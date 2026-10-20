@@ -38,6 +38,7 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 ## How to work
 
+- Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It is the source of truth for the copies in game and virtual-cell: change it here, then copy it to both.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
   them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
