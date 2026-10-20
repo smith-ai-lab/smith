@@ -30,6 +30,8 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link; `make test` runs the routing tests against stub
   compilers; `make compare REAL=/usr/bin/clang` runs the same invocations through clang and smith.
+- `make check` checks formatting and clang-tidy (the same configs as game), then runs `make test` and `make compare`;
+  it must pass before a change is done. `make format` rewrites the sources.
 - `make install` runs the tests, then copies smith and the `smith++` link to `~/.local/bin`. `~/.zshenv` sets `CC` and
   `CXX` to them for every shell, and checkers, learner and game say `CC := smith`. A broken install breaks every
   build, smith's included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
@@ -38,6 +40,7 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 ## How to work
 
+- Load the [smith-development skill](.agents/skills/smith-development/SKILL.md) for any change to smith itself.
 - Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It is the source of truth for the copies in game and virtual-cell: change it here, then copy it to both.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
