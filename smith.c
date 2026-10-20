@@ -299,6 +299,27 @@ static const unsigned char smith_build_runtime[] = {
 #embed "runtime/build_runtime.c"
 };
 
+// smith's libraries: each header and source is written into the project's .smith/ on every `smith build`, where build.c
+// finds the source with smith_library and the compiles find the header through -I .smith/include.
+static const unsigned char smith_arena_header[] = {
+#embed "include/smith/arena.h"
+};
+static const unsigned char smith_arena_source[] = {
+#embed "lib/arena.c"
+};
+
+typedef struct {
+    const char *name;
+    const unsigned char *header;
+    size_t header_size;
+    const unsigned char *source;
+    size_t source_size;
+} SmithLibrary;
+
+static const SmithLibrary smith_libraries[] = {
+    {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
+};
+
 extern char **environ;
 
 constexpr size_t smith_build_args_max = 4096;
@@ -447,16 +468,32 @@ static void smith_build_split(int count, char **args, char **ninja_argv, char **
     program_argv[*program_used] = nullptr;
 }
 
+// Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c.
+static void smith_build_write_libraries(void) {
+    for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
+        const SmithLibrary *library = &smith_libraries[i];
+        char path[PATH_MAX];
+        int written = snprintf(path, sizeof path, ".smith/include/smith/%s.h", library->name);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+        smith_write_if_changed(path, library->header, library->header_size);
+        written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+        smith_write_if_changed(path, library->source, library->source_size);
+    }
+}
+
 static void smith_build_prepare(const char *clang) {
     smith_make_folder(".smith");
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
+    smith_make_folder(".smith/lib");
     smith_make_folder(".smith/bootstrap");
     static char manifest[smith_build_manifest_max];
     size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang);
     // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
+    smith_build_write_libraries();
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }

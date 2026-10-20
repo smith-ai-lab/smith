@@ -939,6 +939,26 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
     return list;
 }
 
+// The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries.
+// smith writes every library it ships to .smith/lib/ before build.c runs, so that folder is the list: smith.c's table
+// is the only one, and the two cannot disagree.
+const char *smith_library(SmithBuild *b, const char *name) {
+    SMITH_ASSERT(b != nullptr && name != nullptr);
+    smith_context = nullptr;
+    bool plain = *name != '\0';
+    for (const char *c = name; *c != '\0'; c++) // bounded by the name's length
+        plain = plain && ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_');
+    const char *source = smith_fmt(b, ".smith/lib/%s.c", name);
+    if (plain && access(source, R_OK) == 0) return source;
+    const char *const *found = smith_glob(b, smith_list(b, ".smith/lib/*.c", nullptr));
+    const char *const *names = smith_list(b, nullptr);
+    for (size_t i = 0; found[i] != nullptr; i++) // bounded by the glob's result
+        names = smith_cat(b, names,
+                          smith_list(b, smith_replace_extension(b, found[i] + strlen(".smith/lib/"), ""), nullptr),
+                          nullptr);
+    smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
+}
+
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items) {
     SMITH_ASSERT(b != nullptr);
     return smith_copy_list(condition ? items : nullptr);

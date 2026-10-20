@@ -91,19 +91,22 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
-        .command = smith_cat(b,
-                             (const char *[]){"sh", "-c",
-                                              smith_fmt(b,
-                                                        "%s --quiet smith.c -- \"$@\" %s && "
-                                                        "%s --quiet build.c -- \"$@\" -I include %s && "
-                                                        "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                                        "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                                        "for f in build main; do %s --quiet "
-                                                        "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                                        "\"$@\" -I include %s || exit 1; done",
-                                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                                              "sh", nullptr},
-                             cflags, nullptr),
+        .command = smith_cat(
+            b,
+            (const char *[]){"sh", "-c",
+                             smith_fmt(b,
+                                       "%s --quiet smith.c -- \"$@\" %s && "
+                                       "%s --quiet build.c -- \"$@\" -I include %s && "
+                                       "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                       "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                       "for f in build main; do %s --quiet "
+                                       "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                       "\"$@\" -I include %s || exit 1; done",
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                             "sh", nullptr},
+            cflags, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "check-tidy", &check_tidy);
@@ -114,8 +117,15 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
     const char *format = build_llvm_tool(b, config->llvm_bin, "clang-format");
     const char *tidy = build_llvm_tool(b, config->llvm_bin, "clang-tidy");
     SmithStep check_llvm = build_check_llvm(b, format, tidy);
-    const char *const *sources = (const char *[]){
-        "smith.c", "build.c", "tests/stub.c", "runtime/build_runtime.c", "include/smith/build.h", nullptr};
+    const char *const *sources = (const char *[]){"smith.c",
+                                                  "build.c",
+                                                  "tests/stub.c",
+                                                  "runtime/build_runtime.c",
+                                                  "include/smith/build.h",
+                                                  "include/smith/arena.h",
+                                                  "lib/arena.c",
+                                                  "tests/arena.c",
+                                                  nullptr};
     build_format(b, format, check_llvm.outputs, sources);
     build_tidy(b, tidy, check_llvm.outputs, config->cflags);
     smith_alias(b, "check", (const char *[]){"check-format", "check-tidy", "test", "compare", nullptr});
@@ -132,10 +142,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = config->cflags,
-        .implicit_inputs =
-            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "templates/new/build.c",
-                             "templates/new/main.c", "templates/new/gitignore", "templates/new/clang-format",
-                             "templates/new/clang-tidy", "templates/new/claude-settings.json", nullptr},
+        .implicit_inputs = (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "include/smith/arena.h",
+                                            "lib/arena.c", "templates/new/build.c", "templates/new/main.c",
+                                            "templates/new/gitignore", "templates/new/clang-format",
+                                            "templates/new/clang-tidy", "templates/new/claude-settings.json", nullptr},
     };
     smith_object(b, &object);
     SmithProgram program = {
@@ -179,9 +189,9 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // tests and the `smith new` tests, which use real ninja, clang and git.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command =
-            (const char *[]){"sh", "-c", "for t in run build new; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
-                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    "for t in run build new arena; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
+                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);
