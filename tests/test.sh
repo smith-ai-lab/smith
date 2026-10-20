@@ -72,7 +72,7 @@ project() {
 void build(SmithBuild *b) {
     bool sanitize = strcmp(smith_option_value(b, "SAN", "1", "0 builds without the sanitizers"), "1") == 0;
     const char *const *flags = smith_cat(b, smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr),
-                                         smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)), nullptr);
+                                         smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", "-fno-sanitize-recover=all", nullptr)), nullptr);
     SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
@@ -281,8 +281,9 @@ cat >tests/test_aborts.c <<'C'
 #include <smith/test.h>
 
 #include <assert.h>
-#include <signal.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 void test_abort_assert(void) {
     SMITH_CHECK_ABORTS((printf("child noise\n"), assert(1 > 2)));
@@ -293,8 +294,28 @@ void test_abort_arena(void) {
     SMITH_CHECK_ABORTS((void)smith_arena_push(&arena, 1000, 8));
 }
 
-void test_abort_signal(void) {
-    SMITH_CHECK_ABORTS(raise(SIGSEGV));
+void test_abort_abort(void) {
+    SMITH_CHECK_ABORTS(abort());
+}
+
+void test_abort_trap(void) {
+    SMITH_CHECK_ABORTS(__builtin_trap());
+}
+
+void test_sanitized_read(void) {
+    char *bytes = malloc(8);
+    volatile size_t index = 8;
+    SMITH_CHECK_ABORTS((printf("before\n"), (void)bytes[index]));
+    free(bytes);
+}
+
+void test_sanitized_overflow(void) {
+    volatile int largest = INT_MAX;
+    SMITH_CHECK_ABORTS((void)(largest + 1));
+}
+
+void test_abort_exit(void) {
+    SMITH_CHECK_ABORTS(exit(3));
 }
 
 void test_abort_returns(void) {
@@ -312,8 +333,19 @@ expect_contains "aborts: an assert passes" "$out" "PASS abort_assert"
 expect_lacks "aborts: ... and the child's output is hidden" "$out" "child noise"
 capture build/tests --test abort_arena --verbose
 expect_contains "aborts: the arena's capacity stop passes" "$out" "PASS abort_arena"
-capture build/tests --test abort_signal --verbose
-expect_contains "aborts: a signal passes" "$out" "PASS abort_signal"
+for name in abort_abort abort_trap; do
+    capture build/tests --test $name --verbose
+    expect_contains "aborts: $name passes" "$out" "PASS $name"
+done
+capture build/tests --test sanitized_read
+expect_contains "aborts: an ASan report fails" "$out" "FAIL sanitized_read"
+expect_contains "aborts: ... saying it was a sanitizer report" "$out" "stopped by a sanitizer report, which is a bug, not the stop the test expected"
+expect_contains "aborts: ... and shows the child's output" "$out" "AddressSanitizer: heap-buffer-overflow"
+capture build/tests --test sanitized_overflow
+expect_contains "aborts: a UBSan error fails" "$out" "stopped by a sanitizer report, which is a bug, not the stop the test expected"
+expect_contains "aborts: ... and shows the child's output" "$out" "runtime error: signed integer overflow"
+capture build/tests --test abort_exit
+expect_contains "aborts: exit(3) fails" "$out" "it exited with status 3"
 line=$(line_of tests/test_aborts.c 'SMITH_CHECK_ABORTS(printf("child output\n"));')
 expect "aborts: returning fails, and shows the child's output" "FAIL abort_returns
   tests/test_aborts.c:$line
@@ -324,6 +356,24 @@ expect "aborts: returning fails, and shows the child's output" "FAIL abort_retur
 0 passed, 1 failed" "$(run_plain --test abort_returns)"
 capture build/tests --test abort_check_inside
 expect_contains "aborts: a check inside the expression is not an abort" "$out" "expected an abort; a check inside it failed"
+
+# A crash without the sanitizers, in a project of its own.
+project "$work/nosan"
+cat >tests/test_crash.c <<'C'
+#include <smith/test.h>
+
+#include <signal.h>
+
+void test_abort_segv(void) {
+    SMITH_CHECK_ABORTS(raise(SIGSEGV));
+}
+C
+capture "$smith" build -DSAN=0
+expect "aborts: the unsanitized runner builds" 0 "$rc"
+capture build/tests --test abort_segv
+expect_contains "aborts: a SIGSEGV fails" "$out" "FAIL abort_segv"
+expect_contains "aborts: ... saying it crashed" "$out" "it crashed with SIGSEGV"
+cd "$work/main" || exit 1
 
 # 3. Isolation: a crash, a sanitizer report and a timeout each fail one test and the rest still run.
 cat >tests/test_isolation.c <<'C'

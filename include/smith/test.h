@@ -32,9 +32,12 @@
 //                                     not 0, and a NaN is itself. A failure prints both values, shortest and in hex; a
 //                                     NaN or an infinity also shows its bits. For determinism: the same inputs must
 //                                     give the same bits, not merely near ones.
-//   SMITH_CHECK_ABORTS(expression)    the expression dies: an assert, the arena's capacity stop, a sanitizer or a
-//   signal.
-//                                     It runs in a child process; if it returns, the check fails.
+//   SMITH_CHECK_ABORTS(expression)    the expression stops the program on purpose: it dies by SIGABRT or SIGTRAP (an
+//                                     assert, abort(), __builtin_trap, the arena's capacity stop) with no sanitizer
+//                                     report in its output. It runs in a child process. It fails, showing the child's
+//                                     output, if the child returns, exits non-zero, crashes with another signal
+//                                     (SIGSEGV), or prints a sanitizer report: a memory bug is not the stop the test
+//                                     expected.
 //
 // A failed check ends the test, so nothing after it runs. Because the arguments of SMITH_CHECK are separated by
 // commas, a comma outside parentheses in an argument (a compound literal's braces) splits it: parenthesize it.
@@ -241,7 +244,8 @@ typedef struct {
                                        const SmithTestValue values[4], const char *file, int line);
 
 // SMITH_CHECK_ABORTS: forks. The child returns true and runs the expression, then calls smith_test_abort_returned; the
-// parent returns false from the first and calls smith_test_abort_judge, which fails the check unless the child died.
+// parent returns false from the first and calls smith_test_abort_judge, which fails the check unless the child stopped
+// by SIGABRT or SIGTRAP with no sanitizer report in its output.
 [[nodiscard]] bool smith_test_abort_child(void);
 [[noreturn]] void smith_test_abort_returned(void);
 void smith_test_abort_judge(const char *file, int line);

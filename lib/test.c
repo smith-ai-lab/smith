@@ -435,17 +435,46 @@ static size_t smith_test_death_read(char *text, size_t capacity) {
     return kept;
 }
 
-// Why the child's end is not a death, or nullptr when it died: by a signal, by a caught signal's status, or by any
-// other non-zero exit, which is how a sanitizer ends a process.
-static const char *smith_test_death_verdict(int status) {
+static const char *smith_test_signal_name(int signal_number);
+
+// Whether the child's output holds a sanitizer's report.
+static bool smith_test_has_report(const char *text, size_t length) {
+    static const char *const markers[] = {"AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer",
+                                          "ThreadSanitizer", "runtime error:"};
+    for (size_t i = 0; i < sizeof markers / sizeof markers[0]; i++) {
+        size_t marker = strlen(markers[i]);
+        for (size_t at = 0; at + marker <= length; at++)
+            if (memcmp(text + at, markers[i], marker) == 0) return true;
+    }
+    return false;
+}
+
+// Why the child's end is not the stop a death test expects, written into message, or nullptr when it is: SIGABRT or
+// SIGTRAP (an assert, abort(), __builtin_trap, the arena's capacity stop; a caught one exits with 128 plus its number)
+// and no sanitizer report in the output. A sanitizer report, any other signal and any other exit are bugs.
+static const char *smith_test_death_verdict(int status, const char *text, size_t length, char *message,
+                                            size_t capacity) {
     int signal_number = smith_test_status_signal(status);
     int code = smith_test_status_code(status);
     if (code > smith_test_signal_status) signal_number = code - smith_test_signal_status;
     if (signal_number == SIGALRM) return "expected an abort; it timed out";
-    if (signal_number != 0) return nullptr;
+    if (smith_test_has_report(text, length))
+        return "expected an abort; it was stopped by a sanitizer report, which is a bug, not the stop the test "
+               "expected";
+    if (signal_number == SIGABRT || signal_number == SIGTRAP) return nullptr;
+    if (signal_number != 0) {
+        const char *name = smith_test_signal_name(signal_number);
+        if (name != nullptr)
+            snprintf(message, capacity, "expected an abort; it crashed with %s, which is not an abort", name);
+        else
+            snprintf(message, capacity, "expected an abort; it crashed with signal %d, which is not an abort",
+                     signal_number);
+        return message;
+    }
     if (code == 0) return "expected an abort; it returned";
     if (code == smith_test_failure_status) return "expected an abort; a check inside it failed";
-    return nullptr;
+    snprintf(message, capacity, "expected an abort; it exited with status %d, which is not an abort", code);
+    return message;
 }
 
 void smith_test_abort_judge(const char *file, int line) {
@@ -457,7 +486,8 @@ void smith_test_abort_judge(const char *file, int line) {
         perror("smith: waitpid");
         abort();
     }
-    const char *verdict = smith_test_death_verdict(status);
+    char message[160];
+    const char *verdict = smith_test_death_verdict(status, text, kept, message, sizeof message);
     if (verdict == nullptr) return;
     if (kept > 0) fwrite(text, 1, kept, stderr); // the child's output is shown for a failure only
     snprintf(smith_test_shared->detail, smith_test_detail_capacity, "%s\n", verdict);

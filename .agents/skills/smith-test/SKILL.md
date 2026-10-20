@@ -36,13 +36,13 @@ SMITH_CHECK(condition)              // a bool, or anything that converts to one
 SMITH_CHECK(a, op, b)               // op: == != < <= > >=; both values print with their types
 SMITH_CHECK_NEAR(a, b, tolerance)   // |a - b| <= tolerance, float or double; a NaN fails
 SMITH_CHECK_SAME_BITS(a, b)         // float or double, bitwise identical: -0 isn't 0, a NaN is itself; prints both in hex
-SMITH_CHECK_ABORTS(expression)      // the expression dies: assert, the arena's capacity stop, a sanitizer, a signal
+SMITH_CHECK_ABORTS(expression)      // the expression stops the program on purpose: SIGABRT or SIGTRAP, no sanitizer report
 ```
 
 - A comparison evaluates each argument once and converts `b` to `a`'s type, so a lossy comparison (`SMITH_CHECK(count, ==, 3.5)`) is a `-Wconversion` error. Put the value under test first.
 - Pointers compare, and print, as addresses. An array decays; `const` drops.
 - A failed check ends the test. A comma outside parentheses inside an argument splits it; parenthesize.
-- `SMITH_CHECK_ABORTS` forks. The check passes when the child dies by a signal or exits non-zero; it fails if the child returns or times out. The child's output shows on a failure only.
+- `SMITH_CHECK_ABORTS` forks and is strict: it passes only when the child dies by SIGABRT or SIGTRAP (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop) and its output holds no sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer", "runtime error:"). It fails, showing the child's output, if the child returns, exits non-zero, crashes with another signal (SIGSEGV) or is stopped by a sanitizer report, so a memory bug before the assertion cannot pass. A timeout fails too.
 
 ## Run them
 

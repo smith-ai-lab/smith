@@ -228,10 +228,13 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
   compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
   infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
-- **`SMITH_CHECK_ABORTS`** forks; the child runs the expression and the check passes when the child dies by a signal
-  (`SIGABRT` from an `assert` or the arena's capacity stop, a crash) or exits with a non-zero status (a sanitizer). If the child
-  returns the check fails with "expected an abort; it returned"; a timeout fails too. The child's output is discarded
-  on a pass and shown on a failure.
+- **`SMITH_CHECK_ABORTS`** forks; the child runs the expression. It checks that the program stops on purpose: the check
+  passes when the child dies by `SIGABRT` or `SIGTRAP` (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity
+  stop) and its output holds no sanitizer report. It fails, with the child's output shown, when the child returns
+  ("it returned"), exits non-zero ("it exited with status N"), crashes with another signal such as `SIGSEGV` ("it
+  crashed"), is stopped by a sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer",
+  "ThreadSanitizer" or "runtime error:" in its output: a bug, not the stop the test expected) or times out. So a memory
+  bug before the assertion cannot make the test pass. The child's output is discarded on a pass.
 - **`smith_test_note(format, ...)`** prints under a failure, whether a failed check, a crash or a timeout; each note
   replaces the last. **`smith_test_arena(capacity)`** is the test's memory, from a block the runner reserved once with
   `mmap`, given back before each test and each key.
