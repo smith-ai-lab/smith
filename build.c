@@ -87,7 +87,8 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 }
 
 // clang-tidy (.clang-tidy) over each source with the flags the build uses, against Xcode's SDK. build.c is tidied too,
-// with -I include, where it finds <smith/build.h>. The `smith new` templates are tidied with their own rules.
+// with -I include, where it finds <smith/build.h>. The `smith new` templates are tidied with their own rules
+// and their own standard, gnu2y.
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
@@ -104,7 +105,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                         "%s --quiet tests/random.c -- \"$@\" -I include %s && "
                                                         "for f in build main; do %s --quiet "
                                                         "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                                        "\"$@\" -I include %s || exit 1; done",
+                                                        "\"$@\" -std=gnu2y -I include %s || exit 1; done",
                                                         tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
                                                         sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                               "sh", nullptr},

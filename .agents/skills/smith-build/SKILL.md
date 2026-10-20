@@ -96,7 +96,7 @@ void build(SmithBuild *b) {
 
 ## Start a project
 
-- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c, the rules (`.clang-format`, `.clang-tidy`, `.gitignore`) and `.claude/settings.json`, which enables the smith plugin (it carries these skills), then builds once and commits on `main`. It never overwrites: a file that exists is kept.
+- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c, the rules (`.clang-format`, `.clang-tidy`, `.gitignore`) and `.claude/settings.json`, which enables the smith plugin (it carries these skills), then builds once and commits on `main`. It never overwrites: a file that exists is kept. The project builds three ways, each into `build/<name>/<project>`: `smith build` is debug (`-O0`, sanitizers, assertions on), `smith build release` is `-O2` with assertions on, and `smith build fast` is `-O2 -DNDEBUG`, assertions off. Its sources are C2y (`-std=gnu2y`, for `_Countof`), a draft standard that Apple clang and upstream clang 21 or later accept; the project's build.c itself is still compiled by `smith build` as C23.
 
 ## Replace a Makefile
 

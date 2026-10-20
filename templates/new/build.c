@@ -1,14 +1,17 @@
 // The build of @NAME@, run with `smith build`. smith new wrote it, and every line is yours to change.
 //   smith build             the debug program, build/debug/@NAME@
 //   smith build run         builds it and runs it
-//   smith build release     the optimized program, build/release/@NAME@
+//   smith build release     the optimized program with assertions on, build/release/@NAME@
+//   smith build fast        the optimized program with assertions off, build/fast/@NAME@
 //   smith build -t clean    removes what was built
 #include <smith/build.h>
 
 #include <string.h>
 
-// C23 with every warning, and warnings as errors. GNU mode (gnu23) keeps POSIX functions declared on Linux.
-static const char *const build_warnings[] = {"-std=gnu23",
+// C2y with every warning, and warnings as errors. C2y is the draft standard after C23; it is here for _Countof, which
+// counts an array's elements, and Apple's clang and upstream clang 21 or later accept it. If a compiler you need does
+// not, use gnu23. GNU mode (gnu2y) keeps POSIX functions declared on Linux.
+static const char *const build_warnings[] = {"-std=gnu2y",
                                              "-Wall",
                                              "-Wextra",
                                              "-Wpedantic",
@@ -32,8 +35,12 @@ static const char *const build_debug[] = {"-g",
                                           "-ftrivial-auto-var-init=pattern",
                                           nullptr};
 
-// The program you ship: optimized, with assertions off.
-static const char *const build_release[] = {"-O2", "-DNDEBUG", nullptr};
+// The program you ship: optimized, and assertions stay on. A broken invariant stops the program instead of corrupting
+// its data, and an assertion costs little next to what a bug costs.
+static const char *const build_release[] = {"-O2", nullptr};
+
+// The same, with assertions off (-DNDEBUG), for when a measurement shows they cost too much. Measure before you use it.
+static const char *const build_fast[] = {"-O2", "-DNDEBUG", nullptr};
 
 // One program: main.c compiled with flags, then linked with link_flags, into build/<variant>/.
 static SmithStep build_program(SmithBuild *b, const char *variant, const char *const *flags,
@@ -68,6 +75,7 @@ void build(SmithBuild *b) {
     SmithStep debug = build_program(b, "debug", smith_cat(b, common, build_debug, nullptr),
                                     (const char *[]){"-fsanitize=address,undefined", nullptr});
     SmithStep release = build_program(b, "release", smith_cat(b, common, build_release, nullptr), nullptr);
+    SmithStep fast = build_program(b, "fast", smith_cat(b, common, build_fast, nullptr), nullptr);
 
     SmithStep run = {
         .command = debug.outputs,
@@ -76,6 +84,7 @@ void build(SmithBuild *b) {
     };
     smith_task(b, "run", &run);
     smith_alias(b, "release", release.outputs);
+    smith_alias(b, "fast", fast.outputs);
     smith_default(b, debug.outputs);
     smith_compile_commands(b, "compile_commands.json");
 }

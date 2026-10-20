@@ -111,13 +111,108 @@ capture smith build run
 expect "new hello: smith build run prints the greeting" "hello from hello" "$(echo "$out" | tail -n 1)"
 capture smith build release
 expect "new hello: smith build release exits 0" 0 "$rc"
-expect "new hello: release program exists" yes "$(exists build/release/hello)"
+capture smith build fast
+expect "new hello: smith build fast exits 0" 0 "$rc"
+for mode in debug release fast; do
+    expect "new hello: the $mode program exists" yes "$(exists build/$mode/hello)"
+    expect "new hello: the $mode program runs and prints its line" "hello from hello" "$(build/$mode/hello | tail -n 1)"
+done
 expect "new hello: compile_commands has main.c" yes "$(grep -q '"main.c"' compile_commands.json && echo yes || echo no)"
 expect "new hello: compile_commands has build.c" yes "$(grep -q '"build.c"' compile_commands.json && echo yes || echo no)"
-expect "new hello: the first main.c command is the debug one" yes \
-    "$(has "$(awk '/"file"/ { n++ } n == 1' compile_commands.json)" "-fsanitize=address,undefined")"
-expect "new hello: the second main.c command is the release one" yes \
-    "$(has "$(awk '/"file"/ { n++ } n == 2' compile_commands.json)" "-DNDEBUG")"
+debug_command=$(awk '/"file"/ { n++ } n == 1' compile_commands.json)
+release_command=$(awk '/"file"/ { n++ } n == 2' compile_commands.json)
+fast_command=$(awk '/"file"/ { n++ } n == 3' compile_commands.json)
+expect "new hello: the first main.c command is the debug one" yes "$(has "$debug_command" "build/debug/main.o")"
+expect "new hello: the debug command has the sanitizers" yes "$(has "$debug_command" "-fsanitize=address,undefined")"
+expect "new hello: the second main.c command is the release one" yes "$(has "$release_command" "build/release/main.o")"
+expect "new hello: the third main.c command is the fast one" yes "$(has "$fast_command" "build/fast/main.o")"
+expect "new hello: debug has no -DNDEBUG" no "$(has "$debug_command" "-DNDEBUG")"
+expect "new hello: release has no -DNDEBUG" no "$(has "$release_command" "-DNDEBUG")"
+expect "new hello: fast has -DNDEBUG" yes "$(has "$fast_command" "-DNDEBUG")"
+expect "new hello: release is -O2" yes "$(has "$release_command" "-O2")"
+expect "new hello: fast is -O2" yes "$(has "$fast_command" "-O2")"
+expect "new hello: release has no sanitizers" no "$(has "$release_command" "-fsanitize")"
+for mode in debug release fast; do
+    eval "command=\$${mode}_command"
+    expect "new hello: $mode compiles with -std=gnu2y" yes "$(has "$command" "-std=gnu2y")"
+    expect "new hello: $mode does not use gnu23" no "$(has "$command" "-std=gnu23")"
+done
+expect "new hello: the build.c header lists release" yes "$(has "$(head -n 6 build.c)" "smith build release")"
+expect "new hello: the build.c header lists fast" yes "$(has "$(head -n 6 build.c)" "smith build fast")"
+
+# The generated project passes the tools with the configs smith new wrote.
+llvm=${LLVM_BIN:-$(brew --prefix llvm 2>/dev/null || echo /opt/homebrew/opt/llvm)/bin}
+if [ -x "$llvm/clang-format" ] && [ -x "$llvm/clang-tidy" ]; then
+    capture "$llvm/clang-format" --dry-run --Werror main.c build.c
+    expect "new hello: clang-format passes on main.c and build.c" 0 "$rc"
+    sdk=
+    if [ "$(uname -s)" = Darwin ]; then sdk=$(xcrun --show-sdk-path); fi
+    capture "$llvm/clang-tidy" --quiet main.c -- -std=gnu2y ${sdk:+-isysroot "$sdk"}
+    expect "new hello: clang-tidy passes on main.c" 0 "$rc"
+else
+    echo "skip  new hello: clang-format and clang-tidy (no LLVM at $llvm)"
+fi
+if [ -x /usr/bin/clangd ]; then
+    capture /usr/bin/clangd --check=main.c
+    errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
+    expect "new hello: clangd reports no errors in main.c" 0 "$errors"
+fi
+cd "$work" || exit 1
+
+# 1b. assert(false) stops debug and release and not fast, in a scratch copy of the generated project.
+mkdir abort && cp hello/build.c abort/ && sed 's/assert(sum == 28);/assert(false);/' hello/main.c >abort/main.c
+cd abort || exit 1
+capture sh -c "smith build && smith build release fast"
+expect "assert(false): the three build" 0 "$rc"
+capture build/debug/hello
+expect "assert(false): debug stops" 134 "$rc"
+capture build/release/hello
+expect "assert(false): release stops" 134 "$rc"
+capture build/fast/hello
+expect "assert(false): fast does not stop" 0 "$rc"
+cd "$work" || exit 1
+
+# 1c. smith's libraries build under the template's flags (gnu2y, every warning an error) in all three modes and run.
+mkdir libs && cp hello/main.c libs/main.c.orig
+cat >libs/insert.txt <<'C'
+    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"),
+                         .output = smith_fmt(b, "build/%s/arena.o", variant), .flags = include_flags};
+    smith_object(b, &arena);
+    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"),
+                          .output = smith_fmt(b, "build/%s/random.o", variant), .flags = include_flags};
+    smith_object(b, &random);
+C
+cat >libs/main.c <<'C'
+#include <smith/arena.h>
+#include <smith/random.h>
+
+#include <stdio.h>
+
+int main(void) {
+    SmithKey key = smith_key_make(42);
+    alignas(smith_arena_align_max) static unsigned char memory[1024];
+    SmithArena arena = smith_arena_make(memory, sizeof memory);
+    SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1, 1, 2}, 3);
+    size_t index = smith_categorical_sample(key, categorical);
+    float x = smith_normal_float_sample(smith_key_derive(key, 1), (SmithNormalFloat){.mean = 0, .deviation = 1});
+    puts(index < 3 && x > -6.0f && x < 6.0f ? "libraries ok" : "libraries wrong");
+    return 0;
+}
+C
+# The template's own build.c, with the two libraries compiled with each mode's flags and linked in.
+sed -e 's|^    smith_object(b, &object);|&\n    const char *const *include_flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr);\n@INSERT@|' \
+    -e 's|\.flags = flags,|.flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr),|' \
+    -e 's|{&object, nullptr}|{\&object, \&arena, \&random, nullptr}|' hello/build.c |
+    sed -e "/@INSERT@/r libs/insert.txt" -e '/@INSERT@/d' >libs/build.c
+rm libs/insert.txt libs/main.c.orig
+cd libs || exit 1
+capture sh -c "smith build && smith build release fast"
+expect "libraries: the three build under the template's flags" 0 "$rc"
+if [ "$rc" -ne 0 ]; then echo "$err" | head -n 20; fi
+for mode in debug release fast; do
+    capture build/$mode/hello
+    expect "libraries: the $mode program runs" "libraries ok" "$out"
+done
 cd "$work" || exit 1
 
 # 2. A second run creates nothing.
