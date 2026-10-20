@@ -2,23 +2,46 @@
 
 In order. Each step starts only with the owner. AGENTS.md holds the rules; this file holds where smith is going.
 
-1. **`compile_commands.json` as a side effect** of each compile (one fragment per file, merged), replacing the `-MJ` and
-   `sed` lines in checkers.
-2. **libclang dry run.** Parse every translation unit of checkers, learner and game with the same arguments plus
-   `-resource-dir` and `-isysroot` (as `learner/tools/lint` does), change no output, print function and assert counts.
-3. **Contracts** (`requires`, `ensures`, `invariant`) checked with Z3, first on checkers, then `game/src/base/arena.c`.
-   What the solver cannot prove becomes an always-on runtime check, and later a Lean theorem to prove by hand. Lean needs
-   a model of the C we write; no malloc, no recursion, bounded loops and arenas keep that model small. `BASE_ASSERT`
-   needs no change: after preprocessing it is a branch into a `[[noreturn]]` function, which is an assertion.
-4. **`.smith` files**: C plus syntax that replaces macros, lowered to plain C with `#line` so clang, lldb and the checker
+1. **libclang dry run.** When asked (an environment variable), smith parses each translation unit it compiles with the
+   arguments it was given, plus `-resource-dir` (as `learner/tools/lint` does), and changes no output. It prints
+   function and assert counts for checkers, learner and game. smith sees every compile's exact arguments, so this needs
+   no `compile_commands.json`.
+2. **Contracts** (`requires`, `ensures`, `invariant`) checked with Z3, first on checkers, then `game/src/base/arena.c`.
+   The first goal: smith reports `get_user_move`'s out-of-bounds read by itself. What the solver cannot prove becomes an
+   always-on runtime check, and later a Lean theorem to prove by hand. Lean needs a model of the C we write; no malloc,
+   no recursion, bounded loops and arenas keep that model small. `BASE_ASSERT` needs no change: after preprocessing it
+   is a branch into a `[[noreturn]]` function, which is an assertion.
+3. **Subcommands that forward**, recognised only as the exact first argument so no clang command is mistaken for one.
+   With arguments they forward them unchanged; with none they act on the whole project.
+   - `smith fmt`: the pinned clang-format.
+   - `smith lint`: clang-tidy, plus smith's own rules through libclang. learner's and game's shared Tiger Style rules
+     move here from their `tools/lint`.
+   - `smith dbg`: the platform's lldb.
+4. **`build.c` and `smith build`, `smith run`, `smith test`.** Only C, no `build.cpp`.
+   - `build.c` emits ninja first. The executor can change later without anyone rewriting their `build.c`.
+   - `compile_commands.json` comes from `ninja -t compdb`. Until then it comes from `-MJ` fragments merged by the
+     Makefile, as in checkers. smith adds nothing for it.
+   - `build.c` is the opt-in profile where defaults live; the command line stays a pure passthrough. The defaults:
+     `-std=gnu23`, all warnings with `-Werror`, debug information, sanitizers in debug and test builds,
+     `-ftrivial-auto-var-init=pattern`, `-ffp-contract=off`, and a named CPU rather than `-march=native`.
+   - `smith test` bakes in the convention game already uses:
+     - tests are non-`static` `void test_<name>(void)` functions in `test_*.c` files, found through libclang;
+     - `test_death_<name>` must die;
+     - `void test_prop_<name>(u64 seed)` runs over many seeds and prints the failing one.
+     
+     smith generates the runner: one process per test, in parallel. A project can choose the files, the links and
+     the flags in `build.c`, or keep its own runner and take only the generated list of tests.
+5. **`.smith` files**: C plus syntax that replaces macros, lowered to plain C with `#line` so clang, lldb and the checker
    keep working. First-class types run at compile time (`type f(type t)`, like Zig's `comptime`) and replace
    `ARENA_PUSH` and `ARENA_PUSH_ARRAY`. `BASE_COUNT` needs nothing new (`_Countof`). `BASE_ASSERT` needs the caller's
-   file, line and expression text. Shapes as dependent types (matrix sizes, lengths) later.
-5. **One download**: smith as the formatter, language server and debugger. It wraps the platform's clangd and lldb
-   (Apple's on macOS) and a pinned clang-format and clang-tidy shipped beside it. Subcommands must never be mistaken
-   for clang arguments (hence `--smith-which`). On macOS the compiler, SDK, frameworks and `metal` come from Xcode or
-   the Command Line Tools.
-6. **`build.c`** that emits ninja.
+   file, line and expression text. A `test "name" { ... }` block can lower to the same test functions. Shapes as
+   dependent types (matrix sizes, lengths) later.
+6. **One download**:
+   - `smith lsp` wraps the platform's clangd (Apple's on macOS) and adds `.smith`.
+   - `smith prove` runs the contracts: Z3, then Lean.
+   - `smith check` runs the whole gate: `fmt --check`, `lint`, `prove` and `test`.
+   - A pinned clang-format and clang-tidy ship beside smith. On macOS the compiler, SDK, frameworks and `metal` still
+     come from Xcode or the Command Line Tools.
 
 Later ideas, not planned: arena regions and `inout` modes; cost clauses (flops, bytes) and bounded recursion with a
 decreasing measure; a kernel subset of C emitted as `.metal`; a tree-sitter grammar for `.smith`. The owner wants no
