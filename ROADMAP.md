@@ -24,8 +24,10 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
    - `build.c` is an explicit, cross-platform description of a build, written to replace a Makefile one for one. Every
      flag, file and step is written out, it has no defaults, and adopting it changes nothing.
    - `build.c` emits ninja first. The executor can change later without anyone rewriting their `build.c`.
-   - `compile_commands.json` comes from `ninja -t compdb`. Until then it comes from `-MJ` fragments merged by the
-     Makefile, as in checkers. smith adds nothing for it.
+   - v1 is done: [docs/build-c.md](docs/build-c.md), and checkers builds with it. Next, learner's Makefile in a scratch
+     copy, compared byte for byte with make; then v1.5 (`smith_defer`, `smith_lines`) for game.
+   - `compile_commands.json` comes from `-MJ` fragments merged by a step, as in checkers, or from `smith build -t
+     compdb`. smith adds nothing for it.
    - Conveniences sit on top, each a call a project makes by name. The first is the smith house style. A target that
      opts in gets:
      - `-std=gnu23`, all warnings with `-Werror`, and debug information;
@@ -42,10 +44,14 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
      them; nothing is added by default. A project can choose the files, the links and the flags, or keep its own
      runner and take only the generated list of tests.
 5. **`.smith` files**: C plus syntax that replaces macros, lowered to plain C with `#line` so clang, lldb and the checker
-   keep working. First-class types run at compile time (`type f(type t)`, like Zig's `comptime`) and replace
-   `ARENA_PUSH` and `ARENA_PUSH_ARRAY`. `BASE_COUNT` needs nothing new (`_Countof`). `BASE_ASSERT` needs the caller's
-   file, line and expression text. A `test "name" { ... }` block can lower to the same test functions. Shapes as
-   dependent types (matrix sizes, lengths) later.
+   keep working. The syntax stays valid C where it can, so existing tools keep working; compiling through clang's
+   and LLVM's libraries instead of emitting C is for later, if emitting C proves too slow. First-class types run at
+   compile time (`type f(type t)`, like Zig's `comptime`) and replace `ARENA_PUSH` and `ARENA_PUSH_ARRAY`.
+   `BASE_COUNT` needs nothing new (`_Countof`). `BASE_ASSERT` needs the caller's file, line and expression text. A
+   `test "name" { ... }` block can lower to the same test functions. Shapes as dependent types (matrix sizes,
+   lengths) later.
+   - smith stays plain C until `.smith` is stable. Then smith can be written in smith: built by the previous release,
+     pinned by version and checksum, with each release's lowered C as a bootstrap that needs only `cc`.
 6. **One download**:
    - `smith lsp` wraps the platform's clangd (Apple's on macOS) and adds `.smith`.
    - `smith prove` runs the contracts: Z3, then Lean.
