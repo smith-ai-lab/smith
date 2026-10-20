@@ -288,7 +288,7 @@ Changes from the 0.15 version: `b.build_root` no longer exists (the project fold
 
 void build(SmithBuild *b) {
     const char *const *outputs = (const char *[]){nullptr};
-    for (const char *const *in = smith_glob(b, "*.in"); *in; in++) {
+    for (const char *const *in = smith_glob(b, (const char *[]){"*.in", nullptr}); *in; in++) {
         SmithStep copy = {
             .command = (const char *[]){"cp", "$in", "$out", nullptr},
             .inputs = (const char *[]){*in, nullptr},
@@ -1295,7 +1295,7 @@ To follow the case, `names` is edited between builds (first `foo` and `bar`, the
 
 void build(SmithBuild *b) {
     const char *const *outputs = (const char *[]){nullptr};
-    for (const char *const *in = smith_glob(b, "*.in"); *in; in++) {
+    for (const char *const *in = smith_glob(b, (const char *[]){"*.in", nullptr}); *in; in++) {
         // adding baz.in or removing bar.in changes the manifest on the next smith build
         SmithStep run = {
             .command = (const char *[]){"sh", "run.sh", "$in", "$out", nullptr},

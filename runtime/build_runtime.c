@@ -4,6 +4,7 @@
 #include <smith/build.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <glob.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -37,6 +38,9 @@ constexpr size_t smith_cat_lists_max = 4096;
 constexpr size_t smith_chunk = 65536;
 constexpr size_t smith_defers_max = 256;
 constexpr size_t smith_lines_file_max = 16U << 20;
+constexpr size_t smith_command_max = 1U << 20;
+constexpr int smith_glob_first = GLOB_NOSORT;
+constexpr int smith_glob_next = GLOB_NOSORT | GLOB_APPEND;
 
 typedef enum {
     SmithEntryKind_Step,
@@ -61,6 +65,7 @@ typedef struct {
     const char *name;
     const char *description;
     bool flag;
+    const char *value; // what the first call returned: a flag's setting is value != nullptr, an option's value itself
 } SmithDeclared;
 
 typedef struct {
@@ -95,6 +100,7 @@ static bool smith_regenerating;
 static char smith_capture_buffer[smith_capture_max + 1];
 static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
+static char smith_command_buffer[smith_command_max + 1];
 static const char *smith_context; // "step x" or "task x" while one is being checked or written
 
 [[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
@@ -204,12 +210,33 @@ static void smith_check_name(const char *what, const char *name) {
     }
 }
 
-static bool smith_name_taken(const char *name) {
-    for (size_t i = 0; i < smith_entry_count; i++) {
-        const SmithEntry *entry = &smith_entries[i];
-        if (entry->kind != SmithEntryKind_Step && strcmp(entry->name, name) == 0) return true;
+// A task or alias name is a path of components, so it may hold '/': check-alone/src/a.c. It cannot start with '/' or
+// '-', end with '/', or hold an empty, '.' or '..' component, which ninja would fold into another name.
+static void smith_check_path_name(const char *what, const char *name) {
+    if (name == nullptr || *name == '\0') smith_fail("%s needs a name", what);
+    for (const char *c = name; *c != '\0'; c++) {
+        if (!smith_is_name_byte(*c) && *c != '/')
+            smith_fail("%s name '%s' may hold only A-Z a-z 0-9 _ . / -", what, name);
     }
-    return false;
+    if (*name == '/' || *name == '-') smith_fail("%s name '%s' may not start with '/' or '-'", what, name);
+    if (name[strlen(name) - 1] == '/') smith_fail("%s name '%s' may not end with '/'", what, name);
+    const char *start = name;
+    for (const char *c = name;; c++) {
+        if (*c != '/' && *c != '\0') continue;
+        size_t length = (size_t)(c - start);
+        if (length == 0 || (length == 1 && start[0] == '.') || (length == 2 && start[0] == '.' && start[1] == '.'))
+            smith_fail("%s name '%s' may not hold an empty, '.' or '..' component", what, name);
+        if (*c == '\0') break;
+        start = c + 1;
+    }
+}
+
+static SmithEntry *smith_find_named(const char *name) {
+    for (size_t i = 0; i < smith_entry_count; i++) {
+        SmithEntry *entry = &smith_entries[i];
+        if (entry->kind != SmithEntryKind_Step && strcmp(entry->name, name) == 0) return entry;
+    }
+    return nullptr;
 }
 
 static SmithEntry *smith_add_entry(SmithEntryKind kind) {
@@ -251,6 +278,13 @@ static uint64_t smith_hash_list(uint64_t hash, const char *const *list) {
     return (hash ^ 1U) * UINT64_C(1099511628211);
 }
 
+static uint64_t smith_hash_bytes(const char *bytes, size_t length) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (size_t i = 0; i < length; i++)
+        hash = (hash ^ (unsigned char)bytes[i]) * UINT64_C(1099511628211);
+    return hash;
+}
+
 // A stamp's name: the command and every input, so two steps with one command but different inputs get two stamps.
 static uint64_t smith_hash_step(const SmithStep *step) {
     uint64_t hash = UINT64_C(14695981039346656037);
@@ -266,35 +300,102 @@ static void smith_name_step(const SmithStep *step) {
     smith_context = smith_text("step %s", first != nullptr ? first : "(empty)");
 }
 
+static bool smith_same_list(const char *const *left, const char *const *right) {
+    size_t count = smith_count(left);
+    if (count != smith_count(right)) return false;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(left[i], right[i]) != 0) return false;
+    }
+    return true;
+}
+
+static bool smith_same_text(const char *left, const char *right) {
+    if (left == nullptr || right == nullptr) return left == right;
+    return strcmp(left, right) == 0;
+}
+
+// The first field that differs between two steps, or nullptr when every field is equal.
+static const char *smith_step_difference(const SmithStep *left, const SmithStep *right) {
+    if (!smith_same_list(left->command, right->command)) return ".command";
+    if (!smith_same_list(left->inputs, right->inputs)) return ".inputs";
+    if (!smith_same_list(left->implicit_inputs, right->implicit_inputs)) return ".implicit_inputs";
+    if (!smith_same_list(left->order_only_inputs, right->order_only_inputs)) return ".order_only_inputs";
+    if (!smith_same_list(left->outputs, right->outputs)) return ".outputs";
+    if (!smith_same_text(left->depfile, right->depfile)) return ".depfile";
+    if (!smith_same_text(left->description, right->description)) return ".description";
+    if (!smith_same_text(left->pool, right->pool)) return ".pool";
+    if (left->restat != right->restat) return ".restat";
+    if (left->always != right->always) return ".always";
+    return nullptr;
+}
+
+// The earlier step that makes one of these outputs, and which output; nullptr when there is none.
+static const SmithEntry *smith_find_output(const char *const *outputs, const char **shared) {
+    for (size_t i = 0; i < smith_entry_count; i++) {
+        const SmithEntry *entry = &smith_entries[i];
+        if (entry->kind != SmithEntryKind_Step) continue;
+        for (size_t j = 0; outputs[j] != nullptr; j++) { // bounded by smith_copy_list
+            for (size_t k = 0; entry->step.outputs[k] != nullptr; k++) {
+                if (strcmp(outputs[j], entry->step.outputs[k]) != 0) continue;
+                *shared = outputs[j];
+                return entry;
+            }
+        }
+    }
+    return nullptr;
+}
+
 void smith_step(SmithBuild *b, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_name_step(step);
     smith_check_step(step);
     SmithStep copy = smith_copy_step(step);
-    SmithEntry *entry = smith_add_entry(SmithEntryKind_Step);
-    if (smith_count(copy.outputs) == 0) {
-        copy.outputs = smith_one(smith_text(".smith/stamp/%016" PRIx64, smith_hash_step(&copy)));
-        entry->stamp = true;
+    bool stamp = smith_count(copy.outputs) == 0;
+    if (stamp) copy.outputs = smith_one(smith_text(".smith/stamp/%016" PRIx64, smith_hash_step(&copy)));
+    const char *shared = nullptr;
+    const SmithEntry *earlier = smith_find_output(copy.outputs, &shared);
+    if (earlier != nullptr) { // an identical step declared again changes nothing
+        const char *field = smith_step_difference(&earlier->step, &copy);
+        if (field != nullptr)
+            smith_fail("the output '%s' is already made by an earlier step whose %s differs", shared, field);
+        *step = earlier->step;
+        smith_context = nullptr;
+        return;
     }
+    SmithEntry *entry = smith_add_entry(SmithEntryKind_Step);
+    entry->stamp = stamp;
     entry->step = copy;
     *step = copy;
     smith_context = nullptr;
 }
 
-void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
-    SMITH_ASSERT(b != nullptr && step != nullptr);
-    smith_context = nullptr;
-    smith_check_name("a task", name);
-    smith_context = smith_text("task %s", name);
-    if (smith_name_taken(name)) smith_fail("the name is already used by a task or an alias");
+static void smith_check_task(const SmithStep *step) {
     if (smith_count(step->outputs) > 0) smith_fail("a task has no outputs; use smith_step");
     if (step->restat) smith_fail("a task has no outputs, so .restat means nothing; use smith_step");
     if (step->always) smith_fail("a task already runs every time; .always is not needed");
     smith_check_step(step);
+}
+
+void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
+    SMITH_ASSERT(b != nullptr && step != nullptr);
+    smith_context = nullptr;
+    smith_check_path_name("a task", name);
+    smith_context = smith_text("task %s", name);
+    smith_check_task(step);
     SmithStep copy = smith_copy_step(step);
-    SmithEntry *entry = smith_add_entry(SmithEntryKind_Task);
-    entry->name = smith_copy_string(name);
     copy.outputs = smith_one(smith_text(".smith/task/%s", name));
+    SmithEntry *entry = smith_find_named(name);
+    if (entry != nullptr) { // a task declared again, identical, changes nothing
+        if (entry->kind != SmithEntryKind_Task) smith_fail("the name is already used by an alias");
+        const char *field = smith_step_difference(&entry->step, &copy);
+        if (field != nullptr) smith_fail("the task is already declared and its %s differs", field);
+        *step = entry->step;
+        step->outputs = smith_one(entry->name);
+        smith_context = nullptr;
+        return;
+    }
+    entry = smith_add_entry(SmithEntryKind_Task);
+    entry->name = smith_copy_string(name);
     entry->step = copy;
     copy.outputs = smith_one(entry->name);
     *step = copy;
@@ -304,11 +405,18 @@ void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
 void smith_alias(SmithBuild *b, const char *name, const char *const *targets) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
-    smith_check_name("an alias", name);
+    smith_check_path_name("an alias", name);
     smith_context = smith_text("alias %s", name);
-    if (smith_name_taken(name)) smith_fail("the name is already used by a task or an alias");
     if (targets == nullptr) smith_fail("the targets list is nullptr; use an empty list");
-    SmithEntry *entry = smith_add_entry(SmithEntryKind_Alias);
+    SmithEntry *entry = smith_find_named(name);
+    if (entry != nullptr) { // an alias declared again, with the same targets, changes nothing
+        if (entry->kind != SmithEntryKind_Alias) smith_fail("the name is already used by a task");
+        if (!smith_same_list(entry->targets, targets))
+            smith_fail("the alias is already declared and its targets differ");
+        smith_context = nullptr;
+        return;
+    }
+    entry = smith_add_entry(SmithEntryKind_Alias);
     entry->name = smith_copy_string(name);
     entry->targets = smith_copy_list(targets);
     smith_context = nullptr;
@@ -347,37 +455,52 @@ static const SmithGiven *smith_find_given(const char *name) {
     return nullptr;
 }
 
-static void smith_declare(const char *name, const char *description, bool flag) {
+// Declares an option, or finds it again: the same name and kind reads the same value, so a callback that runs later can
+// read what build() read. The other kind is an error. *fresh tells the first declaration.
+static SmithDeclared *smith_declare(const char *name, const char *description, bool flag, bool *fresh) {
     smith_context = nullptr;
     if (name == nullptr || *name == '\0' || strchr(name, '=') != nullptr)
         smith_fail("an option needs a name without '='");
+    *fresh = false;
     for (size_t i = 0; i < smith_declared_count; i++) {
-        if (strcmp(smith_declared[i].name, name) == 0) smith_fail("option '%s' is declared twice", name);
+        if (strcmp(smith_declared[i].name, name) != 0) continue;
+        if (smith_declared[i].flag != flag)
+            smith_fail("option '%s' is declared as %s and read as %s", name, flag ? "a value" : "a flag",
+                       flag ? "a flag" : "a value");
+        return &smith_declared[i];
     }
     if (smith_declared_count >= smith_options_max) smith_too_many("options", smith_options_max);
-    smith_declared[smith_declared_count++] = (SmithDeclared){
+    *fresh = true;
+    SmithDeclared *declared = &smith_declared[smith_declared_count++];
+    *declared = (SmithDeclared){
         .name = smith_copy_string(name),
         .description = description != nullptr ? smith_copy_string(description) : "",
         .flag = flag,
     };
+    return declared;
 }
 
 bool smith_option(SmithBuild *b, const char *name, const char *description) {
     SMITH_ASSERT(b != nullptr);
-    smith_declare(name, description, true);
+    bool fresh = false;
+    SmithDeclared *declared = smith_declare(name, description, true, &fresh);
+    if (!fresh) return declared->value != nullptr;
     const SmithGiven *given = smith_find_given(name);
     if (given == nullptr) return false;
     if (given->value != nullptr) smith_fail("-D%s takes no value; write -D%s", name, name);
+    declared->value = "";
     return true;
 }
 
 const char *smith_option_value(SmithBuild *b, const char *name, const char *fallback, const char *description) {
     SMITH_ASSERT(b != nullptr);
-    smith_declare(name, description, false);
+    bool fresh = false;
+    SmithDeclared *declared = smith_declare(name, description, false, &fresh);
+    if (!fresh) return declared->value;
     const SmithGiven *given = smith_find_given(name);
-    if (given == nullptr) return fallback;
-    if (given->value == nullptr) smith_fail("-D%s needs a value; write -D%s=value", name, name);
-    return given->value;
+    if (given != nullptr && given->value == nullptr) smith_fail("-D%s needs a value; write -D%s=value", name, name);
+    declared->value = given != nullptr ? given->value : fallback;
+    return declared->value;
 }
 
 static void smith_check_given(void) {
@@ -410,26 +533,43 @@ static int smith_compare_strings(const void *left, const void *right) {
     return strcmp(*a, *b);
 }
 
-const char *const *smith_glob(SmithBuild *b, const char *pattern) {
-    SMITH_ASSERT(b != nullptr && pattern != nullptr);
+// The union of the matches of every pattern, sorted by strcmp (not the locale), each name once: make's
+// $(sort $(wildcard a b c)).
+const char *const *smith_glob(SmithBuild *b, const char *const *patterns) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (patterns == nullptr) smith_fail("smith_glob: the patterns list is nullptr; use an empty list");
     glob_t found = {};
-    int status = glob(pattern, GLOB_NOSORT, nullptr, &found);
-    if (status != 0 && status != GLOB_NOMATCH) smith_fail("glob '%s' failed", pattern);
-    size_t count = status == 0 ? (size_t)found.gl_pathc : 0;
-    const char **list = smith_new_list(count);
-    for (size_t i = 0; i < count; i++)
-        list[i] = smith_copy_string(found.gl_pathv[i]);
-    globfree(&found);
-    if (count > 1) qsort((void *)list, count, sizeof *list, smith_compare_strings); // strcmp, not the locale
+    size_t count = smith_count(patterns);
+    for (size_t i = 0; i < count; i++) {
+        int status = glob(patterns[i], i > 0 ? smith_glob_next : smith_glob_first, nullptr, &found);
+        if (status != 0 && status != GLOB_NOMATCH) smith_fail("glob '%s' failed", patterns[i]);
+    }
+    size_t matches = count > 0 ? (size_t)found.gl_pathc : 0;
+    if (matches > smith_list_max) smith_too_many("matches in smith_glob", smith_list_max);
+    if (matches > 1) qsort((void *)found.gl_pathv, matches, sizeof *found.gl_pathv, smith_compare_strings);
+    const char **list = smith_new_list(matches);
+    size_t used = 0;
+    for (size_t i = 0; i < matches; i++) {
+        if (used > 0 && strcmp(list[used - 1], found.gl_pathv[i]) == 0) continue;
+        list[used++] = smith_copy_string(found.gl_pathv[i]);
+    }
+    list[used] = nullptr;
+    if (count > 0) globfree(&found);
     return list;
 }
 
-static void smith_wait(const char *name, pid_t pid) {
+// Waits for the program; the raw wait status.
+static int smith_wait(const char *name, pid_t pid) {
     int status = 0;
     int waited = -1;
     for (int i = 0; i < 1000 && waited < 0; i++) // bounded; only a signal interrupts the wait
         waited = waitpid(pid, &status, 0);
     if (waited < 0) smith_fail("%s: cannot wait for it", name);
+    return status;
+}
+
+static void smith_require_success(const char *name, int status) {
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return;
     if (WIFEXITED(status)) smith_fail("%s failed (status %d)", name, WEXITSTATUS(status));
     smith_fail("%s failed (signal %d)", name, WTERMSIG(status));
@@ -447,39 +587,133 @@ static size_t smith_read_all(const char *name, int fd) {
     smith_fail("%s: its output did not end", name);
 }
 
-static pid_t smith_spawn_into(const char *const *argv, int pipe_fds[2]) {
+// Starts the program with its stdout in the pipe, and its stderr on /dev/null when quiet. Returns -1 and the error when
+// it cannot start.
+static pid_t smith_spawn_into(const char *const *argv, int pipe_fds[2], bool quiet, int *error) {
     posix_spawn_file_actions_t actions;
     int setup = posix_spawn_file_actions_init(&actions);
     if (setup == 0) setup = posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
     if (setup == 0) setup = posix_spawn_file_actions_addclose(&actions, pipe_fds[0]);
     if (setup == 0 && pipe_fds[1] != STDOUT_FILENO) setup = posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
+    if (setup == 0 && quiet)
+        setup = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
     SMITH_ASSERT(setup == 0);
     pid_t pid = 0;
     int status = posix_spawnp(&pid, argv[0], &actions, nullptr, (char *const *)argv, environ);
     posix_spawn_file_actions_destroy(&actions);
     close(pipe_fds[1]);
-    if (status != 0) {
-        close(pipe_fds[0]);
-        smith_fail("%s failed (cannot run: %s)", argv[0], strerror(status));
-    }
-    return pid;
+    if (status == 0) return pid;
+    close(pipe_fds[0]);
+    *error = status;
+    return -1;
 }
 
-const char *smith_capture(SmithBuild *b, const char *const *argv) {
-    SMITH_ASSERT(b != nullptr);
-    smith_context = nullptr;
+// Runs the program and returns its stdout without the last newline. With a fallback, a program that cannot start,
+// exits non-zero or is killed gives the fallback, and its stderr is discarded. Without one, any of those is an error.
+static const char *smith_capture_with(const char *const *argv, const char *fallback, bool has_fallback) {
     if (argv == nullptr || argv[0] == nullptr) smith_fail("smith_capture needs a command");
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) smith_fail("%s: cannot make a pipe", argv[0]);
-    pid_t pid = smith_spawn_into(argv, pipe_fds);
+    int error = 0;
+    pid_t pid = smith_spawn_into(argv, pipe_fds, has_fallback, &error);
+    if (pid < 0) {
+        if (has_fallback) return fallback;
+        smith_fail("%s failed (cannot run: %s)", argv[0], strerror(error));
+    }
     size_t length = smith_read_all(argv[0], pipe_fds[0]);
     close(pipe_fds[0]);
-    smith_wait(argv[0], pid);
+    int status = smith_wait(argv[0], pid);
+    if (has_fallback && !(WIFEXITED(status) && WEXITSTATUS(status) == 0)) return fallback;
+    smith_require_success(argv[0], status);
     if (length > 0 && smith_capture_buffer[length - 1] == '\n') length -= 1;
     char *text = smith_alloc(length + 1);
     memcpy(text, smith_capture_buffer, length);
     text[length] = '\0';
     return text;
+}
+
+const char *smith_capture(SmithBuild *b, const char *const *argv) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    return smith_capture_with(argv, nullptr, false);
+}
+
+const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char *fallback) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    return smith_capture_with(argv, fallback, true);
+}
+
+// Files that build.c computes and the manifest refers to.
+
+// Whether the file holds exactly these bytes.
+static bool smith_file_holds(const char *path, const char *text, size_t length) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    struct stat info;
+    bool same = fstat(fileno(file), &info) == 0 && S_ISREG(info.st_mode) && (uintmax_t)info.st_size == length;
+    for (size_t done = 0; same && done < length;) { // bounded: each read moves at least a byte, or ends the loop
+        size_t want = length - done < smith_chunk ? length - done : smith_chunk;
+        size_t got = fread(smith_compare_a, 1, want, file);
+        same = got == want && memcmp(smith_compare_a, text + done, got) == 0;
+        done += got;
+    }
+    fclose(file);
+    return same;
+}
+
+static void smith_make_parents(const char *path) {
+    char folder[PATH_MAX];
+    if (strlen(path) >= sizeof folder) smith_fail("the path '%s' is too long", path);
+    memcpy(folder, path, strlen(path) + 1);
+    for (char *c = folder + 1; *c != '\0'; c++) { // bounded by the path's length
+        if (*c != '/') continue;
+        *c = '\0';
+        struct stat info;
+        if (mkdir(folder, 0777) != 0 && (stat(folder, &info) != 0 || !S_ISDIR(info.st_mode)))
+            smith_fail("cannot make the folder %s", folder);
+        *c = '/';
+    }
+}
+
+// Writes the file through a temporary file and a rename, only when its bytes differ, so its mtime moves only when its
+// content does.
+static void smith_write_if_different(const char *path, const char *text, size_t length) {
+    if (smith_file_holds(path, text, length)) return;
+    smith_make_parents(path);
+    const char *temporary = smith_text("%s.tmp", path);
+    FILE *file = fopen(temporary, "wb");
+    if (file == nullptr) smith_fail("cannot write %s", temporary);
+    if (fwrite(text, 1, length, file) != length || fclose(file) != 0) smith_fail("cannot write %s", temporary);
+    if (rename(temporary, path) != 0) smith_fail("cannot replace %s", path);
+}
+
+// A relative path with no '..' component, and nothing under .smith/, which is smith's own folder.
+static void smith_check_write_path(const char *path) {
+    if (path == nullptr || *path == '\0') smith_fail("smith_write needs a path");
+    if (*path == '/') smith_fail("smith_write: the path '%s' must be relative", path);
+    if (path[strlen(path) - 1] == '/') smith_fail("smith_write: the path '%s' names a folder", path);
+    const char *start = path;
+    bool first = true;
+    for (const char *c = path;; c++) {
+        if (*c != '/' && *c != '\0') continue;
+        size_t length = (size_t)(c - start);
+        if (length == 2 && start[0] == '.' && start[1] == '.')
+            smith_fail("smith_write: the path '%s' holds a '..' component", path);
+        if (first && length == 6 && strncmp(start, ".smith", 6) == 0)
+            smith_fail("smith_write: the path '%s' is under .smith/, which is smith's own", path);
+        if (length > 0 && !(length == 1 && start[0] == '.')) first = false;
+        if (*c == '\0') break;
+        start = c + 1;
+    }
+}
+
+void smith_write(SmithBuild *b, const char *path, const char *text) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    smith_check_write_path(path);
+    if (text == nullptr) smith_fail("smith_write: the text of '%s' is nullptr", path);
+    smith_write_if_different(path, text, strlen(text));
 }
 
 // Helpers.
@@ -669,8 +903,10 @@ static bool smith_is_safe_word(const char *word) {
     return true;
 }
 
-static void smith_put_quoted(FILE *out, const char *word) {
-    if (strchr(word, '\n') != nullptr) smith_fail("the command word '%s' holds a newline", word);
+// A word for sh. For ninja's own text (ninja) every $ is doubled, and a newline is an error because ninja cannot hold
+// one; for a script file neither applies.
+static void smith_put_quoted(FILE *out, const char *word, bool ninja) {
+    if (ninja && strchr(word, '\n') != nullptr) smith_fail("the command word '%s' holds a newline", word);
     if (smith_is_safe_word(word)) {
         fputs(word, out);
         return;
@@ -679,7 +915,7 @@ static void smith_put_quoted(FILE *out, const char *word) {
     for (const char *c = word; *c != '\0'; c++) {
         if (*c == '\'')
             fputs("'\\''", out);
-        else if (*c == '$')
+        else if (*c == '$' && ninja)
             fputs("$$", out);
         else
             fputc(*c, out);
@@ -687,24 +923,75 @@ static void smith_put_quoted(FILE *out, const char *word) {
     fputc('\'', out);
 }
 
-static void smith_put_quoted_list(FILE *out, const char *const *words) {
+static void smith_put_quoted_list(FILE *out, const char *const *words, bool ninja) {
     for (size_t i = 0; words[i] != nullptr; i++) {
         if (i > 0) fputc(' ', out);
-        smith_put_quoted(out, words[i]);
+        smith_put_quoted(out, words[i], ninja);
     }
 }
 
 // A command word. The words $in and $out stand for the step's inputs and outputs; every other word is quoted for the
-// shell and its $ is doubled. ninja evaluates an edge's own variable (cmd) without the edge's $in and $out, so the
-// paths are written here, quoted the same way, instead of being left to ninja.
+// shell. ninja evaluates an edge's own variable (cmd) without the edge's $in and $out, so the paths are written here,
+// quoted the same way, instead of being left to ninja.
 static void smith_put_word(FILE *out, const SmithStep *step, const char *word) {
     if (strcmp(word, "$in") == 0) {
-        smith_put_quoted_list(out, step->inputs);
+        smith_put_quoted_list(out, step->inputs, false);
     } else if (strcmp(word, "$out") == 0) {
-        smith_put_quoted_list(out, step->outputs);
+        smith_put_quoted_list(out, step->outputs, false);
     } else {
-        smith_put_quoted(out, word);
+        smith_put_quoted(out, word, false);
     }
+}
+
+// The command line as sh reads it: the words, then the stamp's touch. It is built in a fixed buffer and ends with a
+// 0 byte; *length is its size.
+static const char *smith_render_command(const SmithEntry *entry, size_t *length) {
+    const SmithStep *step = &entry->step;
+    FILE *file = fmemopen(smith_command_buffer, smith_command_max, "w");
+    if (file == nullptr) smith_fail("cannot render the command");
+    for (size_t i = 0; step->command[i] != nullptr; i++) {
+        if (i > 0) fputc(' ', file);
+        smith_put_word(file, step, step->command[i]);
+    }
+    if (entry->stamp) {
+        fputs(" && touch ", file);
+        smith_put_quoted_list(file, step->outputs, false);
+    }
+    long size = fflush(file) == 0 ? ftell(file) : -1;
+    fclose(file);
+    if (size < 0 || (size_t)size >= smith_command_max)
+        smith_fail("the command is larger than %zu bytes", smith_command_max);
+    *length = (size_t)size;
+    smith_command_buffer[size] = '\0';
+    return smith_command_buffer;
+}
+
+static bool smith_command_has_newline(const SmithStep *step) {
+    for (size_t i = 0; step->command[i] != nullptr; i++) {
+        if (strchr(step->command[i], '\n') != nullptr) return true;
+    }
+    return false;
+}
+
+// The edge's cmd. A command that holds a newline cannot be one line of ninja, so the whole command line goes into
+// .smith/command/<FNV-1a 64 of its text> and cmd runs that file with sh. The name changes with the text, so ninja
+// reruns the step when the command changes. The file is read by sh, not ninja, so its $ are not doubled.
+static void smith_put_command(FILE *out, const SmithEntry *entry) {
+    size_t length = 0;
+    const char *text = smith_render_command(entry, &length);
+    fputs("  cmd = ", out);
+    if (!smith_command_has_newline(&entry->step)) {
+        for (size_t i = 0; i < length; i++) {
+            if (text[i] == '$') fputc('$', out);
+            fputc(text[i], out);
+        }
+        fputc('\n', out);
+        return;
+    }
+    const char *path = smith_text(".smith/command/%016" PRIx64, smith_hash_bytes(text, length));
+    smith_command_buffer[length] = '\n'; // the file ends its last line
+    smith_write_if_different(path, text, length + 1);
+    fprintf(out, "sh %s\n", path);
 }
 
 static void smith_put_value(FILE *out, const char *key, const char *value) {
@@ -737,16 +1024,8 @@ static void smith_put_edge(FILE *out, const SmithEntry *entry) {
     if (step->always) fputs(" smith_always", out);
     if (smith_count(step->order_only_inputs) > 0) fputs(" ||", out);
     smith_put_paths(out, step->order_only_inputs);
-    fputs("\n  cmd =", out);
-    for (size_t i = 0; step->command[i] != nullptr; i++) {
-        fputc(' ', out);
-        smith_put_word(out, step, step->command[i]);
-    }
-    if (entry->stamp) {
-        fputs(" && touch ", out);
-        smith_put_quoted_list(out, step->outputs);
-    }
     fputc('\n', out);
+    smith_put_command(out, entry);
     if (step->description != nullptr) smith_put_value(out, "description", step->description);
     if (step->depfile != nullptr) {
         smith_put_value(out, "depfile", step->depfile);
@@ -778,7 +1057,7 @@ static void smith_put_regenerate_rule(FILE *out) {
     fputs("rule smith_regenerate\n  command = .smith/program --regenerate .smith/build.ninja", out);
     for (size_t i = 0; i < smith_option_arg_count; i++) {
         fputc(' ', out);
-        smith_put_quoted(out, smith_option_args[i]);
+        smith_put_quoted(out, smith_option_args[i], true);
     }
     fputs("\n  description = smith: regenerate .smith/build.ninja\n  generator = 1\n", out);
 }

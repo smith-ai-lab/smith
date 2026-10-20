@@ -1,6 +1,6 @@
 # smith build
 
-Status: v1 and v1.5 (`smith_defer`, `smith_lines`) are implemented. checkers and smith itself build with it. `.run`,
+Status: v1, v1.5 (`smith_defer`, `smith_lines`) and the changes found by porting game (below) are implemented. checkers and smith itself build with it. `.run`,
 `.args`, `.content_hash` and `smith_run_lines` are declared but not implemented. The
 23 cases that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in
 [build-c-cases.md](build-c-cases.md).
@@ -21,7 +21,7 @@ Status: v1 and v1.5 (`smith_defer`, `smith_lines`) are implemented. checkers and
 - **No macros.** A list is a C23 compound literal that ends in `nullptr`. A loop or a function builds the rest.
 - **C23, libc only, no malloc.** Strings and lists live in smith's arena until `build` returns.
 - **build.c reads the outside world through the `smith_*` calls**: `smith_option`, `smith_option_value`, `smith_env`,
-  `smith_glob`, `smith_capture` and `smith_lines`. These are the calls a later cache would track, and the checks on
+  `smith_glob`, `smith_capture`, `smith_capture_or` and `smith_lines`. These are the calls a later cache would track, and the checks on
   `build.c` (a lint rule, the option listing) know about them. In v1 `getenv` and `fopen` would also work, because the
   program reruns on every `smith build`. Use the calls anyway, so the build keeps working when a cache arrives.
 - **The build program runs on every `smith build`.** Globs, environment variables, captured commands and options are
@@ -73,6 +73,31 @@ Generator rules:
   `cmd` when it reads the line, before the edge's `$in` and `$out` exist, so `$in` there would be empty. smith writes
   the step's input and output paths into `cmd`, each shell-quoted like a literal word. Every `$` in `cmd` is doubled.
 - Literal words in a command are shell-quoted. Paths in `build` lines are escaped (`$ `, `$:`, `$$`).
+- A newline stays an error in a path, `description`, `depfile` and a pool name, and in a `-D` argument, because ninja
+  cannot hold one there. A command word may hold newlines (a shell script). ninja's `cmd` is one line, so when any word
+  of a step's command holds a newline, smith writes the whole command line to `.smith/command/<hash>`: the text it
+  would have put in `cmd`, with the stamp's `&& touch` included and single quotes keeping the newlines, and the
+  hash is FNV-1a 64 of that text as 16 hex digits. The file ends with a newline, is written through a temporary file
+  and a rename only when its bytes differ, and has no `$` doubled, because `sh` reads it and ninja does not. The edge
+  becomes `cmd = sh .smith/command/<hash>`. The name changes with the text, so ninja's command comparison reruns the
+  step when the script changes. A command with no newline is written as before. Old command files stay (like old
+  stamps); `rm -rf .smith` removes them.
+- `smith_write` runs when `build.c` runs, not as a step: it writes the file through a temporary file and a rename, only
+  when the bytes differ, so a step that lists the file as an input reruns only when the text changed. No step makes the
+  file, so `-t clean` leaves it. A path must be relative, with no `..` component and nothing under `.smith/`.
+- A step declared again is accepted when every field is equal (command, the three input lists, outputs, depfile,
+  description, pool, restat, always) and `*step` becomes the earlier copy. A step that makes an earlier step's output
+  with any field different is an error that names the output and the first field that differs. A step without outputs
+  is compared by its stamp, which hashes the command and the input lists. The same holds for a task declared twice
+  under one name and an alias declared twice (its targets must be equal).
+- A task or alias name is a path: `A-Za-z0-9_./-`, not starting with `/` or `-`, not ending with `/`, with no empty,
+  `.` or `..` component. The task's output `.smith/task/<name>` then has folders, and is never created. Pool names keep
+  `A-Za-z0-9_.-`.
+- `smith_option` and `smith_option_value` called again with a declared name and the same kind return what the first
+  call returned (the fallback of the first call included), and the description may then be `nullptr`. The other kind is
+  an error. A `smith_defer` callback reads the options this way.
+- `smith_capture_or` starts the program with its stderr on `/dev/null` and returns the fallback when it cannot start,
+  exits non-zero or is killed. Output over 1 MiB is still an error.
 - `deps = gcc` is emitted whenever `.depfile` is set, so ninja folds the `.d` file into `.ninja_deps` and deletes it.
 - `.always` adds an input on one shared phony target that has no inputs (`build smith_always: phony`).
 - A step with no outputs gets a stamp output, `.smith/stamp/<hash>`, and `&& touch <stamp>` ends its command. The
@@ -142,7 +167,8 @@ typedef struct SmithBuild {
 typedef struct SmithRun SmithRun; // later
 
 typedef struct {
-    const char *const *command;           // argv. Only the whole words $in and $out expand; every other $ is literal
+    // argv. Only the whole words $in and $out expand; every other $ is literal. A word may hold newlines
+    const char *const *command;
     const char *const *inputs;            // $in; a change reruns the step
     const char *const *implicit_inputs;   // a change reruns the step; not on the command line
     const char *const *order_only_inputs; // built first; a change does not rerun the step
@@ -160,24 +186,44 @@ typedef struct {
 void build(SmithBuild *b); // what the project writes
 
 // one ninja edge. Afterwards every list and string in *step points at the arena copies; with no outputs, .outputs is
-// the stamp
+// the stamp. A step declared again with every field equal (command, the input lists, outputs, depfile, description,
+// pool, restat, always) changes nothing and *step becomes the earlier copy; a step that makes an earlier step's output
+// with any field different is an error that names the output and the first field that differs. A command word may
+// hold newlines (a shell script): smith writes the whole command line to .smith/command/<hash of its text> and the
+// edge runs it with sh, so editing the script reruns the step. A newline in a path, .description, .depfile or .pool is
+// an error.
 void smith_step(SmithBuild *b, SmithStep *step);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
-// afterwards .outputs is {name}, so other steps can depend on the task
+// afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
+// start with '/' or '-', end with '/', or hold an empty, '.' or '..' component (check-alone/src/a.c is a name). A task
+// declared again under one name with every field equal changes nothing; with any field different it is an error
 void smith_task(SmithBuild *b, const char *name, SmithStep *step);
+// a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
+// different targets it is an error
 void smith_alias(SmithBuild *b, const char *name, const char *const *targets);
 void smith_default(SmithBuild *b, const char *const *targets);
 void smith_pool(SmithBuild *b, const char *name, int depth);
 
-// -Dname
+// -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
+// nullptr, so a smith_defer callback can read what build() read. The other kind is an error
 bool smith_option(SmithBuild *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 const char *smith_option_value(SmithBuild *b, const char *name, const char *fallback, const char *description);
 // an environment variable, or fallback (may be nullptr)
 const char *smith_env(SmithBuild *b, const char *name, const char *fallback);
-const char *const *smith_glob(SmithBuild *b, const char *pattern); // sorted
-// a command's stdout without its last newline; no shell
+// the union of the patterns' matches, sorted by strcmp, each name once: make's $(sort $(wildcard a b c)). No **
+const char *const *smith_glob(SmithBuild *b, const char *const *patterns);
+// a command's stdout without its last newline; no shell. A program that cannot start, exits non-zero or is killed is an
+// error
 const char *smith_capture(SmithBuild *b, const char *const *argv);
+// like smith_capture, but returns fallback (may be nullptr) when the program cannot start, exits non-zero or is
+// killed; its stderr goes to /dev/null
+const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char *fallback);
+// Writes a file when build.c runs, through a temporary file and a rename, and only when its bytes differ, so its mtime
+// moves only when its content does. It creates missing parent folders. The path must be relative, with no '..'
+// component and nothing under .smith/. For files whose content build.c computes; a step that reads one lists it as an
+// input. `-t clean` leaves it, since no step makes it
+void smith_write(SmithBuild *b, const char *path, const char *text);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
@@ -229,6 +275,8 @@ Rules:
 - `.command` and `.run` are exclusive. A `.run` step is later; nothing in v1 or v1.5 needs it.
 - `.pool = "console"` gives the step the terminal. ninja allows one console step at a time.
 - The calls that read the outside world are read again on every `smith build`, because the program reruns each time.
+- `smith_glob` takes a list of patterns, so one pattern is a list of one: `smith_glob(b, (const char *[]){"src/*.c",
+  nullptr})`. The result is the union, sorted by `strcmp` with each name once, like make's `$(sort $(wildcard a b c))`.
 
 Which tier each project needs:
 - checkers: v1.
@@ -242,6 +290,27 @@ Dropped from the proposals of the case agents:
 - `smith_in`: membership is a loop. The `function` case writes `in_list` in six lines.
 - `smith_read`: `smith_lines` covers the cases. A whole-text read can come back if a case needs it.
 - `smith_run_temp` and `smith_run_status`: no case needs them yet.
+
+## Found by porting game
+
+game's Makefile was ported to a `build.c` of about 1,000 lines. The port worked around these gaps, and each is now in
+the API:
+- **Multi-line command words.** The Makefile's recipes are shell scripts, and the port joined their lines with a
+  heuristic. A word may now hold newlines; smith moves such a command into `.smith/command/<hash>` for ninja.
+- **`smith_write`.** The unity files and the test list are computed by `build.c`, and the Makefile wrote them with a
+  temporary file and `cmp`. The mtime now moves only when the content does, with no `.always` step that prints on every
+  no-op build.
+- **`smith_capture_or`.** `$(shell git ... 2>/dev/null)` yields a fallback outside a repository, but `smith_capture`
+  is fatal when the command fails.
+- **An identical step declared twice is accepted.** game's bakers share object files such as `sim/noise`, and the port
+  kept a list of what it had declared. The same holds for a task or an alias.
+- **`/` in task and alias names.** The check-alone tasks are named after files, such as `check-alone/src/base/arena.c`.
+- **Options can be read again.** A `smith_defer` callback has no context, so it could not read the options that
+  `build()` read.
+- **`smith_glob` takes a list of patterns.** `$(sort $(wildcard a b c))` needed a sorting, de-duplicating helper.
+
+Not changed: lazy values such as `$(xcrun --show-sdk-path)` (the port wraps the command in `sh -c`), quiet `.always`
+steps and `.content_hash`.
 
 ## Example: checkers
 

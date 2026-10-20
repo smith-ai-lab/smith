@@ -264,7 +264,7 @@ cat >build.c <<'C'
 void build(SmithBuild *b) {
     SmithStep join = {
         .command = (const char *[]){"sh", "-c", "cat \"$@\" > joined", "x", "$in", nullptr},
-        .inputs = smith_glob(b, "src/*.txt"),
+        .inputs = smith_glob(b, (const char *[]){"src/*.txt", nullptr}),
         .outputs = (const char *[]){"joined", nullptr},
     };
     smith_step(b, &join);
@@ -367,7 +367,7 @@ cat >build.c <<'C'
 void build(SmithBuild *b) {
     SmithStep s = {.command = (const char *[]){"touch", "$out", nullptr}, .outputs = (const char *[]){"x", nullptr}};
     smith_step(b, &s);
-    smith_default(b, smith_glob(b, "*.none"));
+    smith_default(b, smith_glob(b, (const char *[]){"*.none", nullptr}));
 }
 C
 build
@@ -615,6 +615,295 @@ rm data
 build
 expect_status "lines: a missing file exits 2" 2
 expect_contains "lines: the missing file message" "$err" "smith: build.c: cannot read data; if a step makes it, read it inside smith_defer"
+
+# 9d. A command word may hold newlines: the command line goes into .smith/command/<hash> and the edge runs it with sh.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep script = {
+        .command = (const char *[]){"sh", "-c",
+                                    "if [ \"$1\" = go ]; then\n    echo yes > \"$2\"\nelse\n    echo no > \"$2\"\nfi\necho x >> runs\n",
+                                    "sh", "go", "$out", nullptr},
+        .inputs = (const char *[]){"input", nullptr},
+        .outputs = (const char *[]){"result", nullptr},
+    };
+    smith_step(b, &script);
+    smith_default(b, script.outputs);
+}
+C
+echo a >input
+build
+expect "newline: a multi-line sh -c script with positional arguments runs" "0 yes 1" "$rc $(cat result 2>/dev/null) $(lines runs)"
+expect_contains "newline: the edge runs a file with sh" "$(cat .smith/build.ninja)" "cmd = sh .smith/command/"
+expect "newline: the command is one file with a 16 digit name" 1 "$(ls .smith/command | grep -c '^[0-9a-f]\{16\}$')"
+command_file=$(ls .smith/command/* | head -n 1)
+touch -t 200001010000 "$command_file"
+touch marker
+build
+expect "newline: a second build changes nothing and keeps the file" "ninja: no work to do. 0" \
+    "$(echo "$out" | tail -n 1) $(find "$command_file" -newer marker | wc -l | tr -d ' ')"
+sed 's/echo yes/echo YES/' build.c >build.tmp && mv build.tmp build.c
+build
+expect "newline: editing the script reruns the step" "0 YES 2" "$rc $(cat result) $(lines runs)"
+expect "newline: and writes a new command file" 2 "$(ls .smith/command | grep -c '^[0-9a-f]\{16\}$')"
+
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {
+        .command = (const char *[]){"true", nullptr},
+        .outputs = (const char *[]){"x", nullptr},
+        .description = "two\nlines",
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "newline: a newline in a description is still an error" 2
+expect_contains "newline: the description message" "$err" "holds a newline"
+
+# 9e. smith_write.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_write(b, "gen/deep/list.txt", smith_option_value(b, "text", "one", "the file's text"));
+    SmithStep copy = {
+        .command = (const char *[]){"sh", "-c", "cp \"$0\" \"$1\"; echo x >> copies", "$in", "$out", nullptr},
+        .inputs = (const char *[]){"gen/deep/list.txt", nullptr},
+        .outputs = (const char *[]){"copy.txt", nullptr},
+    };
+    smith_step(b, &copy);
+    smith_default(b, copy.outputs);
+}
+C
+build
+expect "write: the bytes, in a folder smith made" "0 one 1" "$rc $(cat gen/deep/list.txt 2>/dev/null) $(lines copies)"
+touch -t 200001010000 gen/deep/list.txt
+touch marker
+build -Dtext=one
+expect "write: the same text keeps the mtime and reruns nothing" "0 0 1" \
+    "$rc $(find gen/deep/list.txt -newer marker | wc -l | tr -d ' ') $(lines copies)"
+build -Dtext=two
+expect "write: a new text rewrites it and reruns the step" "0 two 2" "$rc $(cat copy.txt) $(lines copies)"
+expect "write: no temporary file is left" 0 "$(ls gen/deep | grep -c tmp)"
+build -t clean
+expect "write: -t clean leaves it" "present absent" \
+    "$([ -f gen/deep/list.txt ] && echo present) $([ -f copy.txt ] && echo present || echo absent)"
+
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_write(b, smith_option_value(b, "path", "ok.txt", "where to write"), "x");
+    SmithStep step = {.command = (const char *[]){"true", nullptr}, .outputs = (const char *[]){"y", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+for path in /abs.txt ../up.txt a/../b.txt .smith/x.txt ./.smith/x.txt dir/; do
+    build "-Dpath=$path"
+    expect "write: '$path' is refused" "2 yes" "$rc $(echo "$err" | grep -q '^smith: build.c: smith_write' && echo yes)"
+done
+build -Dpath=./fine/ok.txt
+expect "write: ./folder/file is accepted" "0 x" "$rc $(cat fine/ok.txt 2>/dev/null)"
+
+# 9f. smith_capture_or.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *failed = smith_capture_or(b, (const char *[]){"false", nullptr}, "fb1");
+    const char *missing = smith_capture_or(b, (const char *[]){"smith-no-such-program", nullptr}, "fb2");
+    const char *worked = smith_capture_or(b, (const char *[]){"echo", "hi", nullptr}, "fb3");
+    const char *noisy = smith_capture_or(b, (const char *[]){"sh", "-c", "echo oops >&2; exit 3", nullptr}, "fb4");
+    const char *killed = smith_capture_or(b, (const char *[]){"sh", "-c", "kill -9 $$", nullptr}, "fb5");
+    const char *none = smith_capture_or(b, (const char *[]){"false", nullptr}, nullptr);
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0|$1|$2|$3|$4|$5\" > \"$6\"", failed, missing, worked, noisy,
+                                    killed, none == nullptr ? "null" : "set", "$out", nullptr},
+        .outputs = (const char *[]){"result", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect "capture_or: failed, missing, working, noisy, killed and a nullptr fallback" "0 fb1|fb2|hi|fb4|fb5|null" \
+    "$rc $(cat result 2>/dev/null)"
+expect "capture_or: stderr goes to /dev/null" "" "$err"
+
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *text = smith_capture(b, (const char *[]){"false", nullptr});
+    SmithStep step = {.command = (const char *[]){"echo", text, nullptr}};
+    smith_task(b, "t", &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "capture: a failing program is still an error" 2
+
+# 9g. A step, a task or an alias declared twice.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static SmithStep object(SmithBuild *b, const char *description) {
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo x >> runs; echo o > \"$0\"", "$out", nullptr},
+        .inputs = (const char *[]){"input", nullptr},
+        .outputs = (const char *[]){"shared.o", nullptr},
+        .description = description,
+    };
+    smith_step(b, &step);
+    return step;
+}
+
+void build(SmithBuild *b) {
+    bool differ = smith_option(b, "differ", "declare the second step differently");
+    SmithStep first = object(b, "make shared.o");
+    SmithStep second = object(b, differ ? "other" : "make shared.o");
+    SmithStep tool = {.command = (const char *[]){"sh", "-c", "echo x >> tasks", nullptr}, .inputs = first.outputs};
+    smith_task(b, "tool", &tool);
+    SmithStep again = {.command = (const char *[]){"sh", "-c", "echo x >> tasks", nullptr}, .inputs = second.outputs};
+    smith_task(b, "tool", &again);
+    smith_alias(b, "group", tool.outputs);
+    smith_alias(b, "group", again.outputs);
+    smith_default(b, smith_cat(b, first.outputs, second.outputs, nullptr));
+}
+C
+echo a >input
+build
+expect "twice: identical steps are accepted and run once" "0 1" "$rc $(lines runs)"
+build tool
+expect "twice: identical tasks and aliases are one task" "0 1" "$rc $(lines tasks)"
+build group
+expect "twice: and the alias names it" "0 2" "$rc $(lines tasks)"
+build -Ddiffer
+expect_status "twice: a step that differs is an error" 2
+expect_contains "twice: the error names the output and the field" "$err" \
+    "the output 'shared.o' is already made by an earlier step whose .description differs"
+
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep first = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "tool", &first);
+    SmithStep second = {.command = (const char *[]){"false", nullptr}};
+    smith_task(b, "tool", &second);
+    smith_default(b, first.outputs);
+}
+C
+build
+expect_status "twice: a task that differs is an error" 2
+expect_contains "twice: the task error names the field" "$err" \
+    "task tool: the task is already declared and its .command differs"
+
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "tool", &step);
+    smith_alias(b, "group", step.outputs);
+    smith_alias(b, "group", (const char *[]){nullptr});
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "twice: an alias with other targets is an error" 2
+expect_contains "twice: the alias error" "$err" "alias group: the alias is already declared and its targets differ"
+
+# 9h. Task and alias names may hold '/'.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"sh", "-c", "echo ran >> log", nullptr}};
+    smith_task(b, smith_option_value(b, "name", "check/src/a.c", "a task name"), &step);
+    smith_alias(b, "group/all", step.outputs);
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build check/src/a.c
+build group/all
+expect "names: a task named after a file runs, and so does an alias with a '/'" "0 2" "$rc $(lines log)"
+for name in /x -x x/ a/../b a//b ./a 'a b' 'a:b'; do
+    build "-Dname=$name"
+    expect "names: '$name' is refused" "2 yes" "$rc $(echo "$err" | grep -q "name '$name'" && echo yes)"
+done
+
+# 9i. An option can be read again, in a smith_defer callback.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdlib.h>
+
+static void more(SmithBuild *b) {
+    const char *name = smith_option_value(b, "name", nullptr, nullptr);
+    bool loud = smith_option(b, "loud", nullptr);
+    if (getenv("SMITH_TEST_BAD") != nullptr) smith_option(b, "name", nullptr);
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0 $1\" > \"$2\"", name, loud ? "loud" : "quiet", "$out", nullptr},
+        .outputs = (const char *[]){"greeting", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+
+void build(SmithBuild *b) {
+    smith_option_value(b, "name", "world", "who to greet");
+    smith_option(b, "loud", "print loudly");
+    smith_defer(b, (const char *[]){"source", nullptr}, more);
+}
+C
+echo s >source
+build -Dname=Ada -Dloud
+expect "option again: a callback reads the values build() read" "0 Ada loud" "$rc $(cat greeting 2>/dev/null)"
+build
+expect "option again: and the fallback" "0 world quiet" "$rc $(cat greeting 2>/dev/null)"
+SMITH_TEST_BAD=1 build
+expect_status "option again: the other kind is an error" 2
+expect_contains "option again: the message" "$err" "option 'name' is declared as a value and read as a flag"
+
+# 9j. smith_glob takes several patterns: sorted, each name once.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep join = {
+        .command = (const char *[]){"sh", "-c", "printf '%s\\n' \"$@\" > joined", "x", "$in", nullptr},
+        .inputs = smith_glob(b, (const char *[]){"src/*.txt", "src/a*", "other/*.md", "none*", nullptr}),
+        .outputs = (const char *[]){"joined", nullptr},
+    };
+    smith_step(b, &join);
+    smith_default(b, join.outputs);
+}
+C
+mkdir src other
+echo a >src/a.txt
+echo b >src/b.txt
+echo c >other/c.md
+build
+expect "glob: the union is sorted with each name once" "0 other/c.md src/a.txt src/b.txt" \
+    "$rc $(tr '\n' ' ' <joined | sed 's| *$||')"
 
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
