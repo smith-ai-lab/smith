@@ -5,7 +5,7 @@ description: "Using smith, the compiler driver that builds this project. Load wh
 
 # Use smith
 
-This file is copied from `.agents/skills/smith/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there, then copy it again.
+This skill ships in the smith plugin, from `.agents/skills/smith/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there; projects get the update through the plugin.
 
 smith is a drop-in replacement for clang, written in C. Its home is https://github.com/adam-r-kowalski/smith, and the source is https://github.com/adam-r-kowalski/smith/blob/main/smith.c. It takes clang's flags and passes them through unchanged. Then it replaces itself with the platform's compiler (`execv`). Exit status, signals and output are the compiler's, and a build through smith is byte-identical to one through the compiler directly.
 

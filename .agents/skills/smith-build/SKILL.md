@@ -5,7 +5,7 @@ description: "Running, writing and editing a project's build.c with smith build.
 
 # Build with smith build
 
-This file is copied from `.agents/skills/smith-build/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there, then copy it again.
+This skill ships in the smith plugin, from `.agents/skills/smith-build/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there; projects get the update through the plugin.
 
 `build.c` describes the build in C, explicitly and with no defaults. `smith build` compiles it, runs it, and runs ninja on the manifest it writes. The API is `.smith/include/smith/build.h` and its implementation is `.smith/runtime.c`. Every `smith build` writes both, and they match the installed smith exactly, so read them first. The source's home is https://github.com/adam-r-kowalski/smith (`include/smith/build.h`, `runtime/build_runtime.c`), and the design and its reasons are in `docs/build-c.md` there. The repository is private, so read it with `gh`, for example `gh api repos/adam-r-kowalski/smith/contents/docs/build-c.md -H 'Accept: application/vnd.github.raw'`.
 
@@ -92,7 +92,7 @@ void build(SmithBuild *b) {
 
 ## Start a project
 
-- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c, the rules (`.clang-format`, `.clang-tidy`, `.gitignore`) and the skills, then builds once and commits on `main`. It never overwrites: a file that exists is kept.
+- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c, the rules (`.clang-format`, `.clang-tidy`, `.gitignore`) and `.claude/settings.json`, which enables the smith plugin (it carries these skills), then builds once and commits on `main`. It never overwrites: a file that exists is kept.
 
 ## Replace a Makefile
 

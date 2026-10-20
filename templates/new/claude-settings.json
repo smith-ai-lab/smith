@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "smith@smith": true
+  },
+  "extraKnownMarketplaces": {
+    "smith": {
+      "source": {
+        "source": "github",
+        "repo": "adam-r-kowalski/smith"
+      }
+    }
+  }
+}

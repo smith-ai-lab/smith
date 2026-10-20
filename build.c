@@ -135,8 +135,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .implicit_inputs =
             (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "templates/new/build.c",
                              "templates/new/main.c", "templates/new/gitignore", "templates/new/clang-format",
-                             "templates/new/clang-tidy", ".agents/skills/smith/SKILL.md",
-                             ".agents/skills/smith-build/SKILL.md", nullptr},
+                             "templates/new/clang-tidy", "templates/new/claude-settings.json", nullptr},
     };
     smith_object(b, &object);
     SmithProgram program = {

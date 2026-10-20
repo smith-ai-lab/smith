@@ -21,8 +21,9 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   2. **Replace the Makefile with a `build.c`.** It only describes the build, explicitly and across platforms, so it
      changes nothing either.
   3. **Run `smith new`.** It writes an explicit, opinionated starting point (C23, strict warnings, sanitizers while
-     developing, `.clang-format`, `.clang-tidy`, smith's skills, git on `main`, a first build), all in files the project
-     owns. There is no house-style mechanism, only those files; a project that never runs `smith new` gets none of it.
+     developing, `.clang-format`, `.clang-tidy`, `.claude/settings.json` enabling the smith plugin, git on `main`, a
+     first build), all in files the project owns. smith's skills are not copied: they ship in the smith plugin. There
+     is no house-style mechanism, only those files; a project that never runs `smith new` gets none of it.
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
 - **smith `execv`s the compiler** with the compiler's full path as `argv[0]` (gcc finds its files from it), so exit
   status, signals and pipes are the compiler's.
@@ -50,8 +51,8 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`. `-DCC=` picks the
   compiler that builds smith; `smith build clean` removes `build/`.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
-  `main.c`, `.gitignore`, `.clang-format`, `.clang-tidy`, smith's skills and the `.claude/skills` link, then builds once
-  and commits on `main`. `tests/new.sh` tests it.
+  `main.c`, `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
+  and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
   runs.
@@ -59,8 +60,8 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 ## How to work
 
 - Load the [smith-development skill](.agents/skills/smith-development/SKILL.md) for any change to smith itself.
-- Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It is the source of truth for the copies in game and virtual-cell: change it here, then copy it to both.
-- Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It is the source of truth for the copy in each project that builds with build.c.
+- Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
+- Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
   them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a

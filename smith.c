@@ -9,7 +9,8 @@
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
-// runs ninja. See docs/build-c.md. `smith new` writes a ready project: build.c, main.c, the rules and the skills.
+// runs ninja. See docs/build-c.md. `smith new` writes a ready project: build.c, main.c, the rules and the plugin
+// settings.
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -490,8 +491,9 @@ static int smith_build_main(int count, char **args, const char *self) {
 
 // smith new.
 
-// The files a new project gets travel inside smith, so a project gets exactly what the installed smith ships. The
-// skills are smith's own. The dotfiles are stored without their dot so that they do not act on smith's own repository.
+// The files a new project gets travel inside smith, so a project gets exactly what the installed smith ships. Agents
+// get smith's skills from the smith plugin, which .claude/settings.json enables. The dotfiles are stored without their
+// dot so that they do not act on smith's own repository.
 static const unsigned char smith_new_build_c[] = {
 #embed "templates/new/build.c"
 };
@@ -507,11 +509,8 @@ static const unsigned char smith_new_clang_format[] = {
 static const unsigned char smith_new_clang_tidy[] = {
 #embed "templates/new/clang-tidy"
 };
-static const unsigned char smith_new_skill_smith[] = {
-#embed ".agents/skills/smith/SKILL.md"
-};
-static const unsigned char smith_new_skill_build[] = {
-#embed ".agents/skills/smith-build/SKILL.md"
+static const unsigned char smith_new_claude_settings[] = {
+#embed "templates/new/claude-settings.json"
 };
 
 typedef struct {
@@ -527,8 +526,7 @@ static const SmithNewFile smith_new_files[] = {
     {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false},
     {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false},
     {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false},
-    {".agents/skills/smith/SKILL.md", smith_new_skill_smith, sizeof smith_new_skill_smith, false},
-    {".agents/skills/smith-build/SKILL.md", smith_new_skill_build, sizeof smith_new_skill_build, false},
+    {".claude/settings.json", smith_new_claude_settings, sizeof smith_new_claude_settings, false},
 };
 
 constexpr size_t smith_new_name_max = 200;
@@ -624,17 +622,6 @@ static void smith_new_count(SmithNewCounts *counts, const char *path, bool exist
     counts->written[counts->written_count++] = path;
 }
 
-// The link to the skills, made only if nothing is there.
-static void smith_new_link(SmithNewCounts *counts) {
-    const char *link = ".claude/skills";
-    bool exists = smith_new_exists(link);
-    if (!exists) {
-        smith_make_folder(".claude");
-        if (symlink("../.agents/skills", link) != 0) smith_die(smith_exit_usage, "cannot create", link);
-    }
-    smith_new_count(counts, link, exists);
-}
-
 // Each file is written only if nothing exists at its path. main.c is left out when the project has its own sources: a
 // build.c already there, or another build system.
 static void smith_new_files_write(const char *name, bool skip_main, SmithNewCounts *counts) {
@@ -648,7 +635,6 @@ static void smith_new_files_write(const char *name, bool skip_main, SmithNewCoun
         }
         smith_new_count(counts, file->path, exists);
     }
-    smith_new_link(counts);
 }
 
 // The lines of smith's .gitignore that an existing one lacks, said so that the user can add them. A line is present
@@ -671,6 +657,22 @@ static void smith_new_gitignore_missing(void) {
     fclose(file);
     for (size_t i = 0; i < sizeof wanted / sizeof wanted[0]; i++) {
         if (!present[i]) printf("  .gitignore lacks %s; add it\n", wanted[i]);
+    }
+}
+
+// Says so when an existing .claude/settings.json does not mention the smith plugin, so that the user can add it.
+static void smith_new_settings_missing(void) {
+    FILE *file = fopen(".claude/settings.json", "r");
+    if (file == nullptr) return;
+    char line[PATH_MAX];
+    bool present = false;
+    for (size_t read = 0; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
+        if (strstr(line, "\"smith@smith\"") != nullptr) present = true;
+    }
+    fclose(file);
+    if (!present) {
+        printf("  .claude/settings.json lacks \"smith@smith\"; add \"smith@smith\": true under enabledPlugins to give\n"
+               "  agents smith's skills\n");
     }
 }
 
@@ -739,6 +741,7 @@ static int smith_new_main(int count, char **args, const char *self) {
     bool has_build_c = smith_new_exists("build.c");
     const char *other = has_build_c ? nullptr : smith_new_other_build();
     bool had_gitignore = smith_new_exists(".gitignore");
+    bool had_settings = smith_new_exists(".claude/settings.json");
     SmithNewCounts counts = {};
     smith_new_files_write(name, has_build_c || other != nullptr, &counts);
     fflush(stdout);
@@ -753,9 +756,12 @@ static int smith_new_main(int count, char **args, const char *self) {
     const char *git = smith_new_commit(self, name, other != nullptr ? &counts : nullptr);
     printf("\nsmith new: %s: %d created, %d kept\n  git: %s\n", name, counts.created, counts.kept, git);
     if (had_gitignore) smith_new_gitignore_missing();
+    if (had_settings) smith_new_settings_missing();
+    printf("\nAgents get smith's skills from the smith plugin. If it is not installed:\n"
+           "  /plugin marketplace add adam-r-kowalski/smith\n  /plugin install smith@smith\n");
     if (other != nullptr) {
         printf("\nThis project builds with a %s. build.c is a starting point: port the %s into it, following the\n"
-               "smith-build skill (.agents/skills/smith-build/SKILL.md), and remove the %s once smith build gives\n"
+               "smith-build skill, and remove the %s once smith build gives\n"
                "the same results.\n",
                other, other, other);
         return 0;

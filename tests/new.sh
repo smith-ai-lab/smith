@@ -68,8 +68,7 @@ cd "$work" || exit 1
 capture smith new hello
 expect "new hello: exits 0" 0 "$rc"
 new_out=$out
-for f in build.c main.c .gitignore .clang-format .clang-tidy .agents/skills/smith/SKILL.md \
-    .agents/skills/smith-build/SKILL.md .claude/skills; do
+for f in build.c main.c .gitignore .clang-format .clang-tidy .claude/settings.json; do
     expect "new hello: creates $f" yes "$(exists "hello/$f")"
 done
 expect_contains "new hello: build.c names the program" "$(cat hello/build.c)" "build/%s/hello"
@@ -78,16 +77,31 @@ expect_contains "new hello: main.c names the program" "$(cat hello/main.c)" 'put
 expect "new hello: .gitignore is the template" "$(cat "$here/templates/new/gitignore")" "$(cat hello/.gitignore)"
 expect "new hello: .clang-format is the template" "$(cat "$here/templates/new/clang-format")" "$(cat hello/.clang-format)"
 expect "new hello: .clang-tidy is the template" "$(cat "$here/templates/new/clang-tidy")" "$(cat hello/.clang-tidy)"
-expect "new hello: the link is relative" "../.agents/skills" "$(readlink hello/.claude/skills)"
-expect "new hello: the link resolves to the skills" "$(cd hello/.agents/skills && pwd -P)" "$(cd hello/.claude/skills && pwd -P)"
-expect "new hello: the smith skill is smith's own" "" "$(cmp "$here/.agents/skills/smith/SKILL.md" hello/.agents/skills/smith/SKILL.md 2>&1)"
-expect "new hello: the smith-build skill is smith's own" "" \
-    "$(cmp "$here/.agents/skills/smith-build/SKILL.md" hello/.agents/skills/smith-build/SKILL.md 2>&1)"
+expect "new hello: .claude/settings.json is the template" "$(cat "$here/templates/new/claude-settings.json")" \
+    "$(cat hello/.claude/settings.json)"
+expect "new hello: .claude/settings.json is exactly the plugin settings" '{
+  "enabledPlugins": {
+    "smith@smith": true
+  },
+  "extraKnownMarketplaces": {
+    "smith": {
+      "source": {
+        "source": "github",
+        "repo": "adam-r-kowalski/smith"
+      }
+    }
+  }
+}' "$(cat hello/.claude/settings.json)"
+expect "new hello: no .agents/skills folder" no "$(exists hello/.agents/skills)"
+expect "new hello: no .claude/skills link" no "$(exists hello/.claude/skills)"
+expect_contains "new hello: the summary names the plugin" "$new_out" "/plugin marketplace add adam-r-kowalski/smith"
+expect_contains "new hello: the summary names the install" "$new_out" "/plugin install smith@smith"
+expect "new hello: no missing-entry report" no "$(has "$new_out" 'lacks "smith@smith"')"
 expect "new hello: git is on main" main "$(git -C hello symbolic-ref --short HEAD)"
 expect "new hello: one commit" 1 "$(commits hello)"
 expect "new hello: the commit message" "chore: create hello with smith new" "$(git -C hello log -1 --format=%s)"
 expect "new hello: git tracks exactly the written files" \
-    ".agents/skills/smith-build/SKILL.md .agents/skills/smith/SKILL.md .clang-format .clang-tidy .claude/skills .gitignore build.c main.c" \
+    ".clang-format .clang-tidy .claude/settings.json .gitignore build.c main.c" \
     "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new hello: the tree is clean after the commit" "" "$(git -C hello status --porcelain)"
 expect "new hello: the first build made the debug program" yes "$(exists hello/build/debug/hello)"
@@ -112,7 +126,7 @@ capture smith new hello
 expect "second run: exits 0" 0 "$rc"
 expect "second run: changes no bytes" "$before" "$(tree_sum hello)"
 expect "second run: no new commit" 1 "$(commits hello)"
-expect_contains "second run: everything is kept" "$out" "0 created, 7 kept"
+expect_contains "second run: everything is kept" "$out" "0 created, 5 kept"
 
 # 3. No argument: the folder's name, and its own main.c kept.
 mkdir demo && printf 'int main(void) { return 0; }\n' >demo/main.c
@@ -198,13 +212,12 @@ expect "Makefile: writes build.c" yes "$(exists has_make/build.c)"
 expect "Makefile: no main.c" no "$(exists has_make/main.c)"
 expect "Makefile: no first build" no "$(exists has_make/.smith)"
 expect "Makefile: writes the rules" yes "$(exists has_make/.clang-format)"
-expect "Makefile: writes the skills" yes "$(exists has_make/.agents/skills/smith-build/SKILL.md)"
-expect "Makefile: writes the link" yes "$(exists has_make/.claude/skills)"
+expect "Makefile: writes the plugin settings" yes "$(exists has_make/.claude/settings.json)"
 expect_contains "Makefile: the message names the Makefile" "$out" "This project builds with a Makefile."
 expect_contains "Makefile: the message says to port it" "$out" "port the Makefile into it"
-expect_contains "Makefile: the message names the skill" "$out" ".agents/skills/smith-build/SKILL.md"
+expect_contains "Makefile: the message names the skill" "$out" "smith-build skill"
 expect "Makefile: commits only the files written" \
-    ".agents/skills/smith-build/SKILL.md .agents/skills/smith/SKILL.md .clang-format .clang-tidy .claude/skills .gitignore build.c" \
+    ".clang-format .clang-tidy .claude/settings.json .gitignore build.c" \
     "$(git -C has_make ls-files | tr '\n' ' ' | sed 's/ $//')"
 mkdir has_cmake
 : >has_cmake/CMakeLists.txt
@@ -221,6 +234,18 @@ expect_contains "gitignore: reports /compile_commands.json" "$out" "lacks /compi
 expect_contains "gitignore: reports /.cache/" "$out" "lacks /.cache/"
 expect "gitignore: does not report /build/ (trailing spaces ignored)" no \
     "$(has "$out" "lacks /build/")"
+
+# 11b. An existing .claude/settings.json is kept; the missing plugin entry is reported.
+mkdir -p has_settings/.claude
+printf '{"permissions": {}}\n' >has_settings/.claude/settings.json
+capture smith new has_settings
+expect "settings: kept untouched" '{"permissions": {}}' "$(cat has_settings/.claude/settings.json)"
+expect_contains "settings: reports the missing entry" "$out" 'lacks "smith@smith"'
+expect_contains "settings: says what to add" "$out" '"smith@smith": true under enabledPlugins'
+mkdir -p has_settings2/.claude
+printf '{"enabledPlugins": {"smith@smith": false}}\n' >has_settings2/.claude/settings.json
+capture smith new has_settings2
+expect "settings with the entry: no report" no "$(has "$out" 'lacks "smith@smith"')"
 
 # 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's.
 # Allowed differences: smith-only assert macro, typedef names, unity-build include check.

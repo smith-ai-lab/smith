@@ -13,7 +13,7 @@ smith builds itself with its own `build.c`, so the installed smith must have `sm
 
 - `smith build` builds `build/<OS>-<arch>/smith` and the `smith++` link. `CC` is the installed smith, so smith builds smith; `-DCC=/usr/bin/clang` compiles it with Apple's clang instead. If the installed smith is broken, use the recovery line below.
 - `smith build test` runs the 22 routing tests against stub compilers, then the 189 `smith build` tests in `tests/build.sh` and the `smith new` tests in `tests/new.sh`, which need ninja, a real clang and git. `smith build compare -DREAL=/usr/bin/clang` runs 10 invocations through clang and through smith; `REAL` defaults to that on macOS.
-- The files `smith new` writes live in `templates/new/` (dotfiles without their dot) and are embedded with `#embed`, like the skills a project gets, which are smith's own. A test keeps the template's rules equal to smith's `.clang-format` and `.clang-tidy`; `tests/new.sh` runs with `smith build test`.
+- The files `smith new` writes live in `templates/new/` (dotfiles without their dot) and are embedded with `#embed`. The skills are not among them: a project gets smith's skills from the smith plugin, which the `.claude/settings.json` that `smith new` writes enables. A test keeps the template's rules equal to smith's `.clang-format` and `.clang-tidy`; `tests/new.sh` runs with `smith build test`.
 - `include/smith/build.h` and `runtime/build_runtime.c` are embedded in smith with `#embed`; keep `cc -std=gnu23 smith.c -o smith` building all of smith (a test checks it).
 - `smith build format` rewrites `smith.c`, `build.c`, `tests/stub.c`, the header and the runtime. `smith build check` runs `check-format`, `check-tidy`, `test` and `compare`, and must exit 0 before you finish. It needs Homebrew LLVM 23 (`check-llvm`). `build.c` is formatted and tidied like the rest, so each of its functions is at most 70 lines.
 - Before and after a change, run `smith --smith-which -c a.c`, `--smith-which a.metal`, `a.metal b.c` and `--smith-version`, and compare. A refactor must not change a route, a message, an exit code or an argv.
@@ -34,5 +34,5 @@ The rules are game's, in https://github.com/adam-r-kowalski/game/blob/main/knowl
 ## Where docs go
 
 - Decisions and rules, one line each: `AGENTS.md`. Plans and order of work: `ROADMAP.md`. Procedures: skills in `.agents/skills`. `.claude/skills` links to it.
-- `.agents/skills/smith` is the source of truth for the copies in game and virtual-cell, and `.agents/skills/smith-build` for the copy in each project that builds with build.c. Change them here, then copy them.
+- The `smith` and `smith-build` skills ship in the smith plugin, straight from `.agents/skills`. No project carries a copy, so change them here only.
 - Code and the docs that describe it go in the same commit. Small Conventional Commits.
