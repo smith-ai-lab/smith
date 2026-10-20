@@ -69,11 +69,11 @@ capture env SMITH_METAL="$work/bin/metal" "$smith" -E a.metal
 expect "SMITH_METAL replaces xcrun" "$(lines "metal argv0=$work/bin/metal" '[-E]' '[a.metal]')" "$out"
 
 capture env SMITH_CLANG="$cl" "$smith" a.metal b.c
-expect "mixed .metal and C inputs are refused" "smith: cannot compile .metal files together with other inputs in one command; split it" "$err"
+expect "mixed .metal and C inputs are refused" "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command" "$err"
 expect "mixed inputs: status 2 and nothing ran" "2 " "$rc $out"
 
-capture env SMITH_CLANG="$cl" "$smith" a.smith
-expect ".smith inputs are not supported yet" "smith: .smith inputs are not supported yet; milestone 0 is a passthrough" "$err"
+capture env SMITH_CLANG="$cl" "$smith" -c a.smith -o out.o
+expect "a .smith input goes to clang with its arguments untouched" "$(lines "clang argv0=$cl" '[-c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
 
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/smith++" -c a.cpp
 expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"

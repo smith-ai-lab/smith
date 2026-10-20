@@ -12,12 +12,12 @@ description: "Start here for any change to smith itself: building, testing, inst
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link. `CC` is the installed smith, so smith builds smith. If that is broken, `make CC=/usr/bin/clang`.
 - `make test` runs the 22 routing tests against stub compilers. `make compare REAL=/usr/bin/clang` runs 10 invocations through clang and through smith; `REAL` defaults to that on macOS.
 - `make format` rewrites `smith.c` and `tests/stub.c`. `make check` runs `check-format`, `check-tidy`, `test` and `compare`, and must exit 0 before you finish. It needs Homebrew LLVM 23 (`make check-llvm`).
-- Before and after a change, run `smith --smith-which -c a.c`, `--smith-which a.metal`, `a.metal b.c`, `a.smith` and `--smith-version`, and compare. A refactor must not change a route, a message, an exit code or an argv.
+- Before and after a change, run `smith --smith-which -c a.c`, `--smith-which a.metal`, `a.metal b.c` and `--smith-version`, and compare. A refactor must not change a route, a message, an exit code or an argv.
 - `make install` runs the tests, then replaces `~/.local/bin/smith`, which every project's build uses. Do it only when the owner asks. If the installed smith is broken, `make install CC=/usr/bin/clang`.
 
 ## Write C
 
-The rules are game's, in `~/Documents/game/knowledge/c-language.md` and `c-naming.md`, and `.clang-format` and `.clang-tidy` are copies of game's.
+The rules are game's, in https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-language.md and https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-naming.md, and `.clang-format` and `.clang-tidy` are copies of game's.
 
 - Everything has the module prefix: `smith_route_metal`, `SmithRoute`, `SmithRoute_Clang`. Functions and variables are snake_case, types PascalCase, enum values `Type_Value`, macros UPPER_SNAKE.
 - Functions are at most 70 lines, nothing recurses, every loop has a bound, and there is no malloc.

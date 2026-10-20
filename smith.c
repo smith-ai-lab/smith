@@ -6,8 +6,7 @@
 //   - anything else goes to the platform's best clang: $SMITH_CLANG if set, else Apple's on macOS (/usr/bin/clang runs
 //     it through xcrun, which also finds the SDK), else Homebrew's LLVM, else the first clang on PATH that is not smith
 //     itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
-// It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. A .smith input
-// is where the extra behavior will live; for now it is an error. See AGENTS.md.
+// It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,8 +37,14 @@ constexpr int smith_exit_missing = 127;
 typedef enum {
     SmithRoute_Clang,
     SmithRoute_Metal,
-    SmithRoute_Mixed, // .metal files together with other inputs: they need different compilers
-    SmithRoute_Smith, // a .smith input
+    // .metal files together with other inputs are refused, for these reasons:
+    //   - .metal needs Apple's metal compiler and the rest needs clang, and plain clang cannot compile .metal at all;
+    //   - their flags differ (C takes -std=gnu23, frameworks and link flags; Metal takes -std=metal... and its own
+    //     options), so one command line cannot be right for both;
+    //   - their outputs cannot be one file;
+    //   - smith hands each command to exactly one compiler with execv, which is why the exit status and signals are
+    //     the compiler's. Running two would need a parent process to wait and combine their results.
+    SmithRoute_Mixed,
 } SmithRoute;
 
 [[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
@@ -103,7 +108,6 @@ static SmithRoute smith_classify(int count, char **args) {
     SMITH_ASSERT(count >= 0);
     SMITH_ASSERT(args != nullptr);
     int metal = 0;
-    int smith = 0;
     int other = 0;
     for (int i = 0; i < count; i++) { // bounded by count
         const char *arg = args[i];
@@ -115,13 +119,10 @@ static SmithRoute smith_classify(int count, char **args) {
         }
         if (smith_ends_with(arg, ".metal")) {
             metal += 1;
-        } else if (smith_ends_with(arg, ".smith")) {
-            smith += 1;
         } else if (smith_has_other_input_extension(arg)) {
             other += 1;
         }
     }
-    if (smith > 0) return SmithRoute_Smith;
     if (metal > 0 && other > 0) return SmithRoute_Mixed;
     return metal > 0 ? SmithRoute_Metal : SmithRoute_Clang;
 }
@@ -294,11 +295,11 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     switch (smith_classify(count, args)) {
-    case SmithRoute_Smith:
-        smith_die(smith_exit_usage, ".smith inputs are not supported yet; milestone 0 is a passthrough", nullptr);
     case SmithRoute_Mixed:
-        smith_die(smith_exit_usage, "cannot compile .metal files together with other inputs in one command; split it",
-                  nullptr);
+        smith_die(
+            smith_exit_usage,
+            ".metal and other inputs need different compilers and flags; compile the shaders in their own command",
+            nullptr);
     case SmithRoute_Metal:
         return smith_route_metal(count, args, which, self);
     case SmithRoute_Clang:

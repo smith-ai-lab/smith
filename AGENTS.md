@@ -21,8 +21,6 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
      changes nothing either.
   3. **Opt into conveniences such as the house style** (smith's flags, `.clang-format`, `.clang-tidy` and lint rules).
      A project always asks for these by name; it never gets them by default.
-  
-  `.smith` inputs are an error for now.
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
 - **smith `execv`s the compiler** with the compiler's full path as `argv[0]` (gcc finds its files from it), so exit
   status, signals and pipes are the compiler's.
@@ -39,9 +37,9 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
   compilers; `make compare REAL=/usr/bin/clang` runs the same invocations through clang and smith.
 - `make check` checks formatting and clang-tidy (the same configs as game), then runs `make test` and `make compare`;
   it must pass before a change is done. `make format` rewrites the sources.
-- `make install` runs the tests, then copies smith and the `smith++` link to `~/.local/bin`. `~/.zshenv` sets `CC` and
-  `CXX` to them for every shell, and checkers, learner and game say `CC := smith`. A broken install breaks every
-  build, smith's included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
+- `make install` runs the tests, then copies smith and the `smith++` link to `$(PREFIX)/bin` (default
+  `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build, smith's
+  included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it.
 
