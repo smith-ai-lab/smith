@@ -130,11 +130,11 @@ static void test_uniform_int64(void) {
         assert(smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MAX, INT64_MAX}) ==
                INT64_MAX);
     }
-    // The full range is the raw bits, so both signs and extremes of magnitude appear.
+    // The full range is the word, zigzag decoded, so both signs and extremes of magnitude appear.
     size_t negative = 0;
     for (uint64_t i = 0; i < 10000; i++) {
         int64_t value = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MIN, INT64_MAX});
-        assert(value == (int64_t)smith_key_bits(smith_key_derive(key, i), 0));
+        assert(value == smith_random_zigzag(smith_key_bits(smith_key_derive(key, i), 0)));
         negative += value < 0;
     }
     assert(negative > 4700 && negative < 5300);
@@ -154,7 +154,8 @@ static void test_uniform_int64_wide(void) {
         assert(value <= high);
         upper += (uint64_t)value - (uint64_t)INT64_MIN >= ((uint64_t)1 << 62);
         unsigned _BitInt(128) product = (unsigned _BitInt(128))smith_key_bits(k, 0) * (((uint64_t)1 << 63) + 1);
-        retried += (uint64_t)product < ((uint64_t)1 << 63) - 1; // the first candidate is rejected
+        retried +=
+            (uint64_t)product >= ((uint64_t)1 << 63) + 1; // the first candidate is rejected: low >= 2^64 - threshold
     }
     double deviation = sqrt((double)draws * 0.25);
     assert(fabs((double)upper - (double)draws / 2.0) < 5.0 * deviation);
@@ -588,11 +589,11 @@ static const uint64_t test_pinned_values[] = {
     0x0000000000000002ULL, // categorical alias
     0x000000003ef30fa6ULL, // unit_float
     0x3fde61f4fa7e2600ULL, // unit_double
-    0x000000003ebf4e40ULL, // uniform_float
-    0x3fd7e9c8e476be00ULL, // uniform_double
-    0x0000000000000001ULL, // uniform_int64
-    0x000000003f5f8b9bULL, // normal_float
-    0x3febf173f201613fULL, // normal_double
+    0x00000000bf97e9c8ULL, // uniform_float
+    0x3ff2fd391c8ed7c0ULL, // uniform_double
+    0x0000000000000002ULL, // uniform_int64
+    0x00000000be8a7c9cULL, // normal_float
+    0x400229f29201b1cbULL, // normal_double
     0x0000000000000000ULL, // bernoulli
     0x0000000000000002ULL, // categorical
     0x00000000bf8c4f9fULL, // log_float
@@ -602,9 +603,9 @@ static const uint64_t test_pinned_values[] = {
     0x00000000402b2598ULL, // uniform_float
     0x400564b331296a2cULL, // uniform_double
     0x0000000000000006ULL, // uniform_int64
-    0x000000004080d19cULL, // normal_float
-    0x40101a33a665691cULL, // normal_double
-    0x0000000000000000ULL, // bernoulli
+    0x00000000c02c0c06ULL, // normal_float
+    0x4012c0c0ac77efeaULL, // normal_double
+    0x0000000000000001ULL, // bernoulli
     0x0000000000000000ULL, // categorical
     0x000000003d634c72ULL, // log_float
     0x3fac698d2d755d83ULL, // log_double
@@ -613,9 +614,9 @@ static const uint64_t test_pinned_values[] = {
     0x0000000040359538ULL, // uniform_float
     0x4006b2a70ff5f658ULL, // uniform_double
     0x0000000000000006ULL, // uniform_int64
-    0x0000000040960ca8ULL, // normal_float
-    0x4012c1956ba7662cULL, // normal_double
-    0x0000000000000000ULL, // bernoulli
+    0x00000000c0519b22ULL, // normal_float
+    0xc00a33655f8a9c90ULL, // normal_double
+    0x0000000000000001ULL, // bernoulli
     0x0000000000000000ULL, // categorical
     0x00000000bed47034ULL, // log_float
     0xbfda8e06607ae3c6ULL, // log_double
@@ -624,20 +625,20 @@ static const uint64_t test_pinned_values[] = {
     0x0000000040275640ULL, // uniform_float
     0x4004eac816f774c2ULL, // uniform_double
     0x0000000000000006ULL, // uniform_int64
-    0x00000000407667e0ULL, // normal_float
-    0x400eccfbe51e150cULL, // normal_double
-    0x0000000000000000ULL, // bernoulli
+    0x00000000409125d2ULL, // normal_float
+    0xc00449741659234aULL, // normal_double
+    0x0000000000000001ULL, // bernoulli
     0x0000000000000002ULL, // categorical
     0x000000003e57a913ULL, // log_float
     0x3fcaf52321baddefULL, // log_double
-    0x0000000000000007ULL, // permutation
-    0x0000000000000001ULL, // permutation
-    0x0000000000000002ULL, // permutation
     0x0000000000000004ULL, // permutation
-    0x0000000000000006ULL, // permutation
-    0x0000000000000003ULL, // permutation
     0x0000000000000005ULL, // permutation
+    0x0000000000000003ULL, // permutation
     0x0000000000000000ULL, // permutation
+    0x0000000000000006ULL, // permutation
+    0x0000000000000002ULL, // permutation
+    0x0000000000000001ULL, // permutation
+    0x0000000000000007ULL, // permutation
 };
 
 static void test_pinned(void) {
@@ -700,6 +701,183 @@ static uint64_t test_digest_draws(void) {
     return digest;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// 4. Shrinking: the zero word gives the simplest value, and the hook.
+
+static uint64_t test_hook_word;
+
+static uint64_t test_hook_constant(SmithKey key, uint64_t n, uint64_t bits) {
+    (void)key;
+    (void)n;
+    (void)bits;
+    return test_hook_word;
+}
+
+static uint64_t test_hook_identity(SmithKey key, uint64_t n, uint64_t bits) {
+    (void)key;
+    (void)n;
+    return bits;
+}
+
+// The word that makes Lemire's index equal `index` for a span: the smallest word whose high half is the index.
+static uint64_t test_word_for_index(uint64_t index, uint64_t span) {
+    unsigned _BitInt(128) shifted = (unsigned _BitInt(128))index << 64;
+    return (uint64_t)((shifted + span - 1) / span);
+}
+
+// A bijection: over each (count, origin), indices 0 to count - 1 give every position exactly once, and index 0 gives
+// the origin.
+static void test_around_bijection(void) {
+    for (uint64_t count = 1; count <= 40; count++) {
+        for (uint64_t origin = 0; origin < count; origin++) {
+            bool seen[40] = {false};
+            assert(smith_random_around(0, origin, count) == origin);
+            for (uint64_t index = 0; index < count; index++) {
+                uint64_t position = smith_random_around(index, origin, count);
+                assert(position < count && !seen[position]);
+                seen[position] = true;
+            }
+        }
+    }
+    const int64_t bounds[][2] = {{-3, 6}, {5, 9}, {-9, -5}, {0, 4}, {-4, 0}, {-1, 1}, {7, 7}, {-2, 40}};
+    for (size_t b = 0; b < sizeof bounds / sizeof bounds[0]; b++) {
+        uint64_t span = (uint64_t)(bounds[b][1] - bounds[b][0] + 1);
+        bool seen[64] = {false};
+        for (uint64_t index = 0; index < span; index++) {
+            int64_t value = smith_random_int_value(bounds[b][0], bounds[b][1], index);
+            assert(value >= bounds[b][0] && value <= bounds[b][1] && !seen[value - bounds[b][0]]);
+            seen[value - bounds[b][0]] = true;
+        }
+    }
+    // The order, with room on both sides, then with one side short, then with no room below or above.
+    const int64_t order[] = {0, -1, 1, -2, 2, -3, 3, 4, 5, 6};
+    for (uint64_t index = 0; index < 10; index++)
+        assert(smith_random_int_value(-3, 6, index) == order[index]);
+    const int64_t order_low[] = {0, -1, 1, 2, 3, 4, 5, 6};
+    for (uint64_t index = 0; index < 8; index++)
+        assert(smith_random_int_value(-1, 6, index) == order_low[index]);
+    const int64_t order_high[] = {-1, -2, -3, -4};
+    for (uint64_t index = 0; index < 4; index++)
+        assert(smith_random_int_value(-4, -1, index) == order_high[index]);
+    for (uint64_t index = 0; index < 5; index++)
+        assert(smith_random_int_value(5, 9, index) == 5 + (int64_t)index);
+    assert(smith_random_zigzag(0) == 0 && smith_random_zigzag(1) == -1 && smith_random_zigzag(2) == 1);
+    assert(smith_random_zigzag(3) == -2 && smith_random_zigzag(UINT64_MAX) == INT64_MIN);
+    assert(smith_random_zigzag(UINT64_MAX - 1) == INT64_MAX);
+}
+
+// A word at 0 is accepted by Lemire's rejection (it would not be if the smallest low half were rejected).
+static void test_index_zero_word(void) {
+    test_hook_word = 0;
+    smith_random_hook = test_hook_constant;
+    SmithKey key = smith_key_make(1);
+    const uint64_t spans[] = {1, 2, 3, 5, 6, 7, 10, 1000, ((uint64_t)1 << 63) + 1, UINT64_MAX};
+    for (size_t i = 0; i < sizeof spans / sizeof spans[0]; i++)
+        assert(smith_random_index(key, spans[i]) == 0);
+    smith_random_hook = nullptr;
+}
+
+static void test_zero_word_simplest(void) {
+    SmithKey key = smith_key_make(test_seed + 13);
+    static TestMemory memory;
+    SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+    SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1.0, 2.0, 3.0}, 3);
+    test_hook_word = 0;
+    smith_random_hook = test_hook_constant;
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-3, 6}) == 0);
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){5, 9}) == 5);
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-9, -5}) == -5);
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, INT64_MAX}) == 0);
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, 1}) == 0);
+    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MAX - 1, INT64_MAX}) == INT64_MAX - 1);
+    assert(smith_uniform_double_sample(key, (SmithUniformDouble){2.0, 5.0}) == 2.0);
+    assert(smith_uniform_float_sample(key, (SmithUniformFloat){2.0f, 5.0f}) == 2.0f);
+    assert(smith_uniform_double_sample(key, (SmithUniformDouble){0.0, 5.0}) == 0.0);
+    double d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 3.0}); // within one grid step of 0
+    assert(fabs(d) <= 4.0 * 0x1p-53);
+    float f = smith_uniform_float_sample(key, (SmithUniformFloat){-1.0f, 3.0f});
+    assert(fabsf(f) <= 4.0f * 0x1p-24f);
+    d = smith_uniform_double_sample(key, (SmithUniformDouble){-5.0, -1.0}); // the bound nearest 0: just below -1
+    assert(d < -1.0 && d >= -1.0 - 4.0 * 0x1p-53 * 4.0);
+    f = smith_uniform_float_sample(key, (SmithUniformFloat){-5.0f, -1.0f});
+    assert(f < -1.0f && f >= -1.0f - 4.0f * 0x1p-24f * 4.0f);
+    double nd = smith_normal_double_sample(key, (SmithNormalDouble){10.0, 2.0});
+    assert(nd >= 10.0 && nd - 10.0 < 2.0 * 1e-15);
+    float nf = smith_normal_float_sample(key, (SmithNormalFloat){10.0f, 2.0f});
+    assert(nf >= 10.0f && nf - 10.0f < 2.0f * 1e-6f);
+    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.3}));
+    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.0}));
+    assert(smith_bernoulli_sample(key, (SmithBernoulli){1.0}));
+    assert(smith_categorical_sample(key, categorical) == 0); // column 0 and its own coin, as without a hook
+    size_t order[9];
+    smith_permutation_sample(key, (SmithPermutation){9}, order);
+    for (size_t i = 0; i < 9; i++)
+        assert(order[i] == i);
+    smith_random_hook = nullptr;
+}
+
+// Words 1, 2 and 3 move the values away from the simplest one in the zigzag order.
+static void test_small_words_zigzag(void) {
+    SmithKey key = smith_key_make(test_seed + 14);
+    smith_random_hook = test_hook_constant;
+    const uint64_t words[] = {0, 1, 2, 3, 4};
+    const int64_t full[] = {0, -1, 1, -2, 2};
+    for (size_t i = 0; i < 5; i++) {
+        test_hook_word = words[i];
+        assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, INT64_MAX}) == full[i]);
+        test_hook_word = test_word_for_index(i, 10); // indices 0 to 4 of a span of 10: [-3, 6]
+        assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-3, 6}) == full[i]);
+    }
+    double previous = -1.0;
+    for (uint64_t w = 0; w < 5; w++) { // the real uniform: grid points 0, -1, +1, -2, +2 steps from 0
+        test_hook_word = w << 11;
+        double d = smith_uniform_double_sample(key, (SmithUniformDouble){0.0, 1.0});
+        assert(d == (double)w * 0x1p-53 && d > previous);
+        previous = d;
+        d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 1.0}); // origin at the 2^52 grid point
+        assert(d == (double)smith_random_zigzag(w) * 0x1p-52 + 0.0);
+    }
+    for (uint64_t w = 0; w < 5; w++) { // the normal: u just above 0.5, just below, the next above...
+        test_hook_word = w << 12;
+        double u = smith_random_normal_u_double(key);
+        assert(u == 0.5 + (double)(2 * smith_random_zigzag(w) + 1) * 0x1p-53);
+        assert(smith_normal_double_sample(key, (SmithNormalDouble){0.0, 1.0}) ==
+               ((w & 1) == 0 ? 1.0 : -1.0) * fabs(smith_random_ppnd16(u)));
+        test_hook_word = w << 41;
+        float uf = smith_random_normal_u_float(key);
+        assert(uf == 0.5f + (float)(2 * smith_random_zigzag(w) + 1) * 0x1p-24f);
+    }
+    test_hook_word = (uint64_t)1 << 11; // the Bernoulli: only the last grid index is true, at probability 1 - 2^-53
+    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.5}));
+    test_hook_word = UINT64_MAX;
+    assert(smith_bernoulli_sample(key, (SmithBernoulli){0.5}));
+    test_hook_word = (uint64_t)1 << 11;
+    assert(smith_bernoulli_sample(key, (SmithBernoulli){1.0}));
+    smith_random_hook = nullptr;
+}
+
+static void test_zero_word_permutation_steps(void) {
+    SmithKey key = smith_key_make(test_seed + 15);
+    smith_random_hook = test_hook_constant;
+    size_t out[4];
+    test_hook_word = test_word_for_index(1, 4); // one step off the identity: only the last position swaps
+    smith_permutation_sample(key, (SmithPermutation){4}, out);
+    size_t moved = 0;
+    for (size_t i = 0; i < 4; i++)
+        moved += out[i] != i;
+    assert(moved > 0);
+    smith_random_hook = nullptr;
+}
+
+static void test_hook_identity_matches(void) {
+    uint64_t without = test_digest_draws();
+    smith_random_hook = test_hook_identity;
+    uint64_t with = test_digest_draws();
+    smith_random_hook = nullptr;
+    assert(with == without);
+    assert(smith_random_hook == nullptr);
+}
+
 static void test_print_pins(void) {
     static TestPins pins;
     test_pin_keys(&pins);
@@ -749,6 +927,12 @@ int main(int argc, char **argv) {
     test_categorical();
     test_permutation();
     test_log();
+    test_around_bijection();
+    test_index_zero_word();
+    test_zero_word_simplest();
+    test_small_words_zigzag();
+    test_zero_word_permutation_steps();
+    test_hook_identity_matches();
     printf("random: all checks passed\n");
     return 0;
 }
