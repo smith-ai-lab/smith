@@ -101,9 +101,15 @@ SmithKey smith_key_derive(SmithKey key, uint64_t i) {
     return (SmithKey){.bits = smith_random_pair(out.word[0], out.word[1])};
 }
 
+SmithRandomHook smith_random_hook = nullptr;
+
+// Every distribution draws through here, so the runner's hook sees every word. smith_key_derive is not hooked: keys
+// stay the same, and only words change.
 uint64_t smith_key_bits(SmithKey key, uint64_t n) {
     SmithRandomBlock out = smith_random_block(key, n >> 1, 0);
-    return (n & 1) == 0 ? smith_random_pair(out.word[0], out.word[1]) : smith_random_pair(out.word[2], out.word[3]);
+    uint64_t word =
+        (n & 1) == 0 ? smith_random_pair(out.word[0], out.word[1]) : smith_random_pair(out.word[2], out.word[3]);
+    return smith_random_hook != nullptr ? smith_random_hook(key, n, word) : word;
 }
 
 float smith_key_unit_float(SmithKey key, uint64_t n) {
@@ -283,10 +289,32 @@ float smith_log_float(float x) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Zigzag decoding: 0, 1, 2, 3, 4... give 0, -1, 1, -2, 2... so a word moves away from 0 as it grows.
+static int64_t smith_random_zigzag(uint64_t word) {
+    int64_t half = (int64_t)(word >> 1);
+    return (word & 1) != 0 ? -half - 1 : half;
+}
+
+// The position in [0, count) that comes index-th when the positions are ordered by their distance from origin: origin,
+// origin - 1, origin + 1, origin - 2, origin + 2... until one side runs out, then the rest of the other side in order.
+// A bijection of [0, count), so a uniform index gives a uniform position, and index 0 gives the origin.
+static uint64_t smith_random_around(uint64_t index, uint64_t origin, uint64_t count) {
+    assert(origin < count && index < count);
+    uint64_t below = origin;
+    uint64_t above = count - 1 - origin;
+    uint64_t both = below < above ? below : above; // positions come in pairs this many times
+    if (index <= 2 * both) return origin + (uint64_t)smith_random_zigzag(index);
+    return below > above ? origin - (index - both) : origin + (index - both);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // An index below n, unbiased: Lemire's multiply-and-reject, "Fast Random Integer Generation in an Interval", 2019. The
-// high half of bits * n is the index; a low half under (2^64 mod n) is a candidate from the overrepresented part and
-// is rejected. Attempt k uses bits k of the key. A rejection has probability below 1/2, so needing all 64 attempts has
-// probability below 2^-64; after the 64th the last candidate is returned, which is then biased by less than that.
+// high half of bits * n is the index, so the index grows with the word and word 0 gives index 0. Each index owns a run
+// of words, and a run is one word longer than the others when 2^64 mod n is not 0; that extra word is the one with the
+// largest low half, and it is rejected (Lemire rejects the one with the smallest, which would reject word 0 and spend
+// the next draw; this rejects the same number of words, so the index is as uniform). A rejection has probability below
+// 1/2. Attempt k uses bits k of the key. Needing all 64 attempts has probability below 2^-64; after the 64th the last
+// candidate is returned, which is then biased by less than that.
 
 constexpr uint64_t smith_random_attempts = 64;
 
@@ -297,16 +325,29 @@ static uint64_t smith_random_index(SmithKey key, uint64_t n) {
     for (uint64_t attempt = 0; attempt < smith_random_attempts; attempt++) {
         unsigned _BitInt(128) product = (unsigned _BitInt(128))smith_key_bits(key, attempt) * n;
         index = (uint64_t)(product >> 64);
-        if ((uint64_t)product >= threshold) break;
+        if (threshold == 0 || (uint64_t)product < 0 - threshold) break;
     }
     return index;
+}
+
+// The value that comes index-th, in [low, high], ordered by distance from 0 clamped into the range. span is high - low
+// + 1, which is not 0 here.
+static int64_t smith_random_int_value(int64_t low, int64_t high, uint64_t index) {
+    uint64_t span = (uint64_t)high - (uint64_t)low + 1;
+    uint64_t origin = 0; // the position of 0, clamped
+    if (high < 0) {
+        origin = span - 1;
+    } else if (low <= 0) {
+        origin = 0 - (uint64_t)low;
+    }
+    return (int64_t)((uint64_t)low + smith_random_around(index, origin, span));
 }
 
 int64_t smith_uniform_int64_sample(SmithKey key, SmithUniformInt64 uniform) {
     assert(uniform.low <= uniform.high);
     uint64_t span = (uint64_t)uniform.high - (uint64_t)uniform.low + 1;
-    if (span == 0) return (int64_t)smith_key_bits(key, 0); // the whole int64_t range: the raw bits
-    return (int64_t)((uint64_t)uniform.low + smith_random_index(key, span));
+    if (span == 0) return smith_random_zigzag(smith_key_bits(key, 0)); // the whole int64_t range
+    return smith_random_int_value(uniform.low, uniform.high, smith_random_index(key, span));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -327,17 +368,40 @@ static double smith_random_below_double(double high) {
     return smith_random_bits_double(bits + 1);
 }
 
+// The grid index nearest 0: where the zigzag starts. 0 when low >= 0, the last index when high <= 0.
+static uint64_t smith_random_origin_float(float low, float high) {
+    constexpr uint64_t last = ((uint64_t)1 << 24) - 1;
+    if (low >= 0.0f) return 0;
+    if (high <= 0.0f) return last;
+    float scaled = smith_random_mul_float(-low / (high - low), 0x1p24f);
+    uint64_t origin = (uint64_t)(scaled + 0.5f);
+    return origin < last ? origin : last;
+}
+
+static uint64_t smith_random_origin_double(double low, double high) {
+    constexpr uint64_t last = ((uint64_t)1 << 53) - 1;
+    if (low >= 0.0) return 0;
+    if (high <= 0.0) return last;
+    double scaled = smith_random_mul_double(-low / (high - low), 0x1p53);
+    uint64_t origin = (uint64_t)(scaled + 0.5);
+    return origin < last ? origin : last;
+}
+
 float smith_uniform_float_sample(SmithKey key, SmithUniformFloat uniform) {
     assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
     assert(isfinite(uniform.high - uniform.low));
-    float value = uniform.low + smith_random_mul_float(uniform.high - uniform.low, smith_key_unit_float(key, 0));
+    uint64_t origin = smith_random_origin_float(uniform.low, uniform.high);
+    uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (uint64_t)1 << 24);
+    float value = uniform.low + smith_random_mul_float(uniform.high - uniform.low, (float)grid * 0x1p-24f);
     return value < uniform.high ? value : smith_random_below_float(uniform.high);
 }
 
 double smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform) {
     assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
     assert(isfinite(uniform.high - uniform.low));
-    double value = uniform.low + smith_random_mul_double(uniform.high - uniform.low, smith_key_unit_double(key, 0));
+    uint64_t origin = smith_random_origin_double(uniform.low, uniform.high);
+    uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (uint64_t)1 << 53);
+    double value = uniform.low + smith_random_mul_double(uniform.high - uniform.low, (double)grid * 0x1p-53);
     return value < uniform.high ? value : smith_random_below_double(uniform.high);
 }
 
@@ -438,12 +502,16 @@ static float smith_random_ppnd7(float p) {
     return q < 0 ? -value : value;
 }
 
+// The midpoint-grid index is ordered by distance from the centre, so word 0 gives the u just above 0.5 (about the
+// mean), word 1 the u just below it, and so on outwards. Only which word gives which u changes, not the u's.
 static double smith_random_normal_u_double(SmithKey key) {
-    return (double)((smith_key_bits(key, 0) >> 12) * 2 + 1) * 0x1p-53;
+    uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 12, (uint64_t)1 << 51, (uint64_t)1 << 52);
+    return (double)(grid * 2 + 1) * 0x1p-53;
 }
 
 static float smith_random_normal_u_float(SmithKey key) {
-    return (float)((smith_key_bits(key, 0) >> 41) * 2 + 1) * 0x1p-24f;
+    uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 41, (uint64_t)1 << 22, (uint64_t)1 << 23);
+    return (float)(grid * 2 + 1) * 0x1p-24f;
 }
 
 double smith_normal_double_sample(SmithKey key, SmithNormalDouble normal) {
@@ -461,7 +529,8 @@ float smith_normal_float_sample(SmithKey key, SmithNormalFloat normal) {
 
 bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli) {
     assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
-    return smith_key_unit_double(key, 0) < bernoulli.probability;
+    uint64_t grid = smith_key_bits(key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
+    return (double)(((uint64_t)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
 
 // Vose's alias method, "A Linear Algorithm For Generating Random Numbers With a Given Distribution", 1991. Each index
@@ -534,7 +603,7 @@ void smith_permutation_sample(SmithKey key, SmithPermutation permutation, size_t
     for (size_t i = 0; i < permutation.count; i++)
         out[i] = i;
     for (size_t i = permutation.count; i > 1; i--) { // step i swaps position i - 1 with a position in [0, i)
-        size_t j = (size_t)smith_random_index(smith_key_derive(key, i - 1), i);
+        size_t j = i - 1 - (size_t)smith_random_index(smith_key_derive(key, i - 1), i); // index 0 swaps with itself
         size_t swap = out[i - 1];
         out[i - 1] = out[j];
         out[j] = swap;

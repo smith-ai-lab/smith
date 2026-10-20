@@ -44,7 +44,7 @@ expect_contains() { # name, text, needle
 }
 
 # The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
-expected_digest=9a4217f2bb4ac77d
+expected_digest=4a2e897669d609ac
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
 sources="$here/tests/random.c $here/lib/arena.c"
 

@@ -48,6 +48,8 @@ smith_permutation_sample(key, (SmithPermutation){.count = 52}, order);          
 - Parameters are `assert`ed: `low < high` and finite, `deviation > 0`, a probability in [0, 1], categorical weights finite, not negative, with a positive sum. A real uniform never returns `high`.
 - The integer uniform is Lemire's multiply-and-reject: every value exactly as likely, up to 64 attempts. Needing all 64 has a probability below 2^-64, and then the last candidate is returned.
 - The normal is the inverse CDF (Wichura's AS241), computed in `float` for `float`. Its reach is about +-8.2 deviations for `double` and about +-5.3 for `float`: the grid never reaches 0 or 1, so a draw is finite, and the distribution is exactly symmetric. A `float` normal is a poor fit when the tails past 5.3 sigma matter; use `double`.
+- The zero word gives the simplest value, and values move away from it as the word grows (this is for the test runner, which shrinks a failing test by making its words smaller; it changes no distribution, only which word gives which value). The integer uniform gives 0 clamped into the range, then 0 - 1, 0 + 1, 0 - 2... (zigzag), and the real uniforms do the same on their grid; the normals give the mean to within one grid step; the Bernoulli gives `false`; the categorical gives column 0; the permutation gives the identity. Draws are pure functions of (key, n), so shrinking one word never shifts another: item i's key is `smith_key_derive(key, i)` however many items came before.
+- `smith_random_hook` is for smith's test runner and nothing else: when set, `smith_key_bits` passes each word through it. A program never sets it. `smith_key_derive` is not hooked.
 - A zero weight is never drawn. The categorical table lives in the arena, which must outlive it; a sample is an index from `derive(key, 0)` and a coin from `derive(key, 1)`.
 
 ## Fill an array: a loop
@@ -63,7 +65,7 @@ Run the iterations in any order, on any number of threads: the array is the same
 
 ## Write your own distribution
 
-A distribution is a function of a key built only from the public primitives, written exactly like smith's. An exponential distribution:
+A distribution is a function of a key built only from the public primitives, written exactly like smith's. **Map the zero word to the simplest value, and let values move away from it as the word grows**, so a failing test shrinks to it: smith's test runner records the words a test drew and makes them smaller as unsigned integers. `smith_key_unit_double(key, 0)` is 0.0 for the word 0, so an exponential drawn as below gives 0 for it, the simplest value. An exponential distribution:
 
 ```c
 double exponential_sample(SmithKey key, double rate) {

@@ -24,6 +24,16 @@
 //       return -smith_log_double(1.0 - smith_key_unit_double(key, 0)) / rate;
 //   }
 //
+// A draw is a pure function of (key, n), so it does not depend on the draws before it: item i's key is
+// smith_key_derive(key, i) however many items came before, and changing one draw never shifts another.
+//
+// Every distribution maps the zero word to its simplest value, and values move away from it as the word grows, so a
+// test runner that makes the words of a failing test smaller (as unsigned integers) finds a simple failure. A
+// distribution of your own should do the same: let bits 0 give the simplest value. The simplest values are: 0, or the
+// bound nearest 0, for the uniforms (then 0 - 1, 0 + 1, 0 - 2... in that order); the mean, to within one grid step, for
+// the normals; false for the Bernoulli; column 0 for the categorical; the identity for the permutation. This changes no
+// distribution, since any bijection of uniform words is uniform; it only changes which word gives which value.
+//
 // Types are named as <math.h> does (sqrtf and sqrt): real distributions come in float and double, and integer ones use
 // int64_t. A float distribution computes in float, so a GPU kernel can mirror it; Metal has no double.
 //
@@ -66,6 +76,13 @@ typedef struct {
 
 // A real in [0, 1) on a grid of 2^-53, from the key's bits n. 1 - unit is exact and lies in (0, 1].
 [[nodiscard]] double smith_key_unit_double(SmithKey key, uint64_t n);
+
+// For smith's test runner, and nothing else: when it is set, smith_key_bits passes each word through it, so the runner
+// can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
+// pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
+// runs. smith_key_derive is not hooked, so keys stay the same and only words change.
+typedef uint64_t (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
+extern SmithRandomHook smith_random_hook;
 
 // The natural logarithm the distributions use, fdlibm's algorithm: within 1 ulp of the true value and the same bits on
 // every platform, which libm's log does not promise. 0 gives -inf, a negative gives NaN, inf gives inf, NaN gives NaN,
@@ -113,8 +130,9 @@ typedef struct {
     size_t count;
 } SmithPermutation;
 
-// Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation). Parameters are checked
-// with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
+// Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation), and the zero word gives
+// the simplest value (see the top). The categorical's zero word gives column 0 and a coin that keeps it. Parameters are
+// checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key, SmithUniformFloat uniform);
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform);
 [[nodiscard]] int64_t smith_uniform_int64_sample(SmithKey key, SmithUniformInt64 uniform);
