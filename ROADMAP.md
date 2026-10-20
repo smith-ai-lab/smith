@@ -12,7 +12,9 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
    no recursion, bounded loops and arenas keep that model small. `BASE_ASSERT` needs no change: after preprocessing it
    is a branch into a `[[noreturn]]` function, which is an assertion.
 3. **Subcommands that forward**, recognised only as the exact first argument so no clang command is mistaken for one.
-   With arguments they forward them unchanged; with none they act on the whole project.
+   With arguments they forward them unchanged; with none they act on the whole project. From the command line they
+   behave exactly as the tools do alone: a project's `.clang-format` and `.clang-tidy` apply as usual, and without
+   them clang-format's and clang-tidy's own defaults apply. smith adds no style of its own there.
    - `smith fmt`: the pinned clang-format.
    - `smith lint`: clang-tidy, plus smith's own rules through libclang. learner's and game's shared Tiger Style rules
      move here from their `tools/lint`.
@@ -21,9 +23,14 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
    - `build.c` emits ninja first. The executor can change later without anyone rewriting their `build.c`.
    - `compile_commands.json` comes from `ninja -t compdb`. Until then it comes from `-MJ` fragments merged by the
      Makefile, as in checkers. smith adds nothing for it.
-   - `build.c` is the opt-in profile where defaults live; the command line stays a pure passthrough. The defaults:
-     `-std=gnu23`, all warnings with `-Werror`, debug information, sanitizers in debug and test builds,
-     `-ftrivial-auto-var-init=pattern`, `-ffp-contract=off`, and a named CPU rather than `-march=native`.
+   - `build.c` is the opt-in profile where defaults live; the command line stays a pure passthrough. A project opts into
+     the smith house style there, and only there. It sets the compile defaults:
+     - `-std=gnu23`, all warnings with `-Werror`, and debug information;
+     - sanitizers in debug and test builds;
+     - `-ftrivial-auto-var-init=pattern` and `-ffp-contract=off`;
+     - a named CPU rather than `-march=native`.
+     
+     It also brings smith's `.clang-format`, `.clang-tidy` and Tiger Style lint rules to `smith fmt` and `smith lint`.
    - `smith test` bakes in the convention game already uses:
      - tests are non-`static` `void test_<name>(void)` functions in `test_*.c` files, found through libclang;
      - `test_death_<name>` must die;
