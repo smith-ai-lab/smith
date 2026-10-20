@@ -45,9 +45,10 @@ void build(SmithBuild *b) {
 - `smith_alias(b, name, targets)` names a group. `smith_default(b, targets)` is required; an empty list builds nothing. `smith_pool(b, name, depth)` limits a set of steps.
 - Options: `smith_option(b, name, description)` for `-Dname`, `smith_option_value(b, name, fallback, description)` for `-Dname=value`. A make `VAR ?= x` is `smith_option_value(b, "VAR", smith_env(b, "VAR", "x"), "...")`.
 - The outside world: `smith_env`, `smith_glob` (sorted; no `**`) and `smith_capture` (runs an argv with no shell and returns its output). `smith_capture` runs on every `smith build`, so a slow command that only some targets need belongs inside those steps' commands, as `$(...)` in `sh -c`.
+- Reading generated files: a file a step makes is read with `smith_lines` inside `more`, the function given to `smith_defer(b, needs, more)`, never in `build()`. `needs` are the step outputs (or sources) the file comes from; once they exist, `more` runs and declares the steps that the file's lines name. `smith_lines(b, path)` returns one entry per line without the newline, and is an error for a missing file. `more` may call `smith_defer` again (limit 256 calls); `smith_default` may be called there.
 - Helpers: `smith_fmt` (printf), `smith_map(b, items, "out/%s.o")`, `smith_when(b, condition, items)`, `smith_replace_extension(b, "src/a.c", ".o")`.
 - `b->os` and `b->arch` are exactly what `uname -s` and `uname -m` print: `"Darwin"`, `"arm64"`.
-- Not implemented yet: `smith_defer`, `smith_lines`, `.run`, `.args`, `.content_hash` and `smith_run_lines`. Each fails with "not implemented yet". If the build needs one, tell the owner.
+- Not implemented yet: `.run`, `.args`, `.content_hash` and `smith_run_lines`. Each fails with "not implemented yet". If the build needs one, tell the owner.
 
 ## Replace a Makefile
 

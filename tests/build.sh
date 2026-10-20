@@ -402,12 +402,17 @@ cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    smith_defer(b, (const char *[]){nullptr}, nullptr);
+    SmithStep step = {
+        .command = (const char *[]){"true", nullptr},
+        .outputs = (const char *[]){"x", nullptr},
+        .content_hash = true,
+    };
+    smith_step(b, &step);
 }
 C
 build
-expect_status "errors: an unimplemented call exits 2" 2
-expect_contains "errors: the unimplemented message" "$err" "smith: build.c: smith_defer is not implemented yet"
+expect_status "errors: an unimplemented field exits 2" 2
+expect_contains "errors: the unimplemented message" "$err" "smith: build.c: .content_hash is not implemented yet"
 
 # 9b. smith's files are in .smith/, not build/.
 project
@@ -438,6 +443,178 @@ expect "clean: a task running rm -rf build exits 0" "0 absent" "$rc $([ -e build
 rm -f out
 build
 expect "clean: the next smith build works" "0 present" "$rc $([ -f out ] && echo present || echo absent)"
+
+# 9c. smith_defer and smith_lines, the monad3 shape: a step makes a list, and each name in it becomes a step.
+defer_project() {
+    project
+    printf 'a\nb\n' >source
+    cat >build.c <<'C'
+#include <smith/build.h>
+#include <stddef.h>
+
+static const char *suffix = "";
+
+static void more(SmithBuild *b) {
+    const char *const *names = smith_lines(b, "list");
+    for (size_t i = 0; names[i] != nullptr; i++) {
+        const char *out = smith_fmt(b, "%s.out", names[i]);
+        SmithStep step = {
+            .command = (const char *[]){"sh", "-c", "echo \"$0$2\" > \"$1\"; echo \"$0\" >> ran", names[i], out, suffix,
+                                        nullptr},
+            .outputs = (const char *[]){out, nullptr},
+        };
+        smith_step(b, &step);
+        smith_default(b, step.outputs);
+    }
+}
+
+void build(SmithBuild *b) {
+    suffix = smith_option_value(b, "suffix", "", "text added to every output");
+    SmithStep list = {
+        .command = (const char *[]){"cp", "$in", "$out", nullptr},
+        .inputs = (const char *[]){"source", nullptr},
+        .outputs = (const char *[]){"list", nullptr},
+    };
+    smith_step(b, &list);
+    smith_defer(b, list.outputs, more);
+}
+C
+}
+
+defer_project ""
+build
+expect "defer: a fresh tree builds every output in one smith build" "0 a.out b.out" "$rc $(ls ./*.out | tr '\n' ' ' | sed 's|\./||g; s| *$||')"
+build
+expect_contains "defer: the second run has no work" "$out" "no work to do"
+printf 'a\nb\nc\n' >source
+build
+expect "defer: a new name builds one new output" "0 a b c" "$rc $(sort ran | tr '\n' ' ' | sed 's| *$||')"
+expect "defer: no other output step reran" 3 "$(lines ran)"
+build
+expect_contains "defer: and the next run has no work" "$out" "no work to do"
+
+defer_project ""
+build b.out
+expect "defer: a stage 2 target can be named on a fresh tree" "0 b.out" "$rc $(ls ./*.out | sed 's|\./||')"
+
+defer_project ""
+build -Dsuffix=x
+expect "defer: a -D option reaches stage 2" "bx" "$(cat b.out)"
+
+defer_project ""
+build -t clean
+build
+expect "defer: clean, then smith build, works" "0 a b" "$rc $(sort ran | tr '\n' ' ' | sed 's| *$||')"
+build -t clean
+expect "defer: clean keeps the manifest" "present" "$([ -f .smith/build.ninja ] && echo present)"
+build
+expect "defer: and builds again" "0 present present" "$rc $([ -f a.out ] && echo present) $([ -f list ] && echo present)"
+
+# a chained defer: more defers on an output of a step it added
+project
+printf 'a\nb\n' >source
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stddef.h>
+
+static void last(SmithBuild *b) {
+    const char *const *names = smith_lines(b, "second");
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", names[0], "final", nullptr},
+        .inputs = (const char *[]){"second", nullptr},
+        .outputs = (const char *[]){"final", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+
+static void middle(SmithBuild *b) {
+    SmithStep step = {
+        .command = (const char *[]){"cp", "$in", "$out", nullptr},
+        .inputs = (const char *[]){"list", nullptr},
+        .outputs = (const char *[]){"second", nullptr},
+    };
+    smith_step(b, &step);
+    smith_defer(b, step.outputs, last);
+}
+
+void build(SmithBuild *b) {
+    SmithStep list = {
+        .command = (const char *[]){"cp", "$in", "$out", nullptr},
+        .inputs = (const char *[]){"source", nullptr},
+        .outputs = (const char *[]){"list", nullptr},
+    };
+    smith_step(b, &list);
+    smith_defer(b, list.outputs, middle);
+}
+C
+build
+expect "defer: a chained defer builds the whole chain in one smith build" "0 a" "$rc $(cat final 2>/dev/null)"
+build
+expect_contains "defer: the chain has no work next" "$out" "no work to do"
+
+# smith_lines
+project
+printf 'one\n\nthree\n' >data
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    const char *const *lines = smith_lines(b, "data");
+    const char *text = smith_fmt(b, "%zu", (size_t)0);
+    size_t count = 0;
+    while (lines[count] != nullptr)
+        count++;
+    text = smith_fmt(b, "%zu[%s][%s][%s]", count, lines[0], lines[1], lines[2]);
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", text, "result", nullptr},
+        .outputs = (const char *[]){"result", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect "lines: three lines, a final newline and an empty one between" "0 3[one][][three]" "$rc $(cat result 2>/dev/null)"
+printf 'x' >data
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    const char *const *lines = smith_lines(b, "data");
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", lines[0], "result", nullptr},
+        .outputs = (const char *[]){"result", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect "lines: no final newline still gives the line" "0 x" "$rc $(cat result 2>/dev/null)"
+: >data
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    const char *const *lines = smith_lines(b, "data");
+    SmithStep step = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", lines[0] == nullptr ? "empty" : "no", "result", nullptr},
+        .outputs = (const char *[]){"result", nullptr},
+    };
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect "lines: an empty file is an empty list" "0 empty" "$rc $(cat result 2>/dev/null)"
+rm data
+build
+expect_status "lines: a missing file exits 2" 2
+expect_contains "lines: the missing file message" "$err" "smith: build.c: cannot read data; if a step makes it, read it inside smith_defer"
 
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1

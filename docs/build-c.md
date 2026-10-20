@@ -1,6 +1,7 @@
 # smith build
 
-Status: v1 is implemented. checkers and smith itself build with it. v1.5 and later are declared but not implemented. The
+Status: v1 and v1.5 (`smith_defer`, `smith_lines`) are implemented. checkers and smith itself build with it. `.run`,
+`.args`, `.content_hash` and `smith_run_lines` are declared but not implemented. The
 23 cases that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in
 [build-c-cases.md](build-c-cases.md).
 
@@ -89,15 +90,42 @@ Generator rules:
   lists the declared options.
 - There is no automatic `cleandead`. make never deletes leftover outputs, so smith does not either.
   `smith build -t cleandead` is there when wanted (case `noleftover`).
-- `smith_defer` writes a first manifest that has a regeneration edge (`generator = 1`) from the build program. ninja
-  builds the needs, runs that edge, and the build program calls `more`. The edge stays in every later manifest.
+- `smith_defer` records each call (needs copied, `more` kept) in a table of 256. After `build()` returns, the program
+  walks the table in order from 0 up to its current count, which grows when a `more` defers again. An entry whose
+  needs all exist (`stat`) has its `more` called once; an entry with a missing need is pending. Nothing builds while
+  the program runs, so one pass is enough: an entry that `more` adds is reached later in the same pass. Callbacks run
+  from this loop, never from inside each other.
+- When the table is not empty, the manifest gains a regeneration rule and edge. Their inputs are every entry's needs,
+  pending or not, so a need that changes during the ninja run regenerates the manifest:
+  ```
+  rule smith_regenerate
+    command = .smith/program --regenerate .smith/build.ninja <the -D arguments of this call>
+    description = smith: regenerate .smith/build.ninja
+    generator = 1
+  build .smith/build.ninja: smith_regenerate <every need> | .smith/program
+  ```
+  `generator = 1` keeps the manifest through `ninja -t clean` and keeps a changed command from forcing a regeneration.
+- The program's arguments are `[--regenerate] <manifest> [-D...]`; the driver passes no `--regenerate`, ninja does.
+  Without it the manifest is written only when its bytes changed. With it the manifest is always written, even with the
+  same bytes, so its mtime moves past the needs and ninja reloads once and settles (ninja decides regeneration by
+  mtime only).
+- `smith_default` may be missing only while some entry is pending, because the pending `more` will set it. Then the
+  manifest has `build smith_nothing: phony` and `default smith_nothing`. With nothing pending, a missing default is
+  still the error.
+- Measured with ninja 1.13.2. A fresh tree: the run before ninja writes stage 1 (the steps that make the needs, plus the
+  regeneration edge); ninja builds the needs, regenerates, reloads, then builds what was asked, so a stage 2 target
+  can be named on the command line. Needs present but stale: `more` runs with the old contents, ninja rebuilds the
+  needs and regenerates before it builds any target, so stale steps never run. No-op: the needs are older than the
+  manifest and ninja prints `no work to do`.
+- `smith_lines` reads the file into the arena on every `smith build` (limit 16 MiB). A file a step makes is read inside
+  `more`; read in `build()` it is the error `cannot read <path>; if a step makes it, read it inside smith_defer`.
 
 ## The API
 
-Version 1 is enough for checkers and learner. Version 1.5 adds what game needs for its generated mesh list. Everything
-else is later. The text below is [include/smith/build.h](../include/smith/build.h) without `#pragma once`.
-The v1.5 and later functions are declared but not implemented yet. Calling one, or setting `.run`, `.args` or
-`.content_hash`, is the error `smith: build.c: <name> is not implemented yet`.
+Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
+generated mesh list. Everything else is later. The text below is [include/smith/build.h](../include/smith/build.h)
+without `#pragma once`. Setting `.run`, `.args` or `.content_hash`, or calling `smith_run_lines`, is the error
+`smith: build.c: <name> is not implemented yet`.
 
 ```c
 // smith/build.h: the API of a project's build.c, which `smith build` compiles and runs to write build.ninja.
@@ -162,12 +190,19 @@ const char *const *smith_when(SmithBuild *b, bool condition, const char *const *
 // ("src/a.c", ".o") gives "src/a.o"
 const char *smith_replace_extension(SmithBuild *b, const char *path, const char *extension);
 
-// Not implemented yet: calling one prints a message and exits 2.
-// builds needs, regenerates, calls more
+// Steps that exist only once a generated file is read.
+// `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
+// may call any function here, smith_defer included. The program calls `more` itself while it runs, for each call whose
+// needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
+// regeneration edge on every call's needs, so ninja builds the needs, runs the program again with them in place, and
+// reloads. A pending `more` may be the one that calls smith_default.
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b));
-// tracked; one entry per line
+// One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
+// is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
+// missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
+// Not implemented yet, so using one prints a message and exits 2: .run, .args, .content_hash and smith_run_lines.
 // later: steps written as C functions
 struct SmithRun {
     SmithBuild *b;
@@ -200,7 +235,7 @@ Which tier each project needs:
 - smith: v1. Its `build.c` is at the repository root and replaced its Makefile.
 - learner: v1.
 - game: v1.5, for the mesh list that a program prints and that the rest of the build depends on (`smith_defer`,
-  `smith_lines`).
+  `smith_lines`). Implemented.
 
 Dropped from the proposals of the case agents:
 - `smith_list`: a compound literal does it, and a function that takes a variadic list needs a terminator anyway.

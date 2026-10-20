@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,6 +35,8 @@ constexpr size_t smith_defaults_max = 65536;
 constexpr size_t smith_capture_max = 1U << 20;
 constexpr size_t smith_cat_lists_max = 4096;
 constexpr size_t smith_chunk = 65536;
+constexpr size_t smith_defers_max = 256;
+constexpr size_t smith_lines_file_max = 16U << 20;
 
 typedef enum {
     SmithEntryKind_Step,
@@ -65,6 +68,12 @@ typedef struct {
     const char *value; // nullptr for a bare -Dname
 } SmithGiven;
 
+typedef struct {
+    const char *const *needs;
+    void (*more)(SmithBuild *b);
+    bool pending; // some need did not exist when the table was walked
+} SmithDefer;
+
 static alignas(16) char smith_arena[smith_arena_size];
 static size_t smith_arena_used;
 static SmithEntry smith_entries[smith_entries_max];
@@ -78,6 +87,11 @@ static SmithDeclared smith_declared[smith_options_max];
 static size_t smith_declared_count;
 static SmithGiven smith_given[smith_options_max];
 static size_t smith_given_count;
+static SmithDefer smith_defers[smith_defers_max];
+static size_t smith_defer_count;
+static const char *smith_option_args[smith_options_max]; // the -D arguments of this call, as given
+static size_t smith_option_arg_count;
+static bool smith_regenerating;
 static char smith_capture_buffer[smith_capture_max + 1];
 static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
@@ -542,16 +556,84 @@ const char *smith_replace_extension(SmithBuild *b, const char *path, const char 
 }
 
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b)) {
-    (void)b;
-    (void)needs;
-    (void)more;
-    smith_unimplemented("smith_defer");
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (needs == nullptr) smith_fail("smith_defer: the needs list is nullptr; use an empty list");
+    if (more == nullptr) smith_fail("smith_defer needs a function to call");
+    if (smith_defer_count >= smith_defers_max) smith_too_many("smith_defer calls", smith_defers_max);
+    smith_defers[smith_defer_count++] = (SmithDefer){.needs = smith_copy_list(needs), .more = more};
+}
+
+static bool smith_all_exist(const char *const *paths) {
+    struct stat info;
+    for (size_t i = 0; paths[i] != nullptr; i++) { // bounded by smith_copy_list
+        if (stat(paths[i], &info) != 0) return false;
+    }
+    return true;
+}
+
+// Walks the table in order up to its current count, which grows when a `more` defers again. Nothing builds while the
+// program runs, so a single pass reaches every entry that can be called. Each `more` runs from this loop, not from
+// inside another.
+static void smith_run_defers(SmithBuild *b) {
+    for (size_t i = 0; i < smith_defer_count; i++) { // bounded by smith_defers_max
+        if (smith_all_exist(smith_defers[i].needs)) {
+            smith_defers[i].more(b);
+            smith_context = nullptr;
+        } else {
+            smith_defers[i].pending = true;
+        }
+    }
+}
+
+static bool smith_any_pending(void) {
+    for (size_t i = 0; i < smith_defer_count; i++) {
+        if (smith_defers[i].pending) return true;
+    }
+    return false;
+}
+
+// Reads the whole file into the arena, ending it with a 0 byte; returns its size.
+static size_t smith_read_file(const char *path, char **text) {
+    FILE *file = fopen(path, "rb");
+    struct stat info;
+    if (file == nullptr || fstat(fileno(file), &info) != 0 || !S_ISREG(info.st_mode)) {
+        if (file != nullptr) fclose(file);
+        smith_fail("cannot read %s; if a step makes it, read it inside smith_defer", path);
+    }
+    if ((uintmax_t)info.st_size > smith_lines_file_max) {
+        fclose(file);
+        smith_fail("%s is larger than %zu MiB", path, smith_lines_file_max >> 20);
+    }
+    size_t size = (size_t)info.st_size;
+    *text = smith_alloc(size + 1);
+    size_t got = fread(*text, 1, size, file);
+    fclose(file);
+    if (got != size) smith_fail("cannot read %s; if a step makes it, read it inside smith_defer", path);
+    (*text)[size] = '\0';
+    return size;
 }
 
 const char *const *smith_lines(SmithBuild *b, const char *path) {
-    (void)b;
-    (void)path;
-    smith_unimplemented("smith_lines");
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (path == nullptr) smith_fail("smith_lines needs a path");
+    char *text = nullptr;
+    size_t size = smith_read_file(path, &text);
+    size_t count = 0;
+    for (size_t i = 0; i < size; i++) // a final newline adds no empty entry
+        count += text[i] == '\n' || (i + 1 == size && text[i] != '\n');
+    if (count > smith_list_max) smith_too_many("lines in a file", smith_list_max);
+    const char **list = smith_new_list(count);
+    char *start = text;
+    for (size_t i = 0; i < count; i++) {
+        char *end = memchr(start, '\n', (size_t)(text + size - start));
+        if (end == nullptr) end = text + size;
+        *end = '\0'; // the last line's end is the terminator smith_read_file wrote
+        list[i] = start;
+        start = end + 1;
+    }
+    return list;
 }
 
 const char *const *smith_run_lines(SmithRun *run, const char *const *argv) {
@@ -692,9 +774,27 @@ static void smith_put_entry(FILE *out, const SmithEntry *entry) {
     smith_context = nullptr;
 }
 
+static void smith_put_regenerate_rule(FILE *out) {
+    fputs("rule smith_regenerate\n  command = .smith/program --regenerate .smith/build.ninja", out);
+    for (size_t i = 0; i < smith_option_arg_count; i++) {
+        fputc(' ', out);
+        smith_put_quoted(out, smith_option_args[i]);
+    }
+    fputs("\n  description = smith: regenerate .smith/build.ninja\n  generator = 1\n", out);
+}
+
+// ninja reruns the program when a need changes or the program does; it decides by mtime only.
+static void smith_put_regenerate_edge(FILE *out) {
+    fputs("build .smith/build.ninja: smith_regenerate", out);
+    for (size_t i = 0; i < smith_defer_count; i++)
+        smith_put_paths(out, smith_defers[i].needs);
+    fputs(" | .smith/program\n", out);
+}
+
 static void smith_put_manifest(FILE *out) {
     fputs("# Written by smith build from build.c. Edit build.c, not this file.\n", out);
     fputs("ninja_required_version = 1.10\nbuilddir = .smith\nrule step\n  command = $cmd\n", out);
+    if (smith_defer_count > 0) smith_put_regenerate_rule(out);
     for (size_t i = 0; i < smith_pool_count; i++)
         fprintf(out, "pool %s\n  depth = %d\n", smith_pools[i].name, smith_pools[i].depth);
     for (size_t i = 0; i < smith_entry_count; i++) {
@@ -705,6 +805,7 @@ static void smith_put_manifest(FILE *out) {
     }
     for (size_t i = 0; i < smith_entry_count; i++)
         smith_put_entry(out, &smith_entries[i]);
+    if (smith_defer_count > 0) smith_put_regenerate_edge(out);
     // ninja builds every target when there is no default line, so an empty default names a target that does nothing.
     if (smith_default_count == 0) fputs("build smith_nothing: phony\ndefault smith_nothing", out);
     if (smith_default_count > 0) fputs("default", out);
@@ -731,14 +832,15 @@ static bool smith_same_file(const char *left, const char *right) {
 }
 
 // Writes the manifest through a temporary file and renames it only when the bytes differ, so its mtime moves only
-// when the build does.
+// when the build does. When ninja asked for the regeneration it always replaces it: the new mtime is past the needs,
+// so ninja reloads once and settles.
 static void smith_write_manifest(const char *path) {
     const char *temporary = smith_text("%s.tmp", path);
     FILE *out = fopen(temporary, "wb");
     if (out == nullptr) smith_fail("cannot write %s", temporary);
     smith_put_manifest(out);
     if (fclose(out) != 0) smith_fail("cannot write %s", temporary);
-    if (smith_same_file(temporary, path)) {
+    if (!smith_regenerating && smith_same_file(temporary, path)) {
         unlink(temporary);
         return;
     }
@@ -748,10 +850,12 @@ static void smith_write_manifest(const char *path) {
 static void smith_parse_options(int count, char **args) {
     for (int i = 0; i < count; i++) { // bounded by count
         SMITH_ASSERT(strncmp(args[i], "-D", 2) == 0);
+        if (smith_given_count >= smith_options_max) smith_too_many("-D arguments", smith_options_max);
+        SMITH_ASSERT(smith_option_arg_count == smith_given_count); // the two tables grow together
+        smith_option_args[smith_option_arg_count++] = args[i];
         const char *name = args[i] + 2;
         const char *equals = strchr(name, '=');
         if (*name == '\0' || equals == name) smith_fail("-D needs a name");
-        if (smith_given_count >= smith_options_max) smith_too_many("-D arguments", smith_options_max);
         size_t length = equals != nullptr ? (size_t)(equals - name) : strlen(name);
         char *copy = smith_alloc(length + 1);
         memcpy(copy, name, length);
@@ -776,12 +880,16 @@ static SmithBuild smith_make_build(void) {
 
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 2 && argv[1] != nullptr);
-    smith_parse_options(argc - 2, argv + 2);
+    smith_regenerating = strcmp(argv[1], "--regenerate") == 0;
+    int first = smith_regenerating ? 2 : 1; // the manifest comes next, then the -D arguments
+    SMITH_ASSERT(argc > first && argv[first] != nullptr);
+    smith_parse_options(argc - first - 1, argv + first + 1);
     SmithBuild b = smith_make_build();
     build(&b);
     smith_context = nullptr;
+    smith_run_defers(&b);
     smith_check_given();
-    if (!smith_default_called) smith_fail("no default; call smith_default");
-    smith_write_manifest(argv[1]);
+    if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");
+    smith_write_manifest(argv[first]);
     return 0;
 }

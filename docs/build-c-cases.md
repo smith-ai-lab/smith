@@ -430,6 +430,7 @@ and had `more again`. Then, to simulate `smith` rerunning `build.c` after `list`
 (`build output: step list input1`, command listing only `input1`): ninja reran because the command text differed, output was
 `more`, a second run was a no-op, and changing `input2` ran nothing. So the generated-file approach works on ninja, as long as
 smith reruns `build.c` when `list` changes. `build.c` itself cannot be run, so the rerun was done by hand. Zig 0.17.0: the original did not compile (`b.build_root`, and the old `readFileAlloc` and `captureStdOut()` signatures). With `list` = `input1`, `input2`: output `more x`; again `cached`; changing `input1` reran; cutting `list` to `input1` reran and gave `more again`; changing the unlisted `input2` stayed `cached`; touching `list` alone stayed `cached`. Output is `zig-out/output`. Without the `dependOnFileContents` line, editing `list` was not noticed and the old output stayed.
+**Run under smith v1.5** (the snippet above, unchanged, in a scratch folder with `input1`, `input2` and `list`; ninja 1.13.2): the first `smith build` ran `sh -c 'cat "$@" > "$0"' output input1 input2` and `output` held both files; a second run said `no work to do`; after `input1` changed it reran; after `list` was cut to `input1` it reran with only `input1` in the command; then `no work to do`; changing the unlisted `input2` ran nothing. The snippet needed no fix.
 **How each handles it:** make natively (`$(shell cat list)` is read each run); ninja not natively (static graph; works only with a depfile written by the command, or a generator that rereads `list`); Zig with a declaration: the graph is built by Zig code that reads `list`, but 0.17 caches the configuration, so `b.dependOnFileContents(b.path("list"))` is what makes a changed `list` rebuild the graph (without it the change was missed); smith with the new read, because `build.c` reruns on every `smith build`, so a changed `list` is seen.
 **What smith's API needs:** `smith_lines` (v1.5), a file read that a later cache could track. In v1 plain `fopen` in
 `build.c` would also work, because the program reruns every time, but the call keeps the read visible to the checks:
@@ -438,7 +439,7 @@ smith reruns `build.c` when `list` changes. `build.c` itself cannot be run, so t
 // the file's lines, read on every `smith build`
 const char *const *smith_lines(SmithBuild *b, const char *path);
 ```
-The result leaves out empty lines and the trailing newline, and an error names the file if it is missing. (A whole-text
+The result has one entry per line without its newline (a final newline adds no entry, an empty line is `""`), and an error names the file if it is missing. (A whole-text
 `smith_read` was proposed with `smith_lines` as its split. One of the two is enough, and `smith_lines` is the one this
 case uses, so `smith_read` was dropped.)
 
@@ -680,6 +681,14 @@ ninja, second stage by manifest regeneration (hand-written stage 1 and stage 2 a
 - Limits found: (1) `ninja -n output` on a fresh tree only reports stage 1 (`cp`, `gen`) and stops, since a dry run cannot reload; ninja's `-t` tools and `-n` see whichever manifest is on disk. (2) Manifest rebuild ignores the build log: it is decided by mtimes only. Consequence: if smith rewrites a stage 1 manifest over an up-to-date tree, the new manifest is newer than `list`, so ninja sees nothing to do and `output` never appears (verified, even with a different command string). The fix, verified: smith writes the stage 1 manifest and then sets its mtime to the past (`utimes`, 1970), or else calls `more` whenever the needs already exist. (3) Files in `out/` for names that left the list stay behind (this is the `noleftover` case). (4) The generator edge needs `generator = 1` so `ninja -t clean` keeps `build.ninja` (verified: `Cleaning... 3 files`, manifest kept).
 - Not run: putting the compile of `build.c` into the same manifest as an edge feeding the regen edge (extrapolated from the `gen.sh` touch test).
 - Zig 0.17.0: the 0.15 custom step does not exist any more. `Step.init` takes a `tag` from a fixed list (`Step.Tag`: compile, run, install_file, ...) and has no `id`, `.custom` or `makeFn`, and the first compile error was `no field named 'id' in struct 'Build.Step.StepOptions'`; the build runner (`compiler/Maker.zig`) configures once per invocation, before any step runs, so no step can be added from a build product. What does work is two invocations (clean tree, then `list`): plain `zig build` before `list` exists builds nothing; `zig build list` wrote `list`; `zig build` then ran two `tr` steps and `cat` (output `zig-out/output` = `CUBE1 SPHERE1`); again all `cached`; `touch m/cube.src` reran only the cube `tr` and `cat`; changing `m/cube.src` the same; changing `source` to `cube tri` then `zig build list; zig build` reran the new `tri` `tr` and `cat` (the cube `tr` stayed `cached`) and `output` became `CUBE2 TRI1`. `b.dependOnFileContents(b.path("list"))` on a missing `list` fails the configure with `FileSystemFailure` although its doc comment says creation is tracked, hence the directory dependency. `zig build list install --watch` converged by itself in one process: pass one wrote `list`, the watcher saw the dependency change, reconfigured, and pass two built `output`. Without `list` run first, a changed `source` is not picked up by a plain `zig build` (stale output, verified).
+**Run under smith v1.5** (the snippet above, unchanged, with `source` = `cube sphere` and `m/{cube,sphere,tri}.src`; ninja 1.13.2):
+- Fresh tree: one `smith build` ran `cp source list`, the regeneration, then both `tr` steps and the `cat`; `output` = `CUBE1 SPHERE1`. The second run: `no work to do`.
+- `source` changed to `cube tri`: one `smith build` ran `cp`, the regeneration, `out/tri.o` and `output` only (`CUBE1 TRI1`).
+- `m/cube.src` changed: only `out/cube.o` and `output` ran, no regeneration; then `no work to do`.
+- Fresh tree, `smith build output` (a target that exists only in stage 2): worked in one call.
+- `smith build -t clean` (`Cleaning... 4 files`) then `smith build`: rebuilt everything; the manifest survived the clean.
+- A `source` naming `missing` stopped with `'m/missing.src', needed by 'out/missing.o', missing and no known rule`; fixing `source` and running `smith build` again recovered.
+The snippet needed no fix. The backdating rule below is not needed: when ninja runs the program through the regeneration edge (`--regenerate`), the program always rewrites the manifest, so its mtime is past the needs; the run before ninja writes a manifest only when its bytes changed.
 **How each handles it:** make: natively, with automatic restart of included makefiles (`list.mk`). ninja: `dyndep` only for edges that exist in advance; new edges only by regenerating the manifest (works, tested above); a depfile does not work. Zig: with a workaround. Not within one `zig build`: configuration runs once before any step, so a step cannot be added from a build product, and the 0.15 custom step is gone. With two invocations (`zig build list`, then `zig build`) it adds and removes per-name steps and caches them per name; `--watch` does both in one process. smith: with a new `smith_defer`, compiled to the manifest regeneration above.
 **What smith's API needs:**
 - `smith_defer` (v1.5):
@@ -696,8 +705,9 @@ closed.
   step without a macro.
 - In v1's layout the manifest is `.smith/build.ninja` and the regen edge runs `.smith/program`; the blocks
   above keep the names of the hand-run test.
-- Rule for the writer: the stage 1 manifest must be written with an old mtime (or smith must call `more` when the needs
-  exist), otherwise ninja believes it is done.
+- Rule for the writer, as built: the program calls `more` whenever the needs exist, and the manifest is rewritten
+  unconditionally when ninja runs the program with `--regenerate`; otherwise it is written only when its bytes changed.
+  No backdating.
 
 **Recommendation (monad2 and monad3):** use the second stage (`smith_defer`, implemented as a self-regenerating
 manifest) for anything that adds steps, and keep `depfile` for monad2 (files that already exist). Do not build on

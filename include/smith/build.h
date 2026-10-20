@@ -61,12 +61,19 @@ const char *const *smith_when(SmithBuild *b, bool condition, const char *const *
 // ("src/a.c", ".o") gives "src/a.o"
 const char *smith_replace_extension(SmithBuild *b, const char *path, const char *extension);
 
-// Not implemented yet: calling one prints a message and exits 2.
-// builds needs, regenerates, calls more
+// Steps that exist only once a generated file is read.
+// `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
+// may call any function here, smith_defer included. The program calls `more` itself while it runs, for each call whose
+// needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
+// regeneration edge on every call's needs, so ninja builds the needs, runs the program again with them in place, and
+// reloads. A pending `more` may be the one that calls smith_default.
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b));
-// tracked; one entry per line
+// One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
+// is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
+// missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
+// Not implemented yet, so using one prints a message and exits 2: .run, .args, .content_hash and smith_run_lines.
 // later: steps written as C functions
 struct SmithRun {
     SmithBuild *b;
