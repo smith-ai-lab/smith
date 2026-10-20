@@ -59,6 +59,8 @@ FAIL uniform_stays_in_range with seed 6387777158891554393
     rerun: smith build test -DTEST=uniform_stays_in_range -DSEED=6387777158891554393
 ```
 
+A failing property test is shrunk before it is shown: the runner reruns the key, tries each random word it drew as 0 and then as the smallest word that still fails the same check (file and line) or the same signal, within 1,000 runs or 10 s, so a failure shows `x = 500` rather than a random 64-bit draw; the header says `shrunk in 41 runs`. The rerun line names the original seed and shrinks to the same case again; `-DSHRINK=0` shows the unshrunk failure. This works because every distribution in smith-random maps word 0 to its simplest value, so draw everything from the key with smith's distributions. Your own distribution should do the same: spend the key with `smith_key_bits`, `smith_key_unit_float` or `smith_key_unit_double`, and make word 0 the simplest value.
+
 A crash is `FAIL name: killed by SIGSEGV` with the process's stderr under it (a sanitizer's report), a timeout `FAIL name: timed out after 10 s`. Each test runs in a process of its own, so one crash fails one test and the rest run. A passing test's output is hidden.
 
 ## Set it up

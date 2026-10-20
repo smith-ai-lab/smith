@@ -419,6 +419,100 @@ capture build/tests --test prop_fails --seed "$seed" --shrink 0
 third=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p')
 expect "properties: --seed reproduces it too" "$first" "$third"
 
+# 4b. Shrinking.
+cat >tests/test_shrink.c <<'C'
+#include <smith/test.h>
+
+void test_shrink_int(SmithKey key) {
+    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+    SMITH_CHECK(x, <, 500);
+}
+
+void test_shrink_list(SmithKey key) {
+    long long length = smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 8});
+    for (long long i = 0; i < length; i++) {
+        long long item = smith_uniform_int64_sample(smith_key_derive(key, (uint64_t)i + 1), (SmithUniformInt64){.low = 0, .high = 100});
+        smith_test_note("length %lld, item %lld", length, i);
+        SMITH_CHECK(item, <=, 90);
+    }
+}
+
+void test_shrink_normal(SmithKey key) {
+    double z = smith_normal_double_sample(key, (SmithNormalDouble){.mean = 0, .deviation = 1});
+    SMITH_CHECK(z, <, 3.0);
+}
+
+void test_shrink_moves(SmithKey key) {
+    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+    SMITH_CHECK(x, <, 500);
+    SMITH_CHECK(x, !=, 0); // the failure that shrinking to 0 would move to
+}
+C
+capture "$smith" build
+expect "shrink: the runner builds" 0 "$rc"
+
+line=$(line_of tests/test_shrink.c 'SMITH_CHECK(x, <, 500);')
+capture build/tests --test shrink_int
+seed=$(printf '%s' "$out" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
+expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
+  tests/test_shrink.c:$line
+      SMITH_CHECK(x, <, 500);
+    x = 500   (long long)
+    500       (long long)
+    rerun: smith build test -DTEST=shrink_int -DSEED=$seed
+
+0 passed, 1 failed" "$(printf '%s' "$out" | plain | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/')"
+runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+expect "shrink: ... in at most 1000 runs" yes "$([ -n "$runs" ] && [ "$runs" -le 1000 ] && echo yes)"
+
+capture build/tests --test shrink_int --shrink 0
+unshrunk=$(printf '%s' "$out" | sed -n 's/^    x = \([0-9]*\) .*/\1/p')
+expect "shrink: --shrink 0 shows the unshrunk failure" yes "$([ "$unshrunk" -gt 500 ] && echo yes)"
+expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
+
+capture "$smith" build test -DTEST=shrink_int -DSEED="$seed"
+expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
+
+first=$(build/tests --test shrink_list 2>&1 | plain)
+expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
+expect_contains "shrink: ... of 91" "$first" "    item = 91   (long long)"
+second=$(build/tests --test shrink_list 2>&1 | plain)
+expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
+
+capture build/tests --test shrink_normal --seeds 5000
+z=$(printf '%s' "$out" | sed -n 's/^    z *= \([0-9.e+-]*\) .*/\1/p')
+expect_contains "shrink: a normal with z < 3 shrinks" "$out" "FAIL shrink_normal with seed"
+expect "shrink: ... to the z nearest 3 from above" yes "$(awk -v z="$z" 'BEGIN { print (z >= 3 && z < 3.0000001) ? "yes" : "no" }')"
+
+line=$(grep -n -F 'SMITH_CHECK(x, <, 500);' tests/test_shrink.c | sed -n 2p | cut -d: -f1)
+capture build/tests --test shrink_moves
+expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
+expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
+
+# The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds.
+project "$work/budget"
+cat >tests/test_budget.c <<'C'
+#include <smith/test.h>
+
+void test_budget(SmithKey key) {
+    long long smallest = 1000000000;
+    for (uint64_t i = 0; i < 200; i++) {
+        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) smallest = v;
+    }
+    SMITH_CHECK(smallest, <, 1000);
+}
+C
+capture "$smith" build -DSAN=0
+expect "budget: the runner builds" 0 "$rc"
+start=$(date +%s)
+capture build/tests --test budget
+elapsed=$(($(date +%s) - start))
+runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+expect "budget: it shrinks, and stops within 1000 runs" yes "$([ -n "$runs" ] && [ "$runs" -le 1000 ] && echo yes)"
+expect "budget: ... and within about 10 seconds" yes "$([ "$elapsed" -le 14 ] && echo yes)"
+cd "$work/main" || exit 1
+
 # 5. SIGSEGV without the sanitizers is named.
 project "$work/plain"
 cat >tests/test_crash.c <<'C'

@@ -47,6 +47,7 @@ typedef struct {
 
 static SmithTestShared smith_test_fallback;
 static SmithTestShared *smith_test_shared = &smith_test_fallback;
+static SmithTestShared *smith_test_shared_slots; // the runner's: one per job, and one more for shrinking
 static unsigned char *smith_test_memory;
 static size_t smith_test_memory_used; // a multiple of smith_arena_align_max
 static unsigned smith_test_timeout_seconds = 10;
@@ -451,6 +452,8 @@ typedef struct {
     char note[smith_test_note_capacity];
     char detail[smith_test_detail_capacity];
     SmithTestOutput output;
+    unsigned shrink_runs; // the runs shrinking took, 0 when it did not run
+    bool shrink_changed;  // it found a smaller failure
 } SmithTestRun;
 
 static void smith_test_die(const char *call) {
@@ -504,12 +507,16 @@ static void smith_test_run_key(const SmithTest *test, const SmithTestOptions *op
     test->property(smith_key_make(seed));
 }
 
+static uint64_t smith_test_hook(SmithKey key, uint64_t n, uint64_t bits);
+static bool smith_test_hooking; // the next child installs the hook
+
 // In the child: send all output down the pipe, run the test and exit 0 if it returns.
 [[noreturn]] static void smith_test_child(const SmithTest *test, const SmithTestOptions *options,
                                           SmithTestShared *shared, int output) {
     smith_test_shared = shared;
     smith_test_timeout_seconds = options->timeout;
     smith_test_catch_signals();
+    if (smith_test_hooking) smith_random_hook = smith_test_hook;
     if (dup2(output, STDOUT_FILENO) < 0 || dup2(output, STDERR_FILENO) < 0) _exit(smith_test_usage_status);
     close(output);
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -689,6 +696,8 @@ static void smith_test_print_check(const SmithTestRun *run) {
 static void smith_test_print_failure(const SmithTest *test, const SmithTestOptions *options, const SmithTestRun *run) {
     printf("%sFAIL%s %s", smith_test_paint(options, "\033[31m"), smith_test_paint(options, "\033[0m"), test->name);
     if (test->property != nullptr) printf(" with seed %llu", (unsigned long long)run->seed);
+    if (run->shrink_changed) printf(", shrunk in %u runs", run->shrink_runs);
+    if (run->shrink_runs > 0 && !run->shrink_changed) printf(", no smaller case in %u runs", run->shrink_runs);
     smith_test_print_reason(run, options);
     putchar('\n');
     smith_test_print_check(run);
@@ -714,6 +723,245 @@ static void smith_test_report(const SmithTest *test, const SmithTestOptions *opt
             printf("%sPASS%s %s (%llu seeds)\n", green, reset, test->name, (unsigned long long)options->seed_count);
     }
     fflush(stdout);
+}
+
+// Shrinking.
+//
+// A property test draws every number from its key's words (smith_key_bits). When a key fails, the runner reruns that
+// key with smith's random hook installed in the child, which records each (key, n) the test asks for, in first-use
+// order, with the word it got. Then the runner tries to make the failure smaller: for each recorded word in order it
+// tries 0, the simplest value of every distribution, and when the test then no longer fails it searches between 0 and
+// the word for the smallest one that still does. Each try is a child with an override table that the hook reads. A try
+// keeps the failure only when it is the same: the same check (file and line), or the same signal or exit status.
+
+constexpr size_t smith_test_draws_max = 65536; // words recorded; past it, no more are
+constexpr size_t smith_test_slots = 131072;    // a power of two, twice the words: the hash table is never full
+constexpr unsigned smith_test_shrink_runs_max = 1000;
+constexpr double smith_test_shrink_seconds_max = 10.0;
+
+typedef struct {
+    uint64_t key;
+    uint64_t n;
+    uint64_t word;
+} SmithTestDraw;
+
+// A set of draws with a hash table over them, in memory the runner and a child can share.
+typedef struct {
+    uint32_t count;
+    uint32_t dropped; // words that did not fit
+    SmithTestDraw draws[smith_test_draws_max];
+    uint32_t slots[smith_test_slots]; // 1 + the index into draws, or 0
+} SmithTestDraws;
+
+static SmithTestDraws *smith_test_recorded;  // what the child asked for: the child writes, the runner reads
+static SmithTestDraws *smith_test_overrides; // the words to give instead: the runner writes, the child reads
+
+static uint64_t smith_test_mix(uint64_t key, uint64_t n) {
+    uint64_t z = key ^ (n * 0x9e3779b97f4a7c15ULL);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+// The draw for (key, n): its index + 1, or 0. *slot is where it is, or where it would go.
+static uint32_t smith_test_draws_find(const SmithTestDraws *table, uint64_t key, uint64_t n, size_t *slot) {
+    size_t at = smith_test_mix(key, n) & (smith_test_slots - 1);
+    for (size_t probe = 0; probe < smith_test_slots; probe++) {
+        uint32_t entry = table->slots[at];
+        if (entry == 0 || (table->draws[entry - 1].key == key && table->draws[entry - 1].n == n)) {
+            *slot = at;
+            return entry;
+        }
+        at = (at + 1) & (smith_test_slots - 1);
+    }
+    *slot = smith_test_slots;
+    return 0;
+}
+
+// Sets the word of (key, n), adding the draw if it is new. False when the table is full.
+static bool smith_test_draws_set(SmithTestDraws *table, uint64_t key, uint64_t n, uint64_t word) {
+    size_t slot = 0;
+    uint32_t found = smith_test_draws_find(table, key, n, &slot);
+    if (found != 0) {
+        table->draws[found - 1].word = word;
+        return true;
+    }
+    if (table->count >= smith_test_draws_max) {
+        table->dropped += 1;
+        return false;
+    }
+    table->draws[table->count] = (SmithTestDraw){.key = key, .n = n, .word = word};
+    table->count += 1;
+    table->slots[slot] = table->count;
+    return true;
+}
+
+static void smith_test_draws_clear(SmithTestDraws *table) {
+    table->count = 0;
+    table->dropped = 0;
+    memset(table->slots, 0, sizeof table->slots);
+}
+
+// Installed in the child: gives the override for (key, n) if there is one, and records the first use with the word
+// given.
+static uint64_t smith_test_hook(SmithKey key, uint64_t n, uint64_t bits) {
+    size_t slot = 0;
+    uint32_t over = smith_test_draws_find(smith_test_overrides, key.bits, n, &slot);
+    uint64_t word = over != 0 ? smith_test_overrides->draws[over - 1].word : bits;
+    if (smith_test_draws_find(smith_test_recorded, key.bits, n, &slot) == 0)
+        (void)smith_test_draws_set(smith_test_recorded, key.bits, n, word);
+    return word;
+}
+
+// What shrinking one failure holds: the runs it keeps (the best failure so far and the latest try), and the words of
+// the best one's draws.
+typedef struct {
+    const SmithTest *test;
+    const SmithTestOptions *options;
+    uint64_t seed;
+    SmithTestRun *best;      // the smallest failing run so far
+    SmithTestRun *candidate; // the latest try
+    unsigned runs;
+    double deadline;
+    SmithTestDraw list[smith_test_draws_max]; // the best run's draws, in first-use order
+    uint32_t count;
+} SmithTestShrink;
+
+static SmithTestRun smith_test_tries[2];
+static SmithTestShrink smith_test_shrinking;
+
+static bool smith_test_same_failure(const SmithTestRun *failure, const SmithTestRun *run) {
+    if (run->outcome.end != failure->outcome.end || run->outcome.number != failure->outcome.number) return false;
+    if (run->outcome.end != SmithTestEnd_Check) return true;
+    return run->line == failure->line && run->file != nullptr && failure->file != nullptr &&
+           strcmp(run->file, failure->file) == 0;
+}
+
+static bool smith_test_budget(const SmithTestShrink *shrink) {
+    return shrink->runs < smith_test_shrink_runs_max && smith_test_seconds() < shrink->deadline;
+}
+
+// Runs the key once more as a child that records its draws, with the overrides in place. The run lands in
+// shrink->candidate, with its output.
+static void smith_test_try_run(SmithTestShrink *shrink) {
+    SmithTestRun *run = shrink->candidate;
+    SmithTestOptions options = *shrink->options;
+    options.seed_given = true;
+    options.seed = shrink->seed;
+    smith_test_draws_clear(smith_test_recorded);
+    memset(run, 0, sizeof *run);
+    smith_test_hooking = true;
+    SmithTestShared *shared = &smith_test_shared_slots[smith_test_jobs_max];
+    smith_test_start(shrink->test, &options, shared, run);
+    smith_test_hooking = false;
+    while (smith_test_read(run)) {
+    }
+    smith_test_finish(run, shared);
+    shrink->runs += 1;
+}
+
+// Tries the word for the draw at index; true (and the try becomes the best) when the failure is the same.
+static bool smith_test_try_word(SmithTestShrink *shrink, uint32_t index, uint64_t word) {
+    const SmithTestDraw *draw = &shrink->list[index];
+    (void)smith_test_draws_set(smith_test_overrides, draw->key, draw->n, word);
+    smith_test_try_run(shrink);
+    bool same = smith_test_same_failure(shrink->best, shrink->candidate);
+    const SmithTestDraws *recorded = smith_test_recorded;
+    if (same && recorded->count > index && recorded->draws[index].key == draw->key &&
+        recorded->draws[index].n == draw->n) {
+        SmithTestRun *kept = shrink->best;
+        shrink->best = shrink->candidate;
+        shrink->candidate = kept;
+        shrink->count = recorded->count;
+        memcpy(shrink->list, recorded->draws, recorded->count * sizeof recorded->draws[0]);
+        return true;
+    }
+    // Put the word back, so the table holds exactly what the best run was given.
+    (void)smith_test_draws_set(smith_test_overrides, draw->key, draw->n, draw->word);
+    return false;
+}
+
+// Makes the word at index as small as it can be: 0 if the failure survives it, else the smallest word between 0 and the
+// word that does. True when the word got smaller.
+static bool smith_test_shrink_word(SmithTestShrink *shrink, uint32_t index) {
+    uint64_t high = shrink->list[index].word;
+    if (high == 0 || !smith_test_budget(shrink)) return false;
+    if (smith_test_try_word(shrink, index, 0)) return true;
+    uint64_t low = 0; // does not fail
+    bool smaller = false;
+    for (int step = 0; step < 64 && high - low > 1 && smith_test_budget(shrink); step++) {
+        uint64_t middle = low + (high - low) / 2;
+        if (smith_test_try_word(shrink, index, middle)) {
+            high = middle;
+            smaller = true;
+        } else {
+            low = middle;
+        }
+    }
+    return smaller;
+}
+
+// One pass over the best run's draws, in order; the list may change under it after a success.
+static bool smith_test_shrink_pass(SmithTestShrink *shrink) {
+    bool improved = false;
+    for (uint32_t index = 0; index < shrink->count && smith_test_budget(shrink); index++)
+        improved = smith_test_shrink_word(shrink, index) || improved;
+    return improved;
+}
+
+// Copies the shrunk failure into the run that reports it.
+static void smith_test_shrink_finish(const SmithTestShrink *shrink, bool changed, SmithTestRun *run) {
+    run->shrink_runs = shrink->runs;
+    run->shrink_changed = changed;
+    if (!changed) return;
+    run->outcome = shrink->best->outcome;
+    run->file = shrink->best->file;
+    run->line = shrink->best->line;
+    memcpy(run->note, shrink->best->note, sizeof run->note);
+    memcpy(run->detail, shrink->best->detail, sizeof run->detail);
+    run->output = shrink->best->output;
+}
+
+// Whether a failed run is worth shrinking: a property test whose failure is a check, a signal or an exit status. A
+// timeout would cost its whole timeout for every try.
+static bool smith_test_shrinkable(const SmithTest *test, const SmithTestOptions *options, const SmithTestRun *run) {
+    if (test->property == nullptr || !options->shrink) return false;
+    return run->outcome.end == SmithTestEnd_Check || run->outcome.end == SmithTestEnd_Signal ||
+           run->outcome.end == SmithTestEnd_Exit;
+}
+
+// Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on;
+// the same seed gives the same shrunk case unless the time budget ends the search.
+static void smith_test_shrink_run(const SmithTest *test, const SmithTestOptions *options, SmithTestRun *run) {
+    SmithTestShrink *shrink = &smith_test_shrinking;
+    *shrink = (SmithTestShrink){.test = test,
+                                .options = options,
+                                .seed = run->seed,
+                                .best = &smith_test_tries[0],
+                                .candidate = &smith_test_tries[1],
+                                .deadline = smith_test_seconds() + smith_test_shrink_seconds_max};
+    smith_test_draws_clear(smith_test_overrides);
+    smith_test_try_run(shrink); // the same key again, recording; it must fail as it did
+    bool reproduced = smith_test_same_failure(run, shrink->candidate);
+    shrink->best = shrink->candidate;
+    shrink->candidate = shrink->best == &smith_test_tries[0] ? &smith_test_tries[1] : &smith_test_tries[0];
+    shrink->count = smith_test_recorded->count;
+    memcpy(shrink->list, smith_test_recorded->draws, shrink->count * sizeof shrink->list[0]);
+    if (!reproduced) return; // it depended on earlier keys or on chance: the failure stays as it was
+    bool changed = false;
+    for (int pass = 0; pass < 64 && smith_test_budget(shrink); pass++) { // the budget ends it long before
+        if (!smith_test_shrink_pass(shrink)) break;
+        changed = true;
+    }
+    smith_test_shrink_finish(shrink, changed, run);
+}
+
+// The time shrinking takes counts toward the test's, for the list of the slowest.
+static void smith_test_shrink(const SmithTest *test, const SmithTestOptions *options, SmithTestRun *run) {
+    if (!smith_test_shrinkable(test, options, run)) return;
+    double began = smith_test_seconds();
+    smith_test_shrink_run(test, options, run);
+    run->seconds += smith_test_seconds() - began;
 }
 
 // Running.
@@ -774,6 +1022,7 @@ static void smith_test_run_all(SmithTestPlan *plan) {
         }
         smith_test_pump(plan);
         while (printed < plan->count && plan->runs[printed].finished) {
+            smith_test_shrink(plan->tests[printed], plan->options, &plan->runs[printed]);
             smith_test_report(plan->tests[printed], plan->options, &plan->runs[printed]);
             printed += 1;
         }
@@ -890,7 +1139,10 @@ static SmithTestPlan smith_test_plan(const SmithTestOptions *options) {
         plan.count += 1;
     }
     plan.runs = smith_test_map(plan.count * sizeof(SmithTestRun) + 1, MAP_PRIVATE);
-    plan.shared = smith_test_map(smith_test_jobs_max * sizeof(SmithTestShared), MAP_SHARED);
+    plan.shared = smith_test_map((smith_test_jobs_max + 1) * sizeof(SmithTestShared), MAP_SHARED);
+    smith_test_shared_slots = plan.shared; // the last one is for shrinking
+    smith_test_recorded = smith_test_map(sizeof *smith_test_recorded, MAP_SHARED);
+    smith_test_overrides = smith_test_map(sizeof *smith_test_overrides, MAP_PRIVATE);
     return plan;
 }
 

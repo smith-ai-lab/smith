@@ -245,7 +245,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   values with their types, the note, the test's output, and the command that reruns it:
 
   ```
-  FAIL uniform_stays_in_range with seed 6387777158891554393
+  FAIL uniform_stays_in_range with seed 6387777158891554393, shrunk in 41 runs
     tests/test_random.c:12
         SMITH_CHECK(x, <=, range.high);
       x          = 7   (long long)
@@ -255,8 +255,22 @@ smith_tests(b, &tests);                              // tests.step is the task "
       rerun: smith build test -DTEST=uniform_stays_in_range -DSEED=6387777158891554393
   ```
 
+  The check's source line is read from the file when the failure is reported, and left out when the file cannot be read.
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a timeout is
   `FAIL name: timed out after 10 s`. Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
+- **A failing property test is shrunk.** The runner reruns the failing key as a child that has `smith_random_hook`
+  (in `<smith/random.h>`) set, which records each `(key, n)` the test asks `smith_key_bits` for, in first-use order, in
+  shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest
+  value (0 or the bound nearest it for an integer, about the mean for a normal, false, the identity permutation). For
+  each recorded word in order the runner tries 0; if the test then stops failing it binary-searches between 0 and the
+  word for the smallest one that still fails. Each try is a child process that reads an override table from memory.
+  A try is kept only when the failure is the same: the same check (file and line), or the same signal or exit status;
+  a failure that moves to another check is not kept. Passes repeat until none improves, within 1,000 runs or 10
+  seconds, whichever comes first, and the same seed gives the same shrunk case (when the runs limit ends it; the
+  seconds limit depends on the machine). The report is the shrunk failure, with its values, its note and its output,
+  and `shrunk in k runs`; the rerun line names the original seed, and rerunning it shrinks to the same case again.
+  `-DSHRINK=0` shows the unshrunk failure. A timeout is not shrunk (each try would take the whole timeout), and a failure
+  that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
