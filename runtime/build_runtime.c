@@ -801,6 +801,190 @@ const char *smith_replace_extension(SmithBuild *b, const char *path, const char 
     return smith_text("%.*s%s", (int)keep, path, extension);
 }
 
+// High level: compiles and links that smith knows are compiles and links.
+
+constexpr size_t smith_objects_max = 65536;
+
+typedef struct {
+    const SmithObject *address; // the caller's struct, so a copy that was never registered is found out
+    SmithObject object;         // the arena copy; .step is the emitted step
+    bool listed;                // false for an object declared again with the same output: one entry in the file
+} SmithObjectRow;
+
+static SmithObjectRow smith_object_rows[smith_objects_max];
+static size_t smith_object_row_count;
+static bool smith_compile_commands_called;
+
+// The flags `smith build` compiles build.c with; smith.c's bootstrap manifest holds the same words (a test compares).
+static const char *const smith_build_c_words[] = {"smith", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
+                                                  "-I",    ".smith/include", "-c", "build.c", nullptr};
+
+static void smith_require_text(const char *call, const char *field, const char *value) {
+    smith_context = nullptr;
+    if (value == nullptr || *value == '\0') smith_fail("%s: .%s is required", call, field);
+}
+
+static SmithObjectRow *smith_find_row(const SmithObject *address, const char *output) {
+    for (size_t i = 0; i < smith_object_row_count; i++) {
+        SmithObjectRow *row = &smith_object_rows[i];
+        if (row->address == address && row->object.output == output) return row;
+    }
+    return nullptr;
+}
+
+void smith_object(SmithBuild *b, SmithObject *object) {
+    SMITH_ASSERT(b != nullptr && object != nullptr);
+    smith_require_text("smith_object", "compiler", object->compiler);
+    smith_require_text("smith_object", "source", object->source);
+    smith_require_text("smith_object", "output", object->output);
+    SmithObject copy = *object;
+    copy.compiler = smith_copy_string(object->compiler);
+    copy.source = smith_copy_string(object->source);
+    copy.output = smith_copy_string(object->output);
+    copy.flags = smith_copy_list(object->flags);
+    copy.implicit_inputs = smith_copy_list(object->implicit_inputs);
+    const char *depfile = smith_replace_extension(b, copy.output, ".d");
+    if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
+    const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
+    copy.step = (SmithStep){
+        .command = smith_cat(b, smith_one(copy.compiler), copy.flags, tail, nullptr),
+        .inputs = smith_one(copy.source),
+        .implicit_inputs = copy.implicit_inputs,
+        .outputs = smith_one(copy.output),
+        .depfile = depfile,
+    };
+    bool listed = true;
+    for (size_t i = 0; i < smith_object_row_count; i++)
+        listed = listed && strcmp(smith_object_rows[i].object.output, copy.output) != 0;
+    smith_step(b, &copy.step);
+    if (smith_object_row_count >= smith_objects_max) smith_too_many("objects", smith_objects_max);
+    smith_object_rows[smith_object_row_count++] = (SmithObjectRow){object, copy, listed};
+    *object = copy;
+}
+
+// A library that is a file: a path (it holds '/') or ends in .a, .dylib or .so; a flag such as -L/usr/lib is not.
+static bool smith_is_library_file(const char *word) {
+    if (word[0] == '-') return false;
+    size_t length = strlen(word);
+    const char *suffixes[] = {".a", ".dylib", ".so"};
+    bool file = strchr(word, '/') != nullptr;
+    for (size_t i = 0; i < 3; i++) {
+        size_t n = strlen(suffixes[i]);
+        file = file || (length >= n && strcmp(word + length - n, suffixes[i]) == 0);
+    }
+    return file;
+}
+
+static const char *const *smith_library_files(const char *const *libraries) {
+    size_t count = smith_count(libraries);
+    const char **files = smith_new_list(count);
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (smith_is_library_file(libraries[i])) files[used++] = libraries[i];
+    }
+    files[used] = nullptr;
+    return files;
+}
+
+void smith_program(SmithBuild *b, SmithProgram *program) {
+    SMITH_ASSERT(b != nullptr && program != nullptr);
+    smith_require_text("smith_program", "linker", program->linker);
+    smith_require_text("smith_program", "output", program->output);
+    if (program->objects == nullptr || program->objects[0] == nullptr)
+        smith_fail("smith_program: .objects is empty; give it objects passed to smith_object");
+    size_t count = smith_count((const char *const *)program->objects);
+    const SmithObject **rows = (const SmithObject **)smith_new_list(count);
+    const char **outputs = smith_new_list(count);
+    for (size_t i = 0; i < count; i++) {
+        const SmithObjectRow *row = smith_find_row(program->objects[i], program->objects[i]->output);
+        if (row == nullptr) smith_fail("smith_program: .objects[%zu] was never passed to smith_object", i);
+        rows[i] = &row->object;
+        outputs[i] = row->object.output;
+    }
+    SmithProgram copy = *program;
+    copy.linker = smith_copy_string(program->linker);
+    copy.output = smith_copy_string(program->output);
+    copy.flags = smith_copy_list(program->flags);
+    copy.libraries = smith_copy_list(program->libraries);
+    copy.objects = (const SmithObject *const *)rows;
+    const char *const tail[] = {"-o", copy.output, nullptr};
+    copy.step = (SmithStep){
+        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries, tail,
+                             nullptr),
+        .inputs = (const char *const *)outputs,
+        .implicit_inputs = smith_library_files(copy.libraries),
+        .outputs = smith_one(copy.output),
+    };
+    smith_step(b, &copy.step);
+    *program = copy;
+}
+
+static void smith_json_string(FILE *out, const char *text) {
+    fputc('"', out);
+    for (const char *c = text; *c != '\0'; c++) {
+        if (*c == '"' || *c == '\\') {
+            fputc('\\', out);
+            fputc(*c, out);
+        } else if ((unsigned char)*c < 0x20U) {
+            fprintf(out, "\\u%04x", (unsigned)(unsigned char)*c);
+        } else {
+            fputc(*c, out);
+        }
+    }
+    fputc('"', out);
+}
+
+static void smith_json_entry(FILE *out, const char *directory, const char *file, const char *output,
+                             const char *const *arguments) {
+    fputs("  {\n    \"directory\": ", out);
+    smith_json_string(out, directory);
+    fputs(",\n    \"file\": ", out);
+    smith_json_string(out, file);
+    if (output != nullptr) {
+        fputs(",\n    \"output\": ", out);
+        smith_json_string(out, output);
+    }
+    fputs(",\n    \"arguments\": [\n", out);
+    for (size_t i = 0; arguments[i] != nullptr; i++) { // bounded by smith_copy_list
+        fputs(i > 0 ? ",\n      " : "      ", out);
+        smith_json_string(out, arguments[i]);
+    }
+    fputs("\n    ]\n  }", out);
+}
+
+static void smith_put_compile_commands(FILE *out, const SmithBuild *b) {
+    fputs("[\n", out);
+    for (size_t i = 0; i < smith_object_row_count; i++) {
+        const SmithObject *object = &smith_object_rows[i].object;
+        if (!smith_object_rows[i].listed) continue;
+        smith_json_entry(out, b->root, object->source, object->output, object->step.command);
+        fputs(",\n", out);
+    }
+    smith_json_entry(out, b->root, "build.c", nullptr, smith_build_c_words);
+    fputs("\n]\n", out);
+}
+
+void smith_compile_commands(SmithBuild *b, const char *path) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (smith_compile_commands_called) smith_fail("smith_compile_commands is called twice");
+    smith_compile_commands_called = true;
+    smith_check_write_path(path);
+    FILE *counter = fopen("/dev/null", "w");
+    if (counter == nullptr) smith_fail("cannot open /dev/null");
+    smith_put_compile_commands(counter, b);
+    long size = ftell(counter);
+    fclose(counter);
+    SMITH_ASSERT(size > 0);
+    char *text = smith_alloc((size_t)size + 1);
+    FILE *out = fmemopen(text, (size_t)size + 1, "w");
+    if (out == nullptr) smith_fail("cannot render %s", path);
+    smith_put_compile_commands(out, b);
+    SMITH_ASSERT(fclose(out) == 0);
+    text[size] = '\0';
+    smith_write(b, path, text);
+}
+
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b)) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;

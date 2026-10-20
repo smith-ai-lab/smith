@@ -115,3 +115,36 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
+
+// High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
+// Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
+
+// One source compiled to one object:
+//   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
+// with that .d file as the step's depfile.
+typedef struct {
+    const char *compiler;               // the program, such as "smith" or "smith++"; required
+    const char *source;                 // required
+    const char *output;                 // the object, such as "build/main.o"; required
+    const char *const *flags;           // exactly these, in this order
+    const char *const *implicit_inputs; // files the compile reads that are not in its depfile on a clean build, such as
+                                        // a generated #include or #embed file
+    SmithStep step;                     // set by smith_object: the step it emitted
+} SmithObject;
+
+// Objects linked into a program:
+//   <linker> <flags...> <each object's output...> <libraries...> -o <output>
+typedef struct {
+    const char *linker;                // the program, such as "smith" or "smith++"; required
+    const char *output;                // the program file; required
+    const char *const *flags;          // before the objects, such as -mmacosx-version-min=26.0
+    const SmithObject *const *objects; // the objects to link, each already passed to smith_object
+    const char *const *libraries;      // after the objects: -framework Metal, -lm, a .a path
+    SmithStep step;                    // set by smith_program: the step it emitted
+} SmithProgram;
+
+void smith_object(SmithBuild *b, SmithObject *object);
+void smith_program(SmithBuild *b, SmithProgram *program);
+// Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
+// plus one entry for build.c itself with the command smith compiles it with. Call it last.
+void smith_compile_commands(SmithBuild *b, const char *path);

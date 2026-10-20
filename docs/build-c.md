@@ -146,6 +146,31 @@ Generator rules:
 - `smith_lines` reads the file into the arena on every `smith build` (limit 16 MiB). A file a step makes is read inside
   `more`; read in `build()` it is the error `cannot read <path>; if a step makes it, read it inside smith_defer`.
 
+## Two layers
+
+build.c has two layers, and a project may use either or both.
+
+- **The raw layer** (`smith_step`, `smith_task`) is the make replacement: you own every command, and smith knows
+  nothing about what a step does. It cannot tell a compile from an `rm`.
+- **The high level** (`smith_object`, `smith_program`, `smith_compile_commands`) is for letting smith know what a
+  compile and a link are. Each call emits ordinary steps, the same as `smith_step`, and its comment in the header states
+  the exact command. `smith build -v` shows it. Nothing is hidden; the gain is that smith can write a correct
+  `compile_commands.json`, which clang's `-MJ` cannot (it records Apple clang's internal command, which upstream clangd
+  rejects), and which has an entry for build.c itself so an editor finds `<smith/build.h>`.
+
+`compile_commands.json` rules:
+- One entry per `smith_object`, in call order: `directory` is the project root, `file` the source, `output` the object,
+  and `arguments` the exact argv of the step, `-MMD -MF` included (clangd tolerates them, and the file tells the truth).
+  An object declared again with the same output has one entry.
+- Then one entry for build.c: `file` "build.c" and `arguments` `smith -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
+  -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's bootstrap).
+- The JSON is escaped (`"`, `\`, control characters as `\u00XX`), indented two spaces, ends with a newline, and is
+  written only when its bytes change, through `smith_write`'s rules. A `.run` replay writes nothing.
+- Calling `smith_compile_commands` twice is an error, and so is a path under `.smith/`. Call it last.
+- A missing required field is an error naming it; so is an object in `.objects` that was never passed to `smith_object`.
+  A program's step lists the objects' outputs as inputs and the libraries that are files (a path with `/`, or ending in
+  `.a`, `.dylib` or `.so`, and not starting with `-`) as implicit inputs; `-framework X` is not a file.
+
 ## The API
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
@@ -155,7 +180,6 @@ without `#pragma once`. Setting `.content_hash` is the error `smith: build.c: .c
 ```c
 // smith/build.h: the API of a project's build.c, which `smith build` compiles and runs to write build.ninja.
 // Design: docs/build-c.md. Lists end in nullptr and are never nullptr (an optional field left unset reads as empty).
-
 typedef struct SmithBuild {
     // `uname -s` exactly: "Darwin", "Linux"; nothing renamed, so it matches what a Makefile sees
     const char *os;
@@ -269,6 +293,39 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
+
+// High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
+// Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
+
+// One source compiled to one object:
+//   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
+// with that .d file as the step's depfile.
+typedef struct {
+    const char *compiler;               // the program, such as "smith" or "smith++"; required
+    const char *source;                 // required
+    const char *output;                 // the object, such as "build/main.o"; required
+    const char *const *flags;           // exactly these, in this order
+    const char *const *implicit_inputs; // files the compile reads that are not in its depfile on a clean build, such as
+                                        // a generated #include or #embed file
+    SmithStep step;                     // set by smith_object: the step it emitted
+} SmithObject;
+
+// Objects linked into a program:
+//   <linker> <flags...> <each object's output...> <libraries...> -o <output>
+typedef struct {
+    const char *linker;                // the program, such as "smith" or "smith++"; required
+    const char *output;                // the program file; required
+    const char *const *flags;          // before the objects, such as -mmacosx-version-min=26.0
+    const SmithObject *const *objects; // the objects to link, each already passed to smith_object
+    const char *const *libraries;      // after the objects: -framework Metal, -lm, a .a path
+    SmithStep step;                    // set by smith_program: the step it emitted
+} SmithProgram;
+
+void smith_object(SmithBuild *b, SmithObject *object);
+void smith_program(SmithBuild *b, SmithProgram *program);
+// Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
+// plus one entry for build.c itself with the command smith compiles it with. Call it last.
+void smith_compile_commands(SmithBuild *b, const char *path);
 ```
 
 Rules:

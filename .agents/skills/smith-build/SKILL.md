@@ -71,6 +71,25 @@ static int check_nm(SmithRun *run) { // fail if an object uses a symbol outside 
 //     .inputs = obj.outputs, .outputs = (const char *[]){"build/check.stamp", nullptr}}; smith_step(b, &check);
 ```
 
+## High level
+
+- `smith_object(b, &object)` is one compile (`<compiler> <flags> -MMD -MF <output>.d -c <source> -o <output>`, with that depfile), `smith_program(b, &program)` links objects (`<linker> <flags> <objects> <libraries> -o <output>`), and `smith_compile_commands(b, path)` writes compile_commands.json from them, plus an entry for build.c. They emit ordinary steps; `smith build -v` shows the commands. Pass each object to `smith_object` before the program that links it. Libraries that are files rebuild the program; `-framework X` is not a file.
+- clangd then works with any version: point it at smith with `--query-driver=<path to smith>`.
+
+```c
+void build(SmithBuild *b) {
+    SmithObject main = {.compiler = "smith", .source = "main.c", .output = "build/main.o",
+                        .flags = (const char *[]){"-std=gnu23", "-g", nullptr}};
+    smith_object(b, &main);
+    SmithProgram app = {.linker = "smith", .output = "build/app",
+                        .objects = (const SmithObject *[]){&main, nullptr},
+                        .libraries = (const char *[]){"-lm", nullptr}};
+    smith_program(b, &app);
+    smith_compile_commands(b, "compile_commands.json"); // last
+    smith_default(b, app.step.outputs);
+}
+```
+
 ## Replace a Makefile
 
 - Keep every command word for word and every output path the same; a linked binary records its objects' paths.

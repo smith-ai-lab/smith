@@ -1219,6 +1219,190 @@ build -Dsufix=typo
 expect_status "defer option: a misspelt one still fails once the callback ran" 2
 expect_contains "defer option: the message names it" "$err" "unknown option -Dsufix"
 
+# 9h. The high level: smith_object, smith_program and smith_compile_commands.
+project
+mkdir "src dir"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject main_object = {
+        .compiler = "cc",
+        .source = "src dir/main.c",
+        .output = "build/main.o",
+        .flags = (const char *[]){"-std=gnu23", "-DGREETING=\"hi\"", nullptr},
+    };
+    smith_object(b, &main_object);
+    SmithObject util = {.compiler = "cc", .source = "util.c", .output = "build/util.o"};
+    smith_object(b, &util);
+    SmithProgram app = {
+        .linker = "cc",
+        .output = "build/app",
+        .objects = (const SmithObject *[]){&main_object, &util, nullptr},
+        .libraries = (const char *[]){"-lm", "-framework", "Foundation", "libextra.a", nullptr},
+    };
+    smith_program(b, &app);
+    smith_compile_commands(b, "compile_commands.json");
+    smith_default(b, app.step.outputs);
+}
+C
+cat >"src dir/main.c" <<'C'
+#include <stdio.h>
+int util_value(void);
+int main(void) { printf("%s %d\n", GREETING, util_value()); return 0; }
+C
+printf 'int util_value(void);\n' >util.h
+printf '#include "util.h"\nint util_value(void) { return 7; }\n' >util.c
+printf 'int extra_value(void) { return 1; }\n' >extra.c
+"$cc" -c extra.c -o extra.o && ar rcs libextra.a extra.o
+build -v
+expect "high level: the program builds" 0 "$rc"
+expect "high level: the program runs" "hi 7" "$(./build/app 2>/dev/null)"
+expect_contains "high level: -v shows the compile" "$out" "cc -std=gnu23 '-DGREETING=\"hi\"' -MMD -MF build/main.d -c 'src dir/main.c' -o build/main.o"
+expect_contains "high level: -v shows the link" "$out" "cc build/main.o build/util.o -lm -framework Foundation libextra.a -o build/app"
+here_dir=$(pwd -P)
+cat >expected.json <<JSON
+[
+  {
+    "directory": "$here_dir",
+    "file": "src dir/main.c",
+    "output": "build/main.o",
+    "arguments": [
+      "cc",
+      "-std=gnu23",
+      "-DGREETING=\\"hi\\"",
+      "-MMD",
+      "-MF",
+      "build/main.d",
+      "-c",
+      "src dir/main.c",
+      "-o",
+      "build/main.o"
+    ]
+  },
+  {
+    "directory": "$here_dir",
+    "file": "util.c",
+    "output": "build/util.o",
+    "arguments": [
+      "cc",
+      "-MMD",
+      "-MF",
+      "build/util.d",
+      "-c",
+      "util.c",
+      "-o",
+      "build/util.o"
+    ]
+  },
+  {
+    "directory": "$here_dir",
+    "file": "build.c",
+    "arguments": [
+      "smith",
+      "-std=gnu23",
+      "-g",
+      "-O0",
+      "-Wall",
+      "-Wextra",
+      "-I",
+      ".smith/include",
+      "-c",
+      "build.c"
+    ]
+  }
+]
+JSON
+expect "compile_commands.json: the whole file" "$(cat expected.json)" "$(cat compile_commands.json 2>/dev/null)"
+expect "compile_commands.json: ends with a newline" "]" "$(tail -c 2 compile_commands.json | tr -d '\n' | tail -c 1)"
+before=$(perl -e 'print((stat("compile_commands.json"))[9])')
+sleep 1
+build
+expect_contains "high level: a no-op build does nothing" "$out" "no work to do"
+expect "compile_commands.json: the mtime is unchanged on a no-op" "$before" "$(perl -e 'print((stat("compile_commands.json"))[9])')"
+sleep 1
+printf 'int util_value(void);\n// edited\n' >util.h
+build -v
+expect_contains "high level: a header edit rebuilds the includer" "$out" "build/util.o"
+expect_contains "high level: a header edit relinks" "$out" "-o build/app"
+case $out in *"src dir/main.c"*) rebuilt_main=yes ;; *) rebuilt_main=no ;; esac
+expect "high level: a header only util.c includes does not rebuild main" no "$rebuilt_main"
+expect "high level: a header edit leaves compile_commands.json alone" "$before" "$(perl -e 'print((stat("compile_commands.json"))[9])')"
+sleep 1
+touch libextra.a
+build -v
+expect_contains "high level: a changed library file relinks" "$out" "-o build/app"
+build
+sleep 1
+touch Foundation
+build
+expect_contains "high level: -framework X's name is not a file" "$out" "no work to do"
+sed -i.bak 's/"-std=gnu23", "-DGREETING/"-std=gnu23", "-Wall", "-DGREETING/' build.c
+build
+case $(cat compile_commands.json) in *'"-Wall"'*) changed=yes ;; *) changed=no ;; esac
+expect "compile_commands.json: a changed flag changes it" yes "$changed"
+# the build.c entry compiles build.c with exactly these arguments
+args=$(sed -n '/"file": "build.c"/,/^    \]/p' compile_commands.json | sed -n 's/^      "\(.*\)",\{0,1\}$/\1/p' | tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')
+# shellcheck disable=SC2086
+capture /usr/bin/clang $args -fsyntax-only build.c
+expect "build.c entry: clang -fsyntax-only with its arguments succeeds" "0 " "$rc $err"
+bootstrap_flags=$(sed -n 's/.*command = [^ ]* \(-std=gnu23.*-I \.smith\/include\) -MMD.*/\1/p' .smith/bootstrap/build.ninja | head -n 1)
+entry_flags=$(echo $args)
+expect "build.c entry: its flags are the bootstrap's" "$bootstrap_flags" "$entry_flags"
+cd "$copy_project" || exit 1
+
+# 9i. High-level errors.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.source = "a.c", .output = "a.o"};
+    smith_object(b, &o);
+    smith_default(b, o.step.outputs);
+}
+C
+build
+expect_status "errors: a missing .compiler fails" 2
+expect_contains "errors: the message names .compiler" "$err" ".compiler is required"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.compiler = "cc", .source = "a.c", .output = "a.o"};
+    smith_object(b, &o);
+    SmithObject copy = o;
+    SmithProgram p = {.linker = "cc", .output = "a", .objects = (const SmithObject *[]){&copy, nullptr}};
+    smith_program(b, &p);
+    smith_default(b, p.step.outputs);
+}
+C
+build
+expect_status "errors: an unregistered object fails" 2
+expect_contains "errors: the message says it was never passed to smith_object" "$err" "never passed to smith_object"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_commands(b, "one.json");
+    smith_compile_commands(b, "two.json");
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build
+expect_status "errors: a second smith_compile_commands fails" 2
+expect_contains "errors: the message says twice" "$err" "twice"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_commands(b, ".smith/cc.json");
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build
+expect_status "errors: compile_commands under .smith fails" 2
+
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
 build -t targets
