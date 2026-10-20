@@ -1,0 +1,42 @@
+# clang-tidy 23 (Homebrew LLVM), run by make check over smith.c and tests/stub.c.
+# Excluded bugprone checks:
+#   easily-swappable-parameters: flags every pair like (size, align); too noisy for C.
+#   suspicious-include: the unity builds include .c files on purpose.
+#   switch-missing-default-case: an enum switch leaves out default so -Wswitch names a missing case.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-suspicious-include,
+  -bugprone-switch-missing-default-case,
+  misc-no-recursion,
+  readability-function-size,
+  readability-identifier-naming
+WarningsAsErrors: '*'
+# smith has no headers of its own; diagnostics come from smith.c and tests/stub.c, never from system headers.
+HeaderFilterRegex: '(^|/)(smith\.c|tests/.*)$'
+CheckOptions:
+  bugprone-assert-side-effect.AssertMacros: SMITH_ASSERT
+  # Positive literals such as 1 << 0 are never the hazard the check exists for.
+  bugprone-signed-bitwise.IgnorePositiveIntegerLiterals: true
+  # clang-tidy counts the lines after the opening brace's line through the closing brace,
+  # so 69 allows 70 lines from the opening brace's line through the closing brace.
+  readability-function-size.LineThreshold: 69
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  # constexpr constants are named like variables, with the module prefix: arena_align_max.
+  readability-identifier-naming.ConstexprVariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.TypedefCase: CamelCase
+  # base/base.h names the fixed-width types u8…u64, i8…i64, f32 and f64.
+  readability-identifier-naming.TypedefIgnoredRegexp: '^[uif](8|16|32|64)$'
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # Type_Value (FighterAction_Roll) is no built-in case style. Names of that shape are skipped:
+  # a PascalCase type with a lowercase letter, one underscore, then a value starting uppercase.
+  # Every other enum value must start with a prefix no identifier can have, so it's flagged.
+  readability-identifier-naming.EnumConstantIgnoredRegexp: '^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*_[A-Z][A-Za-z0-9]*$'
+  readability-identifier-naming.EnumConstantPrefix: 'Type_Value-'
