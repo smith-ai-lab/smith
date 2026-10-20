@@ -257,7 +257,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 
   The check's source line is read from the file when the failure is reported, and left out when the file cannot be read.
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a timeout is
-  `FAIL name: timed out after 10 s`. Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
+  `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
 - **A failing property test is shrunk.** The runner reruns the failing key as a child that has `smith_random_hook`
   (in `<smith/random.h>`) set, which records each `(key, n)` the test asks `smith_key_bits` for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest

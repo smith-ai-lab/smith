@@ -11,6 +11,9 @@
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
 // more than this header.
 //
+// The runner sets a timer for each test (`--timeout`, 10 s). A test that calls `alarm` itself replaces that timer, and
+// when its alarm fires the test ends as a timeout, reported with the time it ran ("timed out after 2.0 s").
+//
 // The checks are macros because only a macro can capture an expression's text, its file and its line, and evaluate an
 // expression later in a child process.
 //
@@ -48,7 +51,8 @@ extern const SmithTest smith_test_table[];
 extern const size_t smith_test_count;
 
 // Printed under a failure, whether it is a failed check, a crash or a timeout. Each note replaces the last, and the
-// runner clears it before each test and each key. For where the test is, such as a loop's index.
+// runner clears it before each test and each key. For where the test is, such as a loop's index. It holds 4 KiB; a
+// longer note is cut and ends with `…` so the cut shows.
 [[gnu::format(printf, 1, 2)]] void smith_test_note(const char *format, ...);
 
 // This test's memory, capacity bytes, from a block the runner reserved once. It is given back before each test and each

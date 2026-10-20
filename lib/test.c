@@ -24,7 +24,7 @@
 #define __has_feature(feature) 0
 #endif
 
-constexpr size_t smith_test_note_capacity = 160;
+constexpr size_t smith_test_note_capacity = 4096;
 constexpr size_t smith_test_detail_capacity = 1024;
 constexpr size_t smith_test_text_capacity = 128;          // one formatted value
 constexpr size_t smith_test_memory_capacity = 256U << 20; // every test arena of one test, or of one key, together
@@ -35,6 +35,20 @@ constexpr size_t smith_test_alternate_stack = 64U << 10;
 constexpr int smith_test_failure_status = 99; // a child whose check failed exits with this
 constexpr int smith_test_signal_status = 128; // a child that catches a fatal signal exits with 128 + its number
 constexpr int smith_test_usage_status = 2;
+
+// The SDK's WIFSIGNALED and WIFEXITED expand to a literal written 0177, which -Wdeprecated-octal-literals rejects under
+// the C2y flags `smith new` writes, and a project compiles this file with its own flags. So the SDK's macros are used
+// here only, with that one warning off.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-octal-literals"
+static int smith_test_status_signal(int status) {
+    return WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+}
+
+static int smith_test_status_code(int status) {
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 0;
+}
+#pragma clang diagnostic pop
 
 // What a child tells the runner, in memory they share. A block is reset before each test and each key.
 typedef struct {
@@ -80,8 +94,16 @@ void smith_test_note(const char *format, ...) {
     assert(format != nullptr);
     va_list arguments;
     va_start(arguments, format);
-    vsnprintf(smith_test_shared->note, smith_test_note_capacity, format, arguments);
+    int wanted = vsnprintf(smith_test_shared->note, smith_test_note_capacity, format, arguments);
     va_end(arguments);
+    if (wanted >= 0 && (size_t)wanted >= smith_test_note_capacity) {
+        // Cut: end it with the mark, backing up so the cut does not split a UTF-8 character.
+        constexpr char mark[] = "\xE2\x80\xA6"; // …
+        size_t at = smith_test_note_capacity - sizeof mark;
+        while (at > 0 && (((unsigned char)smith_test_shared->note[at]) & 0xC0U) == 0x80U)
+            at--;
+        memcpy(smith_test_shared->note + at, mark, sizeof mark);
+    }
 }
 
 // Values.
@@ -371,9 +393,8 @@ static size_t smith_test_death_read(char *text, size_t capacity) {
 // Why the child's end is not a death, or nullptr when it died: by a signal, by a caught signal's status, or by any
 // other non-zero exit, which is how a sanitizer ends a process.
 static const char *smith_test_death_verdict(int status) {
-    int signal_number = 0;
-    if (WIFSIGNALED(status)) signal_number = WTERMSIG(status);
-    int code = WIFEXITED(status) ? WEXITSTATUS(status) : 0;
+    int signal_number = smith_test_status_signal(status);
+    int code = smith_test_status_code(status);
     if (code > smith_test_signal_status) signal_number = code - smith_test_signal_status;
     if (signal_number == SIGALRM) return "expected an abort; it timed out";
     if (signal_number != 0) return nullptr;
@@ -558,8 +579,8 @@ static const char *smith_test_signal_name(int signal_number) {
 
 static SmithTestOutcome smith_test_judge(int status, bool flood) {
     if (flood) return (SmithTestOutcome){.end = SmithTestEnd_Flood};
-    int signal_number = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
-    int code = WIFEXITED(status) ? WEXITSTATUS(status) : 0;
+    int signal_number = smith_test_status_signal(status);
+    int code = smith_test_status_code(status);
     if (code > smith_test_signal_status) signal_number = code - smith_test_signal_status;
     if (signal_number == SIGALRM) return (SmithTestOutcome){.end = SmithTestEnd_Timeout, .number = SIGALRM};
     if (signal_number != 0) return (SmithTestOutcome){.end = SmithTestEnd_Signal, .number = signal_number};
@@ -659,12 +680,11 @@ static bool smith_test_source_line(const char *file, int line, char *text, size_
     return current == line && used > 0;
 }
 
-static void smith_test_print_reason(const SmithTestRun *run, const SmithTestOptions *options) {
-    unsigned timeout = options->timeout;
+static void smith_test_print_reason(const SmithTestRun *run) {
     const char *name = smith_test_signal_name(run->outcome.number);
     switch (run->outcome.end) {
     case SmithTestEnd_Timeout:
-        printf(": timed out after %u s", timeout);
+        printf(": timed out after %.1f s", run->seconds);
         break;
     case SmithTestEnd_Signal:
         if (name != nullptr)
@@ -698,7 +718,7 @@ static void smith_test_print_failure(const SmithTest *test, const SmithTestOptio
     if (test->property != nullptr) printf(" with seed %llu", (unsigned long long)run->seed);
     if (run->shrink_changed) printf(", shrunk in %u runs", run->shrink_runs);
     if (run->shrink_runs > 0 && !run->shrink_changed) printf(", no smaller case in %u runs", run->shrink_runs);
-    smith_test_print_reason(run, options);
+    smith_test_print_reason(run);
     putchar('\n');
     smith_test_print_check(run);
     if (run->note[0] != '\0') printf("    note: %s\n", run->note);

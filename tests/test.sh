@@ -3,6 +3,7 @@
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
+repo=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 failures=0
@@ -329,6 +330,7 @@ cat >tests/test_isolation.c <<'C'
 #include <smith/test.h>
 
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 void test_overflow(void) {
@@ -346,6 +348,24 @@ void test_exits(void) {
     exit(3);
 }
 
+void test_alarm_hangs(void) {
+    alarm(1);
+    sleep(30);
+}
+
+void test_long_note(void) {
+    char text[6000];
+    memset(text, 'a', sizeof text - 1);
+    text[sizeof text - 1] = '\0';
+    smith_test_note("%s", text);
+    SMITH_CHECK(1, ==, 2);
+}
+
+void test_board_note(void) {
+    smith_test_note("board\n  . x .\n  x . x\n  . x .\nend");
+    SMITH_CHECK(1, ==, 2);
+}
+
 void test_ok_after(void) {
     SMITH_CHECK(1, ==, 1);
 }
@@ -357,7 +377,19 @@ expect_contains "isolation: an ASan report is shown" "$out" "AddressSanitizer: h
 expect_contains "isolation: ... under the test's FAIL line" "$out" "FAIL overflow: killed by SIGABRT"
 expect_contains "isolation: ... with the note" "$out" "    note: index 8"
 capture build/tests --test sleeps --timeout 1
-expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1 s"
+expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1.0 s"
+capture build/tests --test alarm_hangs
+expect_contains "isolation: a test's own alarm ends it as a timeout, with the measured time" "$out" "FAIL alarm_hangs: timed out after 1.0 s"
+capture build/tests --test board_note
+expect_contains "note: several lines show in full" "$out" "    note: board
+  . x .
+  x . x
+  . x .
+end"
+expect_lacks "note: ... without the mark" "$out" "…"
+capture build/tests --test long_note
+expect_contains "note: an overlong one ends with the mark" "$out" "aaa…"
+expect_lacks "note: ... and holds no more than 4 KiB" "$out" "$(printf 'a%.0s' $(seq 1 4100))"
 capture build/tests --test exits
 expect_contains "isolation: an exit status is reported" "$out" "FAIL exits: exited with status 3"
 capture build/tests --test ok_after --verbose
@@ -668,6 +700,17 @@ if [ -x /usr/bin/clangd ]; then
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
+
+# 10. The libraries compile clean under the flags `smith new` writes, in both C standards.
+flags=$(awk '/build_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/templates/new/build.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
+for standard in gnu2y gnu23; do
+    for library in test random arena; do
+        # shellcheck disable=SC2086
+        capture /usr/bin/clang -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
+        expect "flags: lib/$library.c compiles clean under $standard with the template's warnings" 0 "$rc"
+        [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
+    done
+done
 
 echo
 echo "$total test checks, $failures failed"
