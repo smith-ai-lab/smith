@@ -5,12 +5,17 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+// The number in an environment variable the tests set, or fallback when it is unset.
+static int stub_env_number(const char *name, int fallback) {
+    const char *text = getenv(name);
+    return text != NULL ? (int)strtol(text, NULL, 10) : fallback;
+}
+
 int main(int argc, char **argv) {
     printf("%s argv0=%s\n", NAME, argv[0]);
-    for (int i = 1; i < argc; i++) printf("[%s]\n", argv[i]);
+    for (int i = 1; i < argc; i++)
+        printf("[%s]\n", argv[i]);
     fprintf(stderr, "%s-stderr\n", NAME);
-    const char *signal_number = getenv("STUB_SIGNAL");
-    if (signal_number != NULL) kill(getpid(), atoi(signal_number));
-    const char *code = getenv("STUB_EXIT");
-    return code != NULL ? atoi(code) : 0;
+    if (getenv("STUB_SIGNAL") != NULL) kill(getpid(), stub_env_number("STUB_SIGNAL", 0));
+    return stub_env_number("STUB_EXIT", 0);
 }
