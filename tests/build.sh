@@ -1075,13 +1075,13 @@ expect_contains "failure: ninja reports the status" "$out$err" "code=3"
 expect_contains "failure: the function's own message shows" "$out$err" "this step fails"
 expect "failure: nothing after it ran" "no" "$([ -e after.out ] && echo yes || echo no)"
 
-# 9m. Editing the function reruns the step; options reach the function through the replay; defer.
+# 9m. Editing the function reruns the step; options reach the function through .args; defer.
 project
 cat >build.c <<'C'
 #include <smith/build.h>
 
 static int write_it(SmithRun *run) {
-    smith_write(run->b, run->outputs[0], smith_fmt(run->b, "v1 %s\n", smith_option_value(run->b, "who", "nobody", nullptr)));
+    smith_write(run->b, run->outputs[0], smith_fmt(run->b, "v1 %s\n", run->args[0]));
     return 0;
 }
 
@@ -1097,8 +1097,12 @@ static void more(SmithBuild *b) {
 }
 
 void build(SmithBuild *b) {
-    smith_option_value(b, "who", "nobody", "a name");
-    SmithStep step = {.run = write_it, .outputs = (const char *[]){"it.out", nullptr}};
+    const char *who = smith_option_value(b, "who", "nobody", "a name");
+    SmithStep step = {
+        .run = write_it,
+        .args = (const char *[]){who, nullptr},
+        .outputs = (const char *[]){"it.out", nullptr},
+    };
     smith_step(b, &step);
     smith_alias(b, "it", step.outputs);
     smith_defer(b, (const char *[]){"it.out", nullptr}, more);
@@ -1112,7 +1116,7 @@ sed 's/"v1 %s/"v2 %s/' build.c >build.c.new && mv build.c.new build.c
 build it
 expect "edit: editing build.c reruns the step" "0 v2 nobody" "$rc $(cat it.out 2>/dev/null)"
 build it -Dwho=Ada
-expect "options: -Dname=value reaches the function through the replay" "0 v2 Ada" "$rc $(cat it.out 2>/dev/null)"
+expect "options: -Dname=value reaches the function through .args" "0 v2 Ada" "$rc $(cat it.out 2>/dev/null)"
 build it -Dwho='a b$c'
 expect "options: a value with a space and a dollar" "v2 a b\$c" "$(cat it.out 2>/dev/null)"
 build
@@ -1160,7 +1164,7 @@ sh 4 [a] [] [b c] [last]
 lines x y end
 failing null" "$(cat status.txt)"
 
-# 9o. The replay's cost (informational): a trivial .run task against a trivial command task.
+# 9o. A .run step's cost (informational): a trivial .run task against a trivial command task.
 project
 cat >build.c <<'C'
 #include <smith/build.h>
@@ -1185,6 +1189,178 @@ for task in tock tick; do
     end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
     echo "time  smith build $task (a task that runs every time): $(perl -e "printf '%.0f', ($end - $start) * 100") ms per run (mean of 10)"
 done
+
+# 9o2. A .run step gets its data from its command: .args and .inputs with a space and a $ in a value, no -D option, and
+# build() is not called again for it.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+
+static int show(SmithRun *run) {
+    FILE *out = fopen(run->outputs[0], "w");
+    for (const char *const *input = run->inputs; *input; input++)
+        fprintf(out, "input [%s]\n", *input);
+    for (const char *const *output = run->outputs; *output; output++)
+        fprintf(out, "output [%s]\n", *output);
+    for (const char *const *arg = run->args; *arg; arg++)
+        fprintf(out, "arg [%s]\n", *arg);
+    fprintf(out, "who [%s]\n", smith_option_value(run->b, "who", "unset", nullptr));
+    fclose(out);
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    FILE *count = fopen("calls.log", "a");
+    fputs("build\n", count);
+    fclose(count);
+    smith_option_value(b, "who", "nobody", "a name");
+    SmithStep step = {
+        .run = show,
+        .inputs = (const char *[]){"in put.txt", "$HOME.txt", nullptr},
+        .outputs = (const char *[]){"seen.txt", nullptr},
+        .args = (const char *[]){"two words", "$dollar", "it's", "--arg", nullptr},
+    };
+    smith_step(b, &step);
+    SmithStep other = {.run = show, .inputs = (const char *[]){"in put.txt", nullptr}, .outputs = (const char *[]){"other.out", nullptr}};
+    smith_step(b, &other);
+    smith_default(b, smith_cat(b, step.outputs, other.outputs, nullptr));
+}
+C
+echo a >'in put.txt'
+echo b >'$HOME.txt'
+build -Dwho=Ada
+expect_status ".run data: the step succeeds" 0
+cat >want.txt <<'W'
+input [in put.txt]
+input [$HOME.txt]
+output [seen.txt]
+arg [two words]
+arg [$dollar]
+arg [it's]
+arg [--arg]
+who [unset]
+W
+expect ".run data: inputs, outputs and args arrive exactly, and no -D option does" "$(cat want.txt)" "$(cat seen.txt)"
+expect ".run data: build() runs once per smith build, not once per .run step" 1 "$(lines calls.log)"
+build -Dwho=Bob
+expect ".run data: build() ran once more for a second smith build" 2 "$(lines calls.log)"
+
+# 9o3. smith_join and smith_list.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static const char *const *make_list(SmithBuild *b) {
+    {
+        return smith_list(b, "one", "two words", "$three", nullptr);
+    }
+}
+
+static const char *const *kept(SmithBuild *b) {
+    const char *const *list;
+    {
+        list = smith_list(b, "kept", "alive", nullptr);
+        const char *scratch[] = {"gone", nullptr};
+        (void)scratch;
+    }
+    return list;
+}
+
+void build(SmithBuild *b) {
+    const char *const *empty = smith_list(b, nullptr);
+    const char *const *one = smith_list(b, "solo", nullptr);
+    const char *const *many = make_list(b);
+    smith_write(b, "join.txt",
+                smith_fmt(b, "[%s][%s][%s][%s][%s]\n[%s]\n", smith_join(b, empty, ","), smith_join(b, one, ", "),
+                          smith_join(b, many, ", "), smith_join(b, many, ""), smith_join(b, kept(b), "\n"),
+                          smith_join(b, smith_map(b, many, "#include \"%s\"\n"), "")));
+    smith_write(b, "list.txt", smith_fmt(b, "%d %d %d %s\n", (int)(empty[0] == nullptr), (int)(one[1] == nullptr),
+                                         (int)(many[3] == nullptr), many[2]));
+    smith_default(b, smith_list(b, nullptr));
+}
+C
+build
+expect_status "join, list: build.c runs" 0
+expect "join: empty, one, several, empty separator, newline, mapped" '[][solo][one, two words, $three][onetwo words$three][kept
+alive]
+[#include "one"
+#include "two words"
+#include "$three"
+]' "$(cat join.txt)"
+expect "list: empty, one, three; kept past its block and returned" '1 1 1 $three' "$(cat list.txt)"
+
+# 9o4. smith_run_program: stdout reaches the terminal, an environment variable arrives, and an exit status comes back.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+
+static int play(SmithRun *run) {
+    printf("function line first\n");
+    int shown = smith_run_program(run, (const char *[]){"sh", "-c", "echo \"program says $SMITH_TEST_WORD and $HOME_KEPT\"; echo err-line >&2", nullptr},
+                                  (const char *[]){"SMITH_TEST_WORD=two words $x", "HOME_KEPT=kept", nullptr});
+    int three = smith_run_program(run, (const char *[]){"sh", "-c", "exit 3", nullptr}, nullptr);
+    int killed = smith_run_program(run, (const char *[]){"sh", "-c", "kill -9 $$", nullptr}, nullptr);
+    int missing = smith_run_program(run, (const char *[]){"smith-no-such-program", nullptr}, nullptr);
+    printf("statuses %d %d %d %d\n", shown, three, killed, missing);
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep step = {.run = play};
+    smith_task(b, "play", &step);
+    smith_default(b, smith_list(b, nullptr));
+}
+C
+capture env HOME_KEPT=old "$smith" build play
+expect_status "run_program: the step succeeds" 0
+expect_contains "run_program: the environment variable arrives" "$out" "program says two words \$x and kept"
+expect_contains "run_program: statuses are 0, 3, 128 plus the signal and 127" "$out" "statuses 0 3 137 127"
+expect "run_program: the function's line comes before the program's" "function line first" \
+    "$(printf '%s\n' "$out" | grep -n 'function line first\|program says' | sed -n 1p | sed 's/^[0-9]*://')"
+expect_contains "run_program: stderr reaches the terminal" "$out$err" "err-line"
+expect "run_program: the program's line is in smith build's own stdout" 1 "$(printf '%s\n' "$out" | grep -c 'program says')"
+
+# 9o5. ** in smith_glob.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_write(b, "deep.txt", smith_join(b, smith_map(b, smith_glob(b, (const char *[]){"src/**/*.c", nullptr}), "%s\n"), ""));
+    smith_write(b, "hidden.txt", smith_join(b, smith_map(b, smith_glob(b, (const char *[]){"src/**/*.h", nullptr}), "%s\n"), ""));
+    smith_write(b, "overlap.txt", smith_join(b, smith_map(b, smith_glob(b, (const char *[]){"src/**/*.c", "src/x/*.c", "src/*.c", "**/b.c", nullptr}), "%s\n"), ""));
+    smith_write(b, "dot.txt", smith_join(b, smith_map(b, smith_glob(b, (const char *[]){"src/.*/*.c", "src/**/.hid/*.h", nullptr}), "%s\n"), ""));
+    smith_write(b, "star.txt", smith_join(b, smith_map(b, smith_glob(b, (const char *[]){"*/a.c", "s?c/x/[y]/*.c", nullptr}), "%s\n"), ""));
+    smith_default(b, smith_list(b, nullptr));
+}
+C
+mkdir -p src/x/y/z src/.hid/deep other
+echo >src/a.c
+echo >src/x/b.c
+echo >src/x/y/z/d.c
+echo >src/x/y/c.c
+echo >src/.hid/h.c
+echo >src/.hid/h.h
+echo >src/x/y/e.h
+echo >other/a.c
+build
+expect_status "glob **: build.c runs" 0
+expect "glob **: zero, one, two and three folders deep; the hidden folder is skipped" "src/a.c
+src/x/b.c
+src/x/y/c.c
+src/x/y/z/d.c" "$(cat deep.txt)"
+expect "glob **: *.h skips the hidden folder" "src/x/y/e.h" "$(cat hidden.txt)"
+expect "glob **: sorted, with no duplicates when patterns overlap" "src/a.c
+src/x/b.c
+src/x/y/c.c
+src/x/y/z/d.c" "$(cat overlap.txt)"
+expect "glob **: a component that starts with . matches hidden entries" "src/.hid/h.c
+src/.hid/h.h" "$(cat dot.txt)"
+expect "glob: other components go through fnmatch" "other/a.c
+src/a.c
+src/x/y/c.c" "$(cat star.txt)"
 
 # 9p. An option that only a smith_defer callback reads: stage 1 cannot know it yet, stage 2 checks it.
 project

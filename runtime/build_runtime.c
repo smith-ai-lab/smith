@@ -3,9 +3,11 @@
 // written only when its bytes change, so ninja's view of it changes only when the build does. See docs/build-c.md.
 #include <smith/build.h>
 
+#include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <glob.h>
+#include <fnmatch.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <spawn.h>
@@ -40,8 +42,8 @@ constexpr size_t smith_chunk = 65536;
 constexpr size_t smith_defers_max = 256;
 constexpr size_t smith_lines_file_max = 16U << 20;
 constexpr size_t smith_command_max = 1U << 20;
-constexpr int smith_glob_first = GLOB_NOSORT;
-constexpr int smith_glob_next = GLOB_NOSORT | GLOB_APPEND;
+constexpr size_t smith_glob_depth_max = 64;
+constexpr size_t smith_glob_parts_max = 128;
 
 typedef enum {
     SmithEntryKind_Step,
@@ -103,8 +105,6 @@ static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
 static char smith_command_buffer[smith_command_max + 1];
 static const char *smith_context; // "step x" or "task x" while one is being checked or written
-static bool smith_run_mode;       // --run: build() is replayed to find a step's function; nothing is written
-static bool smith_in_run;         // the function is running, so smith_write writes again
 
 [[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
     fprintf(stderr, "smith: assertion failed: %s (%s:%d)\n", condition, file, line);
@@ -545,28 +545,136 @@ static int smith_compare_strings(const void *left, const void *right) {
 }
 
 // The union of the matches of every pattern, sorted by strcmp (not the locale), each name once: make's
-// $(sort $(wildcard a b c)).
+// $(sort $(wildcard a b c)). A pattern is walked one component at a time with an explicit stack and no recursion. A
+// `**` component matches zero or more folders (at most smith_glob_depth_max deep; symbolic links are not followed), and
+// every other component goes through fnmatch. A hidden entry matches only a component that starts with '.', as in the
+// shell.
+
+typedef struct {
+    const char *path; // what the components before `part` matched; "" at the start
+    size_t part;      // the next component to match
+    size_t depth;     // the folders `**` has entered
+} SmithGlobState;
+
+typedef struct {
+    const char *text; // not 0-terminated
+    size_t length;
+} SmithGlobPart;
+
+static const char *smith_glob_names[smith_list_max];
+static size_t smith_glob_name_count;
+static SmithGlobState smith_glob_stack[smith_entries_max];
+static size_t smith_glob_stack_count;
+static SmithGlobPart smith_glob_parts[smith_glob_parts_max];
+static size_t smith_glob_part_count;
+
+static void smith_glob_push(const char *path, size_t part, size_t depth) {
+    if (smith_glob_stack_count >= smith_entries_max) smith_too_many("pending folders in smith_glob", smith_entries_max);
+    smith_glob_stack[smith_glob_stack_count++] = (SmithGlobState){.path = path, .part = part, .depth = depth};
+}
+
+static const char *smith_glob_join(const char *path, const char *name) {
+    if (*path == '\0') return smith_copy_string(name);
+    bool slash = path[strlen(path) - 1] == '/';
+    return smith_text("%s%s%s", path, slash ? "" : "/", name);
+}
+
+// Splits the pattern at '/' into smith_glob_parts, dropping empty components.
+static void smith_glob_split(const char *pattern) {
+    smith_glob_part_count = 0;
+    const char *c = pattern;
+    for (size_t i = 0; *c != '\0' && i <= strlen(pattern); i++) { // bounded by the pattern's length
+        const char *end = strchr(c, '/');
+        size_t length = end != nullptr ? (size_t)(end - c) : strlen(c);
+        if (length > 0) {
+            if (smith_glob_part_count >= smith_glob_parts_max)
+                smith_fail("smith_glob: '%s' has too many components", pattern);
+            smith_glob_parts[smith_glob_part_count++] = (SmithGlobPart){.text = c, .length = length};
+        }
+        c += length;
+        if (*c == '/') c++;
+    }
+}
+
+static const char *smith_glob_part_text(size_t part) {
+    char *copy = smith_alloc(smith_glob_parts[part].length + 1);
+    memcpy(copy, smith_glob_parts[part].text, smith_glob_parts[part].length);
+    copy[smith_glob_parts[part].length] = '\0';
+    return copy;
+}
+
+static void smith_glob_add(const char *path) {
+    if (*path == '\0') return;
+    if (smith_glob_name_count >= smith_list_max) smith_too_many("matches in smith_glob", smith_list_max);
+    smith_glob_names[smith_glob_name_count++] = path;
+}
+
+// A literal component names one entry, so it is checked, not searched for.
+static void smith_glob_literal(const SmithGlobState *state, const char *name) {
+    const char *path = smith_glob_join(state->path, name);
+    struct stat info;
+    if (lstat(path, &info) == 0) smith_glob_push(path, state->part + 1, state->depth);
+}
+
+// Reads the folder for a wildcard component, or, for `**`, for the folders to enter.
+static void smith_glob_read(const SmithGlobState *state, const char *name, const char *pattern) {
+    bool deeper = strcmp(name, "**") == 0;
+    DIR *folder = opendir(*state->path == '\0' ? "." : state->path);
+    if (folder == nullptr) return;
+    for (struct dirent *entry = readdir(folder); entry != nullptr; entry = readdir(folder)) { // ends with the folder
+        const char *entry_name = entry->d_name;
+        if (strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) continue;
+        if (entry_name[0] == '.' && name[0] != '.') continue;
+        if (!deeper && fnmatch(name, entry_name, 0) != 0) continue;
+        const char *path = smith_glob_join(state->path, entry_name);
+        struct stat info;
+        if (deeper && (lstat(path, &info) != 0 || !S_ISDIR(info.st_mode))) continue;
+        if (deeper && state->depth >= smith_glob_depth_max)
+            smith_fail("smith_glob: '%s' goes deeper than %zu folders", pattern, smith_glob_depth_max);
+        smith_glob_push(path, deeper ? state->part : state->part + 1, state->depth + (deeper ? 1 : 0));
+    }
+    closedir(folder);
+}
+
+// Walks one pattern; its matches are appended to smith_glob_names.
+static void smith_glob_walk(const char *pattern) {
+    smith_glob_split(pattern);
+    smith_glob_stack_count = 0;
+    smith_glob_push(pattern[0] == '/' ? "/" : "", 0, 0);
+    for (size_t steps = 0; smith_glob_stack_count > 0; steps++) { // bounded: the stack, the depth and the arena are
+        if (steps >= (size_t)1 << 26) smith_too_many("steps in smith_glob", (size_t)1 << 26);
+        SmithGlobState state = smith_glob_stack[--smith_glob_stack_count];
+        if (state.part == smith_glob_part_count) {
+            smith_glob_add(state.path);
+            continue;
+        }
+        const char *name = smith_glob_part_text(state.part);
+        if (strcmp(name, "**") == 0) smith_glob_push(state.path, state.part + 1, state.depth);
+        if (strpbrk(name, "*?[\\") != nullptr)
+            smith_glob_read(&state, name, pattern);
+        else
+            smith_glob_literal(&state, name);
+    }
+}
+
 const char *const *smith_glob(SmithBuild *b, const char *const *patterns) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     if (patterns == nullptr) smith_fail("smith_glob: the patterns list is nullptr; use an empty list");
-    glob_t found = {};
-    size_t count = smith_count(patterns);
-    for (size_t i = 0; i < count; i++) {
-        int status = glob(patterns[i], i > 0 ? smith_glob_next : smith_glob_first, nullptr, &found);
-        if (status != 0 && status != GLOB_NOMATCH) smith_fail("glob '%s' failed", patterns[i]);
+    smith_glob_name_count = 0;
+    for (size_t i = 0; patterns[i] != nullptr; i++) {
+        SMITH_ASSERT(i < smith_list_max);
+        smith_glob_walk(patterns[i]);
     }
-    size_t matches = count > 0 ? (size_t)found.gl_pathc : 0;
-    if (matches > smith_list_max) smith_too_many("matches in smith_glob", smith_list_max);
-    if (matches > 1) qsort((void *)found.gl_pathv, matches, sizeof *found.gl_pathv, smith_compare_strings);
+    size_t matches = smith_glob_name_count;
+    if (matches > 1) qsort((void *)smith_glob_names, matches, sizeof *smith_glob_names, smith_compare_strings);
     const char **list = smith_new_list(matches);
     size_t used = 0;
     for (size_t i = 0; i < matches; i++) {
-        if (used > 0 && strcmp(list[used - 1], found.gl_pathv[i]) == 0) continue;
-        list[used++] = smith_copy_string(found.gl_pathv[i]);
+        if (used > 0 && strcmp(list[used - 1], smith_glob_names[i]) == 0) continue;
+        list[used++] = smith_glob_names[i];
     }
     list[used] = nullptr;
-    if (count > 0) globfree(&found);
     return list;
 }
 
@@ -724,7 +832,6 @@ void smith_write(SmithBuild *b, const char *path, const char *text) {
     smith_context = nullptr;
     smith_check_write_path(path);
     if (text == nullptr) smith_fail("smith_write: the text of '%s' is nullptr", path);
-    if (smith_run_mode && !smith_in_run) return; // the replay only records; the manifest run already wrote it
     smith_write_if_different(path, text, strlen(text));
 }
 
@@ -785,6 +892,51 @@ const char *const *smith_map(SmithBuild *b, const char *const *items, const char
         mapped[i] = text;
     }
     return mapped;
+}
+
+const char *smith_join(SmithBuild *b, const char *const *items, const char *separator) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (items == nullptr || separator == nullptr) smith_fail("smith_join needs a list and a separator");
+    size_t count = smith_count(items);
+    size_t separator_length = strlen(separator);
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++)
+        total += strlen(items[i]) + (i > 0 ? separator_length : 0);
+    char *text = smith_alloc(total + 1);
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) memcpy(text + used, separator, separator_length);
+        used += i > 0 ? separator_length : 0;
+        size_t length = strlen(items[i]);
+        memcpy(text + used, items[i], length);
+        used += length;
+    }
+    SMITH_ASSERT(used == total);
+    text[total] = '\0';
+    return text;
+}
+
+const char *const *smith_list(SmithBuild *b, const char *first, ...) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    va_list args;
+    va_start(args, first);
+    size_t count = 0;
+    for (const char *item = first; item != nullptr; item = va_arg(args, const char *)) {
+        if (count >= smith_list_max) smith_too_many("entries in a list", smith_list_max);
+        count++;
+    }
+    va_end(args);
+    const char **list = smith_new_list(count);
+    va_start(args, first);
+    const char *item = first;
+    for (size_t i = 0; i < count; i++) {
+        list[i] = smith_copy_string(item);
+        item = va_arg(args, const char *);
+    }
+    va_end(args);
+    return list;
 }
 
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items) {
@@ -1073,9 +1225,11 @@ const char *const *smith_lines(SmithBuild *b, const char *path) {
 
 // Runs a program with its stdout captured and its stderr passed through. The result is its exit status, 128 plus the
 // signal that killed it, or 127 when it cannot start. *lines is its stdout as lines, or nullptr when it did not start.
-static int smith_run_program(const char *const *argv, const char *const **lines) {
+static int smith_run_capture(const char *const *argv, const char *const **lines) {
     smith_context = nullptr;
     if (argv == nullptr || argv[0] == nullptr) smith_fail("a run needs a command");
+    fflush(stdout); // the function's own printing comes before the program's
+    fflush(stderr);
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) smith_fail("%s: cannot make a pipe", argv[0]);
     int error = 0;
@@ -1097,7 +1251,7 @@ static int smith_run_program(const char *const *argv, const char *const **lines)
 const char *const *smith_run_lines(SmithRun *run, const char *const *argv) {
     SMITH_ASSERT(run != nullptr);
     const char *const *lines = nullptr;
-    int status = smith_run_program(argv, &lines);
+    int status = smith_run_capture(argv, &lines);
     if (status == 0) return lines;
     fprintf(stderr, "smith: %s failed (status %d)\n", argv[0], status);
     return nullptr;
@@ -1105,7 +1259,44 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv) {
 
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines) {
     SMITH_ASSERT(run != nullptr);
-    return smith_run_program(argv, lines);
+    return smith_run_capture(argv, lines);
+}
+
+// The current environment with the NAME=value entries added; an entry replaces one of the same name.
+static char *const *smith_merge_environment(const char *const *environment) {
+    size_t extra = smith_count(environment);
+    size_t current = 0;
+    for (; environ[current] != nullptr; current++)
+        SMITH_ASSERT(current < smith_list_max);
+    const char **merged = smith_new_list(current + extra);
+    size_t used = 0;
+    for (size_t i = 0; i < current; i++) {
+        bool replaced = false;
+        for (size_t j = 0; j < extra && !replaced; j++) {
+            const char *equals = strchr(environment[j], '=');
+            if (equals == nullptr) smith_fail("smith_run_program: '%s' is not NAME=value", environment[j]);
+            size_t length = (size_t)(equals - environment[j]) + 1; // the name and the '='
+            replaced = strncmp(environ[i], environment[j], length) == 0;
+        }
+        if (!replaced) merged[used++] = environ[i];
+    }
+    for (size_t j = 0; j < extra; j++)
+        merged[used++] = environment[j];
+    merged[used] = nullptr;
+    return (char *const *)merged;
+}
+
+int smith_run_program(SmithRun *run, const char *const *argv, const char *const *environment) {
+    SMITH_ASSERT(run != nullptr);
+    smith_context = nullptr;
+    if (argv == nullptr || argv[0] == nullptr) smith_fail("a run needs a command");
+    char *const *envp = smith_merge_environment(environment);
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = 0;
+    if (posix_spawnp(&pid, argv[0], nullptr, nullptr, (char *const *)argv, envp) != 0) return smith_exit_not_started;
+    int status = smith_wait(argv[0], pid);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 
 // The manifest.
@@ -1175,6 +1366,21 @@ static void smith_put_word(FILE *out, const SmithStep *step, const char *word) {
     }
 }
 
+// The fixed function a step's function is measured from: a command carries the difference of the two addresses, which
+// is the same in every run of one executable.
+static int smith_run_anchor(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+// What a function gets, as the words `--input a --input b`: everything it sees is in its step's command.
+static void smith_put_run_words(FILE *file, const char *flag, const char *const *words) {
+    for (size_t i = 0; words[i] != nullptr; i++) { // bounded by smith_copy_list
+        fprintf(file, " %s ", flag);
+        smith_put_quoted(file, words[i], false);
+    }
+}
+
 // The command line as sh reads it: the words, then the stamp's touch. It is built in a fixed buffer and ends with a
 // 0 byte; *length is its size.
 static const char *smith_render_command(const SmithEntry *entry, size_t *length) {
@@ -1182,12 +1388,10 @@ static const char *smith_render_command(const SmithEntry *entry, size_t *length)
     FILE *file = fmemopen(smith_command_buffer, smith_command_max, "w");
     if (file == nullptr) smith_fail("cannot render the command");
     if (step->run != nullptr) {
-        fputs(".smith/program --run ", file);
-        smith_put_quoted(file, step->outputs[0], false);
-        for (size_t i = 0; i < smith_option_arg_count; i++) {
-            fputc(' ', file);
-            smith_put_quoted(file, smith_option_args[i], false);
-        }
+        fprintf(file, ".smith/program --run %" PRIxPTR, (uintptr_t)step->run - (uintptr_t)smith_run_anchor);
+        smith_put_run_words(file, "--input", step->inputs);
+        if (entry->kind != SmithEntryKind_Task) smith_put_run_words(file, "--output", step->outputs);
+        smith_put_run_words(file, "--arg", step->args);
     }
     for (size_t i = 0; step->run == nullptr && step->command[i] != nullptr; i++) {
         if (i > 0) fputc(' ', file);
@@ -1391,41 +1595,65 @@ static SmithBuild smith_make_build(void) {
     };
 }
 
-// --run <output>: the build has been replayed, so the step that makes the output is in the table; call its function.
-static int smith_run_step(SmithBuild *b, const char *output) {
-    const SmithEntry *found = nullptr;
-    for (size_t i = 0; i < smith_entry_count && found == nullptr; i++) {
-        const SmithEntry *entry = &smith_entries[i];
-        if (entry->kind != SmithEntryKind_Alias && strcmp(entry->step.outputs[0], output) == 0) found = entry;
+// The words after each `flag` in `--run`'s arguments (flag word pairs from argv[3]), as a list; any other argument is
+// an error.
+static const char *const *smith_run_collect(int argc, char **argv, const char *flag) {
+    size_t count = 0;
+    for (int i = 3; i < argc; i += 2) { // bounded by argc: each flag takes its word
+        bool known =
+            strcmp(argv[i], "--input") == 0 || strcmp(argv[i], "--output") == 0 || strcmp(argv[i], "--arg") == 0;
+        if (!known) smith_fail("--run: unexpected argument '%s'", argv[i]);
+        if (i + 1 >= argc) smith_fail("--run: %s needs a word", argv[i]);
+        count += strcmp(argv[i], flag) == 0;
     }
-    SMITH_ASSERT(found != nullptr && found->step.run != nullptr); // smith wrote the name
-    static const char *const none[] = {nullptr};
+    const char **list = smith_new_list(count);
+    size_t used = 0;
+    for (int i = 3; i + 1 < argc; i += 2) {
+        if (strcmp(argv[i], flag) == 0) list[used++] = argv[i + 1];
+    }
+    return list;
+}
+
+// --run <function> [--input p]... [--output p]... [--arg w]...: the step's command carries everything the function
+// gets, so build() and the callbacks do not run. The function is the anchor's address plus the offset.
+static int smith_run_command(SmithBuild *b, int argc, char **argv) {
+    if (argc < 3) smith_fail("--run needs a function");
+    char *end = nullptr;
+    errno = 0;
+    uintmax_t offset = strtoumax(argv[2], &end, 16);
+    if (errno != 0 || end == argv[2] || *end != '\0') smith_fail("--run: '%s' is not an offset", argv[2]);
+    uintptr_t address = (uintptr_t)smith_run_anchor + (uintptr_t)offset;
+    Dl_info anchor_info;
+    Dl_info function_info;
+    SMITH_ASSERT(dladdr((void *)(uintptr_t)smith_run_anchor, &anchor_info) != 0);
+    SMITH_ASSERT(dladdr((void *)address, &function_info) != 0);     // inside a loaded image ...
+    SMITH_ASSERT(function_info.dli_fbase == anchor_info.dli_fbase); // ... which is this executable, not a library
     SmithRun run = {
         .b = b,
-        .inputs = found->step.inputs,
-        .outputs = found->kind == SmithEntryKind_Task ? none : found->step.outputs,
-        .args = found->step.args,
+        .inputs = smith_run_collect(argc, argv, "--input"),
+        .outputs = smith_run_collect(argc, argv, "--output"),
+        .args = smith_run_collect(argc, argv, "--arg"),
     };
-    smith_in_run = true;
-    int status = found->step.run(&run);
-    smith_in_run = false;
+    int (*function)(SmithRun *) = (int (*)(SmithRun *))address;
+    int status = function(&run);
     smith_context = nullptr;
     return status;
 }
 
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 2 && argv[1] != nullptr);
+    if (strcmp(argv[1], "--run") == 0) {
+        SmithBuild b = smith_make_build();
+        return smith_run_command(&b, argc, argv);
+    }
     smith_regenerating = strcmp(argv[1], "--regenerate") == 0;
-    smith_run_mode = strcmp(argv[1], "--run") == 0;
-    int first =
-        smith_regenerating || smith_run_mode ? 2 : 1; // the manifest or the output comes next, then -D arguments
+    int first = smith_regenerating ? 2 : 1; // the manifest comes next, then -D arguments
     SMITH_ASSERT(argc > first && argv[first] != nullptr);
     smith_parse_options(argc - first - 1, argv + first + 1);
     SmithBuild b = smith_make_build();
     build(&b);
     smith_context = nullptr;
     smith_run_defers(&b);
-    if (smith_run_mode) return smith_run_step(&b, argv[first]);
     // A -D that only a pending smith_defer callback reads is not known yet; stage 2 checks it.
     if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");

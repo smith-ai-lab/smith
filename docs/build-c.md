@@ -165,7 +165,7 @@ build.c has two layers, and a project may use either or both.
 - Then one entry for build.c: `file` "build.c" and `arguments` `smith -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
   -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's bootstrap).
 - The JSON is escaped (`"`, `\`, control characters as `\u00XX`), indented two spaces, ends with a newline, and is
-  written only when its bytes change, through `smith_write`'s rules. A `.run` replay writes nothing.
+  written only when its bytes change, through `smith_write`'s rules. A `.run` step does not run build(), so it writes nothing there.
 - Calling `smith_compile_commands` twice is an error, and so is a path under `.smith/`. Call it last.
 - A missing required field is an error naming it; so is an object in `.objects` that was never passed to `smith_object`.
   A program's step lists the objects' outputs as inputs and the libraries that are files (a path with `/`, or ending in
@@ -180,6 +180,8 @@ without `#pragma once`. Setting `.content_hash` is the error `smith: build.c: .c
 ```c
 // smith/build.h: the API of a project's build.c, which `smith build` compiles and runs to write build.ninja.
 // Design: docs/build-c.md. Lists end in nullptr and are never nullptr (an optional field left unset reads as empty).
+#pragma once
+
 typedef struct SmithBuild {
     // `uname -s` exactly: "Darwin", "Linux"; nothing renamed, so it matches what a Makefile sees
     const char *os;
@@ -235,7 +237,10 @@ bool smith_option(SmithBuild *b, const char *name, const char *description);
 const char *smith_option_value(SmithBuild *b, const char *name, const char *fallback, const char *description);
 // an environment variable, or fallback (may be nullptr)
 const char *smith_env(SmithBuild *b, const char *name, const char *fallback);
-// the union of the patterns' matches, sorted by strcmp, each name once: make's $(sort $(wildcard a b c)). No **
+// the union of the patterns' matches, sorted by strcmp, each name once: make's $(sort $(wildcard a b c)).
+// A `**` component matches zero or more folders, so src/**/*.c matches src/a.c and src/x/y/b.c (symbolic links are
+// not followed, and more than 64 folders deep is an error). Every other component goes through fnmatch, the last one
+// included, and a hidden entry matches only a component that starts with '.', as in the shell
 const char *const *smith_glob(SmithBuild *b, const char *const *patterns);
 // a command's stdout without its last newline; no shell. A program that cannot start, exits non-zero or is killed is an
 // error
@@ -257,6 +262,12 @@ const char *const *smith_cat(SmithBuild *b, const char *const *first, ...);
 const char *const *smith_map(SmithBuild *b, const char *const *items, const char *format);
 // items, or an empty list
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items);
+// the items with the separator between them, in the arena; the empty list gives "". For text such as a unity file:
+// smith_join(b, smith_map(b, files, "#include \"%s\"\n"), "")
+const char *smith_join(SmithBuild *b, const char *const *items, const char *separator);
+// the strings up to a final nullptr, as a list in the arena. Unlike a compound literal it never dangles, so it is safe
+// to keep and to return from a function; smith_list(b, nullptr) is the empty list
+const char *const *smith_list(SmithBuild *b, const char *first, ...);
 // ("src/a.c", ".o") gives "src/a.o"
 const char *smith_replace_extension(SmithBuild *b, const char *path, const char *extension);
 
@@ -272,13 +283,18 @@ void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuil
 // missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
-// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step: the
-// build program runs again with `--run <the step's first output>`, repeats build() and the smith_defer callbacks
-// without writing anything (smith_write included, until the function runs), and calls the function. Its return value is
-// the exit status. Like a command, it writes the outputs it declares; one with none gets smith's stamp. It sees its
-// step's own lists, and run->b works with every helper (smith_fmt, smith_cat, smith_lines, smith_write). Editing
-// build.c reruns every .run step, since the function's code is part of the program. smith_capture and smith_glob run
-// again in the replay. .content_hash is not implemented yet and exits 2.
+// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step. The
+// step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
+// <path>... --arg <word>...`, where <function> is the function's address minus the address of a fixed function in the
+// program, in hex (the program is each .run edge's implicit input, so the offset is valid for the run that uses it).
+// With --run the program does not call build() or any smith_defer callback: it makes a SmithBuild (os, arch, root,
+// cpus, a fresh arena) and a SmithRun from those words, calls the function and exits with its result. So a function
+// sees no state build() set, no -D option and no earlier capture: its data is its step's .inputs, .outputs and
+// .args, and nothing else. Pass an option's value in .args. The offset is checked to land in this executable.
+// The return value is the exit status. Like a command, the function writes the outputs it declares; one with none gets
+// smith's stamp. run->b works with every helper that needs no build() state (smith_fmt, smith_cat, smith_join,
+// smith_list, smith_lines, smith_glob, smith_capture, smith_write). Editing build.c reruns every .run step, since the
+// function's code is part of the program. .content_hash is not implemented yet and exits 2.
 struct SmithRun {
     SmithBuild *b;
     const char *const *inputs;  // the step's .inputs
@@ -293,6 +309,12 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
+// Runs a program with no shell and with its stdout and stderr going straight to the terminal (inherited, not
+// captured). `environment` (NAME=value entries, may be nullptr) is added to the current environment, and an entry
+// replaces a variable of the same name. Returns the exit status, 128 plus the signal that killed it, or 127 when it
+// cannot start. stdout and stderr are flushed first, so the function's own printing comes before the program's. The
+// same flush happens before smith_run_lines and smith_run_status spawn.
+int smith_run_program(SmithRun *run, const char *const *argv, const char *const *environment);
 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
 // Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
@@ -352,19 +374,25 @@ A recipe that is a program, such as game's `check-symbols` or `check-libc`, is a
 outputs (objects, programs), so it runs during the build, after they exist; ninja calls it as a step.
 
 - **The generator rule.** The edge's command is
-  `.smith/program --run <the step's first output> <the -D arguments of this call, quoted>`, followed by the stamp's
-  `&& touch` for a step with no outputs. A task's first output is `.smith/task/<name>`. Because the `-D` arguments are
-  in the command text, a different option reruns the step. Every `.run` edge also gets the implicit input
-  `.smith/program`: the function's code is part of the program, so editing build.c reruns every `.run` step. That is
-  conservative and correct, not minimal.
-- **The replay.** `--run` runs `build()` and the `smith_defer` callbacks exactly as when writing the manifest, with the
-  same `-D` arguments, so the same steps exist (function pointers do not survive between processes, so there is no
-  table of them). It writes neither the manifest, nor `.smith/command` files, nor the `smith_write` files of
-  `build()`; `smith_write` writes only when called from the function. It finds the step whose first output is the
-  argument and calls its function; the return value is the process's exit status, so ninja fails the step and nothing
-  after it runs. `smith_capture` and `smith_glob` run again in every replay. Measured: a `.run` task that does nothing
-  costs 1 to 3 ms more than a `true` task (about 10 ms against 9 ms per `smith build` in the test), so keep a slow
-  `smith_capture` in the step's command rather than in `build()` when many `.run` steps exist.
+  `.smith/program --run <function> [--input <path>]... [--output <path>]... [--arg <word>]...`, followed by the stamp's
+  `&& touch` for a step with no outputs. `<function>` is the function's address minus the address of a fixed function in
+  the runtime, in hex. Both are in the same executable, and ninja reruns every `.run` step whenever that executable
+  changes (it is each `.run` edge's implicit input, so editing build.c reruns every `.run` step: conservative and
+  correct, not minimal), so the offset is valid for the run that uses it. Words are quoted as in any command. A task
+  has no `--output`. Because the command carries the step's whole data, a change in `.inputs` or `.args` reruns the
+  step.
+- **No replay.** `--run` does not call `build()` or any `smith_defer` callback. It makes a `SmithBuild` (os, arch,
+  root, cpus, a fresh arena) and a `SmithRun` from the words, checks with `dladdr` that the address is a function of
+  the executable itself (`SMITH_ASSERT`; a failure is a bug), calls the function and exits with its result, so ninja
+  fails the step and nothing after it runs. An earlier design replayed `build()` for every `.run` step, which cost 79
+  ms per C step in game (`build()` ran brew, git twice and xcrun each time) and let a function depend on state `build()`
+  happened to set, or see a different build if `git status` changed in between.
+- **The rule: a function's data is its step's lists.** The `-D` options are not passed to the function. Give it what it
+  needs in `.inputs`, `.outputs` and `.args`; an option's value goes in `.args`
+  (`.args = (const char *[]){smith_option_value(b, "who", "nobody", "a name"), nullptr}`). A `.run` step added inside a
+  `smith_defer` callback works the same way. `run->b` works with every helper that needs no `build()` state.
+  Measured (`tests/build.sh`): a `.run` task that does nothing costs about the same as a `true` task, 10 ms against 9 ms
+  per `smith build`, which is the cost of starting a process.
 - **The function.** `int f(SmithRun *run)` returns 0 for success. `run->inputs`, `run->outputs` (the stamp included;
   empty for a task) and `run->args` are the step's own lists, and `run->b` works with every helper. Like a command, it
   writes the outputs it declares; a step with none gets smith's stamp, touched after a zero return. With `.restat`, a function that
@@ -375,10 +403,21 @@ outputs (objects, programs), so it runs during the build, after they exist; ninj
   program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and gives `nullptr`.
   `smith_run_status(run, argv, &lines)` returns the status instead: the exit status, 128 plus the signal, or 127 when
   the program cannot start, and prints nothing. Both limit stdout to 1 MiB.
+- `smith_run_program(run, argv, environment)` runs a program with no shell and its stdout and stderr inherited, not
+  captured, with `environment` (`NAME=value` entries, may be `nullptr`) added to the current environment; it uses
+  `posix_spawnp` with a built `envp`. It returns the exit status, 128 plus the signal, or 127 when the program cannot
+  start. It flushes stdout and stderr first, as `smith_run_lines` and `smith_run_status` do, so the function's own
+  printing comes first. game's `clip`, which plays a session through `./build/game` with `GAME_*` variables, needs it.
 - `.pool = "console"` gives the step the terminal. ninja allows one console step at a time.
 - The calls that read the outside world are read again on every `smith build`, because the program reruns each time.
 - `smith_glob` takes a list of patterns, so one pattern is a list of one: `smith_glob(b, (const char *[]){"src/*.c",
   nullptr})`. The result is the union, sorted by `strcmp` with each name once, like make's `$(sort $(wildcard a b c))`.
+  A `**` component matches zero or more folders (`src/**/*.c` matches `src/a.c` and `src/x/y/b.c`); it is a bounded
+  iterative walk (an explicit stack, no recursion, 64 folders deep at most, symbolic links not followed). Every other
+  component goes through `fnmatch`, and a hidden entry matches only a component that starts with `.`, as in the shell.
+- `smith_join(b, items, separator)` and `smith_list(b, first, ..., nullptr)` build text and lists in the arena, for
+  example a unity file: `smith_join(b, smith_map(b, files, "#include \"%s\"\n"), "")`. `smith_list` never dangles, so
+  a function can return its list; `smith_list(b, nullptr)` is the empty list.
 
 Which tier each project needs:
 - checkers: v1.
@@ -388,7 +427,8 @@ Which tier each project needs:
   `smith_lines`). Implemented.
 
 Dropped from the proposals of the case agents:
-- `smith_list`: a compound literal does it, and a function that takes a variadic list needs a terminator anyway.
+- `smith_list`: dropped at first, since a compound literal does it, then added once the game port crashed twice on
+  literals kept past their block.
 - `smith_in`: membership is a loop. The `function` case writes `in_list` in six lines.
 - `smith_read`: `smith_lines` covers the cases. A whole-text read can come back if a case needs it.
 - `smith_run_temp` and `smith_run_status`: no case needs them yet.
