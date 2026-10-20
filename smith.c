@@ -315,6 +315,13 @@ static const unsigned char smith_random_source[] = {
 #embed "lib/random.c"
 };
 
+static const unsigned char smith_test_header[] = {
+#embed "include/smith/test.h"
+};
+static const unsigned char smith_test_source[] = {
+#embed "lib/test.c"
+};
+
 typedef struct {
     const char *name;
     const unsigned char *header;
@@ -326,6 +333,7 @@ typedef struct {
 static const SmithLibrary smith_libraries[] = {
     {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
+    {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
 };
 
 extern char **environ;
