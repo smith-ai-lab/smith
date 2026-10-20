@@ -106,24 +106,52 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
 
 // The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
 // clang++. The build folder is named for the OS and architecture, so a binary built on one machine is never mistaken
-// for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS).
+// for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS). smith.c embeds the build
+// header and the runtime, so a change to either recompiles it, though the depfile may not list them.
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    SmithStep smith = {
-        .command = smith_cat(b, (const char *[]){config->cc, nullptr}, config->cflags,
-                             (const char *[]){"smith.c", "-o", "$out", nullptr}, nullptr),
-        .inputs = (const char *[]){"smith.c", nullptr},
+    SmithObject object = {
+        .compiler = config->cc,
+        .source = "smith.c",
+        .output = smith_fmt(b, "%s/smith.o", folder),
+        .flags = config->cflags,
         .implicit_inputs = (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", nullptr},
-        .outputs = (const char *[]){smith_fmt(b, "%s/smith", folder), nullptr},
     };
-    smith_step(b, &smith);
+    smith_object(b, &object);
+    SmithProgram program = {
+        .linker = config->cc,
+        .output = smith_fmt(b, "%s/smith", folder),
+        .objects = (const SmithObject *[]){&object, nullptr},
+    };
+    smith_program(b, &program);
     SmithStep smith_plus = {
         .command = (const char *[]){"ln", "-sf", "smith", "$out", nullptr},
-        .inputs = smith.outputs,
+        .inputs = program.step.outputs,
         .outputs = (const char *[]){smith_fmt(b, "%s/smith++", folder), nullptr},
     };
     smith_step(b, &smith_plus);
-    smith_default(b, smith_cat(b, smith.outputs, smith_plus.outputs, nullptr));
-    return smith;
+    smith_default(b, smith_cat(b, program.step.outputs, smith_plus.outputs, nullptr));
+    return program.step;
+}
+
+// The other two C files are not part of the program, but compiling them in a plain build checks that they build, and
+// gives the editor their flags in compile_commands.json. They take the flags check-tidy gives them: the runtime reads
+// <smith/build.h>, and the stub is each stub compiler's source, named by -DNAME.
+static void build_other_objects(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    SmithObject runtime = {
+        .compiler = config->cc,
+        .source = "runtime/build_runtime.c",
+        .output = smith_fmt(b, "%s/build_runtime.o", folder),
+        .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", nullptr}, nullptr),
+    };
+    smith_object(b, &runtime);
+    SmithObject stub = {
+        .compiler = config->cc,
+        .source = "tests/stub.c",
+        .output = smith_fmt(b, "%s/stub.o", folder),
+        .flags = smith_cat(b, config->cflags, (const char *[]){"-DNAME=\"stub\"", nullptr}, nullptr),
+    };
+    smith_object(b, &stub);
+    smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
 }
 
 // Routing tests with stub compilers (no clang or Xcode needed, and no real build is touched), then the `smith build`
@@ -182,6 +210,7 @@ void build(SmithBuild *b) {
         smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
 
     SmithStep smith = build_programs(b, &config, folder);
+    build_other_objects(b, &config, folder);
     config.binary = smith.outputs[0];
     SmithStep test = build_test(b, &config, config.binary);
     build_compare(b, &config, config.binary);
@@ -189,4 +218,6 @@ void build(SmithBuild *b) {
     build_install(b, &config, config.binary, test.outputs);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
+    // clangd reads this: the exact command of each compile, and build.c's own.
+    smith_compile_commands(b, "compile_commands.json");
 }
