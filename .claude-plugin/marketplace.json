@@ -1,0 +1,17 @@
+{
+  "name": "smith",
+  "owner": {
+    "name": "Adam Kowalski",
+    "url": "https://github.com/adam-r-kowalski"
+  },
+  "metadata": {
+    "description": "smith, a drop-in C compiler driver with a build system written in C."
+  },
+  "plugins": [
+    {
+      "name": "smith",
+      "source": "./",
+      "description": "Skills for using smith as the compiler and for writing build.c."
+    }
+  ]
+}

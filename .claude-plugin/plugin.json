@@ -1,0 +1,12 @@
+{
+  "name": "smith",
+  "description": "Skills for smith, the drop-in C compiler driver: using smith as the compiler, and running, writing and editing a project's build.c with smith build.",
+  "author": {
+    "name": "Adam Kowalski",
+    "url": "https://github.com/adam-r-kowalski"
+  },
+  "homepage": "https://github.com/adam-r-kowalski/smith",
+  "repository": "https://github.com/adam-r-kowalski/smith",
+  "keywords": ["c", "compiler", "build", "clang"],
+  "skills": ["./.agents/skills/smith/", "./.agents/skills/smith-build/"]
+}
