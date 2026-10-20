@@ -1186,6 +1186,39 @@ for task in tock tick; do
     echo "time  smith build $task (a task that runs every time): $(perl -e "printf '%.0f', ($end - $start) * 100") ms per run (mean of 10)"
 done
 
+# 9p. An option that only a smith_defer callback reads: stage 1 cannot know it yet, stage 2 checks it.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static void more(SmithBuild *b) {
+    const char *suffix = smith_option_value(b, "suffix", "none", "the word written to out");
+    SmithStep out = {
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", suffix, "$out", nullptr},
+        .inputs = (const char *[]){"list", nullptr},
+        .outputs = (const char *[]){"out", nullptr},
+    };
+    smith_step(b, &out);
+    smith_default(b, out.outputs);
+}
+
+void build(SmithBuild *b) {
+    SmithStep list = {
+        .command = (const char *[]){"cp", "$in", "$out", nullptr},
+        .inputs = (const char *[]){"source", nullptr},
+        .outputs = (const char *[]){"list", nullptr},
+    };
+    smith_step(b, &list);
+    smith_defer(b, list.outputs, more);
+}
+C
+echo x >source
+build -Dsuffix=late
+expect "defer option: read only in the callback, on a fresh tree" "0 late" "$rc $(cat out 2>/dev/null)"
+build -Dsufix=typo
+expect_status "defer option: a misspelt one still fails once the callback ran" 2
+expect_contains "defer option: the message names it" "$err" "unknown option -Dsufix"
+
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
 build -t targets

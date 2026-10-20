@@ -1242,7 +1242,8 @@ int main(int argc, char **argv) {
     smith_context = nullptr;
     smith_run_defers(&b);
     if (smith_run_mode) return smith_run_step(&b, argv[first]);
-    smith_check_given();
+    // A -D that only a pending smith_defer callback reads is not known yet; stage 2 checks it.
+    if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");
     smith_write_manifest(argv[first]);
     return 0;

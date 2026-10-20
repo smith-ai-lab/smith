@@ -276,6 +276,10 @@ Rules:
   `smith_glob` and `smith_when` return one when there is nothing. A loop starts from one:
   `objects = smith_cat(b, objects, cc.outputs, nullptr)`. The `nullptr` that ends `smith_cat`'s arguments is the only
   one.
+- A compound literal lives only until the end of its block. Every smith call copies what it is given, so a literal
+  passed straight to a call is safe, and what a call returns lives until the build ends. A literal returned from a
+  function, or stored in a struct that outlives its block, dangles: the game port's raw translation crashed on one, and
+  ASan did not catch it.
 - `smith_step` and `smith_task` take the step by pointer and update it in place. They copy every list and string into
   the arena, so a block-scope compound literal is safe, and afterwards the step's lists point at the copies:
   `.inputs = compile.outputs` is valid after the block ends. Declare the step first, then pass its address:
