@@ -6,11 +6,14 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 ## Decisions (change one only with the owner)
 
-- **One toolchain: upstream LLVM at one pinned release** for the compiler, clang-format, clang-tidy, clangd, lldb and
-  libclang. Today that is Homebrew `llvm` and `lldb` 23.1.3, held with `brew pin`. Not Apple's clang: it exists only on
-  Apple platforms, has no clang-tidy, and can be neither pinned nor shipped.
-- **`.metal` goes to Apple's `metal`** (`xcrun -sdk macosx metal`, or `$SMITH_METAL`), the only Metal compiler. `.metal`
-  and other inputs in one command are refused.
+- **The best compiler on each platform.** On macOS that is Apple's: `/usr/bin/clang` (it runs through xcrun, which
+  finds the SDK) for C, C++ and Objective-C, and `metal` (`xcrun -sdk macosx metal`, or `$SMITH_METAL`) for `.metal`.
+  Upstream's AddressSanitizer costs about 40 ms per process there, in LLVM 22 and 23 alike, against 3 to 9 ms for
+  Apple's; it made game's sanitized tests 13 s instead of 2.4 s. Elsewhere, upstream clang. `.metal` and other inputs
+  in one command are refused.
+- **clang-format and clang-tidy come from one pinned upstream LLVM** on every platform, so formatting and lint are the
+  same everywhere: Homebrew `llvm` 23.1.3, held with `brew pin`. Apple ships no clang-tidy and an older clang-format.
+  On macOS, clangd and lldb are Apple's, matching the compiler.
 - **C, C++ and Objective-C are a pure passthrough.** smith never adds, removes or reorders flags, so it cannot change a
   build. Defaults (`-std=gnu23`, sanitizers) belong to `.smith` files only. `.smith` inputs are an error for now.
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
@@ -20,12 +23,13 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
-- **No Apple `-fbounds-safety`.** UBSan and the arenas' ASan poisoning check bounds at run time; contracts will prove them.
+- **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
+  check bounds at run time; contracts will prove them.
 
 ## Commands
 
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link; `make test` runs the routing tests against stub
-  compilers; `make compare REAL=/opt/homebrew/opt/llvm/bin/clang` runs the same invocations through clang and smith.
+  compilers; `make compare REAL=/usr/bin/clang` runs the same invocations through clang and smith.
 - In a project: `make CC=smith METAL=smith` (learner, game), or a `clang` symlink to smith first on PATH (checkers).
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it.
@@ -50,6 +54,5 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 - A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 - Apple's `metal` output is not reproducible (two identical builds of learner's shaders differ), so compare shaders by
   the command smith runs, not by bytes.
-- LLVM 23's ASan library costs about 40 ms of kernel time per process on macOS (Apple's: 3 to 9 ms), so game's
-  sanitized tests, which fork once per test, take 13 s against 2.4 s. Whether LLVM 22 had it is not known.
-- Homebrew clang compiles against the Command Line Tools SDK, while learner's and game's lint and clang-tidy use Xcode's.
+- Why upstream's ASan is slow on macOS is not known: the time is kernel time, in both `fork` and `posix_spawn`, which
+  only root can trace.

@@ -78,6 +78,13 @@ expect ".smith inputs are not supported yet" "smith: .smith inputs are not suppo
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/smith++" -c a.cpp
 expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
+if [ "$(uname -s)" = Darwin ]; then
+    capture env -u SMITH_CLANG "$smith" --smith-which -c a.c
+    expect "on macOS the default is Apple's clang" "clang /usr/bin/clang" "$out"
+    capture env -u SMITH_CLANGXX "$work/smith++" --smith-which -c a.cpp
+    expect "on macOS smith++ defaults to Apple's clang++" "clang /usr/bin/clang++" "$out"
+fi
+
 capture env SMITH_CLANG="$work/bin/selfclang" "$smith" a.c
 expect "a compiler that is smith itself is refused" "smith: refers to smith itself: $work/bin/selfclang" "$err"
 expect "self refusal: status 127" 127 "$rc"

@@ -14,9 +14,10 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
    keep working. First-class types run at compile time (`type f(type t)`, like Zig's `comptime`) and replace
    `ARENA_PUSH` and `ARENA_PUSH_ARRAY`. `BASE_COUNT` needs nothing new (`_Countof`). `BASE_ASSERT` needs the caller's
    file, line and expression text. Shapes as dependent types (matrix sizes, lengths) later.
-5. **One download**: smith as the formatter, language server and debugger, wrapping clang-format, clangd and lldb from
-   a pinned LLVM shipped beside it. Subcommands must never be mistaken for clang arguments (hence `--smith-which`).
-   Apple's SDK, frameworks and `metal` still come from Xcode or the Command Line Tools.
+5. **One download**: smith as the formatter, language server and debugger. It wraps the platform's clangd and lldb
+   (Apple's on macOS) and a pinned clang-format and clang-tidy shipped beside it. Subcommands must never be mistaken
+   for clang arguments (hence `--smith-which`). On macOS the compiler, SDK, frameworks and `metal` come from Xcode or
+   the Command Line Tools.
 6. **`build.c`** that emits ninja.
 
 Later ideas, not planned: arena regions and `inout` modes; cost clauses (flops, bytes) and bounded recursion with a

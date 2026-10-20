@@ -3,8 +3,9 @@
 // Milestone 0 is a pure passthrough. It picks a backend by the kind of input, then replaces itself with that compiler
 // and hands over the arguments untouched:
 //   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set;
-//   - anything else goes to upstream clang: $SMITH_CLANG if set, else Homebrew's LLVM, else the first clang on PATH
-//     that is not smith itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
+//   - anything else goes to the platform's best clang: $SMITH_CLANG if set, else Apple's on macOS (/usr/bin/clang runs
+//     it through xcrun, which also finds the SDK), else Homebrew's LLVM, else the first clang on PATH that is not smith
+//     itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. A .smith input
 // is where the extra behavior will live; for now it is an error. See AGENTS.md.
 #include <limits.h>
@@ -137,7 +138,8 @@ static bool find_in_path(const char *tool, const char *self, char *out) {
     return false;
 }
 
-// The upstream compiler for the route: the environment's choice, else Homebrew's LLVM, else PATH.
+// The compiler for the route: the environment's choice, else Apple's clang on macOS, else Homebrew's LLVM, else PATH.
+// Apple's clang is the default there because upstream's AddressSanitizer costs about 40 ms per process on macOS.
 static void find_clang(const char *tool, const char *override_name, const char *self, char *out) {
     const char *override = getenv(override_name);
     if (override != NULL && *override != '\0') {
@@ -146,7 +148,13 @@ static void find_clang(const char *tool, const char *override_name, const char *
         snprintf(out, PATH_MAX, "%s", override);
         return;
     }
-    static const char *const prefixes[] = {"/opt/homebrew/opt/llvm/bin/", "/usr/local/opt/llvm/bin/"};
+    static const char *const prefixes[] = {
+#ifdef __APPLE__
+        "/usr/bin/",
+#endif
+        "/opt/homebrew/opt/llvm/bin/",
+        "/usr/local/opt/llvm/bin/",
+    };
     for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++) {
         int written = snprintf(out, PATH_MAX, "%s%s", prefixes[i], tool);
         if (written > 0 && written < PATH_MAX && is_usable(out, self)) return;
