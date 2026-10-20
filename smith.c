@@ -7,11 +7,17 @@
 //     it through xcrun, which also finds the SDK), else Homebrew's LLVM, else the first clang on PATH that is not smith
 //     itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
+//
+// `smith build` is the one other command: it compiles the project's build.c with an embedded runtime, runs it to write
+// a ninja manifest, and then runs ninja. See docs/build-c.md.
+#include <errno.h>
 #include <limits.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #ifdef __APPLE__
@@ -202,8 +208,8 @@ static void smith_find_clang(const char *tool, const char *override_name, const 
     smith_die(smith_exit_missing, "cannot find a compiler; set SMITH_CLANG or SMITH_CLANGXX, tried", tool);
 }
 
-static void smith_show_command(const char *program, char *const *args) {
-    fprintf(stderr, "smith: exec %s", program);
+static void smith_show_command(const char *verb, const char *program, char *const *args) {
+    fprintf(stderr, "smith: %s %s", verb, program);
     for (size_t i = 1; args[i] != nullptr; i++)
         fprintf(stderr, " %s", args[i]); // args ends with nullptr
     fputc('\n', stderr);
@@ -212,7 +218,7 @@ static void smith_show_command(const char *program, char *const *args) {
 static void smith_run(const char *program, char *const *args) {
     SMITH_ASSERT(program != nullptr && args != nullptr);
     SMITH_ASSERT(args[0] == program); // the compiler is handed its own full path as argv[0]
-    if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command(program, args);
+    if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("exec", program, args);
     execv(program, args);
     smith_die(smith_exit_missing, "cannot execute", program);
 }
@@ -280,6 +286,203 @@ static int smith_route_clang(char **argv, int first, bool which, const char *sel
     return smith_exit_missing;
 }
 
+// smith build.
+
+// The build program's header and runtime travel inside smith, so `smith build` needs nothing installed beside it and
+// `cc -std=gnu23 smith.c -o smith` still builds all of smith.
+static const unsigned char smith_build_header[] = {
+#embed "include/smith/build.h"
+};
+static const unsigned char smith_build_runtime[] = {
+#embed "runtime/build_runtime.c"
+};
+
+extern char **environ;
+
+constexpr size_t smith_build_args_max = 4096;
+constexpr size_t smith_build_manifest_max = 8192;
+constexpr size_t smith_build_chunk = 4096;
+constexpr size_t smith_build_ninja_prefix = 3; // ninja -f build/smith/build.ninja
+
+static bool smith_file_has_bytes(const char *path, const unsigned char *bytes, size_t size) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    unsigned char chunk[smith_build_chunk];
+    size_t offset = 0;
+    bool same = true;
+    for (size_t i = 0; same && i <= size / sizeof chunk + 1; i++) { // bounded by the size of the content
+        size_t got = fread(chunk, 1, sizeof chunk, file);
+        same = got <= size - offset && memcmp(chunk, bytes + offset, got) == 0;
+        offset += got;
+        if (got < sizeof chunk) break;
+    }
+    fclose(file);
+    return same && offset == size;
+}
+
+// Writes the bytes through a temporary file and renames it, only when they differ, so the mtime moves only when the
+// content does.
+static void smith_write_if_changed(const char *path, const unsigned char *bytes, size_t size) {
+    if (smith_file_has_bytes(path, bytes, size)) return;
+    char temporary[PATH_MAX];
+    int written = snprintf(temporary, sizeof temporary, "%s.tmp", path);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary); // a short constant path
+    FILE *file = fopen(temporary, "wb");
+    if (file == nullptr) smith_die(smith_exit_usage, "cannot write", temporary);
+    bool ok = fwrite(bytes, 1, size, file) == size;
+    ok = fclose(file) == 0 && ok;
+    if (!ok || rename(temporary, path) != 0) smith_die(smith_exit_usage, "cannot write", path);
+}
+
+static void smith_make_folder(const char *path) {
+    if (mkdir(path, 0777) != 0 && errno != EEXIST) smith_die(smith_exit_usage, "cannot create", path);
+}
+
+static bool smith_is_plain_word(const char *word) {
+    if (*word == '\0') return false;
+    for (const char *c = word; *c != '\0'; c++) {
+        bool plain = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') ||
+                     strchr("_./=:,+@%^-", *c) != nullptr;
+        if (!plain) return false;
+    }
+    return true;
+}
+
+// The word as a shell argument inside a ninja command line: quoted unless plain, with $ doubled.
+static void smith_quote_word(char *out, size_t capacity, const char *word) {
+    size_t used = 0;
+    bool quote = !smith_is_plain_word(word);
+    SMITH_ASSERT(capacity > 0);
+    if (quote) out[used++] = '\'';
+    for (const char *c = word; *c != '\0'; c++) {
+        const char *piece = *c == '\'' ? "'\\''" : *c == '$' ? "$$" : nullptr;
+        size_t length = piece != nullptr ? strlen(piece) : 1;
+        SMITH_ASSERT(used + length + 2 < capacity);
+        if (piece != nullptr)
+            memcpy(out + used, piece, length);
+        else
+            out[used] = *c;
+        used += length;
+    }
+    if (quote) out[used++] = '\'';
+    out[used] = '\0';
+}
+
+// The manifest that compiles build.c into build/smith/program with the clang `smith` would pick.
+static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang) {
+    char quoted[PATH_MAX * 2];
+    smith_quote_word(quoted, sizeof quoted, clang);
+    int written = snprintf(
+        out, capacity,
+        "# Written by smith build. It compiles build.c into build/smith/program.\n"
+        "ninja_required_version = 1.10\n"
+        "builddir = build/smith/bootstrap\n"
+        "rule cc\n"
+        "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I build/smith/include -MMD -MF $out.d -c $in -o $out\n"
+        "  depfile = $out.d\n"
+        "  deps = gcc\n"
+        "  description = smith: compile $in\n"
+        "rule link\n"
+        "  command = %s $in -o $out\n"
+        "  description = smith: link $out\n"
+        "build build/smith/bootstrap/build.o: cc build.c\n"
+        "build build/smith/bootstrap/runtime.o: cc build/smith/runtime.c\n"
+        "build build/smith/program: link build/smith/bootstrap/build.o build/smith/bootstrap/runtime.o\n",
+        quoted, quoted);
+    SMITH_ASSERT(written > 0 && (size_t)written < capacity);
+    return (size_t)written;
+}
+
+static void smith_build_find_ninja(const char *self, char *out) {
+    const char *override = getenv("SMITH_NINJA");
+    if (override != nullptr && *override != '\0') {
+        int written = snprintf(out, PATH_MAX, "%s", override);
+        if (written > 0 && written < PATH_MAX && smith_is_executable(out)) return;
+    } else if (smith_find_in_path("ninja", self, out)) {
+        return;
+    }
+    smith_die(smith_exit_missing, "cannot find ninja; install it or set SMITH_NINJA", nullptr);
+}
+
+// Runs a program as a child and waits; the result is its exit status, or 128 plus the signal that killed it.
+static int smith_build_spawn(const char *program, char *const *args) {
+    SMITH_ASSERT(program != nullptr && args != nullptr);
+    if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("run", program, args);
+    pid_t pid = 0;
+    if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) {
+        smith_die(smith_exit_missing, "cannot execute", program);
+    }
+    int status = 0;
+    int waited = -1;
+    for (int i = 0; i < 1000 && waited < 0; i++) // bounded; only a signal interrupts the wait
+        waited = waitpid(pid, &status, 0);
+    if (waited < 0) smith_die(smith_exit_missing, "cannot wait for", program);
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return 128 + WTERMSIG(status);
+}
+
+// Splits the arguments after `build`: -D goes to the build program, the rest to ninja, which is told which file to read
+// by smith alone. The two vectors are filled after their fixed starts and end with nullptr.
+static void smith_build_split(int count, char **args, char **ninja_argv, char **program_argv, size_t *ninja_used,
+                              size_t *program_used) {
+    for (int i = 0; i < count; i++) { // bounded by count, which main limits
+        const char *arg = args[i];
+        if (strncmp(arg, "-f", 2) == 0 || strncmp(arg, "-C", 2) == 0) {
+            smith_die(smith_exit_usage, "smith build names the manifest itself; run it from the project folder",
+                      nullptr);
+        }
+        if (strncmp(arg, "-D", 2) == 0) {
+            program_argv[(*program_used)++] = args[i];
+        } else {
+            ninja_argv[(*ninja_used)++] = args[i];
+        }
+    }
+    ninja_argv[*ninja_used] = nullptr;
+    program_argv[*program_used] = nullptr;
+}
+
+static void smith_build_prepare(const char *clang) {
+    smith_make_folder("build");
+    smith_make_folder("build/smith");
+    smith_make_folder("build/smith/include");
+    smith_make_folder("build/smith/include/smith");
+    smith_make_folder("build/smith/bootstrap");
+    static char manifest[smith_build_manifest_max];
+    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang);
+    smith_write_if_changed("build/smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
+    smith_write_if_changed("build/smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
+    smith_write_if_changed("build/smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
+}
+
+static int smith_build_main(int count, char **args, const char *self) {
+    SMITH_ASSERT(count >= 0);
+    if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
+    char ninja[PATH_MAX];
+    smith_build_find_ninja(self, ninja);
+    if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
+    static char *ninja_argv[smith_build_args_max + smith_build_ninja_prefix + 1];
+    static char *program_argv[smith_build_args_max + 3];
+    ninja_argv[0] = ninja;
+    ninja_argv[1] = (char *)"-f";
+    ninja_argv[2] = (char *)"build/smith/build.ninja";
+    program_argv[0] = (char *)"build/smith/program";
+    program_argv[1] = (char *)"build/smith/build.ninja";
+    size_t ninja_used = smith_build_ninja_prefix;
+    size_t program_used = 2;
+    smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
+
+    char clang[PATH_MAX];
+    smith_find_clang("clang", "SMITH_CLANG", self, clang);
+    smith_build_prepare(clang);
+    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)"build/smith/bootstrap/build.ninja",
+                              nullptr};
+    int status = smith_build_spawn(ninja, bootstrap_argv);
+    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
+    if (status != 0) return status;
+    smith_run(ninja, ninja_argv);
+    return smith_exit_missing;
+}
+
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
@@ -293,6 +496,8 @@ int main(int argc, char **argv) {
 
     char self[PATH_MAX];
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
+
+    if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
 
     switch (smith_classify(count, args)) {
     case SmithRoute_Mixed:

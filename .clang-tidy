@@ -13,8 +13,8 @@ Checks: >
   readability-function-size,
   readability-identifier-naming
 WarningsAsErrors: '*'
-# smith has no headers of its own; diagnostics come from smith.c and tests/stub.c, never from system headers.
-HeaderFilterRegex: '(^|/)(smith\.c|tests/.*)$'
+# Diagnostics come from smith's own files, never from system headers.
+HeaderFilterRegex: '(^|/)(smith\.c|include/smith/build\.h|runtime/.*|tests/.*)$'
 CheckOptions:
   bugprone-assert-side-effect.AssertMacros: SMITH_ASSERT
   # Positive literals such as 1 << 0 are never the hazard the check exists for.

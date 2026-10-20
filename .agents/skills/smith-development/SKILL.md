@@ -10,8 +10,9 @@ description: "Start here for any change to smith itself: building, testing, inst
 ## Build, test, install
 
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link. `CC` is the installed smith, so smith builds smith. If that is broken, `make CC=/usr/bin/clang`.
-- `make test` runs the 22 routing tests against stub compilers. `make compare REAL=/usr/bin/clang` runs 10 invocations through clang and through smith; `REAL` defaults to that on macOS.
-- `make format` rewrites `smith.c` and `tests/stub.c`. `make check` runs `check-format`, `check-tidy`, `test` and `compare`, and must exit 0 before you finish. It needs Homebrew LLVM 23 (`make check-llvm`).
+- `make test` runs the 22 routing tests against stub compilers, then the 50 `smith build` tests in `tests/build.sh`, which need ninja and a real clang. `make compare REAL=/usr/bin/clang` runs 10 invocations through clang and through smith; `REAL` defaults to that on macOS.
+- `include/smith/build.h` and `runtime/build_runtime.c` are embedded in smith with `#embed`; keep `cc -std=gnu23 smith.c -o smith` building all of smith (a test checks it).
+- `make format` rewrites `smith.c`, `tests/stub.c`, the header and the runtime. `make check` runs `check-format`, `check-tidy`, `test` and `compare`, and must exit 0 before you finish. It needs Homebrew LLVM 23 (`make check-llvm`).
 - Before and after a change, run `smith --smith-which -c a.c`, `--smith-which a.metal`, `a.metal b.c` and `--smith-version`, and compare. A refactor must not change a route, a message, an exit code or an argv.
 - `make install` runs the tests, then replaces `~/.local/bin/smith`, which every project's build uses. Do it only when the owner asks. If the installed smith is broken, `make install CC=/usr/bin/clang`.
 

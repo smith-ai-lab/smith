@@ -16,13 +16,13 @@ LLVM_MAJOR := 23
 LLVM_BIN ?= $(shell brew --prefix llvm 2>/dev/null || echo /opt/homebrew/opt/llvm)/bin
 CLANG_FORMAT = $(LLVM_BIN)/clang-format
 CLANG_TIDY = $(LLVM_BIN)/clang-tidy
-FORMAT_SOURCES := smith.c tests/stub.c
+FORMAT_SOURCES := smith.c tests/stub.c runtime/build_runtime.c include/smith/build.h
 
 .PHONY: all test compare install clean format check check-llvm check-format check-tidy
 
 all: $(BUILD)/smith $(BUILD)/smith++
 
-$(BUILD)/smith: smith.c
+$(BUILD)/smith: smith.c include/smith/build.h runtime/build_runtime.c
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) smith.c -o $@
 
@@ -33,6 +33,7 @@ $(BUILD)/smith++: $(BUILD)/smith
 # Routing tests with stub compilers: no clang or Xcode needed, and no real build is touched.
 test: $(BUILD)/smith
 	CC='$(CC)' sh tests/run.sh $(BUILD)/smith
+	CC='$(CC)' sh tests/build.sh $(BUILD)/smith
 
 # Runs a table of invocations through a real compiler and through smith, and compares stdout, stderr, exit status and
 # the files produced. REAL is the compiler: /usr/bin/clang on macOS, else for example REAL=$$(command -v clang).
@@ -64,6 +65,7 @@ check-format: check-llvm
 # clang-tidy (.clang-tidy) over each source with the flags the build uses, against Xcode's SDK.
 check-tidy: check-llvm
 	@$(CLANG_TIDY) --quiet smith.c -- $(CFLAGS) -isysroot $$(xcrun --show-sdk-path)
+	@$(CLANG_TIDY) --quiet runtime/build_runtime.c -- $(CFLAGS) -I include -isysroot $$(xcrun --show-sdk-path)
 	@$(CLANG_TIDY) --quiet tests/stub.c -- $(CFLAGS) -DNAME='"stub"' -isysroot $$(xcrun --show-sdk-path)
 
 # Copies smith, once its tests pass, to $(PREFIX)/bin, where projects find it as CC. A link to the build directory would

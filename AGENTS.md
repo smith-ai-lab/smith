@@ -1,8 +1,9 @@
 # smith
 
 A drop-in compiler driver for C, Objective-C, C++ and Metal, written in C. Milestone 0, a routing passthrough, works on
-macOS: smith builds itself, checkers, learner and game. Next are contracts checked at compile time, then `.smith` files
-whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
+macOS: smith builds itself, checkers, learner and game, and `smith build` builds checkers from its `build.c`. Next are
+contracts checked at compile time, then `.smith` files whose syntax replaces macros; the order is in
+[ROADMAP.md](ROADMAP.md).
 
 ## Decisions (change one only with the owner)
 
@@ -28,20 +29,25 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
+- **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs ninja.** It is recognised only
+  as the exact first argument. The header and runtime are embedded in smith with `#embed`, so smith still builds with
+  one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 
 ## Commands
 
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link; `make test` runs the routing tests against stub
-  compilers; `make compare REAL=/usr/bin/clang` runs the same invocations through clang and smith.
+  compilers, then the `smith build` tests with real ninja and clang; `make compare REAL=/usr/bin/clang` runs the same
+  invocations through clang and smith.
 - `make check` checks formatting and clang-tidy (the same configs as game), then runs `make test` and `make compare`;
   it must pass before a change is done. `make format` rewrites the sources.
 - `make install` runs the tests, then copies smith and the `smith++` link to `$(PREFIX)/bin` (default
   `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build, smith's
   included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
-  `smith --smith-which <args>` prints the choice without running it.
+  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
+  runs.
 
 ## How to work
 
