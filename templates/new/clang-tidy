@@ -1,0 +1,45 @@
+# clang-tidy's rules for this project. smith new wrote them; change anything. clangd reports them as you type.
+# Every rule says why it is here.
+#
+# Excluded bugprone checks:
+#   easily-swappable-parameters: flags every pair like (size, align); too noisy for C.
+#   switch-missing-default-case: an enum switch leaves out default so -Wswitch names a missing case.
+#
+# Tiger Style: a function fits on a screen, and nothing recurses, so the code's paths can be checked. Delete
+# misc-no-recursion and readability-function-size (and its LineThreshold below) to opt out.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-switch-missing-default-case,
+  clang-analyzer-*,
+  misc-no-recursion,
+  readability-function-size,
+  readability-identifier-naming
+WarningsAsErrors: '*'
+# Diagnostics come from the project's own files, never from system headers.
+HeaderFilterRegex: '.*'
+CheckOptions:
+  # Positive literals such as 1 << 0 are never the hazard the check exists for.
+  bugprone-signed-bitwise.IgnorePositiveIntegerLiterals: true
+  # clang-tidy counts the lines after the opening brace's line through the closing brace,
+  # so 69 allows 70 lines from the opening brace's line through the closing brace.
+  readability-function-size.LineThreshold: 69
+  # Naming: functions and variables are snake_case, types are PascalCase, enum values are Type_Value and macros are
+  # UPPER_CASE, so a name tells what it is.
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  # constexpr constants are named like variables, with the module prefix: arena_align_max.
+  readability-identifier-naming.ConstexprVariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # Type_Value (FighterAction_Roll) is no built-in case style. Names of that shape are skipped:
+  # a PascalCase type with a lowercase letter, one underscore, then a value starting uppercase.
+  # Every other enum value must start with a prefix no identifier can have, so it's flagged.
+  readability-identifier-naming.EnumConstantIgnoredRegexp: '^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*_[A-Z][A-Za-z0-9]*$'
+  readability-identifier-naming.EnumConstantPrefix: 'Type_Value-'

@@ -1,0 +1,5 @@
+# What smith build makes. Its own state, .smith/, ignores itself.
+/build/
+/compile_commands.json
+# clangd's index.
+/.cache/

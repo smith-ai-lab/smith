@@ -29,13 +29,7 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
      compared byte for byte with make, then game itself; learner's after.
    - `compile_commands.json` comes from `-MJ` fragments merged by a step, as in checkers, or from `smith build -t
      compdb`. smith adds nothing for it.
-   - Conveniences sit on top, each a call a project makes by name. The first is the smith house style. A target that
-     opts in gets:
-     - `-std=gnu23`, all warnings with `-Werror`, and debug information;
-     - sanitizers in debug and test builds;
-     - `-ftrivial-auto-var-init=pattern` and `-ffp-contract=off`;
-     - a named CPU rather than `-march=native`;
-     - smith's `.clang-format`, `.clang-tidy` and Tiger Style lint rules for `smith fmt` and `smith lint`.
+   - `smith new` writes an explicit, opinionated starting point, made of files the project owns.
    - `smith test` bakes in the convention game already uses:
      - tests are non-`static` `void test_<name>(void)` functions in `test_*.c` files, found through libclang;
      - `test_death_<name>` must die;

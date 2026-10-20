@@ -90,6 +90,10 @@ void build(SmithBuild *b) {
 }
 ```
 
+## Start a project
+
+- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c, the rules (`.clang-format`, `.clang-tidy`, `.gitignore`) and the skills, then builds once and commits on `main`. It never overwrites: a file that exists is kept.
+
 ## Replace a Makefile
 
 - Keep every command word for word and every output path the same; a linked binary records its objects' paths.

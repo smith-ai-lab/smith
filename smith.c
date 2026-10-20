@@ -8,9 +8,10 @@
 //     itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
-// `smith build` is the one other command: it compiles the project's build.c with an embedded runtime, runs it to write
-// a ninja manifest, and then runs ninja. See docs/build-c.md.
+// `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
+// runs ninja. See docs/build-c.md. `smith new` writes a ready project: build.c, main.c, the rules and the skills.
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -405,11 +406,11 @@ static void smith_build_find_ninja(const char *self, char *out) {
 }
 
 // Runs a program as a child and waits; the result is its exit status, or 128 plus the signal that killed it.
-static int smith_build_spawn(const char *program, char *const *args) {
+static int smith_spawn_with(const char *program, char *const *args, const posix_spawn_file_actions_t *actions) {
     SMITH_ASSERT(program != nullptr && args != nullptr);
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("run", program, args);
     pid_t pid = 0;
-    if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) {
+    if (posix_spawn(&pid, program, actions, nullptr, args, environ) != 0) {
         smith_die(smith_exit_missing, "cannot execute", program);
     }
     int status = 0;
@@ -419,6 +420,10 @@ static int smith_build_spawn(const char *program, char *const *args) {
     if (waited < 0) smith_die(smith_exit_missing, "cannot wait for", program);
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     return 128 + WTERMSIG(status);
+}
+
+static int smith_build_spawn(const char *program, char *const *args) {
+    return smith_spawn_with(program, args, nullptr);
 }
 
 // Splits the arguments after `build`: -D goes to the build program, the rest to ninja, which is told which file to read
@@ -483,6 +488,284 @@ static int smith_build_main(int count, char **args, const char *self) {
     return smith_exit_missing;
 }
 
+// smith new.
+
+// The files a new project gets travel inside smith, so a project gets exactly what the installed smith ships. The
+// skills are smith's own. The dotfiles are stored without their dot so that they do not act on smith's own repository.
+static const unsigned char smith_new_build_c[] = {
+#embed "templates/new/build.c"
+};
+static const unsigned char smith_new_main_c[] = {
+#embed "templates/new/main.c"
+};
+static const unsigned char smith_new_gitignore[] = {
+#embed "templates/new/gitignore"
+};
+static const unsigned char smith_new_clang_format[] = {
+#embed "templates/new/clang-format"
+};
+static const unsigned char smith_new_clang_tidy[] = {
+#embed "templates/new/clang-tidy"
+};
+static const unsigned char smith_new_skill_smith[] = {
+#embed ".agents/skills/smith/SKILL.md"
+};
+static const unsigned char smith_new_skill_build[] = {
+#embed ".agents/skills/smith-build/SKILL.md"
+};
+
+typedef struct {
+    const char *path;
+    const unsigned char *bytes;
+    size_t size;
+    bool named; // @NAME@ is replaced by the program's name
+} SmithNewFile;
+
+static const SmithNewFile smith_new_files[] = {
+    {"build.c", smith_new_build_c, sizeof smith_new_build_c, true},
+    {"main.c", smith_new_main_c, sizeof smith_new_main_c, true},
+    {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false},
+    {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false},
+    {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false},
+    {".agents/skills/smith/SKILL.md", smith_new_skill_smith, sizeof smith_new_skill_smith, false},
+    {".agents/skills/smith-build/SKILL.md", smith_new_skill_build, sizeof smith_new_skill_build, false},
+};
+
+constexpr size_t smith_new_name_max = 200;
+static const char smith_new_placeholder[] = "@NAME@";
+constexpr size_t smith_new_placeholder_length = sizeof smith_new_placeholder - 1;
+constexpr size_t smith_new_written_max = 16;
+constexpr size_t smith_new_gitignore_lines_max = 100000;
+
+typedef struct {
+    int created;
+    int kept;
+    const char *written[smith_new_written_max]; // the paths created, for git
+    size_t written_count;
+} SmithNewCounts;
+
+// A name is letters, digits, _, . and -, and does not start with . or -.
+static bool smith_new_is_name(const char *name) {
+    size_t length = strlen(name);
+    if (length == 0 || length > smith_new_name_max) return false;
+    for (size_t i = 0; i < length; i++) { // bounded by the length
+        char c = name[i];
+        bool word = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!word && (i == 0 || (c != '.' && c != '-'))) return false;
+    }
+    return true;
+}
+
+[[noreturn]] static void smith_new_bad_name(const char *name, bool from_folder) {
+    fprintf(stderr, "smith: %s cannot name a program; use letters, digits, _, . and -%s\n", name,
+            from_folder ? "; smith new <name> from the parent folder picks another name" : "");
+    exit(smith_exit_usage);
+}
+
+// Writes the bytes to a path nothing exists at, with @NAME@ replaced when the file is named.
+static void smith_new_write(const SmithNewFile *file, const char *name) {
+    FILE *out = fopen(file->path, "wbx");
+    if (out == nullptr) smith_die(smith_exit_usage, "cannot write", file->path);
+    bool ok = true;
+    for (size_t i = 0; i < file->size; i++) { // bounded by the size of the content
+        bool hole = file->named && file->size - i >= smith_new_placeholder_length &&
+                    memcmp(file->bytes + i, smith_new_placeholder, smith_new_placeholder_length) == 0;
+        if (hole) {
+            ok = fputs(name, out) >= 0 && ok;
+            i += smith_new_placeholder_length - 1;
+        } else {
+            ok = fputc(file->bytes[i], out) != EOF && ok;
+        }
+    }
+    ok = fclose(out) == 0 && ok;
+    if (!ok) smith_die(smith_exit_usage, "cannot write", file->path);
+}
+
+static bool smith_new_exists(const char *path) {
+    struct stat info = {};
+    if (lstat(path, &info) == 0) return true;
+    if (errno != ENOENT) smith_die(smith_exit_usage, "cannot inspect", path);
+    return false;
+}
+
+// Makes the folders above a path, one at a time.
+static void smith_new_make_parents(const char *path) {
+    char partial[PATH_MAX];
+    int written = snprintf(partial, sizeof partial, "%s", path);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof partial);
+    for (char *slash = strchr(partial, '/'); slash != nullptr; slash = strchr(slash + 1, '/')) {
+        *slash = '\0';
+        smith_make_folder(partial);
+        *slash = '/';
+    }
+}
+
+static void smith_new_report(const char *verb, const char *path) {
+    printf("  %-8s %s\n", verb, path);
+}
+
+// What the folder already builds with, if it is not smith: the first of these files that exists.
+static const char *smith_new_other_build(void) {
+    static const char *const files[] = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"};
+    for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
+        if (smith_new_exists(files[i])) return files[i];
+    }
+    return nullptr;
+}
+
+static void smith_new_count(SmithNewCounts *counts, const char *path, bool exists) {
+    smith_new_report(exists ? "kept" : "created", path);
+    if (exists) {
+        counts->kept += 1;
+        return;
+    }
+    counts->created += 1;
+    SMITH_ASSERT(counts->written_count < smith_new_written_max);
+    counts->written[counts->written_count++] = path;
+}
+
+// The link to the skills, made only if nothing is there.
+static void smith_new_link(SmithNewCounts *counts) {
+    const char *link = ".claude/skills";
+    bool exists = smith_new_exists(link);
+    if (!exists) {
+        smith_make_folder(".claude");
+        if (symlink("../.agents/skills", link) != 0) smith_die(smith_exit_usage, "cannot create", link);
+    }
+    smith_new_count(counts, link, exists);
+}
+
+// Each file is written only if nothing exists at its path. main.c is left out when the project has its own sources: a
+// build.c already there, or another build system.
+static void smith_new_files_write(const char *name, bool skip_main, SmithNewCounts *counts) {
+    for (size_t i = 0; i < sizeof smith_new_files / sizeof smith_new_files[0]; i++) {
+        const SmithNewFile *file = &smith_new_files[i];
+        if (skip_main && strcmp(file->path, "main.c") == 0) continue;
+        bool exists = smith_new_exists(file->path);
+        if (!exists) {
+            smith_new_make_parents(file->path);
+            smith_new_write(file, name);
+        }
+        smith_new_count(counts, file->path, exists);
+    }
+    smith_new_link(counts);
+}
+
+// The lines of smith's .gitignore that an existing one lacks, said so that the user can add them. A line is present
+// only if it matches exactly, ignoring trailing spaces.
+static void smith_new_gitignore_missing(void) {
+    static const char *const wanted[] = {"/build/", "/compile_commands.json", "/.cache/"};
+    bool present[sizeof wanted / sizeof wanted[0]] = {};
+    FILE *file = fopen(".gitignore", "r");
+    if (file == nullptr) return;
+    char line[PATH_MAX];
+    for (size_t read = 0; read < smith_new_gitignore_lines_max && fgets(line, sizeof line, file) != nullptr; read++) {
+        size_t length = strlen(line);
+        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r' || line[length - 1] == ' ')) {
+            line[--length] = '\0';
+        }
+        for (size_t i = 0; i < sizeof wanted / sizeof wanted[0]; i++) {
+            if (strcmp(line, wanted[i]) == 0) present[i] = true;
+        }
+    }
+    fclose(file);
+    for (size_t i = 0; i < sizeof wanted / sizeof wanted[0]; i++) {
+        if (!present[i]) printf("  .gitignore lacks %s; add it\n", wanted[i]);
+    }
+}
+
+// Runs git with its output silenced as asked: stdout, or stdout and stderr.
+static int smith_new_git(const char *git, bool silence_errors, char *const *args) {
+    posix_spawn_file_actions_t actions;
+    SMITH_ASSERT(posix_spawn_file_actions_init(&actions) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0) == 0);
+    if (silence_errors) SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
+    int status = smith_spawn_with(git, args, &actions);
+    posix_spawn_file_actions_destroy(&actions);
+    return status;
+}
+
+// Puts the new project under git on main, unless git is missing or the folder is already in a work tree. A failed
+// commit, for example with no user.name, leaves the files staged. Returns the line for the summary.
+static const char *smith_new_commit(const char *self, const char *name, const SmithNewCounts *only) {
+    char git[PATH_MAX];
+    if (!smith_find_in_path("git", self, git)) return "skipped: git is not on PATH";
+    char *inside[] = {git, (char *)"rev-parse", (char *)"--is-inside-work-tree", nullptr};
+    if (smith_new_git(git, true, inside) == 0) return "kept: the folder is already inside a git work tree";
+    char message[PATH_MAX];
+    int written = snprintf(message, sizeof message, "chore: create %s with smith new", name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof message);
+    char *init[] = {git, (char *)"init", (char *)"-q", (char *)"-b", (char *)"main", nullptr};
+    // Beside another build system only the files written are added; the rest of the folder is the owner's.
+    char *add[smith_new_written_max + 4] = {git, (char *)"add", (char *)"-A", nullptr};
+    if (only != nullptr) {
+        add[2] = (char *)"--";
+        for (size_t i = 0; i < only->written_count; i++)
+            add[3 + i] = (char *)only->written[i];
+        add[3 + only->written_count] = nullptr;
+    }
+    char *commit[] = {git, (char *)"commit", (char *)"-q", (char *)"-m", message, nullptr};
+    if (smith_new_git(git, false, init) != 0) return "failed: git init; no repository was made";
+    if (smith_new_git(git, false, add) != 0) return "failed: git add; the repository has no commit";
+    if (smith_new_git(git, false, commit) != 0) {
+        return "commit skipped: git could not commit (is user.name and user.email set?); the files are staged";
+    }
+    return "created a repository on main with one commit";
+}
+
+// Moves into the folder of the project, making it if needed, and returns its name. With no argument the folder is the
+// current one and its own name is the program's.
+static const char *smith_new_enter(int count, char **args, char *folder_name) {
+    if (count == 1) {
+        if (!smith_new_is_name(args[0])) smith_new_bad_name(args[0], false);
+        smith_make_folder(args[0]);
+        if (chdir(args[0]) != 0) smith_die(smith_exit_usage, "cannot enter", args[0]);
+        return args[0];
+    }
+    char here[PATH_MAX];
+    if (getcwd(here, sizeof here) == nullptr) smith_die(smith_exit_usage, "cannot find the current folder", nullptr);
+    int written = snprintf(folder_name, PATH_MAX, "%s", smith_base_name(here));
+    SMITH_ASSERT(written >= 0 && written < PATH_MAX);
+    if (!smith_new_is_name(folder_name)) smith_new_bad_name(folder_name, true);
+    return folder_name;
+}
+
+static int smith_new_main(int count, char **args, const char *self) {
+    SMITH_ASSERT(count >= 0);
+    if (count > 1) smith_die(smith_exit_usage, "new takes at most one argument", "smith new [<name>]");
+    char folder_name[PATH_MAX];
+    const char *name = smith_new_enter(count, args, folder_name);
+    printf("smith new: %s\n", name);
+    bool has_build_c = smith_new_exists("build.c");
+    const char *other = has_build_c ? nullptr : smith_new_other_build();
+    bool had_gitignore = smith_new_exists(".gitignore");
+    SmithNewCounts counts = {};
+    smith_new_files_write(name, has_build_c || other != nullptr, &counts);
+    fflush(stdout);
+    // The template compiles a main.c that a project with another build system does not have, so it is not built.
+    if (other == nullptr) {
+        char *build_argv[] = {(char *)self, (char *)"build", nullptr};
+        if (smith_build_spawn(self, build_argv) != 0) {
+            smith_die(smith_exit_usage,
+                      "the first build failed, so nothing was committed; fix it, then run smith build", nullptr);
+        }
+    }
+    const char *git = smith_new_commit(self, name, other != nullptr ? &counts : nullptr);
+    printf("\nsmith new: %s: %d created, %d kept\n  git: %s\n", name, counts.created, counts.kept, git);
+    if (had_gitignore) smith_new_gitignore_missing();
+    if (other != nullptr) {
+        printf("\nThis project builds with a %s. build.c is a starting point: port the %s into it, following the\n"
+               "smith-build skill (.agents/skills/smith-build/SKILL.md), and remove the %s once smith build gives\n"
+               "the same results.\n",
+               other, other, other);
+        return 0;
+    }
+    printf("\nNext:\n");
+    if (count == 1) printf("  cd %s\n", name);
+    printf("  smith build run\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
@@ -498,6 +781,7 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
 
     switch (smith_classify(count, args)) {
     case SmithRoute_Mixed:

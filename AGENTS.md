@@ -20,8 +20,9 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
      removes or reorders flags, so the build cannot change.
   2. **Replace the Makefile with a `build.c`.** It only describes the build, explicitly and across platforms, so it
      changes nothing either.
-  3. **Opt into conveniences such as the house style** (smith's flags, `.clang-format`, `.clang-tidy` and lint rules).
-     A project always asks for these by name; it never gets them by default.
+  3. **Run `smith new`.** It writes an explicit, opinionated starting point (C23, strict warnings, sanitizers while
+     developing, `.clang-format`, `.clang-tidy`, smith's skills, git on `main`, a first build), all in files the project
+     owns. There is no house-style mechanism, only those files; a project that never runs `smith new` gets none of it.
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
 - **smith `execv`s the compiler** with the compiler's full path as `argv[0]` (gcc finds its files from it), so exit
   status, signals and pipes are the compiler's.
@@ -48,6 +49,9 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   smith's included. The way back needs only a C23 compiler, and is also the first build of a fresh clone:
   `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`. `-DCC=` picks the
   compiler that builds smith; `smith build clean` removes `build/`.
+- `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
+  `main.c`, `.gitignore`, `.clang-format`, `.clang-tidy`, smith's skills and the `.claude/skills` link, then builds once
+  and commits on `main`. `tests/new.sh` tests it.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
   runs.

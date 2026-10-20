@@ -57,15 +57,29 @@ static SmithStep build_check_llvm(SmithBuild *b, const char *format, const char 
 // Rewrites the sources in the style of .clang-format (format), or fails on any file clang-format would change
 // (check-format; `smith build format` fixes them).
 static void build_format(SmithBuild *b, const char *format, const char *const *llvm, const char *const *sources) {
+    // The C files of the `smith new` templates follow the template's own rules, which are smith's, comments aside.
+    const char *new_files = "templates/new/build.c templates/new/main.c";
     SmithStep rewrite = {
-        .command = smith_cat(b, (const char *[]){"sh", "-c", smith_fmt(b, "%s -i \"$@\"", format), "sh", nullptr},
-                             sources, nullptr),
+        .command =
+            smith_cat(b,
+                      (const char *[]){"sh", "-c",
+                                       smith_fmt(b, "%s -i \"$@\" && %s -i --style=file:templates/new/clang-format %s",
+                                                 format, format, new_files),
+                                       "sh", nullptr},
+                      sources, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "format", &rewrite);
     SmithStep check_format = {
         .command = smith_cat(
-            b, (const char *[]){"sh", "-c", smith_fmt(b, "%s --dry-run --Werror \"$@\"", format), "sh", nullptr},
+            b,
+            (const char *[]){
+                "sh", "-c",
+                smith_fmt(
+                    b,
+                    "%s --dry-run --Werror \"$@\" && %s --dry-run --Werror --style=file:templates/new/clang-format %s",
+                    format, format, new_files),
+                "sh", nullptr},
             sources, nullptr),
         .inputs = llvm,
     };
@@ -73,7 +87,7 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 }
 
 // clang-tidy (.clang-tidy) over each source with the flags the build uses, against Xcode's SDK. build.c is tidied too,
-// with -I include, where it finds <smith/build.h>.
+// with -I include, where it finds <smith/build.h>. The `smith new` templates are tidied with their own rules.
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
@@ -83,8 +97,11 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                         "%s --quiet smith.c -- \"$@\" %s && "
                                                         "%s --quiet build.c -- \"$@\" -I include %s && "
                                                         "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                                        "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s",
-                                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                                        "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                                        "for f in build main; do %s --quiet "
+                                                        "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                                        "\"$@\" -I include %s || exit 1; done",
+                                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                               "sh", nullptr},
                              cflags, nullptr),
         .inputs = llvm,
@@ -107,14 +124,19 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
 // The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
 // clang++. The build folder is named for the OS and architecture, so a binary built on one machine is never mistaken
 // for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS). smith.c embeds the build
-// header and the runtime, so a change to either recompiles it, though the depfile may not list them.
+// header, the runtime and the `smith new` files, so a change to any recompiles it, though the depfile may not list
+// them.
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = config->cflags,
-        .implicit_inputs = (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", nullptr},
+        .implicit_inputs =
+            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "templates/new/build.c",
+                             "templates/new/main.c", "templates/new/gitignore", "templates/new/clang-format",
+                             "templates/new/clang-tidy", ".agents/skills/smith/SKILL.md",
+                             ".agents/skills/smith-build/SKILL.md", nullptr},
     };
     smith_object(b, &object);
     SmithProgram program = {
@@ -155,11 +177,11 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 }
 
 // Routing tests with stub compilers (no clang or Xcode needed, and no real build is touched), then the `smith build`
-// tests, which use real ninja and clang.
+// tests and the `smith new` tests, which use real ninja, clang and git.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
         .command =
-            (const char *[]){"sh", "-c", "env \"$0\" sh tests/run.sh \"$1\" && env \"$0\" sh tests/build.sh \"$1\"",
+            (const char *[]){"sh", "-c", "for t in run build new; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
                              smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
