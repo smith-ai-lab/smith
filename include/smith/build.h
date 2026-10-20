@@ -80,8 +80,8 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
-// build.c asks. An unknown name is an error that lists the known names ("arena", "random"; random uses the arena, so a
-// project that compiles one compiles both).
+// build.c asks. An unknown name is an error that lists the known names ("arena", "random", "test"; random uses the
+// arena, so a project that compiles one compiles both; smith_tests compiles "test").
 const char *smith_library(SmithBuild *b, const char *name);
 
 // Helpers
@@ -189,6 +189,35 @@ void smith_program(SmithBuild *b, SmithProgram *program);
 // entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
 // smith_compile_commands, which writes the file; after it, it is an error.
 void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
+// Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
+typedef struct {
+    const char *compiler;       // compiles and links the tests, by default "smith"
+    const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
+    const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
+    const char *const *flags;          // for the test files and smith's test library
+    const char *const *link_flags;
+    const char *output; // the runner, by default build/tests
+    const char *name;   // the task, by default "test"
+    SmithStep step;     // set by smith_tests: the task
+} SmithTests;
+
+// Emits ordinary steps, the same as calling smith_step yourself; the commands are written out here.
+//   find the tests (a .run step, restat): reads .sources and writes <folder of .output>/tests_list.h, the prototypes
+//     of the tests, and tests_list.c, the table the runner reads. A test is a line that is exactly
+//     `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` (<name> in [a-z0-9_], <key> in [a-z_]), the
+//     pattern ^void (test_[a-z0-9_]+)\((void|SmithKey [a-z_]+)\) \{$. A name defined twice is an error that names
+//     both files.
+//   each test file, through smith_object:
+//     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MMD -MF <d> -c <file> -o <object>
+//     so a test_ function the scan missed, because it is formatted another way, is a compile error.
+//   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
+//   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
+//     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
+//     second time; the call fails and says which smith_library to add when one is missing.
+//   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
+//     -DSEEDS (--seeds), -DJOBS (--jobs) and -DSHRINK (--shrink), each read with smith_option_value, so a project that
+//     reads the same name gets the same value.
+void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
 // last.
