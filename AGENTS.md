@@ -14,8 +14,15 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 - **clang-format and clang-tidy come from one pinned upstream LLVM** on every platform, so formatting and lint are the
   same everywhere: Homebrew `llvm` 23.1.3, held with `brew pin`. Apple ships no clang-tidy and an older clang-format.
   On macOS, clangd and lldb are Apple's, matching the compiler.
-- **C, C++ and Objective-C are a pure passthrough.** smith never adds, removes or reorders flags, so it cannot change a
-  build. Defaults (`-std=gnu23`, sanitizers) belong to `.smith` files only. `.smith` inputs are an error for now.
+- **smith never changes a default, so adopting it is trivial and each step is optional.**
+  1. **Use the smith command instead of clang.** For C, C++ and Objective-C it is a pure passthrough: smith never adds,
+     removes or reorders flags, so the build cannot change.
+  2. **Replace the Makefile with a `build.c`.** It only describes the build, explicitly and across platforms, so it
+     changes nothing either.
+  3. **Opt into conveniences such as the house style** (smith's flags, `.clang-format`, `.clang-tidy` and lint rules).
+     A project always asks for these by name; it never gets them by default.
+  
+  `.smith` inputs are an error for now.
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
 - **smith `execv`s the compiler** with the compiler's full path as `argv[0]` (gcc finds its files from it), so exit
   status, signals and pipes are the compiler's.
