@@ -176,6 +176,92 @@ build.c has two layers, and a project may use either or both.
   A program's step lists the objects' outputs as inputs and the libraries that are files (a path with `/`, or ending in
   `.a`, `.dylib` or `.so`, and not starting with `-`) as implicit inputs; `-framework X` is not a file.
 
+## Tests: `smith_tests` and `<smith/test.h>`
+
+Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
+types, a process per test, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
+with the exact commands) builds that runner from the project's test files and adds the task `smith build test`.
+
+```c
+// tests/test_random.c
+#include <smith/test.h>
+
+void test_addition(void) {                      // a test: found by name, no registration
+    SMITH_CHECK(2 + 2, ==, 4);
+}
+
+void test_uniform_stays_in_range(SmithKey key) { // a property test: runs on 100 keys
+    SmithUniformInt64 range = {.low = 0, .high = 6};
+    int64_t x = smith_uniform_int64_sample(key, range);
+    SMITH_CHECK(x, <=, range.high);
+}
+```
+
+```c
+// build.c
+SmithTests tests = {
+    .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+    .objects = (const SmithObject *[]){&arena, &random, &code_under_test, nullptr},
+    .flags = flags,                                  // for the test files and smith's test library
+    .link_flags = link_flags,
+};
+smith_tests(b, &tests);                              // tests.step is the task "test"
+```
+
+- **Macros only for checks.** Only a macro can capture an expression's text, its file and its line, and evaluate an
+  expression later in a child process. A test is a plain function; there is no `TEST()` macro and no registration.
+- **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
+  because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {` or
+  `void test_<name>(SmithKey key) {` (`<name>` in `[a-z0-9_]`, the parameter's name in `[a-z_]`) and writes
+  `tests_list.h` (prototypes) and `tests_list.c` (the table) beside the runner. Each test file compiles with
+  `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
+  another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
+  error that names both files; a file with no tests is fine.
+- **`SMITH_CHECK(condition)`**, **`SMITH_CHECK(a, op, b)`**, **`SMITH_CHECK_NEAR(a, b, tolerance)`** and
+  **`SMITH_CHECK_ABORTS(expression)`** are the checks. A comparison evaluates each argument once and converts `b` to
+  `a`'s type as an assignment would, so `-Wconversion` flags a lossy comparison (`SMITH_CHECK(int_value, ==, 3.5)` is a
+  compile error) and both values print in `a`'s type. `a`'s type is its type as a value: an array becomes a pointer and
+  `const` drops; every pointer compares, and prints, as an address. Printed types: `bool`, `char`, every standard
+  signed and unsigned integer type, `float` and `double` (shortest round trip plus `%a`, so a difference in the last
+  bit shows) and pointers. A failed check ends the test.
+- **`SMITH_CHECK_ABORTS`** forks; the child runs the expression and the check passes when the child dies by a signal
+  (`SIGABRT` from an `assert` or the arena's capacity stop, a crash) or exits with a non-zero status (a sanitizer). If the child
+  returns the check fails with "expected an abort; it returned"; a timeout fails too. The child's output is discarded
+  on a pass and shown on a failure.
+- **`smith_test_note(format, ...)`** prints under a failure, whether a failed check, a crash or a timeout; each note
+  replaces the last. **`smith_test_arena(capacity)`** is the test's memory, from a block the runner reserved once with
+  `mmap`, given back before each test and each key.
+- **The runner** runs a process per test, in parallel, and prints results in table order. Output is captured and
+  shown only for a failing test (the first 64 KiB; a child that writes 16 MiB is killed). The options come from
+  `-DTEST=<substring>` (a test named exactly that, else every test whose name contains it), `-DSEED=<n>` (each
+  property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100 by default), `-DJOBS=<n>` (default: the
+  cores) and `-DSHRINK=0|1`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
+  test and per key), `--shrink 0|1`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
+  so a project that reads the same name gets the same value. The run ends with `N passed, M failed in T s` and the five
+  slowest tests; `--verbose` lists every test.
+- **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
+  replays exactly.
+- **A failure prints** the test, the seed of a property test, the check's file and line, the line as written, the
+  values with their types, the note, the test's output, and the command that reruns it:
+
+  ```
+  FAIL uniform_stays_in_range with seed 6387777158891554393
+    tests/test_random.c:12
+        SMITH_CHECK(x, <=, range.high);
+      x          = 7   (long long)
+      range.high = 6   (long long)
+      note: <the note, if any>
+      <the test's output, indented, if any>
+      rerun: smith build test -DTEST=uniform_stays_in_range -DSEED=6387777158891554393
+  ```
+
+  A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a timeout is
+  `FAIL name: timed out after 10 s`. Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
+- **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
+  project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
+- The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
+  flags (`/usr/bin/clangd --check` on a test file reports no errors).
+
 ## The API
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
@@ -265,8 +351,8 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
-// build.c asks. An unknown name is an error that lists the known names ("arena", "random"; random uses the arena, so a project that
-// compiles one compiles both).
+// build.c asks. An unknown name is an error that lists the known names ("arena", "random", "test"; random uses the arena,
+// so a project that compiles one compiles both; smith_tests compiles "test").
 const char *smith_library(SmithBuild *b, const char *name);
 
 // Helpers
@@ -374,6 +460,35 @@ void smith_program(SmithBuild *b, SmithProgram *program);
 // entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
 // smith_compile_commands, which writes the file; after it, it is an error.
 void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
+// Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
+typedef struct {
+    const char *compiler;       // compiles and links the tests, by default "smith"
+    const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
+    const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
+    const char *const *flags;          // for the test files and smith's test library
+    const char *const *link_flags;
+    const char *output; // the runner, by default build/tests
+    const char *name;   // the task, by default "test"
+    SmithStep step;     // set by smith_tests: the task
+} SmithTests;
+
+// Emits ordinary steps, the same as calling smith_step yourself; the commands are written out here.
+//   find the tests (a .run step, restat): reads .sources and writes <folder of .output>/tests_list.h, the prototypes
+//     of the tests, and tests_list.c, the table the runner reads. A test is a line that is exactly
+//     `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` (<name> in [a-z0-9_], <key> in [a-z_]), the
+//     pattern ^void (test_[a-z0-9_]+)\((void|SmithKey [a-z_]+)\) \{$. A name defined twice is an error that names
+//     both files.
+//   each test file, through smith_object:
+//     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MMD -MF <d> -c <file> -o <object>
+//     so a test_ function the scan missed, because it is formatted another way, is a compile error.
+//   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
+//   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
+//     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
+//     second time; the call fails and says which smith_library to add when one is missing.
+//   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
+//     -DSEEDS (--seeds), -DJOBS (--jobs) and -DSHRINK (--shrink), each read with smith_option_value, so a project that
+//     reads the same name gets the same value.
+void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
 // last.

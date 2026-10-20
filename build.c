@@ -103,11 +103,12 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                         "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
                                                         "%s --quiet lib/random.c -- \"$@\" -I include %s && "
                                                         "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet lib/test.c -- \"$@\" -I include %s && "
                                                         "for f in build main; do %s --quiet "
                                                         "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
                                                         "\"$@\" -std=gnu2y -I include %s || exit 1; done",
                                                         tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                        sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                                        sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                               "sh", nullptr},
                              cflags, nullptr),
         .inputs = llvm,
@@ -131,6 +132,8 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "include/smith/random.h",
                                                   "lib/random.c",
                                                   "tests/random.c",
+                                                  "include/smith/test.h",
+                                                  "lib/test.c",
                                                   nullptr};
     build_format(b, format, check_llvm.outputs, sources);
     build_tidy(b, tidy, check_llvm.outputs, config->cflags);
@@ -150,8 +153,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .flags = config->cflags,
         .implicit_inputs =
             (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "include/smith/arena.h", "lib/arena.c",
-                             "include/smith/random.h", "lib/random.c", "templates/new/build.c", "templates/new/main.c",
-                             "templates/new/gitignore", "templates/new/clang-format", "templates/new/clang-tidy",
+                             "include/smith/random.h", "lib/random.c", "include/smith/test.h", "lib/test.c",
+                             "templates/new/build.c", "templates/new/main.c", "templates/new/gitignore",
+                             "templates/new/clang-format", "templates/new/clang-tidy",
                              "templates/new/claude-settings.json", nullptr},
     };
     smith_object(b, &object);
@@ -197,9 +201,10 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
         .command =
-            (const char *[]){"sh", "-c",
-                             "for t in run build new arena random; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
-                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+            (const char *[]){
+                "sh", "-c",
+                "for t in run build new arena random test; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
+                smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);
