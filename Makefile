@@ -6,8 +6,9 @@ STD ?= gnu17
 WERROR ?= -Werror
 CFLAGS ?= -std=$(STD) -O1 -g -Wall -Wextra -Wpedantic $(WERROR)
 BUILD ?= build/$(shell uname -s)-$(shell uname -m)
+PREFIX ?= $(HOME)/.local
 
-.PHONY: all test compare clean
+.PHONY: all test compare install clean
 
 all: $(BUILD)/smith $(BUILD)/smith++
 
@@ -28,6 +29,15 @@ test: $(BUILD)/smith
 compare: $(BUILD)/smith
 	@test -n '$(REAL)' || { echo 'usage: make compare REAL=/path/to/clang'; exit 2; }
 	sh tests/compare.sh $(BUILD)/smith '$(REAL)'
+
+# Copies smith, once its tests pass, to $(PREFIX)/bin, where projects find it as CC. A link to the build directory would
+# hand every project each half-finished build. The rename replaces the binary in one step, so a build running meanwhile
+# never sees half a file.
+install: test
+	mkdir -p $(PREFIX)/bin
+	cp $(BUILD)/smith $(PREFIX)/bin/smith.tmp
+	mv $(PREFIX)/bin/smith.tmp $(PREFIX)/bin/smith
+	ln -sf smith $(PREFIX)/bin/smith++
 
 clean:
 	rm -rf build
