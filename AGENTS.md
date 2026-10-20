@@ -30,7 +30,9 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link; `make test` runs the routing tests against stub
   compilers; `make compare REAL=/usr/bin/clang` runs the same invocations through clang and smith.
-- In a project: `make CC=smith METAL=smith` (learner, game), or a `clang` symlink to smith first on PATH (checkers).
+- `make install` runs the tests, then copies smith and the `smith++` link to `~/.local/bin`. `~/.zshenv` sets `CC` and
+  `CXX` to them for every shell, and checkers, learner and game say `CC := smith`. A broken install breaks every
+  build, smith's included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it.
 
@@ -38,8 +40,10 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
-  them in scratch copies, and change their sources only with the owner.
+  them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
+  note on what changed and why.
 - Small Conventional Commits.
+- Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 
 ## Bugs the checker must find (`~/Documents/checkers/checkers.c`)
 
