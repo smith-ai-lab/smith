@@ -158,7 +158,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "unknown: the build fails with status 2" 2 "$rc"
-expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: arena'
+expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: arena, random'
 
 echo
 echo "$total arena checks, $failures failed"

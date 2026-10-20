@@ -1,0 +1,134 @@
+// <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
+// of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
+// state and no generator that advances, so nothing can interleave, and a test that fails once fails every time.
+//
+//   SmithKey key = smith_key_make(seed);
+//   double x = smith_uniform_double_sample(key, (SmithUniformDouble){.low = 0, .high = 1});
+//
+// Derive one key for every use. Drawing twice from the same key repeats the same numbers, which is a bug: the second
+// use is not independent of the first. smith_key_derive(key, i) is the key for part or item i, so a program gives each
+// of its parts a derived key, and each of theirs another:
+//   SmithKey world_key = smith_key_derive(key, 0);
+//   SmithKey noise_key = smith_key_derive(key, 1);
+//
+// Filling an array is a loop, which works for any distribution and parallelizes, since no draw depends on another:
+//   for (size_t i = 0; i < count; i++)
+//       out[i] = smith_normal_float_sample(smith_key_derive(key, i), (SmithNormalFloat){.mean = 0, .deviation = 1});
+//
+// A distribution is a struct of its parameters and a function `smith_<name>_sample(key, d)` that is built only from the
+// public primitives below, so your own is written exactly like smith's. It takes a key and spends it with
+// smith_key_bits, smith_key_unit_float or smith_key_unit_double (draw n of the same key are different numbers), or
+// derives keys for its parts. An exponential distribution with a rate, where 1 - unit lies in (0, 1], so the log is
+// safe:
+//   double exponential_sample(SmithKey key, double rate) {
+//       return -smith_log_double(1.0 - smith_key_unit_double(key, 0)) / rate;
+//   }
+//
+// Types are named as <math.h> does (sqrtf and sqrt): real distributions come in float and double, and integer ones use
+// int64_t. A float distribution computes in float, so a GPU kernel can mirror it; Metal has no double.
+//
+// The numbers are part of the API: smith never changes what a key gives. To keep that true on every machine, the
+// library keeps a multiply from fusing with an add whatever -ffp-contract says, and refuses -ffast-math, and its
+// logarithm is its own (smith_log_float and smith_log_double), the same bits everywhere; only sqrt and sqrtf come from
+// libm, and IEEE requires those to be exactly rounded. The library uses the arena (smith_categorical_make), so a
+// project compiles both:
+//   smith_library(b, "random") and smith_library(b, "arena") in its build.c.
+// On platforms where sqrt is not inlined, link libm (-lm).
+#pragma once
+
+#include <float.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <smith/arena.h>
+
+// clang has no _Float32 (C23 Annex H), so the types are asserted to be IEEE binary32 and binary64.
+static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53, "float and double must be IEEE");
+
+// A key: a 64-bit value that names a stream of random bits. Keys are values; copy them freely.
+typedef struct {
+    uint64_t bits;
+} SmithKey;
+
+// The key for a seed. Seeds that differ in one bit give unrelated streams.
+[[nodiscard]] SmithKey smith_key_make(uint64_t seed);
+
+// JAX's fold_in: the key for part or item i of key. Deriving is how a key is split, so each use gets its own.
+[[nodiscard]] SmithKey smith_key_derive(SmithKey key, uint64_t i);
+
+// The key's n-th 64 random bits. Draws n = 0, 1, 2... of one key are different numbers; they are a stream a
+// distribution may spend, while a program gives each use its own derived key.
+[[nodiscard]] uint64_t smith_key_bits(SmithKey key, uint64_t n);
+
+// A real in [0, 1) on a grid of 2^-24, from the key's bits n. 1 - unit is then exact and lies in (0, 1]: the safe way
+// to take a log.
+[[nodiscard]] float smith_key_unit_float(SmithKey key, uint64_t n);
+
+// A real in [0, 1) on a grid of 2^-53, from the key's bits n. 1 - unit is exact and lies in (0, 1].
+[[nodiscard]] double smith_key_unit_double(SmithKey key, uint64_t n);
+
+// The natural logarithm the distributions use, fdlibm's algorithm: within 1 ulp of the true value and the same bits on
+// every platform, which libm's log does not promise. 0 gives -inf, a negative gives NaN, inf gives inf, NaN gives NaN,
+// and subnormals work.
+[[nodiscard]] float smith_log_float(float x);
+[[nodiscard]] double smith_log_double(double x);
+
+typedef struct {
+    float low, high;
+} SmithUniformFloat; // [low, high)
+
+typedef struct {
+    double low, high;
+} SmithUniformDouble; // [low, high)
+
+typedef struct {
+    int64_t low, high;
+} SmithUniformInt64; // [low, high], each value exactly as likely
+
+// The normal distribution by inverse CDF (Wichura's AS241), from a grid of probabilities that never reaches 0 or 1, so
+// a draw is finite and the distribution is exactly symmetric. A draw reaches about +-8.2 deviations for double and
+// about
+// +-5.3 for float.
+typedef struct {
+    float mean, deviation;
+} SmithNormalFloat;
+
+typedef struct {
+    double mean, deviation;
+} SmithNormalDouble;
+
+typedef struct {
+    double probability;
+} SmithBernoulli; // true with that probability
+
+// Vose's alias table: a sample is two draws whatever the count. Built by smith_categorical_make, with its two arrays in
+// the arena, so the arena must outlive the distribution.
+typedef struct {
+    const double *probability; // the chance, per index, of keeping it rather than its alias
+    const size_t *alias;
+    size_t count;
+} SmithCategorical;
+
+typedef struct {
+    size_t count;
+} SmithPermutation;
+
+// Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation). Parameters are checked
+// with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
+[[nodiscard]] float smith_uniform_float_sample(SmithKey key, SmithUniformFloat uniform);
+[[nodiscard]] double smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform);
+[[nodiscard]] int64_t smith_uniform_int64_sample(SmithKey key, SmithUniformInt64 uniform);
+[[nodiscard]] float smith_normal_float_sample(SmithKey key, SmithNormalFloat normal);
+[[nodiscard]] double smith_normal_double_sample(SmithKey key, SmithNormalDouble normal);
+[[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli);
+
+// The table for weights (count of them, at least one, finite, not negative, summing above zero; they need not sum to
+// 1). Construction is deterministic, so the same weights give the same table everywhere. Its worklists live in a scope
+// that ends before this returns.
+[[nodiscard]] SmithCategorical smith_categorical_make(SmithArena *arena, const double *weights, size_t count);
+
+// An index below count; a zero weight is never drawn.
+[[nodiscard]] size_t smith_categorical_sample(SmithKey key, SmithCategorical categorical);
+
+// Writes 0..count-1 to out in a uniformly random order (Fisher-Yates); a count of 0 writes nothing.
+void smith_permutation_sample(SmithKey key, SmithPermutation permutation, size_t *out);
