@@ -1,7 +1,8 @@
 # smith build
 
-Status: v1, v1.5 (`smith_defer`, `smith_lines`) and the changes found by porting game (below) are implemented. checkers and smith itself build with it. `.run`,
-`.args`, `.content_hash` and `smith_run_lines` are declared but not implemented. The
+Status: v1, v1.5 (`smith_defer`, `smith_lines`), C-function steps (`.run`, `.args`, `smith_run_lines`,
+`smith_run_status`) and the changes found by porting game (below) are implemented. checkers and smith itself build with
+it. `.content_hash` is declared but not implemented. The
 23 cases that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in
 [build-c-cases.md](build-c-cases.md).
 
@@ -149,8 +150,7 @@ Generator rules:
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
 generated mesh list. Everything else is later. The text below is [include/smith/build.h](../include/smith/build.h)
-without `#pragma once`. Setting `.run`, `.args` or `.content_hash`, or calling `smith_run_lines`, is the error
-`smith: build.c: <name> is not implemented yet`.
+without `#pragma once`. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.
 
 ```c
 // smith/build.h: the API of a project's build.c, which `smith build` compiles and runs to write build.ninja.
@@ -164,7 +164,7 @@ typedef struct SmithBuild {
     int cpus;         // the number of cores
 } SmithBuild;
 
-typedef struct SmithRun SmithRun; // later
+typedef struct SmithRun SmithRun;
 
 typedef struct {
     // argv. Only the whole words $in and $out expand; every other $ is literal. A word may hold newlines
@@ -178,8 +178,8 @@ typedef struct {
     const char *pool;                     // a name from smith_pool, or "console" for the terminal
     bool restat;                          // an output the command left unchanged does not rerun what depends on it
     bool always;                          // run on every build
-    int (*run)(SmithRun *run);            // later: a C function in build.c instead of .command
-    const char *const *args;              // later: given to .run
+    int (*run)(SmithRun *run);            // a C function in build.c instead of .command; 0 succeeds
+    const char *const *args;              // given to .run as run->args
     bool content_hash;                    // later: rerun only when the inputs' bytes changed
 } SmithStep;
 
@@ -248,16 +248,27 @@ void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuil
 // missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
-// Not implemented yet, so using one prints a message and exits 2: .run, .args, .content_hash and smith_run_lines.
-// later: steps written as C functions
+// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step: the
+// build program runs again with `--run <the step's first output>`, repeats build() and the smith_defer callbacks
+// without writing anything (smith_write included, until the function runs), and calls the function. Its return value is
+// the exit status. Like a command, it writes the outputs it declares; one with none gets smith's stamp. It sees its
+// step's own lists, and run->b works with every helper (smith_fmt, smith_cat, smith_lines, smith_write). Editing
+// build.c reruns every .run step, since the function's code is part of the program. smith_capture and smith_glob run
+// again in the replay. .content_hash is not implemented yet and exits 2.
 struct SmithRun {
     SmithBuild *b;
-    const char *const *inputs;
-    const char *const *outputs;
-    const char *const *args;
+    const char *const *inputs;  // the step's .inputs
+    const char *const *outputs; // its outputs, the stamp included; empty for a task
+    const char *const *args;    // its .args
 };
-// runs a program, no shell; stdout as lines, or nullptr after a message
+// Runs a program, no shell, and returns its stdout split into lines as smith_lines does, with its stderr passed
+// through. A program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and
+// gives nullptr. More than 1 MiB of stdout is an error.
 const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
+// Like smith_run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
+// it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
+// It prints no message.
+int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
 ```
 
 Rules:
@@ -272,7 +283,37 @@ Rules:
 - A step with no outputs gets a stamp list in `.outputs`, and a task gets `{name}`.
 - A task has no outputs, `.restat` or `.always`; setting one is an error.
 - `smith_default` is required.
-- `.command` and `.run` are exclusive. A `.run` step is later; nothing in v1 or v1.5 needs it.
+- `.command` and `.run` are exclusive: setting both is an error, and so is `.args` without `.run`.
+
+### C functions as steps (`.run`)
+
+A recipe that is a program, such as game's `check-symbols` or `check-libc`, is a C function in build.c. It reads build
+outputs (objects, programs), so it runs during the build, after they exist; ninja calls it as a step.
+
+- **The generator rule.** The edge's command is
+  `.smith/program --run <the step's first output> <the -D arguments of this call, quoted>`, followed by the stamp's
+  `&& touch` for a step with no outputs. A task's first output is `.smith/task/<name>`. Because the `-D` arguments are
+  in the command text, a different option reruns the step. Every `.run` edge also gets the implicit input
+  `.smith/program`: the function's code is part of the program, so editing build.c reruns every `.run` step. That is
+  conservative and correct, not minimal.
+- **The replay.** `--run` runs `build()` and the `smith_defer` callbacks exactly as when writing the manifest, with the
+  same `-D` arguments, so the same steps exist (function pointers do not survive between processes, so there is no
+  table of them). It writes neither the manifest, nor `.smith/command` files, nor the `smith_write` files of
+  `build()`; `smith_write` writes only when called from the function. It finds the step whose first output is the
+  argument and calls its function; the return value is the process's exit status, so ninja fails the step and nothing
+  after it runs. `smith_capture` and `smith_glob` run again in every replay. Measured: a `.run` task that does nothing
+  costs 1 to 3 ms more than a `true` task (about 10 ms against 9 ms per `smith build` in the test), so keep a slow
+  `smith_capture` in the step's command rather than in `build()` when many `.run` steps exist.
+- **The function.** `int f(SmithRun *run)` returns 0 for success. `run->inputs`, `run->outputs` (the stamp included;
+  empty for a task) and `run->args` are the step's own lists, and `run->b` works with every helper. Like a command, it
+  writes the outputs it declares; a step with none gets smith's stamp, touched after a zero return. With `.restat`, a function that
+  writes its output with `smith_write` gives early cutoff: unchanged bytes keep the mtime and nothing after it reruns.
+- **Two functions with the same inputs and args and no outputs** get the same stamp name, which is an error that names
+  `.run`; give one of them an output or different `.args`.
+- `smith_run_lines(run, argv)` runs a program with no shell and returns its stdout as lines (stderr passes through); a
+  program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and gives `nullptr`.
+  `smith_run_status(run, argv, &lines)` returns the status instead: the exit status, 128 plus the signal, or 127 when
+  the program cannot start, and prints nothing. Both limit stdout to 1 MiB.
 - `.pool = "console"` gives the step the terminal. ninja allows one console step at a time.
 - The calls that read the outside world are read again on every `smith build`, because the program reruns each time.
 - `smith_glob` takes a list of patterns, so one pattern is a list of one: `smith_glob(b, (const char *[]){"src/*.c",
@@ -393,7 +434,7 @@ what a `build.c` author writes, so `system1` is a workaround in ninja but native
 | variants | one program built twice (plain and sanitized) | workaround | native | native | native | `smith_cat`, `smith_fmt` (v1) |
 | tool | build a program, run it, `#embed` its output | native | native | workaround | native | nothing new |
 | options | a task with values from the command line | native | no | native | native | `smith_option_value`, `smith_task`, `smith_when` (v1) |
-| function | a step written as a C function | workaround | workaround | workaround | native | `.run`, `.args`, `smith_run_lines` (later) |
+| function | a step written as a C function | workaround | workaround | workaround | native | `.run`, `.args`, `smith_run_lines`, `smith_run_status` (v2) |
 | platform | a source file and a flag that differ by platform | native | no | native | native | nothing new |
 
 - make and ninja: measured, except make in `digest` and `noleftover` (not run; they have the same shape as the standard

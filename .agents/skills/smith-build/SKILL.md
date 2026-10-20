@@ -51,7 +51,24 @@ void build(SmithBuild *b) {
 - Reading generated files: a file a step makes is read with `smith_lines` inside `more`, the function given to `smith_defer(b, needs, more)`, never in `build()`. `needs` are the step outputs (or sources) the file comes from; once they exist, `more` runs and declares the steps that the file's lines name. `smith_lines(b, path)` returns one entry per line without the newline, and is an error for a missing file. `more` may call `smith_defer` again (limit 256 calls); `smith_default` may be called there.
 - Helpers: `smith_fmt` (printf), `smith_map(b, items, "out/%s.o")`, `smith_when(b, condition, items)`, `smith_replace_extension(b, "src/a.c", ".o")`.
 - `b->os` and `b->arch` are exactly what `uname -s` and `uname -m` print: `"Darwin"`, `"arm64"`.
-- Not implemented yet: `.run`, `.args`, `.content_hash` and `smith_run_lines`. Each fails with "not implemented yet". If the build needs one, tell the owner.
+- C functions as steps: `.run = fn` (with `.command` empty, and `.args` for the function) makes a step or task call `int fn(SmithRun *run)` while ninja builds, for checks that read build outputs. It returns 0 for success, anything else fails the step with that status. `run->inputs`, `run->outputs`, `run->args` are the step's lists and `run->b` works with every helper. Like a command, a function writes the outputs it declares; a check declares none, and smith's stamp records that it passed. Editing build.c reruns every `.run` step.
+- Inside the function, `smith_run_lines(run, argv)` runs a program with no shell and returns its stdout lines, or prints `smith: <argv[0]> failed (status N)` and returns `nullptr`; `smith_run_status(run, argv, &lines)` returns the status (127 when it cannot start) and prints nothing. `smith_write` plus `.restat` stops what follows from rerunning when the bytes are the same.
+- `build()` is replayed (with the same `-D` options) every time a `.run` step runs, so `smith_capture` and `smith_glob` run again there; keep slow ones out of `build()`.
+- Not implemented yet: `.content_hash`; it fails with "not implemented yet". If the build needs it, tell the owner.
+
+```c
+static int check_nm(SmithRun *run) { // fail if an object uses a symbol outside .args
+    const char *const *used = smith_run_lines(run, (const char *[]){"nm", "-uj", run->inputs[0], nullptr});
+    if (used == nullptr) return 1;
+    int failed = 0;
+    for (const char *const *s = used; *s; s++) {
+        if (strcmp(*s, run->args[0]) != 0) { fprintf(stderr, "%s uses %s\n", run->inputs[0], *s); failed = 1; }
+    }
+    return failed;
+}
+// in build(): SmithStep check = {.run = check_nm, .args = (const char *[]){"_puts", nullptr},
+//     .inputs = obj.outputs, .outputs = (const char *[]){"build/check.stamp", nullptr}}; smith_step(b, &check);
+```
 
 ## Replace a Makefile
 

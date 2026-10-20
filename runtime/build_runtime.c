@@ -27,6 +27,7 @@ extern char **environ;
     } while (0)
 
 constexpr int smith_exit_usage = 2;
+constexpr int smith_exit_not_started = 127;
 constexpr size_t smith_arena_size = 64U << 20;
 constexpr size_t smith_list_max = 1000000;
 constexpr size_t smith_entries_max = 65536;
@@ -102,6 +103,8 @@ static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
 static char smith_command_buffer[smith_command_max + 1];
 static const char *smith_context; // "step x" or "task x" while one is being checked or written
+static bool smith_run_mode;       // --run: build() is replayed to find a step's function; nothing is written
+static bool smith_in_run;         // the function is running, so smith_write writes again
 
 [[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
     fprintf(stderr, "smith: assertion failed: %s (%s:%d)\n", condition, file, line);
@@ -247,16 +250,21 @@ static SmithEntry *smith_add_entry(SmithEntryKind kind) {
 }
 
 static void smith_check_step(const SmithStep *step) {
-    if (step->run != nullptr) smith_unimplemented(".run");
-    if (step->args != nullptr) smith_unimplemented(".args");
     if (step->content_hash) smith_unimplemented(".content_hash");
-    if (step->command == nullptr) smith_fail("a step needs a .command");
-    if (step->command[0] == nullptr) smith_fail("a step needs a non-empty .command");
+    bool has_command = step->command != nullptr && step->command[0] != nullptr;
+    if (step->run != nullptr) {
+        if (has_command) smith_fail("a step has .run or .command, not both");
+        return;
+    }
+    if (step->args != nullptr) smith_fail(".args is given to .run, and this step has none");
+    if (step->command == nullptr) smith_fail("a step needs a .command or a .run");
+    if (!has_command) smith_fail("a step needs a non-empty .command");
 }
 
 static SmithStep smith_copy_step(const SmithStep *step) {
     SmithStep copy = *step;
     copy.command = smith_copy_list(step->command);
+    copy.args = smith_copy_list(step->args);
     copy.inputs = smith_copy_list(step->inputs);
     copy.implicit_inputs = smith_copy_list(step->implicit_inputs);
     copy.order_only_inputs = smith_copy_list(step->order_only_inputs);
@@ -291,6 +299,7 @@ static uint64_t smith_hash_step(const SmithStep *step) {
     hash = smith_hash_list(hash, step->command);
     hash = smith_hash_list(hash, step->inputs);
     hash = smith_hash_list(hash, step->implicit_inputs);
+    if (step->run != nullptr) hash = smith_hash_list(hash, step->args); // a function has no stable name to hash
     return smith_hash_list(hash, step->order_only_inputs);
 }
 
@@ -316,7 +325,9 @@ static bool smith_same_text(const char *left, const char *right) {
 
 // The first field that differs between two steps, or nullptr when every field is equal.
 static const char *smith_step_difference(const SmithStep *left, const SmithStep *right) {
+    if (left->run != right->run) return ".run";
     if (!smith_same_list(left->command, right->command)) return ".command";
+    if (!smith_same_list(left->args, right->args)) return ".args";
     if (!smith_same_list(left->inputs, right->inputs)) return ".inputs";
     if (!smith_same_list(left->implicit_inputs, right->implicit_inputs)) return ".implicit_inputs";
     if (!smith_same_list(left->order_only_inputs, right->order_only_inputs)) return ".order_only_inputs";
@@ -713,6 +724,7 @@ void smith_write(SmithBuild *b, const char *path, const char *text) {
     smith_context = nullptr;
     smith_check_write_path(path);
     if (text == nullptr) smith_fail("smith_write: the text of '%s' is nullptr", path);
+    if (smith_run_mode && !smith_in_run) return; // the replay only records; the manifest run already wrote it
     smith_write_if_different(path, text, strlen(text));
 }
 
@@ -848,12 +860,8 @@ static size_t smith_read_file(const char *path, char **text) {
     return size;
 }
 
-const char *const *smith_lines(SmithBuild *b, const char *path) {
-    SMITH_ASSERT(b != nullptr);
-    smith_context = nullptr;
-    if (path == nullptr) smith_fail("smith_lines needs a path");
-    char *text = nullptr;
-    size_t size = smith_read_file(path, &text);
+// Splits the text, which ends with a 0 byte after size bytes, into lines in place.
+static const char *const *smith_split_lines(char *text, size_t size) {
     size_t count = 0;
     for (size_t i = 0; i < size; i++) // a final newline adds no empty entry
         count += text[i] == '\n' || (i + 1 == size && text[i] != '\n');
@@ -870,10 +878,50 @@ const char *const *smith_lines(SmithBuild *b, const char *path) {
     return list;
 }
 
+const char *const *smith_lines(SmithBuild *b, const char *path) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (path == nullptr) smith_fail("smith_lines needs a path");
+    char *text = nullptr;
+    size_t size = smith_read_file(path, &text);
+    return smith_split_lines(text, size);
+}
+
+// Runs a program with its stdout captured and its stderr passed through. The result is its exit status, 128 plus the
+// signal that killed it, or 127 when it cannot start. *lines is its stdout as lines, or nullptr when it did not start.
+static int smith_run_program(const char *const *argv, const char *const **lines) {
+    smith_context = nullptr;
+    if (argv == nullptr || argv[0] == nullptr) smith_fail("a run needs a command");
+    int pipe_fds[2];
+    if (pipe(pipe_fds) != 0) smith_fail("%s: cannot make a pipe", argv[0]);
+    int error = 0;
+    pid_t pid = smith_spawn_into(argv, pipe_fds, false, &error);
+    if (lines != nullptr) *lines = nullptr;
+    if (pid < 0) return smith_exit_not_started;
+    size_t length = smith_read_all(argv[0], pipe_fds[0]);
+    close(pipe_fds[0]);
+    int status = smith_wait(argv[0], pid);
+    if (lines != nullptr) {
+        char *text = smith_alloc(length + 1);
+        memcpy(text, smith_capture_buffer, length);
+        text[length] = '\0';
+        *lines = smith_split_lines(text, length);
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
 const char *const *smith_run_lines(SmithRun *run, const char *const *argv) {
-    (void)run;
-    (void)argv;
-    smith_unimplemented("smith_run_lines");
+    SMITH_ASSERT(run != nullptr);
+    const char *const *lines = nullptr;
+    int status = smith_run_program(argv, &lines);
+    if (status == 0) return lines;
+    fprintf(stderr, "smith: %s failed (status %d)\n", argv[0], status);
+    return nullptr;
+}
+
+int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines) {
+    SMITH_ASSERT(run != nullptr);
+    return smith_run_program(argv, lines);
 }
 
 // The manifest.
@@ -949,7 +997,15 @@ static const char *smith_render_command(const SmithEntry *entry, size_t *length)
     const SmithStep *step = &entry->step;
     FILE *file = fmemopen(smith_command_buffer, smith_command_max, "w");
     if (file == nullptr) smith_fail("cannot render the command");
-    for (size_t i = 0; step->command[i] != nullptr; i++) {
+    if (step->run != nullptr) {
+        fputs(".smith/program --run ", file);
+        smith_put_quoted(file, step->outputs[0], false);
+        for (size_t i = 0; i < smith_option_arg_count; i++) {
+            fputc(' ', file);
+            smith_put_quoted(file, smith_option_args[i], false);
+        }
+    }
+    for (size_t i = 0; step->run == nullptr && step->command[i] != nullptr; i++) {
         if (i > 0) fputc(' ', file);
         smith_put_word(file, step, step->command[i]);
     }
@@ -966,13 +1022,6 @@ static const char *smith_render_command(const SmithEntry *entry, size_t *length)
     return smith_command_buffer;
 }
 
-static bool smith_command_has_newline(const SmithStep *step) {
-    for (size_t i = 0; step->command[i] != nullptr; i++) {
-        if (strchr(step->command[i], '\n') != nullptr) return true;
-    }
-    return false;
-}
-
 // The edge's cmd. A command that holds a newline cannot be one line of ninja, so the whole command line goes into
 // .smith/command/<FNV-1a 64 of its text> and cmd runs that file with sh. The name changes with the text, so ninja
 // reruns the step when the command changes. The file is read by sh, not ninja, so its $ are not doubled.
@@ -980,7 +1029,7 @@ static void smith_put_command(FILE *out, const SmithEntry *entry) {
     size_t length = 0;
     const char *text = smith_render_command(entry, &length);
     fputs("  cmd = ", out);
-    if (!smith_command_has_newline(&entry->step)) {
+    if (memchr(text, '\n', length) == nullptr) {
         for (size_t i = 0; i < length; i++) {
             if (text[i] == '$') fputc('$', out);
             fputc(text[i], out);
@@ -1019,8 +1068,9 @@ static void smith_put_edge(FILE *out, const SmithEntry *entry) {
     smith_put_paths(out, step->outputs);
     fputs(": step", out);
     smith_put_paths(out, step->inputs);
-    if (smith_count(step->implicit_inputs) > 0 || step->always) fputs(" |", out);
+    if (smith_count(step->implicit_inputs) > 0 || step->always || step->run != nullptr) fputs(" |", out);
     smith_put_paths(out, step->implicit_inputs);
+    if (step->run != nullptr) fputs(" .smith/program", out); // the function's code is part of the program
     if (step->always) fputs(" smith_always", out);
     if (smith_count(step->order_only_inputs) > 0) fputs(" ||", out);
     smith_put_paths(out, step->order_only_inputs);
@@ -1157,16 +1207,41 @@ static SmithBuild smith_make_build(void) {
     };
 }
 
+// --run <output>: the build has been replayed, so the step that makes the output is in the table; call its function.
+static int smith_run_step(SmithBuild *b, const char *output) {
+    const SmithEntry *found = nullptr;
+    for (size_t i = 0; i < smith_entry_count && found == nullptr; i++) {
+        const SmithEntry *entry = &smith_entries[i];
+        if (entry->kind != SmithEntryKind_Alias && strcmp(entry->step.outputs[0], output) == 0) found = entry;
+    }
+    SMITH_ASSERT(found != nullptr && found->step.run != nullptr); // smith wrote the name
+    static const char *const none[] = {nullptr};
+    SmithRun run = {
+        .b = b,
+        .inputs = found->step.inputs,
+        .outputs = found->kind == SmithEntryKind_Task ? none : found->step.outputs,
+        .args = found->step.args,
+    };
+    smith_in_run = true;
+    int status = found->step.run(&run);
+    smith_in_run = false;
+    smith_context = nullptr;
+    return status;
+}
+
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 2 && argv[1] != nullptr);
     smith_regenerating = strcmp(argv[1], "--regenerate") == 0;
-    int first = smith_regenerating ? 2 : 1; // the manifest comes next, then the -D arguments
+    smith_run_mode = strcmp(argv[1], "--run") == 0;
+    int first =
+        smith_regenerating || smith_run_mode ? 2 : 1; // the manifest or the output comes next, then -D arguments
     SMITH_ASSERT(argc > first && argv[first] != nullptr);
     smith_parse_options(argc - first - 1, argv + first + 1);
     SmithBuild b = smith_make_build();
     build(&b);
     smith_context = nullptr;
     smith_run_defers(&b);
+    if (smith_run_mode) return smith_run_step(&b, argv[first]);
     smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");
     smith_write_manifest(argv[first]);

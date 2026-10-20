@@ -10,7 +10,7 @@ typedef struct SmithBuild {
     int cpus;         // the number of cores
 } SmithBuild;
 
-typedef struct SmithRun SmithRun; // later
+typedef struct SmithRun SmithRun;
 
 typedef struct {
     // argv. Only the whole words $in and $out expand; every other $ is literal. A word may hold newlines
@@ -24,8 +24,8 @@ typedef struct {
     const char *pool;                     // a name from smith_pool, or "console" for the terminal
     bool restat;                          // an output the command left unchanged does not rerun what depends on it
     bool always;                          // run on every build
-    int (*run)(SmithRun *run);            // later: a C function in build.c instead of .command
-    const char *const *args;              // later: given to .run
+    int (*run)(SmithRun *run);            // a C function in build.c instead of .command; 0 succeeds
+    const char *const *args;              // given to .run as run->args
     bool content_hash;                    // later: rerun only when the inputs' bytes changed
 } SmithStep;
 
@@ -94,13 +94,24 @@ void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuil
 // missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
-// Not implemented yet, so using one prints a message and exits 2: .run, .args, .content_hash and smith_run_lines.
-// later: steps written as C functions
+// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step: the
+// build program runs again with `--run <the step's first output>`, repeats build() and the smith_defer callbacks
+// without writing anything (smith_write included, until the function runs), and calls the function. Its return value is
+// the exit status. Like a command, it writes the outputs it declares; one with none gets smith's stamp. It sees its
+// step's own lists, and run->b works with every helper (smith_fmt, smith_cat, smith_lines, smith_write). Editing
+// build.c reruns every .run step, since the function's code is part of the program. smith_capture and smith_glob run
+// again in the replay. .content_hash is not implemented yet and exits 2.
 struct SmithRun {
     SmithBuild *b;
-    const char *const *inputs;
-    const char *const *outputs;
-    const char *const *args;
+    const char *const *inputs;  // the step's .inputs
+    const char *const *outputs; // its outputs, the stamp included; empty for a task
+    const char *const *args;    // its .args
 };
-// runs a program, no shell; stdout as lines, or nullptr after a message
+// Runs a program, no shell, and returns its stdout split into lines as smith_lines does, with its stderr passed
+// through. A program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and
+// gives nullptr. More than 1 MiB of stdout is an error.
 const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
+// Like smith_run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
+// it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
+// It prints no message.
+int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);

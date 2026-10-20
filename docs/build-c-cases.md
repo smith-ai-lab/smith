@@ -1448,7 +1448,7 @@ void build(SmithBuild *b) {
 - ninja, one edge (command above, with `$$` as smith would escape it): first build ran the temp step and the final step and left only `output`; second build "no work to do"; change ran both again; no leftover `output.tmp`. The quoted `$1`/`$2` form was also run, and gave the same result. In this form `$out` appears only as a whole word, which matches the "only whole-word `$in` and `$out` expand" rule.
 - Zig 0.17.0 (the snippet ran unchanged): build, build again, change `input`: the log shows `intermediate`, `output`, then nothing, then `intermediate`, `output` again. The tree held only `zig-out/output`; the intermediate stays in `.zig-cache/o/<hash>/intermediate` (one folder per version, not deleted at the end).
 **How each handles it:** make: natively (`.INTERMEDIATE`). ninja: with a workaround (merge the steps into one edge; the intermediate is invisible to ninja). Zig: natively (the intermediate is a cache file, never installed and not recreated while `input` is unchanged; it is not deleted, old versions stay in `.zig-cache`). smith: with a workaround (one step, or a C-function step with `run`, which can create and remove a temp file without shell quoting).
-**What smith's API needs:** nothing new (v1). A step written as a C function (`.run`, later) would create and remove the
+**What smith's API needs:** nothing new (v1). A step written as a C function (`.run`) would create and remove the
 temp file without the shell quoting. A helper for a temp path (`smith_run_temp`) was proposed; no case needs it yet, so
 it was dropped.
 
@@ -1910,7 +1910,7 @@ done
 exit $fail
 ```
 
-**smith build.c** (later)
+**smith build.c** (run)
 ```c
 #include <smith/build.h>
 #include <stdio.h>
@@ -1942,7 +1942,7 @@ static int check_libc(SmithRun *run) {
             failed = 1;
         }
     }
-    return failed; // 0 is success; smith creates any declared output the function left missing
+    return failed; // 0 is success
 }
 
 void build(SmithBuild *b) {
@@ -1962,7 +1962,6 @@ void build(SmithBuild *b) {
         .args = (const char *[]){"memcpy", "memmove", "memset", "__memcpy_chk", "bzero", "sqrtf", "fabsf",
                                  "__stack_chk_guard", "__stack_chk_fail", nullptr},
         .inputs = objects,
-        .outputs = (const char *[]){"build/check-libc.stamp", nullptr},
         .description = "check-libc",
     };
     smith_step(b, &check);
@@ -1972,48 +1971,38 @@ void build(SmithBuild *b) {
 ```
 `in_list` is a local helper: membership is a loop, so smith has no `smith_in`.
 
-How ninja runs the function. The build program (build.c compiled and linked with smith's runtime) is also the thing that
-runs `.run` steps. For each `.run` step, in order of creation, smith writes a ninja edge whose command is the build
-program itself, a step number, and the lists:
+How ninja runs the function. The build program (build.c compiled and linked with smith's runtime) is also what runs
+`.run` steps. The edge for the step is
 ```ninja
-program = .smith/program
-rule run
-  command = $program --run $index $argsline --in $in --out $out
-  description = $description
-build build/base.o: cc base.c
-build build/game.o: cc game.c
-build task/check-libc: run build/base.o build/game.o | $program
-  index = 0
-  argsline = --arg memcpy --arg memmove --arg memset --arg __memcpy_chk --arg bzero --arg sqrtf --arg fabsf --arg __stack_chk_guard --arg __stack_chk_fail
+build .smith/stamp/<hash>: step build/base.o build/game.o | .smith/program
+  cmd = .smith/program --run .smith/stamp/<hash> && touch .smith/stamp/<hash>
   description = check-libc
-build check-libc: phony task/check-libc
 ```
-(In the real design the output is `build/check-libc.stamp`; `task/check-libc` is what was run. The block was updated to
-the v1 path of the build program, `.smith/program`, and not rerun.) With `--run N` the
-program runs `build()` again in replay mode, in which `smith_step` records and emits nothing, takes the N-th step that
-has a `.run`, builds a `SmithRun` from the `--arg`, `--in`, `--out` lists, calls the function, and exits with its return
-value. Replay (rather than a table of function pointers) is needed because the steps are created while `build()` runs,
-and function pointers do not survive between processes. The replay gets the same `-D` arguments, so it makes the same
-steps. `| $program` makes the program an implicit input: the function's code lives in the program, so a changed
+With `--run <output>` the program runs `build()` again in replay mode (same `-D` arguments, which are on the command
+line; `smith_step` records and nothing is written), finds the step whose first output is the argument, builds a
+`SmithRun` from its lists, calls the function and exits with its return value. Replay (rather than a table of function
+pointers) is needed because the steps are created while `build()` runs, and function pointers do not survive between
+processes. `| .smith/program` makes the program an implicit input: the function's code lives in the program, so a changed
 `build.c` must rerun the step, and ninja's command text would not show that.
 
-**Verified:** make: the shell version passes on a good tree (exit 0), fails with `build/game.o uses puts from the C library, which is not allowed` and exit 2 when game.c calls `puts`, and passes again once restored. The first run failed on `__memcpy_chk`, which Apple clang emits for `memcpy`: the allowed list needed it, as in the real Makefile. ninja: the same script as one `command`: good tree passes and creates the stamp; a second run did nothing; adding `puts` to game.c recompiled game.o, printed the same error and `FAILED: [code=1]`, and left no stamp; restoring it passed. For the smith form, `build.c` cannot run, so I wrote a stand-in (the `check_libc` logic above, using `popen` for `smith_run_lines`, plus the `--run N --arg A --in F... --out F...` parsing) and ran the ninja file above against it. Good tree: 3 edges, exit 0, then "no work to do". With `puts`: the error line names `build/game.o` and `puts`, exit 1, ninja printed the full command. Restored: passes. The stand-in wrote the stamp itself; in the real design smith does. Not verified: the replay step, which needs the real runtime. Zig 0.17.0: the 0.15 custom `Step` cannot be made to work. The first errors were `for (.{ ... }, 0..)` (the tuple index must be comptime) and `no field named 'id' in struct 'Build.Step.StepOptions'`: steps are a fixed set of kinds in the build runner (`Step.Tag`), with no custom `makeFn`. The version above, using `addObject` for `base.c` and `game.c`: the good tree passed (`nm -uj` on Zig's `base.o` shows only `___memcpy_chk`, which is on the list); a second run was `cached`; with `game.c` calling `puts` the step failed with exit 1 and `.../game.o uses puts from the C library, which is not allowed`; restoring `game.c` passed again (the `game` compile reran, the check reran). No file is produced; the result is the exit status.
+**Verified:** make: the shell version passes on a good tree (exit 0), fails with `build/game.o uses puts from the C library, which is not allowed` and exit 2 when game.c calls `puts`, and passes again once restored. The first run failed on `__memcpy_chk`, which Apple clang emits for `memcpy`: the allowed list needed it, as in the real Makefile. ninja: the same script as one `command`: good tree passes and creates the stamp; a second run did nothing; adding `puts` to game.c recompiled game.o, printed the same error and `FAILED: [code=1]`, and left no stamp; restoring it passed. For the smith form, `build.c` cannot run, so I wrote a stand-in (the `check_libc` logic above, using `popen` for `smith_run_lines`, plus the `--run N --arg A --in F... --out F...` parsing) and ran the ninja file above against it. Good tree: 3 edges, exit 0, then "no work to do". With `puts`: the error line names `build/game.o` and `puts`, exit 1, ninja printed the full command. Restored: passes. The stand-in wrote the stamp itself; in the real design smith does. Zig 0.17.0: the 0.15 custom `Step` cannot be made to work. The first errors were `for (.{ ... }, 0..)` (the tuple index must be comptime) and `no field named 'id' in struct 'Build.Step.StepOptions'`: steps are a fixed set of kinds in the build runner (`Step.Tag`), with no custom `makeFn`. The version above, using `addObject` for `base.c` and `game.c`: the good tree passed (`nm -uj` on Zig's `base.o` shows only `___memcpy_chk`, which is on the list); a second run was `cached`; with `game.c` calling `puts` the step failed with exit 1 and `.../game.o uses puts from the C library, which is not allowed`; restoring `game.c` passed again (the `game` compile reran, the check reran). No file is produced; the result is the exit status.
+smith, run for real (stage 0 built from smith.c, the snippet above unchanged except that it is the file `build.c` of a folder holding `base.c` and `game.c`; no fix was needed): the clean tree built both objects and ran `check-libc` (3 edges, exit 0), a second `smith build` printed `ninja: no work to do.`, and with `puts` added to game.c it recompiled game.o, printed `build/game.o uses puts from the C library, which is not allowed` and ninja `FAILED: [code=1]`, exit 1. The same case, with the good and bad trees, is in `tests/build.sh`.
 **How each handles it:** make: a shell pipeline (`$$` everywhere), nothing structured. ninja: the same pipeline inside one `command`, with the `$` line continuations and the `$$` escape. Zig: with a workaround. A check written in Zig as a custom `Step` is not possible in 0.17 (no custom steps); the check runs as a shell script in a Run step with `expectExitCode(0)`, cached by the object files (a separate Zig or C program built by the same `build.zig` and run with `addRunArtifact` would be the structured alternative; not tried). smith: natively with `.run`, in C, using the same language as the project.
-**What smith's API needs:** all of it is "later"; none of it is in v1 or v1.5.
+**What smith's API needs:** all of it is implemented (v2).
 - `.run` and `.args` in `SmithStep`. `.command` must be empty when `.run` is set; setting both is an error.
 - `SmithRun` with `b`, `inputs`, `outputs` and `args` (lists end in `nullptr`). `run->b` lets `smith_cat` and
   `smith_fmt` work in the function with no second set of helpers; `b->root` is the working directory the function runs
   in.
-- `smith_run_lines(SmithRun *run, const char *const *argv)` runs a program without a shell (`posix_spawn`), returns its
-  standard output split into lines, and returns `nullptr` after printing a message if the program failed. Without it a
-  function step has to write its own `popen`.
-- The function's return value is the step's exit status; nonzero fails the edge. After a zero return smith creates any
-  declared output the function did not write (a stamp needs no code). The function prints its own errors to standard
+- `smith_run_lines(SmithRun *run, const char *const *argv)` runs a program without a shell (`posix_spawnp`), returns
+  its standard output split into lines, and returns `nullptr` after printing a message if the program failed. Without
+  it a function step has to write its own `popen`. `smith_run_status` is the variant whose answer is the exit status
+  (the proposals had dropped it as unneeded here; the spec added it for linters that exit 1 on findings).
+- The function's return value is the step's exit status; nonzero fails the edge. The check declares no outputs, so
+  smith's stamp records that it passed, touched only after a zero return. The function prints its own errors to standard
   error.
-- The program is an implicit input of every `.run` edge (shown above), and the step number stays stable across runs of
-  the same `build.c`.
-- Dropped from the proposals: `smith_in` (membership is a loop, see `in_list`) and `smith_run_status` (an exit code
-  alone; not needed here).
+- The program is an implicit input of every `.run` edge (shown above), and a step is found by its first output, so no
+  step number is needed.
+- Dropped from the proposals: `smith_in` (membership is a loop, see `in_list`).
 - Alternative to replay: pass the function's address as an offset from `main`. It is stable inside one binary but not
   portable (arm64e pointer signing), so replay is the choice.
 

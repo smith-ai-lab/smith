@@ -905,6 +905,287 @@ build
 expect "glob: the union is sorted with each name once" "0 other/c.md src/a.txt src/b.txt" \
     "$rc $(tr '\n' ' ' <joined | sed 's| *$||')"
 
+# 9k. C functions as steps: .run.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+#include <string.h>
+
+static bool in_list(const char *const *list, const char *string) {
+    for (; *list; list++) {
+        if (strcmp(*list, string) == 0) return true;
+    }
+    return false;
+}
+
+static int check_libc(SmithRun *run) {
+    const char *const *ours = (const char *[]){nullptr};
+    for (const char *const *object = run->inputs; *object; object++) {
+        const char *const *defined = smith_run_lines(run, (const char *[]){"nm", "-gUj", *object, nullptr});
+        if (defined == nullptr) return 1;
+        ours = smith_cat(run->b, ours, defined, nullptr);
+    }
+    int failed = 0;
+    for (const char *const *object = run->inputs; *object; object++) {
+        const char *const *used = smith_run_lines(run, (const char *[]){"nm", "-uj", *object, nullptr});
+        if (used == nullptr) return 1;
+        for (const char *const *symbol = used; *symbol; symbol++) {
+            const char *name = **symbol == '_' ? *symbol + 1 : *symbol;
+            if (in_list(ours, *symbol) || in_list(run->args, name)) continue;
+            fprintf(stderr, "%s uses %s from the C library, which is not allowed\n", *object, name);
+            failed = 1;
+        }
+    }
+    return failed;
+}
+
+void build(SmithBuild *b) {
+    const char *const sources[] = {"base", "game", nullptr};
+    const char *const *objects = (const char *[]){nullptr};
+    for (const char *const *name = sources; *name; name++) {
+        SmithStep cc = {
+            .command = (const char *[]){"cc", "-O0", "-c", "$in", "-o", "$out", nullptr},
+            .inputs = (const char *[]){smith_fmt(b, "%s.c", *name), nullptr},
+            .outputs = (const char *[]){smith_fmt(b, "build/%s.o", *name), nullptr},
+        };
+        smith_step(b, &cc);
+        objects = smith_cat(b, objects, cc.outputs, nullptr);
+    }
+    SmithStep check = {
+        .run = check_libc,
+        .args = (const char *[]){"memcpy", "memmove", "memset", "__memcpy_chk", "bzero", "sqrtf", "fabsf",
+                                 "__stack_chk_guard", "__stack_chk_fail", nullptr},
+        .inputs = objects,
+        .description = "check-libc",
+    };
+    smith_step(b, &check);
+    smith_alias(b, "check-libc", check.outputs);
+    smith_default(b, check.outputs);
+}
+C
+cat >base.c <<'C'
+#include <math.h>
+#include <string.h>
+float base_root(float x) {
+    char a[4] = "abc", c[4];
+    memcpy(c, a, 4);
+    return sqrtf(x) + (float)c[0];
+}
+C
+cat >game.c <<'C'
+float base_root(float x);
+float game_run(float x) { return base_root(x); }
+C
+build check-libc
+expect "function: a clean tree passes" "0 yes" "$rc $(ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no)"
+build check-libc
+expect_contains "function: a second build does nothing" "$out" "no work to do"
+cat >game.c <<'C'
+#include <stdio.h>
+float base_root(float x);
+float game_run(float x) { puts("hi"); return base_root(x); }
+C
+rm -rf .smith/stamp
+build check-libc
+expect_status "function: a forbidden symbol fails the build" fail
+expect_contains "function: the message names the object and the symbol" "$err$out" \
+    "build/game.o uses puts from the C library, which is not allowed"
+expect "function: a failed check leaves no stamp" "no" "$(ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no)"
+cat >game.c <<'C'
+float base_root(float x);
+float game_run(float x) { return base_root(x); }
+C
+build check-libc
+expect "function: restored, it passes" "0 yes" "$rc $(ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no)"
+
+# 9l. A .run step that writes its output with smith_write and .restat; a task with .args; failure; editing build.c.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+#include <string.h>
+
+static int first_word(SmithRun *run) {
+    const char *const *lines = smith_lines(run->b, run->inputs[0]);
+    smith_write(run->b, run->outputs[0], smith_fmt(run->b, "%s\n", lines[0]));
+    return 0;
+}
+
+static int show(SmithRun *run) {
+    FILE *log = fopen("runs.log", "a");
+    for (const char *const *arg = run->args; *arg; arg++)
+        fprintf(log, "%s ", *arg);
+    fputc('\n', log);
+    fclose(log);
+    printf("task saw %s\n", run->args[0]);
+    return 0;
+}
+
+static int fail_three(SmithRun *run) {
+    (void)run;
+    fputs("this step fails\n", stderr);
+    return 3;
+}
+
+void build(SmithBuild *b) {
+    SmithStep word = {
+        .run = first_word,
+        .inputs = (const char *[]){"seed.txt", nullptr},
+        .outputs = (const char *[]){"word.txt", nullptr},
+        .restat = true,
+    };
+    smith_step(b, &word);
+    SmithStep copy = {
+        .command = (const char *[]){"sh", "-c", "cp \"$0\" final.txt && echo x >> copies.log", "$in", nullptr},
+        .inputs = word.outputs,
+        .outputs = (const char *[]){"final.txt", nullptr},
+    };
+    smith_step(b, &copy);
+    SmithStep task = {.run = show, .args = (const char *[]){"alpha", "beta", nullptr}};
+    smith_task(b, "show", &task);
+    SmithStep bad = {.run = fail_three, .outputs = (const char *[]){"bad.out", nullptr}};
+    smith_step(b, &bad);
+    SmithStep after = {
+        .command = (const char *[]){"sh", "-c", "echo ran > after.out", nullptr},
+        .inputs = bad.outputs,
+        .outputs = (const char *[]){"after.out", nullptr},
+    };
+    smith_step(b, &after);
+    smith_alias(b, "broken", after.outputs);
+    smith_default(b, copy.outputs);
+}
+C
+printf 'hello world\nline two\n' >seed.txt
+build
+expect "restat: the .run step writes its output" "0 hello world" "$rc $(cat final.txt 2>/dev/null)"
+printf 'hello world\nline two changed\n' >seed.txt
+build
+expect "restat: the .run step reran and the bytes are the same" "1" "$(lines copies.log)"
+printf 'goodbye world\nline two\n' >seed.txt
+build
+expect "restat: changed bytes rerun what depends on it" "goodbye world 2" "$(cat final.txt) $(lines copies.log)"
+build show
+expect_contains "task: runs and prints" "$out" "task saw alpha"
+build show
+expect "task: runs every time, with .args" "2 alpha beta" "$(lines runs.log) $(sed -n 1p runs.log | sed 's/ *$//')"
+build broken
+expect_status "failure: a function returning 3 fails the build" fail
+expect_contains "failure: ninja reports the status" "$out$err" "code=3"
+expect_contains "failure: the function's own message shows" "$out$err" "this step fails"
+expect "failure: nothing after it ran" "no" "$([ -e after.out ] && echo yes || echo no)"
+
+# 9m. Editing the function reruns the step; options reach the function through the replay; defer.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static int write_it(SmithRun *run) {
+    smith_write(run->b, run->outputs[0], smith_fmt(run->b, "v1 %s\n", smith_option_value(run->b, "who", "nobody", nullptr)));
+    return 0;
+}
+
+static int deferred(SmithRun *run) {
+    smith_write(run->b, run->outputs[0], "from defer\n");
+    return 0;
+}
+
+static void more(SmithBuild *b) {
+    SmithStep step = {.run = deferred, .outputs = (const char *[]){"deferred.out", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+
+void build(SmithBuild *b) {
+    smith_option_value(b, "who", "nobody", "a name");
+    SmithStep step = {.run = write_it, .outputs = (const char *[]){"it.out", nullptr}};
+    smith_step(b, &step);
+    smith_alias(b, "it", step.outputs);
+    smith_defer(b, (const char *[]){"it.out", nullptr}, more);
+}
+C
+build it
+expect "edit: the function runs" "0 v1 nobody" "$rc $(cat it.out 2>/dev/null)"
+build it
+expect_contains "edit: unchanged, nothing reruns" "$out" "no work to do"
+sed 's/"v1 %s/"v2 %s/' build.c >build.c.new && mv build.c.new build.c
+build it
+expect "edit: editing build.c reruns the step" "0 v2 nobody" "$rc $(cat it.out 2>/dev/null)"
+build it -Dwho=Ada
+expect "options: -Dname=value reaches the function through the replay" "0 v2 Ada" "$rc $(cat it.out 2>/dev/null)"
+build it -Dwho='a b$c'
+expect "options: a value with a space and a dollar" "v2 a b\$c" "$(cat it.out 2>/dev/null)"
+build
+expect "defer: a .run step added in a smith_defer callback runs" "0 from defer" "$rc $(cat deferred.out 2>/dev/null)"
+
+# 9n. smith_run_status and smith_run_lines.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+
+static int probe(SmithRun *run) {
+    const char *const *lines = nullptr;
+    FILE *out = fopen("status.txt", "w");
+    fprintf(out, "true %d\n", smith_run_status(run, (const char *[]){"true", nullptr}, nullptr));
+    fprintf(out, "false %d\n", smith_run_status(run, (const char *[]){"false", nullptr}, &lines));
+    fprintf(out, "missing %d lines %s\n", smith_run_status(run, (const char *[]){"smith-no-such-program", nullptr}, &lines),
+            lines == nullptr ? "null" : "set");
+    int status = smith_run_status(run, (const char *[]){"sh", "-c", "printf 'a\n\nb c\nlast'; exit 4", nullptr}, &lines);
+    fprintf(out, "sh %d", status);
+    for (const char *const *line = lines; *line; line++)
+        fprintf(out, " [%s]", *line);
+    fputc('\n', out);
+    const char *const *same = smith_run_lines(run, (const char *[]){"printf", "x\ny\n", nullptr});
+    fprintf(out, "lines %s %s %s\n", same[0], same[1], same[2] == nullptr ? "end" : "more");
+    fprintf(out, "failing %s\n", smith_run_lines(run, (const char *[]){"sh", "-c", "echo oops >&2; exit 5", nullptr}) == nullptr ? "null" : "set");
+    fclose(out);
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep step = {.run = probe, .outputs = (const char *[]){"status.txt", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "run_status: the probe step succeeds" 0
+expect_contains "run_status: failing program prints the message" "$out$err" "smith: sh failed (status 5)"
+expect_contains "run_status: its stderr passes through" "$out$err" "oops"
+expect "run_status: statuses and lines are exact" "true 0
+false 1
+missing 127 lines null
+sh 4 [a] [] [b c] [last]
+lines x y end
+failing null" "$(cat status.txt)"
+
+# 9o. The replay's cost (informational): a trivial .run task against a trivial command task.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static int trivial(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep tick = {.run = trivial};
+    smith_task(b, "tick", &tick);
+    SmithStep tock = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "tock", &tock);
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build tick
+for task in tock tick; do
+    start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+    for _ in 1 2 3 4 5 6 7 8 9 10; do "$smith" build $task >/dev/null 2>&1; done
+    end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+    echo "time  smith build $task (a task that runs every time): $(perl -e "printf '%.0f', ($end - $start) * 100") ms per run (mean of 10)"
+done
+
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
 build -t targets
