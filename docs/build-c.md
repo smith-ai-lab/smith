@@ -205,13 +205,14 @@ typedef struct {
     const char *const *order_only_inputs; // built first; a change does not rerun the step
     const char *const *outputs;           // $out
     const char *depfile;                  // a file the command writes in -MMD form
-    const char *description;              // printed instead of the command
-    const char *pool;                     // a name from smith_pool, or "console" for the terminal
-    bool restat;                          // an output the command left unchanged does not rerun what depends on it
-    bool always;                          // run on every build
-    int (*run)(SmithRun *run);            // a C function in build.c instead of .command; 0 succeeds
-    const char *const *args;              // given to .run as run->args
-    bool content_hash;                    // later: rerun only when the inputs' bytes changed
+    const char *stamp;         // the step's only output, which smith touches on success; .depfile may name it
+    const char *description;   // printed instead of the command
+    const char *pool;          // a name from smith_pool, or "console" for the terminal
+    bool restat;               // an output the command left unchanged does not rerun what depends on it
+    bool always;               // run on every build
+    int (*run)(SmithRun *run); // a C function in build.c instead of .command; 0 succeeds
+    const char *const *args;   // given to .run as run->args
+    bool content_hash;         // later: rerun only when the inputs' bytes changed
 } SmithStep;
 
 void build(SmithBuild *b); // what the project writes
@@ -222,7 +223,9 @@ void build(SmithBuild *b); // what the project writes
 // with any field different is an error that names the output and the first field that differs. A command word may
 // hold newlines (a shell script): smith writes the whole command line to .smith/command/<hash of its text> and the
 // edge runs it with sh, so editing the script reruns the step. A newline in a path, .description, .depfile or .pool is
-// an error.
+// an error. With .stamp the step's output is that file, $out is it, and afterwards .outputs is {stamp}; .stamp with
+// .outputs (other than the {stamp} a returned step holds) is an error, and so is .stamp on a task. Declared again,
+// .stamp must be equal like every other field.
 void smith_step(SmithBuild *b, SmithStep *step);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
@@ -321,6 +324,13 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
+// Like smith_run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
+// order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
+// limit covers both streams together.
+int smith_run_combined(SmithRun *run, const char *const *argv, const char *const **lines);
+// Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
+// these paths when the function returns. A .run step that records a path must have a .depfile.
+void smith_run_depend(SmithRun *run, const char *path);
 // Runs a program with no shell and with its stdout and stderr going straight to the terminal (inherited, not
 // captured). `environment` (NAME=value entries, may be nullptr) is added to the current environment, and an entry
 // replaces a variable of the same name. Returns the exit status, 128 plus the signal that killed it, or 127 when it
@@ -428,6 +438,26 @@ outputs (objects, programs), so it runs during the build, after they exist; ninj
   `posix_spawnp` with a built `envp`. It returns the exit status, 128 plus the signal, or 127 when the program cannot
   start. It flushes stdout and stderr first, as `smith_run_lines` and `smith_run_status` do, so the function's own
   printing comes first. game's `clip`, which plays a session through `./build/game` with `GAME_*` variables, needs it.
+- `smith_run_combined(run, argv, &lines)` is `smith_run_status` with the program's stderr in the same pipe as its stdout
+  (`2>&1`), so `lines` holds both in the order the program wrote them; the 1 MiB limit covers both together. For
+  comparing a program's whole output with an expected text.
+- **A failed `.run` step names itself.** The command also carries `--description <text>` (the step's `.description`, or
+  its first output, or a task's name) and, for a step with a `.depfile`, `--depfile <path>`. When the function returns
+  non-zero, after it has printed, the program prints `smith: <description>: failed (status N)` to stderr as its last
+  line. ninja itself prints the description as the progress line (`[1/1] <description>`), then on failure `FAILED:
+  [code=N] <outputs>`, the command (`.smith/program --run ...`) and the step's output, in a smart terminal, `TERM=dumb`
+  and a pipe alike (a smart terminal overwrites the progress line); it does not repeat the description, so the line
+  smith adds is the one that says which check failed and with what status.
+- **What a `.run` step read.** `smith_run_depend(run, path)` records a path; when the function returns, the program
+  writes the step's `.depfile` as `<first output>: <paths>` (a space escaped as `\ `, `#` as `\#`, `$` as `$$`), always,
+  even with no paths, so ninja never reads a stale one. A path recorded by a step with no `.depfile` is an error, and
+  so is a `.depfile` on a `.run` task (it has no output to name). The step then reruns when a recorded file changes,
+  for files the function learned at run time (named inside one of its inputs).
+- **`.stamp`.** A step whose result is only that it passed names its stamp: `.stamp` is the step's one output (`$out`,
+  `.outputs` afterwards), smith touches it when the command succeeds or the function returns 0, and `.depfile` may name
+  it as its target (`-MT`), so a syntax check needs no `sh -c '"$@" && touch "$0"'`. `.stamp` with `.outputs` is an
+  error (a returned step holds `.outputs = {stamp}`, which is accepted), and so is `.stamp` on a task. A failing step
+  leaves no stamp.
 - `.pool = "console"` gives the step the terminal. ninja allows one console step at a time.
 - The calls that read the outside world are read again on every `smith build`, because the program reruns each time.
 - `smith_glob` takes a list of patterns, so one pattern is a list of one: `smith_glob(b, (const char *[]){"src/*.c",

@@ -20,13 +20,14 @@ typedef struct {
     const char *const *order_only_inputs; // built first; a change does not rerun the step
     const char *const *outputs;           // $out
     const char *depfile;                  // a file the command writes in -MMD form
-    const char *description;              // printed instead of the command
-    const char *pool;                     // a name from smith_pool, or "console" for the terminal
-    bool restat;                          // an output the command left unchanged does not rerun what depends on it
-    bool always;                          // run on every build
-    int (*run)(SmithRun *run);            // a C function in build.c instead of .command; 0 succeeds
-    const char *const *args;              // given to .run as run->args
-    bool content_hash;                    // later: rerun only when the inputs' bytes changed
+    const char *stamp;         // the step's only output, which smith touches on success; .depfile may name it
+    const char *description;   // printed instead of the command
+    const char *pool;          // a name from smith_pool, or "console" for the terminal
+    bool restat;               // an output the command left unchanged does not rerun what depends on it
+    bool always;               // run on every build
+    int (*run)(SmithRun *run); // a C function in build.c instead of .command; 0 succeeds
+    const char *const *args;   // given to .run as run->args
+    bool content_hash;         // later: rerun only when the inputs' bytes changed
 } SmithStep;
 
 void build(SmithBuild *b); // what the project writes
@@ -37,7 +38,9 @@ void build(SmithBuild *b); // what the project writes
 // with any field different is an error that names the output and the first field that differs. A command word may
 // hold newlines (a shell script): smith writes the whole command line to .smith/command/<hash of its text> and the
 // edge runs it with sh, so editing the script reruns the step. A newline in a path, .description, .depfile or .pool is
-// an error.
+// an error. With .stamp the step's output is that file, $out is it, and afterwards .outputs is {stamp}; .stamp with
+// .outputs (other than the {stamp} a returned step holds) is an error, and so is .stamp on a task. Declared again,
+// .stamp must be equal like every other field.
 void smith_step(SmithBuild *b, SmithStep *step);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
@@ -136,6 +139,13 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
+// Like smith_run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
+// order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
+// limit covers both streams together.
+int smith_run_combined(SmithRun *run, const char *const *argv, const char *const **lines);
+// Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
+// these paths when the function returns. A .run step that records a path must have a .depfile.
+void smith_run_depend(SmithRun *run, const char *path);
 // Runs a program with no shell and with its stdout and stderr going straight to the terminal (inherited, not
 // captured). `environment` (NAME=value entries, may be nullptr) is added to the current environment, and an entry
 // replaces a variable of the same name. Returns the exit status, 128 plus the signal that killed it, or 127 when it

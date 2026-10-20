@@ -1690,6 +1690,252 @@ build
 expect_status "errors: smith_compile_command after smith_compile_commands fails" 2
 expect_contains "errors: the message says after" "$err" "after smith_compile_commands"
 
+# 9p. .stamp: a syntax check whose result is that it passed, with a depfile that names the stamp.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *warn = smith_option_value(b, "W", "-Wall", "a warning flag");
+    SmithStep check = {
+        .command = (const char *[]){"cc", "-std=gnu23", warn, "-Werror", "-fsyntax-only", "-MMD", "-MF",
+                                    "build/check/a.d", "-MT", "build/check/a.stamp", "a.c", nullptr},
+        .inputs = (const char *[]){"a.c", nullptr},
+        .stamp = "build/check/a.stamp",
+        .depfile = "build/check/a.d",
+        .description = "check a",
+    };
+    smith_step(b, &check);
+    SmithStep same = {
+        .command = (const char *[]){"cc", "-std=gnu23", warn, "-Werror", "-fsyntax-only", "-MMD", "-MF",
+                                    "build/check/a.d", "-MT", "build/check/a.stamp", "a.c", nullptr},
+        .inputs = (const char *[]){"a.c", nullptr},
+        .stamp = "build/check/a.stamp",
+        .depfile = "build/check/a.d",
+        .description = "check a",
+    };
+    smith_step(b, &same);
+    smith_alias(b, "check", check.outputs);
+    smith_default(b, check.outputs);
+}
+C
+printf '#include "h.h"\nint a(void) { return H; }\n' >a.c
+printf '#define H 1\n' >h.h
+build
+expect "stamp: the check passes and leaves its stamp" "0 yes" "$rc $([ -f build/check/a.stamp ] && echo yes || echo no)"
+expect_contains "stamp: it ran" "$out" "check a"
+build
+expect_contains "stamp: unchanged, nothing reruns" "$out" "no work to do"
+printf '\n' >>a.c
+build
+expect_contains "stamp: a changed source reruns" "$out" "check a"
+build
+expect_contains "stamp: then it settles" "$out" "no work to do"
+printf '#define H 2\n' >h.h
+build
+expect_contains "stamp: a changed header reruns" "$out" "check a"
+build
+expect_contains "stamp: then it settles again" "$out" "no work to do"
+build -DW=-Wextra
+expect_contains "stamp: changed flags rerun" "$out" "check a"
+build -DW=-Wextra
+expect_contains "stamp: the same flags settle" "$out" "no work to do"
+printf 'int a(void) { return ; }\n' >a.c
+rm -f build/check/a.stamp
+build -DW=-Wextra
+expect_status "stamp: a failing check fails the build" fail
+expect "stamp: its failure leaves no stamp" "no" "$([ -f build/check/a.stamp ] && echo yes || echo no)"
+build -DW=-Wextra
+expect_status "stamp: it fails again, so it reran" fail
+printf 'int a(void) { return 0; }\n' >a.c
+build -DW=-Wextra
+expect "stamp: fixed, it passes and stamps" "0 yes" "$rc $([ -f build/check/a.stamp ] && echo yes || echo no)"
+
+# 9q. .stamp errors: with .outputs, on a task, a different .stamp for an existing output.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}, .stamp = "s", .outputs = (const char *[]){"o", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "stamp errors: .stamp with .outputs fails" 2
+expect_contains "stamp errors: the message names both" "$err" ".stamp"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep task = {.command = (const char *[]){"true", nullptr}, .stamp = "s"};
+    smith_task(b, "t", &task);
+    smith_default(b, task.outputs);
+}
+C
+build
+expect_status "stamp errors: .stamp on a task fails" 2
+expect_contains "stamp errors: the message says task" "$err" "task t"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep one = {.command = (const char *[]){"touch", "s", nullptr}, .outputs = (const char *[]){"s", nullptr}};
+    smith_step(b, &one);
+    SmithStep two = {.command = (const char *[]){"touch", "s", nullptr}, .stamp = "s"};
+    smith_step(b, &two);
+    smith_default(b, one.outputs);
+}
+C
+build
+expect_status "stamp errors: a different .stamp for an output fails" 2
+expect_contains "stamp errors: the message names the field" "$err" "whose .stamp differs"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static int pass(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep step = {.run = pass, .stamp = "build/pass.stamp"};
+    smith_step(b, &step);
+    SmithStep command = {.command = (const char *[]){"true", nullptr}, .stamp = "build/true.stamp"};
+    smith_step(b, &command);
+    smith_default(b, smith_cat(b, step.outputs, command.outputs, nullptr));
+}
+C
+build
+expect "stamp: a .run step and a command step both stamp" "0 yes yes" "$rc $([ -f build/pass.stamp ] && echo yes || echo no) $([ -f build/true.stamp ] && echo yes || echo no)"
+
+# 9r. smith_run_combined: stdout and stderr in one stream, in order; statuses as smith_run_status gives.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+
+static int probe(SmithRun *run) {
+    const char *const *lines = nullptr;
+    FILE *out = fopen("combined.txt", "w");
+    int status = smith_run_combined(
+        run, (const char *[]){"sh", "-c", "echo o1; echo e1 >&2; echo o2; echo e2 >&2; echo o3; exit 4", nullptr},
+        &lines);
+    fprintf(out, "sh %d", status);
+    for (const char *const *line = lines; *line; line++)
+        fprintf(out, " [%s]", *line);
+    fputc('\n', out);
+    status = smith_run_combined(run, (const char *[]){"sh", "-c", "echo before; kill -9 $$", nullptr}, &lines);
+    fprintf(out, "killed %d %s\n", status, lines != nullptr && lines[0] != nullptr ? lines[0] : "none");
+    status = smith_run_combined(run, (const char *[]){"smith-no-such-program", nullptr}, &lines);
+    fprintf(out, "missing %d lines %s\n", status, lines == nullptr ? "null" : "set");
+    status = smith_run_combined(run, (const char *[]){"true", nullptr}, nullptr);
+    fprintf(out, "true %d\n", status);
+    fprintf(out, "status %d %d\n", smith_run_status(run, (const char *[]){"sh", "-c", "exit 4", nullptr}, nullptr),
+            smith_run_status(run, (const char *[]){"sh", "-c", "kill -9 $$", nullptr}, nullptr));
+    fclose(out);
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep step = {.run = probe, .outputs = (const char *[]){"combined.txt", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "run_combined: the probe step succeeds" 0
+expect "run_combined: lines in the order written, and the statuses" "sh 4 [o1] [e1] [o2] [e2] [o3]
+killed 137 before
+missing 127 lines null
+true 0
+status 4 137" "$(cat combined.txt)"
+
+# 9s. A failed .run step names itself; what a .run step read reruns it.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+#include <stdio.h>
+
+static int fail_three(SmithRun *run) {
+    (void)run;
+    fputs("the program's own message\n", stderr);
+    return 3;
+}
+
+static int fail_unnamed(SmithRun *run) {
+    (void)run;
+    return 5;
+}
+
+// list.txt names the file to read; the step does not list that file as an input.
+static int learn(SmithRun *run) {
+    const char *const *lines = smith_lines(run->b, run->inputs[0]);
+    smith_run_depend(run, lines[0]);
+    FILE *log = fopen("learn.log", "a");
+    fputs("ran\n", log);
+    fclose(log);
+    const char *const *data = smith_lines(run->b, lines[0]);
+    smith_write(run->b, run->outputs[0], smith_fmt(run->b, "%s\n", data[0]));
+    return 0;
+}
+
+static int learn_none(SmithRun *run) {
+    smith_write(run->b, run->outputs[0], "none\n");
+    return 0;
+}
+
+static int learn_orphan(SmithRun *run) {
+    smith_run_depend(run, "x");
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep named = {.run = fail_three, .outputs = (const char *[]){"named.out", nullptr},
+                       .description = "check the widget"};
+    smith_step(b, &named);
+    SmithStep unnamed = {.run = fail_unnamed, .outputs = (const char *[]){"unnamed.out", nullptr}};
+    smith_step(b, &unnamed);
+    SmithStep learn_step = {.run = learn,
+                            .inputs = (const char *[]){"list.txt", nullptr},
+                            .outputs = (const char *[]){"learned.out", nullptr},
+                            .depfile = "build/learned.d"};
+    smith_step(b, &learn_step);
+    SmithStep none = {.run = learn_none, .outputs = (const char *[]){"none.out", nullptr}, .depfile = "build/none.d"};
+    smith_step(b, &none);
+    SmithStep orphan = {.run = learn_orphan, .stamp = "orphan.stamp"};
+    smith_step(b, &orphan);
+    smith_alias(b, "named", named.outputs);
+    smith_alias(b, "unnamed", unnamed.outputs);
+    smith_alias(b, "orphan", orphan.outputs);
+    smith_default(b, smith_cat(b, learn_step.outputs, none.outputs, nullptr));
+}
+C
+printf 'data file.txt\n' >list.txt
+printf 'one\n' >'data file.txt'
+build
+expect "depend: the step ran and read the learned file" "0 one 1" "$rc $(cat learned.out 2>/dev/null) $(lines learn.log)"
+build
+expect_contains "depend: nothing changed, nothing reruns" "$out" "no work to do"
+printf 'two\n' >'data file.txt'
+build
+expect "depend: a change to the learned file reruns the step" "two 2" "$(cat learned.out) $(lines learn.log)"
+build
+expect "depend: and then it settles" "2" "$(lines learn.log)"
+printf 'data file.txt\n\n' >list.txt
+build
+expect "depend: a change to the input list reruns it too" "3" "$(lines learn.log)"
+build named
+expect_status "name: a failing .run step fails" fail
+expect_contains "name: it prints its description and status" "$out$err" "smith: check the widget: failed (status 3)"
+expect_contains "name: its own message still shows" "$out$err" "the program's own message"
+build unnamed
+expect_contains "name: with no description it names the first output" "$out$err" "smith: unnamed.out: failed (status 5)"
+build orphan
+expect_status "depend: recording a path without a .depfile fails" fail
+expect_contains "depend: the message says why" "$out$err" "smith_run_depend: this step has no .depfile"
+
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
 build -t targets
