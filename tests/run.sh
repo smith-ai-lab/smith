@@ -9,7 +9,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
 for name in clang clang++ xcrun metal; do
-    $cc -DNAME="\"$name\"" "$here/stub.c" -o "$work/bin/$name" || exit 1
+    $cc -std=gnu23 -DNAME="\"$name\"" "$here/stub.c" -o "$work/bin/$name" || exit 1
 done
 ln -s "$smith" "$work/smith++"
 ln -s "$smith" "$work/bin/selfclang"

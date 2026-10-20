@@ -12,7 +12,6 @@ description: "Start here for any change to smith itself: building, testing, inst
 - `make` builds `build/<OS>-<arch>/smith` and the `smith++` link. `CC` is the installed smith, so smith builds smith. If that is broken, `make CC=/usr/bin/clang`.
 - `make test` runs the 22 routing tests against stub compilers. `make compare REAL=/usr/bin/clang` runs 10 invocations through clang and through smith; `REAL` defaults to that on macOS.
 - `make format` rewrites `smith.c` and `tests/stub.c`. `make check` runs `check-format`, `check-tidy`, `test` and `compare`, and must exit 0 before you finish. It needs Homebrew LLVM 23 (`make check-llvm`).
-- Also build with `make STD=gnu23 BUILD=build/c23`: smith must compile as C17 and C23, with `-Werror`.
 - Before and after a change, run `smith --smith-which -c a.c`, `--smith-which a.metal`, `a.metal b.c`, `a.smith` and `--smith-version`, and compare. A refactor must not change a route, a message, an exit code or an argv.
 - `make install` runs the tests, then replaces `~/.local/bin/smith`, which every project's build uses. Do it only when the owner asks. If the installed smith is broken, `make install CC=/usr/bin/clang`.
 
@@ -23,7 +22,7 @@ The rules are game's, in `~/Documents/game/knowledge/c-language.md` and `c-namin
 - Everything has the module prefix: `smith_route_metal`, `SmithRoute`, `SmithRoute_Clang`. Functions and variables are snake_case, types PascalCase, enum values `Type_Value`, macros UPPER_SNAKE.
 - Functions are at most 70 lines, nothing recurses, every loop has a bound, and there is no malloc.
 - Assert with `SMITH_ASSERT`, on in every build: arguments, buffer capacities and `snprintf` results where they must hold. An expected failure, such as a bad `$SMITH_CLANG`, is a `smith_die` message, not an assertion.
-- smith's exceptions, until it can compile itself: C17 and C23 both build, so `NULL`, `<stdbool.h>`, `__attribute__((noreturn))` and enum constants instead of `constexpr`, `nullptr`, `[[noreturn]]`. Plain `int`, `size_t` and `char` where libc wants them, not `u32`.
+- smith's exceptions to game's rules: libc's types stay where libc takes them (`int`, `size_t`, `ssize_t`, `char *`, `uint32_t` for `_NSGetExecutablePath`), not `u32` and `u64`, so there are no casts; exit statuses are `constexpr int`, not an enum; and `SMITH_ASSERT` replaces `BASE_ASSERT`, still on in every build. smith calls libc freely, which game's base layer may not.
 - Fix what clang-tidy reports in the code. Do not weaken `.clang-tidy`.
 
 ## Where docs go

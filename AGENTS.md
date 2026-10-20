@@ -26,7 +26,7 @@ whose syntax replaces macros; the order is in [ROADMAP.md](ROADMAP.md).
 - **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
 - **smith `execv`s the compiler** with the compiler's full path as `argv[0]` (gcc finds its files from it), so exit
   status, signals and pipes are the compiler's.
-- **libc only, no malloc, builds as C17 and C23** (`NULL`, enum constants, no `constexpr`) until smith compiles itself.
+- **C23 (`-std=gnu23`), libc only, no malloc.**
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

@@ -1,8 +1,9 @@
-# Builds smith with any C compiler: it is one file and needs nothing but libc. STD=gnu23 works on a recent clang.
+# Builds smith with any C23 compiler: it is one file and needs nothing but libc. STD=gnu23 (GNU mode keeps realpath and
+# readlink declared on Linux) needs a clang with constexpr, nullptr and [[noreturn]]; a recent one has them.
 # The build directory is named for the OS and architecture, so a binary built on one machine is never mistaken for
 # an up-to-date one on another (this folder is shared with a Linux VM as well as macOS).
 CC ?= cc
-STD ?= gnu17
+STD ?= gnu23
 WERROR ?= -Werror
 CFLAGS ?= -std=$(STD) -O1 -g -Wall -Wextra -Wpedantic $(WERROR)
 BUILD ?= build/$(shell uname -s)-$(shell uname -m)

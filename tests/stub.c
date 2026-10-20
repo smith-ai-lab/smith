@@ -8,7 +8,7 @@
 // The number in an environment variable the tests set, or fallback when it is unset.
 static int stub_env_number(const char *name, int fallback) {
     const char *text = getenv(name);
-    return text != NULL ? (int)strtol(text, NULL, 10) : fallback;
+    return text != nullptr ? (int)strtol(text, nullptr, 10) : fallback;
 }
 
 int main(int argc, char **argv) {
@@ -16,6 +16,6 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++)
         printf("[%s]\n", argv[i]);
     fprintf(stderr, "%s-stderr\n", NAME);
-    if (getenv("STUB_SIGNAL") != NULL) kill(getpid(), stub_env_number("STUB_SIGNAL", 0));
+    if (getenv("STUB_SIGNAL") != nullptr) kill(getpid(), stub_env_number("STUB_SIGNAL", 0));
     return stub_env_number("STUB_EXIT", 0);
 }
