@@ -192,8 +192,8 @@ double smith_log_double(double x) {
     uint32_t lx = (uint32_t)bits;
     int32_t k = 0;
     if (hx < 0x00100000 || hx >= 0x80000000U) { // x < 2^-1022, or negative
-        if (((hx & 0x7fffffffU) | lx) == 0) return -INFINITY;
-        if (hx >= 0x80000000U) return NAN;
+        if (((hx & 0x7fffffffU) | lx) == 0) return -(double)INFINITY;
+        if (hx >= 0x80000000U) return (double)NAN;
         k -= 54; // subnormal: scale up
         x *= smith_log_double_two54;
         bits = smith_random_double_bits(x);

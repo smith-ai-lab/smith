@@ -862,8 +862,10 @@ if [ -x /usr/bin/clangd ]; then
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
 
-# 10. The libraries compile clean under the flags `smith new` writes, in both C standards.
+# 10. The libraries compile clean under the flags `smith new` writes, in both C standards, and under the extra
+# warnings game and learner add, since every project compiles them with its own flags.
 flags=$(awk '/build_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/templates/new/build.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
+flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 -Wmissing-variable-declarations -Wcomma -Wunreachable-code"
 for standard in gnu2y gnu23; do
     for library in test random arena; do
         # shellcheck disable=SC2086
