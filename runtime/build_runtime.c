@@ -1,5 +1,5 @@
 // The build program's runtime. `smith build` compiles a project's build.c together with this file, runs the result, and
-// the result writes build/smith/build.ninja. Strings and lists live in a static arena (no malloc); the manifest is
+// the result writes .smith/build.ninja. Strings and lists live in a static arena (no malloc); the manifest is
 // written only when its bytes change, so ninja's view of it changes only when the build does. See docs/build-c.md.
 #include <smith/build.h>
 
@@ -259,7 +259,7 @@ void smith_step(SmithBuild *b, SmithStep *step) {
     SmithStep copy = smith_copy_step(step);
     SmithEntry *entry = smith_add_entry(SmithEntryKind_Step);
     if (smith_count(copy.outputs) == 0) {
-        copy.outputs = smith_one(smith_text("build/smith/stamp/%016" PRIx64, smith_hash_step(&copy)));
+        copy.outputs = smith_one(smith_text(".smith/stamp/%016" PRIx64, smith_hash_step(&copy)));
         entry->stamp = true;
     }
     entry->step = copy;
@@ -280,7 +280,7 @@ void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
     SmithStep copy = smith_copy_step(step);
     SmithEntry *entry = smith_add_entry(SmithEntryKind_Task);
     entry->name = smith_copy_string(name);
-    copy.outputs = smith_one(smith_text("build/smith/task/%s", name));
+    copy.outputs = smith_one(smith_text(".smith/task/%s", name));
     entry->step = copy;
     copy.outputs = smith_one(entry->name);
     *step = copy;
@@ -694,7 +694,7 @@ static void smith_put_entry(FILE *out, const SmithEntry *entry) {
 
 static void smith_put_manifest(FILE *out) {
     fputs("# Written by smith build from build.c. Edit build.c, not this file.\n", out);
-    fputs("ninja_required_version = 1.10\nbuilddir = build/smith\nrule step\n  command = $cmd\n", out);
+    fputs("ninja_required_version = 1.10\nbuilddir = .smith\nrule step\n  command = $cmd\n", out);
     for (size_t i = 0; i < smith_pool_count; i++)
         fprintf(out, "pool %s\n  depth = %d\n", smith_pools[i].name, smith_pools[i].depth);
     for (size_t i = 0; i < smith_entry_count; i++) {

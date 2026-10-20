@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs a table of invocations through a real compiler and through smith, and compares what each prints, how each exits
 # and which files each writes. Both run in the same directory, one after the other, with the same relative paths.
-# Usage: sh tests/compare.sh build/smith /path/to/clang
+# Usage: sh tests/compare.sh path/to/smith /path/to/clang
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 real=$2

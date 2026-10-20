@@ -1,8 +1,8 @@
 # smith
 
 A drop-in compiler driver for C, Objective-C, C++ and Metal, written in C. Milestone 0, a routing passthrough, works on
-macOS: smith builds itself, checkers, learner and game, and `smith build` builds checkers from its `build.c`. Next are
-contracts checked at compile time, then `.smith` files whose syntax replaces macros; the order is in
+macOS: smith builds itself, checkers, learner and game, and `smith build` builds smith and checkers from their
+`build.c`. Next are contracts checked at compile time, then `.smith` files whose syntax replaces macros; the order is in
 [ROADMAP.md](ROADMAP.md).
 
 ## Decisions (change one only with the owner)
@@ -37,14 +37,17 @@ contracts checked at compile time, then `.smith` files whose syntax replaces mac
 
 ## Commands
 
-- `make` builds `build/<OS>-<arch>/smith` and the `smith++` link; `make test` runs the routing tests against stub
-  compilers, then the `smith build` tests with real ninja and clang; `make compare REAL=/usr/bin/clang` runs the same
+- smith builds itself with its own `build.c`, so the installed smith must have `smith build`. `smith build` builds
+  `build/<OS>-<arch>/smith` and the `smith++` link; `smith build test` runs the routing tests against stub compilers,
+  then the `smith build` tests with real ninja and clang; `smith build compare -DREAL=/usr/bin/clang` runs the same
   invocations through clang and smith.
-- `make check` checks formatting and clang-tidy (the same configs as game), then runs `make test` and `make compare`;
-  it must pass before a change is done. `make format` rewrites the sources.
-- `make install` runs the tests, then copies smith and the `smith++` link to `$(PREFIX)/bin` (default
-  `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build, smith's
-  included: rebuild and reinstall with `make install CC=/usr/bin/clang`.
+- `smith build check` checks formatting and clang-tidy (the same configs as game, build.c included), then runs the
+  `test` and `compare` targets; it must pass before a change is done. `smith build format` rewrites the sources.
+- `smith build install` runs the tests, then copies smith and the `smith++` link to `$PREFIX/bin` (`-DPREFIX=`,
+  default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
+  smith's included. The way back needs only a C23 compiler, and is also the first build of a fresh clone:
+  `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`. `-DCC=` picks the
+  compiler that builds smith; `smith build clean` removes `build/`.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
   runs.

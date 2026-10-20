@@ -1,5 +1,5 @@
 # clang-format 22 (Homebrew LLVM). One style for .c, .h, .m and .metal (formatted as C++).
-# `make format` rewrites files; `make check` fails on any file this would change.
+# `smith build format` rewrites files; `smith build check` fails on any file this would change.
 BasedOnStyle: LLVM
 IndentWidth: 4
 ContinuationIndentWidth: 4

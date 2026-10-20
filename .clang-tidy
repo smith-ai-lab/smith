@@ -1,4 +1,4 @@
-# clang-tidy 23 (Homebrew LLVM), run by make check over smith.c and tests/stub.c.
+# clang-tidy 23 (Homebrew LLVM), run by `smith build check` over smith.c, build.c and the other sources.
 # Excluded bugprone checks:
 #   easily-swappable-parameters: flags every pair like (size, align); too noisy for C.
 #   suspicious-include: the unity builds include .c files on purpose.

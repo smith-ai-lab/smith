@@ -20,7 +20,7 @@ smith is a drop-in replacement for clang, written in C. Its home is https://gith
 
 1. A project says `CC := smith` in its Makefile, and its shader rules use `$(CC)` too. smith must be on PATH. Write flags as you would for clang.
 2. See what it does: `SMITH_VERBOSE=1` prints `smith: exec <compiler> <args>` on stderr before running. `smith --smith-which <args>` prints the compiler it would choose without running it. `smith --smith-version` prints its version.
-3. Install or reinstall from a clone of https://github.com/adam-r-kowalski/smith with `make install`. It runs the tests, then copies smith and the smith++ link to `$(PREFIX)/bin`, which defaults to `~/.local/bin`. That directory must be on PATH.
+3. Install or reinstall from a clone of https://github.com/adam-r-kowalski/smith with `smith build install`. It runs the tests, then copies smith and the smith++ link to `$PREFIX/bin` (`-DPREFIX=...`), which defaults to `~/.local/bin`. That directory must be on PATH.
 4. For `compile_commands.json`, smith adds nothing. Pass `-MJ fragments/<file>.json` as with clang, keeping the fragments
    in their own folder, then merge them:
    `{ echo '['; sed '$ s/,$//' fragments/*.json; echo ']'; } > compile_commands.json`
@@ -35,7 +35,7 @@ smith is a drop-in replacement for clang, written in C. Its home is https://gith
    - `cannot find xcrun`: the Xcode command line tools are missing, so metal cannot run.
    - `cannot execute <program>`: the chosen program exists but would not start. Run it by hand.
    The wording is in https://github.com/adam-r-kowalski/smith/blob/main/smith.c.
-3. If the installed smith is broken, build the new one with a different compiler: `make install CC=/usr/bin/clang`, from a clone of smith.
+3. If the installed smith is broken, build the new one with a C23 compiler alone, from a clone of smith: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`.
 
 ## Rules
 

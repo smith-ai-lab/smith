@@ -16,7 +16,7 @@ the build-shootout cases (basic to system2, 18 of them), then smith's own: varia
   where it failed. The snippets below are the corrected ones.
 - smith build.c: it did not run when the cases were written, because the API did not exist. The ninja under **ninja** is
   the `build.ninja` that the `build.c` would generate, written by hand and run. Where a decision of v1 changed what
-  smith generates (task edges, stamps, `build/smith/` paths), the block was updated and not rerun; a sentence under it
+  smith generates (task edges, stamps, `.smith/` paths), the block was updated and not rerun; a sentence under it
   says so. That is the test of whether the design works on ninja. Each
   smith heading names the API tier the snippet needs (v1, v1.5 or later); the tiers are in [build-c.md](build-c.md).
 - In the ninja snippets one rule is written per kind of step, to keep them short. smith would emit one generic `rule
@@ -694,7 +694,7 @@ closed.
   exists when `more` runs; without `smith_lines`, `more` would use stdio.
 - `smith_map` (v1): a new list with `format` applied to each item (`"out/%s.o"`), to build the input list of the final
   step without a macro.
-- In v1's layout the manifest is `build/smith/build.ninja` and the regen edge runs `build/smith/program`; the blocks
+- In v1's layout the manifest is `.smith/build.ninja` and the regen edge runs `.smith/program`; the blocks
   above keep the names of the hand-run test.
 - Rule for the writer: the stage 1 manifest must be written with an old mtime (or smith must call `more` when the needs
   exist), otherwise ninja believes it is done.
@@ -1160,12 +1160,12 @@ void build(SmithBuild *b) {
 **How each handles it:** make: not natively (workaround with a hash file and a phony `FORCE`, which hashes every build). ninja: not natively and `restat` does not help; the hash-file edge above is a working workaround. Zig: with a workaround. Not natively: a file given as an argument is checked by size, inode and mtime, so a same-bytes rewrite reruns (and a same-size in-place change with the same mtime is missed); a file the command names in a depfile is compared by content, which gives the cutoff. smith: not by passing through, but smith can generate the hash-file edges itself.
 **What smith's API needs:** `.content_hash` (later), one field on `SmithStep`: "rerun only if the contents of the inputs
 changed, not their timestamps". Proposed design and cost:
-- For each input that is a file, smith emits `build build/smith/hash/<path>.hash: smith_hash <path>` with `restat = 1`, and
+- For each input that is a file, smith emits `build .smith/hash/<path>.hash: smith_hash <path>` with `restat = 1`, and
   the step lists the `.hash` file as an implicit input instead of the file (the command line still names the real file,
   so `$in` is unchanged). The hash command is a subcommand of smith itself (`smith --smith-hash in out`), which writes
   `out` only if the hash differs, so there is no dependency on `shasum`.
 - Cost: one extra tiny edge per input of a `content_hash` step (a process spawn plus hashing the file, only when its
-  mtime changed, because ninja still compares mtimes first), a `build/smith/hash/` folder, and doubled edge count for those
+  mtime changed, because ninja still compares mtimes first), a `.smith/hash/` folder, and doubled edge count for those
   steps. Steps without the field are unaffected, so by default nothing changes.
 - Limits: dependencies found through `depfile` (for example headers) are still tracked by mtime, because ninja reads
   them itself. To cover headers, the hash edge would have to run after the compile, which is a larger design. The input
@@ -1186,8 +1186,8 @@ nofileout-run: .stamp
 ```ninja
 rule run
   command = sh run.sh $in && touch $out
-build build/smith/stamp/81b43ea1e0306b15: run input
-build nofileout-run: phony build/smith/stamp/81b43ea1e0306b15
+build .smith/stamp/81b43ea1e0306b15: run input
+build nofileout-run: phony .smith/stamp/81b43ea1e0306b15
 default nofileout-run
 ```
 This block was updated to the v1 decisions and not rerun. The stamp name is the one smith writes for the snippet
@@ -1229,7 +1229,7 @@ void build(SmithBuild *b) {
 - Zig 0.17.0 (three builds, the third after changing `input`): the original, a Run step with no output and nothing captured, ran every time (3 runs in 3 builds; the Run source treats a step with no output file as having side effects); `_ = run.captureStdOut();` did not compile (it takes an options struct), and `captureStdOut(.{})` gave 1, 1, 2 runs; `run.expectExitCode(0)` with no output file also gave 1, 1, 2 runs. A command that exits 1 failed the build each time and ran again each time (2 runs in 2 builds).
 **How each handles it:** make: with a workaround (stamp file). ninja: with a workaround (stamp file; a command that never creates its declared output reruns every time). Zig: natively with one call (`expectExitCode(0)` makes a Run step with no output file cacheable by its inputs). The claim that an unchecked Run step with no outputs always runs is right; the documented `captureStdOut(.{})` also works but writes a stdout file. smith: with a workaround that smith does for the user, by creating the stamp.
 **What smith's API needs:** `smith_step` (v1), with no new signature. Pin its meaning in the docs: a step with no
-outputs gets a stamp, `build/smith/stamp/<hash>`, and `&& touch <stamp>` ends its command, so it reruns only when its
+outputs gets a stamp, `.smith/stamp/<hash>`, and `&& touch <stamp>` ends its command, so it reruns only when its
 inputs changed. A stamp is touched only on success (shown above). A task is different: it runs every time it is asked
 for, like make's `.PHONY`, and it cannot have outputs. So this case is a step, not a task.
 
@@ -1733,9 +1733,9 @@ rule task
   command = $cmd
   pool = console
 build build/tests: cc tests.c
-build build/smith/task/test: task build/tests
+build .smith/task/test: task build/tests
   cmd = ./build/tests --test name --seed 42
-build test: phony build/smith/task/test
+build test: phony .smith/task/test
 default build/tests
 # For: smith build test        the same file with   cmd = ./build/tests
 # For: smith build test -DSEED=7                    cmd = ./build/tests --seed 7
@@ -1793,7 +1793,7 @@ void build(SmithBuild *b) {
 (A task runs every time it is asked for, so `smith build test` reruns the tests with no `.always`, as in the ninja
 above. The default builds `build/tests` and does not run the tests.)
 
-**Verified:** make: `make test` ran `./build/tests` with no arguments (printing `tests:`), again with `TEST=name SEED=42` printed `--test name --seed 42`, with only `SEED=7` printed `--seed 7`, and a plain `make test` afterwards printed `tests:` again. Each run reran the test and did not recompile. ninja: five runs of `ninja -f <file> test` over files for no options, no options, both options, `SEED` only, no options: the first built `build/tests` and ran; every later run ran the task alone with exactly the argument words of its file (nothing for unset), including the second identical run, because `test` is an edge whose output is never created. Setting a value in the command line changes the command, which is the only thing that differs between runs. A folder named `test` did not stop the task from running in ninja 1.13.2 (tried), but I did not establish that it never matters; a safer form, which also worked, is an edge with output `task/test` plus `build test: phony task/test`. smith writes that form, with the output under `build/smith/task/`. Zig 0.17.0 (the snippet ran unchanged, then without the `has_side_effects` line): `zig build test` printed `tests:`; `zig build test -DTEST=name -DSEED=42` printed `tests: --test name --seed 42`; `-DSEED=7` printed `tests: --seed 7`; the same again and a plain `zig build test` each ran the test again (`success`, never `cached`); `tests` compiled once (`cached` afterwards). `zig build -h` lists `-DTEST=[string]` and `-DSEED=[string]` with the descriptions. Without the `has_side_effects` line the behaviour was identical. (In a shell the two options must be separate words.)
+**Verified:** make: `make test` ran `./build/tests` with no arguments (printing `tests:`), again with `TEST=name SEED=42` printed `--test name --seed 42`, with only `SEED=7` printed `--seed 7`, and a plain `make test` afterwards printed `tests:` again. Each run reran the test and did not recompile. ninja: five runs of `ninja -f <file> test` over files for no options, no options, both options, `SEED` only, no options: the first built `build/tests` and ran; every later run ran the task alone with exactly the argument words of its file (nothing for unset), including the second identical run, because `test` is an edge whose output is never created. Setting a value in the command line changes the command, which is the only thing that differs between runs. A folder named `test` did not stop the task from running in ninja 1.13.2 (tried), but I did not establish that it never matters; a safer form, which also worked, is an edge with output `task/test` plus `build test: phony task/test`. smith writes that form, with the output under `.smith/task/`. Zig 0.17.0 (the snippet ran unchanged, then without the `has_side_effects` line): `zig build test` printed `tests:`; `zig build test -DTEST=name -DSEED=42` printed `tests: --test name --seed 42`; `-DSEED=7` printed `tests: --seed 7`; the same again and a plain `zig build test` each ran the test again (`success`, never `cached`); `tests` compiled once (`cached` afterwards). `zig build -h` lists `-DTEST=[string]` and `-DSEED=[string]` with the descriptions. Without the `has_side_effects` line the behaviour was identical. (In a shell the two options must be separate words.)
 **How each handles it:** make: natively; variables come from the command line and `$(if ...)` omits empty ones. ninja: not at all by itself; a program must write the command line with the values in it (smith does this by regenerating the file). Zig: natively with `b.option` and `-DTEST=name`; the run happens every time because a Run step with no output file counts as having side effects (no extra field needed). smith: natively with `smith_option_value`; `smith_when` is a helper on top.
 **What smith's API needs:** nothing new beyond `smith_option_value`, `smith_task`, `smith_when` and `smith_cat` (v1).
 Five behaviours to specify, none a signature:
@@ -1966,7 +1966,7 @@ How ninja runs the function. The build program (build.c compiled and linked with
 runs `.run` steps. For each `.run` step, in order of creation, smith writes a ninja edge whose command is the build
 program itself, a step number, and the lists:
 ```ninja
-program = build/smith/program
+program = .smith/program
 rule run
   command = $program --run $index $argsline --in $in --out $out
   description = $description
@@ -1979,7 +1979,7 @@ build task/check-libc: run build/base.o build/game.o | $program
 build check-libc: phony task/check-libc
 ```
 (In the real design the output is `build/check-libc.stamp`; `task/check-libc` is what was run. The block was updated to
-the v1 path of the build program, `build/smith/program`, and not rerun.) With `--run N` the
+the v1 path of the build program, `.smith/program`, and not rerun.) With `--run N` the
 program runs `build()` again in replay mode, in which `smith_step` records and emits nothing, takes the N-th step that
 has a `.run`, builds a `SmithRun` from the `--arg`, `--in`, `--out` lists, calls the function, and exits with its return
 value. Replay (rather than a table of function pointers) is needed because the steps are created while `build()` runs,

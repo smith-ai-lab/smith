@@ -1,6 +1,6 @@
 #!/bin/sh
 # Routing tests for smith, run against stub compilers so that no clang or Xcode is needed and no real build is touched.
-# Usage: sh tests/run.sh build/smith
+# Usage: sh tests/run.sh path/to/smith
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")" && pwd)

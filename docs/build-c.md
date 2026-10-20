@@ -1,7 +1,8 @@
 # smith build
 
-Status: v1 is implemented, and checkers builds with it. v1.5 and later are declared but not implemented. The 23 cases
-that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in [build-c-cases.md](build-c-cases.md).
+Status: v1 is implemented. checkers and smith itself build with it. v1.5 and later are declared but not implemented. The
+23 cases that shaped it, each in make, ninja, Zig 0.17.0 and a smith `build.c`, are in
+[build-c-cases.md](build-c-cases.md).
 
 ## What smith build is
 
@@ -35,22 +36,27 @@ The driver, in order:
 2. Find ninja: `$SMITH_NINJA`, else the first `ninja` on PATH.
 3. Split the arguments. Those that start with `-D` go to the build program, and everything else goes to ninja. `-f` and
    `-C` are refused, because `smith build` names the manifest itself.
-4. Write `build/smith/include/smith/build.h`, `build/smith/runtime.c` and `build/smith/bootstrap/build.ninja`. Each is
-   written only when its bytes changed, so its mtime changes only then.
-5. Run `ninja --quiet -f build/smith/bootstrap/build.ninja`. It compiles `build.c` into `build/smith/program`, and
+4. Write `.smith/include/smith/build.h`, `.smith/runtime.c`, `.smith/bootstrap/build.ninja` and `.smith/.gitignore`.
+   Each is written only when its bytes changed, so its mtime changes only then.
+5. Run `ninja --quiet -f .smith/bootstrap/build.ninja`. It compiles `build.c` into `.smith/program`, and
    rebuilds the program when `build.c`, a header it includes, or smith's runtime changed (a depfile).
 6. Run the program with the `-D` arguments. `build()` calls the `smith_*` functions, and the program writes
-   `build/smith/build.ninja` only when its bytes changed.
-7. `execv` ninja on `build/smith/build.ninja` with the other arguments, so ninja's exit status and signals are
+   `.smith/build.ninja` only when its bytes changed.
+7. `execv` ninja on `.smith/build.ninja` with the other arguments, so ninja's exit status and signals are
    `smith build`'s.
 
 The header and the runtime are embedded in smith with C23 `#embed`, so `smith build` needs nothing installed beside it.
-The compile command is `<clang> -std=gnu23 -g -O0 -Wall -Wextra -I build/smith/include`, with the clang that `smith`
+The compile command is `<clang> -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include`, with the clang that `smith`
 itself would pick. Bootstrapping still works with one `cc` command.
 
-smith's own files all go in `build/smith/`: the manifests, ninja's logs (`builddir`), the build program, stamps and task
-outputs. The bootstrap manifest has its own `builddir`, `build/smith/bootstrap`, because ninja recompacts its log and
+smith's own files all go in `.smith/`: the manifests, ninja's logs (`builddir`), the build program, stamps and task
+outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, because ninja recompacts its log and
 drops the entries that the current manifest does not have.
+
+They are not in `build/`, because a project's `clean` task usually runs `rm -rf build`, and that would delete the logs
+while ninja is still running from them. Ninja then exits 1 with "Error writing to build log" (measured). smith writes
+`.smith/.gitignore` containing `*`, so git ignores the folder with no change to the project, as pytest, ruff and mypy
+do for their caches. smith does not create `build/`.
 
 An unchanged manifest keeps its mtime, so a `smith build` with nothing to do does not make ninja rebuild.
 
@@ -68,12 +74,12 @@ Generator rules:
 - Literal words in a command are shell-quoted. Paths in `build` lines are escaped (`$ `, `$:`, `$$`).
 - `deps = gcc` is emitted whenever `.depfile` is set, so ninja folds the `.d` file into `.ninja_deps` and deletes it.
 - `.always` adds an input on one shared phony target that has no inputs (`build smith_always: phony`).
-- A step with no outputs gets a stamp output, `build/smith/stamp/<hash>`, and `&& touch <stamp>` ends its command. The
+- A step with no outputs gets a stamp output, `.smith/stamp/<hash>`, and `&& touch <stamp>` ends its command. The
   stamp is touched only when the command succeeds, so the step reruns only when its inputs change (case `nofileout`).
   The hash is FNV-1a 64 of the command and every input, so two steps with one command and different inputs get two
   stamps.
 - A task runs every time it is asked for, like make's `.PHONY`. It is an edge whose output is
-  `build/smith/task/<name>`, which is never created, plus `build <name>: phony build/smith/task/<name>`. A task cannot
+  `.smith/task/<name>`, which is never created, plus `build <name>: phony .smith/task/<name>`. A task cannot
   have outputs, `.restat` or `.always`; setting one is an error.
 - `smith_default` is required. Without it ninja would build every target, tasks such as `clean` included, so a
   `build.c` without a default is an error. An empty default, such as a glob that matched nothing, builds nothing: smith
@@ -191,6 +197,7 @@ Rules:
 
 Which tier each project needs:
 - checkers: v1.
+- smith: v1. Its `build.c` is at the repository root and replaced its Makefile.
 - learner: v1.
 - game: v1.5, for the mesh list that a program prints and that the rest of the build depends on (`smith_defer`,
   `smith_lines`).
@@ -333,15 +340,21 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
   the project now keeps as a hand-written source at the same path would be deleted. smith never runs it by itself.
 - The generator edge needs `generator = 1`, so that `ninja -t clean` keeps the manifest.
 - A task named `test` next to a folder named `test` still ran in ninja 1.13.2, but this is not established to be safe.
-  So a task is an edge with output `build/smith/task/test` plus `build test: phony build/smith/task/test`.
+  So a task is an edge with output `.smith/task/test` plus `build test: phony .smith/task/test`.
 - A value read with `smith_env` ends up in `build.ninja` and `.ninja_log`. That matters if it is a secret.
 
 ## Bootstrapping
 
 - smith itself stays plain C23 with libc only, so a fresh clone builds with one command and any C23 compiler:
-  `cc -std=gnu23 smith.c -o smith` (checked with Apple clang 21). That smith then runs smith's own `build.c`.
-- The same command is the way back when an installed smith is broken and `smith build` cannot run.
-- Other projects need smith installed to run their `build.c`, as a Makefile needs make.
+  `cc -std=gnu23 smith.c -o smith` (checked with Apple clang 21). That smith then runs smith's own `build.c`, which is
+  the second project built by `build.c`, after checkers: `smith build`, `smith build test`, `smith build check`,
+  `smith build install` and the rest replaced the Makefile's targets, with the same compile command and the same
+  machine code.
+- The same command is the way back when an installed smith is broken and `smith build` cannot run, and the first build
+  of a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`. It
+  needs only a C23 compiler.
+- Other projects need smith installed to run their `build.c`, as a Makefile needs make. So does smith: the installed
+  smith must have `smith build`.
 
 ## Open decisions
 

@@ -302,7 +302,7 @@ extern char **environ;
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
 constexpr size_t smith_build_chunk = 4096;
-constexpr size_t smith_build_ninja_prefix = 3; // ninja -f build/smith/build.ninja
+constexpr size_t smith_build_ninja_prefix = 3; // ninja -f .smith/build.ninja
 
 static bool smith_file_has_bytes(const char *path, const unsigned char *bytes, size_t size) {
     FILE *file = fopen(path, "rb");
@@ -368,27 +368,27 @@ static void smith_quote_word(char *out, size_t capacity, const char *word) {
     out[used] = '\0';
 }
 
-// The manifest that compiles build.c into build/smith/program with the clang `smith` would pick.
+// The manifest that compiles build.c into .smith/program with the clang `smith` would pick.
 static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang) {
     char quoted[PATH_MAX * 2];
     smith_quote_word(quoted, sizeof quoted, clang);
-    int written = snprintf(
-        out, capacity,
-        "# Written by smith build. It compiles build.c into build/smith/program.\n"
-        "ninja_required_version = 1.10\n"
-        "builddir = build/smith/bootstrap\n"
-        "rule cc\n"
-        "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I build/smith/include -MMD -MF $out.d -c $in -o $out\n"
-        "  depfile = $out.d\n"
-        "  deps = gcc\n"
-        "  description = smith: compile $in\n"
-        "rule link\n"
-        "  command = %s $in -o $out\n"
-        "  description = smith: link $out\n"
-        "build build/smith/bootstrap/build.o: cc build.c\n"
-        "build build/smith/bootstrap/runtime.o: cc build/smith/runtime.c\n"
-        "build build/smith/program: link build/smith/bootstrap/build.o build/smith/bootstrap/runtime.o\n",
-        quoted, quoted);
+    int written =
+        snprintf(out, capacity,
+                 "# Written by smith build. It compiles build.c into .smith/program.\n"
+                 "ninja_required_version = 1.10\n"
+                 "builddir = .smith/bootstrap\n"
+                 "rule cc\n"
+                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
+                 "  depfile = $out.d\n"
+                 "  deps = gcc\n"
+                 "  description = smith: compile $in\n"
+                 "rule link\n"
+                 "  command = %s $in -o $out\n"
+                 "  description = smith: link $out\n"
+                 "build .smith/bootstrap/build.o: cc build.c\n"
+                 "build .smith/bootstrap/runtime.o: cc .smith/runtime.c\n"
+                 "build .smith/program: link .smith/bootstrap/build.o .smith/bootstrap/runtime.o\n",
+                 quoted, quoted);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
     return (size_t)written;
 }
@@ -442,16 +442,17 @@ static void smith_build_split(int count, char **args, char **ninja_argv, char **
 }
 
 static void smith_build_prepare(const char *clang) {
-    smith_make_folder("build");
-    smith_make_folder("build/smith");
-    smith_make_folder("build/smith/include");
-    smith_make_folder("build/smith/include/smith");
-    smith_make_folder("build/smith/bootstrap");
+    smith_make_folder(".smith");
+    smith_make_folder(".smith/include");
+    smith_make_folder(".smith/include/smith");
+    smith_make_folder(".smith/bootstrap");
     static char manifest[smith_build_manifest_max];
     size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang);
-    smith_write_if_changed("build/smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
-    smith_write_if_changed("build/smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
-    smith_write_if_changed("build/smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
+    // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
+    smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
+    smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
+    smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
+    smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }
 
 static int smith_build_main(int count, char **args, const char *self) {
@@ -464,9 +465,9 @@ static int smith_build_main(int count, char **args, const char *self) {
     static char *program_argv[smith_build_args_max + 3];
     ninja_argv[0] = ninja;
     ninja_argv[1] = (char *)"-f";
-    ninja_argv[2] = (char *)"build/smith/build.ninja";
-    program_argv[0] = (char *)"build/smith/program";
-    program_argv[1] = (char *)"build/smith/build.ninja";
+    ninja_argv[2] = (char *)".smith/build.ninja";
+    program_argv[0] = (char *)".smith/program";
+    program_argv[1] = (char *)".smith/build.ninja";
     size_t ninja_used = smith_build_ninja_prefix;
     size_t program_used = 2;
     smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
@@ -474,8 +475,7 @@ static int smith_build_main(int count, char **args, const char *self) {
     char clang[PATH_MAX];
     smith_find_clang("clang", "SMITH_CLANG", self, clang);
     smith_build_prepare(clang);
-    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)"build/smith/bootstrap/build.ninja",
-                              nullptr};
+    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/bootstrap/build.ninja", nullptr};
     int status = smith_build_spawn(ninja, bootstrap_argv);
     if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
     if (status != 0) return status;

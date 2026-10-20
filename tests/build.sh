@@ -1,6 +1,6 @@
 #!/bin/sh
 # End-to-end tests for `smith build`, with real ninja and the real clang smith picks. Each case runs in its own
-# temporary project. Usage: sh tests/build.sh build/smith
+# temporary project. Usage: sh tests/build.sh path/to/smith
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
@@ -408,6 +408,36 @@ C
 build
 expect_status "errors: an unimplemented call exits 2" 2
 expect_contains "errors: the unimplemented message" "$err" "smith: build.c: smith_defer is not implemented yet"
+
+# 9b. smith's files are in .smith/, not build/.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
+    smith_task(b, "clean", &clean);
+    SmithStep write = {
+        .command = (const char *[]){"sh", "-c", "echo x > out", nullptr},
+        .outputs = (const char *[]){"out", nullptr},
+    };
+    smith_step(b, &write);
+    smith_default(b, write.outputs);
+}
+C
+build
+expect "folder: a build whose steps write nothing under build/ leaves no build/" "0 absent" \
+    "$rc $([ -e build ] && echo present || echo absent)"
+expect "folder: smith keeps its files in .smith" "present present" \
+    "$([ -f .smith/build.ninja ] && echo present) $([ -f .smith/include/smith/build.h ] && echo present)"
+expect "folder: .smith/.gitignore holds *" "*" "$(cat .smith/.gitignore 2>/dev/null)"
+mkdir build
+echo x >build/file
+build clean
+expect "clean: a task running rm -rf build exits 0" "0 absent" "$rc $([ -e build ] && echo present || echo absent)"
+rm -f out
+build
+expect "clean: the next smith build works" "0 present" "$rc $([ -f out ] && echo present || echo absent)"
 
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
