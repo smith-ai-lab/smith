@@ -967,6 +967,14 @@ static SmithObjectRow smith_object_rows[smith_objects_max];
 static size_t smith_object_row_count;
 static bool smith_compile_commands_called;
 
+typedef struct {
+    const char *source;
+    const char *const *arguments; // compiler, flags, -c, source
+} SmithCommandRow;
+
+static SmithCommandRow smith_command_rows[smith_objects_max];
+static size_t smith_command_row_count;
+
 // The flags `smith build` compiles build.c with; smith.c's bootstrap manifest holds the same words (a test compares).
 static const char *const smith_build_c_words[] = {"smith", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
                                                   "-I",    ".smith/include", "-c", "build.c", nullptr};
@@ -1104,12 +1112,40 @@ static void smith_json_entry(FILE *out, const char *directory, const char *file,
     fputs("\n    ]\n  }", out);
 }
 
+static bool smith_source_recorded(const char *source) {
+    for (size_t i = 0; i < smith_object_row_count; i++) {
+        if (strcmp(smith_object_rows[i].object.source, source) == 0) return true;
+    }
+    for (size_t i = 0; i < smith_command_row_count; i++) {
+        if (strcmp(smith_command_rows[i].source, source) == 0) return true;
+    }
+    return false;
+}
+
+void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags) {
+    SMITH_ASSERT(b != nullptr);
+    smith_require_text("smith_compile_command", "compiler", compiler);
+    smith_require_text("smith_compile_command", "source", source);
+    if (smith_compile_commands_called) smith_fail("smith_compile_command is called after smith_compile_commands");
+    if (smith_source_recorded(source)) return;
+    if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
+    const char *copy = smith_copy_string(source);
+    const char *const tail[] = {"-c", copy, nullptr};
+    const char *const *arguments =
+        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_copy_list(flags), tail, nullptr);
+    smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
+}
+
 static void smith_put_compile_commands(FILE *out, const SmithBuild *b) {
     fputs("[\n", out);
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed) continue;
         smith_json_entry(out, b->root, object->source, object->output, object->step.command);
+        fputs(",\n", out);
+    }
+    for (size_t i = 0; i < smith_command_row_count; i++) {
+        smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr, smith_command_rows[i].arguments);
         fputs(",\n", out);
     }
     smith_json_entry(out, b->root, "build.c", nullptr, smith_build_c_words);

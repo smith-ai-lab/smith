@@ -1579,6 +1579,117 @@ C
 build
 expect_status "errors: compile_commands under .smith fails" 2
 
+# 9j. smith_compile_command: an entry with no step.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject util = {.compiler = "cc", .source = "util.c", .output = "build/util.o"};
+    smith_object(b, &util);
+    smith_compile_command(b, "cc", "tests/a.c", (const char *[]){"-std=gnu23", "-Iinc", nullptr});
+    smith_compile_command(b, "cc", "util.c", (const char *[]){"-DIGNORED", nullptr});
+    smith_compile_command(b, "cc", "tests/b.c", nullptr);
+    smith_compile_command(b, "cc", "tests/a.c", (const char *[]){"-DIGNORED", nullptr});
+    smith_compile_commands(b, "compile_commands.json");
+    smith_default(b, util.step.outputs);
+}
+C
+printf 'int util_value(void) { return 7; }\n' >util.c
+build
+expect "compile_command: the build succeeds" 0 "$rc"
+here_dir=$(pwd -P)
+cat >expected.json <<JSON
+[
+  {
+    "directory": "$here_dir",
+    "file": "util.c",
+    "output": "build/util.o",
+    "arguments": [
+      "cc",
+      "-MMD",
+      "-MF",
+      "build/util.d",
+      "-c",
+      "util.c",
+      "-o",
+      "build/util.o"
+    ]
+  },
+  {
+    "directory": "$here_dir",
+    "file": "tests/a.c",
+    "arguments": [
+      "cc",
+      "-std=gnu23",
+      "-Iinc",
+      "-c",
+      "tests/a.c"
+    ]
+  },
+  {
+    "directory": "$here_dir",
+    "file": "tests/b.c",
+    "arguments": [
+      "cc",
+      "-c",
+      "tests/b.c"
+    ]
+  },
+  {
+    "directory": "$here_dir",
+    "file": "build.c",
+    "arguments": [
+      "smith",
+      "-std=gnu23",
+      "-g",
+      "-O0",
+      "-Wall",
+      "-Wextra",
+      "-I",
+      ".smith/include",
+      "-c",
+      "build.c"
+    ]
+  }
+]
+JSON
+expect "compile_command: the entries, their order, and a covered file skipped" "$(cat expected.json)" "$(cat compile_commands.json 2>/dev/null)"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_command(b, nullptr, "a.c", nullptr);
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build
+expect_status "errors: a missing compiler for smith_compile_command fails" 2
+expect_contains "errors: the message names compiler" "$err" "smith_compile_command: .compiler is required"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_command(b, "cc", "", nullptr);
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build
+expect_status "errors: a missing source for smith_compile_command fails" 2
+expect_contains "errors: the message names source" "$err" "smith_compile_command: .source is required"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_commands(b, "compile_commands.json");
+    smith_compile_command(b, "cc", "a.c", nullptr);
+    smith_default(b, (const char *[]){nullptr});
+}
+C
+build
+expect_status "errors: smith_compile_command after smith_compile_commands fails" 2
+expect_contains "errors: the message says after" "$err" "after smith_compile_commands"
+
 # 10. ninja arguments pass through (the copy project of case 1).
 cd "$copy_project" || exit 1
 build -t targets

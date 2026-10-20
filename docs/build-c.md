@@ -152,7 +152,7 @@ build.c has two layers, and a project may use either or both.
 
 - **The raw layer** (`smith_step`, `smith_task`) is the make replacement: you own every command, and smith knows
   nothing about what a step does. It cannot tell a compile from an `rm`.
-- **The high level** (`smith_object`, `smith_program`, `smith_compile_commands`) is for letting smith know what a
+- **The high level** (`smith_object`, `smith_program`, `smith_compile_command`, `smith_compile_commands`) is for letting smith know what a
   compile and a link are. Each call emits ordinary steps, the same as `smith_step`, and its comment in the header states
   the exact command. `smith build -v` shows it. Nothing is hidden; the gain is that smith can write a correct
   `compile_commands.json`, which clang's `-MJ` cannot (it records Apple clang's internal command, which upstream clangd
@@ -162,6 +162,11 @@ build.c has two layers, and a project may use either or both.
 - One entry per `smith_object`, in call order: `directory` is the project root, `file` the source, `output` the object,
   and `arguments` the exact argv of the step, `-MMD -MF` included (clangd tolerates them, and the file tells the truth).
   An object declared again with the same output has one entry.
+- Then one entry per `smith_compile_command(b, compiler, source, flags)`, in call order: `file` the source, no `output`,
+  and `arguments` the compiler, the flags, `-c` and the source. It is for files the build never compiles on their own,
+  such as sources reached only through a unity build, so the editor still knows their flags. A source that already has
+  a `smith_object` entry or an earlier `smith_compile_command` is skipped (the first entry for a file wins), and
+  calling it after `smith_compile_commands` is an error.
 - Then one entry for build.c: `file` "build.c" and `arguments` `smith -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
   -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's bootstrap).
 - The JSON is escaped (`"`, `\`, control characters as `\u00XX`), indented two spaces, ends with a newline, and is
@@ -345,8 +350,16 @@ typedef struct {
 
 void smith_object(SmithBuild *b, SmithObject *object);
 void smith_program(SmithBuild *b, SmithProgram *program);
+// Records a compile_commands.json entry for source with no step: {directory: the root, file: source, arguments:
+// [compiler, flags..., "-c", source]} and no "output". It is for files the build never compiles on their own, such as
+// sources reached only through a unity build, so the editor still knows their flags. compiler and source are required.
+// Entries follow the smith_object entries, in call order, before build.c's. A source that already has a smith_object
+// entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
+// smith_compile_commands, which writes the file; after it, it is an error.
+void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
-// plus one entry for build.c itself with the command smith compiles it with. Call it last.
+// then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
+// last.
 void smith_compile_commands(SmithBuild *b, const char *path);
 ```
 

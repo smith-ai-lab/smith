@@ -73,7 +73,7 @@ static int check_nm(SmithRun *run) { // fail if an object uses a symbol outside 
 
 ## High level
 
-- `smith_object(b, &object)` is one compile (`<compiler> <flags> -MMD -MF <output>.d -c <source> -o <output>`, with that depfile), `smith_program(b, &program)` links objects (`<linker> <flags> <objects> <libraries> -o <output>`), and `smith_compile_commands(b, path)` writes compile_commands.json from them, plus an entry for build.c. They emit ordinary steps; `smith build -v` shows the commands. Pass each object to `smith_object` before the program that links it. Libraries that are files rebuild the program; `-framework X` is not a file.
+- `smith_object(b, &object)` is one compile (`<compiler> <flags> -MMD -MF <output>.d -c <source> -o <output>`, with that depfile), `smith_program(b, &program)` links objects (`<linker> <flags> <objects> <libraries> -o <output>`), and `smith_compile_commands(b, path)` writes compile_commands.json from them, plus an entry for build.c. They emit ordinary steps; `smith build -v` shows the commands. `smith_compile_command(b, compiler, source, flags)` adds an entry with no step for a file the build never compiles on its own (a unity-build source), so the editor knows its flags; call it before `smith_compile_commands`, and a file that already has an entry is skipped. Pass each object to `smith_object` before the program that links it. Libraries that are files rebuild the program; `-framework X` is not a file.
 - clangd then works with any version: point it at smith with `--query-driver=<path to smith>`.
 
 ```c
