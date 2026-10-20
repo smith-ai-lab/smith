@@ -56,6 +56,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 
 - Load the [smith-development skill](.agents/skills/smith-development/SKILL.md) for any change to smith itself.
 - Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It is the source of truth for the copies in game and virtual-cell: change it here, then copy it to both.
+- Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It is the source of truth for the copy in each project that builds with build.c.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
   them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
