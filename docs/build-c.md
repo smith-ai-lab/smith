@@ -269,7 +269,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
   seconds, whichever comes first, and the same seed gives the same shrunk case (when the runs limit ends it; the
   seconds limit depends on the machine). The report is the shrunk failure, with its values, its note and its output,
   and `shrunk in k runs`; the rerun line names the original seed, and rerunning it shrinks to the same case again.
-  `-DSHRINK=0` shows the unshrunk failure. A timeout is not shrunk (each try would take the whole timeout), and a failure
+  `-DSHRINK=0` shows the unshrunk failure. Shrinking starts only when every other test has finished (a shrinkable
+  failure and the results after it are held until then, and printed in order), so a result never depends on another
+  test: nothing stops reading the other children's pipes or judging their timeouts. A timeout is not shrunk (each try would take the whole timeout), and a failure
   that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.

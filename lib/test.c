@@ -1011,21 +1011,36 @@ static bool smith_test_launch(SmithTestPlan *plan, size_t *next) {
     return false;
 }
 
-// Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it has finished.
+static bool smith_test_any_running(const SmithTestPlan *plan) {
+    for (size_t job = 0; job < plan->options->jobs; job++) {
+        if (plan->running[job] != smith_test_idle) return true;
+    }
+    return false;
+}
+
+// Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it has finished. A
+// failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking takes
+// seconds, and while it ran nothing would read the other children's pipes or judge their timeouts, so a result would
+// depend on another test. Then the held failures are shrunk and printed in order.
 static void smith_test_run_all(SmithTestPlan *plan) {
     for (size_t job = 0; job < smith_test_jobs_max; job++)
         plan->running[job] = smith_test_idle;
     size_t next = 0;
     size_t printed = 0;
-    while (printed < plan->count) { // each pass finishes a child or reads output, and there are finitely many tests
+    for (;;) { // each pass starts a child, finishes one or reads output, and there are finitely many tests
         while (next < plan->count && smith_test_launch(plan, &next)) {
         }
-        smith_test_pump(plan);
-        while (printed < plan->count && plan->runs[printed].finished) {
-            smith_test_shrink(plan->tests[printed], plan->options, &plan->runs[printed]);
+        if (smith_test_any_running(plan)) smith_test_pump(plan);
+        while (printed < plan->count && plan->runs[printed].finished &&
+               !smith_test_shrinkable(plan->tests[printed], plan->options, &plan->runs[printed])) {
             smith_test_report(plan->tests[printed], plan->options, &plan->runs[printed]);
             printed += 1;
         }
+        if (next == plan->count && !smith_test_any_running(plan)) break;
+    }
+    for (; printed < plan->count; printed++) { // nothing else is running now
+        smith_test_shrink(plan->tests[printed], plan->options, &plan->runs[printed]);
+        smith_test_report(plan->tests[printed], plan->options, &plan->runs[printed]);
     }
 }
 

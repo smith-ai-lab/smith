@@ -489,6 +489,40 @@ capture build/tests --test shrink_moves
 expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
 expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
 
+# Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes more
+# than 64 KiB, waits a second and writes more, still passes with --timeout 2.
+project "$work/alongside"
+cat >tests/test_alongside.c <<'C'
+#include <smith/test.h>
+
+#include <stdio.h>
+
+void test_a_shrinks_slowly(SmithKey key) {
+    usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
+    long long smallest = 1000000000;
+    for (uint64_t i = 0; i < 200; i++) {
+        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) smallest = v;
+    }
+    SMITH_CHECK(smallest, <, 1000);
+}
+
+void test_b_writes_a_lot(void) {
+    for (int i = 0; i < 1000; i++) printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
+    usleep(1000000);                                      // while the runner shrinks the other test
+    for (int i = 0; i < 3000; i++) printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
+    printf("done\n");
+}
+C
+sed -i.bak 's/#include <stdio.h>/#include <stdio.h>\n#include <unistd.h>/' tests/test_alongside.c && rm tests/test_alongside.c.bak
+capture "$smith" build -DSAN=0
+expect "alongside: the runner builds" 0 "$rc"
+capture build/tests --timeout 2 --jobs 2
+expect_contains "alongside: the shrinking test fails and is shrunk" "$out" "FAIL a_shrinks_slowly with seed"
+expect_lacks "alongside: ... and the other test is not a failure" "$out" "FAIL b_writes_a_lot"
+expect_contains "alongside: ... it passes" "$out" "1 passed, 1 failed"
+cd "$work/main" || exit 1
+
 # The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds.
 project "$work/budget"
 cat >tests/test_budget.c <<'C'
