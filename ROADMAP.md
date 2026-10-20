@@ -24,10 +24,10 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
    - `build.c` is an explicit, cross-platform description of a build, written to replace a Makefile one for one. Every
      flag, file and step is written out, it has no defaults, and adopting it changes nothing.
    - `build.c` emits ninja first. The executor can change later without anyone rewriting their `build.c`.
-   - v1 is done: [docs/build-c.md](docs/build-c.md), and checkers and smith itself build with it (smith's `build.c`
-     replaced its Makefile). v1.5 (`smith_defer`, `smith_lines`) is done too. Next, game's Makefile in a scratch copy,
-     compared byte for byte with make, then game itself; learner's after.
-   - `compile_commands.json` comes from `-MJ` fragments merged by a step, as in checkers, or from `smith build -t
+   - v1 is done: [docs/build-c.md](docs/build-c.md), and checkers, smith itself and game build with it, each `build.c`
+     replacing a Makefile. game's checks are C steps that rerun only when what they read changes: an unchanged tree
+     checks in 0.14 s, where make took about 15 s. Next, learner's Makefile, ported the same way.
+   - `compile_commands.json` comes from `smith_compile_commands`, as in checkers, smith and game, or from `smith build -t
      compdb`. smith adds nothing for it.
    - `smith new` writes an explicit, opinionated starting point, made of files the project owns.
    - `smith test` bakes in the convention game already uses:

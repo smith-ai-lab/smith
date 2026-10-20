@@ -1,7 +1,7 @@
 # smith
 
 A drop-in compiler driver for C, Objective-C, C++ and Metal, written in C. Milestone 0, a routing passthrough, works on
-macOS: smith builds itself, checkers, learner and game, and `smith build` builds smith and checkers from their
+macOS: smith builds itself, checkers, learner and game, and `smith build` builds smith, checkers and game from their
 `build.c`. Next are contracts checked at compile time, then `.smith` files whose syntax replaces macros; the order is in
 [ROADMAP.md](ROADMAP.md).
 
