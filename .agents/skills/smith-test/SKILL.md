@@ -35,6 +35,7 @@ void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 1
 SMITH_CHECK(condition)              // a bool, or anything that converts to one
 SMITH_CHECK(a, op, b)               // op: == != < <= > >=; both values print with their types
 SMITH_CHECK_NEAR(a, b, tolerance)   // |a - b| <= tolerance, float or double; a NaN fails
+SMITH_CHECK_SAME_BITS(a, b)         // float or double, bitwise identical: -0 isn't 0, a NaN is itself; prints both in hex
 SMITH_CHECK_ABORTS(expression)      // the expression dies: assert, the arena's capacity stop, a sanitizer, a signal
 ```
 
@@ -45,7 +46,7 @@ SMITH_CHECK_ABORTS(expression)      // the expression dies: assert, the arena's 
 
 ## Run them
 
-`smith build test`, with `-DTEST=<substring>` (one test, or every name that contains it), `-DSEED=<n>` (a property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100), `-DJOBS=<n>` and `-DSHRINK=0|1`. The runner `build/tests` takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--list` and `--verbose`, so under a debugger it is `lldb -- build/tests --test name --jobs 1`.
+`smith build test`, with `-DTEST=<substring>` (one test, or every name that contains it), `-DSEED=<n>` (a property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100), `-DJOBS=<n>`, `-DSHRINK=0|1` and `-DFULL` (the heavy checks at full size). The runner `build/tests` takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--full`, `--list` and `--verbose`, so under a debugger it is `lldb -- build/tests --test name --jobs 1`.
 
 A failure looks like this; the last line reproduces it:
 
@@ -58,6 +59,8 @@ FAIL uniform_stays_in_range with seed 6387777158891554393
     note: count 3
     rerun: smith build test -DTEST=uniform_stays_in_range -DSEED=6387777158891554393
 ```
+
+A test with a heavy check picks its size from `smith_test_full()`, false by default and true with `-DFULL`: `size_t count = smith_test_full() ? 20000 : 200;`. It checks the same properties either way. Use `SMITH_CHECK_SAME_BITS` for determinism, where near is not enough.
 
 A failing property test is shrunk before it is shown: the runner reruns the key, tries each random word it drew as 0 and then as the smallest word that still fails the same check (file and line) or the same signal, within 1,000 runs or 10 s, so a failure shows `x = 500` rather than a random 64-bit draw; the header says `shrunk in 41 runs`. The rerun line names the original seed and shrinks to the same case again; `-DSHRINK=0` shows the unshrunk failure. This works because every distribution in smith-random maps word 0 to its simplest value, so draw everything from the key with smith's distributions. Your own distribution should do the same: spend the key with `smith_key_bits`, `smith_key_unit_float` or `smith_key_unit_double`, and make word 0 the simplest value.
 
@@ -73,6 +76,7 @@ SmithTests tests = {
     .objects = (const SmithObject *[]){&arena, &random, &code_under_test, nullptr}, // smith's arena and random are required
     .flags = flags,       // the test files and smith's test library, -I .smith/include included
     .link_flags = link_flags,
+    .inputs = smith_list(b, "build/shaders.metallib", nullptr), // files the tests read when they run: built first, a change reruns the tests
 };
 smith_tests(b, &tests);
 ```

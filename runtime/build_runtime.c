@@ -1358,6 +1358,8 @@ static const char *const *smith_tests_arguments(SmithBuild *b, const char *runne
         const char *value = smith_option_value(b, names[i][0], nullptr, descriptions[i]);
         if (value != nullptr) arguments = smith_cat(b, arguments, smith_list(b, names[i][1], value, nullptr), nullptr);
     }
+    if (smith_option(b, "FULL", "run the heavy checks at full size"))
+        arguments = smith_cat(b, arguments, smith_list(b, "--full", nullptr), nullptr);
     return arguments;
 }
 
@@ -1368,6 +1370,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     copy.sources = smith_copy_list(tests->sources);
     copy.flags = smith_copy_list(tests->flags);
     copy.link_flags = smith_copy_list(tests->link_flags);
+    copy.inputs = smith_copy_list(tests->inputs);
     copy.compiler = smith_copy_string(tests->compiler != nullptr ? tests->compiler : "smith");
     copy.output = smith_copy_string(tests->output != nullptr ? tests->output : "build/tests");
     const char *name = tests->name != nullptr ? tests->name : "test";
@@ -1404,7 +1407,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     smith_program(b, &program);
     SmithStep task = {
         .run = smith_tests_run,
-        .inputs = program.step.outputs,
+        .inputs = smith_cat(b, program.step.outputs, copy.inputs, nullptr),
         .args = smith_tests_arguments(b, copy.output),
         .pool = "console",
     };

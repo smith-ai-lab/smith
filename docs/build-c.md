@@ -224,6 +224,10 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `const` drops; every pointer compares, and prints, as an address. Printed types: `bool`, `char`, every standard
   signed and unsigned integer type, `float` and `double` (shortest round trip plus `%a`, so a difference in the last
   bit shows) and pointers. A failed check ends the test.
+- **`SMITH_CHECK_SAME_BITS(a, b)`** passes when two floats or two doubles are bitwise identical: `-0.0` is not `0.0`,
+  and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
+  compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
+  infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
 - **`SMITH_CHECK_ABORTS`** forks; the child runs the expression and the check passes when the child dies by a signal
   (`SIGABRT` from an `assert` or the arena's capacity stop, a crash) or exits with a non-zero status (a sanitizer). If the child
   returns the check fails with "expected an abort; it returned"; a timeout fails too. The child's output is discarded
@@ -235,10 +239,17 @@ smith_tests(b, &tests);                              // tests.step is the task "
   shown only for a failing test (the first 64 KiB; a child that writes 16 MiB is killed). The options come from
   `-DTEST=<substring>` (a test named exactly that, else every test whose name contains it), `-DSEED=<n>` (each
   property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100 by default), `-DJOBS=<n>` (default: the
-  cores) and `-DSHRINK=0|1`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
-  test and per key), `--shrink 0|1`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
+  cores), `-DSHRINK=0|1` and `-DFULL`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
+  test and per key), `--shrink 0|1`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
   so a project that reads the same name gets the same value. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
+- **Full size: `smith_test_full()`.** It is false by default and true when the run was given `-DFULL` (the runner's
+  `--full`). A test with a heavy check picks its size from it, such as 200 meshes by default and 20,000 with `-DFULL`,
+  and checks the same properties either way, so `smith build test` stays fast and `smith build test -DFULL` is the
+  slow pass. It replaces a second task such as game's `test-slow`: that becomes `smith build test -DFULL`.
+- **`.inputs`: files the tests read when they run**, such as compiled shaders, baked meshes and fixtures. They are the
+  test task's inputs after the runner, so ninja builds them first and a change to one reruns the tests. The tests read
+  them by their path, relative to the project's root, where `smith build` runs them.
 - **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
   replays exactly.
 - **A failure prints** the test, the seed of a property test, the check's file and line, the line as written, the
@@ -483,6 +494,7 @@ typedef struct {
     const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
     const char *const *flags;          // for the test files and smith's test library
     const char *const *link_flags;
+    const char *const *inputs; // files the tests read when they run, such as compiled shaders; built first
     const char *output; // the runner, by default build/tests
     const char *name;   // the task, by default "test"
     SmithStep step;     // set by smith_tests: the task
@@ -502,8 +514,9 @@ typedef struct {
 //     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
 //     second time; the call fails and says which smith_library to add when one is missing.
 //   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
-//     -DSEEDS (--seeds), -DJOBS (--jobs) and -DSHRINK (--shrink), each read with smith_option_value, so a project that
-//     reads the same name gets the same value.
+//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink) and the boolean -DFULL (--full), each read with
+//     smith_option_value or smith_option, so a project that reads the same name gets the same value. .inputs are
+//     the task's inputs after the runner, so ninja builds them before the tests run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it

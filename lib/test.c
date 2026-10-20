@@ -65,6 +65,11 @@ static SmithTestShared *smith_test_shared_slots; // the runner's: one per job, a
 static unsigned char *smith_test_memory;
 static size_t smith_test_memory_used; // a multiple of smith_arena_align_max
 static unsigned smith_test_timeout_seconds = 10;
+static bool smith_test_full_run; // the runner was given --full; set before any test forks, so every child sees it
+
+bool smith_test_full(void) {
+    return smith_test_full_run;
+}
 
 static void smith_test_reset(void) {
     smith_test_memory_used = 0;
@@ -189,6 +194,25 @@ bool smith_test_compare(SmithTestValue a, const char *op, SmithTestValue b) {
     abort();
 }
 
+static uint64_t smith_test_raw_bits(SmithTestValue value) {
+    assert(value.kind == SmithTestKind_Float || value.kind == SmithTestKind_Double);
+    if (value.kind == SmithTestKind_Float) {
+        uint32_t bits = 0;
+        static_assert(sizeof bits == sizeof value.float_value);
+        memcpy(&bits, &value.float_value, sizeof bits);
+        return bits;
+    }
+    uint64_t bits = 0;
+    static_assert(sizeof bits == sizeof value.double_value);
+    memcpy(&bits, &value.double_value, sizeof bits);
+    return bits;
+}
+
+bool smith_test_same_bits(SmithTestValue a, SmithTestValue b) {
+    assert(a.kind == b.kind);
+    return smith_test_raw_bits(a) == smith_test_raw_bits(b);
+}
+
 bool smith_test_within(double distance, double tolerance) {
     return distance <= tolerance; // false when either is a NaN
 }
@@ -253,11 +277,18 @@ static void smith_test_format(SmithTestValue value, char *text, size_t capacity)
     }
 }
 
+static bool smith_test_finite(SmithTestValue value) {
+    if (value.kind == SmithTestKind_Float) return isfinite((double)value.float_value);
+    if (value.kind == SmithTestKind_Double) return isfinite(value.double_value);
+    return true;
+}
+
 typedef struct {
     const char *text; // the expression as written
     SmithTestValue value;
     char formatted[smith_test_text_capacity];
     bool literal; // the expression is the value itself, like 500
+    bool bits;    // a NaN or an infinity also shows its bits, which tell two NaNs apart
 } SmithTestLine;
 
 // Appends to the shared detail, silently dropping what does not fit.
@@ -278,6 +309,12 @@ static void smith_test_write_values(SmithTestLine *lines, size_t count) {
     size_t value_width = 0;
     for (size_t i = 0; i < count; i++) {
         smith_test_format(lines[i].value, lines[i].formatted, smith_test_text_capacity);
+        if (lines[i].bits && !smith_test_finite(lines[i].value)) {
+            size_t length = strlen(lines[i].formatted);
+            int digits = lines[i].value.kind == SmithTestKind_Float ? 8 : 16;
+            snprintf(lines[i].formatted + length, smith_test_text_capacity - length, " [0x%0*llx]", digits,
+                     (unsigned long long)smith_test_raw_bits(lines[i].value));
+        }
         lines[i].literal = strcmp(lines[i].text, lines[i].formatted) == 0;
         size_t formatted_length = strlen(lines[i].formatted);
         if (formatted_length > value_width) value_width = formatted_length;
@@ -314,6 +351,14 @@ void smith_test_fail_compare(const char *a_text, const char *b_text, SmithTestVa
                              const char *file, int line) {
     assert(a_text != nullptr && b_text != nullptr && file != nullptr && line > 0);
     SmithTestLine lines[2] = {{.text = a_text, .value = a}, {.text = b_text, .value = b}};
+    smith_test_write_values(lines, 2);
+    smith_test_end(file, line);
+}
+
+void smith_test_fail_same_bits(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
+                               const char *file, int line) {
+    assert(a_text != nullptr && b_text != nullptr && file != nullptr && line > 0);
+    SmithTestLine lines[2] = {{.text = a_text, .value = a, .bits = true}, {.text = b_text, .value = b, .bits = true}};
     smith_test_write_values(lines, 2);
     smith_test_end(file, line);
 }
@@ -430,6 +475,7 @@ typedef struct {
     size_t jobs;
     unsigned timeout;
     bool shrink;
+    bool full;
     bool list;
     bool verbose;
     bool color;
@@ -1144,6 +1190,8 @@ static bool smith_test_parse_options(int argc, char **argv, SmithTestOptions *op
             options->list = true;
         } else if (strcmp(flag, "--verbose") == 0) {
             options->verbose = true;
+        } else if (strcmp(flag, "--full") == 0) {
+            options->full = true;
         } else if (i + 1 >= argc || !smith_test_parse_value(options, flag, argv[i + 1])) {
             return false;
         } else {
@@ -1193,11 +1241,12 @@ int main(int argc, char **argv) {
     if (!smith_test_parse_options(argc, argv, &options)) {
         fprintf(stderr,
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
-                "[--timeout <seconds>] [--shrink 0|1] [--list] [--verbose]\n",
+                "[--timeout <seconds>] [--shrink 0|1] [--full] [--list] [--verbose]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;
     }
     double start = smith_test_seconds();
+    smith_test_full_run = options.full;
     smith_test_memory = smith_test_map(smith_test_memory_capacity, MAP_PRIVATE);
     SmithTestPlan plan = smith_test_plan(&options);
     if (options.list) {

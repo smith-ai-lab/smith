@@ -692,6 +692,117 @@ capture "$smith" build
 expect "objects: a missing library is an error" 2 "$rc"
 expect_contains "objects: ... that says which library to add" "$err" "smith: build.c: smith_tests: .objects must include smith's random, which the tests link once; add a SmithObject compiled from smith_library(b, \"random\") to .objects"
 
+# 8b. Full size, SMITH_CHECK_SAME_BITS and .inputs.
+project "$work/extras"
+cat >tests/test_extras.c <<'C'
+#include <smith/test.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+void test_size(void) {
+    size_t count = smith_test_full() ? 1000 : 10;
+    smith_test_note("count %zu", count);
+    SMITH_CHECK(count, ==, 10);
+}
+
+void test_bits_equal(void) {
+    SMITH_CHECK_SAME_BITS(0.1 + 0.2, 0.30000000000000004);
+    SMITH_CHECK_SAME_BITS(-0.0, -0.0);
+    SMITH_CHECK_SAME_BITS(1.5f, 1.5f);
+    SMITH_CHECK_SAME_BITS(__builtin_nan(""), __builtin_nan(""));
+    SMITH_CHECK_SAME_BITS(-INFINITY, -INFINITY);
+}
+
+void test_bits_zero(void) {
+    double zero = 0.0;
+    SMITH_CHECK_SAME_BITS(zero, -0.0);
+}
+
+void test_bits_nan(void) {
+    SMITH_CHECK_SAME_BITS(__builtin_nan("1"), __builtin_nan("2"));
+}
+
+void test_bits_float(void) {
+    SMITH_CHECK_SAME_BITS(1.0f, 1.0000001f);
+}
+
+void test_reads_input(void) {
+    FILE *file = fopen("build/data.txt", "r");
+    SMITH_CHECK(file != nullptr);
+    char text[16] = "";
+    SMITH_CHECK(fgets(text, sizeof text, file) != nullptr);
+    fclose(file);
+    smith_test_note("data %s", text);
+    SMITH_CHECK(strcmp(text, "one\n"), ==, 0);
+}
+C
+cat >gen.sh <<'S'
+echo one >"$1"
+S
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
+    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    smith_object(b, &arena);
+    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
+    smith_object(b, &random);
+    SmithStep data = {
+        .command = smith_list(b, "sh", "gen.sh", "$out", nullptr),
+        .implicit_inputs = smith_list(b, "gen.sh", nullptr),
+        .outputs = smith_list(b, "build/data.txt", nullptr),
+        .description = "generate the data",
+    };
+    smith_step(b, &data);
+    SmithTests tests = {
+        .sources = smith_list(b, "tests/test_extras.c", nullptr),
+        .objects = (const SmithObject *[]){&arena, &random, nullptr},
+        .flags = flags,
+        .inputs = data.outputs,
+    };
+    smith_tests(b, &tests);
+    smith_default(b, smith_list(b, "build/tests", nullptr));
+}
+C
+capture "$smith" build
+expect "extras: the runner builds" 0 "$rc"
+run_extras() { # runner arguments
+    "$work/extras/build/tests" "$@" 2>&1 | plain
+}
+expect_contains "full: a test sees false by default" "$(run_extras --test size)" "1 passed, 0 failed"
+capture build/tests --test size --full
+expect_contains "full: ... and true with --full" "$out" "note: count 1000"
+capture "$smith" build test -DTEST=size -DFULL
+expect_contains "full: -DFULL reaches the runner" "$out$err" "note: count 1000"
+capture "$smith" build test -DTEST=size
+expect_contains "full: ... and without it the test sees false" "$out$err" "1 passed, 0 failed"
+capture build/tests --test bits_equal
+expect_contains "bits: equal bits pass, even a NaN and -0" "$out" "1 passed, 0 failed"
+line=$(line_of tests/test_extras.c 'SMITH_CHECK_SAME_BITS(zero, -0.0);')
+expect "bits: 0.0 against -0.0 fails, with both in hex" "FAIL bits_zero
+  tests/test_extras.c:$line
+      SMITH_CHECK_SAME_BITS(zero, -0.0);
+    zero = 0 [0x0p+0]     (double)
+    -0.0 = -0 [-0x0p+0]   (double)
+
+0 passed, 1 failed" "$(run_extras --test bits_zero)"
+capture build/tests --test bits_nan
+expect_contains "bits: two NaN payloads fail" "$out" "FAIL bits_nan"
+expect_contains "bits: ... and the first NaN's bits show" "$out" "nan [0x7ff8000000000001]"
+expect_contains "bits: ... and the second's" "$out" "nan [0x7ff8000000000002]"
+capture build/tests --test bits_float
+expect_contains "bits: floats fail by their last bit, in hex" "$out" "[0x1.000002p+0]"
+capture "$smith" build test -DTEST=reads_input
+expect "inputs: the generated file is built before the tests, and read" 0 "$rc"
+expect "inputs: ... by ninja" yes "$([ -f build/data.txt ] && echo yes)"
+echo two >gen.sh.new && printf 'echo two >"$1"\n' >gen.sh && rm gen.sh.new
+capture "$smith" build test -DTEST=reads_input
+expect "inputs: touching the generator reruns the tests, which see the new file" 1 "$rc"
+expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
+
 # 9. Tools: clangd reads a test file without errors.
 cd "$work/main" || exit 1
 if [ -x /usr/bin/clangd ]; then

@@ -196,9 +196,10 @@ typedef struct {
     const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
     const char *const *flags;          // for the test files and smith's test library
     const char *const *link_flags;
-    const char *output; // the runner, by default build/tests
-    const char *name;   // the task, by default "test"
-    SmithStep step;     // set by smith_tests: the task
+    const char *const *inputs; // files the tests read when they run, such as compiled shaders; built first
+    const char *output;        // the runner, by default build/tests
+    const char *name;          // the task, by default "test"
+    SmithStep step;            // set by smith_tests: the task
 } SmithTests;
 
 // Emits ordinary steps, the same as calling smith_step yourself; the commands are written out here.
@@ -215,8 +216,9 @@ typedef struct {
 //     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
 //     second time; the call fails and says which smith_library to add when one is missing.
 //   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
-//     -DSEEDS (--seeds), -DJOBS (--jobs) and -DSHRINK (--shrink), each read with smith_option_value, so a project that
-//     reads the same name gets the same value.
+//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink) and the boolean -DFULL (--full), each read with
+//     smith_option_value or smith_option, so a project that reads the same name gets the same value. .inputs are
+//     the task's inputs after the runner, so ninja builds them before the tests run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it

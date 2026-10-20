@@ -6,13 +6,17 @@
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
 // `void test_<name>(SmithKey key) {` by name, and the library's main runs them, each in a process of its own, in
 // parallel, with failures printed with both values and their types. `smith build test` runs them; the options are
-// -DTEST=<substring>, -DSEED=<n>, -DSEEDS=<n>, -DJOBS=<n> and -DSHRINK=0|1 (docs/build-c.md).
+// -DTEST=<substring>, -DSEED=<n>, -DSEEDS=<n>, -DJOBS=<n>, -DSHRINK=0|1 and -DFULL (docs/build-c.md).
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
 // more than this header.
 //
 // The runner sets a timer for each test (`--timeout`, 10 s). A test that calls `alarm` itself replaces that timer, and
 // when its alarm fires the test ends as a timeout, reported with the time it ran ("timed out after 2.0 s").
+//
+// A test whose heavy checks have a full size reads smith_test_full(): false by default, true when the run was asked
+// for it (`smith build test -DFULL`, the runner's --full). The test picks its size from it and checks the same
+// properties either way; the default run keeps `smith build test` fast, and -DFULL is the slow pass.
 //
 // The checks are macros because only a macro can capture an expression's text, its file and its line, and evaluate an
 // expression later in a child process.
@@ -24,6 +28,10 @@
 //                                     comparison is a -Wconversion error. a's type is its type as a value: an array
 //                                     becomes a pointer and const drops. Pointers compare, and print, as addresses.
 //   SMITH_CHECK_NEAR(a, b, tolerance) |a - b| <= tolerance, for float and double. A NaN fails; equal infinities pass.
+//   SMITH_CHECK_SAME_BITS(a, b)       a and b are float or double (b converts to a's type) and bitwise identical: -0 is
+//                                     not 0, and a NaN is itself. A failure prints both values, shortest and in hex; a
+//                                     NaN or an infinity also shows its bits. For determinism: the same inputs must
+//                                     give the same bits, not merely near ones.
 //   SMITH_CHECK_ABORTS(expression)    the expression dies: an assert, the arena's capacity stop, a sanitizer or a
 //   signal.
 //                                     It runs in a child process; if it returns, the check fails.
@@ -58,6 +66,9 @@ extern const size_t smith_test_count;
 // This test's memory, capacity bytes, from a block the runner reserved once. It is given back before each test and each
 // key, so a test never frees. Running out stops the test with a message.
 [[nodiscard]] SmithArena smith_test_arena(size_t capacity);
+
+// Whether this run asked for the heavy checks at full size (-DFULL, the runner's --full). False by default.
+[[nodiscard]] bool smith_test_full(void);
 
 #define SMITH_CHECK(...) \
     SMITH_TEST_SELECT(__VA_ARGS__, SMITH_TEST_COMPARE, SMITH_TEST_TWO_ARGUMENTS, SMITH_TEST_CONDITION, ~)(__VA_ARGS__)
@@ -100,6 +111,20 @@ extern const size_t smith_test_count;
                                                     SMITH_TEST_VALUE(smith_check_distance)}, \
                                  __FILE__, __LINE__); \
     } while (0)
+
+// The values are compared by their bits, read by smith_test_same_bits; _Generic has no default, so an integer is a
+// compile error.
+#define SMITH_CHECK_SAME_BITS(a, b) \
+    do { \
+        SMITH_TEST_REAL_TYPE(a) smith_check_a = (a); \
+        SMITH_TEST_REAL_TYPE(a) smith_check_b = (b); \
+        SmithTestValue smith_check_value_a = SMITH_TEST_VALUE(smith_check_a); \
+        SmithTestValue smith_check_value_b = SMITH_TEST_VALUE(smith_check_b); \
+        if (!smith_test_same_bits(smith_check_value_a, smith_check_value_b)) \
+            smith_test_fail_same_bits(#a, #b, smith_check_value_a, smith_check_value_b, __FILE__, __LINE__); \
+    } while (0)
+
+#define SMITH_TEST_REAL_TYPE(value) typeof(_Generic((value), float: 0.0F, double: 0.0))
 
 #define SMITH_CHECK_ABORTS(expression) \
     do { \
@@ -197,6 +222,8 @@ typedef struct {
 // Whether a op b holds, for the operator written as text: "==", "!=", "<", "<=", ">" or ">=". The values have one
 // type. A NaN is unordered, so every operator but != fails. Any other text stops the test.
 [[nodiscard]] bool smith_test_compare(SmithTestValue a, const char *op, SmithTestValue b);
+// Whether a and b, floats of one kind, have the same bits.
+[[nodiscard]] bool smith_test_same_bits(SmithTestValue a, SmithTestValue b);
 // Whether distance <= tolerance; a NaN in either fails.
 [[nodiscard]] bool smith_test_within(double distance, double tolerance);
 [[nodiscard]] float smith_test_distance_float(float a, float b);
@@ -207,6 +234,8 @@ typedef struct {
 [[noreturn]] void smith_test_fail_condition(const char *file, int line);
 [[noreturn]] void smith_test_fail_compare(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
                                           const char *file, int line);
+[[noreturn]] void smith_test_fail_same_bits(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
+                                            const char *file, int line);
 // values holds a, b, the tolerance and their distance.
 [[noreturn]] void smith_test_fail_near(const char *a_text, const char *b_text, const char *tolerance_text,
                                        const SmithTestValue values[4], const char *file, int line);
