@@ -2327,6 +2327,7 @@ void build(SmithBuild *b) {
                          .flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-I", ".smith/include", nullptr)};
         smith_object(b, &o);
     }
+    smith_compile_commands(b, "compile_commands.json");
     smith_default(b, objects);
 }
 C
