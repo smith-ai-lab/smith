@@ -28,7 +28,7 @@ mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations =
 # A smith that prints a commit of our choosing and is the real one otherwise.
 shim() { # folder, version line
     mkdir -p "$1"
-    printf '#!/bin/sh\nif [ "$1" = --smith-version ]; then echo "%s"; exit 0; fi\nexec "%s" "$@"\n' "$2" "$smith" >"$1/smith"
+    printf '#!/bin/sh\nif [ "$1" = version ]; then echo "%s"; exit 0; fi\nexec "%s" "$@"\n' "$2" "$smith" >"$1/smith"
     chmod +x "$1/smith"
 }
 head=$(git -C "$here" rev-parse HEAD 2>/dev/null || true)
@@ -83,14 +83,14 @@ fi
 XDG_DATA_HOME=$work/empty-data one no_smith "/usr/bin:/bin"
 
 # A smith built from a checkout names its commit, which is the plugin's way to compare.
-version=$("$smith" --smith-version)
+version=$("$smith" version)
 case $version in
 *" commit "*)
     total=$((total + 1))
     commit=${version##* commit }
     case $commit in
-    *[!0-9a-f]* | "") failures=$((failures + 1)); echo "FAIL  smith --smith-version names a commit: $version" ;;
-    *) echo "ok    smith --smith-version names its commit" ;;
+    *[!0-9a-f]* | "") failures=$((failures + 1)); echo "FAIL  smith version names a commit: $version" ;;
+    *) echo "ok    smith version names its commit" ;;
     esac
     ;;
 *) echo "SKIP  this smith was built without a commit: $version" ;;

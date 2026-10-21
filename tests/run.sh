@@ -252,6 +252,8 @@ expect "bare: --smith-which is a flag of the compiler verbs" \
 ln -s "$smith" "$work/smith++"
 capture env SMITH_CLANG="$cl" "$work/smith++" -c a.cpp
 expect "bare: the old smith++ name is no compiler" "smith: -c is not a smith command; to compile, run \`smith cc -c a.cpp\`" "$err"
+capture "$smith" version
+expect "version: the version line, status 0" "0 smith 0.0 (milestone 0: a routing passthrough)" "$rc $(printf '%s\n' "$out" | sed 's/ commit [0-9a-f]*$//')"
 capture "$smith"
 expect "no arguments: usage, status 2" "2 usage: smith <command> [<arguments>]" "$rc $(printf '%s\n' "$err" | head -n 1)"
 capture env SMITH_CLANG="$cl" "$smith" cc

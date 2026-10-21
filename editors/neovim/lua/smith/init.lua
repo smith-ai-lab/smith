@@ -109,7 +109,7 @@ function M.check_version(callback)
   vim.system({ "git", "-C", M.root, "rev-parse", "HEAD" }, { text = true }, function(plugin)
     local mine = plugin.code == 0 and vim.trim(plugin.stdout) or nil
     if not mine then return callback("not a checkout") end
-    vim.system({ smith, "--smith-version" }, { text = true }, function(binary)
+    vim.system({ smith, "version" }, { text = true }, function(binary)
       local theirs = binary.code == 0 and (binary.stdout or ""):match("commit (%x+)") or nil
       if not theirs then return callback("smith has no commit") end
       if theirs == mine then return callback("same") end

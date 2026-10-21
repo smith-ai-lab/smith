@@ -40,7 +40,7 @@ changes a debug configuration of yours.
   registers a `smith` adapter (`smith dap`) and a launch configuration for `c`, `cpp`, `objc`, `objcpp` and `smith`, each
   only when you have not set one. It registers; it starts nothing.
 - **The plugin and the installed smith can be different commits.** At start the plugin compares its own commit
-  (`git rev-parse HEAD` in its folder) with the one `smith --smith-version` prints (`... commit <hash>`, for a smith built
+  (`git rev-parse HEAD` in its folder) with the one `smith version` prints (`... commit <hash>`, for a smith built
   from a checkout with `smith build`), and says once when they differ. `vim.g.smith_no_version_check = 1` silences it.
 
 ## What waits

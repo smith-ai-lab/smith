@@ -116,6 +116,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        "%s --quiet smith.c -- \"$@\" %s && "
                                        "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
                                        "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
+                                       "%s --quiet runtime/commit.c -- \"$@\" %s && "
                                        "%s --quiet runtime/pack_data.c -- \"$@\" "
                                        "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' %s && "
                                        "%s --quiet scripts/pack.c -- \"$@\" %s && "
@@ -148,7 +149,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk),
+                                       tidy, sdk, tidy, sdk, tidy, sdk),
                              "sh", nullptr},
             cflags, nullptr),
         .inputs = llvm,
@@ -176,6 +177,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "scripts/pack.h",
                                                    "scripts/defer_init.c",
                                                    "runtime/pack_data.c",
+                                                   "runtime/commit.c",
                                                    "build.c",
                                                    "tests/stub.c",
                                                    "runtime/build_runtime.c",
@@ -390,6 +392,24 @@ static void build_pack_data(SmithBuild *b, const BuildConfig *config, const char
     smith_object(b, data);
 }
 
+// runtime/commit.c, the commit smith is built from (`smith version` prints it; the Neovim plugin compares it with its
+// own), in a translation unit of its own so that a new commit recompiles this file and nothing else. A build outside a
+// checkout has no commit and passes no flag.
+static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *commit = smith_capture_or(b, (const char *[]){"git", "rev-parse", "HEAD", nullptr}, "");
+    SmithObject object = {
+        .compiler = config->cc,
+        .source = "runtime/commit.c",
+        .output = smith_fmt(b, "%s/commit.o", folder),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, commit[0] != '\0', (const char *[]){smith_fmt(b, "-DSMITH_COMMIT=\"%s\"", commit), nullptr}),
+            nullptr),
+    };
+    smith_object(b, &object);
+    return object;
+}
+
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
@@ -444,21 +464,17 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     bool in_process = config->llvm[0] != '\0';
     const char *pack = in_process ? build_resource_pack(b, config, folder) : "";
-    // The commit this smith is built from, which `smith --smith-version` prints (the Neovim plugin compares it with
-    // its own); a build outside a checkout has none.
-    const char *commit = smith_capture_or(b, (const char *[]){"git", "rev-parse", "HEAD", nullptr}, "");
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
-        .flags = smith_cat(
-            b, config->cflags,
-            smith_when(b, commit[0] != '\0', (const char *[]){smith_fmt(b, "-DSMITH_COMMIT=\"%s\"", commit), nullptr}),
-            smith_when(b, in_process,
-                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id),
-                                        nullptr}),
-            smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
-            smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}), nullptr),
+        .flags =
+            smith_cat(b, config->cflags, (const char *[]){"-DSMITH_COMMIT_LINKED", nullptr},
+                      smith_when(b, in_process,
+                                 (const char *[]){"-DSMITH_IN_PROCESS",
+                                                  smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
+                      smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
+                      smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}), nullptr),
         .implicit_inputs = (const char *[]){"scripts/pack.h",
                                             "include/smith/build.h",
                                             "runtime/build_runtime.c",
@@ -493,9 +509,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             nullptr},
     };
     smith_object(b, &object);
+    SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
-    const SmithObject *objects[18] = {&object};
-    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 1);
+    const SmithObject *objects[18] = {&object, &commit};
+    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 2);
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),

@@ -2672,7 +2672,7 @@ fi
 project
 capture "$cc" -std=gnu23 "$here/../smith.c" -o "$work/one-command-smith"
 expect "one command: cc -std=gnu23 smith.c builds a smith" 0 "$rc"
-capture "$work/one-command-smith" --smith-version
+capture "$work/one-command-smith" version
 expect_contains "one command: the built smith runs" "$out" "smith 0."
 
 # 13. A change of compiler rebuilds every object it compiled; a build with the same compiler does nothing.

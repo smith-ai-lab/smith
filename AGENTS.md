@@ -65,7 +65,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
      project owns. smith's skills are not copied: they ship in the smith plugin. There is no house-style mechanism,
      only those files; a project that never runs `smith new` gets none of it.
 - **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
-  `build`, `new`, `fetch`, `cache`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
+  `build`, `new`, `fetch`, `cache`, `version`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
   foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. For what needs one
   program path (`CC=` in a Makefile, CMake's `CMAKE_C_COMPILER`, the first word of a `compile_commands.json` command,
   which clangd reads as a compiler), `smith build install` also installs `smith-cc` and `smith-c++`, links to smith that
