@@ -92,9 +92,14 @@ too; an export with no body is defined against it, in C, by its C name.
   first two; the others are the questions first-class types and reflection will ask (issue #15), built and tested now
   (`SMITH_LANG_ASK=Packet,struct Header` prints what the parser answers at the end of the file).
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
-  clang. A module's file-scope declaration is read whole before it is written (its prefix, `static`, and for an exported
-  function a prototype with the symbol label are decided by all of it). The same code runs over a plain lexer
-  (`runtime/lang_lex.c`) for `--smith-header`.
+  clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with
+  the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `--smith-header`) reads every
+  declaration that way. A private declaration of a module is decided as it streams by, which is what keeps the hook
+  cheap: `static` goes before the first token (from what that token is, and `main` from a look at the file's text), the
+  name after a type is the one declared, and an aggregate's body, an initializer and the declarators after an aggregate
+  need no look ahead. `smith_lang_fast` (`runtime/lang_declare.c`) answers each token as keep, rename, sized type or
+  drop, or says it needs the slow path (`smith_lang_feed`), which can look ahead; the answer is given before anything
+  was changed. `SMITH_HOOK_STATS=1` prints how many tokens each way took.
 - **Routing**: `smith cc x.smith` runs clang as `-x c x.smith`; the extension turns the hook on. A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
 
