@@ -20,6 +20,8 @@ This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.
 - `--jobs <n>` (default: the cores; `--jobs 1` is easier to follow), `--timeout <seconds>` (10), `--shrink 0|1`, `--shuffle <seed>`, `--isolate` (a process per test), `--in-process` (no fork at all, for `smith dbg build/tests -- --test name --in-process`), `--full` (heavy checks at full size), `--trace`, `--color`, `--list`, `--verbose`, `--stats`.
 - A failure ends with the line to rerun it, such as `rerun: smith test --test name --seed 123`.
 
+To debug one test: `smith dbg -- build/tests --test <name> --in-process` (the runner is the `runner` line of `.smith/build.info`; in Neovim with nvim-dap, start a session with the cursor in the test function; skill smith-debug).
+
 Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --seed 8022860619270860748`, `smith test --full`.
 
 ## When it goes wrong

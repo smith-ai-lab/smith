@@ -47,15 +47,25 @@ changes a debug configuration of yours.
   the file as `smith cc` does (`-x c -std=gnu2y`), finding `import foo` by `foo.smith` beside it. A real project wants
   the `compile_commands.json` that its `build.c` writes (`smith_compile_commands`), for its flags and include paths.
 - **Debugging**: when nvim-dap is installed (on the runtimepath at startup, or when a C or `.smith` file opens), the plugin
-  registers a `smith` adapter (`smith dap`) and two launch configurations for `c`, `cpp`, `objc`, `objcpp` and `smith`,
-  each only when you have not set one. It registers; it starts nothing. The first, "smith: build and launch the program",
-  is for a smith project (the folder with `build.c` or `build.smith`, found from the current buffer, else the working
-  directory): its `program` runs `smith build` there, in nvim-dap's coroutine so the editor stays free, and on a failure
-  shows the build's output (`vim.notify` at ERROR) and aborts the launch. Then it reads `.smith/build.info` and launches the
-  one `program` that is among the `default` lines, as `smith run` picks it (and refuses with its message when there is none or
-  more than one), by its absolute path, with `cwd` the project root. That is how a breakpoint in `main.smith` stops after
-  `main.c` became `main.smith`: nvim-dap alone would launch whatever binary was last built. The second, "smith: launch a
-  program", asks for a path, for a program the build does not name.
+  registers a `smith` adapter (`smith dap`) and one launch configuration, "smith: launch", for `c`, `cpp`, `objc`,
+  `objcpp` and `smith`, each only when you have not set one, so nvim-dap never shows a list to pick from. It registers;
+  it starts nothing. The configuration is callable (nvim-dap calls it in its coroutine, so the editor stays free, and uses
+  the table it returns), and its decision is made when you start a session, in a smith project (the folder with `build.c`
+  or `build.smith`, found from the current buffer, else the working directory), with `cwd` the project root:
+  - **The cursor inside a function named `test_...`** in a `c` or `smith` buffer: it runs `smith build smith_needs` (which
+    runs `build.c` and writes `.smith/build.info`), then builds the runner that file names on its `runner` line (the program
+    `smith_tests` makes), and launches it with `--test <name> --in-process`: the name is `test_x`, or `a::b::test_x` when the
+    buffer has `module a::b;`. The runner forks a worker for each test and a debugger stays in the parent, so a breakpoint in
+    the test is only hit in the runner's own process, which `--in-process` is. The function is found with tree-sitter (a
+    regex over the lines above the cursor when there is no parser).
+  - **Anywhere else**: it runs `smith build`, reads `.smith/build.info` and launches the one `program` that is among the
+    `default` lines, as `smith run` picks it, by its absolute path. That is how a breakpoint in `main.smith` stops after
+    `main.c` became `main.smith`: nvim-dap alone would launch whatever binary was last built.
+  - **A failed build** shows its output (`vim.notify` at ERROR) and aborts the launch (`dap.ABORT`).
+  - **It asks for a path** only where there is no project, or the build names no single program (the warning says why);
+    an empty answer aborts.
+  The table also carries plain `program` and `cwd` fields, the program's decision alone, for an nvim-dap that does not call
+  a configuration. Breakpoints are set as in any nvim-dap session (`dap.toggle_breakpoint()`), before or after.
 - **The plugin and the installed smith can be different commits.** At start the plugin compares its own commit
   (`git rev-parse HEAD` in its folder) with the one `smith version` prints (`... commit <hash>`, for a smith built
   from a checkout with `smith build`), and says once when they differ. `vim.g.smith_no_version_check = 1` silences it.
@@ -99,7 +109,10 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
   file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
-  project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter and its two configurations (against a stand-in `dap` module: the build configuration is first; its `program`, run in a
-  coroutine in a real `smith new` project, builds and returns `build/debug/<name>` while the event loop runs; a project whose build
-  fails gets `dap.ABORT` and an ERROR notification; `smith run`'s rule for the program), a user's own adapter staying, and the
-  version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.
+  project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter and its one configuration (against a stand-in `dap` module: exactly one per file type; called in a
+  coroutine in a real `smith new` project it builds while the event loop runs, and with the cursor in a test function of
+  `tests/test_*.c` gives the runner's absolute path, `--test <name> --in-process` and the project as `cwd`, in `main.c` gives
+  `build/debug/<name>` and no arguments; a `.smith` buffer's test is named with its module; with no project it asks for the
+  path; a project whose build fails gets `dap.ABORT` and an ERROR notification; `smith run`'s rule for the program), a user's
+  own adapter staying, and the version warning. The real nvim-dap was run by hand, not by the tests (a breakpoint in
+  `main.smith` and one in a `.smith` test stop). `SMITH_NVIM_ONLY="parser highlights"` runs just those.

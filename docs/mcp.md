@@ -47,8 +47,9 @@ events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools
   defaults to the folder `smith mcp` was started in, spelled as `$PWD` has it when that is the same folder: a compile
   writes that spelling in its debug info (`/var/folders/...`, not `/private/var/folders/...` on macOS), and lldb matches a
   breakpoint's file by it.
-- **A test is launched by name.** `launch` with `test` runs a smith project's test runner (`build/tests`, else
-  `build/debug/tests`, `build/sanitize/tests` or `build/test/tests`, or `runner`) with `--test <name> --in-process`, since
+- **A test is launched by name.** `launch` with `test` runs a smith project's test runner (`runner`, else the one
+  `.smith/build.info` names with its `runner` line, else, for a project built before that line, the first of `build/tests`,
+  `build/debug/tests`, `build/sanitize/tests` and `build/test/tests`) with `--test <name> --in-process`, since
   lldb on macOS does not follow the fork of the runner's workers; the breakpoints are then hit in the test.
 
 ## The tools
