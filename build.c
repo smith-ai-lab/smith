@@ -266,6 +266,20 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
     return pack;
 }
 
+// runtime/pack_data.c, which embeds the pack and which nothing includes, so that smith.c stays small for the editor.
+static SmithObject build_pack_data(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack) {
+    SmithObject data = {
+        .compiler = config->cc,
+        .source = "runtime/pack_data.c",
+        .output = smith_fmt(b, "%s/pack_data.o", folder),
+        .flags = smith_cat(b, config->cflags,
+                           (const char *[]){smith_fmt(b, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack), nullptr}, nullptr),
+        .implicit_inputs = (const char *[]){"scripts/pack.h", pack, nullptr},
+    };
+    smith_object(b, &data);
+    return data;
+}
+
 // The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
 // clang++. The build folder is named for the OS and architecture, so a binary built on one machine is never mistaken
 // for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS). smith.c embeds the build
@@ -314,16 +328,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             nullptr},
     };
     smith_object(b, &object);
-    // The pack, embedded in a translation unit of its own that nothing includes.
-    SmithObject data = {
-        .compiler = config->cc,
-        .source = "runtime/pack_data.c",
-        .output = smith_fmt(b, "%s/pack_data.o", folder),
-        .flags = smith_cat(b, config->cflags,
-                           (const char *[]){smith_fmt(b, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack), nullptr}, nullptr),
-        .implicit_inputs = (const char *[]){"scripts/pack.h", pack, nullptr},
-    };
-    if (in_process) smith_object(b, &data);
+    SmithObject data = in_process ? build_pack_data(b, config, folder, pack) : (SmithObject){};
     SmithObject shim = in_process ? build_shim(b, config, folder, "shim/clang.cpp", "clang_shim") : (SmithObject){};
     SmithObject lld = in_process ? build_shim(b, config, folder, "shim/lld.cpp", "lld_shim") : (SmithObject){};
     SmithObject format = in_process ? build_shim(b, config, folder, "shim/format.cpp", "format_shim") : (SmithObject){};
