@@ -5,8 +5,8 @@
 //
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
 // `void test_<name>(SmithKey key) {` by name, and the library's main runs them, in parallel, with failures printed with
-// both values and their types. `smith build test` runs them; the options are -DTEST=<substring>, -DSEED=<n>,
-// -DSEEDS=<n>, -DJOBS=<n>, -DSHRINK=0|1, -DSHUFFLE=<seed>, -DISOLATE and -DFULL (docs/build-c.md).
+// both values and their types. `smith test` runs them; its arguments are the runner's options: --test <substring>,
+// --seed <n>, --seeds <n>, --jobs <n>, --shrink 0|1, --shuffle <seed>, --isolate and --full (docs/build-c.md).
 //
 // The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
 // process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
@@ -14,8 +14,8 @@
 // check unwinds out of arbitrary code and can leave state half-done), a test that ran a SMITH_CHECK_ABORTS (a death
 // check stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
 // worker, so a worker is reused only after a clean pass with no death check. Which tests share a worker depends on
-// timing, unless there is one job. A test must not depend on another: -DSHUFFLE=<seed> runs the tests in a shuffled
-// order to find one that does (with -DJOBS=1 the order, and so the failure, replays from the seed), and -DISOLATE=1
+// timing, unless there is one job. A test must not depend on another: --shuffle <seed> runs the tests in a shuffled
+// order to find one that does (with --jobs 1 the order, and so the failure, replays from the seed), and --isolate
 // gives every test a process of its own, which is also what to use under a debugger that cannot follow a fork.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
@@ -27,8 +27,8 @@
 // ("timed out after 2.0 s"). The runner clears the timer when a test ends.
 //
 // A test whose heavy checks have a full size reads smith_test_full(): false by default, true when the run was asked
-// for it (`smith build test -DFULL`, the runner's --full). The test picks its size from it and checks the same
-// properties either way; the default run keeps `smith build test` fast, and -DFULL is the slow pass.
+// for it (`smith test --full`). The test picks its size from it and checks the same
+// properties either way; the default run keeps `smith test` fast, and --full is the slow pass.
 //
 // The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
 // call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
@@ -105,7 +105,7 @@ extern const size_t smith_test_count;
 // key, so a test never frees. Running out stops the test with a message.
 [[nodiscard]] SmithArena smith_test_arena(size_t capacity);
 
-// Whether this run asked for the heavy checks at full size (-DFULL, the runner's --full). False by default.
+// Whether this run asked for the heavy checks at full size (--full). False by default.
 [[nodiscard]] bool smith_test_full(void);
 
 // The plain-function checks. A failed one ends the test, like the macros.

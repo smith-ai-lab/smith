@@ -221,6 +221,8 @@ typedef struct {
     size_t tool_arg_count;
     const char *const *targets;
     size_t target_count;
+    const char
+        *verb; // the project verb that asked for its target (smith run), for the message when the project has none
 } SmithExecOptions;
 
 struct SmithExec {

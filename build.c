@@ -8,8 +8,9 @@
 // broken, needs only a C23 compiler:
 //   mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc
 //
-// Targets: smith build, test, text-exhaustive, check, compare -DREAL=..., format, install (-DCC=..., -DPREFIX=...) and
-// clean.
+// Verbs, which run the target of their name: smith test, smith check (check-format, lint, test and compare), smith fmt
+// (rewrites the sources) and smith lint. Targets of smith build: the default, text-exhaustive, compare -DREAL=...,
+// check-format, install (-DCC=..., -DPREFIX=...), llvm and clean.
 #include <smith/build.h>
 
 #include <string.h>
@@ -63,7 +64,7 @@ static SmithStep build_check_llvm(SmithBuild *b, const char *binary) {
 }
 
 // Rewrites the sources in the style of .clang-format (format), or fails on any file clang-format would change
-// (check-format; `smith build format` fixes them).
+// (check-format; `smith fmt` fixes them).
 static void build_format(SmithBuild *b, const char *format, const char *const *llvm, const char *const *sources) {
     // The C files of the `smith new` templates follow the template's own rules, which are smith's, comments aside.
     const char *new_files = "templates/new/build.c templates/new/main.c";
@@ -77,7 +78,7 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
                       sources, nullptr),
         .inputs = llvm,
     };
-    smith_task(b, "format", &rewrite);
+    smith_task(b, "fmt", &rewrite);
     SmithStep check_format = {
         .command = smith_cat(
             b,
@@ -140,7 +141,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                       cflags, nullptr),
         .inputs = llvm,
     };
-    smith_task(b, "check-tidy", &check_tidy);
+    smith_task(b, "lint", &check_tidy);
 }
 
 // Formatting, lint, the routing tests and the comparison with the real compiler.
@@ -207,7 +208,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   nullptr};
     build_format(b, format, check_llvm.outputs, sources);
     build_tidy(b, tidy, check_llvm.outputs, config->cflags);
-    smith_alias(b, "check", (const char *[]){"check-format", "check-tidy", "test", "compare", nullptr});
+    smith_alias(b, "check", (const char *[]){"check-format", "lint", "test", "compare", nullptr});
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -381,7 +382,24 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
         list[count++] = &shims->prove.objects[i];
 }
 
-// The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
+// The links to smith, and with them the outputs of the build: the program, smith-cc and smith-c++.
+static const char *const *build_links(SmithBuild *b, const SmithStep *program, const char *folder) {
+    const char *links[] = {"smith-cc", "smith-c++"};
+    const char *const *outputs = program->outputs;
+    for (size_t i = 0; i < sizeof links / sizeof links[0]; i++) {
+        SmithStep link = {
+            .command = (const char *[]){"ln", "-sf", "smith", "$out", nullptr},
+            .inputs = program->outputs,
+            .outputs = (const char *[]){smith_fmt(b, "%s/%s", folder, links[i]), nullptr},
+        };
+        smith_step(b, &link);
+        outputs = smith_cat(b, outputs, link.outputs, nullptr);
+    }
+    return outputs;
+}
+
+// The program, and the same program under two other names, which act by their name as `smith cc` and `smith c++`: for
+// what needs one program path (CC=smith-cc, CMake, compile_commands.json). smith-c++ compiles and links C++ with
 // clang++. The build folder is named for the OS and architecture, so a binary built on one machine is never mistaken
 // for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS). smith.c embeds the build
 // header, the runtime and the `smith new` files, so a change to any recompiles it, though the depfile may not list
@@ -447,18 +465,12 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                        : nullptr,
     };
     smith_program(b, &program);
-    SmithStep smith_plus = {
-        .command = (const char *[]){"ln", "-sf", "smith", "$out", nullptr},
-        .inputs = program.step.outputs,
-        .outputs = (const char *[]){smith_fmt(b, "%s/smith++", folder), nullptr},
-    };
-    smith_step(b, &smith_plus);
-    smith_default(b, smith_cat(b, program.step.outputs, smith_plus.outputs, nullptr));
+    smith_default(b, build_links(b, &program.step, folder));
     return program.step;
 }
 
 // The other two C files are not part of the program, but compiling them in a plain build checks that they build, and
-// gives the editor their flags in compile_commands.json. They take the flags check-tidy gives them: the runtime reads
+// gives the editor their flags in compile_commands.json. They take the flags lint gives them: the runtime reads
 // <smith/build.h>, and the stub is each stub compiler's source, named by -DNAME.
 static void build_other_objects(SmithBuild *b, const BuildConfig *config, const char *folder) {
     SmithObject runtime = {
@@ -518,12 +530,14 @@ static void build_compare(SmithBuild *b, const BuildConfig *config, const char *
     smith_task(b, "compare", &compare);
 }
 
-// Copies smith, once its tests pass, to $PREFIX/bin, where projects find it as CC. A link to the build folder would
+// Copies smith, once its tests pass, to $PREFIX/bin, with the links smith-cc and smith-c++ (and without the old
+// smith++), where projects find it as CC. A link to the build folder would
 // hand every project each half-finished build. The copy goes to a temporary name and the rename replaces the binary in
 // one step, so a build running meanwhile never sees half a file.
 static void build_install(SmithBuild *b, const BuildConfig *config, const char *binary, const char *const *tested) {
     const char *script = "mkdir -p \"$0/bin\" && cp \"$1\" \"$0/bin/smith.tmp\" && "
-                         "mv \"$0/bin/smith.tmp\" \"$0/bin/smith\" && ln -sf smith \"$0/bin/smith++\"";
+                         "mv \"$0/bin/smith.tmp\" \"$0/bin/smith\" && ln -sf smith \"$0/bin/smith-cc\" && "
+                         "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\"";
     SmithStep install = {
         .command = (const char *[]){"sh", "-c", script, config->prefix, binary, nullptr},
         .inputs = tested,
@@ -662,7 +676,7 @@ void build(SmithBuild *b) {
         config.llvm[0] != '\0'
             ? smith_capture(b, (const char *[]){"cat", smith_fmt(b, "%s/lib/smith-clang.id", config.llvm), nullptr})
             : "";
-    // Not the environment's CXX, which may be smith++ itself: the shim wants LLVM's own headers and a clang.
+    // Not the environment's CXX, which may be smith-c++ itself: the shim wants LLVM's own headers and a clang.
     // The compiler `compare` checks smith against: the clang of the LLVM smith links (it must match on every case),
     // else Homebrew's, the one a smith without clang inside runs on macOS. Homebrew's differs from it in its version
     // string.
