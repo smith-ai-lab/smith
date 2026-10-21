@@ -9,8 +9,8 @@
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
-// runs ninja. See docs/build-c.md. `smith new` writes a ready project: build.c, main.c, the rules and the plugin
-// settings.
+// runs ninja. See docs/build-c.md. `smith fetch <url>` puts a package in the cache. `smith new` writes a ready project:
+// build.c, main.c, the rules and the plugin settings.
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -298,6 +298,10 @@ static const unsigned char smith_build_header[] = {
 static const unsigned char smith_build_runtime[] = {
 #embed "runtime/build_runtime.c"
 };
+// The runtime includes this file, so it is written beside it.
+static const unsigned char smith_build_package[] = {
+#embed "runtime/package.c"
+};
 
 // smith's libraries: each header and source is written into the project's .smith/ on every `smith build`, where build.c
 // finds the source with smith_library and the compiles find the header through -I .smith/include.
@@ -337,6 +341,9 @@ static const SmithLibrary smith_libraries[] = {
 };
 
 extern char **environ;
+
+// Packages, shared with the build runtime: the cache, the download and SHA-256.
+#include "runtime/package.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -511,6 +518,7 @@ static void smith_build_prepare(const char *clang) {
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
     smith_build_write_libraries();
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
+    smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
     smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }
 
@@ -540,6 +548,32 @@ static int smith_build_main(int count, char **args, const char *self) {
     if (status != 0) return status;
     smith_run(ninja, ninja_argv);
     return smith_exit_missing;
+}
+
+// smith fetch.
+
+// `smith fetch <url>` downloads an archive into the package cache and prints the line to paste into build.c.
+static int smith_fetch_main(int count, char **args) {
+    if (count != 1) smith_die(smith_exit_usage, "usage: smith fetch <url>", nullptr);
+    char folder[PATH_MAX];
+    char hash[smith_package_hash_size];
+    SmithPackageError error;
+    if (!smith_package_ensure(args[0], nullptr, false, folder, hash, &error)) {
+        smith_die(smith_exit_usage, "fetch failed:", error.text);
+    }
+    printf(".hash = \"%s\",\n", hash);
+    fflush(stdout);
+    fprintf(stderr, "smith: %s is in %s\n", args[0], folder);
+    return 0;
+}
+
+// `smith --smith-sha256 <file>` prints a file's SHA-256, which the tests check against published vectors.
+static int smith_sha256_main(int count, char **args) {
+    if (count != 1) smith_die(smith_exit_usage, "usage: smith --smith-sha256 <file>", nullptr);
+    char hex[smith_sha256_hex_size];
+    if (!smith_sha256_file(args[0], hex)) smith_die(smith_exit_usage, "cannot read", args[0]);
+    puts(hex);
+    return 0;
 }
 
 // smith new.
@@ -840,6 +874,8 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
 
     switch (smith_classify(count, args)) {
