@@ -307,6 +307,19 @@ expect "new verbs: smith fmt formats a file git has not seen yet" "int untracked
 expect "new verbs: ... not one .gitignore leaves out" "int   ignored_file;" "$(cat ignored.c)"
 expect "new verbs: ... nor one .clang-format-ignore names" "int   left_alone;" "$(cat left.c)"
 rm extra.c ignored.c left.c .clang-format-ignore
+# Options alone are the project's verb (with standard input closed a clang-format waiting for it would fail, and with
+# a terminal it would hang); a .metal file is formatted too, as C++.
+printf 'kernel   void  f( device float*a [[buffer(0)]] ){ a[0]=1;}\n' >shader.metal
+capture smith fmt --dry-run </dev/null
+expect "new verbs: smith fmt --dry-run is the project's check, and a .metal file fails it" 1 "$rc"
+expect_contains "new verbs: ... naming the .metal file" "$out$err" "shader.metal"
+capture smith fmt </dev/null
+expect "new verbs: smith fmt formats a .metal file" "kernel void f(device float *a [[buffer(0)]]) {" "$(head -n 1 shader.metal)"
+capture smith fmt --dry-run </dev/null
+expect "new verbs: ... and then the dry run passes" 0 "$rc"
+capture smith lint --quiet </dev/null
+expect "new verbs: smith lint --quiet is the project's lint" 0 "$rc"
+rm shader.metal
 git checkout -q -- .gitignore
 printf 'int   BadName = 0;\n' >>primes.c
 capture smith lint
@@ -318,6 +331,47 @@ expect "new verbs: smith check fails when parts do" 1 "$rc"
 expect_contains "new verbs: ... names the parts that failed, in order" "$err" "smith check: failed: fmt lint"
 expect_contains "new verbs: ... and the parts that passed" "$err" "smith check: test ok"
 git checkout -q -- primes.c
+cd "$work" || exit 1
+
+# 1e. Two programs that link one source: each proof of it gets the full flags (the first once cut the compile's flags
+# for every later proof of the same source, which then failed to find its header).
+mkdir shared
+cd shared || exit 1
+mkdir inc
+printf '#pragma once\nint shared_double(int x);\n' >inc/shared.h
+printf '#include <smith/contract.h>\n\n#include "shared.h"\n\nint shared_double(int x) {\n    smith_requires(0 <= x && x <= 1000);\n    int result = 2 * x;\n    smith_ensures(result <= 2000);\n    return result;\n}\n' >shared.c
+printf '#include "shared.h"\n\nint main(void) {\n    return shared_double(1) - 2;\n}\n' >a.c
+printf '#include "shared.h"\n\nint main(void) {\n    return shared_double(2) - 4;\n}\n' >b.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const flags[] = {"-std=gnu2y", "-I", "inc", "-I", ".smith/include", nullptr};
+    const char *const a_flags[] = {"-std=gnu2y", "-I", "inc", "-I", ".smith/include", "-DA", nullptr};
+    const char *const b_flags[] = {"-std=gnu2y", "-I", "inc", "-I", ".smith/include", "-DB", nullptr};
+    SmithObject shared = {.compiler = "smith-cc", .source = "shared.c", .output = "build/shared.o", .flags = flags};
+    SmithObject a = {.compiler = "smith-cc", .source = "a.c", .output = "build/a.o", .flags = a_flags};
+    SmithObject b_object = {.compiler = "smith-cc", .source = "b.c", .output = "build/b.o", .flags = b_flags};
+    smith_object(b, &shared);
+    smith_object(b, &a);
+    smith_object(b, &b_object);
+    SmithProgram first = {.linker = "smith-cc", .output = "build/first",
+                          .objects = (const SmithObject *[]){&shared, &a, nullptr}};
+    SmithProgram second = {.linker = "smith-cc", .output = "build/second",
+                           .objects = (const SmithObject *[]){&shared, &b_object, nullptr}};
+    smith_program(b, &first);
+    smith_program(b, &second);
+    smith_default(b, smith_cat(b, first.step.outputs, second.step.outputs, nullptr));
+}
+C
+capture smith prove
+if [ "$(has "$err" "has no prover")" = yes ]; then
+    echo "skip  new shared: smith prove (this smith has no prover)"
+else
+    expect "new shared: smith prove proves a source two programs link, both times" 0 "$rc"
+    expect_contains "new shared: ... the contract of shared.c is proved" "$out" "1 proved, 0 failed"
+    expect "new shared: ... and the header is found by both proofs" no "$(has "$out$err" "file not found")"
+fi
 cd "$work" || exit 1
 
 # 2. A second run creates nothing.

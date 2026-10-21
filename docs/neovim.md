@@ -66,6 +66,31 @@ changes a debug configuration of yours.
     an empty answer aborts.
   The table also carries plain `program` and `cwd` fields, the program's decision alone, for an nvim-dap that does not call
   a configuration. Breakpoints are set as in any nvim-dap session (`dap.toggle_breakpoint()`), before or after.
+- **neotest**: `editors/neovim/lua/neotest-smith` is an adapter for [neotest](https://github.com/nvim-neotest/neotest),
+  so test nearest, file, suite and debug nearest work on smith tests. It registers nothing by itself; add it:
+  `require("neotest").setup({ adapters = { require("neotest-smith") } })`. The adapter is in `editors/neovim`, which
+  `plugin/smith.lua` puts on the runtimepath; during `init.lua` `vim.pack.add` runs no `plugin/` file (its `load` is false
+  there), so a neotest setup in `init.lua` needs the plugin loaded first:
+  `vim.pack.add({ "git@github.com:adam-r-kowalski/smith" }, { load = true })`, before the setup.
+  - **Test files and tests.** A test file is a `.c` or `.smith` file in a smith project (a folder with `build.c` or
+    `build.smith`) named `test_*` or `*_test`; the rule is the name only, which is cheap, the way `smith_tests` globs
+    `tests/test_*.c`. The tests in it are the `test_` function definitions, found with tree-sitter (the `c` parser, or
+    smith's for `.smith`), and each is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has
+    `module a::b;`.
+  - **What runs.** Nearest: `smith test --test <name> --verbose`. File: `--test` is exact when a test has that name and
+    a substring otherwise (`lib/test.c`), so a `.smith` module's file runs `--test <module>:: --verbose`, which selects the
+    module's tests, and a `.c` file, which has no module to select by, runs the suite and keeps its own tests' results.
+    Suite or directory: `smith test --verbose`. The command runs in the project root.
+  - **Debug nearest** (neotest's `dap` strategy): the runner is built as the launch configuration builds it (`smith build
+    smith_needs`, which writes `.smith/build.info`, then the `runner` it names), and nvim-dap gets `type = "smith"`, the
+    runner's absolute path, `args = { "--test", <name>, "--in-process" }` and `cwd` the root: breakpoints in the test stop.
+    A failed build shows its output and runs nothing. Only a test is debugged, not a file or the suite.
+  - **Results** come from the runner's `PASS name` and `FAIL name` lines, which `--verbose` prints (it has no
+    machine-readable line): a failed test carries an error at the failing check's line in its file (0-based) with the check as
+    written and its values; a test whose line is absent is skipped. A debugged test that printed nothing and exited 0
+    passed. `smith test` writes a failure's source and values when its symbolizer gets to them, which can be after the
+    summary, so they are tied to the test by the test's function in the stack; if they never arrive the message is the line
+    of the check from the file.
 - **The plugin and the installed smith can be different commits.** At start the plugin compares its own commit
   (`git rev-parse HEAD` in its folder) with the one `smith version` prints (`... commit <hash>`, for a smith built
   from a checkout with `smith build`), and says once when they differ. `vim.g.smith_no_version_check = 1` silences it.
@@ -114,5 +139,8 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
   `tests/test_*.c` gives the runner's absolute path, `--test <name> --in-process` and the project as `cwd`, in `main.c` gives
   `build/debug/<name>` and no arguments; a `.smith` buffer's test is named with its module; with no project it asks for the
   path; a project whose build fails gets `dap.ABORT` and an ERROR notification; `smith run`'s rule for the program), a user's
-  own adapter staying, and the version warning. The real nvim-dap was run by hand, not by the tests (a breakpoint in
-  `main.smith` and one in a `.smith` test stop). `SMITH_NVIM_ONLY="parser highlights"` runs just those.
+  own adapter staying, the neotest adapter (against stand-in `nio` and `neotest.lib` modules: test files and the root,
+  the tests found in a `smith new` project's C test and in a `.smith` module with its name, the specs for a test, a file, the
+  suite and the dap strategy, and the results from output captured from the runner), and the version warning. The real nvim-dap
+  and neotest were run by hand, not by the tests (a breakpoint in `main.smith` and one in a `.smith` test stop; nearest, file and
+  suite pass and fail with the right line; debug nearest stops in the test). `SMITH_NVIM_ONLY="parser highlights"` runs just those.

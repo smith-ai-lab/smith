@@ -237,7 +237,8 @@ static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*arg
 // ---- fmt
 
 static bool smith_fmt_wanted(const char *name) {
-    static const char *const extensions[] = {".c", ".h", ".m", ".mm", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".smith"};
+    static const char *const extensions[] = {".c",   ".h",   ".m",  ".mm",    ".cpp",  ".cc",
+                                             ".cxx", ".hpp", ".hh", ".smith", ".metal"};
     for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++) {
         if (smith_ends_with(name, extensions[i])) return true;
     }
@@ -442,7 +443,11 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     for (size_t i = 0; i < member_count; i++)
         smith_prove_argv[used++] = (char *)info->compiles[members[i]];
     smith_prove_argv[used++] = (char *)"--";
-    char *flags = (char *)info->compile_flags[members[0]];
+    // A copy: the compile's flags are shared by every group that proves the same source (a unity file), and cutting
+    // them at their tabs in place would leave the next group with the first word only.
+    static char flags_copy[smith_verbs_info_max + 1];
+    snprintf(flags_copy, sizeof flags_copy, "%s", info->compile_flags[members[0]]);
+    char *flags = flags_copy;
     for (size_t guard = 0; *flags != '\0' && guard < smith_verbs_words_max; guard++) { // bounded by the words
         char *tab = strchr(flags, '\t');
         if (tab != nullptr) *tab = '\0';
@@ -624,8 +629,12 @@ static int smith_check_project(int count, char **args, const char *self) {
     return 1;
 }
 
-// `smith fmt` with no arguments, in place.
+// `smith fmt` with no file names: in place, or with --dry-run (-n) the project's check, which fails on a file that
+// would change (--Werror is always part of it).
 static int smith_fmt_verb(int count, char **args, const char *self) {
-    (void)smith_verb_split(count, args);
-    return smith_fmt_project(self, false);
+    SmithVerbArgs *split = smith_verb_split(count, args);
+    bool check = false;
+    for (size_t i = 0; i < split->own_count; i++)
+        check = check || strcmp(split->own[i], "--dry-run") == 0 || strcmp(split->own[i], "-n") == 0;
+    return smith_fmt_project(self, check);
 }
