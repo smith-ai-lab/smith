@@ -31,15 +31,15 @@
 
 #ifdef __APPLE__
 #if __has_include("lib/io.c")
+#include "bootstrap/lib/smith/random.c"
 #include "internal/http.c"
 #include "lib/arena.c"
 #include "lib/io.c"
-#include "lib/random.c"
 #else
+#include "../bootstrap/lib/smith/random.c"
 #include "../lib/arena.c"
 #include "../lib/http.c"
 #include "../lib/io.c"
-#include "../lib/random.c"
 #endif
 #else
 // No HTTPS client yet (io is macOS only): the download fails with a message, and these stand in for io's type.
