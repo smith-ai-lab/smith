@@ -44,12 +44,14 @@ On first use smith unpacks clang's builtin headers and runtimes to `~/.local/sha
 
 ```
 $ smith new hello
-  created  .clang-format
-  created  .clang-tidy
-  created  .claude/settings.json
-  created  AGENTS.md
+smith new: hello
+  created  build.c
+  created  main.c
+  created  primes.h
+  created  primes.c
+  created  tests/test_primes.c
   ...
-smith new: hello: 11 created, 0 kept
+smith new: hello: 14 created, 0 kept
   git: created a repository on main with one commit
 $ cd hello && smith run
 [1/1] build/debug/hello
@@ -57,41 +59,50 @@ the first 5 primes add up to 28
 hello from hello
 ```
 
-`smith new` writes a starting point you own: `build.c`, `main.c`, `.clang-format`, `.clang-tidy`, `.gitignore`, an
-`AGENTS.md` and a `knowledge/` folder, a skill for the project's docs, and `.claude/settings.json`. It builds once and
-commits on `main`. The project is C2y with strict warnings, and has three builds: `smith build` (debug, with
+`smith new` writes a starting point you own: `build.c`, `main.c` and `primes.c` (which `main.c` and the test call), a test
+in `tests/`, `.clang-format`, `.clang-tidy`, `.gitignore`, an `AGENTS.md` and a `knowledge/` folder, a skill for the
+project's docs, and `.claude/settings.json`. It builds once and commits on `main`. The project is C2y with strict warnings, and has three builds: `smith build` (debug, with
 AddressSanitizer and UBSan), `smith build release` (optimized, assertions on) and `smith build fast` (assertions off).
 
 ### Test, check, format, lint
 
-`smith test` runs the tests that `smith_tests` in `build.c` finds. A test is a plain function:
+`smith test` runs the tests that `smith_tests` in `build.c` finds, and a new project has some. A test is a plain
+function; this is `tests/test_primes.c`:
 
 ```c
-#include <smith/test.h>
-#include "../clamp.h"
+#include "primes.h"
 
-void test_clamp_above(void) {
-    smith_check_equal_i32(clamp(50, 0, 10), 10);
+#include <smith/test.h>
+
+void test_the_first_five_primes_add_up_to_28(void) {
+    smith_check_equal_i32(primes_sum(5), 28);
 }
 ```
 
 ```
 $ smith test
+[1/11] find the tests
 ...
-slowest:
-      0.02 s  clamp_inside
-      0.00 s  clamp_above
+[11/11] .smith/program --run fffffffffffe6c14 --input build/tests --arg build/tests --description test
 
-2 passed, 0 failed in 0.07 s
+slowest:
+      0.02 s  the_first_five_primes_add_up_to_28
+      0.00 s  no_primes_add_up_to_nothing
+
+2 passed, 0 failed in 0.08 s
 ```
 
-`smith check` is everything that must pass before a commit: formatting, lint and the docs check, and whatever else the
-project adds.
+`smith check` is everything that must pass before a commit: formatting, lint, the docs check and the tests, and whatever
+else the project adds. It prints the tests' result and, last, clang-tidy's progress:
 
 ```
 $ smith check
-[1/2] smith fmt --dry-run --Werror main.c build.c
-[2/2] smith lint --quiet -p . main.c
+[1/4] .smith/program --run fffffffffffe6c14 --input build/tests --arg build/tests --description test
+...
+2 passed, 0 failed in 0.08 s
+smith docs: 1 concepts, 0 problems
+[4/4] smith lint --quiet -p . main.c primes.c tests/test_primes.c
+...
 ```
 
 `smith fmt` rewrites the sources to `.clang-format`, and `smith lint` runs clang-tidy with `.clang-tidy`. With no
@@ -116,7 +127,16 @@ Process 41601 stopped
 `smith dap` is lldb-dap for editors. Debugging needs Developer mode on the Mac; see the
 [smith-debug skill](.agents/skills/smith-debug/SKILL.md).
 
-`smith prove` proves contracts. A contract is a call, `smith_requires`, `smith_ensures` or `smith_invariant`, that stops
+`smith prove` proves contracts. A new project has a `prove` task for it, and until you write a contract it says there is
+nothing to prove:
+
+```
+$ smith prove
+[1/1] smith prove main.c primes.c -- -I .smith/include
+smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant
+```
+
+A contract is a call, `smith_requires`, `smith_ensures` or `smith_invariant`, that stops
 the program when false, like `assert`:
 
 ```c

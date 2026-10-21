@@ -1328,6 +1328,15 @@ static const unsigned char smith_new_build_c[] = {
 static const unsigned char smith_new_main_c[] = {
 #embed "templates/new/main.c"
 };
+static const unsigned char smith_new_primes_h[] = {
+#embed "templates/new/primes.h"
+};
+static const unsigned char smith_new_primes_c[] = {
+#embed "templates/new/primes.c"
+};
+static const unsigned char smith_new_test_primes_c[] = {
+#embed "templates/new/test_primes.c"
+};
 static const unsigned char smith_new_gitignore[] = {
 #embed "templates/new/gitignore"
 };
@@ -1366,6 +1375,9 @@ typedef struct {
 static const SmithNewFile smith_new_files[] = {
     {"build.c", smith_new_build_c, sizeof smith_new_build_c, true, false, false, nullptr},
     {"main.c", smith_new_main_c, sizeof smith_new_main_c, true, false, false, nullptr},
+    {"primes.h", smith_new_primes_h, sizeof smith_new_primes_h, true, false, false, nullptr},
+    {"primes.c", smith_new_primes_c, sizeof smith_new_primes_c, true, false, false, nullptr},
+    {"tests/test_primes.c", smith_new_test_primes_c, sizeof smith_new_test_primes_c, true, false, false, nullptr},
     {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false, false, false, nullptr},
     {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false, false, false, nullptr},
     {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false, false, false, nullptr},
@@ -1537,15 +1549,21 @@ static void smith_new_count(SmithNewCounts *counts, const char *path, bool exist
     memcpy(counts->written[counts->written_count++], path, strlen(path) + 1);
 }
 
-// Each file is written only if nothing exists at its path. main.c is left out when the project has its own sources: a
-// build.c already there, or another build system. What describes main.c is left out too, and when main.c was there
-// before this run.
+// The sources of the template's program: main.c and what it calls and tests.
+static bool smith_new_is_source(const char *path) {
+    return strcmp(path, "main.c") == 0 || strcmp(path, "primes.c") == 0 || strcmp(path, "primes.h") == 0 ||
+           strcmp(path, "tests/test_primes.c") == 0;
+}
+
+// Each file is written only if nothing exists at its path. The sources (main.c and the files that go with it) are left
+// out when the project has its own: a build.c already there, or another build system. What describes main.c is left
+// out too, and when main.c was there before this run.
 static void smith_new_files_write(const char *name, bool skip_main, bool skip_about, SmithNewCounts *counts) {
     SmithNewNames names = {.name = name};
     smith_new_kebab(name, names.kebab);
     for (size_t i = 0; i < sizeof smith_new_files / sizeof smith_new_files[0]; i++) {
         const SmithNewFile *file = &smith_new_files[i];
-        if (skip_main && strcmp(file->path, "main.c") == 0) continue;
+        if (skip_main && smith_new_is_source(file->path)) continue;
         char path[smith_new_path_max];
         smith_new_expand(path, sizeof path, (const unsigned char *)file->path, strlen(file->path), &names);
         bool exists = smith_new_exists(path);

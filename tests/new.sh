@@ -71,7 +71,7 @@ cd "$work" || exit 1
 capture smith new hello
 expect "new hello: exits 0" 0 "$rc"
 new_out=$out
-for f in build.c main.c .gitignore .clang-format .clang-tidy .claude/settings.json; do
+for f in build.c main.c primes.c primes.h tests/test_primes.c .gitignore .clang-format .clang-tidy .claude/settings.json; do
     expect "new hello: creates $f" yes "$(exists "hello/$f")"
 done
 expect_contains "new hello: build.c names the program" "$(cat hello/build.c)" "build/%s/hello"
@@ -109,7 +109,7 @@ expect "new hello: git is on main" main "$(git -C hello symbolic-ref --short HEA
 expect "new hello: one commit" 1 "$(commits hello)"
 expect "new hello: the commit message" "chore: create hello with smith new" "$(git -C hello log -1 --format=%s)"
 expect "new hello: git tracks exactly the written files" \
-    ".agents/skills/hello-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md knowledge/program.md main.c" \
+    ".agents/skills/hello-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md knowledge/program.md main.c primes.c primes.h tests/test_primes.c" \
     "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new hello: the tree is clean after the commit" "" "$(git -C hello status --porcelain)"
 expect "new hello: the first build made the debug program" yes "$(exists hello/build/debug/hello)"
@@ -126,14 +126,15 @@ for mode in debug release fast; do
     expect "new hello: the $mode program runs and prints its line" "hello from hello" "$(build/$mode/hello | tail -n 1)"
 done
 expect "new hello: build.c turns modules on" yes "$(grep -q 'smith_modules(b' build.c && echo yes || echo no)"
-expect "new hello: the builds compile with modules" 3 "$(grep -c "fmodules-cache-path=$XDG_CACHE_HOME/smith/modules" .smith/build.ninja)"
+expect "new hello: the builds compile with modules" 3 \
+    "$(grep "fmodules-cache-path=$XDG_CACHE_HOME/smith/modules" .smith/build.ninja | grep -c ' -c main.c ')"
 expect "new hello: the module cache is the shared one" yes "$(exists "$XDG_CACHE_HOME/smith/modules/modules.timestamp")"
 expect "new hello: compile_commands.json has the module flags" yes "$(has "$(cat compile_commands.json)" "fmodule")"
 expect "new hello: compile_commands has main.c" yes "$(grep -q '"main.c"' compile_commands.json && echo yes || echo no)"
 expect "new hello: compile_commands has build.c" yes "$(grep -q '"build.c"' compile_commands.json && echo yes || echo no)"
-debug_command=$(awk '/"file"/ { n++ } n == 1' compile_commands.json)
-release_command=$(awk '/"file"/ { n++ } n == 2' compile_commands.json)
-fast_command=$(awk '/"file"/ { n++ } n == 3' compile_commands.json)
+debug_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 1' compile_commands.json)
+release_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 2' compile_commands.json)
+fast_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 3' compile_commands.json)
 expect "new hello: the first main.c command is the debug one" yes "$(has "$debug_command" "build/debug/main.o")"
 expect "new hello: the debug command has the sanitizers" yes "$(has "$debug_command" "-fsanitize=address,undefined")"
 expect "new hello: the second main.c command is the release one" yes "$(has "$release_command" "build/release/main.o")"
@@ -170,8 +171,20 @@ capture smith run
 expect "new hello: smith run with none passes none" "" "$(printf '%s\n' "$out" | grep -v '^\[' | tr -d '\n')"
 cp main.c.orig main.c
 capture smith test
-expect_contains "new hello: smith test says the project has no tests" "$err" "build.c defines no task or alias named test"
-expect "new hello: ... and fails" 1 "$rc"
+expect "new hello: smith test passes out of the box" 0 "$rc"
+expect_contains "new hello: ... on the two tests of the template" "$out" "2 passed, 0 failed"
+capture smith test --test no_primes
+expect_contains "new hello: smith test --test runs one test" "$out" "1 passed, 0 failed"
+capture smith prove
+expect "new hello: smith prove succeeds with nothing to prove" 0 "$rc"
+expect_contains "new hello: ... and says so" "$out" "nothing to prove"
+sed 's/primes_sum(5), 28/primes_sum(5), 27/' tests/test_primes.c >tests/test_primes.c.new && mv tests/test_primes.c.new tests/test_primes.c
+capture smith test
+expect "new hello: a failing test fails smith test" 1 "$rc"
+expect_contains "new hello: ... and shows both values" "$out$err" "primes_sum(5) = 28"
+capture smith check
+expect "new hello: smith check fails when a test does" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+git checkout -q -- tests/test_primes.c
 capture smith check x
 expect_contains "new hello: smith check takes no arguments" "$err" "takes no arguments"
 capture smith build check
@@ -210,7 +223,7 @@ fi
 cd "$work" || exit 1
 
 # 1b. assert(false) stops debug and release and not fast, in a scratch copy of the generated project.
-mkdir abort && cp hello/build.c abort/ && sed 's/assert(sum == 28);/assert(false);/' hello/main.c >abort/main.c
+mkdir abort && cp -R hello/build.c hello/primes.c hello/primes.h hello/tests abort/ && sed 's/assert(sum == 28);/assert(false);/' hello/main.c >abort/main.c
 cd abort || exit 1
 capture sh -c "smith build && smith build release fast"
 expect "assert(false): the three build" 0 "$rc"
@@ -223,15 +236,7 @@ expect "assert(false): fast does not stop" 0 "$rc"
 cd "$work" || exit 1
 
 # 1c. smith's libraries build under the template's flags (gnu2y, every warning an error) in all three modes and run.
-mkdir libs && cp hello/main.c libs/main.c.orig
-cat >libs/insert.txt <<'C'
-    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"),
-                         .output = smith_fmt(b, "build/%s/arena.o", variant), .flags = include_flags};
-    smith_object(b, &arena);
-    SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"),
-                          .output = smith_fmt(b, "build/%s/random.o", variant), .flags = include_flags};
-    smith_object(b, &random);
-C
+mkdir libs && cp -R hello/primes.c hello/primes.h hello/tests libs/
 cat >libs/main.c <<'C'
 #include <smith/arena.h>
 #include <smith/random.h>
@@ -249,12 +254,10 @@ int main(void) {
     return 0;
 }
 C
-# The template's own build.c, with the two libraries compiled with each mode's flags and linked in.
-sed -e 's|^    smith_object(b, &object);|&\n    const char *const *include_flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr);\n@INSERT@|' \
-    -e 's|\.flags = flags,|.flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr),|' \
-    -e 's|{&object, nullptr}|{\&object, \&arena, \&random, nullptr}|' hello/build.c |
-    sed -e "/@INSERT@/r libs/insert.txt" -e '/@INSERT@/d' >libs/build.c
-rm libs/insert.txt libs/main.c.orig
+# The template's own build.c, with the two libraries added to its sources and -I .smith/include to its flags.
+sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", ".smith/lib/arena.c", ".smith/lib/random.c", nullptr}|' \
+    -e 's|(const char \*\[\]){"-ffp-contract=off", nullptr}|(const char *[]){"-ffp-contract=off", "-I", ".smith/include", nullptr}|' \
+    hello/build.c >libs/build.c
 cd libs || exit 1
 capture sh -c "smith build && smith build release fast"
 expect "libraries: the three build under the template's flags" 0 "$rc"

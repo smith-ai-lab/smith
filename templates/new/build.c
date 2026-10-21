@@ -4,12 +4,13 @@
 //   smith fmt               formats the sources to .clang-format
 //   smith lint              runs clang-tidy (.clang-tidy) on them
 //   smith docs              checks AGENTS.md, knowledge/ and the skills in .agents/skills
-//   smith check             fails when formatting, lint or the docs would
+//   smith check             fails when formatting, lint, the docs or a test would
 //   smith build release     the optimized program with assertions on, build/release/@NAME@
 //   smith build fast        the optimized program with assertions off, build/fast/@NAME@
 //   smith build -t clean    removes what was built
-// A verb runs the task or alias of its name in this file: run, test, check, fmt, lint, docs. Add tests with smith_tests
-// and `smith test` runs them.
+//   smith test              builds the tests in tests/ with the debug flags and runs them
+//   smith prove             proves the contracts (<smith/contract.h>) in the sources; with none, nothing to prove
+// A verb runs the task or alias of its name in this file: run, test, prove, check, fmt, lint, docs.
 #include <smith/build.h>
 
 #include <string.h>
@@ -48,24 +49,61 @@ static const char *const build_release[] = {"-O2", nullptr};
 // The same, with assertions off (-DNDEBUG), for when a measurement shows they cost too much. Measure before you use it.
 static const char *const build_fast[] = {"-O2", "-DNDEBUG", nullptr};
 
-// One program: main.c compiled with flags, then linked with link_flags, into build/<variant>/.
+// The program's sources. Add a file here when you add one, and the program, the checks and `smith prove` take it.
+static const char *const build_sources[] = {"main.c", "primes.c", nullptr};
+
+// One program: the sources compiled with flags, then linked with link_flags, into build/<variant>/.
 static SmithStep build_program(SmithBuild *b, const char *variant, const char *const *flags,
                                const char *const *link_flags) {
-    SmithObject object = {
-        .compiler = "smith-cc",
-        .source = "main.c",
-        .output = smith_fmt(b, "build/%s/main.o", variant),
-        .flags = flags,
-    };
-    smith_object(b, &object);
+    constexpr size_t count = _Countof(build_sources) - 1;
+    SmithObject objects[count] = {};
+    const SmithObject *linked[count + 1] = {};
+    for (size_t i = 0; i < count; i++) {
+        objects[i] = (SmithObject){
+            .compiler = "smith-cc",
+            .source = build_sources[i],
+            .output = smith_replace_extension(b, smith_fmt(b, "build/%s/%s", variant, build_sources[i]), ".o"),
+            .flags = flags,
+        };
+        smith_object(b, &objects[i]);
+        linked[i] = &objects[i];
+    }
     SmithProgram program = {
         .linker = "smith-cc",
         .output = smith_fmt(b, "build/%s/@NAME@", variant),
         .flags = link_flags,
-        .objects = (const SmithObject *[]){&object, nullptr},
+        .objects = linked,
     };
     smith_program(b, &program);
     return program.step;
+}
+
+// smith test: the files in tests/ whose functions are named test_<name>, built with the debug flags and run on the
+// primes. smith_tests links smith's test library and the libraries it needs, and the code under test goes in .objects.
+static void build_tests(SmithBuild *b, const char *const *flags) {
+    SmithObject primes = {
+        .compiler = "smith-cc",
+        .source = "primes.c",
+        .output = "build/test/primes.o",
+        .flags = flags,
+    };
+    smith_object(b, &primes);
+    SmithTests tests = {
+        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+        .objects = (const SmithObject *[]){&primes, nullptr},
+        .flags = smith_cat(b, flags, smith_list(b, "-I", ".", "-I", ".smith/include", nullptr), nullptr),
+        .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
+    };
+    smith_tests(b, &tests);
+}
+
+// smith prove: proves the contracts (<smith/contract.h>) in the sources. With none it says there is nothing to prove.
+static void build_prove(SmithBuild *b) {
+    SmithStep prove = {
+        .command = smith_cat(b, smith_list(b, "smith", "prove", nullptr), build_sources,
+                             smith_list(b, "--", "-I", ".smith/include", nullptr), nullptr),
+    };
+    smith_task(b, "prove", &prove);
 }
 
 // smith docs checks AGENTS.md, knowledge/ and the skills (the @KEBAB@-docs skill says how they are kept). The step
@@ -89,17 +127,22 @@ static void build_docs(SmithBuild *b) {
 // clang-tidy reads the flags of each file from compile_commands.json, which this build writes, so lint checks what the
 // build builds.
 static void build_checks(SmithBuild *b) {
-    const char *const *sources = smith_cat(b, smith_list(b, "main.c", "build.c", nullptr),
-                                           smith_glob(b, smith_list(b, "**/*.smith", nullptr)), nullptr);
+    const char *const *sources = smith_cat(b, smith_list(b, "build.c", "primes.h", nullptr), build_sources,
+                                           smith_glob(b, smith_list(b, "tests/*.c", "**/*.smith", nullptr)), nullptr);
     SmithStep fmt = {.command = smith_cat(b, smith_list(b, "smith", "fmt", "-i", nullptr), sources, nullptr)};
     smith_task(b, "fmt", &fmt);
     SmithStep check_format = {
         .command = smith_cat(b, smith_list(b, "smith", "fmt", "--dry-run", "--Werror", nullptr), sources, nullptr)};
     smith_task(b, "check-format", &check_format);
-    SmithStep lint = {.command = smith_list(b, "smith", "lint", "--quiet", "-p", ".", "main.c", nullptr)};
+    // The tests' flags include the list of tests that smith_tests writes, so lint waits for it.
+    SmithStep lint = {
+        .command = smith_cat(b, smith_list(b, "smith", "lint", "--quiet", "-p", ".", nullptr), build_sources,
+                             smith_glob(b, smith_list(b, "tests/*.c", nullptr)), nullptr),
+        .inputs = smith_list(b, "build/tests_list.h", nullptr),
+    };
     smith_task(b, "lint", &lint);
     build_docs(b);
-    smith_alias(b, "check", smith_list(b, "check-format", "lint", "docs", nullptr));
+    smith_alias(b, "check", smith_list(b, "check-format", "lint", "docs", "test", nullptr));
 }
 
 void build(SmithBuild *b) {
@@ -131,6 +174,8 @@ void build(SmithBuild *b) {
         .pool = "console",
     };
     smith_task(b, "run", &run);
+    build_tests(b, smith_cat(b, common, build_debug, nullptr));
+    build_prove(b);
     build_checks(b);
     smith_alias(b, "release", release.outputs);
     smith_alias(b, "fast", fast.outputs);
