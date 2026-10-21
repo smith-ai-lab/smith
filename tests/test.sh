@@ -1025,6 +1025,17 @@ void test_dirty_4_fresh(void) {
     SMITH_CHECK(dirty_failed, ==, 0);
 }
 
+// A failure that depends on state: the first run in a process fails only for a large x, a later one always fails. Shrinking
+// reruns the key in one worker, so its smaller cases fail on the state its earlier attempts left, not on their own.
+static int leaky_runs;
+
+void test_shrink_leaky(SmithKey key) {
+    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+    leaky_runs += 1;
+    bool fails = leaky_runs == 1 ? x >= 500 : true;
+    SMITH_CHECK(fails, ==, false);
+}
+
 static void *fresh_base;
 
 void test_fresh_1_sets(void) {
@@ -1102,6 +1113,22 @@ expect "workers: ... in-process, the checks forked nothing: a test with a death 
 capture build/tests $iso --test unwind_ --jobs 1 --stats
 expect_contains "workers: failed checks fail their tests" "$out" "1 passed, 2 failed"
 expect "workers: ... and a failed test ends its worker, so each test here has its own" 3 "$(forks_of "$out")"
+
+seed=
+for number in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    capture build/tests $iso --test shrink_leaky --seed $number --shrink 0
+    case $out in *"FAIL shrink_leaky"*) seed=$number; break ;; esac
+done
+expect "leaky: some seed fails the first run" yes "$([ -n "$seed" ] && echo yes)"
+capture build/tests $iso --test shrink_leaky --seed "${seed:-1}"
+if [ -n "$iso" ]; then
+    expect_contains "leaky: with a process per attempt nothing leaks, and it shrinks to 500" "$out" "shrunk in"
+    expect_lacks "leaky: ... with no leak line" "$out" "did not reproduce"
+else
+    expect_contains "leaky: a shrunk case that fails only on leaked state is not reported as shrunk" "$out" "the shrunk case did not reproduce in a fresh process, so state leaked between the shrinking attempts"
+    expect_lacks "leaky: ... the failure is shown as it was" "$out" "shrunk in"
+    expect_contains "leaky: ... and still names the seed" "$out" "rerun: smith build test -DTEST=shrink_leaky -DSEED=${seed:-1}"
+fi
 
 capture build/tests $iso --test dirty_ --jobs 1 --stats
 expect_contains "dirty: a test after a death check sees clean globals, and after a failed test too" "$out" "3 passed, 1 failed"

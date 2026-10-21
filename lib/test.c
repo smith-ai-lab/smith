@@ -732,6 +732,7 @@ typedef struct {
     SmithTestOutput output;
     unsigned shrink_runs; // the runs shrinking took, 0 when it did not run
     bool shrink_changed;  // it found a smaller failure
+    bool shrink_leaked;   // the smaller failure did not reproduce in a fresh worker: attempts leaked state
 } SmithTestRun;
 
 // What the runner sends a worker: the test to run, and the one key to run a property test on, if any.
@@ -1227,6 +1228,9 @@ static void smith_test_print_failure(const SmithTest *test, const SmithTestOptio
     smith_test_print_reason(run);
     putchar('\n');
     smith_test_print_check(run);
+    if (run->shrink_leaked)
+        printf("    the shrunk case did not reproduce in a fresh process, so state leaked between the shrinking "
+               "attempts; this is the failure as it was\n");
     if (run->note[0] != '\0') printf("    note: %s\n", run->note);
     smith_test_print_indented(run->output.text, run->output.kept, "    ");
     if (run->output.total > run->output.kept)
@@ -1432,9 +1436,10 @@ static bool smith_test_shrink_pass(SmithTestShrink *shrink) {
 }
 
 // Copies the shrunk failure into the run that reports it.
-static void smith_test_shrink_finish(const SmithTestShrink *shrink, bool changed, SmithTestRun *run) {
+static void smith_test_shrink_finish(const SmithTestShrink *shrink, bool changed, bool leaked, SmithTestRun *run) {
     run->shrink_runs = shrink->runs;
     run->shrink_changed = changed;
+    run->shrink_leaked = leaked;
     if (!changed) return;
     run->outcome = shrink->best->outcome;
     run->file = shrink->best->file;
@@ -1452,6 +1457,18 @@ static bool smith_test_shrinkable(const SmithTest *test, const SmithTestOptions 
            run->outcome.end == SmithTestEnd_Exit;
 }
 
+// The shrinking worker is reused across failing attempts, so it may be dirty: a shrunk case could fail only because of
+// state an earlier attempt left. Reruns the best case once in a fresh worker (with --isolate every attempt already was
+// one) and says whether it fails the same way.
+static bool smith_test_shrink_confirm(SmithTestShrink *shrink) {
+    if (shrink->options->isolate) return true;
+    smith_test_discard(&smith_test_workers[smith_test_shrink_slot]);
+    unsigned runs = shrink->runs;
+    smith_test_try_run(shrink);
+    shrink->runs = runs; // the check is not one of the attempts the budget counts
+    return smith_test_same_failure(shrink->best, shrink->candidate);
+}
+
 // Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on;
 // the same seed gives the same shrunk case unless the time budget ends the search.
 static void smith_test_shrink_run(const SmithTest *test, const SmithTestOptions *options, SmithTestRun *run) {
@@ -1463,6 +1480,7 @@ static void smith_test_shrink_run(const SmithTest *test, const SmithTestOptions 
                                 .candidate = &smith_test_tries[1],
                                 .deadline = smith_test_seconds() + smith_test_shrink_seconds_max};
     smith_test_draws_clear(smith_test_overrides);
+    smith_test_discard(&smith_test_workers[smith_test_shrink_slot]); // a worker an earlier shrink left may be dirty
     smith_test_try_run(shrink); // the same key again, recording; it must fail as it did
     bool reproduced = smith_test_same_failure(run, shrink->candidate);
     shrink->best = shrink->candidate;
@@ -1475,7 +1493,8 @@ static void smith_test_shrink_run(const SmithTest *test, const SmithTestOptions 
         if (!smith_test_shrink_pass(shrink)) break;
         changed = true;
     }
-    smith_test_shrink_finish(shrink, changed, run);
+    bool leaked = changed && !smith_test_shrink_confirm(shrink);
+    smith_test_shrink_finish(shrink, changed && !leaked, leaked, run);
 }
 
 // The time shrinking takes counts toward the test's, for the list of the slowest.
