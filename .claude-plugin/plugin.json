@@ -23,7 +23,8 @@
     "./.agents/skills/smith-random/",
     "./.agents/skills/smith-io/",
     "./.agents/skills/smith-test/",
-    "./.agents/skills/smith-text/"
+    "./.agents/skills/smith-text/",
+    "./.agents/skills/smith-json/"
   ],
   "lspServers": {
     "smith": {
