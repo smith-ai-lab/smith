@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests for `smith docs`: every rule on the small repositories of tests/docs/fixtures (each breaks one rule; its
 # expect.txt is the exact output, stderr then stdout, and the check exits 1 exactly when there are problems), the
-# depfile, the options, and how the verb picks between the check and the project's docs task. They need no compiler
+# depfile, the options, and the types an index declares. They need no compiler
 # except for the tests of a build.c.
 # Usage: sh tests/docs.sh path/to/smith
 set -u
@@ -105,40 +105,29 @@ capture smith docs --type contract --type dataset --require dataset:license_clas
 expect_contains "options: a value list rejects a value outside it" "$err" \
     "knowledge/data.md: type 'dataset' needs license_class: commercial-ok, unknown"
 
-# 4. The verb. With no arguments it checks the current folder when there is no build.c ...
+# 4. The verb. With no arguments it checks the current folder, with the types and required fields that
+# knowledge/index.md declares in its frontmatter, and the defaults when it declares none.
 cd pass || exit 1
 capture smith docs
-expect_contains "no build.c: checks the current folder" "$out" "smith docs: 2 concepts"
-expect_contains "no build.c: the default types apply" "$err" "type 'dataset' is not one of convention, architecture"
+expect_contains "no arguments: checks the current folder" "$out" "smith docs: 2 concepts"
+expect_contains "no arguments: the default types apply" "$err" "type 'dataset' is not one of convention, architecture"
 cd ..
 cd links || exit 1
 capture smith docs
-expect "no build.c: problems exit 1" 1 "$rc"
+expect "no arguments: problems exit 1" 1 "$rc"
+cd ..
+cd declared || exit 1
+capture smith docs
+expect "declared types: the index's types and requirements are the project's" 0 "$rc"
+capture smith docs --type dataset
+expect_contains "declared types: --type replaces the index's types" "$err" "type 'contract' is not one of dataset"
+capture smith docs --type contract --type dataset --require contract:owner
+expect_contains "declared types: --require replaces the index's requirements" "$err" "type 'contract' needs owner"
 cd ..
 
-# ... and runs the project's docs task when there is one, which carries the project's declarations.
-mkdir verb && cp -R pass/. verb/
+# A build.c changes nothing: the verb is the check whatever the build declares, and it needs no task.
+mkdir verb && cp -R declared/. verb/
 cd verb || exit 1
-cat >build.c <<'EOF'
-#include <smith/build.h>
-
-void build(SmithBuild *b) {
-    SmithStep docs = {.command = smith_list(b, "smith", "docs", "--type", "contract", "--type", "dataset", nullptr)};
-    smith_task(b, "docs", &docs);
-    smith_default(b, docs.outputs);
-}
-EOF
-capture smith docs
-expect "build.c with a docs task: runs it" 0 "$rc"
-expect_contains "build.c with a docs task: the task's check ran" "$out" "smith docs: 2 concepts, 0 problems"
-printf -- '---\ntype: poem\ntitle: Poem\ndescription: A poem.\n---\n' >knowledge/poem.md
-capture smith docs
-expect "build.c with a docs task: its failure is the verb's" 1 "$rc"
-capture smith docs .
-expect "arguments: the check, not the task" 1 "$rc"
-capture smith build docs
-expect "smith build docs: refused, it is a verb" 2 "$rc"
-expect_contains "smith build docs: points at the verb" "$err" "smith docs"
 cat >build.c <<'EOF'
 #include <smith/build.h>
 
@@ -149,11 +138,15 @@ void build(SmithBuild *b) {
 }
 EOF
 capture smith docs
-expect "build.c without a docs task: says so" 1 "$rc"
-expect_contains "build.c without a docs task: the message" "$err" "defines no task or alias named docs"
-capture smith docs .
-expect "build.c without a docs task: smith docs . checks" 1 "$rc"
-expect_contains "build.c without a docs task: smith docs . reports" "$err" "knowledge/poem.md: type 'poem' is not one of"
+expect "build.c without a docs task: the verb checks" 0 "$rc"
+expect_contains "build.c without a docs task: the check ran" "$out" "smith docs: 2 concepts, 0 problems"
+printf -- '---\ntype: poem\ntitle: Poem\ndescription: A poem.\n---\n' >knowledge/poem.md
+capture smith docs
+expect "build.c: a problem is the verb's failure" 1 "$rc"
+expect_contains "build.c: the problem is reported" "$err" "knowledge/poem.md: type 'poem' is not one of contract, dataset"
+capture smith build docs
+expect "smith build docs: refused, it is a verb" 2 "$rc"
+expect_contains "smith build docs: points at the verb" "$err" "smith docs"
 cd ..
 
 echo

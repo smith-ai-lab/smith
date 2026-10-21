@@ -50,38 +50,27 @@ Skills link knowledge; knowledge never links skills. No `CLAUDE.md` is needed: C
 
 ## Concept types and required fields
 
-The default types are `convention`, `architecture`, `contract` and `design`. A project with others declares them as options, in one place: the `docs` step of its `build.c` (OKF allows no extra keys in `index.md`'s frontmatter, so the bundle cannot hold the declaration).
+The default types are `convention`, `architecture`, `contract` and `design`. A project with others declares them in `knowledge/index.md`'s frontmatter, which is where the check reads them (as `.clang-format` holds the style):
 
-- `--type <name>`, once for each allowed type. With any `--type`, the default types no longer apply, so list them all.
-- `--require <type>:<field>` makes `<field>` a must for that type; `--require <type>:<field>=a,b,c` also limits its values.
-
-```sh
-smith docs --type contract --type convention --type dataset --type model \
-    --require dataset:license_class=commercial-ok,research-only,unknown
+```
+---
+okf_version: "0.2"
+types: contract, convention, dataset, model
+requires: dataset:license_class=commercial-ok,research-only,unknown; model:owner
+---
 ```
 
-## In a build.c
+- `types:` lists the allowed types, separated by commas. With it, the default types no longer apply, so list them all.
+- `requires:` makes a field a must for a type, separated by `;`: `<type>:<field>`, or `<type>:<field>=a,b,c` to limit its values.
+- On the command line, `--type <name>` (once for each allowed type) and `--require <type>:<field>[=a,b,c]` do the same and replace what the index declares. `smith docs` with no arguments is the check of the current folder with the index's declaration; `--depfile <path> --target <path>` writes the files it read in the form of a compiler's `-MF`.
 
-`smith new` writes this step, in the `check` alias, so `smith check` covers the docs. The depfile lists every file the check read or found (the documents, the skills, what each link points at), so the step reruns only when one changes, or a link target appears or goes. `smith docs` with no arguments runs the project's `docs` task (build.c) when there is a build.c, and checks the folder as it is when there is none; with arguments it is always the check, and `--depfile <path> --target <path>` writes the depfile in the form of a compiler's `-MF`.
+## In a project
 
-```c
-SmithStep docs = {
-    .command = smith_list(b, "smith", "docs", "--depfile", "build/docs.stamp.d", "--target", "build/docs.stamp",
-                          "--type", "convention", "--type", "architecture", "--type", "contract", "--type", "design",
-                          nullptr),
-    .inputs = smith_glob(b, smith_list(b, "AGENTS.md", "knowledge/**/*.md", ".agents/skills/**/*.md", nullptr)),
-    .stamp = "build/docs.stamp",
-    .depfile = "build/docs.stamp.d",
-};
-smith_step(b, &docs);
-smith_alias(b, "docs", docs.outputs);
-```
-
-A project whose build.c has no `docs` task runs the check with `smith docs .` (and the options its types need).
+`smith docs` needs no build.c and no task, and `smith check` runs it. A project that has a build.c may not name a task `docs` (a verb).
 
 ## smith new
 
-`smith new` writes `AGENTS.md`, `knowledge/index.md` and `knowledge/program.md` (a concept describing the program it writes), `.agents/skills/<name>-docs/SKILL.md` (what goes where, adding a concept or a skill, running `smith docs`), the `.claude/skills` link, and the `docs` step above. A project that keeps its own `main.c` or `build.c` does not get `program.md`. The generated skill, `<name>-docs`, is the project's guide to maintaining all of it.
+`smith new` writes `AGENTS.md`, `knowledge/index.md` and `knowledge/program.md` (a concept describing the program it writes), `.agents/skills/<name>-docs/SKILL.md` (what goes where, adding a concept or a skill, running `smith docs`), the `.claude/skills` link, with the types in its index. A project that keeps its own `main.c` or `build.c` does not get `program.md`. The generated skill, `<name>-docs`, is the project's guide to maintaining all of it.
 
 ## Add a concept or a skill
 
