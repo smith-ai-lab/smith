@@ -1425,7 +1425,7 @@ if "$smith" symbolize --available; then
     {
         sed -e '/^    SmithTests tests = {/,$d' build.c
         cat <<'C'
-    SmithObject contract = {.compiler = "smith", .source = smith_library(b, "contract"), .output = "build/smith/contract.o", .flags = flags};
+    SmithObject contract = {.compiler = "smith-cc", .source = smith_library(b, "contract"), .output = "build/smith/contract.o", .flags = flags};
     smith_object(b, &contract);
     SmithTests tests = {
         .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
