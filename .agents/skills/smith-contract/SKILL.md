@@ -39,6 +39,7 @@ for (uint8_t square = 0; square < squares; square++) {
 ## At run time
 
 - A failed contract is `smith_failure(kind)` (`<smith/trace.h>`): it writes `smith-trace begin requires failed` and the stack to standard error and calls `abort()`, at every optimization level; link the trace library (`smith_library(b, "trace")`; `smith_tests` does it itself). In a test it prints the report of a failed check (the failing line and the call chain), and `smith symbolize` turns a saved log into it. Where and what come from the stack and the source line.
+- **The static analyzer takes a contract as an assumption.** clang-tidy's `clang-analyzer-*` (`smith lint`) defines `__clang_analyzer__`, and there each of the three is `__builtin_assume(condition)`, in every build, `NDEBUG` or not; so `smith_requires(index < N)` stops `clang-analyzer-security.ArrayBound` from reporting that index, as `assert` does, and an index nothing bounds is still reported. A compile, `smith prove` and the checks never see this branch.
 - The three are `static inline` functions marked `always_inline`, with an empty body under `NDEBUG`. Otherwise each is one call of an external function of the library, `smith_contract_requires`, `smith_contract_ensures` or `smith_contract_invariant`, which the optimizer cannot see into. That call stays in the IR at `-O0` and optimized, and it is how `smith prove` finds the contracts without a flag.
 
 ## Get the library in build.c

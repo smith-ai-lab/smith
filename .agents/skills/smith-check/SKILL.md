@@ -19,6 +19,8 @@ This skill ships in the smith plugin, from `.agents/skills/smith-check/SKILL.md`
 
 ## On files: with arguments
 
+clang-tidy's analyzer (`clang-analyzer-*`) reads `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>` as assumptions, so an index a contract bounds is not reported by `clang-analyzer-security.ArrayBound`.
+
 With arguments they are the tools, unchanged: `smith fmt -i main.c`, `smith fmt --dry-run --Werror main.c`, `smith lint --quiet main.c -- <flags>`, `smith lsp --check=main.c`. A project's `.clang-format` and `.clang-tidy` apply. A stage0 smith runs Homebrew's tools, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`, `$SMITH_CLANGD`.
 
 ## `.smith` files
