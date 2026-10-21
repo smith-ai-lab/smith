@@ -11,6 +11,9 @@
 
 int clang_main(int argc, char **argv, const llvm::ToolContext &context);
 
+// shim/hook.cpp: makes every compile of a .smith file offer its tokens to the lowering.
+extern "C" void smith_hook_install();
+
 // Runs clang as `program` (the clang or clang++ in the LLVM install smith was linked against) on argv[1 .. argc);
 // argv[0] is ignored. Returns clang's exit status.
 //
@@ -24,6 +27,7 @@ int clang_main(int argc, char **argv, const llvm::ToolContext &context);
 // `program` as its own path, not this executable's, so it finds the resource directory (builtin headers, compiler-rt),
 // dsymutil and the other tools beside `program`, exactly as the clang binary there does.
 extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource) {
+    smith_hook_install();
     llvm::SmallVector<char *, 64> arguments;
     arguments.push_back(const_cast<char *>(program));
     bool cc1 = argc > 1 && std::strncmp(argv[1], "-cc1", 4) == 0; // an internal tool, which takes no driver flags

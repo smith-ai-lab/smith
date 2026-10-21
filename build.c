@@ -353,14 +353,14 @@ static void build_pack_data(SmithBuild *b, const BuildConfig *config, const char
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[6];
+    SmithObject objects[7];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd"};
+    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd", "hook"};
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
                    &shims->objects[i + 1]);
@@ -401,6 +401,14 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             "runtime/xz.c",
                                             "runtime/untar.c",
                                             "runtime/cache.c",
+                                            "runtime/lang.h",
+                                            "runtime/lang.c",
+                                            "runtime/lang_out.c",
+                                            "runtime/lang_decl.c",
+                                            "runtime/lang_import.c",
+                                            "runtime/lang_head.c",
+                                            "runtime/lang_stream.c",
+                                            "runtime/lang_lex.c",
                                             "include/smith/arena.h",
                                             "lib/arena.c",
                                             "include/smith/io.h",
@@ -425,7 +433,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     };
     smith_object(b, &object);
     BuildShims shims = {};
-    const SmithObject *objects[12] = {&object};
+    const SmithObject *objects[14] = {&object};
     if (in_process) build_shims(b, config, folder, pack, &shims, objects + 1);
     SmithProgram program = {
         .linker = config->cc,
@@ -478,7 +486,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
         .command = (const char *[]){"sh", "-c",
                                     // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
                                     "for t in run build new arena io http package random text cache untar resource "
-                                    "defer contract prove test; do env "
+                                    "defer contract prove smith-lang smith-lang-c test; do env "
                                     "\"$0\" sh tests/$t.sh "
                                     "\"$1\" || exit 1; done; "
                                     "env \"$0\" sh tests/test.sh \"$1\" isolate",

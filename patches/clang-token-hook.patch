@@ -1,6 +1,6 @@
 diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Preprocessor.h
---- a/clang/include/clang/Lex/Preprocessor.h	2026-10-21 00:44:17
-+++ b/clang/include/clang/Lex/Preprocessor.h	2026-10-21 00:44:17
+--- a/clang/include/clang/Lex/Preprocessor.h	2026-10-21 01:12:14
++++ b/clang/include/clang/Lex/Preprocessor.h	2026-10-21 01:12:14
 @@ -83,6 +83,7 @@
  class PreprocessorLexer;
  class PreprocessorOptions;
@@ -38,32 +38,42 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
  /// Engages in a tight little dance with the lexer to efficiently
  /// preprocess tokens.
  ///
-@@ -183,6 +206,9 @@
+@@ -183,6 +206,10 @@
    friend class VariadicMacroScopeGuard;
  
    llvm::unique_function<void(const clang::Token &)> OnToken;
 +  std::unique_ptr<TokenHook> Hook;
++  Sema *HookSema = nullptr;
 +  bool InTokenHook = false;   // the hook is running: Lex does not offer tokens
 +  bool InCachingFetch = false; // CachingLex is fetching a token not yet cached
    /// Functor for getting the dependency preprocessor directives of a file.
    ///
    /// These are directives derived from a special form of lexing where the
-@@ -1384,6 +1410,12 @@
+@@ -1383,6 +1410,21 @@
+   /// This also reports annotation tokens produced by the parser.
    void setTokenWatcher(llvm::unique_function<void(const clang::Token &)> F) {
      OnToken = std::move(F);
-   }
++  }
 +
 +  /// Makes the hook of a translation unit; set by a tool that links its
 +  /// language in, consulted when the main file is entered. May return null.
 +  static inline std::unique_ptr<TokenHook> (*TokenHookFactory)(Preprocessor &) =
 +      nullptr;
 +  TokenHook *getTokenHook() const { return Hook.get(); }
++  /// Sema tells the hook that it exists (or no longer does), whichever of the
++  /// two was created first.
++  void setHookSema(Sema *S) {
++    HookSema = S;
++    if (Hook && S)
++      Hook->semaCreated(*S);
++    else if (Hook)
++      Hook->semaDestroyed();
+   }
  
    void setDependencyDirectivesGetter(DependencyDirectivesGetter &Get) {
-     GetDependencyDirectives = &Get;
 diff -ru a/clang/lib/Lex/PPCaching.cpp b/clang/lib/Lex/PPCaching.cpp
---- a/clang/lib/Lex/PPCaching.cpp	2026-10-21 00:44:17
-+++ b/clang/lib/Lex/PPCaching.cpp	2026-10-21 00:44:17
+--- a/clang/lib/Lex/PPCaching.cpp	2026-10-21 01:12:14
++++ b/clang/lib/Lex/PPCaching.cpp	2026-10-21 01:12:14
 @@ -88,7 +88,9 @@
    }
  
@@ -75,18 +85,20 @@ diff -ru a/clang/lib/Lex/PPCaching.cpp b/clang/lib/Lex/PPCaching.cpp
    if (isBacktrackEnabled()) {
      // Cache the lexed token.
 diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
---- a/clang/lib/Lex/Preprocessor.cpp	2026-10-21 00:44:17
-+++ b/clang/lib/Lex/Preprocessor.cpp	2026-10-21 00:44:17
-@@ -588,6 +588,8 @@
+--- a/clang/lib/Lex/Preprocessor.cpp	2026-10-21 01:12:14
++++ b/clang/lib/Lex/Preprocessor.cpp	2026-10-21 01:12:14
+@@ -588,6 +588,10 @@
    // information) and predefined macros aren't guaranteed to be set properly.
    assert(NumEnteredSourceFiles == 0 && "Cannot reenter the main file!");
    FileID MainFileID = SourceMgr.getMainFileID();
 +  if (TokenHookFactory)
 +    Hook = TokenHookFactory(*this);
++  if (Hook && HookSema)
++    Hook->semaCreated(*HookSema);
  
    // If MainFileID is loaded it means we loaded an AST file, no need to enter
    // a main file.
-@@ -928,6 +930,10 @@
+@@ -928,6 +932,10 @@
  
  void Preprocessor::Lex(Token &Result) {
    ++LexLevel;
@@ -97,7 +109,7 @@ diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
  
    // We loop here until a lex function returns a token; this avoids recursion.
    while (!CurLexerCallback(*this, Result))
-@@ -935,6 +941,17 @@
+@@ -935,6 +943,17 @@
  
    if (Result.is(tok::unknown) && TheModuleLoader.HadFatalFailure)
      return;
@@ -116,23 +128,21 @@ diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
    if (Result.is(tok::code_completion) && Result.getIdentifierInfo()) {
      // Remember the identifier before code completion token.
 diff -ru a/clang/lib/Sema/Sema.cpp b/clang/lib/Sema/Sema.cpp
---- a/clang/lib/Sema/Sema.cpp	2026-10-21 00:44:17
-+++ b/clang/lib/Sema/Sema.cpp	2026-10-21 00:44:17
-@@ -327,6 +327,8 @@
+--- a/clang/lib/Sema/Sema.cpp	2026-10-21 01:12:14
++++ b/clang/lib/Sema/Sema.cpp	2026-10-21 01:12:14
+@@ -327,6 +327,7 @@
        ArgPackSubstIndex(std::nullopt), SatisfactionCache(Context) {
    assert(pp.TUKind == TUKind);
    TUScope = nullptr;
-+  if (TokenHook *H = PP.getTokenHook())
-+    H->semaCreated(*this);
++  PP.setHookSema(this);
  
    LoadedExternalKnownNamespaces = false;
    for (unsigned I = 0; I != NSAPI::NumNSNumberLiteralMethods; ++I)
-@@ -602,6 +604,8 @@
+@@ -602,6 +603,7 @@
  Sema::~Sema() {
    assert(InstantiatingSpecializations.empty() &&
           "failed to clean up an InstantiatingTemplate?");
-+  if (TokenHook *H = PP.getTokenHook())
-+    H->semaDestroyed();
++  PP.setHookSema(nullptr);
  
    if (VisContext) FreeVisContext();
  
