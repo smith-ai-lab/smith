@@ -931,6 +931,7 @@ static bool smith_loop_complete(SmithLoop *loop, SmithOp *op) {
     }
     case SmithOpKind_ProcessWait:
         smith_loop_finish_wait(loop, op);
+        if (op->internal.reaped != nullptr) *op->internal.reaped = true; // the id is free for another program now
         break;
     case SmithOpKind_NetConnect:
     case SmithOpKind_NetSend:
@@ -1307,6 +1308,14 @@ void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithPro
     smith_loop_submit(processes->loop, op);
 }
 
+void smith_child_wait_async(SmithChild *child, SmithOp *op) {
+    assert(child != nullptr && child->process.id != 0);
+    smith_op_start(op, child->internal.loop, SmithOpKind_ProcessWait);
+    op->internal.process = child->process.id;
+    op->internal.reaped = &child->internal.reaped;
+    smith_loop_submit(child->internal.loop, op);
+}
+
 size_t smith_processes_cores(const SmithProcesses *processes) {
     assert(processes != nullptr);
     if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
@@ -1420,6 +1429,8 @@ SmithError smith_child_kill(SmithChild *child, int signal) {
         script->signal = signal;
         return (SmithError){};
     }
+    // The wait has reaped the process: its id, and its group's, may be another program's, which is not ours to signal.
+    if (child->internal.reaped) return smith_error_make(ESRCH, "kill", "child");
     if (kill(-child->process.id, signal) != 0) return smith_error_make(errno, "kill", "child");
     return (SmithError){};
 }
@@ -2140,6 +2151,16 @@ bool smith_capture_poll(SmithCapture *capture) {
     capture->output = (const char *)capture->internal.data;
     capture->done = true;
     return true;
+}
+
+SmithError smith_capture_stop(SmithCapture *capture, int signal) {
+    assert(capture != nullptr && signal > 0);
+    // Once the wait has completed the process is reaped and its id may be another program's; a fake capture is done at
+    // once.
+    if (capture->done || capture->internal.wait.done || capture->process.id <= 0)
+        return smith_error_make(ESRCH, "stop", "capture");
+    if (kill(-capture->process.id, signal) != 0) return smith_error_make(errno, "stop", "capture");
+    return (SmithError){};
 }
 
 // ---------------------------------------------------------------- arguments

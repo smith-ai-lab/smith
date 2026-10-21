@@ -271,6 +271,45 @@ static void test_real_capture(SmithIo *io) {
     assert(smith_processes_capture_async(&io->processes, &io->arena, nothing, &capture).code == ENOENT);
 }
 
+static void test_child_until(SmithIo *io, SmithOp *op);
+
+// A process whose id has been waited for may be any program's by now, so nothing signals it: here a bystander (a group
+// of its own, as a reused id would lead) takes the id of a capture that exited and was reaped while a child of it still
+// holds the output pipe, and a stop must leave the bystander alone.
+static void test_real_capture_stale_stop(SmithIo *io) {
+    const char *const bystander_argv[] = {"/bin/sh", "-c", "sleep 30", nullptr};
+    SmithChild bystander = {};
+    assert(smith_processes_start_piped(&io->processes, bystander_argv, &bystander).code == 0);
+    const char *const argv[] = {"/bin/sh", "-c", "sleep 30 & exit 0", nullptr};
+    SmithCapture capture = {};
+    assert(smith_processes_capture_async(&io->processes, &io->arena, argv, &capture).code == 0);
+    for (size_t round = 0; round < test_rounds_max && !capture.internal.wait.done; round++)
+        (void)smith_io_run(io, 20 * test_millisecond);
+    assert(capture.internal.wait.done && !smith_capture_poll(&capture)); // exited and reaped; the sleep holds the pipe
+    int real = capture.process.id;
+    capture.process.id = bystander.process.id; // the id has been reused
+    assert(smith_capture_stop(&capture, SIGKILL).code == ESRCH);
+    (void)smith_io_run(io, 20 * test_millisecond);
+    assert(kill(bystander.process.id, 0) == 0); // still alive: nothing was sent
+    capture.process.id = real;
+    assert(kill(-real, SIGKILL) == 0); // the sleep of the capture's group, which the test ends itself
+    test_capture_wait(io, &capture);
+    assert(smith_capture_stop(&capture, SIGKILL).code == ESRCH); // done: nothing to stop
+    SmithOp wait = {};
+    assert(smith_child_kill(&bystander, SIGKILL).code == 0);
+    smith_child_wait_async(&bystander, &wait);
+    test_child_until(io, &wait);
+    smith_child_close(&bystander);
+
+    // A running capture is still stopped, with its whole group.
+    const char *const running[] = {"/bin/sh", "-c", "sleep 30 & wait", nullptr};
+    assert(smith_processes_capture_async(&io->processes, &io->arena, running, &capture).code == 0);
+    (void)smith_io_run(io, 20 * test_millisecond);
+    assert(smith_capture_stop(&capture, SIGTERM).code == 0);
+    test_capture_wait(io, &capture);
+    assert(capture.signal == SIGTERM);
+}
+
 // A program that talks to the terminal keeps the stdin of this process, where smith_processes_spawn gives it /dev/null.
 static void test_real_terminal(SmithIo *io) {
     int pipes[2];
@@ -1016,6 +1055,33 @@ static void test_real_child_kill(SmithIo *io) {
     smith_child_close(&child);
 }
 
+// A kill after the wait has completed signals nothing: the id may be another program's. The bystander takes the exited
+// child's id, as a reused one would, and survives the kill.
+static void test_real_child_kill_after_wait(SmithIo *io) {
+    const char *const bystander_argv[] = {"/bin/sh", "-c", "sleep 30", nullptr};
+    SmithChild bystander = {};
+    assert(smith_processes_start_piped(&io->processes, bystander_argv, &bystander).code == 0);
+    const char *const quick_argv[] = {"/bin/sh", "-c", "exit 0", nullptr};
+    SmithChild quick = {};
+    assert(smith_processes_start_piped(&io->processes, quick_argv, &quick).code == 0);
+    SmithOp wait = {};
+    smith_child_wait_async(&quick, &wait);
+    test_child_until(io, &wait);
+    assert(wait.exit_status == 0);
+    quick.process.id = bystander.process.id; // the id has been reused
+    assert(smith_child_kill(&quick, SIGKILL).code == ESRCH);
+    (void)smith_io_run(io, 20 * test_millisecond);
+    assert(kill(bystander.process.id, 0) == 0); // nothing was sent
+    smith_child_close(&quick);
+    SmithOp bystander_wait = {};
+    smith_child_wait_async(&bystander, &bystander_wait);
+    assert(smith_child_kill(&bystander, SIGKILL).code == 0); // its wait has not completed: it is signalled
+    test_child_until(io, &bystander_wait);
+    assert(bystander_wait.signal == SIGKILL);
+    assert(smith_child_kill(&bystander, SIGKILL).code == ESRCH);
+    smith_child_close(&bystander);
+}
+
 static void test_real_children(SmithIo *io) {
     test_real_child_cat(io);
     test_real_child_early_exit(io);
@@ -1023,6 +1089,7 @@ static void test_real_children(SmithIo *io) {
     test_real_child_two(io);
     test_real_child_stderr(io);
     test_real_child_kill(io);
+    test_real_child_kill_after_wait(io);
 }
 
 // The scripted child: chunks of output, a read that waits, writes kept, an exit when stdin closes, EPIPE after an exit,
@@ -1106,6 +1173,7 @@ int main(int argc, char **argv) {
     test_real_processes_run(&io);
     test_real_wait_several(&io);
     test_real_capture(&io);
+    test_real_capture_stale_stop(&io);
     test_real_terminal(&io);
     test_real_children(&io);
     test_real_clock(&io);
