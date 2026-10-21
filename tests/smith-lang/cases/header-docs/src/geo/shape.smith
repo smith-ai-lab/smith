@@ -1,0 +1,35 @@
+// A file comment that is not above an export: not in the header.
+
+module geo::shape;
+
+import <stdint.h>;
+
+// A point on the plane.
+// Both coordinates are in meters.
+export typedef struct {
+    u32 x; // east
+    u32 y; /* north */
+    /* the height, kept inside the type */
+    u32 z;
+} Point;
+
+/* The squared distance from the origin. */
+export u64 norm2(Point p) {
+    return (u64)p.x * p.x + (u64)p.y * p.y + (u64)p.z * p.z;
+}
+
+// Not a doc comment: a blank line separates it from the export.
+
+export u32 origin_count = 1; // how many origins there are
+
+/** Whether the point is the origin. */
+[[smith::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+    return norm2(p) == 0;
+}
+
+// A private function has no comment in the header.
+static u32 helper(void) {
+    return 7;
+}
+
+export u32 seven(void); // declared here, defined in C

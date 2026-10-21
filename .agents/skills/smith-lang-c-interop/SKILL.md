@@ -26,7 +26,9 @@ C and C++ include it (`-I .smith/include`, with the header in the compile's `.im
 
 - An export with `[[smith::c_name("Name")]]` is declared as `Name` in the header and its symbol is `Name` (no `__asm__` label), so existing C code that calls `Name`, or defines it for an export with no body, links unchanged. Other exports keep `game_replay_open` and the `::` symbol.
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
-- A header is written without macros or `#if` (only `#if 0` is honoured): keep an export out of a macro.
+- The header keeps what C needs of the source: the comments directly above an `export` (a doc comment), the comments inside an exported declaration and after its last token on its line, and the `#if`/`#ifdef`/`#elif`/`#else`/`#endif` lines around exports, verbatim. The header is never preprocessed, so the includer's `-D` flags choose the branch; the module is compiled with its own flags. A blank line between a comment and the `export` makes it no doc comment.
+- `export inline T f(...) { ... }` is `static inline game_replay_f` in the header with its body, and the module defines it the same way: no symbol, so C, C++ and `.smith` importers each compile it. Its body may use only the module's other exports, its imports and C, never a private name.
+- A header is written without macros (a `#define` of the module is not copied): keep a macro out of an export's signature.
 - Link C++ with `smith c++`.
 
 ## Debugging

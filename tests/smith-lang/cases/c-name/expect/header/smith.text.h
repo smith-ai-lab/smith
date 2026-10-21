@@ -9,6 +9,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+// A .smith importer writes the module's names, and gets the C names.
 uint64_t smith_text_fill(uint64_t capacity) __asm__("_smith::text::fill");
 #ifdef __cplusplus
 }

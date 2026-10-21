@@ -119,6 +119,11 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
     }
     lang->pending_c_name = (SmithLangText){0, 0};
     lang->export_active = lang->pending_export;
+    if (lang->pending_export) {
+        smith_lang_trivia_export(lang);
+    } else {
+        lang->doc_pending = false;
+    }
     lang->pending_export = false;
     lang->head_count = 0;
     lang->scratch_used = 0;
@@ -223,6 +228,7 @@ static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, u
 // that must follow. Returns false when these tokens are some other attribute, which then goes on as a declaration.
 static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, const SmithToken *open) {
     if (!smith_lang_c_name_at(lang, host, 0)) return false;
+    smith_lang_doc_capture(lang);
     uint32_t location = open->location;
     bool line_start = open->line_start;
     for (size_t attributes = 0; attributes < 8; attributes++) { // a second one is the error "one C name"
@@ -265,6 +271,7 @@ static void smith_lang_start(SmithLang *lang, const SmithHost *host, const Smith
             if (!lang->is_module) {
                 smith_lang_error(lang, host, token->location, "`export` needs a `module` line at the top of the file");
             }
+            smith_lang_doc_capture(lang);
             lang->pending_export = true;
             lang->carry_line_start =
                 token->line_start || (lang->pending_c_name.length > 0 && lang->pending_c_name_line);

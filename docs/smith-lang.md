@@ -119,9 +119,26 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
 which is how an import cycle is found, and the exports in a `// smith-names:` line (`// smith-names: Replay version open`),
 which is how an importer knows the names it can write back (see "Names as written"); an export with a chosen C name is listed as `member=CName`. Both depend on the exports only, so
-the header's bytes do not change with an edit to a body, or to the lines above an export (a `#line` for each declaration
-would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
+the header's bytes do not change with an edit to a body (an `export inline` function's body is in the header), or to the
+lines above an export (a `#line` for each declaration would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
 too; an export with no body is defined against it, in C, by its C name.
+
+What the header keeps of the source (written by the plain lexer, `runtime/lang_trivia.c`; the entries are `SmithTrivia`):
+- **Doc comments.** The comments directly above an `export` (or above the `[[smith::c_name]]` before it; no blank line
+  between) are copied above its declaration, as written. Comments inside an exported declaration (a struct's fields) and a
+  comment after its last token on the same line (`export u32 limit = 4; // bytes`) are kept. A comment separated by a
+  blank line from the export, and the comments of private code, are not.
+- **Conditional directives.** An `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else` and `#endif` around exports are copied into
+  the header verbatim, with the branches before an export in it, and nothing is preprocessed at header time: the includer's
+  `-D` flags choose, as for any C header. A chain with no export in it is left out. `#if 0 … #else` writes the live text
+  with no conditional. Because every branch of a chain is read (the lexer has no macros), a name an export declares in two
+  branches is one export, and an importer's `// smith-names:` line lists it whichever branch is live.
+- **Inline functions.** `export inline T f(…) { … }` is written to the header as `static inline T game_replay_f(…) { … }`,
+  body included, and the module defines it the same way: it has no symbol and no `__asm__` label, so C, C++ and `.smith`
+  importers compile it themselves. Its body may use only what the header has: the module's other exports, the module's
+  imports and C. A private name in it is an error in the includer, not in the module.
+- An interface read in memory (`import foo` with no header) keeps the conditionals on the module's own lines, and no
+  comments (diagnostics point at the module's lines).
 
 ## `smith build`
 
@@ -258,8 +275,8 @@ from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md
 ## Known limits
 
 - A header imported with `import <h>;` is included textually; the importing file's macros reach it.
-- A module's header is written without macros or `#if`: a macro in an exported signature, or an export under `#if`, is
-  not seen by it.
+- A module's header is written without macros: a macro in an exported signature is not seen by it. An export under `#if`
+  works (the directives are copied), but `#define`s are not, and the header pass does not evaluate a condition.
 - A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
 - A hover shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's standard C types,

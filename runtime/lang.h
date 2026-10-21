@@ -20,6 +20,29 @@ typedef enum {
 
 constexpr uint32_t smith_token_no_handle = UINT32_MAX;
 
+// What lies between tokens that the plain lexer (runtime/lang_lex.c) keeps for a module's generated header: comments
+// and conditional directives. They are one list for the whole file, in source order, owned by the host for as long as
+// the lowering runs; a token's `trivia` is the first entry before it that no earlier token had, and the entries before
+// a token are those from there while their `location` is below the token's. A host that runs the compiler's
+// preprocessor offers none: it sees the tokens of one branch.
+typedef enum {
+    SmithTrivia_Leading,  // a comment that is the first thing on its line (or follows another comment)
+    SmithTrivia_Trailing, // a comment on the line of the token before it
+    SmithTrivia_Open,     // #if, #ifdef or #ifndef
+    SmithTrivia_Branch,   // #elif, #elifdef, #elifndef or #else
+    SmithTrivia_Close,    // #endif
+} SmithTriviaKind;
+
+typedef struct SmithTrivia {
+    SmithTriviaKind kind;
+    bool zero;        // Open: `#if 0`, whose text the lexer skips
+    bool blank_after; // a comment followed by a blank line (before the next comment, directive or token)
+    uint32_t location;
+    uint32_t length;
+    const char *text; // the comment, or the directive line from the `#`
+    const struct SmithTrivia *next;
+} SmithTrivia;
+
 // One token. `text` is valid until the host is next asked for a token or the call to smith_lang_feed returns,
 // whichever is first; the lowering copies what it keeps.
 typedef struct {
@@ -39,8 +62,9 @@ typedef struct {
     const char *text;
     const char *header_text; // emitted: the spelling in a generated header, when it differs (uint64_t for u64)
     uint32_t header_length;
-    bool completion;     // given by `next`: the place of an editor's cursor, where a name is being completed
-    const char *partial; // of a completion: what was typed of the name, before the cursor
+    const SmithTrivia *trivia; // given by `next`: comments and directives before the token
+    bool completion;           // given by `next`: the place of an editor's cursor, where a name is being completed
+    const char *partial;       // of a completion: what was typed of the name, before the cursor
     uint32_t partial_length;
 } SmithToken;
 

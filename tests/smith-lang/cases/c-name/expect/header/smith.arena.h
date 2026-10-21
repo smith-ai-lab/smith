@@ -8,13 +8,16 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+// A C API that keeps its names: the module's prefix would make smith_arena_Arena of these.
 typedef struct {
 uint64_t used;
 uint64_t capacity;
 } SmithArena;
 SmithArena smith_arena_create(uint64_t capacity);
+// No C name: the module's prefix, as before.
 uint64_t smith_arena_take(SmithArena *arena, uint64_t size) __asm__("_smith::arena::take");
 extern uint64_t smith_arena_limit;
+// Defined in C, by its C name.
 uint64_t smith_arena_checksum(const uint8_t *data, size_t size);
 #ifdef __cplusplus
 }

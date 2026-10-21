@@ -7,6 +7,12 @@ constexpr size_t smith_lang_source_max = (size_t)1 << 23;
 
 static char smith_lang_source[smith_lang_source_max + 1];
 
+// The comments and conditional directives of the file, in order (SmithTrivia in runtime/lang.h). A nested run (an
+// interface read in memory) starts the list again: the run it interrupts is the compiler's, which offers none.
+constexpr size_t smith_raw_trivia_max = (size_t)1 << 17;
+
+static SmithTrivia smith_raw_trivia[smith_raw_trivia_max];
+
 typedef struct {
     const char *file;
     size_t length;
@@ -16,6 +22,10 @@ typedef struct {
     bool skipping;       // inside an `#if 0`
     unsigned skip_depth; // conditionals opened inside it
     SmithLang *lang;
+    size_t trivia_count;
+    SmithTrivia *trivia_last;  // the last entry made
+    SmithTrivia *trivia_fresh; // the first entry made since the last token
+    bool trivia_reported;
     char *capture; // else of printing the first error, it is kept here as `line:column: message`
     size_t capture_capacity;
 } SmithLangRaw;
@@ -32,7 +42,48 @@ static bool smith_raw_is_name(char c) {
     return smith_raw_is_name_start(c) || smith_raw_is_digit(c);
 }
 
-// Skips spaces, comments and line splices; notes whether a new line began.
+static void smith_raw_error(void *context, uint32_t location, const char *message);
+
+// Whether a blank line follows `at` before the next thing that is not white space.
+static bool smith_raw_blank_after(const SmithLangRaw *raw, size_t at) {
+    unsigned newlines = 0;
+    for (; at < raw->length; at++) { // bounded by the file
+        char c = smith_lang_source[at];
+        if (c == '\n') {
+            newlines += 1;
+        } else if (c != ' ' && c != '\t' && c != '\r') {
+            break;
+        }
+    }
+    return newlines >= 2;
+}
+
+// Adds an entry to the list: the text from `start` to `end`.
+static SmithTrivia *smith_raw_note(SmithLangRaw *raw, SmithTriviaKind kind, size_t start, size_t end) {
+    if (raw->trivia_count >= smith_raw_trivia_max) {
+        if (!raw->trivia_reported) {
+            raw->trivia_reported = true;
+            smith_raw_error(raw, (uint32_t)start, "this file has more comments and directives than smith keeps");
+            if (raw->lang != nullptr) raw->lang->errors += 1;
+        }
+        return nullptr;
+    }
+    while (end > start && (smith_lang_source[end - 1] == '\r' || smith_lang_source[end - 1] == ' ' ||
+                           smith_lang_source[end - 1] == '\t')) {
+        end -= 1;
+    }
+    SmithTrivia *entry = &smith_raw_trivia[raw->trivia_count++];
+    *entry = (SmithTrivia){.kind = kind,
+                           .location = (uint32_t)start,
+                           .length = (uint32_t)(end - start),
+                           .text = smith_lang_source + start};
+    if (raw->trivia_last != nullptr) raw->trivia_last->next = entry;
+    raw->trivia_last = entry;
+    if (raw->trivia_fresh == nullptr) raw->trivia_fresh = entry;
+    return entry;
+}
+
+// Skips spaces, comments and line splices; notes whether a new line began, and keeps the comments.
 static void smith_raw_skip(SmithLangRaw *raw) {
     const char *s = smith_lang_source;
     for (size_t guard = 0; raw->position < raw->length && guard < raw->length; guard++) { // each pass moves on
@@ -47,9 +98,15 @@ static void smith_raw_skip(SmithLangRaw *raw) {
         } else if (c == '\\' && raw->position + 1 < raw->length && s[raw->position + 1] == '\n') {
             raw->position += 2;
         } else if (c == '/' && raw->position + 1 < raw->length && s[raw->position + 1] == '/') {
+            size_t start = raw->position;
             while (raw->position < raw->length && s[raw->position] != '\n')
                 raw->position += 1;
+            SmithTrivia *entry =
+                smith_raw_note(raw, raw->line_start ? SmithTrivia_Leading : SmithTrivia_Trailing, start, raw->position);
+            if (entry != nullptr) entry->blank_after = smith_raw_blank_after(raw, raw->position);
         } else if (c == '/' && raw->position + 1 < raw->length && s[raw->position + 1] == '*') {
+            size_t start = raw->position;
+            bool leading = raw->line_start;
             raw->position += 2;
             while (raw->position + 1 < raw->length && !(s[raw->position] == '*' && s[raw->position + 1] == '/')) {
                 if (s[raw->position] == '\n') raw->line_start = true;
@@ -57,6 +114,9 @@ static void smith_raw_skip(SmithLangRaw *raw) {
             }
             raw->position = raw->position + 2 < raw->length ? raw->position + 2 : raw->length;
             raw->space = true;
+            SmithTrivia *entry =
+                smith_raw_note(raw, leading ? SmithTrivia_Leading : SmithTrivia_Trailing, start, raw->position);
+            if (entry != nullptr) entry->blank_after = smith_raw_blank_after(raw, raw->position);
         } else {
             return;
         }
@@ -89,6 +149,27 @@ static void smith_raw_conditional(SmithLangRaw *raw, const char *name, size_t le
     }
 }
 
+// A conditional directive of the module, kept for the header unless it is inside the text of an `#if 0` (the `#else` or
+// `#endif` of that `#if 0` itself is kept, to say where the live text begins and ends).
+static void smith_raw_note_directive(SmithLangRaw *raw, const char *name, size_t length, bool was_skipping,
+                                     unsigned depth_before, size_t line_end) {
+    SmithTriviaKind kind = SmithTrivia_Close;
+    bool opens = smith_lang_equals(name, length, "if") || smith_lang_equals(name, length, "ifdef") ||
+                 smith_lang_equals(name, length, "ifndef");
+    bool branches = smith_lang_equals(name, length, "else") || smith_lang_equals(name, length, "elif") ||
+                    smith_lang_equals(name, length, "elifdef") || smith_lang_equals(name, length, "elifndef");
+    if (opens) {
+        kind = SmithTrivia_Open;
+    } else if (branches) {
+        kind = SmithTrivia_Branch;
+    } else if (!smith_lang_equals(name, length, "endif")) {
+        return;
+    }
+    if (was_skipping && (opens || depth_before > 0)) return; // inside the text that is skipped
+    SmithTrivia *entry = smith_raw_note(raw, kind, raw->position, line_end);
+    if (entry != nullptr && opens) entry->zero = raw->skipping;
+}
+
 // A directive line: `#include` is noted for the header, anything else is skipped.
 static void smith_raw_directive(SmithLangRaw *raw) {
     const char *s = smith_lang_source;
@@ -104,7 +185,10 @@ static void smith_raw_directive(SmithLangRaw *raw) {
         if (s[line_end] == '\n' && s[line_end - 1] != '\\') break;
         line_end += 1;
     }
+    bool was_skipping = raw->skipping;
+    unsigned depth_before = raw->skip_depth;
     smith_raw_conditional(raw, s + start, end - start, s + end, line_end - end);
+    smith_raw_note_directive(raw, s + start, end - start, was_skipping, depth_before, line_end);
     if (include) {
         size_t open = end;
         while (open < line_end && (s[open] == ' ' || s[open] == '\t'))
@@ -176,6 +260,8 @@ static void smith_raw_next(void *context, SmithToken *token, bool unexpanded) {
         break;
     }
     *token = (SmithToken){0};
+    token->trivia = raw->trivia_fresh;
+    raw->trivia_fresh = nullptr;
     token->handle = smith_token_no_handle;
     token->line_start = raw->line_start;
     token->space_before = raw->space;
