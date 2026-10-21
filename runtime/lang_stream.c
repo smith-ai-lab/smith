@@ -32,11 +32,17 @@ static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, c
 // runtime/lang_generic.c
 static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host);
+static bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                            SmithLangWord word);
 
 static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
     if (word != SmithLangWord_Other) {
+        if (lang->recording && smith_lang_ident(token, "if") &&
+            smith_lang_generic_if_constexpr(lang, host, token, word)) {
+            return;
+        }
         smith_lang_word_state(lang, token, word);
         smith_lang_emit_kept(lang, host, token);
         smith_lang_track(lang, token, false);

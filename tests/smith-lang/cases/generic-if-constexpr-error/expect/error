@@ -1,0 +1,2 @@
+src/num.smith:12:5: in `if constexpr`: a type is not a number; compare it with == or !=
+src/num.smith:4:5: in `if constexpr`: `value` is not a constant or a type

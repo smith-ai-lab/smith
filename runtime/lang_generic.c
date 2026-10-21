@@ -1282,6 +1282,8 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     return true;
 }
 
+#include "lang_constexpr.c"
+
 // ---- Resolving a name to a generic
 // -----------------------------------------------------------------------------------------
 
@@ -1371,6 +1373,10 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
         if (token->special == SmithLangGen_CallBegin) {
             smith_lang_replay_group(lang, host, replay, frame->pos);
+            continue;
+        }
+        if (token->special == SmithLangGen_IfConstexpr) {
+            smith_lang_replay_if(lang, host, replay, frame);
             continue;
         }
         frame->pos += 1;
@@ -1581,14 +1587,14 @@ static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, c
     }
     bool punct = token->kind == SmithTokenKind_Punctuator && token->length == 1;
     if (punct && token->text[0] == ';' && frame->depth > 0 && frame->depth <= 64 &&
-        ((frame->braces >> (frame->depth - 1)) & 1U) == 0) { // a statement ended inside the parentheses
+        ((frame->braces >> (uint32_t)(frame->depth - 1)) & 1U) == 0) { // a statement ended inside the parentheses
         smith_lang_generic_abandon(lang, host, token);
         return;
     }
     if (punct && strchr("([{", token->text[0]) != nullptr) {
         if (frame->depth < 64)
-            frame->braces =
-                (frame->braces & ~(1ULL << frame->depth)) | ((uint64_t)(token->text[0] == '{') << frame->depth);
+            frame->braces = (frame->braces & ~(1ULL << (uint32_t)frame->depth)) |
+                            ((uint64_t)(token->text[0] == '{') << (uint32_t)frame->depth);
         frame->depth += 1;
     }
     if (punct && strchr(")]}", token->text[0]) != nullptr) frame->depth -= 1;

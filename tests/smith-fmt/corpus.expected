@@ -567,6 +567,79 @@ module num;
 export T add(constexpr type T, T a, T b) {
     return a + b;
 }
+==> generic-if-constexpr-error/src/main.smith <==
+import num;
+
+int main(void) {
+    return num::sign(i32, 3) + num::many(i32);
+}
+==> generic-if-constexpr-error/src/num.smith <==
+module num;
+
+export i32 sign(constexpr type T, T value) {
+    if constexpr (value > 0) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+export i32 many(constexpr type T) {
+    if constexpr (sizeof(T) == 4 && T == i32 / 0) return 1;
+    return 2;
+}
+==> generic-if-constexpr/src/kind.smith <==
+module kind;
+
+// What a value is, chosen when the instance is written: the branches that are not taken are never given to the parser.
+export i32 describe(constexpr type T, T value) {
+    if constexpr (T == f32) {
+        return 1;
+    } else if constexpr (is_integer(T) && sizeof(T) == 8) {
+        return 2;
+    } else if constexpr (is_pointer(T)) {
+        return 3;
+    } else if constexpr (is_integer(T)) {
+        if constexpr (is_signed(T)) return 4;
+        return 5;
+    } else {
+        return value.x + value.y;
+    }
+}
+
+export i32 floats_only(constexpr type T, T value) {
+    if constexpr (is_float(T)) {
+        return (i32)(value * 2) + sizeof(T);
+    }
+    return 0;
+}
+
+export i32 bytes(constexpr type T) {
+    if constexpr (alignof(T) > 4 || sizeof(T) >= 16) return 1;
+    if constexpr (T == u8) return 2;
+    return 3 + (sizeof(T) != 8);
+}
+==> generic-if-constexpr/src/main.smith <==
+import kind;
+#include <stdio.h>
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    f32 f = 1.5f;
+    u64 big = 9;
+    i32 small = -3;
+    u8 byte = 7;
+    Point p = {10, 20};
+    printf("%d %d %d %d %d\n", kind::describe(f32, f), kind::describe(u64, big), kind::describe(i32 *, &small),
+           kind::describe(u8, byte), kind::describe(Point, p));
+    printf("%d %d %d\n", kind::describe(i32, small), kind::floats_only(f32, f), kind::floats_only(i32, small));
+    printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
+    return 0;
+}
 ==> generic-nested/src/arena.smith <==
 module arena;
 
