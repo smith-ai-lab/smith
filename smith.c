@@ -39,7 +39,9 @@ extern char **environ;
 // build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
 // else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
 // that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
-int smith_clang_main(const char *program, int argc, char **argv);
+int smith_clang_main(const char *program, int argc, char **argv, bool lld);
+// shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
+int smith_lld_main(int argc, char **argv);
 #endif
 
 #ifdef __APPLE__
@@ -504,7 +506,7 @@ static void smith_resource_ensure(const char *folder, const char *self) {
     if (!smith_is_folder(folder)) smith_resource_unpack(folder);
     struct stat mine;
     SMITH_ASSERT(stat(self, &mine) == 0);
-    static const char *const names[] = {"clang", "clang++"};
+    static const char *const names[] = {"clang", "clang++", "ld"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         char path[PATH_MAX];
         struct stat theirs;
@@ -512,6 +514,24 @@ static void smith_resource_ensure(const char *folder, const char *self) {
         bool same = stat(path, &theirs) == 0 && theirs.st_dev == mine.st_dev && theirs.st_ino == mine.st_ino;
         if (!same) smith_resource_program(folder, self, names[i]);
     }
+}
+
+// smith run as `ld`, which is what <folder>/bin/ld is: the driver looks for its linker beside its own program before
+// PATH, so the link it starts is this smith, and lld links in this process. $SMITH_LINKER names a linker to run instead
+// (the system's /usr/bin/ld, to compare, or as a way out), and gets the driver's arguments as they are.
+static bool smith_has_linker_override(void) {
+    const char *override = getenv("SMITH_LINKER");
+    return override != nullptr && *override != '\0';
+}
+
+static int smith_route_linker(int argc, char **argv) {
+    const char *override = getenv("SMITH_LINKER");
+    if (smith_has_linker_override()) {
+        argv[0] = (char *) override;
+        execv(override, argv);
+        smith_die(smith_exit_missing, "cannot run the linker named by SMITH_LINKER", override);
+    }
+    return smith_lld_main(argc, argv);
 }
 
 // Whether clang runs in this process: unless the caller's variable names an external clang to run instead.
@@ -535,7 +555,7 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
     smith_sdk_environment(self);
 #endif
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv + first - 1);
-    return smith_clang_main(program, argc - first + 1, argv + first - 1);
+    return smith_clang_main(program, argc - first + 1, argv + first - 1, !smith_has_linker_override());
 }
 #endif
 
@@ -1204,6 +1224,9 @@ int main(int argc, char **argv) {
     char self[PATH_MAX];
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
+#ifdef SMITH_IN_PROCESS
+    if (strcmp(smith_base_name(argv[0]), "ld") == 0) return smith_route_linker(argc, argv);
+#endif
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
     if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
