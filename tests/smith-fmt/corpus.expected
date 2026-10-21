@@ -663,6 +663,45 @@ i32 main() {
     printf("%d %d\n", sum, aligned);
     return 0;
 }
+==> library-smith-text/src/main.smith <==
+// smith::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
+// the module's, text::make, though C calls them smith_text_make.
+import <stdio.h>;
+import smith::text;
+
+i32 main(void) {
+    text::Text input = text::make("move 3 4 # go\nturn -90.5\n\nhash 00ff\n");
+    text::Text line;
+    text::Text word;
+    u32 lines = 0;
+    while (text::take_line(&input, &line)) {
+        if (!text::take_word(&line, &word)) continue;
+        lines += 1;
+        if (text::is(word, "move")) {
+            u64 x = 0;
+            u64 y = 0;
+            if (text::take_word(&line, &word) && text::parse_u64(word, &x) && text::take_word(&line, &word) &&
+                text::parse_u64(word, &y))
+                c::printf("move %llu %llu\n", x, y);
+        } else if (text::is(word, "turn")) {
+            f64 degrees = 0;
+            if (text::take_word(&line, &word) && text::parse_f64(word, &degrees)) {
+                char out[text::f64_capacity];
+                usize n = text::write_f64(out, degrees);
+                c::printf("turn %.*s\n", (i32)n, out);
+            }
+        } else if (text::is(word, "hash")) {
+            u64 h = 0;
+            if (text::take_word(&line, &word) && text::parse_hex(word, &h)) {
+                char out[text::number_capacity];
+                usize n = text::write_hex(out, h);
+                c::printf("hash %.*s\n", (i32)n, out);
+            }
+        }
+    }
+    c::printf("%u lines\n", lines);
+    return 0;
+}
 ==> module-basic/src/main.smith <==
 import shapes::area as area;
 #include <stdio.h>

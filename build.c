@@ -9,8 +9,8 @@
 //   mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc
 //
 // Verbs, which run the target of their name: smith test, smith check (check-format, lint, test and compare), smith fmt
-// (rewrites the sources) and smith lint. Targets of smith build: the default, text-exhaustive, compare -DREAL=...,
-// check-format, install (-DCC=..., -DPREFIX=...), llvm and clean.
+// (rewrites the sources) and smith lint. Targets of smith build: the default, text-exhaustive, headers, compare
+// -DREAL=..., check-format, install (-DCC=..., -DPREFIX=...), llvm and clean.
 #include <smith/build.h>
 
 #include <string.h>
@@ -135,7 +135,6 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        "%s --quiet tests/random.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/text.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/text.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/json.c -- \"$@\" -I include %s && "
@@ -150,7 +149,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk),
+                                       tidy, sdk, tidy, sdk),
                              "sh", nullptr},
             cflags, nullptr),
         .inputs = llvm,
@@ -229,8 +228,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "include/smith/test.h",
                                                    "include/smith/contract.h",
                                                    "lib/contract.c",
-                                                   "include/smith/text.h",
-                                                   "lib/text.c",
+                                                   "lib/smith/text.smith",
                                                    "tests/text.c",
                                                    "tests/text_exhaustive.c",
                                                    "include/smith/json.h",
@@ -242,13 +240,46 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "lib/trace.c",
                                                    nullptr};
 
+// The libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>): their C headers,
+// include/smith/<name>.h, are generated and committed, because the stage0 has no hook and embeds them as bytes. Porting
+// a library adds its name here. `smith build headers` regenerates them; `check-headers` (part of `check`) fails when a
+// committed header differs from what its module generates.
+static const char *const build_generated_headers[] = {"text", nullptr};
+
+// Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
+static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
+    const char *names = smith_join(b, build_generated_headers, " ");
+    return (SmithStep){
+        .command = smith_list(b, "sh", "-c",
+                              smith_fmt(b,
+                                        "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
+                                        "for name in %s; do "
+                                        "\"$0\" cc --smith-header lib/smith/$name.smith -o \"$dir/$name.h\" || exit 1; "
+                                        "%s; done; exit $status",
+                                        names, action),
+                              config->binary, nullptr),
+        .inputs = smith_list(b, config->binary, nullptr),
+    };
+}
+
+static void build_headers(SmithBuild *b, const BuildConfig *config) {
+    SmithStep rewrite = build_header_step(b, config, "cp \"$dir/$name.h\" include/smith/$name.h");
+    SmithStep check = build_header_step(b, config,
+                                        "cmp -s \"$dir/$name.h\" include/smith/$name.h || { echo "
+                                        "\"include/smith/$name.h is not what lib/smith/$name.smith generates; run "
+                                        "smith build headers\"; status=1; }");
+    smith_task(b, "headers", &rewrite);
+    smith_task(b, "check-headers", &check);
+}
+
 static void build_checks(SmithBuild *b, const BuildConfig *config) {
     const char *format = build_smith_tool(b, config->binary, "fmt");
     const char *tidy = build_smith_tool(b, config->binary, "lint");
     SmithStep check_llvm = build_check_llvm(b, config->binary);
     build_format(b, format, check_llvm.outputs, build_format_sources);
     build_tidy(b, tidy, build_smith_tool(b, config->binary, "fetch"), check_llvm.outputs, config->cflags);
-    smith_alias(b, "check", (const char *[]){"check-format", "lint", "test", "compare", nullptr});
+    build_headers(b, config);
+    smith_alias(b, "check", (const char *[]){"check-format", "check-headers", "lint", "test", "compare", nullptr});
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -496,7 +527,7 @@ static const char *const build_smith_inputs[] = {
     "include/smith/contract.h",
     "lib/contract.c",
     "include/smith/text.h",
-    "lib/text.c",
+    "lib/smith/text.smith",
     "include/smith/json.h",
     "lib/json.c",
     "include/smith/http.h",

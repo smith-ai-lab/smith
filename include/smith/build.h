@@ -80,7 +80,8 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
+// The path of a smith library's source, such as ".smith/lib/arena.c" (a library written in .smith, "text", is a module,
+// ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test",

@@ -57,6 +57,25 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 - `smith cc --smith-lower x.smith` prints the lowering of the text as written, `smith cc --smith-header x.smith -o x.h` a module's header (the helpers are under `smith cc`; the top level is only verbs). `smith build` runs the header steps itself (`smith_object` of a `.smith` source, `runtime/build_runtime.c`, "`.smith` sources" in docs/build-c.md); `tests/build.sh` section 15 tests it. `SMITH_LANG_ASK=Name,struct Tag` prints what the parser answers about those types at the end of a file.
 - Cost: a plain `.smith` file must compile as fast as the `.c` (the host is offered only watched identifiers). Compare with alternating runs, at least 20 each, and note the load.
 
+## Libraries in C and in `.smith`
+
+- A library is a row of `smith_libraries` in `smith.c` (`SMITH_LIBRARY(name, lang)`), its two `#embed`s just above (the header
+  `include/smith/<name>.h` and the source), and its name in `build_smith_inputs` and `build_format_sources` in `build.c`. The source
+  is C (`lib/<name>.c`, written to `.smith/lib/<name>.c`) or, with `lang` true, a `.smith` module (`lib/smith/<name>.smith`,
+  `module smith::<name>;`, written to `.smith/lib/smith/<name>.smith`, which is where its path rule puts it).
+  `smith_library(b, "<name>")` finds either; a project compiles it like any source.
+- **Porting a library from C to `.smith`:** `git mv lib/<name>.c lib/smith/<name>.smith` and convert it (drop the
+  `smith_<name>_` prefix, `[[smith::c_name("smith_<name>_x")]] export` on each function so the symbols stay, `[[smith::c_name("SmithX")]]` on
+  each type; comments above an export are the header's, written with the C names); change the `#embed` path and the row's
+  `false` to `true` in `smith.c`; add the name to `build_generated_headers` in `build.c` and remove the library from `build_tidy` (it has
+  no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it);
+  point the library's own test script at the `.smith` source. Compare the old and new header's declarations and `nm -gU` of an
+  object from each: they must match. `#include`s in a module are copied into its header, so keep them few.
+- A stage0 cannot compile a `.smith` library (no hook), so a project that calls `smith_library(b, "text")` needs the full
+  smith; the header alone (C code that only includes it) works anywhere.
+- **One header, written twice with the same bytes.** C includers and `import smith::<name>;` both read `.smith/include/smith/<name>.h`. `smith build` writes the embedded generated header there (`smith_write_library_header` in `smith.c` swaps the first line's `from lib/smith/<name>.smith` for the `.smith/lib/...` path the project's header step generates from), and `smith_object` of the library's source adds a header step with `restat` that writes the same bytes, so nothing is rebuilt and no "not a header smith wrote" error arises (it carries the `smith-module` line). While a library is still C, its hand-written header at `.smith/include/smith/<name>.h` is refused as a module's header (a project module `smith::<name>` collides), which ends when the library is ported. `tests/text.sh` builds a project with `smith_library(b, "text")`, a C file and a `.smith` importer.
+- `check-headers` (part of `check`) regenerates every committed generated header and compares the bytes.
+
 ## Write C
 
 The rules are game's, in https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-language.md and https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-naming.md, and `.clang-format` and `.clang-tidy` are copies of game's.

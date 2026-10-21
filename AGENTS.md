@@ -179,6 +179,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
       expression text.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
+  - **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
+    or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
+    `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
+    bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text` is the first (issue #39).
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
