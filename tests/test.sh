@@ -1004,6 +1004,27 @@ void test_out_5_fails(void) {
     SMITH_CHECK(1, ==, 2);
 }
 
+static int dirty_death;
+static int dirty_failed;
+
+void test_dirty_1_death(void) {
+    dirty_death = 1;
+    SMITH_CHECK_ABORTS(abort()); // stands for the program ending: the worker ends with it
+}
+
+void test_dirty_2_fresh(void) {
+    SMITH_CHECK(dirty_death, ==, 0);
+}
+
+void test_dirty_3_fails(void) {
+    dirty_failed = 1;
+    SMITH_CHECK(1, ==, 2); // unwinds out of whatever it was doing: the worker ends
+}
+
+void test_dirty_4_fresh(void) {
+    SMITH_CHECK(dirty_failed, ==, 0);
+}
+
 static void *fresh_base;
 
 void test_fresh_1_sets(void) {
@@ -1076,11 +1097,16 @@ expect_contains "workers: ... saying so" "$out" "expected an abort; it was stopp
 expect_contains "workers: ... with the report" "$out" "AddressSanitizer: heap-buffer-overflow"
 expect_contains "workers: ... and shows what the expression printed" "$out" "before the read"
 expect_contains "workers: ... a later check passes" "$out" "PASS aborts_4_after"
-expect "workers: ... in-process, the checks forked nothing and the report replaced the worker" "$(by_mode 2 11)" "$(forks_of "$out")"
+expect "workers: ... in-process, the checks forked nothing: a test with a death check ends its worker, one fork a test" "$(by_mode 4 11)" "$(forks_of "$out")"
 
 capture build/tests $iso --test unwind_ --jobs 1 --stats
 expect_contains "workers: failed checks fail their tests" "$out" "1 passed, 2 failed"
-expect "workers: ... and a failed check does not end the worker" "$(by_mode 1 3)" "$(forks_of "$out")"
+expect "workers: ... and a failed test ends its worker, so each test here has its own" 3 "$(forks_of "$out")"
+
+capture build/tests $iso --test dirty_ --jobs 1 --stats
+expect_contains "dirty: a test after a death check sees clean globals, and after a failed test too" "$out" "3 passed, 1 failed"
+expect_contains "dirty: ... only the failing test failed" "$out" "FAIL dirty_3_fails"
+expect "dirty: ... the death check and the failure each ended a worker" "$(by_mode 3 5)" "$(forks_of "$out")"
 
 capture build/tests $iso --test out_ --jobs 1 --stats
 first=$(printf '%s\n' "$out" | sed -n '/^FAIL out_1_fails/,/^FAIL out_3_fails/p')

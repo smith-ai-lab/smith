@@ -64,6 +64,7 @@ typedef struct {
     int line;         // 0 when no check has failed
     uint64_t seed;    // the property test's current key
     bool aborting;    // a SMITH_CHECK_ABORTS is running in a worker, and file and line are its
+    bool death_check; // a SMITH_CHECK_ABORTS has run in this test (cleared by the runner before each test)
     char note[smith_test_note_capacity];
     char detail[smith_test_detail_capacity]; // the failed check's values, as lines
 } SmithTestShared;
@@ -533,6 +534,7 @@ bool smith_test_abort_child(const char *file, int line) {
     smith_test_shared->file = file;
     smith_test_shared->line = line;
     smith_test_shared->aborting = true;
+    smith_test_shared->death_check = true;
     smith_test_capture_start();
     smith_test_abort_state = smith_test_abort_running; // a timeout ends the worker: it is the test's, as it always was
     return true;
@@ -1063,6 +1065,16 @@ static void smith_test_judge_death_check(SmithTestRun *run, int status) {
     snprintf(run->detail, sizeof run->detail, "%s\n", verdict);
 }
 
+// Whether a worker that answered is not to run another test. A death check stands for the program ending, so the worker
+// that ran one ends too, whether it passed or failed. A failed check siglongjmps out of arbitrary code and can leave
+// state half-done, so a failed test ends its worker; the shrinking worker is the exception, since it reruns one key and
+// its attempts mostly fail. A sanitizer's report in the output means the state is not trusted. Only a clean pass with
+// no death check is followed by another test.
+static bool smith_test_retire(size_t slot, const SmithTestRun *run, const SmithTestShared *shared) {
+    if (shared->death_check || smith_test_has_report(run->output.text, run->output.kept)) return true;
+    return run->outcome.end != SmithTestEnd_Passed && slot != smith_test_shrink_slot;
+}
+
 // The test has ended, by the worker's answer or (reply is nullptr) by the process's end: judge it, and copy what it
 // left in the shared block to the run.
 static void smith_test_finish(size_t slot, SmithTestRun *run, const SmithTestReply *reply) {
@@ -1087,8 +1099,7 @@ static void smith_test_finish(size_t slot, SmithTestRun *run, const SmithTestRep
     if (reply == nullptr && shared->aborting && shared->line > 0 && run->outcome.end != SmithTestEnd_Flood &&
         run->outcome.end != SmithTestEnd_Timeout)
         smith_test_judge_death_check(run, status);
-    // After a sanitizer's report the worker is not trusted, whatever the test came to.
-    if (reply != nullptr && smith_test_has_report(run->output.text, run->output.kept)) smith_test_discard(worker);
+    if (reply != nullptr && smith_test_retire(slot, run, shared)) smith_test_discard(worker);
     run->finished = true;
 }
 
