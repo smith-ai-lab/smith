@@ -20,6 +20,7 @@
 #include <cstring>
 #include <string>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -217,15 +218,32 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     return status;
 }
 
+// What keeps a proof's process from outliving what started it. The parent kills it at the budget plus two seconds, but
+// a parent that is killed itself (a timeout around the whole command, a closed terminal) cannot, and the child, busy in
+// a solver, would run on for ever with the parent's pid 1. So the child ends itself: at a hard deadline (SIGALRM, whose
+// default action no solver call can postpone), and as soon as its parent is gone (a thread that watches the parent
+// pid).
+void end_with_parent_or_budget(pid_t parent, double budget_seconds) {
+    alarm(static_cast<unsigned>(budget_seconds) + 4);
+    std::thread([parent] {
+        for (;;) {
+            if (getppid() != parent) _exit(3);
+            usleep(20000);
+        }
+    }).detach();
+}
+
 // Proves each function in a process of its own, so that a crash or a function that will not finish is a failure of that
 // function and nothing more, and the budget is a clock the prover cannot overrun. Returns 0 for a proof, 1 for a
 // failure.
 int prove_in_child(prove::Program &loaded, const std::string &name, const std::string &label,
                    const prove::Options &options) {
     std::fflush(nullptr);
+    pid_t parent = getpid();
     pid_t child = fork();
     if (child < 0) return 1;
     if (child == 0) {
+        end_with_parent_or_budget(parent, options.budget_seconds);
         int status = prove_unit(loaded, name, options);
         std::fflush(nullptr);
         _exit(status);

@@ -122,6 +122,23 @@ prove --budget=2 "$cases/division.c"
 expect "budget: fails" 1 "$rc"
 expect_contains "budget: ... as a timeout" "$out" "timed out after"
 
+# 7b. A proof's process ends with its parent: kill the parent (a timeout around the command, a closed terminal) while a
+# proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
+"$smith" prove --budget=30 "$cases/division.c" -- -I "$here/include" >/dev/null 2>&1 &
+parent=$!
+sleep 3
+children=$(pgrep -P "$parent")
+kill -9 "$parent"
+wait "$parent" 2>/dev/null
+sleep 1
+alive=
+for child in $children; do
+    kill -0 "$child" 2>/dev/null && alive="$alive $child"
+done
+[ -n "$children" ] && expect "orphan: a proof was running when its parent was killed" yes yes || expect "orphan: a proof was running" yes "no child"
+expect "orphan: the proof's process ends with its parent" "" "$alive"
+for child in $alive; do kill -9 "$child" 2>/dev/null; done
+
 # 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 # before the fixes (else-if, col > 1) fails with a counterexample.
 prove --function=get_valid_diagonals "$cases/diagonals.c"
