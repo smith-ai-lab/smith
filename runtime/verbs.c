@@ -607,7 +607,7 @@ static int smith_check_project(int count, char **args, const char *self) {
     size_t failed_count = 0;
     smith_check_part("fmt", smith_fmt_project(self, true), failed, &failed_count);
     smith_check_part("docs", smith_docs_check(0, nullptr), failed, &failed_count);
-    if (access("build.c", R_OK) != 0) {
+    if (access("build.c", R_OK) != 0 && access("main.smith", R_OK) != 0 && access("main.c", R_OK) != 0) {
         fprintf(stderr, "smith check: no build.c, so lint, test and prove are skipped\n");
     } else {
         smith_check_part("lint", smith_check_child(self, "lint", split), failed, &failed_count);

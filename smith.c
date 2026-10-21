@@ -1028,9 +1028,43 @@ static void smith_quote_word(char *out, size_t capacity, const char *word) {
     out[used] = '\0';
 }
 
+// A project with no build file is built by convention (docs/build-c.md): the build program is the two calls of the
+// conventions with their defaults, compiled like any build.c, from this file.
+static const char smith_conventions_path[] = ".smith/conventions.c";
+static const char smith_conventions_source[] =
+    "// The build of a project that has no build file: smith's conventions, with their defaults (docs/build-c.md).\n"
+    "#include <smith/build.h>\n"
+    "\n"
+    "void build(SmithBuild *b) {\n"
+    "    smith_app(b, &(SmithApp){});\n"
+    "    smith_app_tests(b, &(SmithAppTests){});\n"
+    "}\n";
+
+// Whether this folder is built by convention, which is when it has no build.c. A folder with neither a build.c nor an
+// entry point is an error that says what smith looked for.
+static bool smith_build_by_convention(void) {
+    if (access("build.c", F_OK) == 0) return false;
+    if (access("build.smith", F_OK) == 0)
+        smith_die(smith_exit_usage, "build.smith is not read yet; this folder has no build.c", nullptr);
+    if (access("main.smith", F_OK) == 0 || access("main.c", F_OK) == 0) return true;
+    fputs(
+        "smith: no build.c in this folder, and no main.smith or main.c to build by convention\n"
+        "smith build runs the build.c of the project's root; without one it builds main.smith or main.c and what they\n"
+        "use (docs/build-c.md, Conventions). Add a main.smith or main.c, or write a build.c (`smith new` writes "
+        "one).\n",
+        stderr);
+    if (access("Makefile", F_OK) == 0 || access("makefile", F_OK) == 0 || access("GNUmakefile", F_OK) == 0) {
+        fputs("A Makefile is here: `CC = smith-cc` in it builds with smith unchanged (`smith cc` is a pure passthrough "
+              "for clang),\nand a build.c can replace it command for command (the smith-build skill).\n",
+              stderr);
+    }
+    exit(smith_exit_usage);
+}
+
 // The manifest that compiles build.c into .smith/program with the clang `smith` would pick. When that is smith itself
 // (in_process) the program is `<smith> cc`, since smith's top level is verbs.
-static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang, bool in_process) {
+static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang, bool in_process,
+                                       const char *build_source) {
     char word[PATH_MAX * 2];
     char quoted[PATH_MAX * 2 + 4];
     smith_quote_word(word, sizeof word, clang);
@@ -1049,10 +1083,10 @@ static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *c
                  "rule link\n"
                  "  command = %s $in -o $out\n"
                  "  description = smith: link $out\n"
-                 "build .smith/bootstrap/build.o: cc build.c\n"
+                 "build .smith/bootstrap/build.o: cc %s\n"
                  "build .smith/bootstrap/runtime.o: cc .smith/runtime.c\n"
                  "build .smith/program: link .smith/bootstrap/build.o .smith/bootstrap/runtime.o\n",
-                 quoted, quoted);
+                 quoted, quoted, build_source);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
     return (size_t)written;
 }
@@ -1162,7 +1196,7 @@ static void smith_build_write_libraries(void) {
     }
 }
 
-static void smith_build_prepare(const char *clang, bool in_process) {
+static void smith_build_prepare(const char *clang, bool in_process, bool conventions) {
     smith_make_folder(".smith");
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
@@ -1173,7 +1207,8 @@ static void smith_build_prepare(const char *clang, bool in_process) {
     smith_make_folder(".smith/bootstrap/lib");
     smith_make_folder(".smith/bootstrap/lib/smith");
     static char manifest[smith_build_manifest_max];
-    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang, in_process);
+    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang, in_process,
+                                             conventions ? smith_conventions_path : "build.c");
     // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
@@ -1183,6 +1218,9 @@ static void smith_build_prepare(const char *clang, bool in_process) {
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
                            sizeof smith_embedded_random_source);
+    if (conventions)
+        smith_write_if_changed(smith_conventions_path, (const unsigned char *)smith_conventions_source,
+                               sizeof smith_conventions_source - 1);
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
     smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
@@ -1313,7 +1351,7 @@ static void smith_build_refuse_verbs(int count, char **args) {
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
-    if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
+    bool conventions = smith_build_by_convention();
     smith_cache_hold();
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
     const char *forced = getenv("SMITH_NINJA");
@@ -1340,7 +1378,7 @@ static int smith_build_main(int count, char **args, const char *self, const char
 #ifdef __APPLE__
     smith_sdk_environment(self); // the compiles inherit it, as do the programs build.c runs
 #endif
-    smith_build_prepare(clang, in_process);
+    smith_build_prepare(clang, in_process, conventions);
     if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
     SmithIo io = smith_io_make(0, nullptr);
     SmithExecOptions bootstrap = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
