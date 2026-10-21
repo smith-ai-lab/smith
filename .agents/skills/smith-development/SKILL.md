@@ -72,6 +72,16 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it);
   point the library's own test script at the `.smith` source. Compare the old and new header's declarations and `nm -gU` of an
   object from each: they must match. `#include`s in a module are copied into its header, so keep them few.
+- **The bootstrap (`bootstrap/`).** A `.smith` source that smith's own build compiles is compiled from its committed
+  lowering, `bootstrap/<path>.c` (`bootstrap/lib/smith/text.c`), with `config->cc`, so the stage0 and an older installed
+  smith need no knowledge of the language and a fresh clone builds with `cc`. List the source in `build_bootstrap_sources`
+  (build.c), run `smith build bootstrap`, commit the file, and have the build compile the `.c` (as `build_protocol` does
+  for text). `check-bootstrap` (part of `check`) lowers again and fails naming the stale file, so change a `.smith` that
+  is listed, run `smith build bootstrap`, commit both. The file is `smith cc --smith-lower` (no compiler, so the stage0
+  writes the same bytes) under the header's `#include`s; it has no comments, but keeps `#include`, `#define`, `#pragma`, `#error` and `#if`
+  chains as written (every branch is lowered; a `#define` body with `::` or a sized type is an error). `tests/bootstrap.sh`
+  (`smith build test-bootstrap`) checks the files, the stage0's bytes, the lowering in an empty environment, and the C under
+  `/usr/bin/clang` and `cc`. docs/smith-lang.md, "The bootstrap".
 - A stage0 cannot compile a `.smith` library (no hook), so a project that calls `smith_library(b, "text")` needs the full
   smith; the header alone (C code that only includes it) works anywhere.
 - **One header, written twice with the same bytes.** C includers and `import smith::<name>;` both read `.smith/include/smith/<name>.h`. `smith build` writes the embedded generated header there (`smith_write_library_header` in `smith.c` swaps the first line's `from lib/smith/<name>.smith` for the `.smith/lib/...` path the project's header step generates from), and `smith_object` of the library's source adds a header step with `restat` that writes the same bytes, so nothing is rebuilt and no "not a header smith wrote" error arises (it carries the `smith-module` line). While a library is still C, its hand-written header at `.smith/include/smith/<name>.h` is refused as a module's header (a project module `smith::<name>` collides), which ends when the library is ported. `tests/text.sh` builds a project with `smith_library(b, "text")`, a C file and a `.smith` importer.
