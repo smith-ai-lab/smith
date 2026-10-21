@@ -1,0 +1,21 @@
+diff -ru a/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp b/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp	2026-10-21 12:37:53
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_mac.cpp	2026-10-21 12:37:53
+@@ -132,7 +132,7 @@
+ // XNU on Darwin provides a mmap flag that optimizes allocation/deallocation of
+ // giant memory regions (i.e. shadow memory regions).
+ #define kXnuFastMmapFd 0x4
+-static size_t kXnuFastMmapThreshold = 2 << 30; // 2 GB
++static size_t kXnuFastMmapThreshold = (size_t)2 << 30; // 2 GB
+ static bool use_xnu_fast_mmap = false;
+ 
+ uptr internal_mmap(void *addr, size_t length, int prot, int flags,
+@@ -966,7 +966,7 @@
+ void InitializePlatformEarly() {
+   // Only use xnu_fast_mmap when on x86_64 and the kernel supports it.
+   use_xnu_fast_mmap =
+-#if defined(__x86_64__)
++#if defined(__x86_64__) || defined(__aarch64__)
+       GetDarwinKernelVersion() >= DarwinKernelVersion(17, 5);
+ #else
+       false;
