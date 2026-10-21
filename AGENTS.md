@@ -39,8 +39,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   external clang instead, `execv`ed with its full path as `argv[0]` (gcc finds its files from it), as `.metal` runs
   Apple's `metal`.
 - **A change of compiler rebuilds every object it compiled.** An object depends on a file in `.smith/compiler/` that
-  names its compiler (its executable's path, size and mtime; for smith also the clang it runs), rewritten only when that
-  changes, so a new smith or another `SMITH_CLANG` rebuilds and a build with the same compiler does nothing.
+  names its compiler, rewritten only when that changes. The compiler is its executable (path, size and mtime), but for
+  smith it is the clang it runs, not smith's own file: the LLVM version and a hash of the archives linked in
+  (`lib/smith-clang.id` of the install, compiled into smith, printed by `--smith-which`), or for `SMITH_CLANG` that
+  clang's file. So a smith rebuilt with the same LLVM rebuilds nothing, and a rebuilt LLVM or another clang rebuilds all.
 - **smith's own code is C23 (`-std=gnu23`), libc only, no malloc**: it allocates nothing itself. The LLVM linked into
   it is C++ and does, and `shim/clang.cpp`, a thin C interface to it, is the only C++ in smith.
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a

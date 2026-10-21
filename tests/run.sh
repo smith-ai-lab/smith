@@ -80,14 +80,20 @@ expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' 
 
 if [ "$(uname -s)" = Darwin ]; then
     capture env -u SMITH_CLANG "$smith" --smith-which -c a.c
+    which_identity=$(printf '%s\n' "$out" | tail -n +2)
+    out=$(printf '%s\n' "$out" | head -n 1)
     case $out in
     "clang in-process "/*/bin/clang)
         # A smith with clang linked in compiles in its own process unless SMITH_CLANG names a clang to run instead.
         llvm_clang=${out#clang in-process }
         expect "in-process: the default is clang inside smith, named with the LLVM it was linked against" yes \
             "$([ -x "$llvm_clang" ] && echo yes || echo no)"
+        case $which_identity in
+        "identity llvm-"*" "*) expect "in-process: --smith-which names the identity of the clang inside" yes yes ;;
+        *) expect "in-process: --smith-which names the identity of the clang inside" "identity llvm-<version> <hash>" "$which_identity" ;;
+        esac
         capture env -u SMITH_CLANGXX "$work/smith++" --smith-which -c a.cpp
-        expect "in-process: smith++ is clang++ inside smith" "clang in-process ${llvm_clang}++" "$out"
+        expect "in-process: smith++ is clang++ inside smith" "clang in-process ${llvm_clang}++" "$(printf '%s\n' "$out" | head -n 1)"
         capture env SMITH_CLANG="$cl" "$smith" --smith-which -c a.c
         expect "in-process: SMITH_CLANG still runs an external clang" "clang $cl" "$out"
         capture env -u SMITH_CLANG SMITH_CLANGXX="$work/bin/clang++" "$smith" --smith-which -c a.c

@@ -833,8 +833,8 @@ static void smith_write_if_different(const char *path, const char *text, size_t 
 // compiler built them (and sanitized objects of two compilers do not link together). So each object and program depends
 // on a file in .smith/compiler/ that says which compiler it is and is rewritten, so that its mtime moves, only when
 // that changes: ninja then rebuilds every object that compiler built, and a build with the same compiler does nothing.
-// A compiler is its executable (path, size and mtime), and for smith also what it runs: its --smith-which line, and
-// the external clang's file when that is what it runs ($SMITH_CLANG). The files are written by every run of this
+// A compiler is its executable (path, size and mtime); smith is the clang it runs (see smith_compiler_identity), so a
+// new smith with the same LLVM rebuilds nothing. The files are written by every run of this
 // program, and `smith build` runs it before ninja each time.
 constexpr size_t smith_compilers_max = 64;
 static const char *smith_compilers[smith_compilers_max];
@@ -888,26 +888,33 @@ static const char *smith_file_identity(const char *path) {
                       (long)modified.tv_nsec);
 }
 
-// What `<compiler> --smith-which -c a.c` says if the compiler is smith: "clang in-process <clang>" for a smith with
-// clang linked in, "clang <clang>" for one that runs an external clang. A line that does not start so is not smith.
-static const char *smith_routed_clang(const char *real) {
+// What the compiler is. A compiler that is not smith is its executable (real path, size and mtime). Smith is not its
+// own file, which changes with every build of smith, but the clang it runs, as `<smith> --smith-which -c a.c` says:
+// with clang linked in, "clang in-process <clang>" and "identity <the version of that LLVM and a hash of what is
+// linked>", so a smith rebuilt against the same LLVM is the same compiler; with an external clang ($SMITH_CLANG, or a
+// stage0's), "clang <path>", so it is that clang's file. Anything else that is named smith is taken for a compiler like
+// another.
+static const char *smith_compiler_identity(const char *real) {
     const char *base = strrchr(real, '/');
     base = base != nullptr ? base + 1 : real;
-    if (strncmp(base, "smith", 5) != 0) return "";
-    const char *line = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
-    if (strncmp(line, "clang ", 6) != 0) return "";
-    line = smith_copy_string(line);
-    const char *external = line + 6;
-    if (strncmp(external, "in-process ", 11) == 0) return smith_text("%s\n", line);
-    return smith_text("%s\n%s\n", line, smith_file_identity(external));
+    const char *own = smith_file_identity(real);
+    if (strncmp(base, "smith", 5) != 0) return own;
+    const char *text = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
+    if (strncmp(text, "clang in-process ", 17) == 0) {
+        const char *identity = strstr(text, "\nidentity ");
+        return identity != nullptr ? smith_text("in-process %s", identity + 10) : own;
+    }
+    if (strncmp(text, "clang /", 7) == 0 && strchr(text, '\n') == nullptr)
+        return smith_text("external %s", smith_file_identity(text + 6));
+    return own;
 }
 
 static void smith_write_compiler_files(void) {
     for (size_t i = 0; i < smith_compiler_count; i++) {
         const char *compiler = smith_compilers[i];
         const char *real = smith_resolve_executable(compiler);
-        const char *text = smith_text("%s\n%s\n%s", compiler, real != nullptr ? smith_file_identity(real) : "missing",
-                                      real != nullptr ? smith_routed_clang(real) : "");
+        const char *text =
+            smith_text("%s\n%s\n", compiler, real != nullptr ? smith_compiler_identity(real) : "missing");
         smith_write_if_different(smith_compiler_file(compiler), text, strlen(text));
     }
 }

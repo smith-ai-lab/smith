@@ -63,14 +63,20 @@ ninja decides that an object is out of date from its command, its inputs and the
 compiler built them, and sanitized objects from two compilers do not link together (their ASan ABIs differ). So every
 `smith_object` and `smith_program` depends on a file `.smith/compiler/<hash of the compiler word>` that says which
 compiler it is:
-- the compiler's executable: its real path, size and mtime (a copy of the same bytes is a new compiler);
-- for smith (a program named `smith...`), also the line of `<smith> --smith-which -c a.c`, and when that names an external
-  clang (`$SMITH_CLANG`), that clang's file the same way.
+- a compiler that is not smith: its executable's real path, size and mtime (a copy of the same bytes is a new compiler);
+- smith (a program named `smith...`) is the clang it runs, not its own file, which changes with every build of smith and
+  would rebuild every project after each install. `<smith> --smith-which -c a.c` says which: with clang linked in,
+  `clang in-process <clang>` and `identity <llvm version> <hash>`, where `scripts/llvm.sh` hashes the archives that get
+  linked (and the four objects of `libclangmain.a`) into `lib/smith-clang.id` of the install, `smith build` compiles it
+  into smith (`-DSMITH_CLANG_ID=`), and so a smith rebuilt against the same LLVM is the same compiler and a rebuilt LLVM
+  is another; with an external clang (`$SMITH_CLANG`, or a stage0's), `clang <path>`, and that clang's real path, size
+  and mtime.
 
 The program writes the file on every run, and `smith build` runs the program before ninja every time, but it rewrites the
 file only when the text changes. ninja then sees a newer input only after a change of compiler, and a build with the same
 compiler stays "no work to do". Going back to the old compiler is a change as well. `tests/build.sh` covers it: a stand-in
-compiler replaced, `COMPILER` switched, smith routing to another `SMITH_CLANG`, and a smith replaced by a copy.
+compiler replaced, `COMPILER` switched, smith routing to another `SMITH_CLANG`, a smith replaced by a copy (nothing
+rebuilds), smith switched to an external clang and back, and a stand-in smith whose identity line changes.
 
 They are not in `build/`, because a project's `clean` task usually runs `rm -rf build`, and that would delete the logs
 while ninja is still running from them. Ninja then exits 1 with "Error writing to build log" (measured). smith writes

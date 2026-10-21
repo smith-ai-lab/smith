@@ -29,8 +29,10 @@
 extern char **environ;
 
 #ifdef SMITH_IN_PROCESS
-// shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (SMITH_LLVM_BIN's clang or clang++) on
-// argv[1 .. argc). argv[0] is ignored.
+// SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (scripts/llvm.sh), compiled in by
+// build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
+// else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (SMITH_LLVM_BIN's clang or clang++)
+// on argv[1 .. argc). argv[0] is ignored.
 int smith_clang_main(const char *program, int argc, char **argv);
 #endif
 
@@ -345,7 +347,7 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
     int written = snprintf(program, sizeof program, "%s/%s", SMITH_LLVM_BIN, plus ? "clang++" : "clang");
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // a short constant folder and a tool name
     if (which) {
-        printf("clang in-process %s\n", program);
+        printf("clang in-process %s\nidentity %s\n", program, SMITH_CLANG_ID);
         return 0;
     }
 #ifdef __APPLE__

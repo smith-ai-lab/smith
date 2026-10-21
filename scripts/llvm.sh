@@ -38,4 +38,12 @@ objects=$cache/build/tools/clang/tools/driver/CMakeFiles/clang.dir
 rm -f "$cache/install/lib/libclangmain.a"
 /usr/bin/ar rcs "$cache/install/lib/libclangmain.a" "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" \
     "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o"
+# What the compiler smith links is: the version, and a hash of the archives it links and of the four objects in libclangmain.a (not the archive, which holds the time
+# it was made).
+# `smith build` compiles it into smith, which reports it as the identity of its clang, so a smith rebuilt against the same
+# LLVM leaves every project's objects alone and a rebuilt LLVM rebuilds them.
+hash=$(cat "$cache"/install/lib/libclang[A-Z]*.a "$cache"/install/lib/libLLVM*.a \
+    "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o" |
+    /usr/bin/shasum -a 256 | cut -d' ' -f1)
+echo "llvm-23.1.3 $hash" >"$cache/install/lib/smith-clang.id"
 echo "$cache/install" >"$stamp"

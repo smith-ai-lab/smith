@@ -2445,7 +2445,7 @@ capture env SMITH_CLANG="$(pwd)/bin/w2" "$smith" build
 expect "smith routes to an external clang: a clang replaced by another in the same place rebuilds" \
     "$(printf 'w2\nw3\nw2\nw2new')" "$(cat wrapped)"
 
-# A new smith (here, a copy that is a different file) rebuilds what the old one compiled, whatever clang it runs.
+# The compiler is the clang smith runs, not smith's file: a smith replaced by a copy (a rebuilt smith) compiles the same.
 rm -rf build runs
 capture env -u SMITH_CLANG "$smith" build
 expect_contains "smith upgrade: the first build compiles the object" "$out" "a.c"
@@ -2455,9 +2455,45 @@ expect_contains "smith upgrade: the second build does nothing" "$out" "no work t
 cp "$smith" smith-bin/smith.new
 mv smith-bin/smith.new smith-bin/smith
 build
-expect_contains "smith upgrade: a replaced smith rebuilds the object" "$out" "a.c"
-build
+expect_contains "smith upgrade: a replaced smith with the same clang rebuilds nothing" "$out" "no work to do"
+capture env SMITH_CLANG="$(pwd)/bin/w3" "$smith" build
+expect_contains "smith upgrade: the same smith switched to an external clang rebuilds the object" "$out" "a.c"
+capture env -u SMITH_CLANG "$smith" build
+expect_contains "smith upgrade: and back to the clang inside rebuilds it again" "$out" "a.c"
+capture env -u SMITH_CLANG "$smith" build
 expect_contains "smith upgrade: and then settles" "$out" "no work to do"
+
+# What a smith with clang inside says about its clang is its identity: a rebuilt smith reports the same, a rebuilt LLVM
+# another. A stand-in smith that prints the two lines shows both (the real one is covered above and by run.sh).
+mkdir fake
+cat >fake/smith <<'SH'
+#!/bin/sh
+case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\nidentity %s\n' "$(cat "$0.id")" ;; *) echo "$0" >>runs ;; esac
+while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : >"$2"; fi; shift; done
+SH
+chmod +x fake/smith
+echo "llvm-23.1.3 aaaa" >fake/smith.id
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject a = {.compiler = "fake/smith", .source = "a.c", .output = "build/a.o"};
+    smith_object(b, &a);
+    smith_default(b, a.step.outputs);
+}
+C
+rm -rf build runs
+build
+expect "identity: the first build compiles" 1 "$(lines runs)"
+cp fake/smith fake/smith.new
+mv fake/smith.new fake/smith
+build
+expect_contains "identity: a smith rebuilt with the same LLVM rebuilds nothing" "$out" "no work to do"
+echo "llvm-23.1.3 bbbb" >fake/smith.id
+build
+expect "identity: a smith linked against another LLVM rebuilds the object" 2 "$(lines runs)"
+build
+expect_contains "identity: and then settles" "$out" "no work to do"
 
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1

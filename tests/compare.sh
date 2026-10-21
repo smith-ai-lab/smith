@@ -77,7 +77,7 @@ direct_env() {
 # in the LLVM that smith links, which every case must match.
 real_prefix=$(cd "$realdir/.." && pwd -P)
 smith_prefix=$real_prefix
-inproc=$("$smith" --smith-which -c a.c)
+inproc=$("$smith" --smith-which -c a.c | head -n 1)
 case $inproc in
 "clang in-process "*) smith_prefix=$(cd "$(dirname "${inproc#clang in-process }")/.." && pwd -P) ;;
 esac

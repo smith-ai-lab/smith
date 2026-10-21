@@ -23,8 +23,9 @@ typedef struct {
     const char *llvm_bin; // nullptr until a target needs the LLVM tools
     const char *prefix;
     const char *werror;
-    const char *llvm; // the LLVM install smith links clang from, so that it compiles in its own process; else ""
-    const char *cxx;  // compiles shim/clang.cpp, the only C++
+    const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
+    const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
+    const char *cxx;     // compiles shim/clang.cpp, the only C++
 } BuildConfig;
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -96,30 +97,30 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
-        .command =
-            smith_cat(b,
-                      (const char *[]){"sh", "-c",
-                                       smith_fmt(b,
-                                                 "%s --quiet smith.c -- \"$@\" %s && "
-                                                 "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
-                                                 "-DSMITH_LLVM_BIN='\"/llvm/bin\"' %s && "
-                                                 "%s --quiet build.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                                 "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                                 "for f in build main; do %s --quiet "
-                                                 "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                                 "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                                       "sh", nullptr},
-                      cflags, nullptr),
+        .command = smith_cat(
+            b,
+            (const char *[]){"sh", "-c",
+                             smith_fmt(b,
+                                       "%s --quiet smith.c -- \"$@\" %s && "
+                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
+                                       "-DSMITH_LLVM_BIN='\"/llvm/bin\"' -DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
+                                       "%s --quiet build.c -- \"$@\" -I include %s && "
+                                       "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                       "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/io.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/random.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                       "for f in build main; do %s --quiet "
+                                       "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                       "\"$@\" -std=gnu2y -I include %s || exit 1; done",
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                             "sh", nullptr},
+            cflags, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "check-tidy", &check_tidy);
@@ -194,12 +195,12 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
-        .flags =
-            smith_cat(b, config->cflags,
-                      smith_when(b, in_process,
-                                 (const char *[]){"-DSMITH_IN_PROCESS",
-                                                  smith_fmt(b, "-DSMITH_LLVM_BIN=\"%s/bin\"", config->llvm), nullptr}),
-                      nullptr),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, in_process,
+                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_LLVM_BIN=\"%s/bin\"", config->llvm),
+                                        smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
+            nullptr),
         .implicit_inputs =
             (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c", "runtime/cache.c",
                              "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
@@ -337,7 +338,9 @@ static const char *build_llvm_install(SmithBuild *b) {
         build_variable(b, "LLVM", smith_fmt(b, "%s/smith/llvm/23.1.3/install", cache),
                        "the LLVM install smith links clang from; empty: a smith that runs an external clang");
     if (strcmp(b->os, "Darwin") != 0) return "";
-    return access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 ? llvm : "";
+    bool linkable = access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+                    access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
+    return linkable ? llvm : "";
 }
 
 void build(SmithBuild *b) {
@@ -351,6 +354,10 @@ void build(SmithBuild *b) {
         .werror = werror,
         .llvm = build_llvm_install(b),
     };
+    config.llvm_id =
+        config.llvm[0] != '\0'
+            ? smith_capture(b, (const char *[]){"cat", smith_fmt(b, "%s/lib/smith-clang.id", config.llvm), nullptr})
+            : "";
     // Not the environment's CXX, which may be smith++ itself: the shim wants LLVM's own headers and a clang.
     // The compiler `compare` checks smith against: the clang of the LLVM smith links (it must match on every case),
     // else Homebrew's, the one a smith without clang inside runs on macOS. Homebrew's differs from it in its version
