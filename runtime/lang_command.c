@@ -41,13 +41,11 @@ static bool smith_lang_scan(int argc, char **argv, int first, SmithLangScan *sca
     for (int i = first; i < argc; i++) { // bounded by argc
         if (scan->dashes >= 0) {
             scan->found = scan->found || smith_ends_with(argv[i], ".smith");
-        } else if (strcmp(argv[i], "-cc1") == 0) {
-            return false;
         } else if (smith_lang_says_c(argv, i, argc)) {
             scan->language = true;
             i += strcmp(argv[i], "-x") == 0 ? 1 : 0;
-        } else if (strncmp(argv[i], "-x", 2) == 0) {
-            return false;
+        } else if (strcmp(argv[i], "-cc1") == 0 || strncmp(argv[i], "-x", 2) == 0) {
+            return false; // clang's -cc1, or another language
         } else if (strcmp(argv[i], "--") == 0) {
             scan->dashes = i;
         } else if (argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc) {
