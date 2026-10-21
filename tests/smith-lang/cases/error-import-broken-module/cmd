@@ -1,0 +1,1 @@
+-c main.smith -o @OUT@/main.o

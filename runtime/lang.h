@@ -101,6 +101,12 @@ typedef struct {
     // Whether the file being lowered has declared anything yet (an import must come first).
     bool (*declared)(void *context);
     const char *main_file; // the path of the file being lowered
+    // After read_header said no: the whole message for the import (the host looked for the module's source too and
+    // knows what it tried), or null for the default one.
+    const char *(*read_problem)(void *context);
+    // A name of a module that could not be imported is used here: the host keeps the diagnostics at that location out
+    // of the way (the missing module is the one error).
+    void (*suppress)(void *context, uint32_t location);
 } SmithHost;
 
 typedef struct SmithLang SmithLang;
@@ -145,6 +151,17 @@ unsigned smith_lang_errors(const SmithLang *lang);
 const char *smith_lang_header(const SmithLang *lang, size_t *length);
 // The lowered text of the file, when SMITH_LANG_DUMP names a file to write it to.
 void smith_lang_finish(SmithLang *lang);
+
+// The interface of a module read from its source, in memory: what `smith cc --smith-header` writes, for a host that finds
+// a module by its source instead of its header. `file` names the source (for the module line's check and for messages)
+// and `text` is its text. It is safe to call from inside a lowering (it keeps that lowering's state and gives it back),
+// and fills `out` (at least smith_lang_interface_capacity() bytes). Returns false, with the first error (`line:column:
+// message`) in `error`, when the source has one.
+size_t smith_lang_interface_capacity(void);
+bool smith_lang_interface(const char *file, const char *text, size_t length, char *out, size_t capacity, size_t *used,
+                          char *error, size_t error_capacity);
+// The module of the file being lowered ("a::b"), or null if it is no module.
+const char *smith_lang_module_name(const SmithLang *lang);
 
 // A C keyword that follows a complete type (a sized type name) and cannot continue its specifiers is the program's name
 // for something: `i32 double(i32 x)`. Hosts that read the text report it themselves, once, at the name, with

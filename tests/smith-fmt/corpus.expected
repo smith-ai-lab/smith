@@ -1,3 +1,30 @@
+==> compile-alone-by-path/src/foo.smith <==
+module foo;
+
+export i32 f(i32 x) {
+    return x * 2;
+}
+==> compile-alone-by-path/src/main.smith <==
+module main;
+import foo;
+
+i32 main() {
+    return foo::f(21) - 42;
+}
+==> cycle-by-source/src/a.smith <==
+module a;
+import b;
+
+export i32 from_a(void) {
+    return b::from_b();
+}
+==> cycle-by-source/src/b.smith <==
+module b;
+import a;
+
+export i32 from_b(void) {
+    return a::from_a();
+}
 ==> error-c-name-function/src/uses/math.smith <==
 module uses::math;
 import <math.h>;
@@ -62,6 +89,23 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-import-broken-module/src/broken.smith <==
+module broken;
+
+export i32 f(void) {
+    return 1;
+}
+export struct S {
+    i32 first;
+    u8 *char;
+};
+==> error-import-broken-module/src/main.smith <==
+module main;
+import broken;
+
+i32 main() {
+    return broken::f();
+}
 ==> error-import-cycle/src/cycle/a.smith <==
 module cycle::a;
 import cycle::b;
@@ -124,6 +168,37 @@ int main(void) {
 ==> error-import-self/src/me.smith <==
 module me;
 import me;
+==> error-keyword-function/src/foo.smith <==
+module foo;
+
+export i32 double(i32 x) {
+    return x * 2;
+}
+==> error-keyword-module/src/shapes.smith <==
+module shapes;
+
+export struct Pair {
+    i32 first;
+    u8 *char;
+};
+i32 helper(i32 int) {
+    return 0;
+}
+export i32 float = 3;
+export u64 long(u64 x, f32 default);
+export typedef u32 short;
+==> error-keyword-plain/src/main.smith <==
+typedef i32 int;
+struct Pair {
+    f32 float;
+    u8 *char;
+};
+i32 count(i32 double, u8 long) {
+    i32 return = 3;
+    return 0;
+}
+static i32 sizeof(i32 x);
+i32 const volatile *restrict while = 0;
 ==> error-module-first/src/late.smith <==
 int before;
 module late;
@@ -221,6 +296,22 @@ import app::say;
 
 int main(void) {
     say::hello("there");
+    return 0;
+}
+==> keyword-names-fine/src/main.smith <==
+#include <stdio.h>
+
+// Keywords that legitimately follow a type, and a sized type name used as a type in every other place.
+u32 const first = 1;
+u32 static second = 2;
+unsigned long third = 3;
+long double fourth = 4;
+f64 *restrict pointer = nullptr;
+u8 alignas(4) aligned = 5;
+
+i32 main() {
+    i32 sum = (i32)first + (i32)second + (i32)third + (i32)fourth + sizeof(u8) + sizeof(u16);
+    printf("%d %d\n", sum, aligned);
     return 0;
 }
 ==> module-basic/src/main.smith <==
@@ -572,6 +663,72 @@ int main(void) {
     c::printf("checksum=%llu\n", (unsigned long long)rp::checksum(bytes, 3));
     return 0;
 }
+==> nested-compile-alone/src/game/main.smith <==
+module game::main;
+import lib::text;
+
+i32 main() {
+    return (i32)text::length("abc") - 3;
+}
+==> nested-compile-alone/src/lib/text.smith <==
+module lib::text;
+
+export usize length(const char *s);
+==> nested-module-by-path/src/game/main.smith <==
+module game::main;
+import <stdio.h>;
+import game::util;
+import lib::text;
+
+i32 main() {
+    c::printf("%zu %zu\n", util::twice("abc"), text::length("hello"));
+    return 0;
+}
+==> nested-module-by-path/src/game/util.smith <==
+module game::util;
+import lib::text;
+
+export usize twice(const char *s) {
+    return 2 * text::length(s);
+}
+==> nested-module-by-path/src/lib/text.smith <==
+module lib::text;
+
+export usize length(const char *s) {
+    usize n = 0;
+    while (s[n] != 0)
+        n += 1;
+    return n;
+}
+==> one-command-three-modules/src/main.smith <==
+module main;
+import <stdio.h>;
+import shapes;
+import units;
+
+i32 main() {
+    shapes::Rect room = {.width_m = 3, .height_m = 4};
+    c::printf("%u cm2, %u per meter\n", shapes::area_cm2(room), units::centimeters_per_meter);
+    return 0;
+}
+==> one-command-three-modules/src/shapes.smith <==
+module shapes;
+import units;
+
+export typedef struct {
+    u32 width_m;
+    u32 height_m;
+} Rect;
+export u32 area_cm2(Rect r) {
+    return units::to_centimeters(r.width_m) * units::to_centimeters(r.height_m);
+}
+==> one-command-three-modules/src/units.smith <==
+module units;
+
+export constexpr u32 centimeters_per_meter = 100;
+export u32 to_centimeters(u32 meters) {
+    return meters * centimeters_per_meter;
+}
 ==> plain-hello/src/main.smith <==
 #include <stdio.h>
 
@@ -653,6 +810,84 @@ typedef struct Opaque Hidden;
 int main(void) {
     return 0;
 }
+==> session-keyword-name/src/foo.smith <==
+module foo;
+
+export i32 double(i32 x) {
+    return x * 2;
+}
+==> session-keyword-name/src/main.smith <==
+module main;
+import foo;
+
+i32 main() {
+    return foo::double_(1);
+}
+==> session-missing-module/src/main.smith <==
+module main;
+import <stdio.h>;
+import foo;
+
+i32 main() {
+    auto x = foo::f(10);
+    c::printf("x = %d\n", x);
+    return 0;
+}
+==> session-two-modules/src/foo.smith <==
+module foo;
+
+export i32 f(i32 x) {
+    return x * 2;
+}
+==> session-two-modules/src/main.smith <==
+module main;
+import <stdio.h>;
+import foo;
+
+i32 main() {
+    auto x = foo::f(10);
+    c::printf("x = %d\n", x);
+    return 0;
+}
+==> sized-c-header-typedef/src/main.smith <==
+#include <stdio.h>
+#include "defs.h"
+
+u32 twice(u8 byte) {
+    return 2u * byte;
+}
+
+int main(void) {
+    printf("%u\n", twice(21));
+    return 0;
+}
+==> sized-error-message/src/main.smith <==
+void f(void) {
+    i32 x = "hello";
+    (void)x;
+}
+==> sized-header-conflict/src/main.smith <==
+u32 first = 1;
+#include "other.h"
+==> sized-no-leak-into-c/src/lib/shape.smith <==
+module lib::shape;
+
+export typedef struct {
+    u16 width;
+    u16 height;
+    f32 scale;
+} Shape;
+
+export u64 area(const Shape *shape) {
+    return (u64)shape->width * shape->height;
+}
+==> sized-own-typedef/src/main.smith <==
+// The file's own u32 is kept: the error names its type, not the built-in one.
+typedef unsigned char u32;
+void f(void) {
+    u32 x = "hello";
+    (void)x;
+}
 ==> sized-types/src/main.smith <==
 #include <stddef.h>
 #include <stdio.h>
@@ -673,5 +908,15 @@ int main(void) {
     static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
     bool flag = true;
     printf("%d\n", flag);
+    return 0;
+}
+==> std-default-c2y/src/main.smith <==
+#include <stdio.h>
+
+// C2y by default: `auto` infers the type, and _Countof counts an array's elements.
+i32 main() {
+    int numbers[] = {4, 8, 15, 16, 23, 42};
+    auto count = _Countof(numbers);
+    printf("%zu\n", count);
     return 0;
 }

@@ -1,0 +1,10 @@
+module main;
+import <stdio.h>;
+import shapes;
+import units;
+
+i32 main() {
+    shapes::Rect room = {.width_m = 3, .height_m = 4};
+    c::printf("%u cm2, %u per meter\n", shapes::area_cm2(room), units::centimeters_per_meter);
+    return 0;
+}

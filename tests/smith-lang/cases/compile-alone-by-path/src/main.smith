@@ -1,0 +1,4 @@
+module main;
+import foo;
+
+i32 main() { return foo::f(21) - 42; }

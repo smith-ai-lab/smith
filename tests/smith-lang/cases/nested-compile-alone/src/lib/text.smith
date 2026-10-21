@@ -1,0 +1,3 @@
+module lib::text;
+
+export usize length(const char *s);

@@ -1,0 +1,4 @@
+module a;
+import b;
+
+export i32 from_a(void) { return b::from_b(); }

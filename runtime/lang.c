@@ -86,6 +86,7 @@ typedef struct {
     SmithLangText prefix; // game_replay_
     SmithLangText module; // game::replay
     bool is_c;
+    bool missing; // the module could not be imported: its names are not checked, the import was the one error
 } SmithLangBinding;
 
 // A token of a declaration head, held until the declaration is known.

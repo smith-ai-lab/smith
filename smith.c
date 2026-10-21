@@ -722,6 +722,28 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 
 constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
 
+// The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith among
+// them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited by the
+// compiles the driver runs.
+static void smith_set_smith_inputs(int argc, char **argv, int first) {
+    static char inputs[smith_smith_args_max];
+    size_t used = 0;
+    inputs[0] = 0;
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc) {
+            i += 1;
+        } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
+            size_t length = strlen(argv[i]);
+            if (used + length + 2 > sizeof inputs) break; // a command with that many keeps the rest to the path search
+            memcpy(inputs + used, argv[i], length);
+            inputs[used + length] = '\n';
+            used += length + 1;
+            inputs[used] = 0;
+        }
+    }
+    setenv("SMITH_LANG_INPUTS", inputs, 1);
+}
+
 // Whether the command names a C standard, or has an input that is not C (a C++ file refuses a C standard): `.smith`
 // is smith's own language and compiles as C2y, the standard `smith new` uses, unless the caller chose one.
 static bool smith_smith_standard_given(int argc, char **argv, int first) {
@@ -755,6 +777,7 @@ static int smith_rewrite_smith_inputs(int argc, char **argv, int first, char **o
         }
     }
     if (!found) return 0;
+    smith_set_smith_inputs(argc, argv, first);
     size_t used = 0;
     bool reset = false; // a .smith input was given, and the language is still C
     for (int i = 0; i < first; i++)

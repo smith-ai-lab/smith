@@ -1,0 +1,1 @@
+main.smith:3:8: cannot find module `foo`: no `foo.h` in the include paths, no `foo.smith` among the input files, and nothing at the path the name implies (`foo.smith`)

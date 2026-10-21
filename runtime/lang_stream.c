@@ -467,6 +467,10 @@ size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keywor
     return written > 0 && (size_t)written < capacity ? (size_t)written : 0;
 }
 
+const char *smith_lang_module_name(const SmithLang *lang) {
+    return lang->is_module ? lang->module : nullptr;
+}
+
 bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location) {
     for (size_t i = 0; i < smith_lang_allowed_max; i++) { // bounded by the table
         if (lang->allowed[i] == location) return true;

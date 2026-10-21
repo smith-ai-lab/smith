@@ -194,6 +194,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
     }
     smith_lang_take(lang, host);
     SmithToken taken = smith_lang_take(lang, host);
+    if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);
     if (binding->is_c) {
         smith_lang_allow(lang, taken.location);
         *result = smith_lang_made(name, taken.text, taken.length, true);

@@ -1,0 +1,9 @@
+module main;
+import <stdio.h>;
+import foo;
+
+i32 main() {
+    auto x = foo::f(10);
+    c::printf("x = %d\n", x);
+    return 0;
+}

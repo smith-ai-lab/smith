@@ -32,7 +32,9 @@ extern "C" {
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -78,6 +80,46 @@ struct Lowering {
     }
 };
 
+// Keeps the diagnostics at some locations out of what is shown: the uses of a module that could not be imported, which
+// the import has already reported. A note that belongs to one that is kept out goes too.
+class Suppressing final : public DiagnosticConsumer {
+  public:
+    Suppressing(std::unique_ptr<DiagnosticConsumer> owned, DiagnosticConsumer *inner, const std::set<unsigned> &at)
+        : owned(std::move(owned)), inner(inner), at(at) {
+        NumWarnings = inner->getNumWarnings();
+        NumErrors = inner->getNumErrors();
+    }
+    void BeginSourceFile(const LangOptions &options, const Preprocessor *pp) override {
+        inner->BeginSourceFile(options, pp);
+    }
+    void EndSourceFile() override {
+        inner->EndSourceFile();
+    }
+    void clear() override {
+        DiagnosticConsumer::clear();
+        inner->clear();
+    }
+    bool IncludeInDiagnosticCounts() const override {
+        return inner->IncludeInDiagnosticCounts();
+    }
+    void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level == DiagnosticsEngine::Note) {
+            if (dropNotes) return;
+        } else {
+            dropNotes = info.getLocation().isValid() && at.count(info.getLocation().getRawEncoding()) != 0;
+            if (dropNotes) return;
+        }
+        DiagnosticConsumer::HandleDiagnostic(level, info);
+        inner->HandleDiagnostic(level, info);
+    }
+
+  private:
+    std::unique_ptr<DiagnosticConsumer> owned;
+    DiagnosticConsumer *inner;
+    const std::set<unsigned> &at;
+    bool dropNotes = false;
+};
+
 class SmithHook final : public TokenHook {
   public:
     bool holding = false; // this hook has the lowering
@@ -101,6 +143,8 @@ class SmithHook final : public TokenHook {
         host.type_info = &SmithHook::typeInfo;
         host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
+        host.read_problem = &SmithHook::readProblem;
+        host.suppress = &SmithHook::suppressUse;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
         }
@@ -752,7 +796,9 @@ class SmithHook final : public TokenHook {
         action.include = true;
         action.angled = angled;
         action.header = header;
-        if (!angled) { // a quoted header is found beside the file that imports it, as #include "h" would
+        if (!angled && self->includePathOf(header, action.header)) {
+            // A module read from its source: its interface is the text of that file, as far as this compile goes.
+        } else if (!angled) { // a quoted header is found beside the file that imports it, as #include "h" would
             llvm::SmallString<256> beside(llvm::sys::path::parent_path(self->mainName));
             llvm::sys::path::append(beside, header);
             if (llvm::sys::fs::exists(beside)) action.header = std::string(beside);
@@ -895,21 +941,222 @@ class SmithHook final : public TokenHook {
         return answer;
     }
 
+    // A module's header on the include path (smith build writes it there), read through the file manager's file system,
+    // so that a relative -I means what it means to the tool that set the working directory: clangd serves many
+    // projects from one process.
+    bool headerOnPath(const std::string &relative) {
+        for (DirectoryLookup &directory : PP.getHeaderSearchInfo().search_dir_range()) {
+            if (!directory.isNormalDir()) continue;
+            std::string path = directory.getName().str() + "/" + relative;
+            auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
+            if (!buffer) continue;
+            headerFile = std::move(*buffer);
+            return true;
+        }
+        return false;
+    }
+
     static bool readHeader(void *context, const char *relative, const char **text, uint32_t *length) {
         auto *self = static_cast<SmithHook *>(context);
-        for (DirectoryLookup &directory : self->PP.getHeaderSearchInfo().search_dir_range()) {
-            if (!directory.isNormalDir()) continue;
-            // Through the file manager's file system, so that a relative -I means what it means to the tool that set
-            // the working directory: clangd serves many projects from one process.
-            std::string path = directory.getName().str() + "/" + relative;
-            auto buffer = self->PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
-            if (!buffer) continue;
-            self->headerFile = std::move(*buffer);
+        self->problem.clear();
+        if (self->headerOnPath(relative)) {
             *text = self->headerFile->getBufferStart();
             *length = self->headerFile->getBufferSize();
             return true;
         }
-        return false;
+        StringRef name(relative);
+        if (!name.consume_back(".h")) return false;
+        Interface *found = self->interfaceOf(name.str());
+        if (found == nullptr || !found->ok) return false;
+        *text = found->text.c_str();
+        *length = found->text.size();
+        return true;
+    }
+
+    static const char *readProblem(void *context) {
+        auto *self = static_cast<SmithHook *>(context);
+        return self->problem.empty() ? nullptr : self->problem.c_str();
+    }
+
+    // ---- A module found by its source
+    //
+    // When `import a::b` finds no a/b.h on the include path, the module's source is looked for: among the .smith files
+    // of the command (SMITH_LANG_INPUTS, which smith cc sets), then at a/b.smith under the root of the importing file's
+    // module. Its interface, what `smith cc --smith-header` would write, is made in memory and served as the header;
+    // nothing is written. The text is given to the file manager as the contents of the source file, so the include that
+    // follows reads it, and the depfile names the source.
+    struct Interface {
+        bool done = false;
+        bool ok = false;
+        bool inProgress = false;
+        std::string source;  // the path found
+        std::string include; // the absolute path to include it by
+        std::string text;
+    };
+    std::map<std::string, Interface> interfaces; // by module path (a/b)
+    std::vector<std::string> roots;              // where a module's path starts: the main file's, and those of the modules found
+    bool rootsMade = false;
+    std::string problem;
+    std::set<unsigned> suppressed;
+    bool filtering = false;
+
+    static std::string moduleFromPath(std::string path) {
+        for (size_t at; (at = path.find('/')) != std::string::npos;) path.replace(at, 1, "::");
+        return path;
+    }
+
+    static std::string modulePath(std::string name) {
+        for (size_t at; (at = name.find("::")) != std::string::npos;) name.replace(at, 2, "/");
+        return name;
+    }
+
+    // The folder a module path is relative to: for module a::b in x/a/b.smith, x; for a file with no module line, its
+    // folder.
+    std::string rootOf(const std::string &file, const std::string &module) {
+        std::string tail = module + ".smith";
+        if (StringRef(file).ends_with(tail)) {
+            StringRef root = StringRef(file).drop_back(tail.size());
+            return root.rtrim('/').str();
+        }
+        return llvm::sys::path::parent_path(file).str();
+    }
+
+    void addRoot(const std::string &root) {
+        for (const std::string &known : roots) {
+            if (known == root) return;
+        }
+        roots.push_back(root);
+    }
+
+    void makeRoots() {
+        if (rootsMade) return;
+        rootsMade = true;
+        if (const char *module = smith_lang_module_name(lang)) {
+            addRoot(rootOf(mainName, modulePath(module)));
+        } else {
+            addRoot(llvm::sys::path::parent_path(mainName).str());
+        }
+    }
+
+    std::vector<std::string> candidates(const std::string &module) {
+        std::vector<std::string> list;
+        std::string tail = module + ".smith";
+        if (const char *inputs = getenv("SMITH_LANG_INPUTS")) {
+            StringRef rest(inputs);
+            while (!rest.empty()) {
+                auto [one, more] = rest.split('\n');
+                rest = more;
+                if (one != mainName && (one == tail || one.ends_with("/" + tail))) list.push_back(one.str());
+            }
+        }
+        makeRoots();
+        for (const std::string &root : roots) list.push_back(root.empty() ? tail : root + "/" + tail);
+        return list;
+    }
+
+    std::string absolute(const std::string &path) {
+        llvm::SmallString<256> full(path);
+        PP.getFileManager().makeAbsolutePath(full);
+        return std::string(full);
+    }
+
+    // The interface of the module at a/b, found by its source, or null (with `problem` set to why).
+    Interface *interfaceOf(const std::string &module) {
+        Interface &entry = interfaces[module];
+        if (entry.inProgress) return nullptr;
+        if (entry.done) {
+            if (!entry.ok && problem.empty()) problem = entry.text;
+            return &entry;
+        }
+        entry.done = true;
+        std::string name = moduleFromPath(module);
+        std::string tried;
+        std::unique_ptr<llvm::MemoryBuffer> source;
+        for (const std::string &path : candidates(module)) {
+            auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
+            if (!buffer) {
+                tried += (tried.empty() ? "`" : ", `") + path + "`";
+                continue;
+            }
+            entry.source = path;
+            source = std::move(*buffer);
+            break;
+        }
+        if (!source) {
+            entry.text = "cannot find module `" + name + "`: no `" + module + ".h` in the include paths, no `" +
+                         module + ".smith` among the input files, and nothing at the path the name implies (" + tried + ")";
+            problem = entry.text;
+            return &entry;
+        }
+        entry.inProgress = true;
+        make(entry, name, *source);
+        entry.inProgress = false;
+        return &entry;
+    }
+
+    void make(Interface &entry, const std::string &name, const llvm::MemoryBuffer &source) {
+        std::string out(smith_lang_interface_capacity(), '\0');
+        char error[512];
+        size_t used = 0;
+        if (!smith_lang_interface(entry.source.c_str(), source.getBufferStart(), source.getBufferSize(), out.data(),
+                                  out.size(), &used, error, sizeof error)) {
+            entry.text = "module `" + name + "` cannot be imported: " + entry.source + ":" + error;
+            problem = entry.text;
+            return;
+        }
+        out.resize(used);
+        entry.include = absolute(entry.source);
+        entry.text = out;
+        entry.ok = true;
+        addRoot(rootOf(entry.source, modulePath(name)));
+        nestedImports(entry);
+        if (entry.include != absolute(mainName)) { // never the contents of the file being compiled
+            if (auto file = PP.getFileManager().getFileRef(entry.include)) {
+                SM.overrideFileContents(*file, llvm::MemoryBuffer::getMemBufferCopy(entry.text, entry.include));
+            }
+        }
+    }
+
+    // What the interface includes of other modules is the source of those, when they too are found by their source.
+    void nestedImports(Interface &entry) {
+        size_t at = entry.text.find("// smith-imports:");
+        if (at == std::string::npos) return;
+        StringRef line = StringRef(entry.text).drop_front(at + 17).take_until([](char c) { return c == '\n'; });
+        SmallVector<StringRef, 8> words;
+        line.split(words, ' ', -1, false);
+        for (StringRef word : words) {
+            std::string path = modulePath(word.str());
+            if (headerOnPath(path + ".h")) continue;
+            Interface *nested = interfaceOf(path);
+            if (nested == nullptr || !nested->ok) continue;
+            std::string from = "#include \"" + path + ".h\"";
+            size_t where = entry.text.find(from);
+            if (where != std::string::npos) entry.text.replace(where, from.size(), "#include \"" + nested->include + "\"");
+        }
+        problem.clear();
+    }
+
+    // The path to include a module by, when its interface came from its source.
+    bool includePathOf(const char *header, std::string &path) {
+        StringRef name(header);
+        if (!name.consume_back(".h")) return false;
+        auto found = interfaces.find(name.str());
+        if (found == interfaces.end() || !found->second.ok || headerOnPath(header)) return false;
+        path = found->second.include;
+        return true;
+    }
+
+    // The uses of a module that could not be imported are kept out of the diagnostics.
+    static void suppressUse(void *context, uint32_t location) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->suppressed.insert(location);
+        if (self->filtering) return;
+        self->filtering = true;
+        DiagnosticsEngine &diagnostics = self->PP.getDiagnostics();
+        DiagnosticConsumer *inner = diagnostics.getClient();
+        if (inner == nullptr) return;
+        std::unique_ptr<DiagnosticConsumer> owned = diagnostics.takeClient();
+        diagnostics.setClient(new Suppressing(std::move(owned), inner, self->suppressed), /*ShouldOwnClient=*/true);
     }
 };
 

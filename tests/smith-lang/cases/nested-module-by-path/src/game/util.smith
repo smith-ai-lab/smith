@@ -1,0 +1,4 @@
+module game::util;
+import lib::text;
+
+export usize twice(const char *s) { return 2 * text::length(s); }
