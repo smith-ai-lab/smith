@@ -189,8 +189,18 @@ static const char *smith_lang_scratch_str(SmithLangText text) {
     return smith_lang_scratch + text.offset;
 }
 
-// The module's prefix and a name, in lang->tmp.
+static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, size_t length);
+
+// The module's prefix and a name, in lang->tmp; or the C name chosen for it, if it has one.
 static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length) {
+    if (lang->c_name_count > 0) {
+        SmithLangName *known = smith_lang_name_find(lang, name, length);
+        if (known != nullptr && known->c_name.length > 0 && known->c_name.length < sizeof lang->tmp) {
+            memcpy(lang->tmp, smith_lang_str(known->c_name), known->c_name.length + 1);
+            lang->tmp_length = known->c_name.length;
+            return lang->tmp;
+        }
+    }
     size_t prefix = strlen(lang->prefix);
     if (prefix + length + 1 > sizeof lang->tmp) {
         lang->broken = true;

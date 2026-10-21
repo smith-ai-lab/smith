@@ -36,6 +36,22 @@ u32 helper(void) { … }                              // private
   - `export` applies to functions, typedefs, struct, union and enum tags, enum constants, `constexpr` constants and
     globals. An export has the symbol `game::replay::open` (an `__asm__` label), so no C name can collide with it.
     `main` stays `main`.
+  - **`[[smith::c_name("Name")]]` before `export` chooses the C name** of the export, for a library that keeps its C
+    API when it becomes a module (`[[smith::c_name("SmithArena")]] export typedef struct {…} Arena;`,
+    `[[smith::c_name("smith_text_parse_f64")]] export bool parse_f64(…)`).
+    - What C sees is exactly that name: the generated header declares `SmithArena`, and the symbol of a function or
+      variable is that name too (no `__asm__` label: `_smith_text_parse_f64` on macOS), so C and C++ call it, define
+      an export that has no body in the module, and link against it as against any C function. Other exports keep the
+      prefixed name and the `::` symbol.
+    - A `.smith` importer still writes the module's name (`arena::Arena`, `text::parse_f64`) and gets the C name: the
+      header's `// smith-names:` line lists `Arena=SmithArena`, which is how the importer's lowering, its diagnostics
+      and its editor know the pair. In the module itself the name is the C name in the generated code.
+    - It goes on the export's first name (the tag, in `export typedef struct S {…} S;`, and the typedef of the same
+      name with it); an enumeration's constants keep the prefixed names. It is a string holding one C identifier.
+    - Errors: a C name another export already has chosen; one that the module's prefix gives another name (a private
+      one included); a name declared later that the prefix would make the same; `[[smith::c_name]]` not followed by
+      `export`; two on one export; an export that declares no typedef, tag, function or variable; a string that is no
+      identifier (or a keyword), or an argument that is no string. It is the only attribute in its `[[ ]]`.
   - A C name used with no `c::` is an error in every `.smith` file, a module or not: a function, a variable, a type,
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
@@ -102,7 +118,7 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
 which is how an import cycle is found, and the exports in a `// smith-names:` line (`// smith-names: Replay version open`),
-which is how an importer knows the names it can write back (see "Names as written"). Both depend on the exports only, so
+which is how an importer knows the names it can write back (see "Names as written"); an export with a chosen C name is listed as `member=CName`. Both depend on the exports only, so
 the header's bytes do not change with an edit to a body, or to the lines above an export (a `#line` for each declaration
 would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
 too; an export with no body is defined against it, in C, by its C name.

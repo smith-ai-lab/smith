@@ -24,6 +24,7 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 
 C and C++ include it (`-I .smith/include`, with the header in the compile's `.implicit_inputs` in build.c so a clean build writes it first) and call `game_replay_open`; no other change. An export with no body is defined in C or C++ against the header, by its C name (`uint64_t game_replay_checksum(...) { … }`, `extern "C"` in C++).
 
+- An export with `[[smith::c_name("Name")]]` is declared as `Name` in the header and its symbol is `Name` (no `__asm__` label), so existing C code that calls `Name`, or defines it for an export with no body, links unchanged. Other exports keep `game_replay_open` and the `::` symbol.
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
 - A header is written without macros or `#if` (only `#if 0` is honoured): keep an export out of a macro.
 - Link C++ with `smith c++`.

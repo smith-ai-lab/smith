@@ -127,6 +127,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
         return smith_lang_act(SmithLangAct_Slow);
     }
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
+    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
     bool slow = false;
     bool wants = smith_lang_wants_static(lang, host, token, may_peek, &slow);
     if (slow) return smith_lang_act(SmithLangAct_Slow);

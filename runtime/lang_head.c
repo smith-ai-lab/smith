@@ -234,7 +234,7 @@ static SmithLangForm smith_lang_form(const SmithLang *lang) {
 }
 
 // extern T name __asm__("sym"); in the header for an exported variable defined with an initializer.
-static void smith_lang_header_variable(SmithLang *lang) {
+static void smith_lang_header_variable(SmithLang *lang, bool labeled) {
     SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
     SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "extern", 6, &first);
     if (!lang->decl.is_extern) smith_lang_emit_header(lang, keyword);
@@ -247,6 +247,10 @@ static void smith_lang_header_variable(SmithLang *lang) {
         smith_lang_emit_header(lang, token);
     }
     SmithToken last = smith_lang_last_of_head(lang);
+    if (!labeled) { // a chosen C name is the symbol: extern T name;
+        smith_lang_emit_header(lang, smith_lang_punct_after(";", &last));
+        return;
+    }
     char label[smith_lang_name_max * 2];
     int length = snprintf(label, sizeof label, "\"%s%s%s\"", smith_lang_symbol_underscore, lang->symbol,
                           smith_lang_scratch_str(lang->head[lang->decl.last_name].original));
@@ -263,6 +267,10 @@ static void smith_lang_header_variable(SmithLang *lang) {
 }
 
 static void smith_lang_end_declaration(SmithLang *lang) {
+    if (lang->decl.c_name.length > 0 && !lang->decl.c_name_used) { // reported by the next token fed (it has the host)
+        lang->unnamed_c_name = true;
+        lang->unnamed_c_name_location = lang->decl.c_name_location;
+    }
     lang->export_active = false;
     lang->state = SmithLangState_Start;
     lang->decl = (SmithLangDecl){0};
@@ -348,6 +356,8 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
     if (lang->decl.exported && lang->decl.declared > 1) {
         smith_lang_error(lang, host, lang->head[0].location, "an exported declaration declares one name; split it");
     }
+    // A chosen C name is the symbol too, as C writes it: no label, so C and C++ define and call it by that name.
+    bool has_c_name = lang->decl.c_name_used && lang->decl.c_name.length > 0;
     bool symbol = lang->decl.exported && form != SmithLangForm_Type && !lang->decl.is_constexpr && !is_main;
     bool private_static =
         lang->is_module && !lang->decl.exported && form != SmithLangForm_Type && !lang->decl.storage && !is_main;
@@ -358,7 +368,7 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         // after it has the tokens of the source.
         lang->emit_synthetic = smith_lang_punct(terminator, "{");
         smith_lang_emit_head(lang, host, true, false);
-        smith_lang_emit_label(lang, host, &like, true);
+        if (!has_c_name) smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));
         lang->emit_synthetic = false;
         lang->export_active = false;
@@ -371,10 +381,10 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
             return;
         }
     } else if (symbol && form == SmithLangForm_Variable) {
-        smith_lang_header_variable(lang);
+        smith_lang_header_variable(lang, !has_c_name);
         lang->export_active = false;
         smith_lang_emit_head(lang, host, false, false);
-        smith_lang_emit_label(lang, host, &like, false);
+        if (!has_c_name) smith_lang_emit_label(lang, host, &like, false);
     } else {
         smith_lang_emit_head(lang, host, true, private_static);
     }

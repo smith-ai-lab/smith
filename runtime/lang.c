@@ -33,6 +33,7 @@ constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 constexpr size_t smith_lang_transitive_max = 32;
+constexpr size_t smith_lang_cnames_max = 1024; // exports of imported modules that have a C name of their own
 
 typedef enum {
     SmithLangWord_Other,
@@ -82,7 +83,8 @@ typedef struct {
     SmithLangText name;
     SmithLangNameKind kind;
     bool exported;
-    uint32_t location; // of the declaration's name in the source, in the host's own measure
+    uint32_t location;    // of the declaration's name in the source, in the host's own measure
+    SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
 } SmithLangName;
 
 // A name the compiler sees, and how the source writes it (runtime/lang_names.c).
@@ -91,8 +93,16 @@ typedef struct {
     SmithLangText written;  // box::Box (Box in the module itself)
     SmithLangText module;   // geometry::box
     uint16_t prefix_length; // of lowered: what is left is the member
+    SmithLangText member;   // the member, when lowered is a chosen C name and not prefix + member (length 0: derived)
     bool direct;
 } SmithLangWritten;
+
+// An export of an imported module that has a C name of its own: the name the prefix and the member would make, and the
+// name the module's header gives it.
+typedef struct {
+    SmithLangText fallback;
+    SmithLangText c_name;
+} SmithLangCName;
 
 typedef struct {
     SmithLangText name;
@@ -141,6 +151,9 @@ typedef struct {
     bool prev_tag;        // the token before was struct, union or enum
     bool static_inserted; // `static` was written before the first token, so a later one is dropped
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
+    SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    uint32_t c_name_location;
+    bool c_name_used; // a name this declaration introduces took it
 } SmithLangDecl;
 
 struct SmithLang {
@@ -150,8 +163,16 @@ struct SmithLang {
     bool finished;
     const char *main_file;
     size_t header_full_used;
-    size_t pending;      // the held identifier waiting for the token after it (SIZE_MAX: none)
-    bool pending_export; // `export` was read, and the declaration it applies to is next
+    size_t pending;               // the held identifier waiting for the token after it (SIZE_MAX: none)
+    bool pending_export;          // `export` was read, and the declaration it applies to is next
+    SmithLangText pending_c_name; // [[smith::c_name("...")]] was read: the export after it has that C name
+    uint32_t pending_c_name_location;
+    bool pending_c_name_line; // the attribute was the first token of its line
+    bool unnamed_c_name;      // an export ended that took no name from its [[smith::c_name]]
+    uint32_t unnamed_c_name_location;
+    size_t c_name_count; // how many of the module's own names have a C name chosen
+    SmithLangCName cnames[smith_lang_cnames_max];
+    size_t cnames_count;
     uint32_t bracket_depth;
     char prev_name[64]; // the last token, if it was a plain name: it may be a type the parser knows
     size_t prev_name_length;
@@ -175,14 +196,14 @@ struct SmithLang {
     bool in_function;     // inside a function body: nothing declared here is the module's
     bool agg_pending;     // struct, union or enum seen, `{` not yet
     bool enum_pending;
-    bool init_top;          // an initializer at file scope is being read
-    bool tail_declarator;   // after an aggregate's `}` or a comma: names are declarators
-    uint32_t typedef_depth; // the brace depth the typedef statement began at
-    bool in_attribute;      // inside [[ ]]: gnu::unused is no module path
+    bool init_top;             // an initializer at file scope is being read
+    bool tail_declarator;      // after an aggregate's `}` or a comma: names are declarators
+    uint32_t typedef_depth;    // the brace depth the typedef statement began at
+    bool in_attribute;         // inside [[ ]]: gnu::unused is no module path
     uint32_t attribute_parens; // inside the parentheses of __attribute__(( )): format(printf, 1, 2)
     bool attribute_next;       // __attribute__ was the last token: its parenthesis opens the arguments
-    bool statement_typedef; // `typedef` seen in this statement
-    uint8_t own_words;      // module, import or export, typedef'd by this file: they are names, not keywords
+    bool statement_typedef;    // `typedef` seen in this statement
+    uint8_t own_words;         // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.
     bool prev_member;
     bool prev_tag;

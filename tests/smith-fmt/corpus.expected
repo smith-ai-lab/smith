@@ -1,3 +1,72 @@
+==> attribute-c-names/src/log/fmt.smith <==
+module log::fmt;
+import <stdio.h>;
+import <stdarg.h>;
+
+// An attribute's argument is the attribute's own word: `printf` here is no use of the C function.
+[[gnu::format(printf, 1, 2)]] int private_say(const char *format, ...) {
+    c::va_list args;
+    c::va_start(args, format);
+    int n = c::vprintf(format, args);
+    c::va_end(args);
+    return n;
+}
+
+export [[gnu::format(printf, 1, 2)]] int say(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+export __attribute__((format(printf, 1, 2))) int said(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+[[gnu::format(scanf, 2, 3)]] int private_scan(int fd, const char *format, ...);
+==> attribute-c-names/src/main.smith <==
+module main;
+import log::fmt;
+import <stdio.h>;
+
+int main(void) {
+    fmt::say("%d\n", 7);
+    fmt::said("done\n");
+    c::printf("%d\n", 1);
+    return 0;
+}
+==> c-name/src/smith/arena.smith <==
+module smith::arena;
+
+// A C API that keeps its names: the module's prefix would make smith_arena_Arena of these.
+[[smith::c_name("SmithArena")]] export typedef struct {
+    u64 used;
+    u64 capacity;
+} Arena;
+
+[[smith::c_name("smith_arena_create")]] export Arena make(u64 capacity) {
+    return (Arena){.used = 0, .capacity = capacity};
+}
+
+// No C name: the module's prefix, as before.
+export u64 take(Arena *arena, u64 size) {
+    if (arena->used + size > arena->capacity) return 0;
+    arena->used += size;
+    return arena->used;
+}
+
+[[smith::c_name("smith_arena_limit")]] export u64 limit = 4096;
+
+// Defined in C, by its C name.
+[[smith::c_name("smith_arena_checksum")]] export u64 checksum(const u8 *data, usize size);
+==> c-name/src/smith/text.smith <==
+module smith::text;
+import smith::arena;
+
+// A .smith importer writes the module's names, and gets the C names.
+export u64 fill(u64 capacity) {
+    arena::Arena a = arena::make(capacity);
+    arena::take(&a, 10);
+    const u8 bytes[3] = {1, 2, 3};
+    return arena::take(&a, 5) + arena::checksum(bytes, 3) + arena::limit;
+}
 ==> compile-alone-by-path/src/foo.smith <==
 module foo;
 
@@ -60,6 +129,68 @@ export int size_ok(void) {
     struct c::stat info;
     return (int)sizeof info;
 }
+==> error-c-name/src/smith/names.smith <==
+module smith::names;
+
+[[smith::c_name("smith_names_one")]] export int first(void) {
+    return 1;
+}
+
+// the same C name twice
+[[smith::c_name("smith_names_one")]] export int second(void) {
+    return 2;
+}
+
+// the name the prefix makes of an export with no C name
+[[smith::c_name("smith_names_plain")]] export int third(void) {
+    return 3;
+}
+export int plain(void) {
+    return 4;
+}
+
+// the name the prefix makes of a private one, declared first
+int hidden(void) {
+    return 5;
+}
+[[smith::c_name("smith_names_hidden")]] export int fourth(void) {
+    return 6;
+}
+
+// a chosen name that a later declaration would also get
+[[smith::c_name("smith_names_later")]] export int fifth(void) {
+    return 7;
+}
+int later(void) {
+    return 8;
+}
+
+// not an export
+[[smith::c_name("smith_names_private")]] int sixth(void) {
+    return 9;
+}
+
+// not a C identifier, not a keyword, not a string, nor the only thing in the attribute
+[[smith::c_name("not an identifier")]] export int seventh(void) {
+    return 10;
+}
+[[smith::c_name("int")]] export int eighth(void) {
+    return 11;
+}
+[[smith::c_name(ninth)]] export int ninth(void) {
+    return 12;
+}
+[[smith::c_name("a"), gnu::unused]] export int tenth(void) {
+    return 13;
+}
+
+// two on one export
+[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh(void) {
+    return 14;
+}
+
+// an export that declares nothing a C name could name
+[[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {
     return 1;

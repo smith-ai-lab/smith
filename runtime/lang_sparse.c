@@ -53,8 +53,8 @@ static bool smith_lang_sparse_member(SmithLang *lang, const SmithHost *host) {
 
 // Inside [[ ]], where gnu::unused is no module path, or inside the arguments of __attribute__(( )).
 static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host) {
-    unsigned closed = 0;   // parentheses closed on the way back
-    unsigned unmatched = 0; // parentheses open around the token
+    unsigned closed = 0;                        // parentheses closed on the way back
+    unsigned unmatched = 0;                     // parentheses open around the token
     for (unsigned back = 1; back < 8; back++) { // the host remembers eight
         SmithToken before;
         if (!smith_lang_previous(lang, host, back, &before)) return false;
