@@ -438,6 +438,70 @@ module num;
 export T add(type T, T a, T b) {
     return a + b;
 }
+==> generic-call-too-deep/src/main.smith <==
+import num;
+
+int main(void) {
+    int x = num::id(
+        i32,
+        num::id(
+            i32,
+            num::id(
+                i32,
+                num::id(
+                    i32,
+                    num::id(
+                        i32,
+                        num::id(
+                            i32,
+                            num::id(
+                                i32,
+                                num::id(
+                                    i32,
+                                    num::id(
+                                        i32,
+                                        num::id(
+                                            i32,
+                                            num::id(
+                                                i32,
+                                                num::id(i32,
+                                                        num::id(i32,
+                                                                num::id(i32,
+                                                                        num::id(i32,
+                                                                                num::id(i32,
+                                                                                        num::id(i32, 1)))))))))))))))));
+    return x;
+}
+==> generic-call-too-deep/src/num.smith <==
+module num;
+
+export T id(constexpr type T, T x) {
+    return x;
+}
+==> generic-call-unclosed-statement/src/main.smith <==
+import num;
+
+int main(void) {
+    int x = num::id(i32, 1;
+    int y = num::id(i32, 2);
+    return x + y;
+}
+==> generic-call-unclosed-statement/src/num.smith <==
+module num;
+
+export T id(constexpr type T, T x) {
+    return x;
+}
+==> generic-call-unclosed/src/main.smith <==
+import num;
+
+int x = num::id(i32, 1
+==> generic-call-unclosed/src/num.smith <==
+module num;
+
+export T id(constexpr type T, T x) {
+    return x;
+}
 ==> generic-call/src/arena.smith <==
 module arena;
 

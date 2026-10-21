@@ -98,6 +98,7 @@ typedef struct {
     uint32_t count; // smith_lang_gt.count and text_used when it began
     uint32_t text;
     int depth;
+    uint64_t braces; // per open bracket (bit 0 is the first): a `{`, else a `(` or `[`
 } SmithLangCallFrame;
 
 typedef struct {
@@ -278,6 +279,7 @@ struct SmithLang {
     uint32_t cap_frames;                                  // calls being read: their tokens are kept, not written
     SmithLangCallFrame calls[smith_lang_call_frames_max]; // the calls being read, the innermost last
     size_t call_top;
+    bool call_failed;           // a call nested too deep: the outermost is dropped
     bool recording;             // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic; // its index
     bool recording_skip;        // its head had an error: the body is read to its end and dropped
