@@ -43,7 +43,7 @@ On first use smith unpacks clang's builtin headers and runtimes to `~/.local/sha
 ### A new project
 
 ```
-$ smith new hello && cd hello && smith run
+$ smith new hello
   created  .clang-format
   created  .clang-tidy
   created  .claude/settings.json
@@ -51,7 +51,7 @@ $ smith new hello && cd hello && smith run
   ...
 smith new: hello: 11 created, 0 kept
   git: created a repository on main with one commit
-$ smith run
+$ cd hello && smith run
 [1/1] build/debug/hello
 the first 5 primes add up to 28
 hello from hello
