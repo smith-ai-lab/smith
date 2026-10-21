@@ -134,7 +134,11 @@ expect_contains "checkers: ... with a counterexample" "$out" "counterexample: "
 # 9. Nothing to prove, and the counts of a run.
 printf 'int main(void) { return 0; }\n' >"$work/plain.c"
 prove "$work/plain.c"
-expect_contains "no contract: nothing is proved, and it says so" "$out" "no function with smith_requires"
+expect_contains "no contract: nothing is proved, and it says so" "$out" "nothing to prove: no function with smith_requires"
+expect "no contract: and that is a success" 0 "$rc"
+prove --function=nothing "$work/plain.c"
+expect_contains "--function that matches nothing says so" "$out" "by that name"
+expect "--function that matches nothing fails" 1 "$rc"
 
 echo
 echo "$total prove checks, $failures failed"
