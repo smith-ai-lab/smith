@@ -65,7 +65,7 @@ Whatever the writers produce, the parsers read back exactly: every u64, i64 and 
 text needs nothing else. smith writes the header and the source into `.smith/` on every `smith build`:
 
 ```c
-SmithObject text = {.compiler = "smith", .source = smith_library(b, "text"), .output = "build/smith/text.o", .flags = flags};
+SmithObject text = {.compiler = "smith-cc", .source = smith_library(b, "text"), .output = "build/smith/text.o", .flags = flags};
 smith_object(b, &text);
 ```
 

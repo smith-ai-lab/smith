@@ -1736,7 +1736,7 @@ test: build/tests
 
 **ninja**
 ```ninja
-# What smith writes for: smith build test -DTEST=name -DSEED=42
+# What smith writes for: smith test --test name --seed 42
 rule cc
   command = clang $in -o $out
 rule task
@@ -1747,8 +1747,8 @@ build .smith/task/test: task build/tests
   cmd = ./build/tests --test name --seed 42
 build test: phony .smith/task/test
 default build/tests
-# For: smith build test        the same file with   cmd = ./build/tests
-# For: smith build test -DSEED=7                    cmd = ./build/tests --seed 7
+# For: smith test              the same file with   cmd = ./build/tests
+# For: smith test --seed 7                          cmd = ./build/tests --seed 7
 ```
 This block was updated to the v1 decisions (the task edge and the default) and not rerun.
 
@@ -1800,7 +1800,7 @@ void build(SmithBuild *b) {
     smith_default(b, tests.outputs);
 }
 ```
-(A task runs every time it is asked for, so `smith build test` reruns the tests with no `.always`, as in the ninja
+(A task runs every time it is asked for, so `smith test` reruns the tests with no `.always`, as in the ninja
 above. The default builds `build/tests` and does not run the tests.)
 
 **Verified:** make: `make test` ran `./build/tests` with no arguments (printing `tests:`), again with `TEST=name SEED=42` printed `--test name --seed 42`, with only `SEED=7` printed `--seed 7`, and a plain `make test` afterwards printed `tests:` again. Each run reran the test and did not recompile. ninja: five runs of `ninja -f <file> test` over files for no options, no options, both options, `SEED` only, no options: the first built `build/tests` and ran; every later run ran the task alone with exactly the argument words of its file (nothing for unset), including the second identical run, because `test` is an edge whose output is never created. Setting a value in the command line changes the command, which is the only thing that differs between runs. A folder named `test` did not stop the task from running in ninja 1.13.2 (tried), but I did not establish that it never matters; a safer form, which also worked, is an edge with output `task/test` plus `build test: phony task/test`. smith writes that form, with the output under `.smith/task/`. Zig 0.17.0 (the snippet ran unchanged, then without the `has_side_effects` line): `zig build test` printed `tests:`; `zig build test -DTEST=name -DSEED=42` printed `tests: --test name --seed 42`; `-DSEED=7` printed `tests: --seed 7`; the same again and a plain `zig build test` each ran the test again (`success`, never `cached`); `tests` compiled once (`cached` afterwards). `zig build -h` lists `-DTEST=[string]` and `-DSEED=[string]` with the descriptions. Without the `has_side_effects` line the behaviour was identical. (In a shell the two options must be separate words.)
@@ -1813,7 +1813,7 @@ Five behaviours to specify, none a signature:
    the `-D` arguments of that call, so the manifest always matches them.
 3. A changed value reruns only what uses it: only the option's use sites differ, so ninja reruns exactly the steps whose
    command text changed.
-4. A task runs every time it is asked for, so no field is needed to make `smith build test` rerun the tests. A task
+4. A task runs every time it is asked for, so no field is needed to make `smith test` rerun the tests. A task
    cannot have `.always`.
 5. A `-D` that `build.c` never declared is an error that lists the declared options with their descriptions.
 
