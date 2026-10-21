@@ -12,7 +12,7 @@
 #include "../lib/arena.c"
 #include "../lib/io.c"
 #include "../lib/json.c"
-#include "../lib/random.c"
+#include "../bootstrap/lib/smith/random.c"
 #include "../runtime/protocol/dap.c"
 #include "../runtime/protocol/mcp.c"
 #include "../runtime/protocol/protocol.c"
