@@ -40,7 +40,7 @@ constexpr size_t smith_io_chunk = 4096;
 constexpr int smith_io_folder_mode = 0b111111111; // rwxrwxrwx, before the umask
 constexpr int smith_io_file_mode = 0b110100100;   // rw-r--r--, before the umask
 constexpr uint64_t smith_io_nanoseconds = 1'000'000'000;
-constexpr size_t smith_io_fake_servers_max = 16;
+constexpr size_t smith_io_fake_servers_max = 64;
 constexpr size_t smith_io_request_max = 8192;
 constexpr uintptr_t smith_io_wakeup = 1; // the ident of the loop's EVFILT_USER event
 constexpr size_t smith_net_cas_tries = (size_t)1 << 20;
@@ -1387,17 +1387,17 @@ static const char *smith_net_tls_reason(int status) {
 }
 
 // A Network.framework error as a SmithError, with the connection's host in the message.
-static SmithError smith_net_error(const SmithNetApi *api, nw_error_t error, const char *name) {
+static SmithError smith_net_error(const SmithNetApi *api, nw_error_t error, const char *verb, const char *name) {
     int code = api->error_code(error);
     switch (api->error_domain(error)) {
     case nw_error_domain_posix:
-        return smith_error_make(code, "connect", name);
+        return smith_error_make(code, verb, name);
     case nw_error_domain_dns:
-        return smith_error_text(ENOENT, "connect %s: cannot find the host (DNS error %d)", name, code);
+        return smith_error_text(ENOENT, "%s %s: cannot find the host (DNS error %d)", verb, name, code);
     case nw_error_domain_tls:
-        return smith_error_text(EAUTH, "connect %s: TLS: %s (status %d)", name, smith_net_tls_reason(code), code);
+        return smith_error_text(EAUTH, "%s %s: TLS: %s (status %d)", verb, name, smith_net_tls_reason(code), code);
     default:
-        return smith_error_text(EIO, "connect %s: network error %d", name, code);
+        return smith_error_text(EIO, "%s %s: network error %d", verb, name, code);
     }
 }
 
@@ -1416,7 +1416,7 @@ static void smith_net_on_state(SmithLoop *loop, SmithConnection *connection, nw_
     if (state == nw_connection_state_ready) {
         smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect, (SmithError){});
     } else if (error != nullptr && (state == nw_connection_state_failed || state == nw_connection_state_waiting)) {
-        SmithError failure = smith_net_error(api, error, connection->internal.name);
+        SmithError failure = smith_net_error(api, error, "connect", connection->internal.name);
         smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect, failure);
         smith_net_finish_slot(loop, connection, SmithOpKind_NetSend, failure);
         smith_net_finish_slot(loop, connection, SmithOpKind_NetReceive, failure);
@@ -1480,7 +1480,7 @@ static void smith_net_received(SmithLoop *loop, SmithConnection *connection, dis
     op->size = smith_net_copy(content, op->internal.destination, op->internal.capacity);
     op->data = (const char *)op->internal.destination;
     SmithError failure = {};
-    if (error != nullptr) failure = smith_net_error(&loop->net_api, error, connection->internal.name);
+    if (error != nullptr) failure = smith_net_error(&loop->net_api, error, "read", connection->internal.name);
     if (complete && error == nullptr) connection->internal.end = true;
     op->end = connection->internal.end && op->size == 0;
     smith_net_finish(loop, op, failure);
@@ -1509,7 +1509,7 @@ static void smith_net_send_real(SmithLoop *loop, SmithOp *op, SmithConnection *c
         dispatch_data_create(op->internal.input, op->size, loop->net_queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     api->send(connection->internal.handle, data, *api->context_message, true, ^(nw_error_t error) {
         SmithError failure = {};
-        if (error != nullptr) failure = smith_net_error(&loop->net_api, error, connection->internal.name);
+        if (error != nullptr) failure = smith_net_error(&loop->net_api, error, "write", connection->internal.name);
         smith_net_finish_slot(loop, connection, SmithOpKind_NetSend, failure);
     });
     dispatch_release(data);

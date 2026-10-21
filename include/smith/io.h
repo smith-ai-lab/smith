@@ -392,7 +392,8 @@ typedef struct {
 // most chunk bytes when chunk is not 0, and then either closes cleanly or, when error is not 0, fails the next receive
 // with that errno. With tls_failure the connect fails with EAUTH and that message instead. A connection to a host with
 // no server is ECONNREFUSED. Once any server is added the real io is scripted too: its files, console and clock stay
-// real, and no connection goes out to the network. This is how a test of code that downloads runs on a real disk.
+// real, and no connection goes out to the network. This is how a test of code that downloads runs on a real disk. Up to
+// 64 servers.
 typedef struct {
     const char *host;
     uint16_t port;

@@ -111,6 +111,8 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                        "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/io.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/http.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/http.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/random.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/random.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
@@ -119,7 +121,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                        "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
                                        "\"$@\" -std=gnu2y -I include %s || exit 1; done",
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                              "sh", nullptr},
             cflags, nullptr),
         .inputs = llvm,
@@ -149,6 +151,9 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "include/smith/io.h",
                                                   "lib/io.c",
                                                   "tests/io.c",
+                                                  "include/smith/http.h",
+                                                  "lib/http.c",
+                                                  "tests/http.c",
                                                   "include/smith/random.h",
                                                   "lib/random.c",
                                                   "tests/random.c",
@@ -281,7 +286,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
         .command =
             (const char *[]){"sh", "-c",
                              // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                             "for t in run build new arena io random cache untar test; do env \"$0\" sh tests/$t.sh "
+                             "for t in run build new arena io http random cache untar test; do env \"$0\" sh tests/$t.sh "
                              "\"$1\" || exit 1; done; "
                              "env \"$0\" sh tests/test.sh \"$1\" isolate",
                              smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
