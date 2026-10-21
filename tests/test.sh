@@ -1201,7 +1201,7 @@ fi
 
 # 10. Failure reports: a failure is a stack of addresses, and smith turns it into the failing line and the call chain.
 # The plain-function checks print no file and line themselves, so the runner on its own prints the raw trace; smith
-# symbolize (and smith build test, which pipes the runner through it) reads the source.
+# symbolize (and smith test, which pipes the runner through it) reads the source.
 project "$work/reports"
 cat >tests/test_reports.c <<'C'
 #include <smith/test.h>
@@ -1294,8 +1294,8 @@ expect_contains "raw: a failed check_same_bits shows the bits" "$out" "    a = 0
 expect "reports: --list sees the new tests" yes "$(build/tests --list | grep -q segfault && echo yes)"
 
 if "$smith" symbolize --available; then
-    sym() { # test name: the report smith build test prints
-        capture "$smith" build test $isod -DSAN=0 -DTEST="$1"
+    sym() { # test name: the report smith test prints
+        capture "$smith" test $iso -DSAN=0 --test "$1"
         printf '%s\n%s\n' "$out" "$err"
     }
     line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
@@ -1364,7 +1364,7 @@ void test_objc_fails(void) {
 }
 M
     line=$(line_of tests/test_objc.m 'smith_check(value > 0);')
-    capture "$smith" build test $isod -DSAN=0
+    capture "$smith" test $iso -DSAN=0
     expect_contains "objc: a check inside a method names the line" "$out$err" "  check failed at tests/test_objc.m:$line"
     expect_contains "objc: ... and the method is in the chain" "$out$err" "-[Probe requirePositive:]"
     expect_contains "objc: ... called from the test" "$out$err" "test_objc_fails"
@@ -1373,7 +1373,7 @@ M
     # The Apple linker, in place of lld: the same debug map.
     rm -f build/tests
     line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
-    capture env SMITH_LINKER=/usr/bin/ld "$smith" build test $isod -DSAN=0 -DTEST=check_fails
+    capture env SMITH_LINKER=/usr/bin/ld "$smith" test $iso -DSAN=0 --test check_fails
     expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.c:$line"
     rm -f build/tests
 
@@ -1460,7 +1460,7 @@ void test_requires_holds(void) {
     smith_check_equal_i32(halve(8), 4);
 }
 C
-    capture "$smith" build test $isod -DSAN=0
+    capture "$smith" test $iso -DSAN=0
     line=$(line_of tests/test_contracts.c 'smith_requires(value % 2 == 0);')
     expect_contains "contract: a failed smith_requires names its line" "$out$err" "  requires failed at tests/test_contracts.c:$line"
     expect_contains "contract: ... shows the source" "$out$err" "$line |     smith_requires(value % 2 == 0);"
@@ -1500,13 +1500,13 @@ void test_signed_overflow(void) {
 }
 C
     line=$(line_of tests/test_overflow.c 'return values[count];')
-    capture "$smith" build test $isod -DTEST=overflow
+    capture "$smith" test $iso --test overflow
     expect_contains "asan: the report's innermost user frame is named" "$out$err" "in read_past "
     expect_contains "asan: ... with its line" "$out$err" "tests/test_overflow.c:$line"
     expect_contains "asan: ... and the caller's" "$out$err" "in test_overflow "
     expect_lacks "asan: ... with no module offsets, which atos gives without a dSYM" "$out$err" "tests:arm64+0x"
     line=$(line_of tests/test_overflow.c 'volatile int more = big + 1;')
-    capture "$smith" build test $isod -DTEST=signed_overflow
+    capture "$smith" test $iso --test signed_overflow
     expect_contains "ubsan: the report names the line" "$out$err" "tests/test_overflow.c:$line"
 fi
 cd "$work/main" || exit 1

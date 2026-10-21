@@ -266,9 +266,7 @@ expect "the name clang acts as smith cc" "$(lines "clang argv0=$cl" '[-c]' '[a.c
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/driver/clang++" -c a.cpp
 expect "the name clang++ acts as smith c++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
-# prove and dbg are not available yet: they say so, and name the issue.
-capture "$smith" prove
-expect "prove: not available yet" "smith: prove is not available yet (issue #8)" "$err"
+# dbg is not available yet: it says so, and names the issue.
 capture "$smith" dbg
 expect "dbg: not available yet" "smith: dbg is not available yet (issue #7)" "$err"
 

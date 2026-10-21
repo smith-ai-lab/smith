@@ -73,8 +73,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   clang-tidy). There is no second list of what a project is: the build file defines the targets, as it defines
   everything, and `smith_tests` already names `test`. `smith run` and `smith test` give their arguments (not their `-D`
   options) to the task through `smith_args(b)`: the program's for `run`, the test runner's own options for `test`
-  (`--test`, `--seed`, `--jobs`, `--full`, ...). `smith prove` and `smith dbg` come with issues #8 and #7 and say so
-  until then (a row of the verb table in `smith.c`). The verbs are not targets of `smith build`: `smith build test`
+  (`--test`, `--seed`, `--jobs`, `--full`, ...). `smith prove` is the prover with arguments and the project's `prove` task with none;
+  `smith dbg` comes with issue #7 and says so until then (a row of the verb table in `smith.c`). The verbs are not targets of `smith build`: `smith build test`
   is refused with a pointer to `smith test`, so each thing has one way.
 - **smith compiles in its own process**, by running clang's own `clang_main` on the arguments (`shim/clang.cpp`), so
   every flag, diagnostic, exit status, signal and crash report is clang's, and so are pipes. `SMITH_CLANG` runs an
@@ -186,7 +186,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 ## How to work
 
 - Load the [smith-development skill](.agents/skills/smith-development/SKILL.md) for any change to smith itself.
-- Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
+- Load the [smith skill](.agents/skills/smith/SKILL.md), the map, when using smith; it names the small skills for the compiler ([smith-cc](.agents/skills/smith-cc/SKILL.md)), `run` and `test` ([smith-run-test](.agents/skills/smith-run-test/SKILL.md)) and `check`, `fmt`, `lint` and `lsp` ([smith-check](.agents/skills/smith-check/SKILL.md)). They ship in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build

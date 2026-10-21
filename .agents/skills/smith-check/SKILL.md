@@ -1,0 +1,29 @@
+---
+name: smith-check
+description: "smith check, smith fmt, smith lint and smith lsp: checking a project, formatting with .clang-format, clang-tidy with .clang-tidy, the editor and clangd. Load before committing, when a check fails, on 'code should be clang-formatted', clang-tidy findings, or when setting up an editor or the Claude Code language server for C."
+---
+
+# smith check, fmt, lint and lsp
+
+This skill ships in the smith plugin, from `.agents/skills/smith-check/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+
+`smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, linked into smith from the same LLVM as the compiler, so every machine formats and lints alike.
+
+## On the project: no arguments
+
+- `smith fmt` runs the project's `fmt` task: it rewrites the sources to `.clang-format`.
+- `smith lint` runs the `lint` task: clang-tidy with `.clang-tidy` over the sources, with the flags the build uses.
+- `smith check` runs the `check` alias: everything that must pass before a change is done (format, lint, tests, and what the project adds). It takes no arguments but `-D` options.
+- Before committing: `smith fmt`, then `smith check`. A project without these tasks gets `build.c defines no task or alias named check`; `smith new` writes them.
+- `smith build check` and the other verb names are refused: use the verb.
+
+## On files: with arguments
+
+With arguments they are the tools, unchanged: `smith fmt -i main.c`, `smith fmt --dry-run --Werror main.c`, `smith lint --quiet main.c -- <flags>`, `smith lsp --check=main.c`. A project's `.clang-format` and `.clang-tidy` apply. A stage0 smith runs Homebrew's tools, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`, `$SMITH_CLANGD`.
+
+## The editor
+
+- Point clangd at the command `smith lsp`, with no `--query-driver` (with it clangd cannot build the SDK's modules). It reads the project's `compile_commands.json`, which `smith build` writes, whose commands name `smith-cc`.
+- VS Code: `"clangd.path": "smith", "clangd.arguments": ["lsp"]`. Neovim: `vim.lsp.config('clangd', { cmd = { 'smith', 'lsp' } })`. Helix: `command = "smith"`, `args = ["lsp"]`. Zed: `"lsp": {"clangd": {"binary": {"path": "smith", "arguments": ["lsp"]}}}`. Emacs eglot: `("smith" "lsp")` for c-mode, c++-mode, objc-mode.
+- Claude Code: the smith plugin declares `smith lsp` for `.c`, `.h`, `.m`, `.mm`, `.cpp`, `.cc` and `.hpp`, so an agent gets definitions, references, symbols and diagnostics after each edit. `smith` must be on the PATH of the shell that starts Claude Code; disable the official `clangd-lsp` plugin if both are on.
+- clangd keeps its index in `.cache/clangd`; "Error while reading shard" once after a Homebrew clangd is harmless (delete the folder to start clean).

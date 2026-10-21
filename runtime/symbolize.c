@@ -2,7 +2,7 @@
 // line and the call chain. Included by smith.c.
 //
 // One filter does the work wherever output passes through smith: it copies its input, and replaces each block of
-// `smith-trace` lines with a report. `smith build test` pipes the test runner through it; `smith symbolize` runs it on
+// `smith-trace` lines with a report. `smith test` pipes the test runner through it; `smith symbolize` runs it on
 // a file or on standard input (a log, a crash report) with the binary named when the trace's own path is gone. The
 // lookups are in shim/symbolize.cpp (LLVM's symbolizer); this file has the parsing, the choice of the failing frame
 // and the text. Without the shim (the stage0 has no LLVM) `smith symbolize` says so.

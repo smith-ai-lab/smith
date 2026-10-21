@@ -45,7 +45,8 @@ day:
 | `smith check` | runs the alias `check`: every check that must pass | refused |
 | `smith fmt` | runs the task `fmt`: rewrites the project's sources | clang-format, with its arguments unchanged |
 | `smith lint` | runs the task `lint`: clang-tidy over the project's sources | clang-tidy, with its arguments unchanged |
-| `smith prove`, `smith dbg` | not available yet (issues #8 and #7) | |
+| `smith prove` | runs the task `prove` | the prover, with its arguments |
+| `smith dbg` | not available yet (issue #7) | |
 
 **A verb is a target named like it.** There is no new way to describe a project: `build.c` defines the task or alias
 that a verb runs, with the calls it already has (`smith_task`, `smith_alias`, `smith_tests`), and the verb builds and

@@ -32,7 +32,7 @@
 //
 // The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
 // call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
-// into files, lines and source text, so a check needs no macro to capture its text or its place. `smith build test`
+// into files, lines and source text, so a check needs no macro to capture its text or its place. `smith test`
 // prints the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
 //
 //   smith_check(condition)                 fails the test when the condition is false
