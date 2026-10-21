@@ -145,3 +145,11 @@ unsigned smith_lang_errors(const SmithLang *lang);
 const char *smith_lang_header(const SmithLang *lang, size_t *length);
 // The lowered text of the file, when SMITH_LANG_DUMP names a file to write it to.
 void smith_lang_finish(SmithLang *lang);
+
+// A C keyword that follows a complete type (a sized type name) and cannot continue its specifiers is the program's name
+// for something: `i32 double(i32 x)`. Hosts that read the text report it themselves, once, at the name, with
+// smith_lang_keyword_message; what it names is read from the text around it (null: it is no name). Plain functions of
+// text, with no state.
+bool smith_lang_misused_keyword(const char *text, size_t length);
+const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t start, size_t end);
+size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keyword, size_t length, const char *noun);

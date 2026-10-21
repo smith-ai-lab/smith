@@ -277,6 +277,47 @@ static int smith_lang_write_header(const char *path, const char *bytes, size_t l
     return 0;
 }
 
+// The keyword-as-name check of a file read without a compiler (the compiler's host does the same by itself): a keyword
+// that follows a sized type name (and `*` or a qualifier after it) is reported at the name and fed as an identifier
+// instead, so that nothing after it is read wrongly.
+typedef struct {
+    unsigned after_sized; // tokens left to look at: the previous ones were a sized type name, `*` and qualifiers
+    SmithToken before;    // the token before
+    char renamed[128];
+    unsigned errors;
+} SmithRawNames;
+
+static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken *token) {
+    bool after_member = smith_lang_punct(&names->before, ".") || smith_lang_punct(&names->before, "->") ||
+                        (names->before.kind == SmithTokenKind_Identifier &&
+                         smith_lang_word(names->before.text, names->before.length) == SmithLangWord_Tag);
+    if (token->kind != SmithTokenKind_Identifier) {
+        names->after_sized = smith_lang_punct(token, "*") && names->after_sized > 1 ? names->after_sized - 1 : 0;
+        names->before = *token;
+        return;
+    }
+    SmithLangWord word = smith_lang_word(token->text, token->length);
+    if (names->after_sized > 0 && smith_lang_misused_keyword(token->text, token->length)) {
+        size_t start = (size_t)token->location;
+        const char *noun = smith_lang_keyword_name_use(smith_lang_source, raw->length, start, start + token->length);
+        if (noun != nullptr && token->length + 2 < sizeof names->renamed) {
+            char message[smith_lang_message_max];
+            if (smith_lang_keyword_message(message, sizeof message, token->text, token->length, noun) > 0) {
+                smith_raw_error(raw, token->location, message);
+            }
+            names->errors += 1;
+            memcpy(names->renamed, token->text, token->length);
+            names->renamed[token->length] = '_';
+            names->renamed[token->length + 1] = 0;
+            token->text = names->renamed;
+            token->length += 1;
+        }
+    }
+    names->after_sized = names->after_sized > 1 && word == SmithLangWord_Qualifier ? names->after_sized - 1 : 0;
+    if (smith_lang_find_sized(token->text, token->length) != nullptr && !after_member) names->after_sized = 8;
+    names->before = *token;
+}
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true};
@@ -296,6 +337,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .read_header = nullptr,
         .main_file = path,
     };
+    SmithRawNames names = {0};
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
         smith_raw_next(&raw, &token, false);
@@ -303,6 +345,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
             return 1;
         }
+        smith_raw_names(&raw, &names, &token);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
@@ -311,7 +354,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
         fputc('\n', stdout);
     }
-    if (lang->errors > 0) return 1;
+    if (lang->errors > 0 || names.errors > 0) return 1;
     if (header_path != nullptr && lang->is_module) {
         return smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
     } else if (header_path != nullptr) {

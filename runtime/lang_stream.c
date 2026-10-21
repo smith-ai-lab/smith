@@ -353,6 +353,120 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
     return replaced;
 }
 
+// ---- A C keyword where a name goes
+// -----------------------------------------------------------------------------------------------
+//
+// `i32 double(i32 x)` names a function with a keyword. clang reads `double` as one more type specifier and reports
+// "cannot combine with previous 'int'", then errors on everything after it. A keyword that follows a complete type
+// (a sized type name, maybe with `*` or a qualifier) and cannot continue its specifiers is the program's name for
+// something, and the host says so itself, once, at the name.
+
+bool smith_lang_misused_keyword(const char *text, size_t length) {
+    smith_lang_word_buckets();
+    SmithLangWord word = smith_lang_word(text, length);
+    if (word == SmithLangWord_Other || word == SmithLangWord_Qualifier || word == SmithLangWord_Storage) return false;
+    // These follow a type legitimately: an attribute, an alignment, an assembler label, `__extension__`.
+    static const char *const follows[] = {"_Alignas", "alignas", "asm", "__asm", "__asm__", "__attribute__",
+                                          "__extension__"};
+    for (size_t i = 0; i < sizeof follows / sizeof follows[0]; i++) { // 7 entries
+        if (smith_lang_equals(text, length, follows[i])) return false;
+    }
+    return true;
+}
+
+// What a keyword names, from the character after it and where it stands; null when that character cannot follow a
+// declarator's name (then the keyword is not being used as one).
+static const char *smith_lang_keyword_noun(char next, bool parameters, bool aggregate, bool typedef_statement) {
+    if (next == '(') return "function";
+    if (next != '=' && next != ';' && next != ',' && next != '[' && next != ')' && next != ':') return nullptr;
+    if (typedef_statement) return "type";
+    if (parameters && (next == ',' || next == ')')) return "parameter";
+    if (aggregate) return "field";
+    return "variable";
+}
+
+static bool smith_lang_name_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
+}
+
+// The character that follows, past spaces and comments.
+static char smith_lang_next_char(const char *text, size_t size, size_t at) {
+    for (size_t guard = 0; at < size && guard < size; guard++) { // each pass moves on
+        char c = text[at];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            at += 1;
+        } else if (c == '/' && at + 1 < size && text[at + 1] == '/') {
+            while (at < size && text[at] != '\n')
+                at += 1;
+        } else if (c == '/' && at + 1 < size && text[at + 1] == '*') {
+            at += 2;
+            while (at + 1 < size && !(text[at] == '*' && text[at + 1] == '/'))
+                at += 1;
+            at += 2;
+        } else {
+            return c;
+        }
+    }
+    return 0;
+}
+
+// Whether the word that ends at `end` (spaces before it allowed) is struct, union or enum, or such a word and a tag
+// name come before it: the `{` after is an aggregate's body.
+static bool smith_lang_aggregate_before(const char *text, size_t end) {
+    for (int words = 0; words < 2; words++) {
+        while (end > 0 && (text[end - 1] == ' ' || text[end - 1] == '\n' || text[end - 1] == '\t'))
+            end -= 1;
+        size_t start = end;
+        while (start > 0 && smith_lang_name_char(text[start - 1]))
+            start -= 1;
+        if (start == end) return false;
+        SmithLangWord word = smith_lang_word(text + start, end - start);
+        if (word == SmithLangWord_Tag) return true;
+        if (word != SmithLangWord_Other) return false;
+        end = start;
+    }
+    return false;
+}
+
+// What the keyword at text[start, end) is being used to name, read from the text around it: a function, variable,
+// parameter, field or type (null: it is not being used as a name). The statement before it is scanned back to its
+// start or to the `{` that encloses it, a bounded distance.
+const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t start, size_t end) {
+    if (start > size || end > size) return nullptr;
+    char next = smith_lang_next_char(text, size, end);
+    bool parameters = false;
+    bool aggregate = false;
+    bool typedef_statement = false;
+    int parens = 0;
+    int braces = 0;
+    size_t limit = start > 8192 ? start - 8192 : 0;
+    bool statement = true; // still in the statement the keyword is in; after its start only the enclosing `{` matters
+    for (size_t at = start; at > limit; at--) { // bounded by the window
+        char c = text[at - 1];
+        if (c == '}') braces += 1;
+        if (c == '{' && braces > 0) braces -= 1;
+        if (c == '{' && braces == 0) {
+            aggregate = !parameters && smith_lang_aggregate_before(text, at - 1);
+            break;
+        }
+        if (!statement) continue;
+        if (c == ')') parens += 1;
+        if (c == '(' && parens > 0) parens -= 1;
+        if (c == '(' && parens == 0) parameters = true;
+        if (c == ';' && parens == 0 && braces == 0) statement = false;
+        if (c == 't' && braces == 0 && at - 1 + 7 <= size && memcmp(text + at - 1, "typedef", 7) == 0 &&
+            (at == 1 || !smith_lang_name_char(text[at - 2])) && !smith_lang_name_char(text[at - 1 + 7])) {
+            typedef_statement = true;
+        }
+    }
+    return smith_lang_keyword_noun(next, parameters, aggregate, typedef_statement);
+}
+
+size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keyword, size_t length, const char *noun) {
+    int written = snprintf(out, capacity, "`%.*s` is a C keyword; it cannot name a %s", (int)length, keyword, noun);
+    return written > 0 && (size_t)written < capacity ? (size_t)written : 0;
+}
+
 bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location) {
     for (size_t i = 0; i < smith_lang_allowed_max; i++) { // bounded by the table
         if (lang->allowed[i] == location) return true;

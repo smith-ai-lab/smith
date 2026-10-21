@@ -168,7 +168,80 @@ class SmithHook final : public TokenHook {
         return consumed;
     }
 
+    // A sized type name starts a short look at what follows it: a C keyword there is the program's name for something
+    // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
+    // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
+        if (!spelledInMain(tok.getLocation()) || tok.is(tok::eof)) {
+            if (afterSized > 0) endLook();
+            return offerLowered(tok);
+        }
+        if (afterSized > 0 && !look(tok)) return false;
+        bool sized = tok.is(tok::identifier) && sizedNames.find(tok.getIdentifierInfo()) != sizedNames.end();
+        if (sized) {
+            const IdentifierInfo *beforeInfo = nullptr;
+            tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);
+            sized = before != tok::period && before != tok::arrow && before != tok::kw_struct &&
+                    before != tok::kw_union && before != tok::kw_enum;
+        }
+        bool consumed = offerLowered(tok);
+        if (sized) startLook();
+        return consumed;
+    }
+
+    unsigned afterSized = 0;   // tokens left to look at
+    unsigned char mode = 0;    // the mode the lowering asked for (Preprocessor::HookWatched, HookBraces or HookAll)
+
+    void startLook() {
+        afterSized = 8;
+        PP.setHookMode(Preprocessor::HookAll);
+    }
+
+    void endLook() {
+        afterSized = 0;
+        PP.setHookMode(mode);
+    }
+
+    // The token that the lowering's mode would have offered.
+    bool wouldOffer(const Token &tok) const {
+        return mode == Preprocessor::HookAll || tok.is(tok::eof) ||
+               (tok.is(tok::identifier) && tok.getIdentifierInfo()->isHookWatched()) ||
+               (mode == Preprocessor::HookBraces && tok.isOneOf(tok::l_brace, tok::r_brace));
+    }
+
+    // The token after a sized type name. False when the hook was not to be offered it.
+    bool look(Token &tok) {
+        bool offered = wouldOffer(tok);
+        if (afterSized > 1 && tok.isOneOf(tok::star, tok::kw_const, tok::kw_volatile, tok::kw_restrict,
+                                          tok::kw__Atomic)) {
+            afterSized -= 1;
+            return offered;
+        }
+        endLook();
+        keywordName(tok);
+        return offered;
+    }
+
+    // A keyword used as a name: reported at the name, then it is an identifier (the keyword with a `_`), so that clang
+    // reads the declaration it begins as one and has no cascade of errors to add.
+    void keywordName(Token &tok) {
+        const IdentifierInfo *info = tok.getIdentifierInfo();
+        if (info == nullptr || tok.is(tok::identifier) || !tok.getLocation().isFileID()) return;
+        StringRef word = info->getName();
+        if (!smith_lang_misused_keyword(word.data(), word.size())) return;
+        StringRef text = SM.getBufferData(MainFile);
+        unsigned start = SM.getFileOffset(tok.getLocation());
+        const char *noun = smith_lang_keyword_name_use(text.data(), text.size(), start, start + word.size());
+        if (noun == nullptr) return;
+        char message[512];
+        if (smith_lang_keyword_message(message, sizeof message, word.data(), word.size(), noun) == 0) return;
+        PP.getDiagnostics().Report(tok.getLocation(), diagnostic) << StringRef(message);
+        IdentifierInfo *name = PP.getIdentifierInfo((word + "_").str());
+        tok.setIdentifierInfo(name);
+        tok.setKind(tok::identifier);
+    }
+
+    bool offerLowered(Token &tok) {
         if (!spelledInMain(tok.getLocation())) {
             if (tok.is(tok::eof)) return feed(tok);
             stats.outside += 1;
@@ -761,9 +834,11 @@ class SmithHook final : public TokenHook {
     }
 
     static void watchMode(void *context, SmithWatch mode) {
-        static_cast<SmithHook *>(context)->PP.setHookMode(mode == SmithWatch_All      ? Preprocessor::HookAll
-                                                          : mode == SmithWatch_Braces ? Preprocessor::HookBraces
-                                                                                      : Preprocessor::HookWatched);
+        auto *self = static_cast<SmithHook *>(context);
+        self->mode = mode == SmithWatch_All      ? Preprocessor::HookAll
+                     : mode == SmithWatch_Braces ? Preprocessor::HookBraces
+                                                 : Preprocessor::HookWatched;
+        if (self->afterSized == 0) self->PP.setHookMode(self->mode); // else the look ends with it
     }
 
     // The token `back` places before the one offered, from the Preprocessor's record of the parser's tokens.

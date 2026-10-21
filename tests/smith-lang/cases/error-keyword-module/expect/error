@@ -1,0 +1,6 @@
+src/shapes.smith:10:20: `short` is a C keyword; it cannot name a type
+src/shapes.smith:5:9: `char` is a C keyword; it cannot name a field
+src/shapes.smith:7:16: `int` is a C keyword; it cannot name a parameter
+src/shapes.smith:8:12: `float` is a C keyword; it cannot name a variable
+src/shapes.smith:9:12: `long` is a C keyword; it cannot name a function
+src/shapes.smith:9:28: `default` is a C keyword; it cannot name a parameter
