@@ -6,10 +6,22 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 ## Decisions (change one only with the owner)
 
 - **One compiler, upstream LLVM: the one smith ships.** It is smith's own static build of LLVM 23.1.3 (`smith build
-  llvm`), linked into smith, which compiles C, C++ and Objective-C in its own process; its resource directory (builtin
-  headers, compiler-rt) is the build's install, until it is embedded. Homebrew's `llvm` 23.1.3, held with `brew pin`, is
-  what a smith without clang inside (the stage0) runs. `.metal` goes to Apple's `metal` (`xcrun -sdk macosx metal`, or
-  `$SMITH_METAL`), and `.metal` and other inputs in one command are refused.
+  llvm`), linked into smith, which compiles C, C++ and Objective-C in its own process, with no LLVM install needed at
+  run time. Homebrew's `llvm` 23.1.3, held with `brew pin`, is what a smith without clang inside (the stage0) runs.
+  `.metal` goes to Apple's `metal` (`xcrun -sdk macosx metal`, or `$SMITH_METAL`), and `.metal` and other inputs in one
+  command are refused.
+  - **The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
+    smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
+    `libLTO.dylib`, which the system linker loads for `-flto`. On first use (about 1 s, then a `stat`) smith writes them
+    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`) and runs the driver as that
+    folder's `bin/clang`, a hard link to smith itself (the driver runs its program again with `-cc1` for any compile
+    that has more than one step). The key is the pack's contents and the compiler's identity.
+  - **That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
+    binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and
+    an emptied `~/.cache` leave every built binary running. Old folders stay for the binaries built against them (about
+    70 MB each); delete one by hand to reclaim it, and its binaries then fail at load, naming the missing library.
+  - **The system's tools stay the system's**, found on `PATH`: the linker `/usr/bin/ld` (until #9), `dsymutil` (Apple's;
+    its output is the same size as LLVM's in `compare`), `libtool`, `xcrun`.
   - **The SDK is chosen through the environment, never a flag.** Homebrew's clang reads a default config
     (`/opt/homebrew/etc/clang/*.cfg`) that forces `-isysroot` to the Command Line Tools SDK, and that wins over
     `SDKROOT`, though `xcrun` and `metal` use Xcode's. So on macOS smith sets, for each the caller has not set,
