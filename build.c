@@ -8,7 +8,8 @@
 // broken, needs only a C23 compiler:
 //   mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc
 //
-// Targets: smith build, test, check, compare -DREAL=..., format, install (-DCC=..., -DPREFIX=...) and clean.
+// Targets: smith build, test, text-exhaustive, check, compare -DREAL=..., format, install (-DCC=..., -DPREFIX=...) and
+// clean.
 #include <smith/build.h>
 
 #include <string.h>
@@ -92,28 +93,31 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
-        .command =
-            smith_cat(b,
-                      (const char *[]){"sh", "-c",
-                                       smith_fmt(b,
-                                                 "%s --quiet smith.c -- \"$@\" %s && "
-                                                 "%s --quiet build.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                                 "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                                 "for f in build main; do %s --quiet "
-                                                 "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                                 "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                                       "sh", nullptr},
-                      cflags, nullptr),
+        .command = smith_cat(b,
+                             (const char *[]){"sh", "-c",
+                                              smith_fmt(b,
+                                                        "%s --quiet smith.c -- \"$@\" %s && "
+                                                        "%s --quiet build.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                                        "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet lib/io.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet lib/random.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet lib/text.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/text.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
+                                                        "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                                        "for f in build main; do %s --quiet "
+                                                        "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                                        "\"$@\" -std=gnu2y -I include %s || exit 1; done",
+                                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
+                                                        sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                              "sh", nullptr},
+                             cflags, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "check-tidy", &check_tidy);
@@ -141,6 +145,10 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "lib/random.c",
                                                   "tests/random.c",
                                                   "include/smith/test.h",
+                                                  "include/smith/text.h",
+                                                  "lib/text.c",
+                                                  "tests/text.c",
+                                                  "tests/text_exhaustive.c",
                                                   "lib/test.c",
                                                   nullptr};
     build_format(b, format, check_llvm.outputs, sources);
@@ -159,13 +167,27 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = config->cflags,
-        .implicit_inputs =
-            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c", "runtime/cache.c",
-                             "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
-                             "include/smith/random.h", "lib/random.c", "include/smith/test.h", "lib/test.c",
-                             "templates/new/build.c", "templates/new/main.c", "templates/new/gitignore",
-                             "templates/new/clang-format", "templates/new/clang-tidy",
-                             "templates/new/claude-settings.json", nullptr},
+        .implicit_inputs = (const char *[]){"include/smith/build.h",
+                                            "runtime/build_runtime.c",
+                                            "runtime/package.c",
+                                            "runtime/cache.c",
+                                            "include/smith/arena.h",
+                                            "lib/arena.c",
+                                            "include/smith/io.h",
+                                            "lib/io.c",
+                                            "include/smith/random.h",
+                                            "lib/random.c",
+                                            "include/smith/text.h",
+                                            "lib/text.c",
+                                            "include/smith/test.h",
+                                            "lib/test.c",
+                                            "templates/new/build.c",
+                                            "templates/new/main.c",
+                                            "templates/new/gitignore",
+                                            "templates/new/clang-format",
+                                            "templates/new/clang-tidy",
+                                            "templates/new/claude-settings.json",
+                                            nullptr},
     };
     smith_object(b, &object);
     SmithProgram program = {
@@ -210,15 +232,23 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command = (const char *[]){"sh", "-c",
-                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena io random cache test; do env \"$0\" sh tests/$t.sh "
-                                    "\"$1\" || exit 1; done; "
-                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                             "for t in run build new arena io random text cache test; do env \"$0\" sh tests/$t.sh "
+                             "\"$1\" || exit 1; done; "
+                             "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);
+    // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
+    SmithStep exhaustive = {
+        .command = (const char *[]){"sh", "-c", "env CC=\"$0\" sh tests/text.sh \"$1\" exhaustive", config->cc, binary,
+                                    nullptr},
+        .inputs = (const char *[]){binary, nullptr},
+    };
+    smith_task(b, "text-exhaustive", &exhaustive);
     return test;
 }
 
