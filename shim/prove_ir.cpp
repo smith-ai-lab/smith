@@ -386,8 +386,8 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             if (call == nullptr) continue;
             Function *callee = call->getCalledFunction();
             if (callee == nullptr || callee->isDeclaration() || callee == &function || is_modular(*callee) ||
-                recursive.count(callee) != 0)
-                continue;
+                recursive.count(callee) != 0 || callee->isVarArg())
+                continue; // a variable argument list cannot be inlined into a function that has none
             target = call;
             break;
         }
@@ -1032,6 +1032,11 @@ bool resolve_calls(UnitContext &context) {
                 call->setMetadata("smith.resolved", MDNode::get(function.getContext(), {}));
                 target = nullptr;
                 continue;
+            }
+            if (callee->isVarArg() && !callee->isDeclaration()) {
+                context.fail(call, "a call of " + source_name(*callee) + ", which takes a variable argument list",
+                             "call a function with fixed parameters; a variable argument list is not proved");
+                return false;
             }
             if (!callee->isDeclaration()) {
                 if (callee == &function) {
