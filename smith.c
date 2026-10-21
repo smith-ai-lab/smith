@@ -62,6 +62,15 @@ int smith_lld_main(int argc, char **argv);
 int smith_format_main(int argc, char **argv);
 int smith_tidy_main(int argc, char **argv);
 int smith_clangd_main(int argc, char **argv);
+#ifdef SMITH_LLDB
+constexpr bool smith_has_lldb = true;
+// shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
+// smith built against an LLVM install without lldb (scripts/llvm.sh, the lldb step) runs an external lldb instead.
+int smith_lldb_main(int argc, char **argv);
+int smith_lldb_dap_main(int argc, char **argv);
+#else
+constexpr bool smith_has_lldb = false;
+#endif
 #endif
 
 #ifdef __APPLE__
@@ -588,7 +597,7 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary - 32);
     smith_remove_tree(temporary);
     smith_make_folders(temporary, true);
-    static const char *const names[] = {"clang", "clang++", "ld"};
+    static const char *const names[] = {"clang", "clang++", "ld", "lldb-argdumper"};
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/bin", temporary);
     if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
@@ -645,6 +654,27 @@ static void smith_resource_directory(const char *runtime, char *out) {
 static bool smith_has_linker_override(void) {
     const char *override = getenv("SMITH_LINKER");
     return override != nullptr && *override != '\0';
+}
+
+// smith run as `lldb-argdumper` (a fourth link in the programs folder): lldb runs it through the shell to expand the
+// arguments of a program it starts, and reads back {"arguments": [...]}, as LLVM's lldb-argdumper prints it.
+static int smith_argdumper(int argc, char **argv) {
+    fputs("{\"arguments\":[", stdout);
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) putchar(',');
+        putchar('"');
+        for (const char *c = argv[i]; *c != '\0'; c++) {
+            if (*c == '"' || *c == '\\') putchar('\\');
+            if ((unsigned char)*c < 0x20) {
+                printf("\\u%04x", (unsigned)*c);
+            } else {
+                putchar(*c);
+            }
+        }
+        putchar('"');
+    }
+    fputs("]}", stdout);
+    return 0;
 }
 
 static int smith_route_linker(int argc, char **argv) {
@@ -1503,10 +1533,11 @@ static int smith_new_main(int count, char **args, const char *self) {
     return 0;
 }
 
-// `smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, with the arguments unchanged, so
-// a project's .clang-format and .clang-tidy apply as they do to the tools alone. They are recognised only as the exact
-// first argument. A smith with clang inside runs the tool's own main in this process, from the same LLVM as the
-// compiler; the stage0, and a caller who sets the tool's variable, run an external tool instead.
+// `smith fmt`, `smith lint`, `smith lsp`, `smith dbg` and `smith dap` are clang-format, clang-tidy, clangd, lldb and
+// lldb-dap, with the arguments unchanged, so a project's .clang-format and .clang-tidy apply as they do to the tools
+// alone. They are recognised only as the exact first argument. A smith with clang inside runs the tool's own main in
+// this process, from the same LLVM as the compiler; the stage0, and a caller who sets the tool's variable, run an
+// external tool instead.
 typedef struct {
     const char *command;  // smith's name for it
     const char *tool;     // the LLVM program
@@ -1517,6 +1548,8 @@ static const SmithTool smith_tools[] = {
     {"fmt", "clang-format", "SMITH_CLANG_FORMAT"},
     {"lint", "clang-tidy", "SMITH_CLANG_TIDY"},
     {"lsp", "clangd", "SMITH_CLANGD"},
+    {"dbg", "lldb", "SMITH_LLDB"},
+    {"dap", "lldb-dap", "SMITH_LLDB_DAP"},
 };
 
 static const SmithTool *smith_find_tool(const char *command) {
@@ -1525,6 +1558,32 @@ static const SmithTool *smith_find_tool(const char *command) {
     }
     return nullptr;
 }
+
+#ifdef __APPLE__
+// lldb starts the system's debugserver (LLDB_USE_SYSTEM_DEBUGSERVER): the one of the developer directory, else Xcode's,
+// else the Command Line Tools'. The caller's LLDB_DEBUGSERVER_PATH wins. It is the one Apple signs with the debugger
+// entitlements, which a debugserver made here could not have.
+static void smith_debugserver_environment(void) {
+    if (getenv("LLDB_DEBUGSERVER_PATH") != nullptr) return;
+    static const char tail[] = "LLDB.framework/Resources/debugserver";
+    const char *developer = getenv("DEVELOPER_DIR");
+    char path[PATH_MAX];
+    for (int i = 0; i < 3; i++) {
+        int written = 0;
+        if (i == 0 && developer != nullptr)
+            written = snprintf(path, sizeof path, "%s/../SharedFrameworks/%s", developer, tail);
+        if (i == 1) written = snprintf(path, sizeof path, "/Applications/Xcode.app/Contents/SharedFrameworks/%s", tail);
+        if (i == 2)
+            written =
+                snprintf(path, sizeof path, "/Library/Developer/CommandLineTools/Library/PrivateFrameworks/%s", tail);
+        SMITH_ASSERT(written >= 0 && (size_t)written < sizeof path);
+        if (written > 0 && access(path, X_OK) == 0) {
+            setenv("LLDB_DEBUGSERVER_PATH", path, 0);
+            return;
+        }
+    }
+}
+#endif
 
 #ifdef SMITH_IN_PROCESS
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -1537,9 +1596,19 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_programs_folder leaves room for it
     smith_resource_ensure(folder, programs, self);
     argv[0] = program; // the tool is told its own path in that folder, as the clang is
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) {
+        char argdumper[PATH_MAX];
+        written = snprintf(argdumper, sizeof argdumper, "%s/bin/lldb-argdumper", programs);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof argdumper);
+        setenv("LLDB_ARGDUMPER_PATH", argdumper, 0); // lldb expands a program's arguments through it
+    }
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv);
     if (strcmp(tool->command, "fmt") == 0) return smith_format_main(argc, argv);
     if (strcmp(tool->command, "lint") == 0) return smith_tidy_main(argc, argv);
+#ifdef SMITH_LLDB
+    if (strcmp(tool->command, "dbg") == 0) return smith_lldb_main(argc, argv);
+    if (strcmp(tool->command, "dap") == 0) return smith_lldb_dap_main(argc, argv);
+#endif
     return smith_clangd_main(argc, argv);
 }
 #endif
@@ -1550,10 +1619,13 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
 #ifdef __APPLE__
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
 #endif
 #ifdef SMITH_IN_PROCESS
     const char *override = getenv(tool->override);
-    if (override == nullptr || *override == '\0') return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+    bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
+    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb))
+        return smith_tool_in_process(tool, argc - 1, argv + 1, self);
 #endif
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);
@@ -1601,7 +1673,8 @@ static const SmithVerb smith_verbs[] = {
     {"test", SmithVerb_Project, nullptr},
     {"check", SmithVerb_ProjectBare, nullptr},
     {"prove", SmithVerb_ToolOrProject, nullptr},
-    {"dbg", SmithVerb_Later, "issue #7"}, // becomes ToolOrProject or Project when it arrives
+    {"dbg", SmithVerb_Tool, nullptr},
+    {"dap", SmithVerb_Tool, nullptr},
 };
 
 static const SmithVerb *smith_find_verb(const char *name) {
@@ -1697,7 +1770,7 @@ static int smith_project_main(const SmithVerb *verb, int count, char **args, con
     return smith_build_main((int)used, build_args, self, verb->name);
 }
 
-// The hook for a verb that has not arrived: prove (issue #8) and dbg (issue #7) say so until their row changes kind.
+// The hook for a verb that has not arrived: prove (issue #8) says so until their row changes kind.
 static int smith_later_main(const SmithVerb *verb) {
     fprintf(stderr, "smith: %s is not available yet (%s)\n", verb->name, verb->later);
     return smith_exit_usage;
@@ -1752,6 +1825,7 @@ static void smith_usage(FILE *out) {
           "  fmt, lint               with no arguments, format or lint the project; with arguments, clang-format and\n"
           "                          clang-tidy\n"
           "  lsp                     clangd\n"
+          "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n",
           out);
 }
@@ -1782,6 +1856,7 @@ int main(int argc, char **argv) {
     const char *name = smith_base_name(argv[0]);
 #ifdef SMITH_IN_PROCESS
     if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
+    if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
 #endif
     // The links act as the verbs by their name, for what needs one program path: CC=smith-cc, CMake,
     // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs

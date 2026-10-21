@@ -8,7 +8,7 @@ cc=${CC:-cc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
-for name in clang clang++ xcrun metal clang-format clang-tidy clangd; do
+for name in clang clang++ xcrun metal clang-format clang-tidy clangd lldb lldb-dap; do
     $cc -std=gnu23 -DNAME="\"$name\"" "$here/stub.c" -o "$work/bin/$name" || exit 1
 done
 ln -s "$smith" "$work/smith-cc"
@@ -152,8 +152,9 @@ compile_forms() {
 
 for form in verb link; do compile_forms $form; done
 
-# fmt, lint and lsp are clang-format, clang-tidy and clangd with the arguments untouched, as the exact first argument.
-for tool in fmt:clang-format:SMITH_CLANG_FORMAT lint:clang-tidy:SMITH_CLANG_TIDY lsp:clangd:SMITH_CLANGD; do
+# fmt, lint, lsp, dbg and dap are clang-format, clang-tidy, clangd, lldb and lldb-dap, with the arguments untouched, as
+# the exact first argument.
+for tool in fmt:clang-format:SMITH_CLANG_FORMAT lint:clang-tidy:SMITH_CLANG_TIDY lsp:clangd:SMITH_CLANGD dbg:lldb:SMITH_LLDB dap:lldb-dap:SMITH_LLDB_DAP; do
     command=${tool%%:*}
     rest=${tool#*:}
     program=${rest%%:*}
@@ -266,10 +267,6 @@ expect "the name clang acts as smith cc" "$(lines "clang argv0=$cl" '[-c]' '[a.c
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/driver/clang++" -c a.cpp
 expect "the name clang++ acts as smith c++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
-# dbg is not available yet: it says so, and names the issue.
-capture "$smith" dbg
-expect "dbg: not available yet" "smith: dbg is not available yet (issue #7)" "$err"
-
 # fmt and lint with no arguments, or only -D options of the build, are the project's verbs; the folder has no build.c.
 mkdir "$work/empty"
 for verb in fmt lint run test check; do
@@ -278,7 +275,7 @@ for verb in fmt lint run test check; do
 done
 
 # A project verb is a verb, not a target of smith build.
-for verb in run test check fmt lint prove dbg; do
+for verb in run test check fmt lint prove; do
     capture "$smith" build "$verb"
     expect "build $verb: refused, with a pointer to the verb" \
         "smith: $verb is a verb, not a target of smith build; run \`smith $verb\`" "$err"
