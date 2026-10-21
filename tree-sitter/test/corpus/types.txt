@@ -367,3 +367,44 @@ void f(void) {
             (call_expression
               (identifier)
               (argument_list))))))))
+
+================================================================================
+if constexpr on the type questions
+================================================================================
+
+int kind(constexpr type T, T v) {
+    if constexpr (is_integer(T) && sizeof(T) == 8) return 1;
+    return 0;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_parameter
+            (identifier)))
+        (parameter_declaration
+          (type_identifier)
+          (identifier))))
+    (compound_statement
+      (if_statement
+        (parenthesized_expression
+          (binary_expression
+            (call_expression
+              (identifier)
+              (argument_list
+                (identifier)))
+            (binary_expression
+              (sizeof_expression
+                (parenthesized_expression
+                  (identifier)))
+              (number_literal))))
+        (return_statement
+          (number_literal)))
+      (return_statement
+        (number_literal)))))

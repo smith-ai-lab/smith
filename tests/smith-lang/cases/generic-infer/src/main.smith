@@ -1,0 +1,30 @@
+import pick;
+#include <stdio.h>
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+static f64 half(f64 v) {
+    return v / 2;
+}
+
+int main(void) {
+    i32 a = 3;
+    i32 b = 8;
+    f64 d = 2.5;
+    Point p = {10, 20};
+    Point *pp = &p;
+    i32 numbers[3] = {7, 8, 9};
+    u8 byte = 200;
+    const i32 fixed = 4;
+    printf("%d %g\n", pick::larger(a, b), pick::larger(d, 1.5));
+    printf("%d %d %d\n", pick::larger(p.x, pp->y), pick::larger(p.x, 3), pick::larger(numbers[1], fixed));
+    printf("%d %g %zu\n", pick::larger(a, 100), pick::larger(half(9), d), pick::size_of_value(byte));
+    printf("%d %zu\n", pick::first_of(numbers, 3), pick::size_of_value((u16)3));
+    i32 slot = 0;
+    pick::set(&slot, 42);
+    printf("%d %d\n", slot, pick::twice(i32, slot));
+    return 0;
+}

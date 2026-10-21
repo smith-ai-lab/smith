@@ -446,8 +446,9 @@ const char *cmake = smith_package(b, &(SmithPackage){
   `file://` copies a local file, for tests). It follows redirects, https only (a redirect to another scheme is an
   error), streams the body to the temporary file a block at a time, fails a server that sends nothing for 60 s with
   `ETIMEDOUT`, and reports statuses, redirect loops, short bodies and TLS failures as messages that name the URL.
-  smith.c and the build runtime include the client with the libraries it needs (`lib/arena.c`, `random.c`, `io.c`,
-  `http.c`; the runtime gets them from `.smith/lib/` and `.smith/internal/http.c`, and `smith_library` does not offer
+  smith.c and the build runtime include the client with the libraries it needs (`lib/arena.c`, `random`, `io.c`,
+  `http.c`; the runtime gets them from `.smith/lib/`, `.smith/internal/http.c` and, for random (a `.smith` module), its lowering
+  `.smith/bootstrap/lib/smith/random.c` (docs/smith-lang.md, "The bootstrap"), and `smith_library` does not offer
   http until a second project needs it), so `cc -std=gnu23 smith.c` is still the whole build; Network.framework is
   loaded with `dlopen` on the first download, so nothing else pays for it. SHA-256 is in smith, checked against the NIST
   test vectors in `tests/build.sh`. The network cases are tested in `tests/package.sh` (a real cache, a scripted

@@ -9,10 +9,10 @@
 // sends numbered from 1, so a frame answers the request of that number), and files. The server's output is one JSON
 // message a line; `reply` finds the one answering an id and gives the text of its result. In JSON written here an
 // apostrophe stands for a double quote.
+#include "../bootstrap/lib/smith/random.c"
 #include "../lib/arena.c"
 #include "../lib/io.c"
 #include "../lib/json.c"
-#include "../lib/random.c"
 #include "../runtime/protocol/dap.c"
 #include "../runtime/protocol/mcp.c"
 #include "../runtime/protocol/protocol.c"

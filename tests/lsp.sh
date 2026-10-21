@@ -67,10 +67,12 @@ void build(SmithBuild *b) {
     SmithObject main_object = {.compiler = "smith-cc", .source = "main.smith", .output = "build/main.o", .flags = flags};
     SmithObject box_object = {.compiler = "smith-cc", .source = "geometry/box.smith", .output = "build/box.o", .flags = flags};
     SmithObject util_object = {.compiler = "smith-cc", .source = "util.c", .output = "build/util.o", .flags = flags};
+    SmithObject pick_object = {.compiler = "smith-cc", .source = "pick.smith", .output = "build/pick.o", .flags = flags};
     smith_object(b, &main_object);
     smith_object(b, &box_object);
     smith_object(b, &util_object);
-    SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, nullptr}};
+    smith_object(b, &pick_object);
+    SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, &pick_object, nullptr}};
     smith_program(b, &program);
     smith_default(b, program.step.outputs);
     smith_compile_commands(b, "compile_commands.json");
@@ -141,6 +143,26 @@ int f(void) {
     geometry_box_ar
 }
 EOF
+cat >pick.smith <<'EOF'
+module pick;
+
+// The larger of two values of one type; T is told from the arguments, or written.
+export T larger(constexpr type T, T a, T b) {
+    return a > b ? a : b;
+}
+EOF
+cat >genuse.smith <<'EOF'
+module genuse;
+import pick;
+
+export int f(void) {
+    i32 a = 3;
+    i32 b = 8;
+    i32 inferred = pick::larger(a, b);
+    f64 written = pick::larger(f64, 1.5, 2.5);
+    return inferred + (int)written;
+}
+EOF
 cat >util.c <<'EOF'
 #include <stdio.h>
 
@@ -165,7 +187,7 @@ status=$?
 expect "the project builds" 0 "$status"
 [ "$status" -eq 0 ] || printf '%s\n' "$out" | tail -n 20
 expect "the program runs" "area 6.000000" "$(build/demo 2>&1)"
-expect "compile_commands.json tells clangd the language of a .smith file" 2 \
+expect "compile_commands.json tells clangd the language of a .smith file" 3 \
     "$(grep -c '"-x"' compile_commands.json)"
 
 if ! smith cc -std=gnu23 "$here/tests/lsp_client.c" -o "$work/lsp_client"; then
@@ -219,6 +241,19 @@ expect_line "hover at the definition: and the type's" "$log" \
 expect "symbols: a module's names, as written, each once" \
     "symbol geometry/box.smith: (anonymous struct) symbol geometry/box.smith: width symbol geometry/box.smith: height symbol geometry/box.smith: Box symbol geometry/box.smith: area symbol geometry/box.smith: twice symbol geometry/box.smith: perimeter" \
     "$(printf '%s\n' "$log" | grep '^symbol geometry/box.smith' | tr '\n' ' ' | sed 's/ $//')"
+
+# A call to a generic: the compiler sees an instance there, so the layer answers for the lowering: the hover shows the
+# generic as its module wrote it and the instance asked for, and go-to-definition goes to the generic's name.
+log=$(client open genuse.smith pick.smith -- hover genuse.smith 7 31 -- definition genuse.smith 7 31 pick.smith:4:10 -- \
+    hover genuse.smith 8 31 -- definition genuse.smith 8 31 pick.smith:4:10)
+expect_line "generic call: no diagnostics" "$log" "diagnostics genuse.smith"
+expect "generic call: and nothing else is reported" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
+expect_line "generic call: hover shows the generic as written and the instance, with T inferred" "$log" \
+    'hover genuse.smith:7:31: generic function pick::larger |  | T pick::larger(constexpr type T, T a, T b) |  | instance pick::larger(i32)'
+expect_line "generic call: go-to-definition is the generic's name in its module" "$log" \
+    "definition genuse.smith:7:31 -> pick.smith:4:10"
+expect_line "generic call: hover, T written" "$log" \
+    'hover genuse.smith:8:31: generic function pick::larger |  | T pick::larger(constexpr type T, T a, T b) |  | instance pick::larger(f64)'
 
 # A `c::` name is a name of the file like another: hover and go-to-definition at it find the one declaration (not every
 # declaration of the name, which is what the index answers by name: the SDK's and libc++'s `using`), and the hover of a

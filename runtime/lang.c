@@ -21,7 +21,8 @@ constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
 constexpr size_t smith_lang_queue_max = 256;
 constexpr size_t smith_lang_batch_max = 4096;
-constexpr size_t smith_lang_call_frames_max = 16; // generic calls inside generic calls' arguments
+constexpr size_t smith_lang_call_sites_max = 2048; // calls to generics the editor can be told of
+constexpr size_t smith_lang_call_frames_max = 16;  // generic calls inside generic calls' arguments
 constexpr size_t smith_lang_braces_max = 256;
 constexpr size_t smith_lang_bindings_max = 128;
 constexpr size_t smith_lang_imports_max = 128;
@@ -90,6 +91,12 @@ typedef enum {
 
 // A call to a generic being read (runtime/lang_generic.c): where it began in the pool, and the brackets seen so far.
 typedef struct {
+    uint32_t location; // of the callee's name in the file
+    uint32_t generic;
+    uint32_t instance;
+} SmithLangCallSite;
+
+typedef struct {
     bool record; // in a generic's body: kept whole between marks, not understood yet
     bool skip;   // the next token shown to it is the one the call began at
     uint32_t generic_index;
@@ -98,6 +105,7 @@ typedef struct {
     uint32_t count; // smith_lang_gt.count and text_used when it began
     uint32_t text;
     int depth;
+    uint64_t braces; // per open bracket (bit 0 is the first): a `{`, else a `(` or `[`
 } SmithLangCallFrame;
 
 typedef struct {
@@ -278,12 +286,15 @@ struct SmithLang {
     uint32_t cap_frames;                                  // calls being read: their tokens are kept, not written
     SmithLangCallFrame calls[smith_lang_call_frames_max]; // the calls being read, the innermost last
     size_t call_top;
-    bool recording;             // a generic's body is being read into smith_lang_gt
-    uint32_t recording_generic; // its index
-    bool recording_skip;        // its head had an error: the body is read to its end and dropped
-    uint32_t skip_mark;         // where in smith_lang_gt the dropped body begins
-    bool generic_next;          // the declaration about to begin is generic
-    bool generics_loaded;       // the generics of the imports are read
+    size_t call_site_count;
+    SmithLangCallSite call_sites[smith_lang_call_sites_max]; // the calls as the file wrote them, for the editor
+    bool call_failed;                                        // a call nested too deep: the outermost is dropped
+    bool recording;                                          // a generic's body is being read into smith_lang_gt
+    uint32_t recording_generic;                              // its index
+    bool recording_skip;  // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;   // where in smith_lang_gt the dropped body begins
+    bool generic_next;    // the declaration about to begin is generic
+    bool generics_loaded; // the generics of the imports are read
     SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics
     size_t generic_modules_count;
     bool gen_dump_on; // SMITH_LANG_GENERICS names a file for what the generics write (a test's view of it)

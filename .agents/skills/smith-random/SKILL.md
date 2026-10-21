@@ -86,12 +86,12 @@ double mixture_sample(SmithKey key, double rate, double mean, double deviation, 
 ## The guarantees, and their limits
 
 - **The numbers never change.** They are part of the API: the Philox4x32-10 generator, the key and counter mapping and every distribution's algorithm are pinned by tests, so a change to any of them is a breaking change.
-- **The same bits on every platform.** The library has its own logarithm (`smith_log_float`, `smith_log_double`; fdlibm's algorithm, within 1 ulp), and uses libm only for `sqrt` and `sqrtf`, which IEEE requires to be exactly rounded. `lib/random.c` sets `#pragma STDC FP_CONTRACT OFF` and passes every product that feeds a sum through an empty `asm` barrier, because `-ffp-contract=fast` ignores pragmas and would fuse a multiply-add and change a bit; it also refuses `-ffast-math` and `-Ofast` with an `#error`. Tests give the same digest at -O0 with sanitizers, -O2, `-DNDEBUG`, `-std=gnu23` and `gnu2y`, `-ffp-contract=fast`. GPUs, other compilers and other CPUs are not tested.
-- `float` and `double` are asserted to be IEEE binary32 and binary64 in the header.
+- **The same bits on every platform.** The library has its own logarithm (`smith_log_float`, `smith_log_double`; fdlibm's algorithm, within 1 ulp), and uses libm only for `sqrt` and `sqrtf`, which IEEE requires to be exactly rounded. `lib/smith/random.smith` (the module `smith::random`) sets `#pragma STDC FP_CONTRACT OFF` and passes every product that feeds a sum through an empty `asm` barrier, because `-ffp-contract=fast` ignores pragmas and would fuse a multiply-add and change a bit; it also refuses `-ffast-math` and `-Ofast` with an `#error`. Tests give the same digest at -O0 with sanitizers, -O2, `-DNDEBUG`, `-std=gnu23` and `gnu2y`, `-ffp-contract=fast`. GPUs, other compilers and other CPUs are not tested.
+- `float` and `double` are asserted to be IEEE binary32 and binary64 when the library is compiled.
 
 ## Get the library in build.c
 
-random uses the arena (`smith_categorical_make`), so a project compiles both. smith writes the headers and the sources into `.smith/` on every `smith build`:
+random uses the arena (`smith_categorical_make`), so a project compiles both. smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `smith::random`, source `.smith/lib/smith/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
 
 ```c
 SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
