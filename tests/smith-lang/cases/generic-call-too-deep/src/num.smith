@@ -1,0 +1,5 @@
+module num;
+
+export T id(constexpr type T, T x) {
+    return x;
+}

@@ -2,7 +2,7 @@
 
 A `.smith` file is C with modules. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant. A file opts
 into more, step by step: imports and sized type names work in any `.smith` file; a `module` line makes it a module, with
-exports and private names. The design and the issues it answers are in
+exports and private names, and a function with `constexpr type T` parameters is generic. The design and the issues it answers are in
 [issue #11](https://github.com/adam-r-kowalski/smith/issues/11); this page is what is built.
 
 ```c
@@ -375,6 +375,66 @@ given (`tests/lint-smith.sh`).
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
+
+## Generic functions
+
+A function of a module whose parameter list has `constexpr type T` parameters is written once and compiled for each
+type it is called with (issue #15). `constexpr` in a parameter list means compile-time: the parameter is in no
+generated function. `type` is a kind, as `u32` is, so `constexpr type T` is a compile-time constant that is a type. A
+bare `type T` is an error that says to write `constexpr type T`.
+
+```c
+module arena;
+
+export T *push(Arena *a, constexpr type T) {        // the types may be used anywhere in the signature and body
+    usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
+    ...
+}
+
+Point *p = arena::push(&a, Point);                  // the type is the argument in T's place
+```
+
+- **What a generic is.** A function with a body at file scope in a module, exported or not, `inline` or not (not
+  `static` or `extern`: `export` is what makes it public). Up to 4 `constexpr type` parameters and 16 parameters. It has
+  no symbol and cannot be named without being called (`&arena::push` is an error); C and C++ see a placeholder
+  (`[[clang::unavailable]] void arena_push(void);`), and the module's header carries the record of the generic in a
+  `// smith-generic:` comment line, which an importer reads (so a header on the include path, as `smith build` writes,
+  or the module's source read in memory, both work).
+- **A call** writes the type as the argument in the place of the parameter (`arena::push(&a, Point)`,
+  `list::make_two(arena, i32)`), or leaves every type argument out and has them inferred (below). A call is read whole,
+  so it may be an argument of another call, 16 deep at most. The call becomes
+  `__extension__ ({ extern R f(P) __asm__("label"); f(args); })` with the instance's name for `f`.
+- **An instance** is one function for each distinct list of types, compared by the parser's canonical spelling (`u32`
+  and `uint32_t` are one instance). It is written at the end of the file as a weak, hidden definition with a symbol of
+  its own, `_pick::larger(int)`, so the linker folds the copies other files made; an `inline` generic is
+  `always_inline` instead. Its C name is `pick_larger__i32`. A generic can call generics (`list::make(a, T)` in a
+  body: `T` is the instance's type), 32 deep and 4096 instances at most.
+- **Inference.** A call that leaves out all the type arguments has each `T` told from the arguments of the parameters
+  that say it: `T x`, `const T *x`, `T *x`, `T x[]` (`*` and `[]` each dereference the argument's type once). The
+  compiler types a name, a field chain (`p.x`, `p->y`), `*e`, `&e`, `e[i]`, a call, a cast and a literal, in the scope
+  the parser is in (a local declared by an earlier statement counts). A literal adapts to the arguments that are not
+  one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64";
+  an argument it cannot type (arithmetic, a conditional) is an error that says to write the type. Inside a generic's
+  body the locals of the instance are not yet known to the parser, so write the type there.
+- **`if constexpr`** in a generic's body is chosen for each instance; the branch not taken is never given to the parser,
+  so it may name what `T` has not (`value.x`). The condition is a constant expression of integers (`true`, `false`,
+  the operators of C), `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (canonical spellings), and the questions
+  `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum` and `is_record`. A type is written as C
+  writes one: `T`, a sized type, a typedef, `struct S`, qualifiers, `*`. Anywhere else a generic's constraint is a
+  `static_assert` in a final `else`. `if constexpr` outside a generic is not understood by the parser.
+- **Errors** point at the generic's source, with a note where the instance was asked for, chained when one generic
+  asked for another: `num.smith:5:14: error: invalid operands to binary expression ('Point' and 'Point')`, then
+  `main.smith:13:20: note: in instance num::add(Point), requested from here`. An error in a generic's head, a call that
+  cannot be written (wrong number of arguments, a type that cannot be inferred, a statement that ends inside the
+  parentheses, the end of the file, too deep) is one error: the generic or the call is dropped for a name whose error is
+  not shown, so nothing follows it.
+- **The editor and the debugger.** Hover on the name in a call shows the generic as its module wrote it and the
+  instance (`generic function pick::larger`, the head, `instance pick::larger(i32)`), and go-to-definition goes to the
+  generic's name. An instance is `pick::larger<i32>` in `smith dbg` and `smith dap`, and its code is the generic's own
+  file, line and column, so a breakpoint, a listing and the arguments are those of the source.
+- **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),
+  overloading, specialization, variadic type lists, constraints other than `if constexpr` and `static_assert`,
+  `if constexpr` outside a generic, pointers to a generic, and a type local to a function as `T`.
 
 ## Known limits
 
