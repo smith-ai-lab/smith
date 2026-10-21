@@ -48,7 +48,7 @@
 
 Measured on this machine (unstripped, `-g`; the machine was busy, so the milliseconds are the best of several runs):
 
-| | size | `smith --smith-version` |
+| | size | `smith version` |
 |---|---|---|
 | main (0251349), no lldb linked | 210.1 MB | 15.7 ms |
 | this change: lldb linked, exporting only `main` | 225.7 MB | 10.5 ms |

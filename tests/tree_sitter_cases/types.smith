@@ -1,0 +1,28 @@
+module smith::arena;
+
+export T *push(Arena *a, type T) {
+    return (T *)push_bytes(a, sizeof(T), alignof(T));
+}
+
+export void write_value(Writer *w, type T, T value) {
+    if constexpr (T == f32 || T == f64) {
+        write_float(w, (f64)value);
+    } else if constexpr (sizeof(T) == 8) {
+        write_u64(w, (u64)value);
+    } else {
+        write_u32(w, (u32)value);
+    }
+}
+
+void use(Arena *a) {
+    Point *p = push(a, Point);
+    f32 *xs = push_array(a, f32, 1024);
+    i16 small = 3;
+    isize signed_size = -1;
+    f16 half = 1;
+    (void)p;
+    (void)xs;
+    (void)small;
+    (void)signed_size;
+    (void)half;
+}

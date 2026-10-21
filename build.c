@@ -96,52 +96,62 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
     smith_task(b, "check-format", &check_format);
 }
 
+// The tree-sitter runtime that tests/tree_sitter.c includes, by version: tests/tree_sitter.sh pins the same archive by
+// hash, and `smith fetch` of this URL puts it in the package cache for the lint of the driver.
+static const char build_tree_sitter_runtime_url[] =
+    "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
+
 // clang-tidy (.clang-tidy) over each source with the flags the build uses, against Xcode's SDK. build.c is tidied too,
 // with -I include, where it finds <smith/build.h>. The `smith new` templates are tidied with their own rules
 // and their own standard, gnu2y.
-static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
+static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const char *const *llvm,
+                       const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
-        .command =
-            smith_cat(b,
-                      (const char *[]){"sh", "-c",
-                                       smith_fmt(b,
-                                                 "%s --quiet smith.c -- \"$@\" %s && "
-                                                 "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
-                                                 "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
-                                                 "%s --quiet runtime/pack_data.c -- \"$@\" "
-                                                 "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' %s && "
-                                                 "%s --quiet scripts/pack.c -- \"$@\" %s && "
-                                                 "%s --quiet scripts/defer_init.c -- \"$@\" %s && "
-                                                 "%s --quiet build.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                                 "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/http.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/http.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/text.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/text.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/json.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet tests/json.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                                 "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
-                                                 "for f in build main; do %s --quiet "
-                                                 "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                                 "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                                       "sh", nullptr},
-                      cflags, nullptr),
+        .command = smith_cat(
+            b,
+            (const char *[]){"sh", "-c",
+                             smith_fmt(b,
+                                       "root=$(%s %s 2>&1 | sed -n 's/^smith: .* is in //p') && "
+                                       "%s --quiet smith.c -- \"$@\" %s && "
+                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
+                                       "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
+                                       "%s --quiet runtime/commit.c -- \"$@\" %s && "
+                                       "%s --quiet runtime/pack_data.c -- \"$@\" "
+                                       "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' %s && "
+                                       "%s --quiet scripts/pack.c -- \"$@\" %s && "
+                                       "%s --quiet scripts/defer_init.c -- \"$@\" %s && "
+                                       "%s --quiet build.c -- \"$@\" -I include %s && "
+                                       "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                       "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/io.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/http.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/http.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/random.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/text.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/text.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/json.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/json.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/tree_sitter.c -- \"$@\" -I \"$root/lib/include\" %s && "
+                                       "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                       "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
+                                       "for f in build main; do %s --quiet "
+                                       "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                       "\"$@\" -std=gnu2y -I include %s || exit 1; done",
+                                       fetch, build_tree_sitter_runtime_url, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                       tidy, sdk, tidy, sdk, tidy, sdk),
+                             "sh", nullptr},
+            cflags, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "lint", &check_tidy);
@@ -167,6 +177,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "scripts/pack.h",
                                                    "scripts/defer_init.c",
                                                    "runtime/pack_data.c",
+                                                   "runtime/commit.c",
                                                    "build.c",
                                                    "tests/stub.c",
                                                    "runtime/build_runtime.c",
@@ -206,6 +217,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "include/smith/json.h",
                                                    "lib/json.c",
                                                    "tests/json.c",
+                                                   "tests/tree_sitter.c",
                                                    "lib/test.c",
                                                    "include/smith/trace.h",
                                                    "lib/trace.c",
@@ -216,7 +228,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
     const char *tidy = build_smith_tool(b, config->binary, "lint");
     SmithStep check_llvm = build_check_llvm(b, config->binary);
     build_format(b, format, check_llvm.outputs, build_format_sources);
-    build_tidy(b, tidy, check_llvm.outputs, config->cflags);
+    build_tidy(b, tidy, build_smith_tool(b, config->binary, "fetch"), check_llvm.outputs, config->cflags);
     smith_alias(b, "check", (const char *[]){"check-format", "lint", "test", "compare", nullptr});
 }
 
@@ -380,6 +392,24 @@ static void build_pack_data(SmithBuild *b, const BuildConfig *config, const char
     smith_object(b, data);
 }
 
+// runtime/commit.c, the commit smith is built from (`smith version` prints it; the Neovim plugin compares it with its
+// own), in a translation unit of its own so that a new commit recompiles this file and nothing else. A build outside a
+// checkout has no commit and passes no flag.
+static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *commit = smith_capture_or(b, (const char *[]){"git", "rev-parse", "HEAD", nullptr}, "");
+    SmithObject object = {
+        .compiler = config->cc,
+        .source = "runtime/commit.c",
+        .output = smith_fmt(b, "%s/commit.o", folder),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, commit[0] != '\0', (const char *[]){smith_fmt(b, "-DSMITH_COMMIT=\"%s\"", commit), nullptr}),
+            nullptr),
+    };
+    smith_object(b, &object);
+    return object;
+}
+
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
@@ -439,7 +469,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags =
-            smith_cat(b, config->cflags,
+            smith_cat(b, config->cflags, (const char *[]){"-DSMITH_COMMIT_LINKED", nullptr},
                       smith_when(b, in_process,
                                  (const char *[]){"-DSMITH_IN_PROCESS",
                                                   smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
@@ -479,9 +509,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             nullptr},
     };
     smith_object(b, &object);
+    SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
-    const SmithObject *objects[18] = {&object};
-    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 1);
+    const SmithObject *objects[18] = {&object, &commit};
+    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 2);
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
@@ -524,15 +555,15 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command =
-            (const char *[]){"sh", "-c",
-                             // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                             "for t in run build new arena io http package random text json cache untar resource dap "
-                             "defer contract prove test; do env "
-                             "\"$0\" sh tests/$t.sh "
-                             "\"$1\" || exit 1; done; "
-                             "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                                    "for t in run build new arena io http package random text json cache untar "
+                                    "resource dap tree_sitter neovim "
+                                    "defer contract prove test; do env "
+                                    "\"$0\" sh tests/$t.sh "
+                                    "\"$1\" || exit 1; done; "
+                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);

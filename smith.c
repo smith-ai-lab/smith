@@ -1653,6 +1653,7 @@ typedef enum {
     SmithVerb_Fetch,
     SmithVerb_Cache,
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
+    SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
     SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the project's target of the name with none
     SmithVerb_Project,       // the project's target of the name; the arguments are the target's (smith_args)
@@ -1674,6 +1675,7 @@ static const SmithVerb smith_verbs[] = {
     {"fetch", SmithVerb_Fetch, nullptr},
     {"cache", SmithVerb_Cache, nullptr},
     {"symbolize", SmithVerb_Symbolize, nullptr},
+    {"version", SmithVerb_Version, nullptr},
     {"fmt", SmithVerb_ToolOrProject, nullptr},
     {"lint", SmithVerb_ToolOrProject, nullptr},
     {"lsp", SmithVerb_Tool, nullptr},
@@ -1792,6 +1794,22 @@ static bool smith_only_options(int count, char **args) {
     return true;
 }
 
+// The commit smith was built from is in runtime/commit.c (`smith build` compiles it with -DSMITH_COMMIT and links it,
+// and passes -DSMITH_COMMIT_LINKED here, so that a new commit recompiles that file alone). A smith built with one cc
+// command does not link it and prints no commit.
+#ifdef SMITH_COMMIT_LINKED
+extern const char smith_commit[];
+#else
+static const char smith_commit[] = "";
+#endif
+
+// `smith version`: the version line, and after `commit` the commit when there is one.
+static int smith_version_main() {
+    bool known = smith_commit[0] != '\0';
+    printf("smith 0.0 (milestone 0: a routing passthrough)%s%s\n", known ? " commit " : "", smith_commit);
+    return 0;
+}
+
 static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
     switch (verb->kind) {
     case SmithVerb_Cc:
@@ -1810,6 +1828,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
     case SmithVerb_Symbolize:
         return smith_symbolize_main(argc - 2, argv + 2);
+    case SmithVerb_Version:
+        return smith_version_main();
     case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
         if (!smith_only_options(argc - 2, argv + 2)) {
             if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
@@ -1834,7 +1854,8 @@ static void smith_usage(FILE *out) {
           "                          clang-tidy\n"
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
-          "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n",
+          "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
+          "  version                 the version and the commit smith was built from\n",
           out);
 }
 
@@ -1854,10 +1875,6 @@ static void smith_usage(FILE *out) {
 
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
-    if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
-        puts("smith 0.0 (milestone 0: a routing passthrough)");
-        return 0;
-    }
     char self[PATH_MAX];
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 

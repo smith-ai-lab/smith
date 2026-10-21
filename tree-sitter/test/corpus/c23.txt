@@ -1,0 +1,302 @@
+================================================================================
+embed in an initializer
+================================================================================
+
+static const unsigned char data[] = {
+#embed "include/smith/build.h"
+};
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (storage_class_specifier)
+    (type_qualifier)
+    (sized_type_specifier
+      (primitive_type))
+    (init_declarator
+      (array_declarator
+        (identifier))
+      (initializer_list
+        (preproc_call
+          (preproc_directive)
+          (preproc_arg))))))
+
+================================================================================
+atomic type specifier
+================================================================================
+
+struct S { _Atomic(Op *) finished; _Atomic int plain; };
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (struct_specifier
+    (type_identifier)
+    (field_declaration_list
+      (field_declaration
+        (atomic_type_specifier
+          (type_descriptor
+            (type_identifier)
+            (abstract_pointer_declarator)))
+        (field_identifier))
+      (field_declaration
+        (type_qualifier)
+        (primitive_type)
+        (field_identifier)))))
+
+================================================================================
+bit-precise integers
+================================================================================
+
+unsigned _BitInt(128) product = (unsigned _BitInt(128))x * n;
+_BitInt(12) small;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (bit_int_type
+      (number_literal))
+    (init_declarator
+      (identifier)
+      (binary_expression
+        (cast_expression
+          (type_descriptor
+            (bit_int_type
+              (number_literal)))
+          (identifier))
+        (identifier))))
+  (declaration
+    (bit_int_type
+      (number_literal))
+    (identifier)))
+
+================================================================================
+enum with an underlying type
+================================================================================
+
+typedef enum : unsigned char { A, B } Letter;
+enum Mode : int { Fast, Slow };
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (type_definition
+    (enum_specifier
+      (sized_type_specifier
+        (primitive_type))
+      (enumerator_list
+        (enumerator
+          (identifier))
+        (enumerator
+          (identifier))))
+    (type_identifier))
+  (enum_specifier
+    (type_identifier)
+    (primitive_type)
+    (enumerator_list
+      (enumerator
+        (identifier))
+      (enumerator
+        (identifier)))))
+
+================================================================================
+operators and types as macro arguments
+================================================================================
+
+void f(void) {
+    SMITH_CHECK(line.length, ==, 0);
+    long double *wide = SMITH_ARENA_PUSH(&arena, long double);
+    c = va_arg(args, const char *const *);
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (field_expression
+              (identifier)
+              (field_identifier))
+            (operator)
+            (number_literal))))
+      (declaration
+        (sized_type_specifier
+          (primitive_type))
+        (init_declarator
+          (pointer_declarator
+            (identifier))
+          (call_expression
+            (identifier)
+            (argument_list
+              (pointer_expression
+                (identifier))
+              (type_descriptor
+                (sized_type_specifier
+                  (primitive_type)))))))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier)
+              (type_descriptor
+                (type_qualifier)
+                (primitive_type)
+                (abstract_pointer_declarator
+                  (type_qualifier)
+                  (abstract_pointer_declarator))))))))))
+
+================================================================================
+a macro that defines functions, without a semicolon
+================================================================================
+
+SMITH_TEST_DEFINE_VALUE(bool, bool, SmithTestKind_Bool, "bool", bool_value)
+int after(void);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (macro_invocation
+    (identifier)
+    (argument_list
+      (type_descriptor
+        (primitive_type))
+      (type_descriptor
+        (primitive_type))
+      (identifier)
+      (string_literal
+        (string_content))
+      (identifier)))
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))))
+
+================================================================================
+directives between initializer items
+================================================================================
+
+const int signals[] = {SIGTRAP, SIGABRT,
+#if !__has_feature(address_sanitizer)
+                       SIGSEGV, SIGBUS,
+                       SIGFPE
+#endif
+};
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (type_qualifier)
+    (primitive_type)
+    (init_declarator
+      (array_declarator
+        (identifier))
+      (initializer_list
+        (identifier)
+        (identifier)
+        (preproc_call
+          (preproc_directive)
+          (preproc_arg))
+        (identifier)
+        (identifier)
+        (identifier)
+        (preproc_call
+          (preproc_directive))))))
+
+================================================================================
+has_include in a condition
+================================================================================
+
+#if __has_include("lib/io.c")
+int x;
+#endif
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (preproc_if
+    (call_expression
+      (identifier)
+      (argument_list
+        (string_literal
+          (string_content))))
+    (declaration
+      (primitive_type)
+      (identifier))))
+
+================================================================================
+Apple blocks
+================================================================================
+
+void f(void) {
+    __block size_t copied = 0;
+    apply(content, ^bool(dispatch_data_t region, size_t size) { return true; });
+    set(handle, ^(int state) { copied = state; });
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (declaration
+        (storage_class_specifier)
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (number_literal)))
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (block_expression
+              (primitive_type)
+              (parameter_list
+                (parameter_declaration
+                  (type_identifier)
+                  (identifier))
+                (parameter_declaration
+                  (primitive_type)
+                  (identifier)))
+              (compound_statement
+                (return_statement
+                  (true)))))))
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (block_expression
+              (parameter_list
+                (parameter_declaration
+                  (primitive_type)
+                  (identifier)))
+              (compound_statement
+                (expression_statement
+                  (assignment_expression
+                    (identifier)
+                    (identifier)))))))))))

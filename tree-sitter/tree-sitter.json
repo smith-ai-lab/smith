@@ -1,0 +1,18 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "smith",
+      "camelcase": "Smith",
+      "scope": "source.smith",
+      "path": ".",
+      "file-types": ["smith"]
+    }
+  ],
+  "metadata": {
+    "version": "0.0.1",
+    "license": "MIT",
+    "description": "tree-sitter grammar for .smith, a superset of C",
+    "links": { "repository": "https://github.com/adam-r-kowalski/smith" }
+  }
+}

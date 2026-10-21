@@ -15,5 +15,6 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd and
 - `smith check`, `smith fmt`, `smith lint`, `smith lsp`: format, lint, all checks, the editor. Load `smith-check`.
 - `smith prove`: load `smith-contract`. `smith dbg` says it is not available yet.
 - `smith new`, `smith fetch`, `smith cache`: start a project, fetch a package, show and clean the caches (the smith-build skill).
+- `smith version`: prints the version and, after `commit`, the commit smith was built from.
 - Libraries: `smith-arena`, `smith-io`, `smith-random`, `smith-text`.
 - If smith is missing from PATH or seems broken, stop and tell the owner. Never swap in another compiler to get around a problem; rerun with `SMITH_VERBOSE=1` and report the command and its output.
