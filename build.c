@@ -119,6 +119,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                     "%s --quiet lib/random.c -- \"$@\" -I include %s && "
                                     "%s --quiet tests/random.c -- \"$@\" -I include %s && "
                                     "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
+                                    "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
                                     "%s --quiet lib/text.c -- \"$@\" -I include %s && "
                                     "%s --quiet tests/text.c -- \"$@\" -I include %s && "
                                     "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
@@ -128,7 +129,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                     "\"$@\" -std=gnu2y -I include %s || exit 1; done",
                                     tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
                                     sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                    tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                    tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                           "sh", nullptr},
                       cflags, nullptr),
         .inputs = llvm,
@@ -168,6 +169,8 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "tests/random.c",
                                                   "tests/untar.c",
                                                   "include/smith/test.h",
+                                                  "include/smith/contract.h",
+                                                  "lib/contract.c",
                                                   "include/smith/text.h",
                                                   "lib/text.c",
                                                   "tests/text.c",
@@ -278,6 +281,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             "lib/io.c",
                                             "include/smith/random.h",
                                             "lib/random.c",
+                                            "include/smith/contract.h",
+                                            "lib/contract.c",
                                             "include/smith/text.h",
                                             "lib/text.c",
                                             "include/smith/http.h",
@@ -345,7 +350,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
             (const char *[]){
                 "sh", "-c",
                 // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                "for t in run build new arena io http package random text cache untar resource test; do env "
+                "for t in run build new arena contract io http package random text cache untar resource test; do env "
                 "\"$0\" sh tests/$t.sh "
                 "\"$1\" || exit 1; done; "
                 "env \"$0\" sh tests/test.sh \"$1\" isolate",

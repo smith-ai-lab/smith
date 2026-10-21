@@ -1,0 +1,239 @@
+#!/bin/sh
+# Tests of <smith/contract.h>, with real clang and ninja. Usage: sh tests/contract.sh path/to/smith
+# The macros' run-time behaviour (the message, the stop, NDEBUG), the calls they leave in the IR for `smith prove` to
+# find, and the library built by a project with smith_library. tests/contract.c runs under smith's own test library.
+set -u
+case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
+here=$(cd "$(dirname "$0")/.." && pwd)
+cc=${CC:-cc}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
+failures=0
+total=0
+out=
+err=
+rc=0
+
+capture() {
+    out=$("$@" 2>"$work/err")
+    rc=$?
+    err=$(cat "$work/err")
+}
+
+expect() { # name, expected, actual
+    total=$((total + 1))
+    if [ "$2" = "$3" ]; then
+        echo "ok    $1"
+    else
+        failures=$((failures + 1))
+        echo "FAIL  $1"
+        printf '  expected: %s\n' "$2"
+        printf '  actual:   %s\n' "$3"
+    fi
+}
+
+expect_contains() { # name, text, needle
+    total=$((total + 1))
+    case $2 in
+    *"$3"*) echo "ok    $1" ;;
+    *)
+        failures=$((failures + 1))
+        echo "FAIL  $1"
+        printf '  expected to contain: %s\n' "$3"
+        printf '  actual:              %s\n' "$2"
+        ;;
+    esac
+}
+
+flags="-std=gnu23 -Wall -Wextra -Wpedantic -Wconversion -Werror -I $here/include"
+
+# A program with one contract of each kind; its arguments pick which one fails.
+cat >"$work/clamp.c" <<'C'
+#include <smith/contract.h>
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef void (*OpsBegin)(int *);
+static void ops_begin_contract(int *position) {
+    SMITH_REQUIRES(position != nullptr);
+}
+SMITH_CONTRACT_FOR(OpsBegin, ops_begin_contract);
+
+int32_t clamp(int32_t x, int32_t low, int32_t high) {
+    SMITH_REQUIRES(low <= high);
+    const int32_t old = x; // kept only for the contract below
+    int32_t result = x < low ? low : x > high ? high : x;
+    SMITH_ENSURES(low <= result && result <= high && (result == old || result == low || result == high));
+    return result;
+}
+
+static int32_t twice(int32_t count) {
+    int32_t total = 0;
+    for (int32_t i = 0; i < count; i++) {
+        SMITH_INVARIANT(total == i * 2);
+        total += 2;
+    }
+    return total;
+}
+
+int main(int argc, char **argv) {
+    (void)argc;
+    int32_t x = atoi(argv[1]);
+    int32_t low = atoi(argv[2]);
+    int32_t high = atoi(argv[3]);
+    printf("%d %d\n", clamp(x, low, high), twice(high));
+    return 0;
+}
+C
+cat >"$work/ensures.c" <<'C'
+#include <smith/contract.h>
+
+#include <stdio.h>
+
+static int wrong(int x) {
+    int result = x + 1;
+    SMITH_ENSURES(result == x);
+    return result;
+}
+
+int main(void) {
+    printf("%d\n", wrong(1));
+    return 0;
+}
+C
+cat >"$work/invariant.c" <<'C'
+#include <smith/contract.h>
+
+int main(void) {
+    int total = 0;
+    for (int i = 0; i < 4; i++) {
+        SMITH_INVARIANT(total == i * 2);
+        total += 2;
+        if (i == 1) total++;
+    }
+    return total;
+}
+C
+
+# 1. At run time: passing contracts are silent, a failing one prints its text, file and line, then aborts.
+$cc $flags "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp" || exit 1
+capture "$work/clamp" 5 1 3
+expect "run: true contracts pass" "0 3 6" "$rc $out"
+capture "$work/clamp" 5 3 1
+expect "run: a false SMITH_REQUIRES aborts" 134 "$rc"
+expect "run: ... and prints its text, file and line" "$work/clamp.c:14: SMITH_REQUIRES(low <= high) failed" "$err"
+expect "run: ... before anything else is printed" "" "$out"
+$cc $flags "$work/ensures.c" "$here/lib/contract.c" -o "$work/ensures" || exit 1
+capture "$work/ensures"
+expect "run: a false SMITH_ENSURES aborts" 134 "$rc"
+expect "run: ... and prints its text, file and line" "$work/ensures.c:7: SMITH_ENSURES(result == x) failed" "$err"
+$cc $flags "$work/invariant.c" "$here/lib/contract.c" -o "$work/invariant" || exit 1
+capture "$work/invariant"
+expect "run: a false SMITH_INVARIANT aborts" 134 "$rc"
+expect "run: ... and prints its text, file and line" "$work/invariant.c:6: SMITH_INVARIANT(total == i * 2) failed" "$err"
+
+# 2. The same program under the sanitizers, and optimized: the checks are calls, so no optimization drops them.
+$cc $flags -g -fsanitize=address,undefined "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp_asan" || exit 1
+capture "$work/clamp_asan" 5 1 3
+expect "sanitized: true contracts pass" "0 3 6" "$rc $out"
+$cc $flags -O2 "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp_fast" || exit 1
+capture "$work/clamp_fast" 5 3 1
+expect "optimized: a false SMITH_REQUIRES still aborts" 134 "$rc"
+
+# 3. NDEBUG compiles the checks away: no call, no evaluation, no unused-variable warning for an old value.
+capture $cc $flags -DNDEBUG -c "$work/clamp.c" -o "$work/clamp_ndebug.o"
+expect "NDEBUG: -Wall -Wextra -Werror compile, though old is used only in a contract" 0 "$rc"
+undefined=$(nm -u "$work/clamp_ndebug.o" | grep -c smith_contract_)
+expect "NDEBUG: the object calls no contract function" 0 "$undefined"
+$cc $flags -DNDEBUG "$work/clamp.c" -o "$work/clamp_ndebug" || exit 1
+capture "$work/clamp_ndebug" 5 3 1
+expect "NDEBUG: a false contract is not checked" "0 1 2" "$rc $out"
+cat >"$work/effect.c" <<'C'
+#include <smith/contract.h>
+
+static int calls;
+bool counted(void) {
+    calls++;
+    return true;
+}
+
+int main(void) {
+    SMITH_REQUIRES(counted());
+    SMITH_ENSURES(counted());
+    SMITH_INVARIANT(counted());
+    return calls;
+}
+C
+$cc $flags -DNDEBUG "$work/effect.c" -o "$work/effect" || exit 1
+capture "$work/effect"
+expect "NDEBUG: the expression is not evaluated" 0 "$rc"
+$cc $flags "$work/effect.c" "$here/lib/contract.c" -o "$work/effect" || exit 1
+capture "$work/effect"
+expect "run: each expression is evaluated once" 3 "$rc"
+
+# 4. In the IR, with no flag: a call per contract that smith prove finds by name, at -O0 and optimized.
+for level in -O0 -O2; do
+    $cc $flags $level -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
+    ir=$(cat "$work/clamp.ll")
+    expect_contains "IR $level: SMITH_REQUIRES is a call" "$ir" "call void @smith_contract_requires(i1 noundef zeroext"
+    expect_contains "IR $level: SMITH_ENSURES is a call" "$ir" "call void @smith_contract_ensures("
+    expect_contains "IR $level: SMITH_INVARIANT is a call" "$ir" "call void @smith_contract_invariant("
+done
+expect_contains "IR: the call carries the expression's text" "$ir" 'c"low <= high\00"'
+expect_contains "IR: ... and the line" "$ir" "i32 noundef 14)"
+expect_contains "IR: SMITH_CONTRACT_FOR is a global named for the type" "$ir" "@smith_contract_for_OpsBegin = "
+$cc $flags -DNDEBUG -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
+calls=$(grep -c 'call void @smith_contract_' "$work/clamp.ll")
+expect "IR NDEBUG: no contract call" 0 "$calls"
+expect_contains "IR NDEBUG: SMITH_CONTRACT_FOR is still there" "$(cat "$work/clamp.ll")" "@smith_contract_for_OpsBegin = "
+
+# 5. The library alone compiles as C23 and C2y.
+for std in gnu23 gnu2y; do
+    capture $cc -std=$std -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I "$here/include" -c "$here/lib/contract.c" -o "$work/contract.o"
+    expect "library: compiles as $std" 0 "$rc"
+done
+
+# 6. A project gets the library with smith_library, and its tests run under smith's own test library.
+mkdir -p "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith++"
+PATH="$work/bin:$PATH"
+mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
+cp "$here/tests/contract.c" tests/test_contract.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
+    const char *const *names = smith_list(b, "arena", "contract", "random", nullptr);
+    SmithObject objects[3] = {};
+    for (size_t i = 0; names[i] != nullptr; i++) {
+        objects[i] = (SmithObject){.compiler = "smith", .source = smith_library(b, names[i]),
+                                   .output = smith_fmt(b, "build/smith/%s.o", names[i]), .flags = flags};
+        smith_object(b, &objects[i]);
+    }
+    SmithTests tests = {
+        .sources = smith_list(b, "tests/test_contract.c", nullptr),
+        .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
+        .flags = flags,
+        .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
+    };
+    smith_tests(b, &tests);
+    smith_default(b, smith_list(b, "build/tests", nullptr));
+}
+C
+capture smith build
+[ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
+expect "project: the tests build with smith_library" 0 "$rc"
+capture ./build/tests
+summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
+count=$(grep -c '^void test_' "$here/tests/contract.c")
+expect "project: all $count tests pass" "$count passed, 0 failed" "$summary"
+expect "project: the header is written" yes "$([ -f .smith/include/smith/contract.h ] && echo yes)"
+
+echo
+echo "$total contract checks, $failures failed"
+[ "$failures" -eq 0 ]

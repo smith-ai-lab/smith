@@ -595,6 +595,13 @@ static const unsigned char smith_arena_source[] = {
 #embed "lib/arena.c"
 };
 
+static const unsigned char smith_contract_header[] = {
+#embed "include/smith/contract.h"
+};
+static const unsigned char smith_contract_source[] = {
+#embed "lib/contract.c"
+};
+
 static const unsigned char smith_io_header[] = {
 #embed "include/smith/io.h"
 };
@@ -641,6 +648,8 @@ typedef struct {
 
 static const SmithLibrary smith_libraries[] = {
     {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
+    {"contract", smith_contract_header, sizeof smith_contract_header, smith_contract_source,
+     sizeof smith_contract_source},
     {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
