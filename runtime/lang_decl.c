@@ -142,6 +142,10 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
     if (known == nullptr) {
         smith_lang_name_add(lang, name, length, kind, exported);
         if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
+        if (host->rename != nullptr) {
+            const char *prefixed = smith_lang_prefixed(lang, name, length);
+            host->rename(host->context, name, (uint32_t)length, prefixed, (uint32_t)lang->tmp_length);
+        }
     }
     if (known != nullptr && exported && !known->exported) known->exported = true;
     return smith_lang_prefixed(lang, name, length);

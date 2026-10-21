@@ -93,6 +93,8 @@ typedef struct {
     void (*watch)(void *context, const char *name, uint32_t length);
     void (*watch_mode)(void *context, SmithWatch mode);
     bool (*previous)(void *context, unsigned back, SmithToken *token);
+    // The module declared a name: the host may rename its uses itself (the prefixed spelling is given).
+    void (*rename)(void *context, const char *name, uint32_t length, const char *prefixed, uint32_t prefixed_length);
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).
@@ -110,6 +112,11 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
 // Whether a macro of an imported header may be expanded at this location (it was named c.X there).
 bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location);
 bool smith_lang_is_module(const SmithLang *lang);
+// In a module's function body, whether the host offers only braces and the names it watches (the host's fast paths).
+bool smith_lang_body_sparse(const SmithLang *lang);
+// A brace of such a body that changes nothing but the nesting: done, and the token goes on unchanged. False for the
+// function's own closing brace and for a struct, union or enum, which the full path reads.
+bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open);
 // Whether tokens are held for a later call: the host keeps the tokens it handed over (their handles) until it is false.
 bool smith_lang_holds(const SmithLang *lang);
 unsigned smith_lang_errors(const SmithLang *lang);

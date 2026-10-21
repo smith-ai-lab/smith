@@ -246,3 +246,20 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
         smith_lang_sparse_sized(lang, host, token);
     }
 }
+
+bool smith_lang_body_sparse(const SmithLang *lang) {
+    return lang->body_sparse && !lang->broken;
+}
+
+bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open) {
+    if (!lang->body_sparse || lang->broken) return false;
+    if (!open) {
+        if (lang->brace_depth <= 1) return false; // the function's own
+        lang->brace_depth -= 1;
+        return true;
+    }
+    bool is_enum = false;
+    if (lang->brace_depth >= smith_lang_braces_max || smith_lang_body_aggregate(lang, host, &is_enum)) return false;
+    lang->braces[lang->brace_depth++] = SmithLangBrace_Block;
+    return true;
+}

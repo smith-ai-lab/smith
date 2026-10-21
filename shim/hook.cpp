@@ -15,6 +15,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/FileSystem.h"
@@ -23,6 +24,7 @@
 
 #include "../runtime/lang.h"
 
+#include <chrono>
 #include <deque>
 #include <string>
 #include <vector>
@@ -54,6 +56,7 @@ class SmithHook final : public TokenHook {
         host.previous = &SmithHook::previousToken;
         host.declared = &SmithHook::declaredInFile;
         host.watch_imports = &SmithHook::watchImports;
+        host.rename = &SmithHook::renameName;
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
         host.field = &SmithHook::fieldOf;
@@ -63,8 +66,11 @@ class SmithHook final : public TokenHook {
         }
         host.main_file = mainName.c_str();
         diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
         smith_lang_watch_basics(&host);
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
+        for (unsigned i = 0; i < 13; i++)
+            sizedNames[PP.getIdentifierInfo(sizedTable[i].name)] = i;
     }
 
     void semaCreated(Sema &s) override {
@@ -74,12 +80,107 @@ class SmithHook final : public TokenHook {
         sema = nullptr;
     }
 
+    // SMITH_HOOK_STATS=1: what the hook was offered and what it cost, printed at the end of the file.
+    struct Stats {
+        bool on = false;
+        uint64_t offered = 0, outside = 0, kept = 0, in_place = 0, streams = 0, held = 0, fast = 0;
+        double nanoseconds = 0;
+    } stats;
+
+    void report() {
+        if (!stats.on) return;
+        fprintf(stderr,
+                "hook: offered %llu (outside the file %llu), kept %llu, fast %llu, in place %llu, streams %llu, held "
+                "%llu; %.2f ms\n",
+                (unsigned long long)stats.offered, (unsigned long long)stats.outside, (unsigned long long)stats.kept,
+                (unsigned long long)stats.fast, (unsigned long long)stats.in_place, (unsigned long long)stats.streams,
+                (unsigned long long)stats.held, stats.nanoseconds / 1e6);
+    }
+
     bool transform(Preprocessor &, Token &tok) override {
+        if (!stats.on) return offer(tok);
+        if (tok.is(tok::eof)) report();
+        auto begin = std::chrono::steady_clock::now();
+        bool consumed = offer(tok);
+        stats.nanoseconds += std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - begin).count();
+        stats.offered += 1;
+        return consumed;
+    }
+
+    bool offer(Token &tok) {
         if (!spelledInMain(tok.getLocation())) {
             if (tok.is(tok::eof)) return feed(tok);
+            stats.outside += 1;
             return false;
         }
+        if (tok.is(tok::identifier) || tok.isOneOf(tok::l_brace, tok::r_brace)) {
+            Fast fast = tryFast(tok);
+            if (fast != Fast::No) {
+                stats.fast += 1;
+                return false;
+            }
+        }
         return feed(tok);
+    }
+
+    // The cases that the lowering would answer the same way every time, answered here without it: the sparse path's
+    // common tokens. A sized type name that nothing contradicts becomes its type; in a module's function body a name of
+    // the module becomes its prefixed spelling, and the braces are counted.
+    enum class Fast { No, Kept, Replaced };
+
+    // Whether a token before a name can end a type, so that the name may be a declarator (a question for the lowering).
+    static bool mayEndType(tok::TokenKind kind) {
+        return kind == tok::star || kind == tok::identifier || kind == tok::r_brace || kind == tok::annot_typename ||
+               kind == tok::kw_const || kind == tok::kw_volatile || kind == tok::kw_restrict ||
+               kind == tok::kw__Atomic || kind == tok::kw_char || kind == tok::kw_short || kind == tok::kw_int ||
+               kind == tok::kw_long || kind == tok::kw_signed || kind == tok::kw_unsigned || kind == tok::kw_float ||
+               kind == tok::kw_double || kind == tok::kw_void || kind == tok::kw_bool || kind == tok::kw__Bool ||
+               kind == tok::kw__Complex || kind == tok::kw__BitInt || kind == tok::kw_typeof ||
+               kind == tok::kw__Float16;
+    }
+
+    Fast tryFast(Token &tok) {
+        bool body = smith_lang_body_sparse(lang);
+        if (!body && smith_lang_is_module(lang)) return Fast::No;
+        if (tok.isNot(tok::identifier)) {
+            if (!body || !smith_lang_fast_brace(lang, &host, tok.is(tok::l_brace))) return Fast::No;
+            return Fast::Kept;
+        }
+        IdentifierInfo *info = tok.getIdentifierInfo();
+        const IdentifierInfo *beforeInfo = nullptr;
+        tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);
+        if (body) {
+            auto renamed = renames.find(info);
+            if (renamed != renames.end()) {
+                if (before == tok::period || before == tok::arrow) return Fast::Kept;
+                tok.setIdentifierInfo(renamed->second);
+                return Fast::Replaced;
+            }
+        }
+        auto sized = sizedNames.find(info);
+        if (sized == sizedNames.end() || sema == nullptr) return Fast::No;
+        if (before == tok::period || before == tok::arrow || before == tok::kw_struct || before == tok::kw_union ||
+            before == tok::kw_enum) {
+            return Fast::Kept;
+        }
+        if (mayEndType(before) || info->getFETokenInfo() != nullptr) return Fast::No;
+        sizedToken(tok, sized->second);
+        return Fast::Replaced;
+    }
+
+    // u32 and the others as the parser's own type: a type annotation, or the keyword of float and double.
+    void sizedToken(Token &tok, unsigned index) {
+        const SizedName &entry = sizedTable[index];
+        if (entry.keyword != nullptr) {
+            IdentifierInfo *keyword = PP.getIdentifierInfo(entry.keyword);
+            tok.setIdentifierInfo(keyword);
+            tok.setKind(keyword->getTokenID());
+            return;
+        }
+        if (sizedTypes[index].isNull()) sizedTypes[index] = sizedType(entry.macro);
+        tok.setKind(tok::annot_typename);
+        tok.setAnnotationEndLoc(tok.getLocation());
+        tok.setAnnotationValue(ParsedType::make(sizedTypes[index]).getAsOpaquePtr());
     }
 
   private:
@@ -99,6 +200,22 @@ class SmithHook final : public TokenHook {
     llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
     std::string fieldName;
     std::string fieldType;
+    struct SizedName {
+        const char *name;
+        const char *macro;   // the compiler's macro for its type, or null
+        const char *keyword; // else the keyword
+    };
+    static constexpr SizedName sizedTable[13] = {
+        {"u8", "__UINT8_TYPE__", nullptr},   {"u16", "__UINT16_TYPE__", nullptr},
+        {"u32", "__UINT32_TYPE__", nullptr}, {"u64", "__UINT64_TYPE__", nullptr},
+        {"i8", "__INT8_TYPE__", nullptr},    {"i16", "__INT16_TYPE__", nullptr},
+        {"i32", "__INT32_TYPE__", nullptr},  {"i64", "__INT64_TYPE__", nullptr},
+        {"usize", "__SIZE_TYPE__", nullptr}, {"isize", "__PTRDIFF_TYPE__", nullptr},
+        {"f16", nullptr, "_Float16"},        {"f32", nullptr, "float"},
+        {"f64", nullptr, "double"}};
+    llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
+    QualType sizedTypes[13];
+    llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> renames; // a module's names, to their prefixed spelling
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
 
@@ -230,8 +347,16 @@ class SmithHook final : public TokenHook {
         pool.push_back(tok);
         SmithToken first = convert(tok, pool.size() - 1);
         bool consumed = smith_lang_feed(lang, &host, &first);
-        if (!consumed) return false;
-        if (actions.empty() && out.size() == 1 && replaceInPlace(tok, out[0])) return false;
+        if (!consumed) {
+            stats.kept += 1;
+            return false;
+        }
+        if (actions.empty() && out.size() == 1 && replaceInPlace(tok, out[0])) {
+            stats.in_place += 1;
+            return false;
+        }
+        if (smith_lang_holds(lang)) stats.held += 1;
+        stats.streams += 1;
         flush();
         return true;
     }
@@ -451,6 +576,13 @@ class SmithHook final : public TokenHook {
             return true;
         }
         return false;
+    }
+
+    static void renameName(void *context, const char *name, uint32_t length, const char *prefixed,
+                           uint32_t prefixedLength) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->renames[self->PP.getIdentifierInfo(StringRef(name, length))] =
+            self->PP.getIdentifierInfo(StringRef(prefixed, prefixedLength));
     }
 
     static void watchName(void *context, const char *name, uint32_t length) {
