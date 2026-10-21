@@ -1921,6 +1921,26 @@ static bool smith_only_options(int count, char **args) {
     return true;
 }
 
+// Whether the arguments of a verb that is the tool with arguments are only -D options of the build and the few options
+// of the tool that the project's action takes too: `smith fmt --dry-run` is the project's dry run, not clang-format
+// waiting on standard input for a file; `smith lint --quiet` is the project's lint. Other options (and any file name)
+// leave the verb the tool, unchanged (`smith fmt --assume-filename=x.c` reads standard input).
+static bool smith_project_arguments(const char *verb, int count, char **args) {
+    const char *const *own = nullptr;
+    static const char *const fmt_options[] = {"--dry-run", "-n", "--Werror", "-i", nullptr};
+    static const char *const lint_options[] = {"--quiet", nullptr};
+    if (strcmp(verb, "fmt") == 0) own = fmt_options;
+    if (strcmp(verb, "lint") == 0) own = lint_options;
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strncmp(args[i], "-D", 2) == 0) continue;
+        bool known = false;
+        for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)
+            known = known || strcmp(args[i], own[j]) == 0;
+        if (!known) return false;
+    }
+    return true;
+}
+
 // `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
@@ -2040,7 +2060,7 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
     case SmithVerb_Version:
         return smith_version_main();
     case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
-        if (!smith_only_options(argc - 2, argv + 2)) {
+        if (!smith_project_arguments(verb->name, argc - 2, argv + 2)) {
             if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
             return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
         }

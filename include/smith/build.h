@@ -28,7 +28,7 @@ typedef struct {
     int (*run)(SmithRun *run); // a C function in build.c instead of .command; 0 succeeds
     const char *const *args;   // given to .run as run->args
     bool content_hash;         // later: rerun only when the inputs' bytes changed
-    bool test;                 // a task only: `smith test` runs it (smith_tests sets it on its task)
+    bool test;                 // `smith test` runs this task or builds this step (smith_tests sets it on its task)
 } SmithStep;
 
 void build(SmithBuild *b); // what the project writes
@@ -49,7 +49,8 @@ void smith_step(SmithBuild *b, SmithStep *step);
 // declared again under one name with every field equal changes nothing; with any field different it is an error.
 // A task or alias may not be named after a verb (fmt, lint, docs, prove, check, run, test): each verb does one fixed
 // thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
-// tests, which `smith test` runs (smith_tests does it for its own)
+// tests, which `smith test` runs (smith_tests does it for its own). .test on a step (smith_step) makes `smith test`
+// build it with the tests; it is incremental like any step, so a check stamped by its inputs does not rerun
 void smith_task(SmithBuild *b, const char *name, SmithStep *step);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error

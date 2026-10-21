@@ -41,9 +41,9 @@ own (issue #40):
 
 | verb | with no arguments | with arguments |
 | --- | --- | --- |
-| `smith fmt` | formats every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith`) to `.clang-format`; what `.clang-format-ignore` names is left alone | clang-format, with its arguments unchanged |
-| `smith lint` | builds what the compiles read (generated headers), then runs clang-tidy, with `.clang-tidy`, on the project's own sources among the build's compiles, side by side | clang-tidy, with its arguments unchanged |
-| `smith docs` | checks AGENTS.md, `knowledge/` and `.agents/skills/`, with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
+| `smith fmt` | formats every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith .metal`) to `.clang-format`; what `.clang-format-ignore` names is left alone | clang-format, with its arguments unchanged; options alone (`--dry-run`, `-n`, `--Werror`, `-i`) are the project verb, never standard input |
+| `smith lint` | builds what the compiles read (generated headers), then runs clang-tidy, with `.clang-tidy`, on the project's own sources among the build's compiles, side by side | clang-tidy, with its arguments unchanged; `--quiet` alone is the project verb |
+| `smith docs` | checks AGENTS.md, `knowledge/` and `.agents/skills/` of the nearest folder at or above the current one that has an AGENTS.md (up to the repository's root; else the current folder), with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
 | `smith prove` | proves the contracts of the build's C sources, with the flags of their compiles | the prover, with its arguments |
 | `smith test` | builds and runs the tests `smith_tests` declares | the arguments are the test runner's options |
 | `smith run` | builds `smith_default`, then runs the one program it names | the arguments go to the program |
@@ -76,7 +76,7 @@ between the fields, and `.smith/compile_commands.json`, and the manifest has two
   compile after the compiler (`-MMD -MF`, `-c` and `-o` among them). Not a generated file, nothing under `.smith/` and no
   absolute path (a package's). Sources that `smith_compile_command` declares (never compiled, but read with flags) are
   here too, and build.c itself, with the flags smith compiles it with.
-- `test<TAB>task`: a task with `.test` (what `smith_tests` makes its task; smith's own `test-<name>` tasks set it too).
+- `test<TAB>task`: a task with `.test` (what `smith_tests` makes its task; smith's own `test-<name>` tasks set it too), or a step with `.test` (its outputs).
 - `program<TAB>path`: the output of a `smith_program`; `unit<TAB>source...`: the own sources of a program's objects (not
   the runner `smith_tests` makes); `runner<TAB>path`: the program `smith_tests` makes, the tests' runner (also a
   `program` line), which a debugger launches with `--test <name> --in-process`; `default<TAB>target`: a target of
@@ -931,7 +931,8 @@ void smith_step(SmithBuild *b, SmithStep *step);
 // declared again under one name with every field equal changes nothing; with any field different it is an error.
 // A task or alias may not be named after a verb (fmt, lint, docs, prove, check, run, test): each verb does one fixed
 // thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
-// tests, which `smith test` runs (smith_tests does it for its own)
+// tests, which `smith test` runs (smith_tests does it for its own). .test on a step (smith_step) makes `smith test`
+// build it with the tests; it is incremental like any step, so a check stamped by its inputs does not rerun
 void smith_task(SmithBuild *b, const char *name, SmithStep *step);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error
