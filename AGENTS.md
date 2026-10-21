@@ -1,9 +1,7 @@
 # smith
 
-A drop-in compiler driver for C, Objective-C, C++ and Metal, written in C. Milestone 0, a routing passthrough, works on
-macOS: smith builds itself, checkers, learner and game, and `smith build` builds smith, checkers and game from their
-`build.c`. Next are contracts checked at compile time, then `.smith` files whose syntax replaces macros; the order is in
-[ROADMAP.md](ROADMAP.md).
+A C toolchain and a modern standard library for C, written in C. Planned work is in GitHub issues
+(https://github.com/adam-r-kowalski/smith/issues), and nowhere else.
 
 ## Decisions (change one only with the owner)
 
@@ -96,7 +94,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
   note on what changed and why.
 - **The plugin's skills describe everything smith does today, and nothing it doesn't do yet.** Every command, build.c
-  call and library has a skill that another project's agent can learn it from. Plans go in ROADMAP.md, never in a
+  call and library has a skill that another project's agent can learn it from. Plans go in GitHub issues, never in a
   skill. A change that adds or changes something updates its skill in the same commit.
 - Small Conventional Commits.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.

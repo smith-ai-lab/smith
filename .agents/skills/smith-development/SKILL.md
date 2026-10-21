@@ -5,7 +5,7 @@ description: "Start here for any change to smith itself: building, testing, inst
 
 # Develop smith
 
-[AGENTS.md](../../../AGENTS.md) holds the rules and decisions, [ROADMAP.md](../../../ROADMAP.md) holds where smith is going. This skill holds the procedures every change shares. To use smith as a compiler, load [smith](../smith/SKILL.md) instead. To edit smith's own `build.c`, load [smith-build](../smith-build/SKILL.md) as well.
+[AGENTS.md](../../../AGENTS.md) holds the rules and decisions, and GitHub issues hold the planned work. This skill holds the procedures every change shares. To use smith as a compiler, load [smith](../smith/SKILL.md) instead. To edit smith's own `build.c`, load [smith-build](../smith-build/SKILL.md) as well.
 
 ## Build, test, install
 
@@ -33,6 +33,6 @@ The rules are game's, in https://github.com/adam-r-kowalski/game/blob/main/knowl
 
 ## Where docs go
 
-- Decisions and rules, one line each: `AGENTS.md`. Plans and order of work: `ROADMAP.md`. Procedures: skills in `.agents/skills`. `.claude/skills` links to it.
+- Decisions and rules, one line each: `AGENTS.md`. Planned work: GitHub issues, nowhere in the repository. Procedures: skills in `.agents/skills`. `.claude/skills` links to it.
 - The `smith` and `smith-build` skills ship in the smith plugin, straight from `.agents/skills`. No project carries a copy, so change them here only.
 - Code and the docs that describe it go in the same commit. Small Conventional Commits.
