@@ -800,7 +800,7 @@ void test_text_f64_sweep_of_every_pattern(void) {
     uint64_t stride = (UINT64_MAX / count) | 1; // odd, so the sweep touches every exponent and mantissa
     char text[64];
     for (uint64_t i = 0; i < count; i++) {
-        double d = __builtin_bit_cast(double, i * stride);
+        double d = __builtin_bit_cast(double, i *stride);
         if (d != d || d > DBL_MAX || d < -DBL_MAX) continue;
         snprintf(text, sizeof text, "%.17g", d);
         double back = 0;

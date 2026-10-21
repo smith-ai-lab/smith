@@ -127,6 +127,8 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                  "%s --quiet lib/text.c -- \"$@\" -I include %s && "
                                                  "%s --quiet tests/text.c -- \"$@\" -I include %s && "
                                                  "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/json.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/json.c -- \"$@\" -I include %s && "
                                                  "%s --quiet lib/test.c -- \"$@\" -I include %s && "
                                                  "for f in build main; do %s --quiet "
                                                  "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
@@ -134,7 +136,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
                                                  sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                        "sh", nullptr},
                       cflags, nullptr),
         .inputs = llvm,
@@ -196,6 +198,9 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "lib/text.c",
                                                   "tests/text.c",
                                                   "tests/text_exhaustive.c",
+                                                  "include/smith/json.h",
+                                                  "lib/json.c",
+                                                  "tests/json.c",
                                                   "lib/test.c",
                                                   nullptr};
     build_format(b, format, check_llvm.outputs, sources);
@@ -411,6 +416,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             "lib/contract.c",
                                             "include/smith/text.h",
                                             "lib/text.c",
+                                            "include/smith/json.h",
+                                            "lib/json.c",
                                             "include/smith/http.h",
                                             "lib/http.c",
                                             "include/smith/test.h",
@@ -475,14 +482,15 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command = (const char *[]){"sh", "-c",
-                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena io http package random text cache untar resource "
-                                    "defer contract prove test; do env "
-                                    "\"$0\" sh tests/$t.sh "
-                                    "\"$1\" || exit 1; done; "
-                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                             "for t in run build new arena io http package random text json cache untar resource "
+                             "defer contract prove test; do env "
+                             "\"$0\" sh tests/$t.sh "
+                             "\"$1\" || exit 1; done; "
+                             "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);

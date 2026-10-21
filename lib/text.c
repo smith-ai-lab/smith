@@ -252,8 +252,8 @@ static void smith_text_big_subtract(SmithTextBig *a, const SmithTextBig *b) {
 // The bits nearest to numerator / denominator in a format, ties to even, or the infinity bits if that is out of range.
 static uint64_t smith_text_ratio_to_bits(const SmithTextFormat *format, SmithTextBig numerator,
                                          SmithTextBig denominator) {
-    // Scale so that numerator / denominator, times 2^scale, lies in (2^p, 2^(p+2)) for p mantissa bits: its integer part
-    // q has p + 1 or p + 2 bits, and the remainder says what is left of the last one.
+    // Scale so that numerator / denominator, times 2^scale, lies in (2^p, 2^(p+2)) for p mantissa bits: its integer
+    // part q has p + 1 or p + 2 bits, and the remainder says what is left of the last one.
     int64_t p = format->mantissa_bits;
     int64_t scale = p + 1 - ((int64_t)smith_text_big_bits(&numerator) - (int64_t)smith_text_big_bits(&denominator));
     if (scale >= 0)
@@ -263,7 +263,7 @@ static uint64_t smith_text_ratio_to_bits(const SmithTextFormat *format, SmithTex
     SmithTextBig step = denominator;
     smith_text_big_shift_left(&step, (uint64_t)(p + 1));
     uint64_t q = 0;
-    for (int64_t bit = p + 2; bit-- > 0;) {
+    for (uint32_t bit = format->mantissa_bits + 2; bit-- > 0;) {
         if (smith_text_big_at_least(&numerator, &step)) {
             smith_text_big_subtract(&numerator, &step);
             q |= (uint64_t)1 << bit;
@@ -272,7 +272,7 @@ static uint64_t smith_text_ratio_to_bits(const SmithTextFormat *format, SmithTex
     }
     // The number is (q + numerator / denominator) * 2^-scale. Keep p bits, or fewer where the result is subnormal,
     // and round by the bits dropped.
-    int64_t drop = (q >> (p + 1)) != 0 ? 2 : 1;
+    int64_t drop = (q >> (format->mantissa_bits + 1)) != 0 ? 2 : 1;
     if (scale + format->smallest_exponent > drop) drop = scale + format->smallest_exponent;
     if (drop > p + 2) return 0;
     uint64_t shift = (uint64_t)drop;
@@ -281,7 +281,7 @@ static uint64_t smith_text_ratio_to_bits(const SmithTextFormat *format, SmithTex
     uint64_t half = (uint64_t)1 << (shift - 1);
     if (low > half || (low == half && (numerator.count != 0 || (kept & 1) != 0))) kept += 1;
     int64_t exponent = drop - scale; // the number is kept * 2^exponent
-    uint64_t one = (uint64_t)1 << (p - 1);
+    uint64_t one = (uint64_t)1 << (format->mantissa_bits - 1);
     if (exponent + format->field_offset >= format->field_infinity) return (uint64_t)format->field_infinity * one;
     // A normal number's top bit carries into the exponent field, which also rounds 2^p up to the next power of two.
     return (uint64_t)(exponent + format->field_offset) * one + kept - one;
@@ -543,7 +543,7 @@ static uint64_t smith_text_big_divide(SmithTextBig *numerator, const SmithTextBi
     SmithTextBig step = *denominator;
     smith_text_big_shift_left(&step, (uint64_t)shift);
     uint64_t q = 0;
-    for (int64_t bit = shift; bit >= 0; bit--) {
+    for (uint32_t bit = (uint32_t)shift + 1; bit-- > 0;) {
         if (smith_text_big_at_least(numerator, &step)) {
             smith_text_big_subtract(numerator, &step);
             q |= (uint64_t)1 << bit;
@@ -596,7 +596,7 @@ static uint64_t smith_text_f64_round_to(uint64_t m, int64_t e, int64_t first, ui
 // The decimal exponent of the first digit of m * 2^e: floor(log10), from the binary exponent and then corrected.
 static int64_t smith_text_f64_first_exponent(uint64_t m, int64_t e) {
     int64_t binary = e + (int64_t)(64 - (uint32_t)__builtin_clzll(m)) - 1;
-    int64_t first = (binary * 78913) >> 18; // binary * log10(2), floor, within one
+    int64_t first = (binary * 78913) / 262144; // binary * log10(2), within one of the floor
     for (int attempt = 0; attempt < 4; attempt++) {
         uint64_t q = smith_text_f64_scaled(m, e, first, false);
         if (q == 0)
