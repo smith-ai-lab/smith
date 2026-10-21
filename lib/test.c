@@ -796,6 +796,8 @@ typedef struct {
     bool verbose;
     bool color;
     bool isolate;       // a process for each test, as before the workers
+    bool in_process;    // every test in the runner's own process, for a debugger: no fork, no timeout, no shrinking
+    bool timeout_given; // --timeout was passed
     bool trace;         // print a failure's stack as a trace block, for smith to turn into the report
     bool stats;         // print the forks the run made
     bool shuffle_given; // run the tests in an order drawn from shuffle_seed
@@ -1764,6 +1766,43 @@ static void smith_test_run_all(SmithTestPlan *plan) {
     smith_test_stop_workers();
 }
 
+// --in-process: the tests run one after another in the runner's own process, which forks nothing, so a debugger that
+// does not follow forks (lldb on macOS) stops inside them. A failed check unwinds to here as it does in a worker; a
+// crash, an abort outside a death check or a hang ends the whole run (there is no process to take the blow), and with
+// no alarm by default a stopped test is not timed out. Output goes to the terminal as the test writes it.
+static void smith_test_run_in_process(SmithTestPlan *plan) {
+    const SmithTestOptions *options = plan->options;
+    SmithTestShared *shared = &smith_test_shared_slots[0];
+    smith_test_shared = shared;
+    smith_test_timeout_seconds = options->timeout;
+    smith_test_worker = true;
+    smith_test_catch_signals();
+    smith_failure_hook = smith_test_on_failure;
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    for (size_t i = 0; i < plan->count; i++) {
+        SmithTestRun *run = &plan->runs[plan->order[i]];
+        const SmithTest *test = plan->tests[plan->order[i]];
+        memset(shared, 0, sizeof *shared);
+        SmithTestCommand command = {
+            .test = (uint32_t)(test - smith_test_table), .seed_given = options->seed_given, .seed = options->seed};
+        run->start = smith_test_seconds();
+        smith_test_abort_state = smith_test_abort_idle;
+        run->outcome = (SmithTestOutcome){.end = smith_test_serve(options, &command)};
+        run->seconds = smith_test_seconds() - run->start;
+        run->seed = shared->seed;
+        run->file = shared->file;
+        run->line = shared->line;
+        memcpy(run->note, shared->note, sizeof run->note);
+        memcpy(run->detail, shared->detail, sizeof run->detail);
+        run->heading = shared->heading;
+        run->frame_count = shared->frame_count;
+        run->frames_exact = shared->frames_exact;
+        memcpy(run->frames, shared->frames, sizeof run->frames);
+        run->finished = true;
+        smith_test_report(test, options, run);
+    }
+}
+
 // Whether run i comes after run j when the runs are listed slowest first, the earlier of equal times first.
 static bool smith_test_listed_after(const SmithTestPlan *plan, size_t i, size_t j) {
     if (plan->runs[i].seconds != plan->runs[j].seconds) return plan->runs[i].seconds < plan->runs[j].seconds;
@@ -1828,6 +1867,7 @@ static bool smith_test_parse_value(SmithTestOptions *options, const char *flag, 
     }
     if (strcmp(flag, "--timeout") == 0) {
         options->timeout = (unsigned)number;
+        options->timeout_given = true;
         return number > 0 && number <= 86400;
     }
     if (strcmp(flag, "--shrink") == 0) {
@@ -1857,6 +1897,8 @@ static bool smith_test_parse_options(int argc, char **argv, SmithTestOptions *op
             options->full = true;
         } else if (strcmp(flag, "--isolate") == 0) {
             options->isolate = true;
+        } else if (strcmp(flag, "--in-process") == 0) {
+            options->in_process = true;
         } else if (strcmp(flag, "--stats") == 0) {
             options->stats = true;
         } else if (strcmp(flag, "--trace") == 0) {
@@ -1938,10 +1980,15 @@ int main(int argc, char **argv) {
         fprintf(stderr,
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
                 "[--timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] [--shuffle <seed>] [--isolate] "
+                "[--in-process] "
                 "[--full] [--list] [--verbose] "
                 "[--stats] [--trace] [--color]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;
+    }
+    if (options.in_process) {
+        options.shrink = false; // shrinking reruns the test in workers of its own
+        if (!options.timeout_given) options.timeout = 0;
     }
     double start = smith_test_seconds();
     smith_test_full_run = options.full;
@@ -1959,7 +2006,10 @@ int main(int argc, char **argv) {
         printf("no test matches \"%s\"\n", options.filter);
         return 1;
     }
-    smith_test_run_all(&plan);
+    if (options.in_process)
+        smith_test_run_in_process(&plan);
+    else
+        smith_test_run_all(&plan);
     size_t failed = 0;
     for (size_t i = 0; i < plan.count; i++)
         failed += plan.runs[i].outcome.end != SmithTestEnd_Passed ? 1 : 0;

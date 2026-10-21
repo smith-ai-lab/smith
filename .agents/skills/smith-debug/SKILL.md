@@ -14,7 +14,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md`
 - Interactive: `smith dbg build/debug/app -- arg1 arg2`; then `b main.c:42`, `run`, `bt`, `frame variable`, `p expr`, `n`, `s`, `c`, `q`.
 - Batch, which is how to script it and what an agent runs: `smith dbg -b -o 'b file.c:42' -o run -o 'frame variable' -o bt -o kill build/debug/app -- args`. `-b` exits after the last `-o`; add `-o kill` when the program would otherwise run on.
 - Set a breakpoint after the prologue (a line of the body, not the function's first line), or arguments read as garbage.
-- A program that forks (smith's test runner `--jobs`, servers): the breakpoint hits in the child, which the debugger does not follow on macOS and which dies with SIGTRAP. Stop in the parent, or run the program with its option for one process (smith's test runner: `--isolate`, and break in the parent).
+- A program that forks (smith's test runner `--jobs`, servers): the breakpoint hits in the child, which the debugger does not follow on macOS and which dies with SIGTRAP. Run the program with its option for one process. For smith's test runner that is `--in-process`: `smith dbg -b -o 'b test_x.c:12' -o run -o 'frame variable' -o kill build/tests -- --test name --in-process`. It runs the tests in the runner's own process, with no fork and no timeout, so a crash or hang ends the run; `--jobs 1` and `--isolate` still fork, and the breakpoint then hits in a child the debugger does not follow.
 - No Python scripting, no `gui` (curses): the `script` command is absent. Everything else is lldb's.
 
 ## smith dap: an editor

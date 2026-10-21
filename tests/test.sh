@@ -5,7 +5,7 @@
 # process per test, and every check must give the same result.
 # parts is a comma-separated list of the parts to run (default all): the file is in parts that each work in projects of
 # their own, so that build.c can run them as tasks side by side (main, shrink_int, shrink_list, shrink_normal, alongside,
-# budget, misc, workers, reports, flags).
+# budget, misc, workers, reports, flags, inprocess).
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -1562,6 +1562,56 @@ for standard in gnu2y gnu23; do
     done
 done
 
+fi
+
+if part inprocess; then
+# 12. --in-process: every test in the runner's own process, no fork, so a debugger that does not follow forks (lldb on
+# macOS) stops inside a test. smith dbg is in the full smith only.
+project "$work/inprocess"
+cat >tests/test_inproc.c <<'C'
+#include <smith/test.h>
+
+#include <stdio.h>
+#include <unistd.h>
+
+void test_inproc_pass(void) {
+    printf("in-process output\n");
+    SMITH_CHECK(1 + 1, ==, 2);
+}
+
+void test_inproc_fail(void) {
+    int total = 40;
+    total += 2;
+    SMITH_CHECK(total, ==, 41);
+}
+
+void test_inproc_local(void) {
+    int answer = 41;
+    answer += 1;
+    SMITH_CHECK(answer, ==, 42);
+}
+
+void test_inproc_pid(void) {
+    printf("pid %d\n", (int)getpid());
+}
+C
+capture "$smith" build
+expect "in-process: the runner builds" 0 "$rc"
+capture build/tests --in-process --test inproc_
+expect_contains "in-process: a failed check is reported" "$out" "FAIL inproc_fail"
+expect_contains "in-process: ... with its values" "$out" "41"
+expect_contains "in-process: the other tests ran around it" "$out" "3 passed, 1 failed"
+expect_contains "in-process: output goes to the terminal as written" "$out" "in-process output"
+capture build/tests --in-process --test inproc_pass --stats
+expect_contains "in-process: no fork" "$out" "forks: 0"
+capture build/tests --test inproc_pass --stats
+expect_contains "in-process: without the flag the runner forks a worker" "$out" "forks: 1"
+if "$smith" dbg --version >/dev/null 2>&1; then
+    line=$(line_of tests/test_inproc.c 'SMITH_CHECK(answer, ==, 42);')
+    capture "$smith" dbg -b -o "b test_inproc.c:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
+    expect_contains "in-process: smith dbg stops at a breakpoint inside a test" "$out" "stop reason = breakpoint 1.1"
+    expect_contains "in-process: ... and shows its local" "$out" "(int) answer = 42"
+fi
 fi
 
 echo

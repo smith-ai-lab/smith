@@ -253,5 +253,9 @@ which are fixed at their source (checkers' history up to 2d6bbfa still has them,
 - A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 - Apple's `metal` output is not reproducible (two identical builds of learner's shaders differ), so compare shaders by
   the command smith runs, not by bytes.
-- Why upstream's ASan is slow on macOS (about 80 ms a process against 18 ms for Apple's) is not known: the time is kernel time, in both `fork` and `posix_spawn`, which
-  only root can trace.
+- Why upstream's ASan is slow on macOS (about 80 ms a process under load, 38 ms quiet, against 8 ms for Apple's; a `fork` of a
+  sanitized process takes 40 ms against 2 ms) is known: upstream compiler-rt passes XNU's fast-mmap flag (`VM_FLAGS_4GB_CHUNK`, 4 in
+  `mmap`'s fd) for the 14 TB of shadow only on x86_64, and its 2 GB threshold `2 << 30` overflows `int` so it is never reached; the
+  kernel then maps, copies at `fork` and unmaps at exit the shadow at a cost per TB. `patches/compiler-rt-xnu-fast-mmap.patch` (two
+  lines, what Apple's clang does) fixes both: with a runtime relinked from it, 38 to 8 ms a process and 41 to 2 ms a `fork`. It takes
+  effect when `smith build llvm` is next run (the compiler-rt of the install in use is not yet built with it).
