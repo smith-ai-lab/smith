@@ -105,14 +105,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
-- **`smith prove` checks LLVM IR with Alive2 and Z3, linked into a smith built against an LLVM that has them beside it.** Contracts are
-  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. Alive2 needs LLVM built with RTTI and
-  exceptions, so `smith build llvm-prove` makes a second install (`~/.cache/smith/llvm/23.1.3-prove`, the shared one is
-  untouched), `smith build prove-libs` builds Z3 5.3.1 and Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) static
-  beside it, and `smith build -DLLVM=<that install>` links the prover; the compiler's output is byte-identical with and without
-  RTTI and exceptions (only the install path in debug info differs). Each function is proved in a process of its own. Bitwuzla
-  0.9.1 (static, built by `smith build prove-libs` with Meson; it links Homebrew's GMP and MPFR) decides the queries on every
-  core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
+- **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
+  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
+  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the token hook (#11); the compiler's
+  output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
+  llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
+  and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
+  (`scripts/prove-libs.sh`, `scripts/bitwuzla.sh`). Only the stage0 has no prover. Each function is proved in a process of
+  its own. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
   with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
   smith-contract.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
@@ -155,7 +155,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
-  `~/.cache/smith/llvm/23.1.3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
+  `~/.cache/smith/llvm/23.1.3-r2/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
   install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.

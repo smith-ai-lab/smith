@@ -708,8 +708,8 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, bool 
     return smith_exit_missing;
 }
 
-// smith prove: the prover (Alive2 and Z3) is linked into a smith built against an LLVM install that has one beside it
-// (build.c); any other smith says so.
+// smith prove: the prover (Alive2, Bitwuzla and Z3) is linked into every full smith, which `smith build llvm` makes
+// possible (build.c); only the stage0 says it has none.
 static int smith_prove(int argc, char **argv, const char *self) {
 #if defined(SMITH_PROVE) && defined(SMITH_IN_PROCESS)
     char folder[PATH_MAX];
@@ -730,8 +730,8 @@ static int smith_prove(int argc, char **argv, const char *self) {
     (void)argc;
     (void)argv;
     (void)self;
-    smith_die(smith_exit_usage, "this smith has no prover; build it against an LLVM that has Alive2 and Z3 beside it",
-              "smith build -DLLVM=<such an install>");
+    smith_die(smith_exit_usage, "this smith is the stage0, which has no prover; the full smith has it",
+              "smith build llvm, then smith build");
 #endif
 }
 

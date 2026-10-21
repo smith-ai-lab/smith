@@ -57,7 +57,7 @@ Add `-I .smith/include` to the project's own compiles and put `contract` in the 
 
 ## Prove them: `smith prove <files> [-- <compile flags>]`
 
-Only a smith linked against the prover has it (`smith build llvm-prove`, `smith build prove-libs` (needs `brew install gmp mpfr`), then `smith build -DLLVM=~/.cache/smith/llvm/23.1.3-prove/install`); any other says so and exits 2. It is recognised only as the exact first argument.
+Every full smith has it (`smith build llvm` builds the prover with LLVM); only the stage0, built by `cc` alone, says it has none and exits 2. It is recognised only as the exact first argument.
 
 ```sh
 smith prove main.c util.c -- -I .smith/include -DDEBUG
