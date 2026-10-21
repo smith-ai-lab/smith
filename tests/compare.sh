@@ -77,15 +77,29 @@ direct_env() {
 # in the LLVM that smith links, which every case must match.
 real_prefix=$(cd "$realdir/.." && pwd -P)
 smith_prefix=$real_prefix
+smith_runtime=
 inproc=$("$smith" --smith-which -c a.c | head -n 1)
+# A smith with clang inside links with lld, which Apple's ld and lld write differently, so the programs are compared by what
+# they print, and the real clang is told the linker's version that smith tells the driver for lld (shim/clang.cpp), since
+# the version of the `ld` it was built beside makes it use `objc_msgSendClass$` stubs, which lld does not write.
+real_flags=
 case $inproc in
-"clang in-process "*) smith_prefix=${inproc#clang in-process }; smith_prefix=${smith_prefix%/bin/clang} ;;
+"clang in-process "*)
+    smith_prefix=${inproc#clang in-process }
+    smith_prefix=${smith_prefix%/bin/clang}
+    # The programs (bin/clang) and the files the driver reads (lib/clang) are in two folders; both are the real LLVM here.
+    smith_runtime=$("$smith" -print-resource-dir)
+    smith_runtime=${smith_runtime%/lib/clang/*}
+    real_flags=-mlinker-version=1115.7.3
+    ;;
 esac
 normalize() { # via
     prefix=$real_prefix
     [ "$1" = smith ] && prefix=$smith_prefix
+    runtime=$prefix
+    [ "$1" = smith ] && [ -n "$smith_runtime" ] && runtime=$smith_runtime
     for kind in out err; do
-        sed -e "s|$prefix|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
+        sed -e "s|$prefix|LLVM|g" -e "s|$runtime|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
             -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' "log/$kind.$1" >"log/$kind.$1.n"
         mv "log/$kind.$1.n" "log/$kind.$1"
     done
@@ -97,7 +111,7 @@ run_one() { # via, arguments
     direct) (
         PATH="$realdir:$PATH"
         direct_env
-        eval "$realname $2"
+        eval "$realname $real_flags $2"
     ) </dev/null >log/out.$1 2>log/err.$1 ;;
     smith) (
         # A smith with clang linked in compiles in its own process, which is what is compared; the stage0 runs $real.
@@ -117,7 +131,17 @@ run_one() { # via, arguments
             echo "$f"
             # A linked program with debug info holds the time of each object it was linked from (the debug map), so only
             # its size can be compared.
-            case " $2 $f" in *" -g "*/prog) wc -c <"$f" ;; *) cksum <"$f" ;; esac
+            # With lld the linked program, and the dSYM made from its debug map, differ in bytes from ld's.
+            case " $2 $f" in
+            *./prog* | *.dSYM/*)
+                if [ -n "$real_flags" ]; then
+                    case $f in ./prog*) "$f" </dev/null 2>&1 | head -n 1 ;; esac
+                else
+                    case " $2 $f" in *" -g "*/prog) wc -c <"$f" ;; *) cksum <"$f" ;; esac
+                fi
+                ;;
+            *) cksum <"$f" ;;
+            esac
         fi
     done >log/files.$1
 }

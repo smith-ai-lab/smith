@@ -185,16 +185,21 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
 static const char *const *build_clang_libraries(SmithBuild *b, const char *llvm) {
     const char *const *found = smith_glob(b, (const char *[]){smith_fmt(b, "%s/lib/libclang[A-Z]*.a", llvm),
                                                               smith_fmt(b, "%s/lib/libLLVM*.a", llvm), nullptr});
-    return smith_cat(b, found, smith_list(b, smith_fmt(b, "%s/lib/libclangmain.a", llvm), nullptr), nullptr);
+    return smith_cat(b, found,
+                     smith_list(b, smith_fmt(b, "%s/lib/libclangmain.a", llvm),
+                                smith_fmt(b, "%s/lib/liblldMachO.a", llvm), smith_fmt(b, "%s/lib/liblldCommon.a", llvm),
+                                nullptr),
+                     nullptr);
 }
 
 // shim/clang.cpp, which gives smith.c clang's main. The LLVM headers are system headers, so the build's warnings stay
 // smith's own.
-static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const char *folder) {
+static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const char *folder, const char *source,
+                              const char *name) {
     SmithObject shim = {
         .compiler = config->cxx,
-        .source = "shim/clang.cpp",
-        .output = smith_fmt(b, "%s/clang_shim.o", folder),
+        .source = source,
+        .output = smith_fmt(b, "%s/%s.o", folder, name),
         .flags =
             smith_cat(b,
                       (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
@@ -293,13 +298,14 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             nullptr},
     };
     smith_object(b, &object);
-    SmithObject shim = in_process ? build_shim(b, config, folder) : (SmithObject){};
+    SmithObject shim = in_process ? build_shim(b, config, folder, "shim/clang.cpp", "clang_shim") : (SmithObject){};
+    SmithObject lld = in_process ? build_shim(b, config, folder, "shim/lld.cpp", "lld_shim") : (SmithObject){};
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
         .flags = smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", nullptr}),
-        .objects =
-            in_process ? (const SmithObject *[]){&object, &shim, nullptr} : (const SmithObject *[]){&object, nullptr},
+        .objects = in_process ? (const SmithObject *[]){&object, &shim, &lld, nullptr}
+                              : (const SmithObject *[]){&object, nullptr},
         .libraries = in_process ? smith_cat(b, build_clang_libraries(b, config->llvm),
                                             (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
                                 : nullptr,
@@ -432,6 +438,7 @@ static const char *build_llvm_install(SmithBuild *b) {
                        "the LLVM install smith links clang from; empty: a smith that runs an external clang");
     if (strcmp(b->os, "Darwin") != 0) return "";
     bool linkable = access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+                    access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
     return linkable ? llvm : "";
 }

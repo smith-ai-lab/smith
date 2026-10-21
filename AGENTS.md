@@ -12,16 +12,29 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   command are refused.
   - **The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
     smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
-    `libLTO.dylib`, which the system linker loads for `-flto`. On first use (about 1 s, then a `stat`) smith writes them
-    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`) and runs the driver as that
-    folder's `bin/clang`, a hard link to smith itself (the driver runs its program again with `-cc1` for any compile
-    that has more than one step). The key is the pack's contents and the compiler's identity.
+    `libLTO.dylib`, which the system `ld` loads for `-flto` (lld has LLVM inside and needs none). On first use (about 1 s, then a `stat`) smith writes them
+    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`); the key is the pack's contents
+    and the identity of the compiler and linker. The programs the driver runs (`bin/clang`, `bin/clang++`, `bin/ld`,
+    hard links to smith itself; it runs `clang` again with `-cc1` for any compile with more than one step) are not in
+    it: they are in `$XDG_DATA_HOME/smith/programs/<LC_UUID of the running smith>/`, whose `lib` links to that
+    folder's, and the shim passes `-resource-dir` for it. So the installed smith, a dev build and another agent's
+    never share or remake each other's links, and a smith without lld has no `ld`. A programs folder idle for 31 days
+    is removed when a new one is made (using one touches it once a day); only the runtime folder lives forever.
   - **That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
     binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and
     an emptied `~/.cache` leave every built binary running. Old folders stay for the binaries built against them (about
     70 MB each); delete one by hand to reclaim it, and its binaries then fail at load, naming the missing library.
-  - **The system's tools stay the system's**, found on `PATH`: the linker `/usr/bin/ld` (until #9), `dsymutil` (Apple's;
-    its output is the same size as LLVM's in `compare`), `libtool`, `xcrun`.
+  - **The linker is lld, in smith's process.** The driver looks for `ld` in its own program's folder before `PATH`, so
+    that folder's `bin/ld` is a third hard link to smith; run as `ld`, smith calls `lld::macho::link` (`shim/lld.cpp`)
+    on the arguments the driver built, so nothing is added to the user's command and no system `ld` runs. lld signs
+    the output ad hoc on Apple Silicon, as `ld` does. The driver starts it as a process of its own (it has no hook to
+    link in its own process, as it has for `-cc1`): one more start of smith, which costs less than ld's own start (a hello-world link takes 33 ms against ld's 48). `SMITH_LINKER=/usr/bin/ld`
+    makes smith run that linker instead (a way out, and for comparison), and then the driver is left as Apple's `ld`
+    wants it. With lld the driver is told the linker's version (`-mlinker-version=1115.7.3`, which the user's own
+    flag overrides), so that it does not send messages to classes through `objc_msgSendClass$` stubs, which only
+    Apple's current `ld` writes; lld writes `objc_msgSend$` stubs per selector.
+  - **The system's other tools stay the system's**, found on `PATH`: `dsymutil` (Apple's; its output is the same size
+    as LLVM's in `compare`), `libtool`, `xcrun`.
   - **The SDK is chosen through the environment, never a flag.** Homebrew's clang reads a default config
     (`/opt/homebrew/etc/clang/*.cfg`) that forces `-isysroot` to the Command Line Tools SDK, and that wins over
     `SDKROOT`, though `xcrun` and `metal` use Xcode's. So on macOS smith sets, for each the caller has not set,

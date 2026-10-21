@@ -38,11 +38,14 @@ objects=$cache/build/tools/clang/tools/driver/CMakeFiles/clang.dir
 rm -f "$cache/install/lib/libclangmain.a"
 /usr/bin/ar rcs "$cache/install/lib/libclangmain.a" "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" \
     "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o"
-# What the compiler smith links is: the version, and a hash of the archives it links and of the four objects in libclangmain.a (not the archive, which holds the time
-# it was made).
+# What the compiler and the linker smith links are: the version, and a hash of the archives it links (clang's, LLVM's and
+# lld's) and of the four objects in libclangmain.a (not the archive, which holds the time it was made).
 # `smith build` compiles it into smith, which reports it as the identity of its clang, so a smith rebuilt against the same
-# LLVM leaves every project's objects alone and a rebuilt LLVM rebuilds them.
-hash=$(cat "$cache"/install/lib/libclang[A-Z]*.a "$cache"/install/lib/libLLVM*.a \
+# LLVM leaves every project's objects alone and a rebuilt LLVM rebuilds them. lld is in it because the program the driver
+# runs as `ld` is smith, and a smith that links with lld must not share clang's folder, with its `bin/ld`, with one that
+# does not.
+hash=$(cat "$cache"/install/lib/libclang[A-Z]*.a "$cache"/install/lib/libLLVM*.a "$cache"/install/lib/liblldMachO.a \
+    "$cache"/install/lib/liblldCommon.a \
     "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o" |
     /usr/bin/shasum -a 256 | cut -d' ' -f1)
 echo "llvm-23.1.3 $hash" >"$cache/install/lib/smith-clang.id"
