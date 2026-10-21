@@ -107,7 +107,7 @@ for std in gnu23 gnu2y; do
     expect "library: compiles as $std" 0 "$rc"
 done
 capture $cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "$here/include" -c "$here/lib/text.c" -o "$work/text.o"
-undefined=$(nm -u "$work/text.o" | tr -d ' ' | sort | tr '\n' ' ')
+undefined=$(nm -u "$work/text.o" | tr -d ' ' | grep -v -x -e _memcpy -e _memset -e _bzero -e _memmove | sort | tr '\n' ' ') # but the compiler's own calls for a big struct
 expect "library: names no libc function" "" "$undefined"
 
 echo "$total tests, $failures failed"

@@ -812,6 +812,13 @@ static const unsigned char smith_io_source[] = {
 #embed "lib/io.c"
 };
 
+static const unsigned char smith_json_header[] = {
+#embed "include/smith/json.h"
+};
+static const unsigned char smith_json_source[] = {
+#embed "lib/json.c"
+};
+
 static const unsigned char smith_random_header[] = {
 #embed "include/smith/random.h"
 };
@@ -861,6 +868,7 @@ static const SmithLibrary smith_libraries[] = {
     {"contract", smith_contract_header, sizeof smith_contract_header, smith_contract_source,
      sizeof smith_contract_source},
     {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
+    {"json", smith_json_header, sizeof smith_json_header, smith_json_source, sizeof smith_json_source},
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
     {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},

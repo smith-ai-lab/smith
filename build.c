@@ -129,6 +129,8 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                  "%s --quiet lib/text.c -- \"$@\" -I include %s && "
                                                  "%s --quiet tests/text.c -- \"$@\" -I include %s && "
                                                  "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/json.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/json.c -- \"$@\" -I include %s && "
                                                  "%s --quiet lib/test.c -- \"$@\" -I include %s && "
                                                  "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
                                                  "for f in build main; do %s --quiet "
@@ -137,7 +139,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
                                                  sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                        "sh", nullptr},
                       cflags, nullptr),
         .inputs = llvm,
@@ -146,71 +148,74 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
 }
 
 // Formatting, lint, the routing tests and the comparison with the real compiler.
+// The files `smith fmt` checks: smith's own sources, its libraries and their tests.
+static const char *const build_format_sources[] = {"smith.c",
+                                                   "shim/clang.cpp",
+                                                   "shim/prove.cpp",
+                                                   "shim/prove.hpp",
+                                                   "shim/prove_alive.cpp",
+                                                   "shim/prove_bitwuzla.cpp",
+                                                   "shim/prove_ir.cpp",
+                                                   "shim/format.cpp",
+                                                   "shim/tidy.cpp",
+                                                   "shim/clangd.cpp",
+                                                   "shim/symbolize.cpp",
+                                                   "shim/lldb.cpp",
+                                                   "shim/lldb_dap.cpp",
+                                                   "tests/dap_client.c",
+                                                   "scripts/pack.c",
+                                                   "scripts/pack.h",
+                                                   "scripts/defer_init.c",
+                                                   "runtime/pack_data.c",
+                                                   "build.c",
+                                                   "tests/stub.c",
+                                                   "runtime/build_runtime.c",
+                                                   "runtime/package.c",
+                                                   "runtime/gzip.c",
+                                                   "runtime/xz.c",
+                                                   "runtime/untar.c",
+                                                   "runtime/cache.c",
+                                                   "runtime/symbolize.c",
+                                                   "runtime/executor.c",
+                                                   "runtime/executor_manifest.c",
+                                                   "runtime/executor_state.c",
+                                                   "runtime/executor_plan.c",
+                                                   "runtime/executor_run.c",
+                                                   "runtime/executor_tools.c",
+                                                   "include/smith/build.h",
+                                                   "include/smith/arena.h",
+                                                   "lib/arena.c",
+                                                   "tests/arena.c",
+                                                   "include/smith/io.h",
+                                                   "lib/io.c",
+                                                   "tests/io.c",
+                                                   "include/smith/http.h",
+                                                   "lib/http.c",
+                                                   "tests/http.c",
+                                                   "include/smith/random.h",
+                                                   "lib/random.c",
+                                                   "tests/random.c",
+                                                   "tests/untar.c",
+                                                   "include/smith/test.h",
+                                                   "include/smith/contract.h",
+                                                   "lib/contract.c",
+                                                   "include/smith/text.h",
+                                                   "lib/text.c",
+                                                   "tests/text.c",
+                                                   "tests/text_exhaustive.c",
+                                                   "include/smith/json.h",
+                                                   "lib/json.c",
+                                                   "tests/json.c",
+                                                   "lib/test.c",
+                                                   "include/smith/trace.h",
+                                                   "lib/trace.c",
+                                                   nullptr};
+
 static void build_checks(SmithBuild *b, const BuildConfig *config) {
     const char *format = build_smith_tool(b, config->binary, "fmt");
     const char *tidy = build_smith_tool(b, config->binary, "lint");
     SmithStep check_llvm = build_check_llvm(b, config->binary);
-    const char *const *sources = (const char *[]){"smith.c",
-                                                  "shim/clang.cpp",
-                                                  "shim/prove.cpp",
-                                                  "shim/prove.hpp",
-                                                  "shim/prove_alive.cpp",
-                                                  "shim/prove_bitwuzla.cpp",
-                                                  "shim/prove_ir.cpp",
-                                                  "shim/format.cpp",
-                                                  "shim/tidy.cpp",
-                                                  "shim/clangd.cpp",
-                                                  "shim/symbolize.cpp",
-                                                  "shim/lldb.cpp",
-                                                  "shim/lldb_dap.cpp",
-                                                  "tests/dap_client.c",
-                                                  "scripts/pack.c",
-                                                  "scripts/pack.h",
-                                                  "scripts/defer_init.c",
-                                                  "runtime/pack_data.c",
-                                                  "build.c",
-                                                  "tests/stub.c",
-                                                  "runtime/build_runtime.c",
-                                                  "runtime/package.c",
-                                                  "runtime/gzip.c",
-                                                  "runtime/xz.c",
-                                                  "runtime/untar.c",
-                                                  "runtime/cache.c",
-                                                  "runtime/symbolize.c",
-                                                  "runtime/executor.c",
-                                                  "runtime/executor_manifest.c",
-                                                  "runtime/executor_state.c",
-                                                  "runtime/executor_plan.c",
-                                                  "runtime/executor_run.c",
-                                                  "runtime/executor_tools.c",
-                                                  "include/smith/build.h",
-                                                  "include/smith/arena.h",
-                                                  "lib/arena.c",
-                                                  "tests/arena.c",
-                                                  "include/smith/io.h",
-                                                  "lib/io.c",
-                                                  "tests/io.c",
-                                                  "include/smith/http.h",
-                                                  "lib/http.c",
-                                                  "tests/http.c",
-                                                  "include/smith/random.h",
-                                                  "lib/random.c",
-                                                  "tests/random.c",
-                                                  "tests/untar.c",
-                                                  "include/smith/test.h",
-                                                  "include/smith/contract.h",
-                                                  "lib/contract.c",
-                                                  "include/smith/text.h",
-                                                  "lib/text.c",
-                                                  "tests/text.c",
-                                                  "tests/text_exhaustive.c",
-                                                  "lib/test.c",
-                                                  "include/smith/trace.h",
-                                                  "lib/trace.c",
-                                                  "include/smith/trace.h",
-                                                  "lib/trace.c",
-                                                  nullptr};
-    build_format(b, format, check_llvm.outputs, sources);
+    build_format(b, format, check_llvm.outputs, build_format_sources);
     build_tidy(b, tidy, check_llvm.outputs, config->cflags);
     smith_alias(b, "check", (const char *[]){"check-format", "lint", "test", "compare", nullptr});
 }
@@ -459,6 +464,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             "lib/contract.c",
                                             "include/smith/text.h",
                                             "lib/text.c",
+                                            "include/smith/json.h",
+                                            "lib/json.c",
                                             "include/smith/http.h",
                                             "lib/http.c",
                                             "include/smith/test.h",
@@ -517,14 +524,15 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command = (const char *[]){"sh", "-c",
-                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena io http package random text cache untar resource dap "
-                                    "defer contract prove test; do env "
-                                    "\"$0\" sh tests/$t.sh "
-                                    "\"$1\" || exit 1; done; "
-                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                             "for t in run build new arena io http package random text json cache untar resource dap "
+                             "defer contract prove test; do env "
+                             "\"$0\" sh tests/$t.sh "
+                             "\"$1\" || exit 1; done; "
+                             "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);

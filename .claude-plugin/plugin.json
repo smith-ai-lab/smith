@@ -28,7 +28,8 @@
     "./.agents/skills/smith-io/",
     "./.agents/skills/smith-test/",
     "./.agents/skills/smith-text/",
-    "./.agents/skills/smith-debug/"
+    "./.agents/skills/smith-debug/",
+    "./.agents/skills/smith-json/"
   ],
   "lspServers": {
     "smith": {
