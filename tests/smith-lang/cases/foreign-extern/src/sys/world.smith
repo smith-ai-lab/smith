@@ -1,0 +1,22 @@
+module sys::world;
+
+import <string.h>;
+
+// `extern` without `export` declares a symbol that C defines: it keeps its C name (no sys_world_ prefix, no label).
+extern char **environ;
+extern u32 foreign_counter;
+extern u32 foreign_triple(u32 x);
+
+export u32 env_count(void) {
+    u32 count = 0;
+    for (char **entry = environ; *entry != nullptr; entry++)
+        count += 1;
+    return count;
+}
+
+export u32 counter_times_three(void) {
+    return foreign_triple(foreign_counter);
+}
+
+// An exported extern is still the module's own symbol, defined in C by its C name.
+export extern u32 owned;

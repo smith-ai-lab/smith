@@ -255,10 +255,13 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
 }
 
 // A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one (or the
-// C name chosen for it). Returns null when the name is kept as written (main).
+// C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                       uint32_t location, SmithLangNameKind kind, bool exported) {
     if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) return nullptr;
+    // `extern T name;` without `export` is a symbol that C defines: it keeps its C name, in the module as in C.
+    bool symbol = kind == SmithLangName_Function || kind == SmithLangName_Value;
+    if (symbol && !exported && lang->decl.is_extern && !lang->decl.is_typedef) return nullptr;
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known == nullptr) {
         smith_lang_declare_new(lang, host, name, length, location, kind, exported);

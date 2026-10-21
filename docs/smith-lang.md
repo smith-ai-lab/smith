@@ -33,6 +33,11 @@ u32 helper(void) { … }                              // private
 - **Modules.** The first line, `module a::b;`, makes the file a module; its path must end in `a/b.smith`.
   - Every file-scope name in a module is prefixed with the module's name (`game_replay_open`). `export` makes a
     declaration public; everything else is `static` (functions and variables) and used nowhere else.
+  - **A foreign C symbol** is declared with `extern` and no `export`: `extern char **environ;`, `extern u32 counter;`,
+    `extern u32 triple(u32 x);`. It keeps its C name (no prefix, no `__asm__` label, not in the header), so the module
+    links to the symbol C defines and uses it bare, as C does. For a symbol a header declares, `import <h>;` and
+    `c::name` do the same (`c::optind`, `c::stdout`); `extern` is for one no header declares (macOS's `<unistd.h>` has no
+    `environ`). `export extern T name;` is the opposite: the module's own symbol, defined in C by the prefixed name.
   - `export` applies to functions, typedefs, struct, union and enum tags, enum constants, `constexpr` constants and
     globals. An export has the symbol `game::replay::open` (an `__asm__` label), so no C name can collide with it.
     `main` stays `main`.

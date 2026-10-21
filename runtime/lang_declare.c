@@ -286,6 +286,7 @@ static void smith_lang_head_keyword(SmithLang *lang, const SmithToken *token, Sm
         decl->last_tag_enum = smith_lang_ident(token, "enum");
     }
     if (smith_lang_ident(token, "constexpr")) decl->is_constexpr = true;
+    if (smith_lang_ident(token, "extern")) decl->is_extern = true;
 }
 
 // One token of a private declaration's head (the state Start is its first token), or Slow if it needs more. A Slow

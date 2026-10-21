@@ -28,6 +28,7 @@ u32 helper(void) { … }                              // private
 - Names in the module become `game_replay_open` in C; diagnostics show that spelling.
 - **`[[smith::c_name("SmithArena")]] export typedef struct {…} Arena;`** chooses the export's C name, for a library whose C API must not change: the header declares `SmithArena`, and a function or variable's symbol is that name (no `::` label), so C defines and calls it plainly. `.smith` importers still write `arena::Arena` and get the C name. It goes before `export`, alone in its `[[ ]]`, on the first name the export declares (an enumeration's constants keep the prefixed names). Errors: a C name another name has (chosen, or made by the prefix, private names included), not followed by `export`, two on one export, an export declaring no typedef, tag, function or variable, a string that is no C identifier.
 - **`export inline`** defines the function in the module's header too, as `static inline` with its body (no symbol), so C, C++ and `.smith` importers compile it themselves; its body uses only exports, imports and C. Comments above an export and `#if` lines around exports reach the header (load `smith-lang-c-interop`).
+- **`extern` without `export`** declares a foreign C symbol: it keeps its C name (no prefix, no label, not in the header), for `environ` or a variable or function a C file defines. `export extern` is the module's own symbol, defined in C by its prefixed name. Load `smith-lang-c-interop`.
 
 ## Not yet
 
