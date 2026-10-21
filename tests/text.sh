@@ -2,7 +2,7 @@
 # Tests of <smith/text.h>, with real clang and ninja. Usage: sh tests/text.sh path/to/smith [exhaustive]
 # The checks are tests/text.c, built as a scratch project's test file with smith_tests (smith's own test library), in
 # three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
-# finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith build test`.
+# finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith test`.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -34,7 +34,7 @@ expect() { # name, expected, actual
     fi
 }
 
-mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith++"
+mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
 cc=${CC:-cc}
 
@@ -67,7 +67,7 @@ void build(SmithBuild *b) {
     const char *const *names = smith_list(b, "arena", "random", "text", nullptr);
     SmithObject objects[3] = {};
     for (size_t i = 0; names[i] != nullptr; i++) {
-        objects[i] = (SmithObject){.compiler = "smith", .source = smith_library(b, names[i]),
+        objects[i] = (SmithObject){.compiler = "smith-cc", .source = smith_library(b, names[i]),
                                    .output = smith_fmt(b, "build/smith/%s.o", names[i]), .flags = flags};
         smith_object(b, &objects[i]);
     }

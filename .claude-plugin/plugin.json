@@ -17,6 +17,9 @@
   ],
   "skills": [
     "./.agents/skills/smith/",
+    "./.agents/skills/smith-cc/",
+    "./.agents/skills/smith-check/",
+    "./.agents/skills/smith-run-test/",
     "./.agents/skills/smith-build/",
     "./.agents/skills/smith-arena/",
     "./.agents/skills/smith-contract/",

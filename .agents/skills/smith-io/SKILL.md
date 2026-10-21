@@ -170,7 +170,7 @@ Write the function once against capabilities, call it with `&io.files` from main
 io uses the arena and random, so compile all three, each with the project's own flags and `-I .smith/include` (see smith-build for the `smith_object` form):
 
 ```c
-SmithObject io = {.compiler = "smith", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};
+SmithObject io = {.compiler = "smith-cc", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};
 ```
 
 Add `io`, `random` and `arena` to the program's `.objects`.

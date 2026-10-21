@@ -26,7 +26,7 @@ expect() { # name, expected, actual
     fi
 }
 
-"$smith" -std=gnu23 -Wall -Wextra -Wpedantic -Werror "$here/scripts/defer_init.c" -o "$work/defer_init" || exit 1
+"$smith" cc -std=gnu23 -Wall -Wextra -Wpedantic -Werror "$here/scripts/defer_init.c" -o "$work/defer_init" || exit 1
 tool=$work/defer_init
 
 # Two objects with an initializer each, and a main that runs the section of one of them by hand.
@@ -52,9 +52,9 @@ int main(void) {
     return 0;
 }
 EOF
-for f in a b main; do "$smith" -std=gnu23 -c "$work/$f.c" -o "$work/$f.o" || exit 1; done
+for f in a b main; do "$smith" cc -std=gnu23 -c "$work/$f.c" -o "$work/$f.o" || exit 1; done
 
-"$smith" "$work/main.o" "$work/a.o" "$work/b.o" -o "$work/plain" || exit 1
+"$smith" cc "$work/main.o" "$work/a.o" "$work/b.o" -o "$work/plain" || exit 1
 expect "before: both initializers run at load, before main" "$(printf 'init a\ninit b\nmain\nsection missing, 0 entries')" "$("$work/plain")"
 
 out=$("$tool" "$work/a.o" "$work/a_deferred.o" demo)
@@ -63,7 +63,7 @@ expect "the tool says what it did" "$work/a.o: 1 initializer section(s) deferred
 "$tool" "$work/main.o" "$work/main_same.o" demo >/dev/null
 expect "an object with no initializer is unchanged" "$(shasum "$work/main.o" | cut -d' ' -f1)" "$(shasum "$work/main_same.o" | cut -d' ' -f1)"
 
-"$smith" "$work/main.o" "$work/a_deferred.o" "$work/b_deferred.o" -Wl,-dead_strip -o "$work/deferred" || exit 1
+"$smith" cc "$work/main.o" "$work/a_deferred.o" "$work/b_deferred.o" -Wl,-dead_strip -o "$work/deferred" || exit 1
 expect "after: nothing runs at load, and the section holds both, kept by -dead_strip, to run by hand" \
     "$(printf 'main\nsection found, 2 entries\ninit a\ninit b')" "$("$work/deferred")"
 expect "the section is plain data in the object" yes \

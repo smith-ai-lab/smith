@@ -50,7 +50,7 @@ expect_contains() { # name, text, needle
 
 exists() { [ -e "$1" ] && echo yes || echo no; }
 
-if [ "$("$smith" --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)" != "clang in-process" ]; then
+if [ "$("$smith" cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)" != "clang in-process" ]; then
     echo "skipped: this smith has no clang inside (the stage0)"
     exit 0
 fi
@@ -60,16 +60,16 @@ cd "$work/src" || exit 1
 printf '#include <stddef.h>\n#include <stdio.h>\nint main(void) { puts("hi"); return 0; }\n' >hello.c
 clang_folders=$XDG_DATA_HOME/smith/clang
 
-capture "$smith" --smith-which -c hello.c
+capture "$smith" cc --smith-which -c hello.c
 program=$(printf '%s\n' "$out" | head -n 1 | cut -d ' ' -f 3)
 programs=${program%/bin/clang}
 program_folders=$XDG_DATA_HOME/smith/programs
 expect "which names a bin/clang in a folder of the programs folder" "$program_folders/" "${programs%/*}/"
 expect "which writes nothing" no "$(exists "$XDG_DATA_HOME")"
 
-capture "$smith" -fsyntax-only hello.c
+capture "$smith" cc -fsyntax-only hello.c
 expect "the first compile works" "0" "$rc"
-capture "$smith" -print-resource-dir
+capture "$smith" cc -print-resource-dir
 major=${out##*/}
 folder=${out%/lib/clang/*}
 expect "the resource directory is in a folder of the runtime folders" "$clang_folders/" "${folder%/*}/"
@@ -89,15 +89,15 @@ for name in clang clang++ ld; do
 done
 expect "no half-written folder is left" "" "$({ ls "$clang_folders"; ls "$program_folders"; } | grep tmp)"
 
-capture "$smith" -M hello.c
+capture "$smith" cc -M hello.c
 expect_contains "the builtin headers come from the folder" "$out" "$folder/lib/clang/$major/include/stddef.h"
-capture "$smith" -### -c hello.c
+capture "$smith" cc -### -c hello.c
 expect "nothing names an LLVM install" "" "$(printf '%s\n%s\n' "$out" "$err" | grep -F 'smith/llvm' | head -n 1)"
 
 # A second compile reads the folder and writes nothing.
 stamp=$(ls -l "$folder/lib/clang/$major/include/stddef.h" "$folder/lib/libLTO.dylib")
 sleep 1
-capture "$smith" -fsyntax-only hello.c
+capture "$smith" cc -fsyntax-only hello.c
 expect "a second compile works" "0" "$rc"
 expect "and rewrites no file" "$stamp" "$(ls -l "$folder/lib/clang/$major/include/stddef.h" "$folder/lib/libLTO.dylib")"
 
@@ -106,7 +106,7 @@ capture "$smith" lint --quiet --checks='-*,bugprone-sizeof-expression' --extra-a
 expect "smith lint parses a file that includes a builtin header" "0" "$rc"
 expect_contains "and its builtin headers come from clang's folder" "$out$err" "$XDG_DATA_HOME/smith/programs/"
 expect "and no LLVM install is named" "" "$(printf '%s\n%s\n' "$out" "$err" | grep -F 'smith/llvm' | head -n 1)"
-printf '[{"directory": "%s", "file": "hello.c", "arguments": ["smith", "-c", "hello.c"]}]\n' "$PWD" >compile_commands.json
+printf '[{"directory": "%s", "file": "hello.c", "arguments": ["smith-cc", "-c", "hello.c"]}]\n' "$PWD" >compile_commands.json
 capture "$smith" lsp --check=hello.c
 expect "smith lsp --check works" "0" "$rc"
 expect "and logs no error" "0" "$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')"
@@ -116,53 +116,53 @@ rm compile_commands.json
 
 # -flto links with lld, which has LLVM inside it and so needs no libLTO.dylib; the driver still names the one in the folder
 # for a linker that does, and SMITH_LINKER=/usr/bin/ld loads it.
-capture "$smith" -flto hello.c -o lto
+capture "$smith" cc -flto hello.c -o lto
 expect "an -flto link works" "0 hi" "$rc $(./lto)"
 expect "and the linker prints nothing about libLTO" "" "$err"
-capture env SMITH_LINKER=/usr/bin/ld "$smith" -flto hello.c -o lto_ld
+capture env SMITH_LINKER=/usr/bin/ld "$smith" cc -flto hello.c -o lto_ld
 expect "an -flto link with the system ld works" "0 hi" "$rc $(./lto_ld)"
 expect "and it prints nothing" "" "$err"
 
 # The program the driver runs as `ld` is smith, and the link is lld's, in that process. An lld binary says so in its
 # LC_BUILD_VERSION: tool 4 (ld64's LD is 3), with LLVM's version.
 tool_of() { otool -l "$1" | sed -n '/LC_BUILD_VERSION/,/version/p' | sed -n 's/^ *tool \(.*\)/\1/p'; }
-capture "$smith" hello.c -o linked
+capture "$smith" cc hello.c -o linked
 expect "a link works" "0 hi" "$rc $(./linked)"
 expect "and is lld's" 4 "$(tool_of linked)"
 expect "and is signed, with no codesign step" "0" "$(codesign --verify linked >/dev/null 2>&1; echo $?)"
 expect "and is signed ad hoc by the linker" 1 "$(codesign -dv linked 2>&1 | grep -c 'linker-signed')"
-capture env SMITH_LINKER=/usr/bin/ld "$smith" hello.c -o linked_ld
+capture env SMITH_LINKER=/usr/bin/ld "$smith" cc hello.c -o linked_ld
 expect "SMITH_LINKER=/usr/bin/ld links with ld" "0 hi 3" "$rc $(./linked_ld) $(tool_of linked_ld)"
-capture env SMITH_LINKER=/nonexistent/ld "$smith" hello.c -o linked_none
+capture env SMITH_LINKER=/nonexistent/ld "$smith" cc hello.c -o linked_none
 expect "a SMITH_LINKER that is not there is an error" 1 "$rc"
 expect_contains "and says what it is" "$err" "SMITH_LINKER"
 printf 'int missing(void);\nint main(void) { return missing(); }\n' >undefined.c
-capture "$smith" undefined.c -o undefined
+capture "$smith" cc undefined.c -o undefined
 expect "an undefined symbol fails" 1 "$rc"
 expect_contains "with lld's message" "$err" "undefined symbol: missing"
 expect "and leaves no output" no "$(exists undefined)"
 
 # What ld links today, lld links: frameworks, a dynamic library, -dead_strip, an Objective-C selector stub, a dSYM.
 printf '#import <Foundation/Foundation.h>\n#import <AppKit/AppKit.h>\n#import <Metal/Metal.h>\nint main(void) { @autoreleasepool { NSString *s = [NSString stringWithFormat:@"%%d", 7]; puts(s.UTF8String); (void)MTLCreateSystemDefaultDevice(); NSApplication *a = NSApp; (void)a; } return 0; }\n' >objc.m
-capture "$smith" -fobjc-arc -g objc.m -framework Foundation -framework AppKit -framework Metal -Wl,-dead_strip -o objc
+capture "$smith" cc -fobjc-arc -g objc.m -framework Foundation -framework AppKit -framework Metal -Wl,-dead_strip -o objc
 expect "a program with frameworks, ARC and -dead_strip" "0 7" "$rc $(./objc 2>/dev/null)"
 expect "and its dSYM has the debug info" yes "$([ -f objc.dSYM/Contents/Resources/DWARF/objc ] && echo yes || echo no)"
-capture "$smith" -dynamiclib hello.c -o libhello.dylib
+capture "$smith" cc -dynamiclib hello.c -o libhello.dylib
 expect "a dynamic library links" 0 "$rc"
 printf 'extern void puts_from_library(void);\nint main(void) { puts_from_library(); return 0; }\n' >uselib.c
 printf '#include <stdio.h>\nvoid puts_from_library(void) { puts("lib"); }\n' >lib.c
-"$smith" -dynamiclib lib.c -o liblib.dylib
-capture "$smith" uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib
+"$smith" cc -dynamiclib lib.c -o liblib.dylib
+capture "$smith" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib
 expect "and a program links against it" "0 lib" "$rc $(./uselib)"
 
 # Compiling and linking in one command runs the driver again with -cc1: bin/clang is smith. A copy of smith is the same
 # smith (the same LC_UUID), so it uses the same programs, and the links outlive the smith they were made from.
 cp "$smith" "$work/smith2"
-capture "$work/smith2" hello.c -o prog
+capture "$work/smith2" cc hello.c -o prog
 expect "a compile and a link with a copy of smith" "0 hi" "$rc $(./prog)"
 expect "a copy of smith makes no programs of its own" 1 "$(ls "$program_folders" | wc -l | tr -d ' ')"
 rm "$work/smith2"
-capture "$smith" hello.c -o prog
+capture "$smith" cc hello.c -o prog
 expect "after the copy is removed, a compile and a link still work" "0 hi" "$rc $(./prog)"
 
 # Two different smiths (another LC_UUID, as a rebuild has) never share or remake each other's programs, and keep working
@@ -171,15 +171,15 @@ cp "$smith" "$work/smith_b"
 perl -0777 -pi -e 's/(\x1b\0\0\0\x18\0\0\0)(.{16})/$1 . ("\xab" x 16)/se' "$work/smith_b"
 codesign -f -s - "$work/smith_b" >/dev/null 2>&1
 printf '#import <Foundation/Foundation.h>\nint main(void) { @autoreleasepool { puts([NSString stringWithFormat:@"%%d", 7].UTF8String); } return 0; }\n' >objc2.m
-capture "$work/smith_b" objc2.m -framework Foundation -o objc_b
+capture "$work/smith_b" cc objc2.m -framework Foundation -o objc_b
 expect "a second smith (another LC_UUID) works" "0 7" "$rc $(./objc_b)"
 expect "and has programs folder of its own" 2 "$(ls "$program_folders" | wc -l | tr -d ' ')"
 expect "that hold its own links" yes "$(for f in "$program_folders"/*; do [ "$f/bin/ld" -ef "$work/smith_b" ] && echo yes; done | head -n 1)"
 expect "and the first smith's links are still the first" yes "$([ "$programs/bin/ld" -ef "$smith" ] && echo yes || echo no)"
 for n in 1 2 3 4 5 6 7 8; do
     (for round in 1 2 3 4 5; do
-        "$smith" objc2.m -framework Foundation -o "objc_a$n" 2>>"$work/mix$n" && [ "$(./objc_a$n)" = 7 ] || echo bad >>"$work/mix$n.bad"
-        "$work/smith_b" objc2.m -framework Foundation -o "objc_c$n" 2>>"$work/mix$n" && [ "$(./objc_c$n)" = 7 ] || echo bad >>"$work/mix$n.bad"
+        "$smith" cc objc2.m -framework Foundation -o "objc_a$n" 2>>"$work/mix$n" && [ "$(./objc_a$n)" = 7 ] || echo bad >>"$work/mix$n.bad"
+        "$work/smith_b" cc objc2.m -framework Foundation -o "objc_c$n" 2>>"$work/mix$n" && [ "$(./objc_c$n)" = 7 ] || echo bad >>"$work/mix$n.bad"
     done) &
 done
 wait
@@ -195,19 +195,19 @@ old=$(for f in "$program_folders"/*; do [ "$f/bin/ld" -ef "$work/smith_b" ] && e
 touch -t 202001010000 "$old"
 mkdir "$program_folders/stale.99.tmp"
 touch -t 202001010000 "$program_folders/stale.99.tmp"
-capture "$work/smith_c" -fsyntax-only hello.c
+capture "$work/smith_c" cc -fsyntax-only hello.c
 expect "an idle programs folder is removed when a new one is made" no "$(exists "$old")"
 expect "so is an old half-made one" no "$(exists "$program_folders/stale.99.tmp")"
 expect "a recent one stays" yes "$(exists "$programs")"
 expect "and the runtime folder" yes "$(exists "$folder")"
-ln -s "$smith" "$work/smith++"
+ln -s "$smith" "$work/smith-c++"
 printf '#include <vector>\n#include <cstdio>\nint main() { std::vector<int> v{1, 2, 3}; std::printf("%%zu\\n", v.size()); }\n' >v.cpp
-capture "$work/smith++" v.cpp -o v
-expect "smith++ compiles and links C++" "0 3" "$rc $(./v)"
+capture "$work/smith-c++" v.cpp -o v
+expect "smith-c++ compiles and links C++" "0 3" "$rc $(./v)"
 
 # A sanitized program loads its runtime from the folder, which neither smith cache clean nor pruning nor a removed cache
 # touches.
-capture "$smith" -fsanitize=address,undefined -g hello.c -o asan
+capture "$smith" cc -fsanitize=address,undefined -g hello.c -o asan
 expect "a sanitized program builds and runs" "0 hi" "$rc $(./asan)"
 rpath=$(otool -l asan | sed -n 's/^ *path \(.*clang.*\) (offset.*/\1/p')
 expect "its rpath is the folder's runtime" "$folder/lib/clang/$major/lib/darwin" "$rpath"
@@ -218,14 +218,14 @@ expect "the sanitized program still runs" "hi" "$(./asan)"
 rm -rf "$XDG_CACHE_HOME"
 expect "with the whole cache removed it still runs" "hi" "$(./asan)"
 printf 'int main(void) { int a[2] = {0, 0}; volatile int i = 2; return a[i]; }\n' >bad.c
-"$smith" -fsanitize=address -g bad.c -o bad
+"$smith" cc -fsanitize=address -g bad.c -o bad
 expect "and still finds the runtime to report an error" "AddressSanitizer" "$(./bad 2>&1 | grep -o AddressSanitizer | head -n 1)"
 
 # Processes that start together on a new data folder all work, and leave one folder.
 before=$(ls "$clang_folders")
 rm -rf "$XDG_DATA_HOME"
 for n in 1 2 3 4 5 6 7 8; do
-    ("$smith" -fsyntax-only hello.c 2>"$work/race$n" && echo ok >"$work/race$n.ok") &
+    ("$smith" cc -fsyntax-only hello.c 2>"$work/race$n" && echo ok >"$work/race$n.ok") &
 done
 wait
 ok=$(ls "$work"/race*.ok | wc -l | tr -d ' ')
@@ -234,10 +234,10 @@ expect "and leave the one folder, with the same name" "$before" "$(ls "$clang_fo
 expect "and one programs folder" 1 "$(ls "$program_folders" | wc -l | tr -d ' ')"
 
 # Messages.
-capture env -u XDG_DATA_HOME HOME=relative "$smith" -fsyntax-only hello.c
+capture env -u XDG_DATA_HOME HOME=relative "$smith" cc -fsyntax-only hello.c
 expect "no usable data folder: status 2" 2 "$rc"
 expect_contains "and a message that names the variables" "$err" "set HOME or XDG_DATA_HOME"
-capture env XDG_DATA_HOME=/dev/null/data "$smith" -fsyntax-only hello.c
+capture env XDG_DATA_HOME=/dev/null/data "$smith" cc -fsyntax-only hello.c
 expect "an unwritable data folder: status 2" 2 "$rc"
 expect_contains "and a message that names it" "$err" "cannot create"
 

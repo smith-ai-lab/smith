@@ -122,12 +122,12 @@ cat >build.c <<'C'
 
 void build(SmithBuild *b) {
     const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-fsanitize=address", "-I", ".smith/include", nullptr);
-    SmithObject main = {.compiler = "smith", .source = "main.c", .output = "build/main.o", .flags = flags};
+    SmithObject main = {.compiler = "smith-cc", .source = "main.c", .output = "build/main.o", .flags = flags};
     smith_object(b, &main);
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithProgram program = {
-        .linker = "smith",
+        .linker = "smith-cc",
         .output = "build/app",
         .flags = smith_list(b, "-fsanitize=address", nullptr),
         .objects = (const SmithObject *[]){&main, &arena, nullptr},
@@ -156,7 +156,7 @@ int main(void) {
     return 0;
 }
 C
-mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith++"
+mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
 capture "$smith" build
 expect "project: the build succeeds" 0 "$rc"

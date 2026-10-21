@@ -3,7 +3,7 @@
 
 usage: python3 tests/ninja_compare.py <smith binary> [first seed [last seed [steps]]]
 
-Not part of `smith build test`, which needs no ninja: run it by hand when the executor changes, with ninja installed
+Not part of `smith test`, which needs no ninja: run it by hand when the executor changes, with ninja installed
 (it exits 0 saying so when there is none).
 
 For each seed, a random manifest (plain, restat, depfile and multi-output steps, implicit and order-only inputs, aliases

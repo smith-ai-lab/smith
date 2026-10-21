@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs a table of invocations through a real compiler and through smith, and compares what each prints, how each exits
+# Runs a table of invocations through a real compiler and through smith (`smith cc` and the link smith-cc), and compares what each prints, how each exits
 # and which files each writes. Both run in the same directory, one after the other, with the same relative paths.
 # Usage: sh tests/compare.sh path/to/smith /path/to/clang
 set -u
@@ -10,7 +10,8 @@ realname=$(basename "$real")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 cd "$work" || exit 1
-mkdir log
+mkdir log links
+ln -s "$smith" links/smith-cc # the compiler also runs by this name
 printf '#include <stdio.h>\nint main(void) { puts("hi"); return 0; }\n' >hello.c
 printf 'int main(void) { return missing; }\n' >bad.c
 printf -- '-c hello.c -o rsp.o\n' >opts.rsp
@@ -78,7 +79,7 @@ direct_env() {
 real_prefix=$(cd "$realdir/.." && pwd -P)
 smith_prefix=$real_prefix
 smith_runtime=
-inproc=$("$smith" --smith-which -c a.c | head -n 1)
+inproc=$("$smith" cc --smith-which -c a.c | head -n 1)
 # A smith with clang inside links with lld, which Apple's ld and lld write differently, so the programs are compared by what
 # they print, and the real clang is told the linker's version that smith tells the driver for lld (shim/clang.cpp), since
 # the version of the `ld` it was built beside makes it use `objc_msgSendClass$` stubs, which lld does not write.
@@ -88,16 +89,16 @@ case $inproc in
     smith_prefix=${inproc#clang in-process }
     smith_prefix=${smith_prefix%/bin/clang}
     # The programs (bin/clang) and the files the driver reads (lib/clang) are in two folders; both are the real LLVM here.
-    smith_runtime=$("$smith" -print-resource-dir)
+    smith_runtime=$("$smith" cc -print-resource-dir)
     smith_runtime=${smith_runtime%/lib/clang/*}
     real_flags=-mlinker-version=1115.7.3
     ;;
 esac
 normalize() { # via
     prefix=$real_prefix
-    [ "$1" = smith ] && prefix=$smith_prefix
+    [ "$1" != direct ] && prefix=$smith_prefix
     runtime=$prefix
-    [ "$1" = smith ] && [ -n "$smith_runtime" ] && runtime=$smith_runtime
+    [ "$1" != direct ] && [ -n "$smith_runtime" ] && runtime=$smith_runtime
     for kind in out err; do
         sed -e "s|$prefix|LLVM|g" -e "s|$runtime|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
             -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' "log/$kind.$1" >"log/$kind.$1.n"
@@ -113,15 +114,15 @@ run_one() { # via, arguments
         direct_env
         eval "$realname $real_flags $2"
     ) </dev/null >log/out.$1 2>log/err.$1 ;;
-    smith) (
+    smith | link) (
         # A smith with clang linked in compiles in its own process, which is what is compared; the stage0 runs $real.
-        if "$smith" --smith-which -c a.c | grep -q '^clang in-process'; then
+        if "$smith" cc --smith-which -c a.c | grep -q '^clang in-process'; then
             unset SMITH_CLANG
         else
             SMITH_CLANG=$real
             export SMITH_CLANG
         fi
-        eval "\"$smith\" $2"
+        if [ "$1" = smith ]; then eval "\"$smith\" cc $2"; else eval "\"$work/links/smith-cc\" $2"; fi
     ) </dev/null >log/out.$1 2>log/err.$1 ;;
     esac
     echo $? >log/rc.$1
@@ -150,16 +151,19 @@ failures=0
 while read -r line <&3; do
     run_one direct "$line"
     run_one smith "$line"
+    run_one link "$line"
     bad=
-    for kind in out err rc files; do
-        cmp -s "log/$kind.direct" "log/$kind.smith" || bad="$bad $kind"
+    for via in smith link; do
+        for kind in out err rc files; do
+            cmp -s "log/$kind.direct" "log/$kind.$via" || bad="$bad $via:$kind"
+        done
     done
     if [ -z "$bad" ]; then
         echo "ok    $line"
     else
         failures=$((failures + 1))
         echo "FAIL  $line  (differs in:$bad)"
-        for kind in $bad; do diff "log/$kind.direct" "log/$kind.smith" | head -6; done
+        for entry in $bad; do diff "log/${entry#*:}.direct" "log/${entry#*:}.${entry%:*}" | head -6; done
     fi
 done 3<cases.txt
 echo

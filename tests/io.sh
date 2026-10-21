@@ -132,16 +132,16 @@ cat >build.c <<'C'
 
 void build(SmithBuild *b) {
     const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-fsanitize=address", "-I", ".smith/include", nullptr);
-    SmithObject main = {.compiler = "smith", .source = "main.c", .output = "build/main.o", .flags = flags};
+    SmithObject main = {.compiler = "smith-cc", .source = "main.c", .output = "build/main.o", .flags = flags};
     smith_object(b, &main);
-    SmithObject io = {.compiler = "smith", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};
+    SmithObject io = {.compiler = "smith-cc", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};
     smith_object(b, &io);
-    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
+    SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
     smith_object(b, &random);
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithProgram program = {
-        .linker = "smith",
+        .linker = "smith-cc",
         .output = "build/app",
         .flags = smith_list(b, "-fsanitize=address", nullptr),
         .objects = (const SmithObject *[]){&main, &io, &random, &arena, nullptr},
@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 C
-mkdir "$work/bin2" && ln -s "$smith" "$work/bin2/smith" && ln -s "$smith" "$work/bin2/smith++"
+mkdir "$work/bin2" && ln -s "$smith" "$work/bin2/smith" && ln -s "$smith" "$work/bin2/smith-cc" && ln -s "$smith" "$work/bin2/smith-c++"
 PATH="$work/bin2:$PATH"
 capture "$smith" build
 expect "project: the build succeeds" 0 "$rc"

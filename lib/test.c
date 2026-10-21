@@ -1400,7 +1400,7 @@ static void smith_test_print_failure(const SmithTest *test, const SmithTestOptio
     if (run->output.total > run->output.kept)
         printf("    ... and %zu more bytes\n", run->output.total - run->output.kept);
     if (test->property != nullptr)
-        printf("    rerun: smith build test -DTEST=%s -DSEED=%llu\n", test->name, (unsigned long long)run->seed);
+        printf("    rerun: smith test --test %s --seed %llu\n", test->name, (unsigned long long)run->seed);
 }
 
 static void smith_test_report(const SmithTest *test, const SmithTestOptions *options, const SmithTestRun *run) {

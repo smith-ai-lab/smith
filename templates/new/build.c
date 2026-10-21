@@ -1,9 +1,14 @@
 // The build of @NAME@, run with `smith build`. smith new wrote it, and every line is yours to change.
 //   smith build             the debug program, build/debug/@NAME@
-//   smith build run         builds it and runs it
+//   smith run               builds it and runs it; its arguments go to the program
+//   smith fmt               formats the sources to .clang-format
+//   smith lint              runs clang-tidy (.clang-tidy) on them
+//   smith check             fails when formatting or lint would
 //   smith build release     the optimized program with assertions on, build/release/@NAME@
 //   smith build fast        the optimized program with assertions off, build/fast/@NAME@
 //   smith build -t clean    removes what was built
+// A verb runs the task or alias of its name in this file: run, test, check, fmt, lint. Add tests with smith_tests and
+// `smith test` runs them.
 #include <smith/build.h>
 
 #include <string.h>
@@ -46,20 +51,35 @@ static const char *const build_fast[] = {"-O2", "-DNDEBUG", nullptr};
 static SmithStep build_program(SmithBuild *b, const char *variant, const char *const *flags,
                                const char *const *link_flags) {
     SmithObject object = {
-        .compiler = "smith",
+        .compiler = "smith-cc",
         .source = "main.c",
         .output = smith_fmt(b, "build/%s/main.o", variant),
         .flags = flags,
     };
     smith_object(b, &object);
     SmithProgram program = {
-        .linker = "smith",
+        .linker = "smith-cc",
         .output = smith_fmt(b, "build/%s/@NAME@", variant),
         .flags = link_flags,
         .objects = (const SmithObject *[]){&object, nullptr},
     };
     smith_program(b, &program);
     return program.step;
+}
+
+// smith fmt, smith lint and smith check. The sources are listed here: add a file to the list when you add one.
+// clang-tidy reads the flags of each file from compile_commands.json, which this build writes, so lint checks what the
+// build builds.
+static void build_checks(SmithBuild *b) {
+    const char *const *sources = smith_list(b, "main.c", "build.c", nullptr);
+    SmithStep fmt = {.command = smith_cat(b, smith_list(b, "smith", "fmt", "-i", nullptr), sources, nullptr)};
+    smith_task(b, "fmt", &fmt);
+    SmithStep check_format = {
+        .command = smith_cat(b, smith_list(b, "smith", "fmt", "--dry-run", "--Werror", nullptr), sources, nullptr)};
+    smith_task(b, "check-format", &check_format);
+    SmithStep lint = {.command = smith_list(b, "smith", "lint", "--quiet", "-p", ".", "main.c", nullptr)};
+    smith_task(b, "lint", &lint);
+    smith_alias(b, "check", smith_list(b, "check-format", "lint", nullptr));
 }
 
 void build(SmithBuild *b) {
@@ -84,12 +104,14 @@ void build(SmithBuild *b) {
     SmithStep release = build_program(b, "release", smith_cat(b, common, build_release, nullptr), nullptr);
     SmithStep fast = build_program(b, "fast", smith_cat(b, common, build_fast, nullptr), nullptr);
 
+    // smith run: the debug program, with the arguments the verb was given.
     SmithStep run = {
-        .command = debug.outputs,
+        .command = smith_cat(b, debug.outputs, smith_args(b), nullptr),
         .inputs = debug.outputs,
         .pool = "console",
     };
     smith_task(b, "run", &run);
+    build_checks(b);
     smith_alias(b, "release", release.outputs);
     smith_alias(b, "fast", fast.outputs);
     smith_default(b, debug.outputs);

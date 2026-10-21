@@ -32,6 +32,53 @@ it. `.content_hash` is declared but not implemented. The
   new file, a changed list and a changed environment variable whenever the read was not declared (measured: `wildcard`,
   `monad1`, `system2`). That is why v1 reruns instead of caching.
 
+## The verbs: `smith run`, `test`, `check`, `fmt` and `lint`
+
+smith's top level is only verbs (`smith cc`, `smith c++`, `smith build`, `smith new`, ...), so what a project does is
+`smith <verb>` and what builds a target is `smith build <target>`. The project's verbs are the ones a person types every
+day:
+
+| verb | with no arguments | with arguments |
+| --- | --- | --- |
+| `smith run` | runs the task `run` | the arguments go to the program |
+| `smith test` | runs the task `test` (what `smith_tests` adds) | the arguments are the test runner's options |
+| `smith check` | runs the alias `check`: every check that must pass | refused |
+| `smith fmt` | runs the task `fmt`: rewrites the project's sources | clang-format, with its arguments unchanged |
+| `smith lint` | runs the task `lint`: clang-tidy over the project's sources | clang-tidy, with its arguments unchanged |
+| `smith prove` | runs the task `prove` | the prover, with its arguments |
+| `smith dbg` | not available yet (issue #7) | |
+
+**A verb is a target named like it.** There is no new way to describe a project: `build.c` defines the task or alias
+that a verb runs, with the calls it already has (`smith_task`, `smith_alias`, `smith_tests`), and the verb builds and
+runs that target. A project that defines none gets one message, `smith: error: smith run: build.c defines no task or alias
+named run; add smith_task(b, "run", ...)`. The reasons, in the order they were weighed:
+- `smith_tests` already names `test`; checkers, game and learner already had `run`, `check` and `format` targets, so the
+  verbs ask them to rename one (`format` is `fmt`, and a `lint` alias is the clang-tidy checks), not to learn a new call.
+- What `run` runs, which files `fmt` formats and which flags `lint` uses are the project's: game formats Objective-C,
+  Metal and C with different rules; smith's own `lint` runs clang-tidy with the flags of the build. A call such as
+  `smith_format(b, sources)` would fix a shape that two of the three projects would have to bypass.
+- The one thing the verbs need that build.c had no way to say is the arguments: `smith run` and `smith test` give
+  them to build.c as **`smith_args(b)`**, a list that is empty for none. The program's arguments are part of the
+  `run` task's command (`.command = smith_cat(b, app.outputs, smith_args(b), nullptr)`); `smith_tests` appends them to
+  the runner's, so `smith test --test name --seed 7 --jobs 1` is the runner's own command line, and the `-DTEST`,
+  `-DSEED`, `-DSEEDS`, `-DJOBS`, `-DSHRINK`, `-DSHUFFLE`, `-DISOLATE` and `-DFULL` options it replaced are gone (one way).
+  They travel as the one option `-DSMITH_ARGS`, each after a ";" (with "%", ";" and newline escaped); a build.c that never calls `smith_args` and is given
+  arguments gets an error that says so.
+- `-D` options still work on a verb (`smith test -DFONT=...`), since they are build.c's, not the verb's; `--` ends them,
+  so that a program can be given one (`smith run -- -Dx`).
+
+**The verbs are not targets of `smith build`.** `smith build run`, `test`, `check`, `fmt`, `lint`, `prove` and `dbg` are
+refused with a pointer to the verb (`smith: test is a verb, not a target of smith build; run `smith test``). The
+alternative, both working, leaves two ways to say the same thing in every document, script and CI file, and a
+person who learns `smith build test` is never told that `smith test --seed 7` exists. A refusal costs one message once;
+every other target (`release`, `fast`, `compare`, `clean`) is still `smith build <target>`. The dispatch is one table,
+`smith_verbs` in smith.c, so a new verb is a row.
+
+For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, the first word of a
+`compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
+`smith-cc` and `smith-c++`, which act as `smith cc` and `smith c++` by their name. A `build.c` names them as its
+compilers (`.compiler = "smith-cc"`); `"smith"` alone is an error that says so, since `smith foo.c` has no meaning.
+
 ## How smith build runs
 
 The driver, in order:
@@ -62,13 +109,13 @@ outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, so i
 ### A change of compiler rebuilds everything
 
 ninja decides that an object is out of date from its command, its inputs and their mtimes. A new smith, or another
-`SMITH_CLANG`, changes none of them when the command says `smith`, so the objects would look up to date though another
+`SMITH_CLANG`, changes none of them when the command says `smith-cc`, so the objects would look up to date though another
 compiler built them, and sanitized objects from two compilers do not link together (their ASan ABIs differ). So every
 `smith_object` and `smith_program` depends on a file `.smith/compiler/<hash of the compiler word>` that says which
 compiler it is:
 - a compiler that is not smith: its executable's real path, size and mtime (a copy of the same bytes is a new compiler);
-- smith (a program named `smith...`) is the clang it runs, not its own file, which changes with every build of smith and
-  would rebuild every project after each install. `<smith> --smith-which -c a.c` says which: with clang linked in,
+- smith (a program named `smith...`: `smith-cc`, `smith-c++`) is the clang it runs, not its own file, which changes with
+  every build of smith and would rebuild every project after each install. `<smith-cc> --smith-which -c a.c` says which: with clang linked in,
   `clang in-process <clang>` and `identity <llvm version> <hash>`, where `scripts/llvm.sh` hashes the archives that get
   linked (and the four objects of `libclangmain.a`) into `lib/smith-clang.id` of the install, `smith build` compiles it
   into smith (`-DSMITH_CLANG_ID=`), and so a smith rebuilt against the same LLVM is the same compiler and a rebuilt LLVM
@@ -255,7 +302,7 @@ the pools, the progress line and the log do not change. Threads against worker p
 | `include`, `subninja`, `rspfile`, `deps = msvc`, `dyndep`, `$in_newline`, one rule's variable naming another's | dropped: smith writes none of them. `SMITH_NINJA` runs a manifest that has them |
 | `NINJA_STATUS`, colour | dropped |
 | output capture limit | new: 256 MiB per running job, at most 128 jobs |
-| a console job's stdin | changed for the better: ninja's console jobs keep it too, and so does smith's (checkers' `smith build run` reads it) |
+| a console job's stdin | changed for the better: ninja's console jobs keep it too, and so does smith's (checkers' `smith run` reads it) |
 
 `smith --smith-exec <manifest> [flags and targets]` runs any manifest the executor reads, in the current folder, with no
 `build.c`; the tests use it.
@@ -296,7 +343,7 @@ reproducible); every object and generated file is the same.
   and multi-output steps, implicit and order-only inputs, aliases, defaults), each edited at random between builds (a
   source changed or only touched, an output deleted or touched, a header a depfile named, a depfile's list, a command, a
   single target asked for) and built with both: the commands run and the files made must be the same in every build. It
-  needs ninja, so it is run by hand when the executor changes, not by `smith build test`.
+  needs ninja, so it is run by hand when the executor changes, not by `smith test`.
 
 ## Two layers
 
@@ -319,7 +366,7 @@ build.c has two layers, and a project may use either or both.
   such as sources reached only through a unity build, so the editor still knows their flags. A source that already has
   a `smith_object` entry or an earlier `smith_compile_command` is skipped (the first entry for a file wins), and
   calling it after `smith_compile_commands` is an error.
-- Then one entry for build.c: `file` "build.c" and `arguments` `smith -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
+- Then one entry for build.c: `file` "build.c" and `arguments` `smith-cc -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
   -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's bootstrap).
 - The JSON is escaped (`"`, `\`, control characters as `\u00XX`), indented two spaces, ends with a newline, and is
   written only when its bytes change, through `smith_write`'s rules. A `.run` step does not run build(), so it writes nothing there.
@@ -531,7 +578,7 @@ void build(SmithBuild *b) {
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
 types, workers that run the tests in parallel, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
-with the exact commands) builds that runner from the project's test files and adds the task `smith build test`.
+with the exact commands) builds that runner from the project's test files and adds the task `test`, which `smith test` runs.
 
 ```c
 // tests/test_random.c
@@ -622,17 +669,16 @@ smith_tests(b, &tests);                              // tests.step is the task "
   tests in a shuffled order to find such a dependence (it replays with `--jobs 1`), and `--isolate` keeps the old
   process per test (and per `SMITH_CHECK_ABORTS`), exactly. `--stats` prints how many forks the run made. Results are
   printed in table order, in either mode. Output is captured and
-  shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options come from
-  `-DTEST=<substring>` (a test named exactly that, else every test whose name contains it), `-DSEED=<n>` (each
-  property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100 by default), `-DJOBS=<n>` (default: the
-  cores), `-DSHRINK=0|1`, `-DSHUFFLE=<seed>`, `-DISOLATE` and `-DFULL`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
-  test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the time one shrink may take), `--shuffle <seed>`, `--isolate`, `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
-  so a project that reads the same name gets the same value. The run ends with `N passed, M failed in T s` and the five
+  shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options are the runner's arguments, which `smith test` gives it
+  (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it), `--seed <n>`
+  (each property test on that one seed), `--seeds <n>` (keys per property test, 100 by default), `--jobs <n>` (default:
+  the cores), `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
+  time one shrink may take), `--shuffle <seed>`, `--isolate`, `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
-- **Full size: `smith_test_full()`.** It is false by default and true when the run was given `-DFULL` (the runner's
-  `--full`). A test with a heavy check picks its size from it, such as 200 meshes by default and 20,000 with `-DFULL`,
-  and checks the same properties either way, so `smith build test` stays fast and `smith build test -DFULL` is the
-  slow pass. It replaces a second task such as game's `test-slow`: that becomes `smith build test -DFULL`.
+- **Full size: `smith_test_full()`.** It is false by default and true when the run was given `--full`. A test with a heavy check
+  picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either
+  way, so `smith test` stays fast and `smith test --full` is the slow pass. It replaces a second task such as game's
+  `test-slow`: that becomes `smith test --full`.
 - **`.inputs`: files the tests read when they run**, such as compiled shaders, baked meshes and fixtures. They are the
   test task's inputs after the runner, so they are built first and a change to one reruns the tests. The tests read
   them by their path, relative to the project's root, where `smith build` runs them.
@@ -650,7 +696,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
       range.high = 6   (long long)
       note: <the note, if any>
       <the test's output, indented, if any>
-      rerun: smith build test -DTEST=uniform_stays_in_range -DSEED=6387777158891554393
+      rerun: smith test --test uniform_stays_in_range --seed 6387777158891554393
   ```
 
   The check's source line is read from the file when the failure is reported, and left out when the file cannot be read.
@@ -667,7 +713,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   seconds, whichever comes first, and the same seed gives the same shrunk case (when the runs limit ends it; the
   seconds limit depends on the machine). The report is the shrunk failure, with its values, its note and its output,
   and `shrunk in k runs`; the rerun line names the original seed, and rerunning it shrinks to the same case again.
-  `-DSHRINK=0` shows the unshrunk failure. Shrinking starts only when every other test has finished (a shrinkable
+  `--shrink 0` shows the unshrunk failure. Shrinking starts only when every other test has finished (a shrinkable
   failure and the results after it are held until then, and printed in order), so a result never depends on another
   test: nothing stops reading the other workers' pipes or judging their timeouts. A timeout is not shrunk (each try would take the whole timeout), and a failure
   that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
@@ -925,7 +971,7 @@ int smith_run_program(SmithRun *run, const char *const *argv, const char *const 
 //   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
 // with that .d file as the step's depfile.
 typedef struct {
-    const char *compiler;               // the program, such as "smith" or "smith++"; required
+    const char *compiler;               // the program, such as "smith-cc" or "smith-c++"; required
     const char *source;                 // required
     const char *output;                 // the object, such as "build/main.o"; required
     const char *const *flags;           // exactly these, in this order
@@ -937,7 +983,7 @@ typedef struct {
 // Objects linked into a program:
 //   <linker> <flags...> <each object's output...> <libraries...> -o <output>
 typedef struct {
-    const char *linker;                // the program, such as "smith" or "smith++"; required
+    const char *linker;                // the program, such as "smith-cc" or "smith-c++"; required
     const char *output;                // the program file; required
     const char *const *flags;          // before the objects, such as -mmacosx-version-min=26.0
     const SmithObject *const *objects; // the objects to link, each already passed to smith_object
@@ -975,7 +1021,7 @@ typedef struct {
 void smith_modules(SmithBuild *b, const SmithModules *modules);
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 typedef struct {
-    const char *compiler;       // compiles and links the tests, by default "smith"
+    const char *compiler;       // compiles and links the tests, by default "smith-cc"
     const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
     const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
     const char *const *flags;          // for the test files and smith's test library
@@ -999,10 +1045,10 @@ typedef struct {
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
 //     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
 //     second time; the call fails and says which smith_library to add when one is missing.
-//   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
-//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink) and the boolean -DFULL (--full), each read with
-//     smith_option_value or smith_option, so a project that reads the same name gets the same value. .inputs are
-//     the task's inputs after the runner, so they are built before the tests run and a change to one reruns them.
+//   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
+//     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
+//     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
+//     the runner, so they are built before the tests run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
@@ -1143,7 +1189,7 @@ checkers builds with this `build.c`, which replaced its Makefile command for com
 
 void build(SmithBuild *b) {
     SmithStep checkers = {
-        .command = (const char *[]){"smith", "-std=c23", "-MJ", "checkers.json", "-g", "-O0", "checkers.c", "-o",
+        .command = (const char *[]){"smith-cc", "-std=c23", "-MJ", "checkers.json", "-g", "-O0", "checkers.c", "-o",
                                     "checkers", nullptr},
         .inputs = (const char *[]){"checkers.c", nullptr},
         .outputs = (const char *[]){"checkers", "checkers.json", nullptr},
@@ -1178,7 +1224,7 @@ void build(SmithBuild *b) {
 }
 ```
 
-- `smith build` builds `checkers` and `compile_commands.json`; `smith build run` builds what is needed, then runs the
+- `smith build` builds `checkers` and `compile_commands.json`; `smith run` builds what is needed, then runs the
   game on the terminal every time; `smith build clean` removes what the Makefile's `clean` removed. `smith build -t
   clean` removes the same three files, because each is a declared output.
 - Compared in one scratch folder, make against `smith build`: the machine code is identical, and `checkers.json` and
@@ -1225,7 +1271,7 @@ what a `build.c` author writes, so `system1` is a workaround in ninja but native
   has not run in these cases; the v1 implementation has its own tests. In `function` the ninja file ran against a stand-in for the build program, and the replay step is not verified.
   In `monad3` the two manifests were written by hand, and the regeneration was done by a script standing in for the
   build program.
-- Every smith snippet is a complete `build.c` that passes `smith -std=gnu23 -fsyntax-only -Wall -Wextra -Werror` against
+- Every smith snippet is a complete `build.c` that passes `smith cc -std=gnu23 -fsyntax-only -Wall -Wextra -Werror` against
   `smith/build.h`. That checks the API compiles, not that it works.
 - Full cases: [build-c-cases.md](build-c-cases.md).
 
@@ -1276,7 +1322,7 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
   LLVM, and runs an external clang. `smith build llvm` then builds our static LLVM (once, about 9 minutes), and
   `smith build` links the full smith: `smith.c` with `-DSMITH_IN_PROCESS`, `shim/clang.cpp` (the only C++) and the
   archives of the LLVM install, with `-Wl,-dead_strip`. The stage0 then runs smith's own `build.c`, which is
-  the second project built by `build.c`, after checkers: `smith build`, `smith build test`, `smith build check`,
+  the second project built by `build.c`, after checkers: `smith build`, `smith test`, `smith check`,
   `smith build install` and the rest replaced the Makefile's targets, with the same compile command and the same
   machine code.
 - The same command is the way back when an installed smith is broken and `smith build` cannot run, and the first build
