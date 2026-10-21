@@ -7,21 +7,21 @@
 //   }
 //
 // io holds every capability the program has, as a field: io.arena (memory), io.key and io.seed (randomness), io.console
-// (stdin, stdout, stderr), io.files (files, relative to the current folder), io.clock (monotonic and wall time),
+// (stdin, stdout, stderr), io.files (the file system), io.clock (monotonic and wall time),
 // io.processes (spawn and wait) and io.args. The network comes in the next version as io.net. Code can only do what it
 // was handed: a function that is not given a clock cannot depend on time, and one that is not given files cannot touch
 // the disk.
 //
 // A function takes the narrowest thing that covers what it uses.
 //   One or two capabilities: those alone.
-//     Mesh mesh_load(SmithFiles *files, SmithArena *arena, const char *path);     // main: mesh_load(&io.files,
-//     &io.arena, ...)
+//     Mesh mesh_load(SmithFiles *files, SmithArena *arena, const char *path);
+//     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");        // in main
 //   Most of io: the whole of it.
 //     void game_run(SmithIo *io);
 //   A bundle several functions share: a struct the project defines, of the capabilities that group needs.
 //     typedef struct { SmithFiles *files; SmithConsole *console; SmithArena *arena; } Editor;
-//     Editor editor = {&io.files, &io.console, &io.arena};   // then editor_open(&editor, ...), editor_save(&editor,
-//     ...)
+//     Editor editor = {&io.files, &io.console, &io.arena};
+//     editor_open(&editor, path);
 // If a signature wants four or more separate capabilities, take SmithIo * or define the struct. The pointers point into
 // the io in main, so keep that one in place for as long as they are used.
 //
@@ -43,8 +43,8 @@
 //   SmithOp timer = {}, wait = {};
 //   smith_clock_timeout_async(&io.clock, &timer, 2'000'000'000);
 //   smith_processes_wait_async(&io.processes, &wait, child);
-//   for (size_t round = 0; round < round_max && !(timer.done && wait.done); round++) smith_io_run(&io,
-//   smith_io_forever);
+//   for (size_t i = 0; i < rounds_max && !(timer.done && wait.done); i++)
+//       smith_io_run(&io, smith_io_forever);
 // Completion is a done flag, not a callback. Everything the program needs is in the op (error, data, status), a loop in
 // the caller's own control flow reads it where the state lives, no closure or context pointer is needed, and an
 // io_uring or IOCP backend can complete the same struct by its user data. An op must not move or be freed while it is
@@ -164,8 +164,8 @@ typedef struct {
     SmithLoop *loop;
 } SmithIo;
 
-// The real io. The arena is 64 GiB of address space reserved with mmap; only pages a program touches cost memory (a
-// build with AddressSanitizer reserves 1 GiB, because the sanitizer's shadow of the arena is committed). SMITH_SEED, a
+// The real io. The arena is 64 GiB of address space reserved with mmap; only pages a program touches cost memory (under
+// AddressSanitizer the arena poisons lazily, so the shadow grows with what is used). SMITH_SEED, a
 // decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
 // failure to reserve memory, stops the program with a message.
 [[nodiscard]] SmithIo smith_io_make(int argc, char **argv);
@@ -182,7 +182,7 @@ size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
 // The error for an errno value, with the message "what path: strerror".
 [[nodiscard]] SmithError smith_error_make(int code, const char *what, const char *path);
 
-// --- files, relative to the current folder: an absolute path or one with a ".." component is EINVAL ---
+// --- files: any path the program is given, absolute or relative; a missing one is ENOENT ---
 
 // The whole file, in the arena.
 [[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena, const char *path);

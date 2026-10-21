@@ -1,5 +1,5 @@
-// Tests of <smith/io.h>, run by tests/io.sh in a scratch folder: with no argument, the checks below; with an argument,
-// one program that reads the world and prints what it saw:
+// Tests of <smith/io.h>, run by tests/io.sh in a scratch folder (they write one folder up too): with no argument, the
+// checks below; with an argument, one program that reads the world and prints what it saw:
 //   lines   reads stdin to the end with smith_console_read_line and prints "N lines, last=..."
 //   seed    prints the seed and the first draw of the key
 //   memory  prints how much of the arena's reservation counts as resident before and after it is touched
@@ -80,10 +80,12 @@ static void test_real_files(SmithIo *io) {
     assert(strcmp(missing.error.message, "open missing.txt: No such file or directory") == 0);
     assert(missing.data == nullptr && missing.size == 0);
 
-    assert(smith_files_read(&io->files, &io->arena, "/etc/hosts").error.code == EINVAL);
-    assert(smith_files_read(&io->files, &io->arena, "../hello.txt").error.code == EINVAL);
-    assert(smith_files_read(&io->files, &io->arena, "a/../../x").error.code == EINVAL);
-    assert(smith_files_read(&io->files, &io->arena, "a..b").error.code == ENOENT); // not a ".." component
+    SmithRead hosts = smith_files_read(&io->files, &io->arena, "/etc/hosts"); // absolute paths work
+    assert(hosts.error.code == 0 && hosts.size > 0);
+    assert(smith_files_write(&io->files, "../io-test-parent.txt", "parent", 6).code == 0);
+    SmithRead parent = smith_files_read(&io->files, &io->arena, "../io-test-parent.txt"); // so do ".." paths
+    assert(parent.error.code == 0 && strcmp(parent.data, "parent") == 0);
+    assert(smith_files_read(&io->files, &io->arena, "").error.code == ENOENT);
     assert(smith_files_write(&io->files, "no/such/folder/x", text, 1).code == ENOENT);
 }
 
@@ -235,14 +237,10 @@ static size_t test_resident(void) {
 
 // The reservation is address space: making the io commits (almost) nothing, touching memory commits what is touched.
 static void test_memory(void) {
-#if __has_feature(address_sanitizer)
-    puts("skipped: AddressSanitizer commits shadow memory for the arena, so the library reserves 1 GiB under it");
-    return;
-#endif
     size_t before = test_resident();
     SmithIo io = smith_io_make(0, nullptr);
     size_t made = test_resident();
-    assert(io.arena.capacity >= (size_t)1 << 30);
+    assert(io.arena.capacity == (size_t)64 << 30);
     assert(made - before < (size_t)16 << 20);
     constexpr size_t touched = (size_t)256 << 20;
     unsigned char *block = SMITH_ARENA_PUSH_ARRAY(&io.arena, unsigned char, touched);
@@ -266,9 +264,11 @@ static void test_same_function(SmithIo *real, SmithIo *fake) {
     on_disk = summarize(&real->files, &real->arena, "absent.txt");
     in_memory = summarize(&fake->files, &fake->arena, "absent.txt");
     assert(summary_equal(&on_disk, &in_memory) && on_disk.error == ENOENT);
-    on_disk = summarize(&real->files, &real->arena, "/etc/hosts");
-    in_memory = summarize(&fake->files, &fake->arena, "/etc/hosts");
-    assert(summary_equal(&on_disk, &in_memory) && on_disk.error == EINVAL);
+    assert(smith_files_write(&real->files, "../up.txt", "up\n", 3).code == 0); // a path outside the folder
+    assert(smith_io_test_add_file(fake, "../up.txt", "up\n").code == 0);
+    on_disk = summarize(&real->files, &real->arena, "../up.txt");
+    in_memory = summarize(&fake->files, &fake->arena, "../up.txt");
+    assert(summary_equal(&on_disk, &in_memory) && on_disk.lines == 1 && on_disk.error == 0);
 
     assert(smith_files_write(&fake->files, "new.txt", "xyz", 3).code == 0); // writes land in memory
     SmithRead back = smith_files_read(&fake->files, &fake->arena, "new.txt");

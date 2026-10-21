@@ -21,12 +21,7 @@
 
 extern char **environ;
 
-// An AddressSanitizer build commits a shadow byte for every 8 bytes the arena poisons, so it reserves far less.
-#if __has_feature(address_sanitizer)
-constexpr size_t smith_io_reservation = (size_t)1 << 30;
-#else
 constexpr size_t smith_io_reservation = (size_t)64 << 30;
-#endif
 
 constexpr size_t smith_io_fake_files_max = 64;
 constexpr size_t smith_io_fake_programs_max = 16;
@@ -124,22 +119,7 @@ static void smith_grow_append(SmithGrow *grow, const void *bytes, size_t size) {
     grow->data[grow->size] = 0;
 }
 
-// ---------------------------------------------------------------- paths and descriptors
-
-static SmithError smith_path_check(const char *path) {
-    SmithError error = {};
-    bool bad = path == nullptr || path[0] == '\0' || path[0] == '/';
-    for (const char *c = path; !bad && *c != '\0'; c++) { // bounded by the path's length
-        bool component_start = c == path || c[-1] == '/';
-        if (component_start && c[0] == '.' && c[1] == '.' && (c[2] == '/' || c[2] == '\0')) bad = true;
-    }
-    if (bad) {
-        error.code = EINVAL;
-        snprintf(error.message, sizeof error.message, "path %s: must be relative to the current folder, with no ..",
-                 path == nullptr ? "(null)" : path);
-    }
-    return error;
-}
+// ---------------------------------------------------------------- descriptors
 
 // Writes all size bytes. Each pass writes at least one byte or fails, so the loop is bounded by size.
 static int smith_write_all(int descriptor, const void *data, size_t size) {
@@ -514,28 +494,18 @@ void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, c
     assert(files != nullptr && arena != nullptr);
     smith_op_start(op, files->loop, SmithOpKind_FileRead);
     op->internal.arena = arena;
+    assert(path != nullptr);
     op->internal.path = path;
-    SmithError bad = smith_path_check(path);
-    if (bad.code != 0) {
-        op->error = bad;
-        op->done = true;
-        return;
-    }
     smith_loop_submit(files->loop, op);
 }
 
 void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, size_t size) {
     assert(files != nullptr && (data != nullptr || size == 0));
     smith_op_start(op, files->loop, SmithOpKind_FileWrite);
+    assert(path != nullptr);
     op->internal.path = path;
     op->internal.input = data;
     op->size = size;
-    SmithError bad = smith_path_check(path);
-    if (bad.code != 0) {
-        op->error = bad;
-        op->done = true;
-        return;
-    }
     smith_loop_submit(files->loop, op);
 }
 
@@ -908,8 +878,7 @@ SmithIo smith_io_make_test(SmithIoTest test) {
 }
 
 SmithError smith_io_test_add_file(SmithIo *io, const char *path, const char *text) {
-    SmithError bad = smith_path_check(path);
-    if (bad.code != 0) return bad;
+    assert(io != nullptr && path != nullptr && text != nullptr);
     return smith_fake_write_file(smith_fake_of(io->loop), path, text, strlen(text));
 }
 

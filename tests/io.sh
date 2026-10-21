@@ -77,6 +77,9 @@ capture "$work/bin/fast" memory
 expect "memory: reserves 64 GiB" 0 "$rc"
 expect_contains "memory: ... which is address space only" "$out" "reserved 65536 MiB"
 expect_contains "memory: ... touched memory is resident" "$out" "+256 MiB after touching 256 MiB"
+capture "$work/bin/asan" memory
+expect "memory: the same under AddressSanitizer, which poisons lazily" 0 "$rc"
+expect_contains "memory: ... and the reservation is the same 64 GiB" "$out" "reserved 65536 MiB"
 
 # 4. SMITH_SEED replays a run; without it the key is new each time.
 capture env SMITH_SEED=42 "$work/bin/fast" seed

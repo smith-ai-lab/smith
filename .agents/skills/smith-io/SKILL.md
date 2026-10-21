@@ -24,10 +24,10 @@ int main(int argc, char **argv) {
 
 | Field | What it is |
 | --- | --- |
-| `io.arena` | a `SmithArena` over a 64 GiB `mmap` reservation: address space, so only touched pages cost memory (1 GiB under AddressSanitizer, whose shadow is committed) |
+| `io.arena` | a `SmithArena` over a 64 GiB `mmap` reservation: address space, so only touched pages cost memory (AddressSanitizer poisons lazily, so its shadow grows with use tooitted) |
 | `io.key`, `io.seed` | the key from `getentropy`, or from `SMITH_SEED` (decimal or `0x`) to replay a run; print `io.seed` when a run fails |
 | `io.console` | stdin, stdout, stderr |
-| `io.files` | files relative to the current folder (an absolute path or `..` is `EINVAL`) |
+| `io.files` | the file system: any path the program is given, absolute or relative |
 | `io.clock` | monotonic and wall time |
 | `io.processes` | spawn, wait, run and capture |
 | `io.args` | `count` and `values` |
