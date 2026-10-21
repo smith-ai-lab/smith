@@ -18,10 +18,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <spawn.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -782,10 +785,16 @@ static const SmithLibrary smith_libraries[] = {
     {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
 };
 
+// smith's own io, which runs the build graph (runtime/executor.c): the arena, the keys io needs and the io itself.
+#include "lib/arena.c"
+#include "lib/io.c"
+#include "lib/random.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
+// The executor that runs the build graph, in place of ninja.
+#include "runtime/executor.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -983,12 +992,96 @@ static void smith_build_compiler(const char *self, char *out) {
     smith_find_clang("clang", "SMITH_CLANG", self, out);
 }
 
+// The flags of ninja that `smith build` takes, for the executor: -j, -k, -n, -v, --quiet and -t. -l, -d and -w are read
+// and ignored. Anything else that starts with a dash is an error; the rest are the targets.
+constexpr int smith_build_jobs_max = (int)smith_exec_jobs_max;
+
+static int smith_build_default_jobs(void) {
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    int jobs = cpus <= 1 ? 2 : cpus == 2 ? 3 : (int)cpus + 2; // ninja's own default
+    return jobs > smith_build_jobs_max ? smith_build_jobs_max : jobs;
+}
+
+static int smith_build_number(const char *flag, const char *text) {
+    char *end = nullptr;
+    errno = 0;
+    long value = strtol(text, &end, 10);
+    if (*text == '\0' || *end != '\0' || errno != 0 || value < 0 || value > INT_MAX)
+        smith_die(smith_exit_usage, "needs a number", flag);
+    return (int)value;
+}
+
+// The value of a flag that takes one, written "-j8" or "-j 8".
+static const char *smith_build_flag_value(int count, char **args, int *i) {
+    const char *arg = args[*i];
+    if (arg[2] != '\0') return arg + 2;
+    if (*i + 1 >= count) smith_die(smith_exit_usage, "needs a value", arg);
+    *i += 1;
+    return args[*i];
+}
+
+static void smith_build_flag(int count, char **args, int *i, SmithExecOptions *options) {
+    const char *arg = args[*i];
+    if (strcmp(arg, "-n") == 0) {
+        options->dry_run = true;
+    } else if (strcmp(arg, "-v") == 0 || strcmp(arg, "--verbose") == 0) {
+        options->verbose = true;
+    } else if (strcmp(arg, "--quiet") == 0) {
+        options->quiet = true;
+    } else if (strncmp(arg, "-j", 2) == 0) {
+        int jobs = smith_build_number("-j", smith_build_flag_value(count, args, i));
+        options->jobs = jobs == 0                     ? smith_build_default_jobs()
+                        : jobs > smith_build_jobs_max ? smith_build_jobs_max
+                                                      : jobs;
+    } else if (strncmp(arg, "-k", 2) == 0) {
+        int allowed = smith_build_number("-k", smith_build_flag_value(count, args, i));
+        options->failures_allowed = allowed == 0 ? INT_MAX : allowed;
+    } else if (strncmp(arg, "-d", 2) == 0) {
+        options->explain = options->explain || strcmp(smith_build_flag_value(count, args, i), "explain") == 0;
+    } else if (strncmp(arg, "-l", 2) == 0 || strncmp(arg, "-w", 2) == 0) {
+        (void)smith_build_flag_value(count, args, i);
+    } else {
+        smith_die(smith_exit_usage, "unknown option", arg);
+    }
+}
+
+static SmithExecOptions smith_build_options(int count, char **args) {
+    static const char *targets[smith_build_args_max];
+    SmithExecOptions options = {.jobs = smith_build_default_jobs(), .failures_allowed = 1, .targets = targets};
+    for (int i = 0; i < count; i++) { // bounded by count, which main limits
+        if (strcmp(args[i], "-t") == 0) {
+            if (i + 1 >= count) smith_die(smith_exit_usage, "-t needs a tool", nullptr);
+            options.tool = args[i + 1];
+            options.tool_args = (const char *const *)(args + i + 2);
+            options.tool_arg_count = (size_t)(count - i - 2);
+            break;
+        }
+        if (args[i][0] == '-' && args[i][1] != '\0')
+            smith_build_flag(count, args, &i, &options);
+        else
+            targets[options.target_count++] = args[i];
+    }
+    return options;
+}
+
+// SMITH_NINJA=<ninja> runs the manifest with that ninja instead of the executor: the manifest is the same.
+static int smith_build_with_ninja(char *ninja, char **ninja_argv, char **program_argv) {
+    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/bootstrap/build.ninja", nullptr};
+    int status = smith_build_spawn(ninja, bootstrap_argv);
+    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
+    if (status != 0) return status;
+    smith_run(ninja, ninja_argv);
+    return smith_exit_missing;
+}
+
 static int smith_build_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
     smith_cache_hold();
-    char ninja[PATH_MAX];
-    smith_build_find_ninja(self, ninja);
+    const char *forced = getenv("SMITH_NINJA");
+    bool use_ninja = forced != nullptr && *forced != '\0';
+    char ninja[PATH_MAX] = "";
+    if (use_ninja) smith_build_find_ninja(self, ninja);
     if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
     static char *ninja_argv[smith_build_args_max + smith_build_ninja_prefix + 1];
     static char *program_argv[smith_build_args_max + 3];
@@ -1000,19 +1093,31 @@ static int smith_build_main(int count, char **args, const char *self) {
     size_t ninja_used = smith_build_ninja_prefix;
     size_t program_used = 2;
     smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
+    SmithExecOptions options =
+        smith_build_options((int)(ninja_used - smith_build_ninja_prefix), ninja_argv + smith_build_ninja_prefix);
 
     char clang[PATH_MAX];
     smith_build_compiler(self, clang);
 #ifdef __APPLE__
-    smith_sdk_environment(self); // ninja and the compiles it starts inherit it, as do the programs build.c runs
+    smith_sdk_environment(self); // the compiles inherit it, as do the programs build.c runs
 #endif
     smith_build_prepare(clang);
-    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/bootstrap/build.ninja", nullptr};
-    int status = smith_build_spawn(ninja, bootstrap_argv);
+    if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
+    SmithIo io = smith_io_make(0, nullptr);
+    SmithExecOptions bootstrap = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
+    int status = smith_exec_run(&io, ".smith/bootstrap/build.ninja", &bootstrap);
     if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
     if (status != 0) return status;
-    smith_run(ninja, ninja_argv);
-    return smith_exit_missing;
+    return smith_exec_run(&io, ".smith/build.ninja", &options);
+}
+
+// `smith --smith-exec <manifest> [flags and targets]` runs any manifest the executor reads, as ninja would, in the
+// current folder. The tests use it to compare the executor with ninja on generated graphs.
+static int smith_exec_main(int count, char **args) {
+    if (count < 1) smith_die(smith_exit_usage, "usage: smith --smith-exec <manifest> [flags and targets]", nullptr);
+    SmithExecOptions options = smith_build_options(count - 1, args + 1);
+    SmithIo io = smith_io_make(0, nullptr);
+    return smith_exec_run(&io, args[0], &options);
 }
 
 // smith fetch.
@@ -1346,6 +1451,7 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
 
     switch (smith_classify(count, args)) {
