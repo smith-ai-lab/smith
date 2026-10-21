@@ -1,0 +1,9 @@
+import lib::text;
+import lib::util as u;
+#include <stdio.h>
+
+int main(void) {
+    text::Text t = text::make("hello");
+    printf("%zu %d\n", text::length(t), u::twice(21));
+    return 0;
+}

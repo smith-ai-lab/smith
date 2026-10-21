@@ -1,6 +1,42 @@
+diff -ru a/clang/include/clang/Basic/IdentifierTable.h b/clang/include/clang/Basic/IdentifierTable.h
+--- a/clang/include/clang/Basic/IdentifierTable.h	2026-10-21 02:21:23
++++ b/clang/include/clang/Basic/IdentifierTable.h	2026-10-21 02:21:23
+@@ -217,8 +217,12 @@
+   LLVM_PREFERRED_TYPE(bool)
+   unsigned IsKeywordInCpp : 1;
+ 
+-  // 21 bits left in a 64-bit word.
++  // True if the Preprocessor's token hook wants to see this identifier.
++  LLVM_PREFERRED_TYPE(bool)
++  unsigned IsHookWatched : 1;
+ 
++  // 20 bits left in a 64-bit word.
++
+   // Managed by the language front-end.
+   void *FETokenInfo = nullptr;
+ 
+@@ -235,7 +239,7 @@
+         RevertedTokenID(false), OutOfDate(false), IsModulesImport(false),
+         IsModulesDecl(false), IsMangledOpenMPVariantName(false),
+         IsDeprecatedMacro(false), IsRestrictExpansion(false), IsFinal(false),
+-        IsKeywordInCpp(false) {}
++        IsKeywordInCpp(false), IsHookWatched(false) {}
+ 
+ public:
+   IdentifierInfo(const IdentifierInfo &) = delete;
+@@ -302,6 +306,9 @@
+   }
+ 
+   bool isDeprecatedMacro() const { return IsDeprecatedMacro; }
++
++  bool isHookWatched() const { return IsHookWatched; }
++  void setHookWatched(bool Val) { IsHookWatched = Val; }
+ 
+   void setIsDeprecatedMacro(bool Val) {
+     if (IsDeprecatedMacro == Val)
 diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Preprocessor.h
---- a/clang/include/clang/Lex/Preprocessor.h	2026-10-21 01:12:14
-+++ b/clang/include/clang/Lex/Preprocessor.h	2026-10-21 01:12:14
+--- a/clang/include/clang/Lex/Preprocessor.h	2026-10-21 02:21:23
++++ b/clang/include/clang/Lex/Preprocessor.h	2026-10-21 02:21:23
 @@ -83,6 +83,7 @@
  class PreprocessorLexer;
  class PreprocessorOptions;
@@ -9,7 +45,7 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
  class TargetInfo;
  class NoTrivialPPDirectiveTracer;
  
-@@ -172,6 +173,28 @@
+@@ -172,6 +173,32 @@
    }
  };
  
@@ -18,7 +54,11 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
 +/// by Preprocessor::TokenHookFactory when the main file is entered (the factory
 +/// decides from the file whether the hook applies) and sees each token once:
 +/// tokens replayed from the lookahead cache and ones it injected are not
-+/// offered again.
++/// offered again. It is offered the identifiers marked with
++/// IdentifierInfo::setHookWatched and the end of the file; also the braces
++/// with setHookMode(HookBraces), and every token with setHookMode(HookAll).
++/// The Preprocessor remembers the last few tokens for it (getHookPrevious), so
++/// a hook that watches little still knows what came before.
 +class TokenHook {
 +public:
 +  virtual ~TokenHook() = default;
@@ -38,18 +78,24 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
  /// Engages in a tight little dance with the lexer to efficiently
  /// preprocess tokens.
  ///
-@@ -183,6 +206,10 @@
+@@ -183,6 +210,16 @@
    friend class VariadicMacroScopeGuard;
  
    llvm::unique_function<void(const clang::Token &)> OnToken;
 +  std::unique_ptr<TokenHook> Hook;
 +  Sema *HookSema = nullptr;
++  unsigned char HookMode = 0; // 0 watched identifiers, 1 and braces, 2 every token
++  struct HookRecent {
++    tok::TokenKind Kind = tok::unknown;
++    const IdentifierInfo *II = nullptr;
++  } HookRing[8];
++  unsigned HookRingNext = 0;
 +  bool InTokenHook = false;   // the hook is running: Lex does not offer tokens
 +  bool InCachingFetch = false; // CachingLex is fetching a token not yet cached
    /// Functor for getting the dependency preprocessor directives of a file.
    ///
    /// These are directives derived from a special form of lexing where the
-@@ -1383,6 +1410,21 @@
+@@ -1383,6 +1420,31 @@
    /// This also reports annotation tokens produced by the parser.
    void setTokenWatcher(llvm::unique_function<void(const clang::Token &)> F) {
      OnToken = std::move(F);
@@ -60,6 +106,16 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
 +  static inline std::unique_ptr<TokenHook> (*TokenHookFactory)(Preprocessor &) =
 +      nullptr;
 +  TokenHook *getTokenHook() const { return Hook.get(); }
++  enum : unsigned char { HookWatched = 0, HookBraces = 1, HookAll = 2 };
++  void setHookMode(unsigned char Mode) { HookMode = Mode; }
++  /// The token \p Back places before the one being offered (1 is the one
++  /// before), as the parser saw it: its kind, and its IdentifierInfo if it is
++  /// an identifier (else null). tok::unknown if there are not that many.
++  tok::TokenKind getHookPrevious(unsigned Back, const IdentifierInfo *&II) const {
++    const HookRecent &R = HookRing[(HookRingNext - Back) & 7];
++    II = R.II;
++    return R.Kind;
++  }
 +  /// Sema tells the hook that it exists (or no longer does), whichever of the
 +  /// two was created first.
 +  void setHookSema(Sema *S) {
@@ -72,8 +128,8 @@ diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Prep
  
    void setDependencyDirectivesGetter(DependencyDirectivesGetter &Get) {
 diff -ru a/clang/lib/Lex/PPCaching.cpp b/clang/lib/Lex/PPCaching.cpp
---- a/clang/lib/Lex/PPCaching.cpp	2026-10-21 01:12:14
-+++ b/clang/lib/Lex/PPCaching.cpp	2026-10-21 01:12:14
+--- a/clang/lib/Lex/PPCaching.cpp	2026-10-21 02:21:23
++++ b/clang/lib/Lex/PPCaching.cpp	2026-10-21 02:21:23
 @@ -88,7 +88,9 @@
    }
  
@@ -85,8 +141,8 @@ diff -ru a/clang/lib/Lex/PPCaching.cpp b/clang/lib/Lex/PPCaching.cpp
    if (isBacktrackEnabled()) {
      // Cache the lexed token.
 diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
---- a/clang/lib/Lex/Preprocessor.cpp	2026-10-21 01:12:14
-+++ b/clang/lib/Lex/Preprocessor.cpp	2026-10-21 01:12:14
+--- a/clang/lib/Lex/Preprocessor.cpp	2026-10-21 02:21:23
++++ b/clang/lib/Lex/Preprocessor.cpp	2026-10-21 02:21:23
 @@ -588,6 +588,10 @@
    // information) and predefined macros aren't guaranteed to be set properly.
    assert(NumEnteredSourceFiles == 0 && "Cannot reenter the main file!");
@@ -109,27 +165,35 @@ diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
  
    // We loop here until a lex function returns a token; this avoids recursion.
    while (!CurLexerCallback(*this, Result))
-@@ -935,6 +943,17 @@
+@@ -935,6 +943,25 @@
  
    if (Result.is(tok::unknown) && TheModuleLoader.HadFatalFailure)
      return;
 +
-+  if (Offer && Result.isNot(tok::unknown) &&
-+      !Result.getFlag(Token::IsReinjected)) {
-+    InTokenHook = true;
-+    bool Consumed = Hook->transform(*this, Result);
-+    InTokenHook = false;
-+    if (Consumed) {
-+      --LexLevel;
-+      return Lex(Result);
++  if (Offer && Result.isNot(tok::unknown)) {
++    const IdentifierInfo *II =
++        Result.is(tok::identifier) ? Result.getIdentifierInfo() : nullptr;
++    // Text of other files than the main one, a header's, is not offered.
++    if (!Result.getFlag(Token::IsReinjected) &&
++        (!CurLexer || CurLexer->getFileID() == SourceMgr.getMainFileID()) &&
++        (HookMode == HookAll || Result.is(tok::eof) || (II && II->isHookWatched()) ||
++         (HookMode == HookBraces && Result.isOneOf(tok::l_brace, tok::r_brace)))) {
++      InTokenHook = true;
++      bool Consumed = Hook->transform(*this, Result);
++      InTokenHook = false;
++      if (Consumed) {
++        --LexLevel;
++        return Lex(Result);
++      }
 +    }
++    HookRing[HookRingNext++ & 7] = {Result.getKind(), II};
 +  }
  
    if (Result.is(tok::code_completion) && Result.getIdentifierInfo()) {
      // Remember the identifier before code completion token.
 diff -ru a/clang/lib/Sema/Sema.cpp b/clang/lib/Sema/Sema.cpp
---- a/clang/lib/Sema/Sema.cpp	2026-10-21 01:12:14
-+++ b/clang/lib/Sema/Sema.cpp	2026-10-21 01:12:14
+--- a/clang/lib/Sema/Sema.cpp	2026-10-21 02:21:23
++++ b/clang/lib/Sema/Sema.cpp	2026-10-21 02:21:23
 @@ -327,6 +327,7 @@
        ArgPackSubstIndex(std::nullopt), SatisfactionCache(Context) {
    assert(pp.TUKind == TUKind);

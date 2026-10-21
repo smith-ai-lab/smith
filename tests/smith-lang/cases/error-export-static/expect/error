@@ -1,0 +1,1 @@
+src/s.smith:3:8: an exported declaration cannot be `static`: export is what makes it public

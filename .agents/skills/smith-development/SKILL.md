@@ -46,6 +46,15 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 - `smith-cc` and `smith-c++` are links that `main` dispatches by `argv[0]`, as are `clang` and `clang++`, the names of the programs folder's links, which the driver runs again with `-cc1`; `ld` is the linker. A test that copies smith under another name and expects a compile must pass `cc`.
 - `smith build`'s bootstrap manifest compiles `build.c` with `<smith> cc ...` when clang is inside smith, and with the external clang itself otherwise. `build.c` files name `smith-cc` and `smith-c++` as compilers; `"smith"` is an error in `smith_object` and `smith_program`.
 
+## The `.smith` language
+
+[docs/smith-lang.md](../../../docs/smith-lang.md) is the language; the plugin's `smith-lang*` skills teach it. To work on it:
+
+- The clang side is `patches/clang-token-hook.patch` (the `Preprocessor`'s `TokenHook`), applied to the LLVM sources by `scripts/llvm.sh` in its marked step, and `shim/hook.cpp`. The lowering is plain C in `runtime/lang*.c` (`runtime/lang.h` is its whole interface), so changing it does not rebuild LLVM; changing the patch does. `build.c` builds the hook only when the install's headers have it (`setHookMode`).
+- `tests/smith-lang.sh <smith>` runs the corpus in `tests/smith-lang/cases` (`UPDATE=1` rewrites the expectations: read the diff), and `tests/smith-lang-c.sh <smith>` compiles smith's own sources as `.c` and as `.smith` and compares the code. Both skip themselves for a smith without the hook.
+- `smith --smith-lower x.smith` prints the lowering of the text as written, `smith --smith-header x.smith -o x.h` a module's header. `SMITH_LANG_ASK=Name,struct Tag` prints what the parser answers about those types at the end of a file.
+- Cost: a plain `.smith` file must compile as fast as the `.c` (the host is offered only watched identifiers). Compare with alternating runs, at least 20 each, and note the load.
+
 ## Write C
 
 The rules are game's, in https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-language.md and https://github.com/adam-r-kowalski/game/blob/main/knowledge/c-naming.md, and `.clang-format` and `.clang-tidy` are copies of game's.

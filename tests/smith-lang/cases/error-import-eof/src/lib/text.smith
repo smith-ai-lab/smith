@@ -1,0 +1,13 @@
+module lib::text;
+
+export typedef struct { const char *data; usize length; } Text;
+
+export Text make(const char *data) {
+    usize length = 0;
+    while (data[length] != 0) length += 1;
+    return (Text){data, length};
+}
+
+export usize length(Text text) {
+    return text.length;
+}

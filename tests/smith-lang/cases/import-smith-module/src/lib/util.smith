@@ -1,0 +1,5 @@
+module lib::util;
+
+export int twice(int value) {
+    return value * 2;
+}

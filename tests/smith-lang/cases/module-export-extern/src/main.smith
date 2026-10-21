@@ -1,0 +1,7 @@
+import cfg::limits as limits;
+#include <stdio.h>
+
+int main(void) {
+    printf("%u %u\n", limits::max_users, limits::users_allowed());
+    return 0;
+}

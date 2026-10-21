@@ -1,0 +1,39 @@
+module shapes::area;
+
+export typedef struct { f64 width; f64 height; } Rect;
+export struct Circle { f64 radius; };
+export enum Kind { Square, Round = 5, Other };
+export constexpr u32 sides = 4;
+export u32 calls = 0;
+export f64 pi = 3.0;
+
+u32 private_calls = 0;
+
+static_assert(sizeof(Rect) == 16);
+
+f64 half(f64 value) {
+    private_calls += 1;
+    return value / 2;
+}
+
+export f64 rect(Rect shape) {
+    calls += 1;
+    return shape.width * shape.height;
+}
+
+export f64 circle(struct Circle shape) {
+    calls += 1;
+    return pi * shape.radius * shape.radius;
+}
+
+export f64 triangle(Rect shape) {
+    return half(rect(shape));
+}
+
+export u32 private_count(void) {
+    return private_calls;
+}
+
+export enum Kind kind_of(u32 side_count) {
+    return side_count == sides ? Square : Other;
+}

@@ -1,0 +1,7 @@
+import cond::gate;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d\n", gate::always_there());
+    return 0;
+}

@@ -1,0 +1,21 @@
+#include <stddef.h>
+#include <stdio.h>
+
+int main(void) {
+    printf("%zu %zu %zu %zu\n", sizeof(u8), sizeof(u16), sizeof(u32), sizeof(u64));
+    printf("%zu %zu %zu %zu\n", sizeof(i8), sizeof(i16), sizeof(i32), sizeof(i64));
+    printf("%zu %zu\n", sizeof(usize), sizeof(isize));
+    printf("%zu %zu %zu\n", sizeof(f16), sizeof(f32), sizeof(f64));
+    i8 minus = -1;
+    u8 wrap = (u8)minus;
+    printf("%d %u\n", minus, wrap);
+    f32 half = 0.5f;
+    f64 wide = half;
+    printf("%.2f %.2f\n", (double)half, wide);
+    static_assert(_Generic((u64)0, unsigned long long: 1, unsigned long: 1, default: 0), "u64 is an unsigned type");
+    static_assert(_Generic((usize)0, size_t: 1, default: 0), "usize is size_t");
+    static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
+    bool flag = true;
+    printf("%d\n", flag);
+    return 0;
+}

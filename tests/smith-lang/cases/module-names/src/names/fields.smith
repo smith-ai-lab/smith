@@ -1,0 +1,19 @@
+module names::fields;
+
+export typedef struct { int count; int total; } Stats;
+
+int count = 10;
+
+int total(void) {
+    return 5;
+}
+
+export int combine(Stats *stats) {
+    int local = stats->count + stats->total;
+    return local + count + total();
+}
+
+export Stats make(int count, int total) {
+    Stats stats = {.count = count, .total = total};
+    return stats;
+}

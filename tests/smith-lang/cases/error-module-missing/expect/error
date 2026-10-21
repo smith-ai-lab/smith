@@ -1,0 +1,1 @@
+src/main.smith:1:8: cannot find module `no::such::module`: no `no/such/module.h` in the include paths (smith writes it from the module's source)
