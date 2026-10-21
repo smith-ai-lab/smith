@@ -10427,6 +10427,10 @@
       "members": [
         {
           "type": "STRING",
+          "value": "constexpr"
+        },
+        {
+          "type": "STRING",
           "value": "type"
         },
         {
@@ -10705,6 +10709,10 @@
     [
       "type_parameter",
       "type_specifier"
+    ],
+    [
+      "type_parameter",
+      "type_qualifier"
     ],
     [
       "_declaration_modifiers",

@@ -33,6 +33,7 @@ module.exports = grammar(C, {
     [$.module_declaration, $.type_specifier],
     [$.import_declaration, $.type_specifier],
     [$.type_parameter, $.type_specifier],
+    [$.type_parameter, $.type_qualifier],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
   ]),
 
@@ -126,9 +127,9 @@ module.exports = grammar(C, {
 
     primitive_type: ($, original) => choice(original, ...sized),
 
-    // T max(type T, T a, T b)
+    // T max(constexpr type T, T a, T b)
     parameter_declaration: ($, original) => choice(original, prec.dynamic(1, $.type_parameter)),
-    type_parameter: $ => seq('type', field('name', $.identifier)),
+    type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
 
     // if constexpr (T == f32) { ... }
     if_statement: ($, original) => choice(
