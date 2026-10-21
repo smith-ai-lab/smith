@@ -233,8 +233,8 @@ class SmithHook final : public TokenHook {
         return consumed;
     }
 
-    unsigned afterSized = 0;   // tokens left to look at
-    unsigned char mode = 0;    // the mode the lowering asked for (Preprocessor::HookWatched, HookBraces or HookAll)
+    unsigned afterSized = 0; // tokens left to look at
+    unsigned char mode = 0;  // the mode the lowering asked for (Preprocessor::HookWatched, HookBraces or HookAll)
 
     void startLook() {
         afterSized = 8;
@@ -256,8 +256,8 @@ class SmithHook final : public TokenHook {
     // The token after a sized type name. False when the hook was not to be offered it.
     bool look(Token &tok) {
         bool offered = wouldOffer(tok);
-        if (afterSized > 1 && tok.isOneOf(tok::star, tok::kw_const, tok::kw_volatile, tok::kw_restrict,
-                                          tok::kw__Atomic)) {
+        if (afterSized > 1 &&
+            tok.isOneOf(tok::star, tok::kw_const, tok::kw_volatile, tok::kw_restrict, tok::kw__Atomic)) {
             afterSized -= 1;
             return offered;
         }
@@ -430,9 +430,9 @@ class SmithHook final : public TokenHook {
         return top == sema->IdResolver.end() || *top != sizedDecls[sized->second];
     }
 
-    // u32 and the others are typedefs (`typedef __UINT32_TYPE__ u32;`), made at the first use of the name in a file that
-    // declares nothing of that name, so that a diagnostic says `u32` (aka `unsigned int`). The tokens stay as written:
-    // there is no macro to expand, and the typedef is implicit, so it is in no header.
+    // u32 and the others are typedefs (`typedef __UINT32_TYPE__ u32;`), made at the first use of the name in a file
+    // that declares nothing of that name, so that a diagnostic says `u32` (aka `unsigned int`). The tokens stay as
+    // written: there is no macro to expand, and the typedef is implicit, so it is in no header.
     void ensureSized(unsigned index, SourceLocation at) {
         if (sizedDecls[index] != nullptr || sema == nullptr) return;
         IdentifierInfo *name = sizedInfos[index];
@@ -489,7 +489,7 @@ class SmithHook final : public TokenHook {
         {"f64", nullptr, "double"}};
     llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
     IdentifierInfo *sizedInfos[13];
-    NamedDecl *sizedDecls[13] = {}; // the typedefs this hook made
+    NamedDecl *sizedDecls[13] = {};                                   // the typedefs this hook made
     llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> renames; // a module's names, to their prefixed spelling
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
@@ -994,19 +994,21 @@ class SmithHook final : public TokenHook {
         std::string text;
     };
     std::map<std::string, Interface> interfaces; // by module path (a/b)
-    std::vector<std::string> roots;              // where a module's path starts: the main file's, and those of the modules found
+    std::vector<std::string> roots; // where a module's path starts: the main file's, and those of the modules found
     bool rootsMade = false;
     std::string problem;
     std::set<unsigned> suppressed;
     bool filtering = false;
 
     static std::string moduleFromPath(std::string path) {
-        for (size_t at; (at = path.find('/')) != std::string::npos;) path.replace(at, 1, "::");
+        for (size_t at; (at = path.find('/')) != std::string::npos;)
+            path.replace(at, 1, "::");
         return path;
     }
 
     static std::string modulePath(std::string name) {
-        for (size_t at; (at = name.find("::")) != std::string::npos;) name.replace(at, 2, "/");
+        for (size_t at; (at = name.find("::")) != std::string::npos;)
+            name.replace(at, 2, "/");
         return name;
     }
 
@@ -1050,7 +1052,8 @@ class SmithHook final : public TokenHook {
             }
         }
         makeRoots();
-        for (const std::string &root : roots) list.push_back(root.empty() ? tail : root + "/" + tail);
+        for (const std::string &root : roots)
+            list.push_back(root.empty() ? tail : root + "/" + tail);
         return list;
     }
 
@@ -1084,7 +1087,8 @@ class SmithHook final : public TokenHook {
         }
         if (!source) {
             entry.text = "cannot find module `" + name + "`: no `" + module + ".h` in the include paths, no `" +
-                         module + ".smith` among the input files, and nothing at the path the name implies (" + tried + ")";
+                         module + ".smith` among the input files, and nothing at the path the name implies (" + tried +
+                         ")";
             problem = entry.text;
             return &entry;
         }
@@ -1131,7 +1135,8 @@ class SmithHook final : public TokenHook {
             if (nested == nullptr || !nested->ok) continue;
             std::string from = "#include \"" + path + ".h\"";
             size_t where = entry.text.find(from);
-            if (where != std::string::npos) entry.text.replace(where, from.size(), "#include \"" + nested->include + "\"");
+            if (where != std::string::npos)
+                entry.text.replace(where, from.size(), "#include \"" + nested->include + "\"");
         }
         problem.clear();
     }

@@ -722,9 +722,9 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 
 constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
 
-// The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith among
-// them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited by the
-// compiles the driver runs.
+// The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith
+// among them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited
+// by the compiles the driver runs.
 static void smith_set_smith_inputs(int argc, char **argv, int first) {
     static char inputs[smith_smith_args_max];
     size_t used = 0;

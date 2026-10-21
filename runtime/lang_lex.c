@@ -364,8 +364,8 @@ bool smith_lang_interface(const char *file, const char *text, size_t length, cha
     smith_lang_keep_aside(true);
     memcpy(smith_lang_source, text, length);
     smith_lang_source[length] = 0;
-    SmithLangRaw raw = {.file = file, .length = length, .line_start = true, .capture = error,
-                        .capture_capacity = error_capacity};
+    SmithLangRaw raw = {
+        .file = file, .length = length, .line_start = true, .capture = error, .capture_capacity = error_capacity};
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
     lang->dump_enabled = false;
@@ -386,7 +386,8 @@ bool smith_lang_interface(const char *file, const char *text, size_t length, cha
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
-    lang->finished = true; // not smith_lang_finish: what it writes (SMITH_LANG_DUMP, SMITH_LANG_HEADER) is the importer's
+    lang->finished =
+        true; // not smith_lang_finish: what it writes (SMITH_LANG_DUMP, SMITH_LANG_HEADER) is the importer's
     if (lang->is_module) smith_lang_assemble_header(lang, file);
     bool good = lang->errors == 0 && names.errors == 0 && lang->is_module;
     if (good) {

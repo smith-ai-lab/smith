@@ -366,8 +366,8 @@ bool smith_lang_misused_keyword(const char *text, size_t length) {
     SmithLangWord word = smith_lang_word(text, length);
     if (word == SmithLangWord_Other || word == SmithLangWord_Qualifier || word == SmithLangWord_Storage) return false;
     // These follow a type legitimately: an attribute, an alignment, an assembler label, `__extension__`.
-    static const char *const follows[] = {"_Alignas", "alignas", "asm", "__asm", "__asm__", "__attribute__",
-                                          "__extension__"};
+    static const char *const follows[] = {"_Alignas", "alignas",       "asm",          "__asm",
+                                          "__asm__",  "__attribute__", "__extension__"};
     for (size_t i = 0; i < sizeof follows / sizeof follows[0]; i++) { // 7 entries
         if (smith_lang_equals(text, length, follows[i])) return false;
     }
