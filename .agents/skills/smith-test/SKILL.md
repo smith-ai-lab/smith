@@ -109,7 +109,7 @@ In build.c (the smith-build skill has the rest):
 ```c
 SmithTests tests = {
     .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
-    .objects = (const SmithObject *[]){&arena, &random, &code_under_test, nullptr}, // smith's arena and random are required
+    .objects = (const SmithObject *[]){&code_under_test, nullptr}, // the code under test; nullptr for none. smith_tests links the arena, random, trace and contract libraries itself
     .flags = flags,       // the test files and smith's test library, -I .smith/include included
     .link_flags = link_flags,
     .inputs = smith_list(b, "build/shaders.metallib", nullptr), // files the tests read when they run: built first, a change reruns the tests

@@ -779,7 +779,7 @@ capture "$smith" build
 expect "conversion: a lossy comparison fails to compile" 1 "$rc"
 expect_contains "conversion: ... with -Wconversion's message" "$out$err" "implicit conversion from 'double' to"
 
-# 8. smith_tests refuses objects without the arena and random.
+# 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects at all.
 project "$work/missing"
 cat >tests/test_x.c <<'C'
 #include <smith/test.h>
@@ -804,8 +804,14 @@ void build(SmithBuild *b) {
 }
 C
 capture "$smith" build
-expect "objects: a missing library is an error" 2 "$rc"
-expect_contains "objects: ... that says which library to add" "$err" "smith: build.c: smith_tests: .objects must include smith's random, which the tests link once; add a SmithObject compiled from smith_library(b, \"random\") to .objects"
+expect "objects: a library left out of .objects is linked by smith_tests" 0 "$rc"
+capture build/tests
+expect_contains "objects: ... and the test runs" "$out" "1 passed, 0 failed"
+sed -i.bak -e 's/    smith_object(b, &arena);//' -e 's/    SmithObject arena = .*//' -e '/\.objects = /d' build.c
+capture "$smith" build
+expect "objects: no .objects at all builds" 0 "$rc"
+capture build/tests
+expect_contains "objects: ... and the test runs without them" "$out" "1 passed, 0 failed"
 
 # 8b. Full size, SMITH_CHECK_SAME_BITS and .inputs.
 project "$work/extras"

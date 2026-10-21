@@ -628,7 +628,7 @@ void test_uniform_stays_in_range(SmithKey key) { // a property test: runs on 100
 // build.c
 SmithTests tests = {
     .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
-    .objects = (const SmithObject *[]){&arena, &random, &code_under_test, nullptr},
+    .objects = (const SmithObject *[]){&code_under_test, nullptr},
     .flags = flags,                                  // for the test files and smith's test library
     .link_flags = link_flags,
 };
@@ -748,7 +748,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
 - **Failure reports.** A failure is a stack of addresses, and smith turns it into the failing line and the call chain.
   This is `<smith/trace.h>` in the program and `smith symbolize` in smith.
-  - **In the program (`lib/trace.c`, `smith_library(b, "trace")`; `smith_tests` compiles it itself):** on a failed
+  - **In the program (`lib/trace.c`, `smith_library(b, "trace")`; `smith_tests` compiles it itself, as the contract library):** on a failed
     check, a failed contract (`smith_failure(kind)`), an `assert` or a fatal signal, the program walks its stack by frame
     pointers, which test builds keep (Apple's ABIs always do; sanitized builds pass `-fno-omit-frame-pointer`). A
     signal's walk starts from the `ucontext` the handler is given, with the exact instruction first. It writes the raw
@@ -810,8 +810,12 @@ smith_tests(b, &tests);                              // tests.step is the task "
     and `smith_invariant` call when their condition is false. In a test it fails the test with the report above; in a
     program it writes the heading and the trace block to standard error and calls `abort()`, so a log holds what `smith
     symbolize` needs. The caller's frame is the failing one: a wrapper whose name starts with a prefix above is skipped.
-- **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
-  project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
+- **`smith_tests` links the libraries the runner and `<smith/contract.h>` need.** The test library uses the arena and
+  random, a failure's report uses trace, and code under test that makes a contract calls the contract library. Each is
+  compiled by `smith_tests` with the test flags, unless `.objects` holds the project's own object of it (compiled from
+  `smith_library(b, "arena")` and so on), so nothing is defined twice and a test of code with contracts links with
+  nothing added. The explicit part is `.objects`, where a library the code under test uses and these do not cover
+  (io, text, json) goes.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
   flags (`smith lsp --check` on a test file reports no errors).
 
@@ -905,7 +909,7 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test", "text"; random and io use the arena,
-// and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test").
+// and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them).
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
@@ -1052,7 +1056,7 @@ void smith_modules(SmithBuild *b, const SmithModules *modules);
 typedef struct {
     const char *compiler;       // compiles and links the tests, by default "smith-cc"
     const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
-    const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
+    const SmithObject *const *objects; // the code under test, linked in (nullptr for none)
     const char *const *flags;          // for the test files and smith's test library
     const char *const *link_flags;
     const char *const *inputs; // files the tests read when they run, such as compiled shaders; built first
@@ -1072,8 +1076,10 @@ typedef struct {
 //     so a test_ function the scan missed, because it is formatted another way, is a compile error.
 //   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
-//     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
-//     second time; the call fails and says which smith_library to add when one is missing.
+//     The objects are in <output>_objects/. smith's arena, random, trace and contract libraries are compiled here with
+//     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
+//     smith_library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
+//     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
 //   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after

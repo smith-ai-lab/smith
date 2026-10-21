@@ -1904,16 +1904,6 @@ static bool smith_tests_links(const SmithTests *tests, const char *source) {
 static void smith_tests_check(const SmithTests *tests) {
     smith_context = nullptr;
     if (smith_count(tests->sources) == 0) smith_fail("smith_tests: .sources is empty; give it the test files");
-    bool arena = smith_tests_links(tests, ".smith/lib/arena.c");
-    bool random = smith_tests_links(tests, ".smith/lib/random.c");
-    if (arena && random) return;
-    const char *missing = !arena && !random ? "arena and random" : arena ? "random" : "arena";
-    const char *fix = !arena && !random ? "smith_library(b, \"arena\") and smith_library(b, \"random\")"
-                      : arena           ? "smith_library(b, \"random\")"
-                                        : "smith_library(b, \"arena\")";
-    smith_fail("smith_tests: .objects must include smith's %s, which the tests link once; add a SmithObject "
-               "compiled from %s to .objects",
-               missing, fix);
 }
 
 // One object of the tests' own: compiled with the compiler, its output next to the runner.
@@ -1969,20 +1959,23 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 4 + smith_count((const char *const *)tests->objects));
+    const char **objects = smith_new_list(count + 6 + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
                                                            smith_list(b, list_header, nullptr));
     objects[used++] = (const char *)smith_tests_object(b, &copy, list_table, copy.flags, nullptr);
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
-    if (!smith_tests_links(tests, ".smith/lib/trace.c")) // a project that links the trace library itself is not doubled
-        objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "trace"), copy.flags, nullptr);
-    // Code under test that makes a contract (<smith/contract.h>) calls the contract library, as every test calls the
-    // test library: the runner links it, as it does trace, unless the project links it itself.
-    if (!smith_tests_links(tests, ".smith/lib/contract.c"))
-        objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "contract"), copy.flags, nullptr);
-    for (size_t i = 0; tests->objects[i] != nullptr; i++)
+    // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
+    // memory from them), trace (a failure's report) and contract (<smith/contract.h>). Each is compiled here, with the
+    // test flags, unless the project links it itself in .objects, so no library is defined twice.
+    static const char *const libraries[] = {"arena", "random", "trace", "contract"};
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+        if (smith_tests_links(tests, smith_text(".smith/lib/%s.c", libraries[i]))) continue;
+        objects[used++] =
+            (const char *)smith_tests_object(b, &copy, smith_library(b, libraries[i]), copy.flags, nullptr);
+    }
+    for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];
     SmithProgram program = {
         .linker = copy.compiler,
