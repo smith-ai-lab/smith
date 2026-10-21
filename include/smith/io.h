@@ -8,7 +8,7 @@
 //
 // io holds every capability the program has, as a field: io.arena (memory), io.key and io.seed (randomness), io.console
 // (stdin, stdout, stderr), io.files (the file system), io.clock (monotonic and wall time),
-// io.processes (spawn and wait) and io.args. The network comes in the next version as io.net. Code can only do what it
+// io.processes (spawn and wait), io.net (TLS connections) and io.args. Code can only do what it
 // was handed: a function that is not given a clock cannot depend on time, and one that is not given files cannot touch
 // the disk.
 //
@@ -52,12 +52,14 @@
 //
 // Underneath is one kqueue event loop. macOS has no asynchronous file IO, so file operations run synchronously, in
 // the order they were submitted, inside smith_io_run: submitting only queues them. Pipes, the console, timers and
-// process exits wait on kqueue (EVFILT_READ, EVFILT_TIMER, EVFILT_PROC). Every blocking call is an op submitted and run
-// to completion on the same loop.
+// process exits wait on kqueue (EVFILT_READ, EVFILT_TIMER, EVFILT_PROC). Network connections are Network.framework's,
+// which calls back on a dispatch queue; each callback pushes its finished op onto a lock-free list and signals the same
+// kqueue (EVFILT_USER), so the ops complete in smith_io_run like every other. Every blocking call is an op submitted
+// and run to completion on the same loop.
 //
 // For tests there is a fake with the same type: smith_io_make_test. Its files are in memory, its console is scripted
-// text with the output captured, its clock moves only when told to, its key is given, and its memory is a buffer you
-// provide. Code under test cannot tell it from the real one.
+// text with the output captured, its clock moves only when told to, its key is given, its servers are scripted, and its
+// memory is a buffer you provide. Code under test cannot tell it from the real one.
 //
 // The project compiles lib/io.c itself (build.c: smith_library(b, "io")), along with the arena and random libraries.
 #pragma once
@@ -65,8 +67,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <smith/arena.h>
-#include <smith/random.h>
+#include "arena.h"
+#include "random.h"
 
 // An error: code is 0 for success, otherwise an errno value (ENOENT, EINVAL...), and message says what failed, such
 // as "open config.txt: No such file or directory". Real and fake io give the same code and message.
@@ -95,6 +97,10 @@ typedef enum {
     SmithOpKind_PipeRead,
     SmithOpKind_Timeout,
     SmithOpKind_ProcessWait,
+    SmithOpKind_NetConnect,
+    SmithOpKind_NetSend,
+    SmithOpKind_NetReceive,
+    SmithOpKind_NetClose,
 } SmithOpKind;
 
 // How smith_files_write puts the bytes in the file.
@@ -120,6 +126,8 @@ typedef struct SmithOp {
         struct SmithOp *next;
         SmithLoop *loop;
         void *console;
+        void *connection;
+        struct SmithOp *finished; // network ops: the list of ops the callbacks have finished
         SmithArena *arena;
         const char *path;
         const void *input;
@@ -158,6 +166,10 @@ typedef struct {
 } SmithProcesses;
 
 typedef struct {
+    SmithLoop *loop;
+} SmithNet;
+
+typedef struct {
     size_t count;
     const char *const *values; // values[count] is nullptr
     const char *const
@@ -172,8 +184,8 @@ typedef struct {
     SmithFiles files;
     SmithClock clock;
     SmithProcesses processes;
+    SmithNet net;
     SmithArgs args;
-    // net comes in the next version
     SmithLoop *loop;
 } SmithIo;
 
@@ -302,6 +314,47 @@ void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithPro
 // How many processes can run at once: the machine's logical cores. The fake has what SmithIoTest.cores says, or 1.
 [[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
 
+// --- net: TLS connections, from the platform (Network.framework on macOS) ---
+//
+// A connection is a struct you own and keep where it is until its close has completed. The calls below are ops:
+// connect, then send and receive (one of each at a time), then close. An error is a value: refused and unreachable
+// hosts are the errno of the system (ECONNREFUSED, EHOSTUNREACH), a name that does not resolve is ENOENT, and a
+// certificate or handshake failure is EAUTH with a message that says why ("the certificate is not for this host"). The
+// system's own trust decides; there is no way to turn the check off. A connection that failed is closed by the program,
+// as one that worked is: close completes every op still pending on it with ECANCELED, and it is the last thing to touch
+// the connection, so it may be freed once the close is done.
+typedef struct SmithConnection {
+    struct { // private to the library
+        SmithLoop *loop;
+        void *handle;
+        void *script;
+        size_t position;
+        _Atomic(struct SmithOp *) waiting[4]; // connect, send, receive, close
+        _Atomic bool closed;
+        bool end; // the peer has finished sending
+        char name[96];
+    } internal;
+} SmithConnection;
+
+// Opens a connection to host:port; with tls, it is a TLS connection whose certificate is checked against host. The op
+// completes when the connection is ready, or fails.
+void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const char *host, uint16_t port,
+                             bool tls);
+// Sends all size bytes (the library copies them, so they need not outlive the call).
+void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const void *data, size_t size);
+// Completes with whatever has arrived, at least one byte and at most capacity, in buffer (op->data, op->size; not
+// NUL-terminated); op->end is true when the peer is done sending and nothing was read.
+void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection, void *buffer, size_t capacity);
+// Closes the connection.
+void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
+
+// The same, blocking.
+[[nodiscard]] SmithError smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, uint16_t port,
+                                           bool tls);
+[[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection, const void *data, size_t size);
+[[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection, void *buffer, size_t capacity);
+[[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection);
+
 // --- arguments ---
 
 // The argument i (0 is the program), or nullptr past the end.
@@ -333,3 +386,23 @@ typedef struct {
 // What the program printed to stdout and stderr so far, NUL-terminated.
 [[nodiscard]] const char *smith_io_test_output(const SmithIo *io);
 [[nodiscard]] const char *smith_io_test_errors(const SmithIo *io);
+
+// A scripted server for the net: a connection to host:port is served by the first server added for it that no
+// connection has used yet, so a redirect to another host is a second server. The server sends response, in pieces of at
+// most chunk bytes when chunk is not 0, and then either closes cleanly or, when error is not 0, fails the next receive
+// with that errno. With tls_failure the connect fails with EAUTH and that message instead. A connection to a host with
+// no server is ECONNREFUSED. Once any server is added the real io is scripted too: its files, console and clock stay
+// real, and no connection goes out to the network. This is how a test of code that downloads runs on a real disk.
+typedef struct {
+    const char *host;
+    uint16_t port;
+    const void *response;
+    size_t response_size;
+    size_t chunk;
+    int error;
+    const char *tls_failure;
+} SmithNetServer;
+[[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server);
+// The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
+// was no such connection.
+[[nodiscard]] const char *smith_io_test_request(const SmithIo *io, const char *host, uint16_t port, size_t n);

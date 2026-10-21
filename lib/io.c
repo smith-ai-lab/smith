@@ -1,12 +1,16 @@
-#include <smith/io.h>
+#include "../include/smith/io.h"
 
+#include <Network/Network.h>
 #include <assert.h>
 #include <dirent.h>
+#include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <spawn.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +40,10 @@ constexpr size_t smith_io_chunk = 4096;
 constexpr int smith_io_folder_mode = 0b111111111; // rwxrwxrwx, before the umask
 constexpr int smith_io_file_mode = 0b110100100;   // rw-r--r--, before the umask
 constexpr uint64_t smith_io_nanoseconds = 1'000'000'000;
+constexpr size_t smith_io_fake_servers_max = 16;
+constexpr size_t smith_io_request_max = 8192;
+constexpr uintptr_t smith_io_wakeup = 1; // the ident of the loop's EVFILT_USER event
+constexpr size_t smith_net_cas_tries = (size_t)1 << 20;
 
 typedef struct {
     const char *path;
@@ -50,6 +58,25 @@ typedef struct {
     const char *output;
     int status;
 } SmithFakeProgram;
+
+// A server of the scripted network and the bytes its client has sent.
+typedef struct {
+    const char *host;
+    uint16_t port;
+    const unsigned char *response;
+    size_t response_size;
+    size_t chunk;
+    int error;
+    const char *tls_failure;
+    bool used;
+    char *request; // smith_io_request_max + 1 bytes
+    size_t request_size;
+} SmithFakeServer;
+
+typedef struct {
+    SmithFakeServer servers[smith_io_fake_servers_max];
+    size_t count;
+} SmithFakeNet;
 
 typedef struct {
     SmithArena storage; // a quarter of the test memory: file contents, names and scripts
@@ -69,6 +96,24 @@ typedef struct {
     size_t cores;
 } SmithFake;
 
+// Network.framework's functions, looked up with dlopen when the first connection is made (see the net section).
+typedef struct {
+    typeof(nw_endpoint_create_host) *endpoint_create_host;
+    typeof(nw_parameters_create_secure_tcp) *parameters_create_secure_tcp;
+    typeof(nw_connection_create) *connection_create;
+    typeof(nw_connection_set_queue) *set_queue;
+    typeof(nw_connection_set_state_changed_handler) *set_state_handler;
+    typeof(nw_connection_start) *start;
+    typeof(nw_connection_cancel) *cancel;
+    typeof(nw_connection_send) *send;
+    typeof(nw_connection_receive) *receive;
+    typeof(nw_error_get_error_domain) *error_domain;
+    typeof(nw_error_get_error_code) *error_code;
+    const nw_parameters_configure_protocol_block_t *configure_default;
+    const nw_parameters_configure_protocol_block_t *configure_disable;
+    const nw_content_context_t *context_message;
+} SmithNetApi;
+
 struct SmithLoop {
     int queue; // the kqueue, -1 in the fake
     SmithFake *fake;
@@ -77,7 +122,16 @@ struct SmithLoop {
     size_t pending;
     void *memory; // the reservation, to release
     size_t memory_size;
+    SmithFakeNet *servers;       // the scripted network, once a server is added; the fake io's only one
+    _Atomic(SmithOp *) finished; // network ops whose callbacks have run: pushed by any thread, taken by the loop
+    SmithNetApi net_api;         // Network.framework's functions, once the first connection needs them
+    bool net_loaded;
+    dispatch_queue_t net_queue; // the serial queue its callbacks run on
 };
+
+static void smith_net_drain(SmithLoop *loop, size_t *completed);
+static void smith_net_complete_scripted(SmithLoop *loop, SmithOp *op);
+static bool smith_net_scripted(const SmithLoop *loop);
 
 // ---------------------------------------------------------------- errors
 
@@ -609,6 +663,11 @@ static bool smith_loop_watch(SmithLoop *loop, SmithOp *op) {
         flags = NOTE_NSECONDS;
         data = (intptr_t)op->internal.deadline;
         break;
+    case SmithOpKind_NetConnect:
+    case SmithOpKind_NetSend:
+    case SmithOpKind_NetReceive:
+    case SmithOpKind_NetClose:
+        return !smith_net_scripted(loop); // a callback finishes it and wakes the loop; a script is ready at once
     case SmithOpKind_None:
     case SmithOpKind_FileRead:
     case SmithOpKind_FileWrite:
@@ -724,6 +783,12 @@ static void smith_loop_complete(SmithLoop *loop, SmithOp *op) {
     case SmithOpKind_ProcessWait:
         smith_loop_finish_wait(loop, op);
         break;
+    case SmithOpKind_NetConnect:
+    case SmithOpKind_NetSend:
+    case SmithOpKind_NetReceive:
+    case SmithOpKind_NetClose:
+        if (smith_net_scripted(loop)) smith_net_complete_scripted(loop, op);
+        break;
     case SmithOpKind_Timeout:
     case SmithOpKind_None:
         break;
@@ -764,6 +829,10 @@ static size_t smith_loop_run(SmithLoop *loop, int64_t timeout_ns) {
     struct kevent events[smith_io_events_max];
     int count = kevent(loop->queue, nullptr, 0, events, (int)smith_io_events_max, timeout_ns < 0 ? nullptr : &limit);
     for (int i = 0; i < count; i++) { // at most smith_io_events_max
+        if (events[i].filter == EVFILT_USER) {
+            smith_net_drain(loop, &completed);
+            continue;
+        }
         SmithOp *op = events[i].udata;
         assert(op != nullptr && !op->done);
         smith_loop_complete(loop, op);
@@ -1160,6 +1229,492 @@ SmithProcessResult smith_processes_run(SmithProcesses *processes, SmithArena *ar
     return result;
 }
 
+// ---------------------------------------------------------------- net
+
+// Network.framework is loaded with dlopen when the first connection is made, never linked: a program that makes no
+// connection (smith routing a compile, say) pays nothing at start, where linking the framework costs about 2.5 ms in
+// every process. The functions and the constants the C API names are looked up once and kept in the loop.
+
+// Symbols are data or functions; either way dlsym returns an address. ISO C has no conversion from object pointers to
+// function pointers, and dlsym's contract is exactly that conversion.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpedantic"
+static bool smith_net_load(SmithNetApi *api) {
+    void *library = dlopen("/System/Library/Frameworks/Network.framework/Network", RTLD_NOW | RTLD_LOCAL);
+    if (library == nullptr) return false;
+    struct {
+        const char *name;
+        void *address;
+    } symbols[] = {
+        {"nw_endpoint_create_host", nullptr},
+        {"nw_parameters_create_secure_tcp", nullptr},
+        {"nw_connection_create", nullptr},
+        {"nw_connection_set_queue", nullptr},
+        {"nw_connection_set_state_changed_handler", nullptr},
+        {"nw_connection_start", nullptr},
+        {"nw_connection_cancel", nullptr},
+        {"nw_connection_send", nullptr},
+        {"nw_connection_receive", nullptr},
+        {"nw_error_get_error_domain", nullptr},
+        {"nw_error_get_error_code", nullptr},
+        {"_nw_parameters_configure_protocol_default_configuration", nullptr},
+        {"_nw_parameters_configure_protocol_disable", nullptr},
+        {"_nw_content_context_default_message", nullptr},
+    };
+    for (size_t i = 0; i < sizeof symbols / sizeof symbols[0]; i++) {
+        symbols[i].address = dlsym(library, symbols[i].name);
+        if (symbols[i].address == nullptr) return false;
+    }
+    api->endpoint_create_host = symbols[0].address;
+    api->parameters_create_secure_tcp = symbols[1].address;
+    api->connection_create = symbols[2].address;
+    api->set_queue = symbols[3].address;
+    api->set_state_handler = symbols[4].address;
+    api->start = symbols[5].address;
+    api->cancel = symbols[6].address;
+    api->send = symbols[7].address;
+    api->receive = symbols[8].address;
+    api->error_domain = symbols[9].address;
+    api->error_code = symbols[10].address;
+    api->configure_default = (const nw_parameters_configure_protocol_block_t *)symbols[11].address;
+    api->configure_disable = (const nw_parameters_configure_protocol_block_t *)symbols[12].address;
+    api->context_message = (const nw_content_context_t *)symbols[13].address;
+    return true;
+}
+#pragma clang diagnostic pop
+
+// The functions, loaded on first use; nullptr if the framework is not there.
+static const SmithNetApi *smith_net_api(SmithLoop *loop) {
+    if (!loop->net_loaded) {
+        if (!smith_net_load(&loop->net_api)) return nullptr;
+        loop->net_queue = dispatch_queue_create("smith.net", DISPATCH_QUEUE_SERIAL);
+        loop->net_loaded = loop->net_queue != nullptr;
+    }
+    return loop->net_loaded ? &loop->net_api : nullptr;
+}
+
+static bool smith_net_scripted(const SmithLoop *loop) {
+    return loop->fake != nullptr || loop->servers != nullptr;
+}
+
+// --- finishing ops from any thread
+
+// Wakes the loop's kevent. Safe from any thread.
+static void smith_net_wake(SmithLoop *loop) {
+    struct kevent wakeup = {};
+    EV_SET(&wakeup, smith_io_wakeup, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+    int result = kevent(loop->queue, &wakeup, 1, nullptr, 0, nullptr);
+    assert(result == 0);
+    (void)result;
+}
+
+// Hands a finished op to the loop thread, which marks it done in smith_io_run. Callable from any thread, once per op.
+static void smith_net_finish(SmithLoop *loop, SmithOp *op, SmithError error) {
+    op->error = error;
+    SmithOp *head = atomic_load(&loop->finished);
+    for (size_t tries = 0; tries < smith_net_cas_tries; tries++) { // a lost race retries with the new head
+        op->internal.finished = head;
+        if (atomic_compare_exchange_weak(&loop->finished, &head, op)) break;
+    }
+    smith_net_wake(loop);
+}
+
+// The op waiting in a connection's slot, taken so that exactly one caller finishes it; nullptr if none is.
+static SmithOp *smith_net_take(SmithConnection *connection, SmithOpKind kind) {
+    size_t slot = (size_t)(kind - SmithOpKind_NetConnect);
+    assert(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
+    return atomic_exchange(&connection->internal.waiting[slot], nullptr);
+}
+
+static void smith_net_finish_slot(SmithLoop *loop, SmithConnection *connection, SmithOpKind kind, SmithError error) {
+    SmithOp *op = smith_net_take(connection, kind);
+    if (op != nullptr) smith_net_finish(loop, op, error);
+}
+
+// Runs on the loop thread: completes every op the callbacks have finished. The list is last in, first out; it is
+// turned around so that ops complete in the order they finished.
+static void smith_net_drain(SmithLoop *loop, size_t *completed) {
+    SmithOp *list = atomic_exchange(&loop->finished, nullptr);
+    SmithOp *ordered = nullptr;
+    for (size_t i = 0; list != nullptr && i < loop->pending; i++) { // bounded by the ops pending
+        SmithOp *next = list->internal.finished;
+        list->internal.finished = ordered;
+        ordered = list;
+        list = next;
+    }
+    for (size_t i = 0; ordered != nullptr && i <= loop->pending; i++) {
+        SmithOp *next = ordered->internal.finished;
+        smith_loop_complete(loop, ordered);
+        *completed += 1;
+        ordered = next;
+    }
+}
+
+// --- errors
+
+[[gnu::format(printf, 2, 3)]] static SmithError smith_error_text(int code, const char *format, ...) {
+    SmithError error = {.code = code};
+    va_list arguments;
+    va_start(arguments, format);
+    [[maybe_unused]] int written = vsnprintf(error.message, sizeof error.message, format, arguments);
+    va_end(arguments);
+    assert(written > 0);
+    return error;
+}
+
+// What the system's TLS stack means by a status (Security/SecureTransport.h), for the ones a certificate check gives.
+static const char *smith_net_tls_reason(int status) {
+    switch (status) {
+    case -9807:
+        return "the certificate chain is not valid";
+    case -9808:
+        return "the certificate was rejected (wrong host, self-signed or untrusted)";
+    case -9812:
+        return "the certificate's root is not trusted";
+    case -9813:
+        return "the certificate has no trusted root";
+    case -9814:
+        return "the certificate has expired";
+    case -9815:
+        return "the certificate is not valid yet";
+    case -9843:
+        return "the certificate is not for this host";
+    case -9806:
+        return "the connection was closed during the handshake";
+    default:
+        return "the handshake failed";
+    }
+}
+
+// A Network.framework error as a SmithError, with the connection's host in the message.
+static SmithError smith_net_error(const SmithNetApi *api, nw_error_t error, const char *name) {
+    int code = api->error_code(error);
+    switch (api->error_domain(error)) {
+    case nw_error_domain_posix:
+        return smith_error_make(code, "connect", name);
+    case nw_error_domain_dns:
+        return smith_error_text(ENOENT, "connect %s: cannot find the host (DNS error %d)", name, code);
+    case nw_error_domain_tls:
+        return smith_error_text(EAUTH, "connect %s: TLS: %s (status %d)", name, smith_net_tls_reason(code), code);
+    default:
+        return smith_error_text(EIO, "connect %s: network error %d", name, code);
+    }
+}
+
+static SmithError smith_net_closed(const char *name) {
+    return smith_error_make(ECANCELED, "use closed connection", name);
+}
+
+// --- real connections
+
+// The state callback, on the dispatch queue: finishes the connect when the connection is ready or fails, fails what is
+// pending when it fails, and on the last state (cancelled) finishes the rest and the close.
+static void smith_net_on_state(SmithLoop *loop, SmithConnection *connection, nw_connection_state_t state,
+                               nw_error_t error) {
+    const SmithNetApi *api = &loop->net_api;
+    nw_connection_t handle = connection->internal.handle;
+    if (state == nw_connection_state_ready) {
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect, (SmithError){});
+    } else if (error != nullptr && (state == nw_connection_state_failed || state == nw_connection_state_waiting)) {
+        SmithError failure = smith_net_error(api, error, connection->internal.name);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect, failure);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetSend, failure);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetReceive, failure);
+        api->cancel(handle); // the cancelled state follows, and the program closes the connection
+    } else if (state == nw_connection_state_cancelled) {
+        atomic_store(&connection->internal.closed, true);
+        SmithError gone = smith_net_closed(connection->internal.name);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect, gone);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetSend, gone);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetReceive, gone);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetClose, (SmithError){});
+        os_release(handle);
+    }
+}
+
+static void smith_net_begin(SmithLoop *loop, SmithOp *op, SmithConnection *connection, const char *host, uint16_t port,
+                            bool tls) {
+    const SmithNetApi *api = smith_net_api(loop);
+    if (api == nullptr) {
+        atomic_store(&connection->internal.waiting[0], op);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetConnect,
+                              smith_error_make(ENOSYS, "connect", "(Network.framework is not available)"));
+        return;
+    }
+    char service[8];
+    snprintf(service, sizeof service, "%u", (unsigned)port);
+    nw_endpoint_t endpoint = api->endpoint_create_host(host, service);
+    nw_parameters_t parameters = api->parameters_create_secure_tcp(
+        tls ? *api->configure_default : *api->configure_disable, *api->configure_default);
+    nw_connection_t handle = api->connection_create(endpoint, parameters);
+    os_release(endpoint);
+    os_release(parameters);
+    connection->internal.handle = handle;
+    atomic_store(&connection->internal.waiting[0], op);
+    api->set_queue(handle, loop->net_queue);
+    api->set_state_handler(handle, ^(nw_connection_state_t state, nw_error_t error) {
+        smith_net_on_state(loop, connection, state, error);
+    });
+    api->start(handle);
+}
+
+// Copies a received block into the buffer, up to its capacity.
+static size_t smith_net_copy(dispatch_data_t content, unsigned char *buffer, size_t capacity) {
+    __block size_t copied = 0;
+    if (content == nullptr) return 0;
+    dispatch_data_apply(content, ^bool(dispatch_data_t region, size_t offset, const void *bytes, size_t size) {
+        (void)region;
+        (void)offset;
+        size_t take = size < capacity - copied ? size : capacity - copied;
+        memcpy(buffer + copied, bytes, take);
+        copied += take;
+        return true;
+    });
+    return copied;
+}
+
+static void smith_net_received(SmithLoop *loop, SmithConnection *connection, dispatch_data_t content, bool complete,
+                               nw_error_t error) {
+    SmithOp *op = smith_net_take(connection, SmithOpKind_NetReceive);
+    if (op == nullptr) return;
+    op->size = smith_net_copy(content, op->internal.destination, op->internal.capacity);
+    op->data = (const char *)op->internal.destination;
+    SmithError failure = {};
+    if (error != nullptr) failure = smith_net_error(&loop->net_api, error, connection->internal.name);
+    if (complete && error == nullptr) connection->internal.end = true;
+    op->end = connection->internal.end && op->size == 0;
+    smith_net_finish(loop, op, failure);
+}
+
+static void smith_net_receive_real(SmithLoop *loop, SmithOp *op, SmithConnection *connection) {
+    const SmithNetApi *api = &loop->net_api;
+    if (connection->internal.end) { // the peer finished with the last block
+        op->data = (const char *)op->internal.destination;
+        op->end = true;
+        smith_net_finish(loop, op, (SmithError){});
+        return;
+    }
+    atomic_store(&connection->internal.waiting[SmithOpKind_NetReceive - SmithOpKind_NetConnect], op);
+    api->receive(connection->internal.handle, 1, (uint32_t)op->internal.capacity,
+                 ^(dispatch_data_t content, nw_content_context_t context, bool complete, nw_error_t error) {
+                     (void)context;
+                     smith_net_received(loop, connection, content, complete, error);
+                 });
+}
+
+static void smith_net_send_real(SmithLoop *loop, SmithOp *op, SmithConnection *connection) {
+    const SmithNetApi *api = &loop->net_api;
+    atomic_store(&connection->internal.waiting[SmithOpKind_NetSend - SmithOpKind_NetConnect], op);
+    dispatch_data_t data =
+        dispatch_data_create(op->internal.input, op->size, loop->net_queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    api->send(connection->internal.handle, data, *api->context_message, true, ^(nw_error_t error) {
+        SmithError failure = {};
+        if (error != nullptr) failure = smith_net_error(&loop->net_api, error, connection->internal.name);
+        smith_net_finish_slot(loop, connection, SmithOpKind_NetSend, failure);
+    });
+    dispatch_release(data);
+}
+
+// --- scripted connections
+
+static SmithFakeServer *smith_net_server_find(SmithFakeNet *net, const char *host, uint16_t port, size_t n,
+                                              bool only_unused) {
+    for (size_t i = 0; i < net->count; i++) {
+        SmithFakeServer *server = &net->servers[i];
+        if (server->port != port || strcmp(server->host, host) != 0) continue;
+        if (only_unused ? !server->used : n-- == 0) return server;
+    }
+    return nullptr;
+}
+
+static void smith_net_scripted_connect(SmithLoop *loop, SmithOp *op, SmithConnection *connection) {
+    const char *host = connection->internal.name;
+    SmithFakeServer *server = nullptr;
+    if (loop->servers != nullptr)
+        server = smith_net_server_find(loop->servers, host, (uint16_t)op->internal.deadline, 0, true);
+    if (server == nullptr) {
+        op->error = smith_error_make(ECONNREFUSED, "connect", host);
+    } else if (server->tls_failure != nullptr) {
+        server->used = true;
+        op->error = smith_error_text(EAUTH, "connect %s: TLS: %s", host, server->tls_failure);
+    } else {
+        server->used = true;
+        connection->internal.script = server;
+        connection->internal.position = 0;
+    }
+}
+
+static void smith_net_scripted_receive(SmithOp *op, SmithConnection *connection) {
+    SmithFakeServer *server = connection->internal.script;
+    size_t left = server->response_size - connection->internal.position;
+    size_t take = left < op->internal.capacity ? left : op->internal.capacity;
+    if (server->chunk > 0 && take > server->chunk) take = server->chunk;
+    if (take > 0) memcpy(op->internal.destination, server->response + connection->internal.position, take);
+    connection->internal.position += take;
+    op->data = (const char *)op->internal.destination;
+    op->size = take;
+    if (take > 0) return;
+    if (server->error != 0)
+        op->error = smith_error_make(server->error, "read", connection->internal.name);
+    else
+        op->end = true;
+}
+
+static void smith_net_scripted_send(SmithOp *op, SmithConnection *connection) {
+    SmithFakeServer *server = connection->internal.script;
+    if (server->request_size + op->size > smith_io_request_max) {
+        op->error = smith_error_make(ENOSPC, "send", connection->internal.name);
+        return;
+    }
+    memcpy(server->request + server->request_size, op->internal.input, op->size);
+    server->request_size += op->size;
+    server->request[server->request_size] = 0;
+}
+
+static void smith_net_complete_scripted(SmithLoop *loop, SmithOp *op) {
+    SmithConnection *connection = op->internal.connection;
+    if (op->internal.kind == SmithOpKind_NetConnect) {
+        smith_net_scripted_connect(loop, op, connection);
+        return;
+    }
+    if (op->internal.kind == SmithOpKind_NetClose) {
+        atomic_store(&connection->internal.closed, true);
+    } else if (connection->internal.script == nullptr || atomic_load(&connection->internal.closed)) {
+        op->error = smith_net_closed(connection->internal.name);
+    } else if (op->internal.kind == SmithOpKind_NetSend) {
+        smith_net_scripted_send(op, connection);
+    } else {
+        smith_net_scripted_receive(op, connection);
+    }
+}
+
+// --- the calls
+
+static void smith_net_start(SmithNet *net, SmithOp *op, SmithConnection *connection, SmithOpKind kind) {
+    assert(net != nullptr && connection != nullptr);
+    smith_op_start(op, net->loop, kind);
+    op->internal.connection = connection;
+}
+
+void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const char *host, uint16_t port,
+                             bool tls) {
+    assert(host != nullptr && host[0] != 0);
+    smith_net_start(net, op, connection, SmithOpKind_NetConnect);
+    *connection = (SmithConnection){};
+    connection->internal.loop = net->loop;
+    snprintf(connection->internal.name, sizeof connection->internal.name, "%s", host);
+    op->internal.deadline = port; // the scripted network reads the port from here
+    smith_loop_submit(net->loop, op);
+    if (!smith_net_scripted(net->loop)) smith_net_begin(net->loop, op, connection, host, port, tls);
+}
+
+void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const void *data, size_t size) {
+    assert(data != nullptr || size == 0);
+    smith_net_start(net, op, connection, SmithOpKind_NetSend);
+    op->internal.input = data;
+    op->size = size;
+    smith_loop_submit(net->loop, op);
+    if (smith_net_scripted(net->loop)) return;
+    if (atomic_load(&connection->internal.closed) || size == 0) {
+        smith_net_finish(net->loop, op, size == 0 ? (SmithError){} : smith_net_closed(connection->internal.name));
+        return;
+    }
+    smith_net_send_real(net->loop, op, connection);
+}
+
+void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection, void *buffer, size_t capacity) {
+    assert(buffer != nullptr && capacity > 0 && capacity <= UINT32_MAX);
+    smith_net_start(net, op, connection, SmithOpKind_NetReceive);
+    op->internal.destination = buffer;
+    op->internal.capacity = capacity;
+    smith_loop_submit(net->loop, op);
+    if (smith_net_scripted(net->loop)) return;
+    if (atomic_load(&connection->internal.closed)) {
+        smith_net_finish(net->loop, op, smith_net_closed(connection->internal.name));
+        return;
+    }
+    smith_net_receive_real(net->loop, op, connection);
+}
+
+void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection) {
+    smith_net_start(net, op, connection, SmithOpKind_NetClose);
+    smith_loop_submit(net->loop, op);
+    if (smith_net_scripted(net->loop)) return;
+    if (connection->internal.handle == nullptr || atomic_load(&connection->internal.closed)) {
+        smith_net_finish(net->loop, op, (SmithError){});
+        return;
+    }
+    atomic_store(&connection->internal.waiting[SmithOpKind_NetClose - SmithOpKind_NetConnect], op);
+    const SmithNetApi *api = &net->loop->net_api;
+    api->cancel(connection->internal.handle);
+    if (atomic_load(&connection->internal.closed))
+        smith_net_finish_slot(net->loop, connection, SmithOpKind_NetClose, (SmithError){});
+}
+
+SmithError smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, uint16_t port, bool tls) {
+    SmithOp op = {};
+    smith_net_connect_async(net, &op, connection, host, port, tls);
+    smith_loop_wait(net->loop, &op);
+    return op.error;
+}
+
+SmithError smith_net_send(SmithNet *net, SmithConnection *connection, const void *data, size_t size) {
+    SmithOp op = {};
+    smith_net_send_async(net, &op, connection, data, size);
+    smith_loop_wait(net->loop, &op);
+    return op.error;
+}
+
+SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection, void *buffer, size_t capacity) {
+    SmithOp op = {};
+    smith_net_receive_async(net, &op, connection, buffer, capacity);
+    smith_loop_wait(net->loop, &op);
+    return (SmithRead){.error = op.error, .data = op.data, .size = op.size, .end = op.end};
+}
+
+SmithError smith_net_close(SmithNet *net, SmithConnection *connection) {
+    SmithOp op = {};
+    smith_net_close_async(net, &op, connection);
+    smith_loop_wait(net->loop, &op);
+    return op.error;
+}
+
+// --- the scripted network's setup
+
+SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server) {
+    assert(io != nullptr && server.host != nullptr && (server.response != nullptr || server.response_size == 0));
+    SmithLoop *loop = io->loop;
+    if (loop->servers == nullptr) loop->servers = SMITH_ARENA_PUSH(&io->arena, SmithFakeNet);
+    SmithFakeNet *net = loop->servers;
+    if (net->count == smith_io_fake_servers_max) return smith_error_make(ENOSPC, "script", server.host);
+    SmithFakeServer *entry = &net->servers[net->count++];
+    char *host = smith_arena_push(&io->arena, strlen(server.host) + 1, 1);
+    memcpy(host, server.host, strlen(server.host));
+    unsigned char *response = smith_arena_push(&io->arena, server.response_size + 1, 1);
+    if (server.response_size > 0) memcpy(response, server.response, server.response_size);
+    char *tls_failure = nullptr;
+    if (server.tls_failure != nullptr) {
+        tls_failure = smith_arena_push(&io->arena, strlen(server.tls_failure) + 1, 1);
+        memcpy(tls_failure, server.tls_failure, strlen(server.tls_failure));
+    }
+    *entry = (SmithFakeServer){.host = host,
+                               .port = server.port,
+                               .response = response,
+                               .response_size = server.response_size,
+                               .chunk = server.chunk,
+                               .error = server.error,
+                               .tls_failure = tls_failure,
+                               .request = smith_arena_push(&io->arena, smith_io_request_max + 1, 1)};
+    return (SmithError){};
+}
+
+const char *smith_io_test_request(const SmithIo *io, const char *host, uint16_t port, size_t n) {
+    assert(io != nullptr && host != nullptr);
+    if (io->loop->servers == nullptr) return nullptr;
+    const SmithFakeServer *server = smith_net_server_find(io->loop->servers, host, port, n, false);
+    return server != nullptr && server->used ? server->request : nullptr;
+}
+
 // ---------------------------------------------------------------- arguments
 
 const char *smith_args_get(const SmithArgs *args, size_t i) {
@@ -1193,6 +1748,9 @@ static SmithLoop *smith_loop_make(SmithArena *arena, bool fake) {
         loop->queue = kqueue();
         if (loop->queue < 0) smith_io_stop("kqueue failed");
         fcntl(loop->queue, F_SETFD, FD_CLOEXEC);
+        struct kevent wakeup = {};
+        EV_SET(&wakeup, smith_io_wakeup, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+        if (kevent(loop->queue, &wakeup, 1, nullptr, 0, nullptr) != 0) smith_io_stop("kqueue failed");
     }
     return loop;
 }
@@ -1202,6 +1760,7 @@ static void smith_io_link(SmithIo *io, size_t argc, const char *const *argv, con
     io->files.loop = io->loop;
     io->clock.loop = io->loop;
     io->processes.loop = io->loop;
+    io->net.loop = io->loop;
     io->args.count = argc;
     io->args.values = argv;
     io->args.environment = environment;

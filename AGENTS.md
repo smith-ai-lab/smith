@@ -69,7 +69,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
-    console, files, clock, processes, later the network), each platform behind it on its best API (kqueue on macOS).
+    console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
 ## Commands
 

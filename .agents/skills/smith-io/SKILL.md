@@ -30,9 +30,10 @@ int main(int argc, char **argv) {
 | `io.files` | the file system: any path the program is given, absolute or relative |
 | `io.clock` | monotonic and wall time |
 | `io.processes` | spawn, wait, run and capture |
+| `io.net` | TLS connections (Network.framework) |
 | `io.args` | `count`, `values` and the environment (`smith_args_env`) |
 
-There is no network and there are no options.
+There are no options.
 
 ## Pass only what is needed
 
@@ -126,7 +127,23 @@ for (size_t round = 0; round < round_max && !(timer.done && wait.done); round++)
 
 `smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async` and `smith_processes_wait_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
 
-macOS has no asynchronous file IO, so file operations run synchronously, in submission order, inside `smith_io_run`. Sockets, pipes, timers and process exits wait on kqueue. Every blocking call is an op run to completion on this same loop.
+macOS has no asynchronous file IO, so file operations run synchronously, in submission order, inside `smith_io_run`. Pipes, timers and process exits wait on kqueue; network connections are Network.framework's, whose callbacks run on a dispatch queue and push the finished op onto a lock-free list that wakes the same kqueue (`EVFILT_USER`), so they complete in `smith_io_run` like the rest. Every blocking call is an op run to completion on this same loop.
+
+## The network
+
+`io.net` makes TLS connections with the platform's stack (Network.framework, loaded with `dlopen` on the first connection, so a program that never connects pays nothing at start). A `SmithConnection` is a struct you own and keep in place until its close is done. Everything is an op, with a blocking form:
+
+```c
+SmithConnection connection = {};
+SmithError error = smith_net_connect(&io.net, &connection, "example.com", 443, true);   // tls
+error = smith_net_send(&io.net, &connection, request, request_size);
+SmithRead read = smith_net_receive(&io.net, &connection, buffer, sizeof buffer);       // read.size bytes, or read.end
+error = smith_net_close(&io.net, &connection);
+```
+
+`smith_net_connect_async`, `smith_net_send_async`, `smith_net_receive_async` and `smith_net_close_async` take a `SmithOp` like the other async calls. One send and one receive may be pending on a connection at once. A receive completes with whatever has arrived (at least one byte, at most `capacity`, not NUL-terminated), or `end` when the peer is done. Close completes what is still pending with `ECANCELED` and is the last thing to touch the connection, so free it only after the close is done; a connection that failed is closed like one that worked.
+
+Failures are values: `ECONNREFUSED` and the other errnos of the system, `ENOENT` for a name that does not resolve, and `EAUTH` for a certificate or handshake failure with the reason in the message ("the certificate has expired"). The system's trust decides and there is no way to turn the check off.
 
 ## The test io
 
@@ -138,7 +155,7 @@ smith_io_test_add_file(&io, "config.txt", "volume=3\n");
 smith_io_test_add_program(&io, "git", "main\n", 0);
 ```
 
-It is the same `SmithIo`, so code under test cannot tell it from the real one: files are in memory (writes land there too), the console reads the scripted `.input` then reports the end, output is captured (`smith_io_test_output(&io)`, `smith_io_test_errors(&io)`), the clock moves only when `smith_clock_advance(&io.clock, ns)` says so (and `smith_clock_sleep` of a non-zero time is `EDEADLK`, since nothing can wake it), the key comes from `.seed`, programs are scripted, and its memory is your buffer (a quarter holds file contents). `SmithIoTest.environment` (`"NAME=value"` entries) and `.cores` give it an environment and a core count; folders exist as soon as a file is under them, or `smith_files_make_folder` made them (a write into a folder that was never made still succeeds, where the real io says `ENOENT`). `smith_io_run` on it never waits: it completes what is ready now. Errors have the same codes and messages as the real io.
+It is the same `SmithIo`, so code under test cannot tell it from the real one: files are in memory (writes land there too), the console reads the scripted `.input` then reports the end, output is captured (`smith_io_test_output(&io)`, `smith_io_test_errors(&io)`), the clock moves only when `smith_clock_advance(&io.clock, ns)` says so (and `smith_clock_sleep` of a non-zero time is `EDEADLK`, since nothing can wake it), the key comes from `.seed`, programs are scripted, and its memory is your buffer (a quarter holds file contents). `smith_io_test_add_server(&io, (SmithNetServer){.host, .port, .response, .response_size, ...})` scripts a server of the network: the first connection to `host:port` that no connection has used gets the response (`.chunk` bytes at a time if set), then a clean end or, with `.error`, that errno; `.tls_failure` makes the connect fail with `EAUTH` and that message; a host with no server is `ECONNREFUSED`; `smith_io_test_request(&io, host, port, n)` is what the n-th connection sent. Adding a server to the real io scripts its network only (files, console and clock stay real), which is how code that downloads is tested on a real disk. `SmithIoTest.environment` (`"NAME=value"` entries) and `.cores` give it an environment and a core count; folders exist as soon as a file is under them, or `smith_files_make_folder` made them (a write into a folder that was never made still succeeds, where the real io says `ENOENT`). `smith_io_run` on it never waits: it completes what is ready now. Errors have the same codes and messages as the real io.
 
 Write the function once against capabilities, call it with `&io.files` from main and with the fake's in a test, and compare. The scripted console drives a line loop to completion including the end of input, which is the bug a program that spins on EOF has.
 

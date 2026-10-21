@@ -6,12 +6,16 @@
 
 #include <smith/io.h>
 
+#include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
 #include <mach/mach.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -536,6 +540,199 @@ static int program_seed(void) {
     return 0;
 }
 
+// ---------------------------------------------------------------- net
+
+// Reads from the connection to its end, into the buffer; returns the bytes, or -1 on an error.
+static ptrdiff_t read_all(SmithNet *net, SmithConnection *connection, char *buffer, size_t capacity) {
+    size_t total = 0;
+    for (size_t round = 0; round < test_rounds_max; round++) {
+        SmithRead read = smith_net_receive(net, connection, buffer + total, capacity - total - 1);
+        if (read.error.code != 0) return -1;
+        total += read.size;
+        if (read.end) break;
+    }
+    buffer[total] = 0;
+    return (ptrdiff_t)total;
+}
+
+// What both the fake and a real io with a scripted network must do.
+static void check_scripted_net(SmithIo *io) {
+    assert(smith_io_test_add_server(
+               io,
+               (SmithNetServer){
+                   .host = "a.example", .port = 443, .response = "HELLO WORLD", .response_size = 11, .chunk = 4})
+               .code == 0);
+    SmithConnection connection = {};
+    SmithError error = smith_net_connect(&io->net, &connection, "nowhere.example", 443, true);
+    assert(error.code == ECONNREFUSED && test_contains(error.message, "nowhere.example"));
+    assert(smith_net_close(&io->net, &connection).code == 0);
+
+    error = smith_net_connect(&io->net, &connection, "a.example", 443, true);
+    assert(error.code == 0);
+    assert(smith_net_send(&io->net, &connection, "GET / ", 6).code == 0);
+    assert(smith_net_send(&io->net, &connection, "HTTP/1.1\r\n\r\n", 12).code == 0);
+    assert(strcmp(smith_io_test_request(io, "a.example", 443, 0), "GET / HTTP/1.1\r\n\r\n") == 0);
+    char buffer[64];
+    SmithRead read = smith_net_receive(&io->net, &connection, buffer, sizeof buffer);
+    assert(read.error.code == 0 && read.size == 4 && !read.end && memcmp(buffer, "HELL", 4) == 0); // a chunk at a time
+    assert(read_all(&io->net, &connection, buffer, sizeof buffer) == 7 && strcmp(buffer, "O WORLD") == 0);
+    read = smith_net_receive(&io->net, &connection, buffer, sizeof buffer);
+    assert(read.end && read.size == 0); // the end is stable
+    assert(smith_net_close(&io->net, &connection).code == 0);
+    assert(smith_net_receive(&io->net, &connection, buffer, sizeof buffer).error.code == ECANCELED); // after close
+    assert(smith_io_test_request(io, "a.example", 443, 1) == nullptr);
+
+    // A server serves one connection; the next to the same host is refused, until another is scripted.
+    error = smith_net_connect(&io->net, &connection, "a.example", 443, true);
+    assert(error.code == ECONNREFUSED);
+    assert(smith_net_close(&io->net, &connection).code == 0);
+
+    // A certificate failure is a value with the reason in it.
+    assert(smith_io_test_add_server(io, (SmithNetServer){.host = "bad.example",
+                                                         .port = 443,
+                                                         .tls_failure = "the certificate is not for this host"})
+               .code == 0);
+    error = smith_net_connect(&io->net, &connection, "bad.example", 443, true);
+    assert(error.code == EAUTH && test_contains(error.message, "the certificate is not for this host"));
+    assert(smith_net_close(&io->net, &connection).code == 0);
+
+    // A connection that breaks after some data: the data comes, then the error.
+    assert(smith_io_test_add_server(
+               io,
+               (SmithNetServer){
+                   .host = "reset.example", .port = 8443, .response = "abc", .response_size = 3, .error = ECONNRESET})
+               .code == 0);
+    assert(smith_net_connect(&io->net, &connection, "reset.example", 8443, true).code == 0);
+    assert(read_all(&io->net, &connection, buffer, sizeof buffer) == -1);
+    assert(smith_net_close(&io->net, &connection).code == 0);
+
+    // Two connections wait in one loop.
+    assert(smith_io_test_add_server(
+               io, (SmithNetServer){.host = "p.example", .port = 443, .response = "one", .response_size = 3})
+               .code == 0);
+    assert(smith_io_test_add_server(
+               io, (SmithNetServer){.host = "p.example", .port = 443, .response = "two", .response_size = 3})
+               .code == 0);
+    SmithConnection first = {}, second = {};
+    assert(smith_net_connect(&io->net, &first, "p.example", 443, true).code == 0);
+    assert(smith_net_connect(&io->net, &second, "p.example", 443, true).code == 0);
+    char one[8] = {}, two[8] = {};
+    SmithOp op_one = {}, op_two = {};
+    smith_net_receive_async(&io->net, &op_one, &first, one, 7);
+    smith_net_receive_async(&io->net, &op_two, &second, two, 7);
+    assert(smith_io_run(io, smith_io_forever) == 2 && op_one.done && op_two.done);
+    assert(strcmp(one, "one") == 0 && strcmp(two, "two") == 0);
+    assert(smith_net_close(&io->net, &first).code == 0 && smith_net_close(&io->net, &second).code == 0);
+}
+
+static void test_fake_net(TestMemory *memory) {
+    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
+    SmithIo io = smith_io_make_test(config);
+    check_scripted_net(&io);
+}
+
+static void test_real_scripted_net(void) {
+    SmithIo io = smith_io_make(0, nullptr);
+    check_scripted_net(&io);
+    SmithRead real_file = smith_files_read(&io.files, &io.arena, "hello.txt"); // its files stay real
+    assert(real_file.error.code == 0 || real_file.error.code == ENOENT);
+    smith_io_close(&io);
+}
+
+// A server on the loopback that answers one connection: it reads the request, waits, and sends the reply in two parts.
+typedef struct {
+    int listener;
+    const char *first;
+    const char *second;
+} LoopbackServer;
+
+static void *loopback_serve(void *argument) {
+    LoopbackServer *server = argument;
+    int client = accept(server->listener, nullptr, nullptr);
+    char request[512];
+    ssize_t n = read(client, request, sizeof request);
+    (void)n;
+    struct timespec pause = {.tv_nsec = 40L * 1'000'000};
+    nanosleep(&pause, nullptr);
+    ssize_t written = write(client, server->first, strlen(server->first));
+    nanosleep(&pause, nullptr);
+    written = write(client, server->second, strlen(server->second));
+    (void)written;
+    close(client);
+    return nullptr;
+}
+
+static uint16_t loopback_listen(int *listener) {
+    *listener = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in address = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    assert(bind(*listener, (struct sockaddr *)&address, sizeof address) == 0);
+    assert(listen(*listener, 4) == 0);
+    socklen_t size = sizeof address;
+    assert(getsockname(*listener, (struct sockaddr *)&address, &size) == 0);
+    return ntohs(address.sin_port);
+}
+
+// The real thing, against a server in this process: connections made by Network.framework, completed on the kqueue.
+static void test_real_net(SmithIo *io) {
+    LoopbackServer server = {.first = "HELLO ", .second = "NETWORK"};
+    uint16_t port = loopback_listen(&server.listener);
+    pthread_t thread = {};
+    assert(pthread_create(&thread, nullptr, loopback_serve, &server) == 0);
+
+    SmithConnection connection = {};
+    SmithError error = smith_net_connect(&io->net, &connection, "127.0.0.1", port, false);
+    assert(error.code == 0);
+    assert(smith_net_send(&io->net, &connection, "GET / HTTP/1.1\r\n\r\n", 18).code == 0);
+    // The loop waits on the receive and a timer together; the data arrives in two parts, 40 ms apart.
+    char buffer[64];
+    SmithOp receive = {}, timer = {};
+    smith_net_receive_async(&io->net, &receive, &connection, buffer, sizeof buffer - 1);
+    smith_clock_timeout_async(&io->clock, &timer, 300 * test_millisecond);
+    for (size_t round = 0; round < test_rounds_max && !receive.done; round++)
+        (void)smith_io_run(io, smith_io_forever);
+    assert(receive.done && !timer.done && receive.error.code == 0 && receive.size > 0);
+    size_t total = receive.size;
+    for (size_t round = 0; round < test_rounds_max; round++) {
+        SmithRead more = smith_net_receive(&io->net, &connection, buffer + total, sizeof buffer - 1 - total);
+        assert(more.error.code == 0);
+        total += more.size;
+        if (more.end) break;
+    }
+    buffer[total] = 0;
+    assert(strcmp(buffer, "HELLO NETWORK") == 0);
+    assert(smith_net_close(&io->net, &connection).code == 0);
+    pthread_join(thread, nullptr);
+    close(server.listener);
+    for (size_t round = 0; round < test_rounds_max && !timer.done; round++) // let the timer run out
+        (void)smith_io_run(io, smith_io_forever);
+}
+
+static void test_real_net_errors(SmithIo *io) {
+    int listener = -1;
+    uint16_t port = loopback_listen(&listener);
+    close(listener); // nothing listens on the port now
+    SmithConnection connection = {};
+    SmithError error = smith_net_connect(&io->net, &connection, "127.0.0.1", port, false);
+    assert(error.code == ECONNREFUSED && test_contains(error.message, "127.0.0.1"));
+    assert(smith_net_close(&io->net, &connection).code == 0);
+    assert(smith_net_close(&io->net, &connection).code == 0); // closing twice is fine
+
+    error = smith_net_connect(&io->net, &connection, "no-such-host.invalid", 443, true);
+    assert(error.code == ENOENT && test_contains(error.message, "no-such-host.invalid"));
+    assert(smith_net_close(&io->net, &connection).code == 0);
+
+    // TLS to a server that does not speak it is a failure of the connect, never a hang.
+    LoopbackServer server = {.first = "HTTP/1.1 200 OK\r\n\r\n", .second = "not tls"};
+    port = loopback_listen(&server.listener);
+    pthread_t thread = {};
+    assert(pthread_create(&thread, nullptr, loopback_serve, &server) == 0);
+    error = smith_net_connect(&io->net, &connection, "127.0.0.1", port, true);
+    assert(error.code != 0 && error.message[0] != 0);
+    assert(smith_net_close(&io->net, &connection).code == 0);
+    pthread_join(thread, nullptr);
+    close(server.listener);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "lines") == 0) return program_lines();
     if (argc > 1 && strcmp(argv[1], "seed") == 0) return program_seed();
@@ -555,6 +752,9 @@ int main(int argc, char **argv) {
     test_real_console_pipe(&io);
     test_real_tree(&io);
     test_real_map_big(&io);
+    test_real_net(&io);
+    test_real_net_errors(&io);
+    test_real_scripted_net();
     static TestMemory same_memory;
     SmithIoTest config = {.memory = same_memory.bytes, .capacity = sizeof same_memory.bytes};
     SmithIo fake = smith_io_make_test(config);
@@ -566,6 +766,7 @@ int main(int argc, char **argv) {
     test_fake_append_many(&fake_memory);
     test_environment_and_cores(&fake_memory);
     test_fake_printf(&fake_memory);
+    test_fake_net(&fake_memory);
     test_seed();
     smith_io_close(&io);
     puts("io: all checks passed");
