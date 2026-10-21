@@ -50,16 +50,16 @@ Measured on this machine (unstripped, `-g`; the machine was busy, so the millise
 
 | | size | `smith --smith-version` |
 |---|---|---|
-| the smith before this change | 158.1 MB | 10.1 ms |
-| the same smith.c with lldb, linked as before | 174.8 MB | 19.1 ms |
-| the same, exporting only `main` (this change) | 170.5 MB | 8.2 ms |
-| no lldb, exporting only `main` | 154.5 MB | 6.5 ms |
+| main (0251349), no lldb linked | 210.1 MB | 15.7 ms |
+| this change: lldb linked, exporting only `main` | 225.7 MB | 10.5 ms |
+| (before the prover and #20: same code, lldb linked as before, without the flag) | 174.8 MB | 19.1 ms |
 
-lldb adds 16 MB, and 1.7 ms to every smith process (it loads the frameworks lldb needs: 702 images instead of 84).
+On the r2 install, lldb adds 15.6 MB, and with the flag every smith process starts in less time than before it:
+10.5 ms against 15.7 ms (`smith cc -c` of an empty file: 24 ms against 28 ms). lldb loads the frameworks it needs: 702 images instead of 84.
 Without `-Wl,-exported_symbol,_main` the same lldb added 9 ms: smith's 57,000 weak definitions (inline functions and
 templates of LLVM) were exported, and dyld binds each of them at every start against every image loaded (296 million
 instructions to start, against 52 million). The flag takes the 4 ms of that off the smith without lldb too. `smith dbg
---version` took 32 to 35 ms on the busy machine.
+--version` took 27 to 29 ms on the busy machine.
 
 ## Tests
 
