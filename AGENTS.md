@@ -96,7 +96,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - At end of input `get_user_move` loops forever: `scanf` returns `EOF` and nothing ends the loop.
 - `get_valid_diagonals` and `get_valid_jumps` miss legal moves (`else if`; `col > 1`, `row > 1`, `col > 2` off by one):
   419,348 over 200,000 random boards, and no illegal move generated.
-- `apply_follow_up_jumps` recurses, bounded by 12 captures.
+- `apply_follow_up_jumps` recurses, at most twice nested (three jumps in a chain): men only move forward, two rows a jump. CBMC proves the bound.
 
 ## Known gaps
 
