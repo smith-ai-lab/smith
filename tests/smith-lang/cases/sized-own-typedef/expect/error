@@ -1,0 +1,1 @@
+src/main.smith:4:9: incompatible pointer to integer conversion initializing 'u32' (aka 'unsigned char') with an expression of type 'char[6]' [-Wint-conversion]

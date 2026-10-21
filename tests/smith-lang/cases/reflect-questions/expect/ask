@@ -1,18 +1,18 @@
 ask Packet: size 24 alignment 8 fields 3
-ask   tag: unsigned char
-ask   value: unsigned long long
-ask   weight: float
+ask   tag: u8
+ask   value: u64
+ask   weight: f32
 ask Alias: size 24 alignment 8 fields 3
-ask   tag: unsigned char
-ask   value: unsigned long long
-ask   weight: float
+ask   tag: u8
+ask   value: u64
+ask   weight: f32
 ask struct Header: size 10 alignment 2 fields 3
-ask   id: unsigned short
-ask   flags: unsigned short
+ask   id: u16
+ask   flags: u16
 ask   name: char[6]
 ask union Number: size 4 alignment 4 fields 2
-ask   whole: unsigned int
-ask   real: float
+ask   whole: u32
+ask   real: f32
 ask Hidden: unknown
 ask Missing: unknown
-ask u32: unknown
+ask u32: size 4 alignment 4 fields 0

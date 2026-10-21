@@ -116,8 +116,10 @@ class SmithHook final : public TokenHook {
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
         smith_lang_watch_basics(&host);
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
-        for (unsigned i = 0; i < 13; i++)
-            sizedNames[PP.getIdentifierInfo(sizedTable[i].name)] = i;
+        for (unsigned i = 0; i < 13; i++) {
+            sizedInfos[i] = PP.getIdentifierInfo(sizedTable[i].name);
+            sizedNames[sizedInfos[i]] = i;
+        }
     }
 
     void semaCreated(Sema &s) override {
@@ -202,7 +204,7 @@ class SmithHook final : public TokenHook {
             out.text = info->getNameStart();
             out.length = info->getLength();
             out.watched = info->isHookWatched();
-            out.declared = info->getFETokenInfo() != nullptr;
+            out.declared = declaredByProgram(info);
         } else if (const char *punctuator = tok::getPunctuatorSpelling(tok.getKind())) {
             out.kind = SmithTokenKind_Punctuator;
             out.text = punctuator;
@@ -249,8 +251,9 @@ class SmithHook final : public TokenHook {
             before == tok::kw_enum) {
             return Fast::Kept;
         }
-        if (mayEndType(before) || info->getFETokenInfo() != nullptr) return Fast::No;
-        sizedToken(tok, sized->second);
+        if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
+        if (mayEndType(before)) return Fast::No;
+        ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;
     }
 
@@ -276,7 +279,7 @@ class SmithHook final : public TokenHook {
             break;
         }
         case SmithLangAct_Sized:
-            sizedToken(tok, sizedNames.find(tok.getIdentifierInfo())->second);
+            ensureSized(sizedNames.find(tok.getIdentifierInfo())->second, tok.getLocation());
             break;
         case SmithLangAct_Keep:
             break;
@@ -299,19 +302,41 @@ class SmithHook final : public TokenHook {
         tok = keyword;
     }
 
-    // u32 and the others as the parser's own type: a type annotation, or the keyword of float and double.
-    void sizedToken(Token &tok, unsigned index) {
+    // Whether the parser has a declaration of the name that is the program's: not the typedef of a sized type that this
+    // hook made, which the lowering must see as no declaration at all (the name is still the sized type).
+    bool declaredByProgram(const IdentifierInfo *info) {
+        if (info->getFETokenInfo() == nullptr) return false;
+        if (sema == nullptr || !info->isHookWatched()) return true;
+        auto sized = sizedNames.find(info);
+        if (sized == sizedNames.end() || sizedDecls[sized->second] == nullptr) return true;
+        auto top = sema->IdResolver.begin(info);
+        return top == sema->IdResolver.end() || *top != sizedDecls[sized->second];
+    }
+
+    // u32 and the others are typedefs (`typedef __UINT32_TYPE__ u32;`), made at the first use of the name in a file that
+    // declares nothing of that name, so that a diagnostic says `u32` (aka `unsigned int`). The tokens stay as written:
+    // there is no macro to expand, and the typedef is implicit, so it is in no header.
+    void ensureSized(unsigned index, SourceLocation at) {
+        if (sizedDecls[index] != nullptr || sema == nullptr) return;
+        IdentifierInfo *name = sizedInfos[index];
+        if (name->getFETokenInfo() != nullptr) return; // the file or a header has its own
+        QualType type = sizedQualType(index);
+        if (type.isNull()) return;
+        ASTContext &ast = sema->getASTContext();
+        auto *decl = TypedefDecl::Create(ast, ast.getTranslationUnitDecl(), at, at, name,
+                                         ast.getTrivialTypeSourceInfo(type, at));
+        decl->setImplicit();
+        ast.getTranslationUnitDecl()->addDecl(decl);
+        sema->PushOnScopeChains(decl, sema->TUScope, /*AddToContext=*/false);
+        sizedDecls[index] = decl;
+    }
+
+    QualType sizedQualType(unsigned index) {
         const SizedName &entry = sizedTable[index];
-        if (entry.keyword != nullptr) {
-            IdentifierInfo *keyword = PP.getIdentifierInfo(entry.keyword);
-            tok.setIdentifierInfo(keyword);
-            tok.setKind(keyword->getTokenID());
-            return;
-        }
-        if (sizedTypes[index].isNull()) sizedTypes[index] = sizedType(entry.macro);
-        tok.setKind(tok::annot_typename);
-        tok.setAnnotationEndLoc(tok.getLocation());
-        tok.setAnnotationValue(ParsedType::make(sizedTypes[index]).getAsOpaquePtr());
+        ASTContext &ast = sema->getASTContext();
+        if (entry.macro != nullptr) return sizedType(entry.macro);
+        StringRef keyword(entry.keyword);
+        return keyword == "float" ? ast.FloatTy : keyword == "double" ? ast.DoubleTy : ast.Float16Ty;
     }
 
   private:
@@ -346,7 +371,8 @@ class SmithHook final : public TokenHook {
         {"f16", nullptr, "_Float16"},        {"f32", nullptr, "float"},
         {"f64", nullptr, "double"}};
     llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
-    QualType sizedTypes[13];
+    IdentifierInfo *sizedInfos[13];
+    NamedDecl *sizedDecls[13] = {}; // the typedefs this hook made
     llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> renames; // a module's names, to their prefixed spelling
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
@@ -453,7 +479,7 @@ class SmithHook final : public TokenHook {
                 out.text = info->getNameStart();
                 out.length = info->getLength();
                 out.watched = info->isHookWatched();
-                out.declared = info->getFETokenInfo() != nullptr;
+                out.declared = declaredByProgram(info);
             } else if (tok.isLiteral() && tok.getLiteralData() != nullptr && !tok.needsCleaning()) {
                 out.text = tok.getLiteralData();
                 out.length = tok.getLength();
@@ -539,21 +565,13 @@ class SmithHook final : public TokenHook {
     }
 
     // One token out for the one in (maybe with some read ahead and dropped): the token is changed where it is, with no
-    // stream to push back. A sized type name becomes the parser's own type annotation, so no macro need expand.
+    // stream to push back. A sized type name is left as written (a typedef), so no macro need expand.
     bool replaceInPlace(Token &tok, const Token &made) {
         if (!made.is(tok::identifier) || made.isExpandDisabled()) { // a keyword, or a name that needs no expansion
             tok = made;
             return true;
         }
-        if (sema == nullptr) return false;
-        QualType type = sizedType(made.getIdentifierInfo()->getName());
-        if (type.isNull()) return false; // a macro of the program's (c::X): expand it from a stream
-        Token annotation = made;
-        annotation.setKind(tok::annot_typename);
-        annotation.setAnnotationEndLoc(made.getLocation());
-        annotation.setAnnotationValue(ParsedType::make(type).getAsOpaquePtr());
-        tok = annotation;
-        return true;
+        return false; // a macro of the program's (c::X), or a sized name with no Sema: expand it from a stream
     }
 
     // Puts the output back, last piece first, since each is pushed on top of the lexer stack.
@@ -629,12 +647,28 @@ class SmithHook final : public TokenHook {
             made = self->makeToken(token);
         }
         made.setLocation(SourceLocation::getFromRawEncoding(token->location));
+        bool named = false; // made the sized type's own name
+        if (token->expand && token->handle == smith_token_no_handle && self->sema != nullptr) {
+            // A sized type name the lowering made into the compiler's name for the type (__UINT32_TYPE__): it stays the
+            // name as written, a typedef, so that no macro expands and a diagnostic names the type as the program did.
+            for (unsigned i = 0; i < 13; i++) {
+                const SizedName &entry = sizedTable[i];
+                if (token->length == strlen(entry.macro ? entry.macro : entry.keyword) &&
+                    memcmp(token->text, entry.macro ? entry.macro : entry.keyword, token->length) == 0) {
+                    self->ensureSized(i, made.getLocation());
+                    made.setIdentifierInfo(self->sizedInfos[i]);
+                    made.setKind(tok::identifier);
+                    named = true;
+                    break;
+                }
+            }
+        }
         made.clearFlag(Token::StartOfLine);
         made.clearFlag(Token::LeadingSpace);
         made.clearFlag(Token::DisableExpand);
         if (token->line_start) made.setFlag(Token::StartOfLine);
         if (token->space_before) made.setFlag(Token::LeadingSpace);
-        if (!token->expand && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
+        if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
         self->out.push_back(made);
     }
 
@@ -774,6 +808,9 @@ class SmithHook final : public TokenHook {
         SmithLookup answer{};
         NamedDecl *decl = self->findDecl(name, length, space);
         if (decl == nullptr) return answer;
+        for (NamedDecl *own : self->sizedDecls) { // a sized type's typedef is made by the hook, not the program
+            if (own == decl) return answer;
+        }
         answer.kind = space == SmithLookup_Tag ? SmithLookup_Tag
                       : isa<TypeDecl>(decl)    ? SmithLookup_Type
                                                : SmithLookup_Value;

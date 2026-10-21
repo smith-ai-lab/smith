@@ -1,0 +1,4 @@
+void f(void) {
+    i32 x = "hello";
+    (void)x;
+}
