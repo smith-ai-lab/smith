@@ -23,8 +23,8 @@
 // stickily) rather than write invalid JSON.
 #pragma once
 
-#include <smith/arena.h>
-#include <smith/text.h>
+#include "arena.h"
+#include "text.h"
 
 #include <stddef.h>
 #include <stdint.h>

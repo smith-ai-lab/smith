@@ -1,4 +1,4 @@
-#include <smith/json.h>
+#include "../include/smith/json.h"
 
 #include <assert.h>
 #include <stdint.h>

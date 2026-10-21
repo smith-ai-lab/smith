@@ -1,4 +1,4 @@
-#include <smith/text.h>
+#include "../include/smith/text.h"
 
 #include <assert.h>
 #include <float.h>
