@@ -140,6 +140,18 @@ prove --function=nothing "$work/plain.c"
 expect_contains "--function that matches nothing says so" "$out" "by that name"
 expect "--function that matches nothing fails" 1 "$rc"
 
+# 10. A --function that names no function the prover read is an error, never a skip.
+prove --function=harness_kept --function=harness_dropped "$cases/static_harness.c"
+expect "--function of an unemitted static: fails" 1 "$rc"
+expect_contains "... and names it" "$out" "--function=harness_dropped: no function by that name"
+expect_contains "... with the likely cause" "$out" "static function that nothing calls"
+expect_contains "... and the fix" "$out" "[[gnu::used]]"
+prove --function=harness_kept "$cases/static_harness.c"
+expect "--function of a kept static: proved" 0 "$rc"
+prove --function=no_contract "$cases/static_harness.c"
+expect "--function of a function with no contract: fails" 1 "$rc"
+expect_contains "... says there is nothing to prove" "$out" "so there is nothing to prove"
+
 echo
 echo "$total prove checks, $failures failed"
 [ "$failures" -eq 0 ]

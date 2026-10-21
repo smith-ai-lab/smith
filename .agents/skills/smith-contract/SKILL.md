@@ -64,7 +64,7 @@ smith prove main.c util.c -- -I .smith/include -DDEBUG
 smith prove --function=clamp --budget=5 -v clamp.c -- -I .smith/include
 ```
 
-- A project's `smith prove` (no arguments) runs the task `prove` of its build.c; `smith new` writes one. With no contract in the files it prints `smith: prove: nothing to prove: ...` and succeeds; `--function=` naming nothing is still an error.
+- A project's `smith prove` (no arguments) runs the task `prove` of its build.c; `smith new` writes one. With no contract in the files it prints `smith: prove: nothing to prove: ...` and succeeds; a `--function=` that names no function the prover read is an error that names it (each one, before anything is proved), and a function with no contract is one too. A `static` function that nothing calls is not emitted by clang, so a harness written as one is absent: mark it `[[gnu::used]]`.
 - Each file is compiled to LLVM IR in smith's own clang: C23, `-O0`, debug info, UBSan's checks for undefined behaviour in trap mode (signed overflow, shifts, division by zero, array bounds with trailing arrays counted, `float` casts, `__builtin_unreachable`), `-UNDEBUG`. The files are linked into one program. The flags after `--` are the project's include paths and defines.
 - A function is proved when it carries a contract, or when no function of the program calls it and it calls a function with a `smith_ensures`. Each is proved in a process of its own, in at most 10 s (`--budget=`); one that runs out fails like a test that times out. `-v` lists the proved ones with their time.
 - What is proved: every `smith_ensures` and `smith_invariant`, every `assert`, every UBSan check, and that nothing else is undefined (an invalid access, a poison value used). `smith_requires` of the function is assumed.
