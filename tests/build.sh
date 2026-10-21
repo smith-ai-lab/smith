@@ -2879,8 +2879,8 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
         "// smith-imports: lib::text"
     expect_contains "modules: compile_commands.json lists a .smith source with -I .smith/include" "$(cat compile_commands.json)" \
         '"file": "src/game/replay.smith"'
-    expect_contains "modules: with its flags" "$(tr -d ' \n' <compile_commands.json)" \
-        '"arguments":["bin/smith-cc","-I",".smith/include","-std=gnu23"'
+    expect_contains "modules: with its flags, and the language clangd is told" "$(tr -d ' \n' <compile_commands.json)" \
+        '"arguments":["bin/smith-cc","-x","c","-I",".smith/include","-std=gnu23"'
     build
     expect_contains "modules: the second build does nothing" "$out" "no work to do"
 
