@@ -185,6 +185,12 @@ void smith_json_write_f64(SmithJsonWriter *writer, double value); // the fewest 
 void smith_json_write_bool(SmithJsonWriter *writer, bool value);
 void smith_json_write_null(SmithJsonWriter *writer);
 
+// Writes a whole tree that smith_json_parse made (or one built the same way) as one value: strings escaped again,
+// numbers as they were written, object members in order, duplicate keys kept. Nothing recurses: it keeps its place in
+// a stack of smith_json_depth_max entries, so a tree deeper than that asserts. Used to put a value the caller
+// does not look inside (a protocol's "any" field) back into a document.
+void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value);
+
 // The document written, once exactly one complete value has been. Returns false, with writer.error set, if a call
 // failed or the value is not finished. The text has no terminator.
 [[nodiscard]] bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output);
