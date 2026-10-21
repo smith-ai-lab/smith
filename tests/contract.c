@@ -6,22 +6,22 @@
 #include <stdint.h>
 
 static int32_t test_contract_clamp(int32_t x, int32_t low, int32_t high) {
-    SMITH_REQUIRES(low <= high);
+    smith_requires(low <= high);
     const int32_t result = x < low ? low : x > high ? high : x;
-    SMITH_ENSURES(low <= result && result <= high);
+    smith_ensures(low <= result && result <= high);
     return result;
 }
 
 static int32_t test_contract_wrong(int32_t x) {
     const int32_t result = x + 1;
-    SMITH_ENSURES(result == x);
+    smith_ensures(result == x);
     return result;
 }
 
 static int32_t test_contract_sum(int32_t count) {
     int32_t total = 0;
     for (int32_t i = 0; i < count; i++) {
-        SMITH_INVARIANT(total == i * 2);
+        smith_invariant(total == i * 2);
         total += 2;
         if (i == 2) total += 1; // breaks the invariant on the next pass
     }

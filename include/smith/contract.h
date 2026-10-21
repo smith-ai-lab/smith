@@ -1,36 +1,38 @@
-// <smith/contract.h>: contracts written like assertions. Each macro is a check that prints the expression's text, the
-// file and the line, then stops the program, as `assert` does, and `smith prove` proves the same statements on LLVM IR.
+// <smith/contract.h>: contracts written as calls. Each is a check that stops the program when its condition is false,
+// as `assert` does, and `smith prove` proves the same statements on LLVM IR.
 //
 //   int32_t clamp(int32_t x, int32_t low, int32_t high) {
-//       SMITH_REQUIRES(low <= high);                     // the caller's job
+//       smith_requires(low <= high);                     // the caller's job
 //       int32_t result = x < low ? low : x > high ? high : x;
-//       SMITH_ENSURES(low <= result && result <= high);  // this function's promise
+//       smith_ensures(low <= result && result <= high);  // this function's promise
 //       return result;
 //   }
 //
 //   for (uint8_t square = 0; square < squares; square++) {
-//       SMITH_INVARIANT(moves->len <= 2 * square);       // the first statement of a loop body
+//       smith_invariant(moves->len <= 2 * square);       // the first statement of a loop body
 //       ...
 //   }
 //
-// SMITH_REQUIRES(c)   the start of a function: a caller must make it true.
-// SMITH_ENSURES(c)    just before a `return`: the function makes it true. An old value is a `const` local saved at the
+// smith_requires(c)   the start of a function: a caller must make c true.
+// smith_ensures(c)    just before a `return`: the function makes c true. An old value is a `const` local saved at the
 //                     top, and the result is the variable about to be returned.
-// SMITH_INVARIANT(c)  the first statement of a loop body: true on every pass.
+// smith_invariant(c)  the first statement of a loop body: c is true on every pass.
 // SMITH_CONTRACT_FOR(Type, spec)
 //                     a function pointer type's contract is the body-less spec function `spec`, whose only statements
-//                     are contracts. It is declared now and enforced later: today it records the pair and nothing else.
+//                     are contracts. It declares something rather than checking a value, so it is a macro; today it
+//                     records the pair and nothing else.
 //
-// They are macros because only a macro can capture the expression's text, its file and its line. With NDEBUG they
-// compile away, as `assert` does: the expression is not evaluated, but it is still type-checked and its variables are
-// still used, so an old value kept only for a contract draws no unused-variable warning.
+// A condition must be free of side effects: it is evaluated by the check, and not at all with NDEBUG.
 //
-// Each macro calls a function of the library (build.c: smith_library(b, "contract")), whatever the optimization level,
-// and `smith prove` finds those calls in the IR by name, so no flag is needed to prove a file:
-//   void smith_contract_requires(bool condition, const char *text, const char *file, int line);
-//   void smith_contract_ensures(bool condition, const char *text, const char *file, int line);
-//   void smith_contract_invariant(bool condition, const char *text, const char *file, int line);
-// A contract is an ordinary C expression, so a spec can be a helper function with loops of constant bounds.
+// They are `static inline` functions that always inline, with an empty body under NDEBUG, so the optimizer removes
+// the arguments they leave unused. Without NDEBUG each is one call of a function of the library (build.c:
+// smith_library(b, "contract")), at every optimization level, since that function is external and the optimizer cannot
+// see into it, which is how `smith prove` finds the contracts in the IR without a flag:
+//   void smith_contract_requires(bool condition);
+//   void smith_contract_ensures(bool condition);
+//   void smith_contract_invariant(bool condition);
+// A failed check prints which contract failed and calls abort(). Where and what come from the stack trace and the
+// source line, not from the library.
 #pragma once
 
 // What SMITH_CONTRACT_FOR records: the name of the function pointer type and the spec function, as `smith prove` reads
@@ -40,20 +42,30 @@ typedef struct {
     void (*spec)(void);
 } SmithContractFor;
 
-// A failed check prints "<file>:<line>: <kind>(<text>) failed" to stderr and calls abort(). condition is only a bool,
-// so the checks cost one call each.
-void smith_contract_requires(bool condition, const char *text, const char *file, int line);
-void smith_contract_ensures(bool condition, const char *text, const char *file, int line);
-void smith_contract_invariant(bool condition, const char *text, const char *file, int line);
+void smith_contract_requires(bool condition);
+void smith_contract_ensures(bool condition);
+void smith_contract_invariant(bool condition);
 
 #ifdef NDEBUG
-#define SMITH_REQUIRES(condition) ((void)sizeof(condition))
-#define SMITH_ENSURES(condition) ((void)sizeof(condition))
-#define SMITH_INVARIANT(condition) ((void)sizeof(condition))
+[[gnu::always_inline]] static inline void smith_requires(bool condition) {
+    (void)condition;
+}
+[[gnu::always_inline]] static inline void smith_ensures(bool condition) {
+    (void)condition;
+}
+[[gnu::always_inline]] static inline void smith_invariant(bool condition) {
+    (void)condition;
+}
 #else
-#define SMITH_REQUIRES(condition) smith_contract_requires((condition), #condition, __FILE__, __LINE__)
-#define SMITH_ENSURES(condition) smith_contract_ensures((condition), #condition, __FILE__, __LINE__)
-#define SMITH_INVARIANT(condition) smith_contract_invariant((condition), #condition, __FILE__, __LINE__)
+[[gnu::always_inline]] static inline void smith_requires(bool condition) {
+    smith_contract_requires(condition);
+}
+[[gnu::always_inline]] static inline void smith_ensures(bool condition) {
+    smith_contract_ensures(condition);
+}
+[[gnu::always_inline]] static inline void smith_invariant(bool condition) {
+    smith_contract_invariant(condition);
+}
 #endif
 
 // Always present, NDEBUG included: it is data, not a check. `used` keeps it in the object, where the checker looks.

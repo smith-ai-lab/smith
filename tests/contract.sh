@@ -58,22 +58,22 @@ cat >"$work/clamp.c" <<'C'
 
 typedef void (*OpsBegin)(int *);
 static void ops_begin_contract(int *position) {
-    SMITH_REQUIRES(position != nullptr);
+    smith_requires(position != nullptr);
 }
 SMITH_CONTRACT_FOR(OpsBegin, ops_begin_contract);
 
 int32_t clamp(int32_t x, int32_t low, int32_t high) {
-    SMITH_REQUIRES(low <= high);
+    smith_requires(low <= high);
     const int32_t old = x; // kept only for the contract below
     int32_t result = x < low ? low : x > high ? high : x;
-    SMITH_ENSURES(low <= result && result <= high && (result == old || result == low || result == high));
+    smith_ensures(low <= result && result <= high && (result == old || result == low || result == high));
     return result;
 }
 
 static int32_t twice(int32_t count) {
     int32_t total = 0;
     for (int32_t i = 0; i < count; i++) {
-        SMITH_INVARIANT(total == i * 2);
+        smith_invariant(total == i * 2);
         total += 2;
     }
     return total;
@@ -95,7 +95,7 @@ cat >"$work/ensures.c" <<'C'
 
 static int wrong(int x) {
     int result = x + 1;
-    SMITH_ENSURES(result == x);
+    smith_ensures(result == x);
     return result;
 }
 
@@ -110,7 +110,7 @@ cat >"$work/invariant.c" <<'C'
 int main(void) {
     int total = 0;
     for (int i = 0; i < 4; i++) {
-        SMITH_INVARIANT(total == i * 2);
+        smith_invariant(total == i * 2);
         total += 2;
         if (i == 1) total++;
     }
@@ -123,17 +123,17 @@ $cc $flags "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp" || exit 1
 capture "$work/clamp" 5 1 3
 expect "run: true contracts pass" "0 3 6" "$rc $out"
 capture "$work/clamp" 5 3 1
-expect "run: a false SMITH_REQUIRES aborts" 134 "$rc"
-expect "run: ... and prints its text, file and line" "$work/clamp.c:14: SMITH_REQUIRES(low <= high) failed" "$err"
+expect "run: a false smith_requires aborts" 134 "$rc"
+expect "run: ... and says which contract failed" "smith: smith_requires failed" "$err"
 expect "run: ... before anything else is printed" "" "$out"
 $cc $flags "$work/ensures.c" "$here/lib/contract.c" -o "$work/ensures" || exit 1
 capture "$work/ensures"
-expect "run: a false SMITH_ENSURES aborts" 134 "$rc"
-expect "run: ... and prints its text, file and line" "$work/ensures.c:7: SMITH_ENSURES(result == x) failed" "$err"
+expect "run: a false smith_ensures aborts" 134 "$rc"
+expect "run: ... and says which contract failed" "smith: smith_ensures failed" "$err"
 $cc $flags "$work/invariant.c" "$here/lib/contract.c" -o "$work/invariant" || exit 1
 capture "$work/invariant"
-expect "run: a false SMITH_INVARIANT aborts" 134 "$rc"
-expect "run: ... and prints its text, file and line" "$work/invariant.c:6: SMITH_INVARIANT(total == i * 2) failed" "$err"
+expect "run: a false smith_invariant aborts" 134 "$rc"
+expect "run: ... and says which contract failed" "smith: smith_invariant failed" "$err"
 
 # 2. The same program under the sanitizers, and optimized: the checks are calls, so no optimization drops them.
 $cc $flags -g -fsanitize=address,undefined "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp_asan" || exit 1
@@ -141,7 +141,7 @@ capture "$work/clamp_asan" 5 1 3
 expect "sanitized: true contracts pass" "0 3 6" "$rc $out"
 $cc $flags -O2 "$work/clamp.c" "$here/lib/contract.c" -o "$work/clamp_fast" || exit 1
 capture "$work/clamp_fast" 5 3 1
-expect "optimized: a false SMITH_REQUIRES still aborts" 134 "$rc"
+expect "optimized: a false smith_requires still aborts" 134 "$rc"
 
 # 3. NDEBUG compiles the checks away: no call, no evaluation, no unused-variable warning for an old value.
 capture $cc $flags -DNDEBUG -c "$work/clamp.c" -o "$work/clamp_ndebug.o"
@@ -154,36 +154,30 @@ expect "NDEBUG: a false contract is not checked" "0 1 2" "$rc $out"
 cat >"$work/effect.c" <<'C'
 #include <smith/contract.h>
 
-static int calls;
-bool counted(void) {
-    calls++;
-    return true;
-}
+#include <stdint.h>
 
-int main(void) {
-    SMITH_REQUIRES(counted());
-    SMITH_ENSURES(counted());
-    SMITH_INVARIANT(counted());
-    return calls;
+int32_t checked(int32_t x) {
+    smith_requires(x > 0);
+    int32_t y = x * 2;
+    smith_ensures(y > x);
+    for (int32_t i = 0; i < 2; i++) smith_invariant(i < 2);
+    return y;
 }
 C
-$cc $flags -DNDEBUG "$work/effect.c" -o "$work/effect" || exit 1
-capture "$work/effect"
-expect "NDEBUG: the expression is not evaluated" 0 "$rc"
-$cc $flags "$work/effect.c" "$here/lib/contract.c" -o "$work/effect" || exit 1
-capture "$work/effect"
-expect "run: each expression is evaluated once" 3 "$rc"
+$cc $flags -DNDEBUG -O2 -c "$work/effect.c" -o "$work/effect.o" || exit 1
+undefined=$(nm -u "$work/effect.o" | grep -c smith_contract_)
+expect "NDEBUG: the optimized object calls no contract function" 0 "$undefined"
+$cc $flags -DNDEBUG -S -emit-llvm -O2 "$work/effect.c" -o "$work/effect.ll" || exit 1
+expect "NDEBUG: the optimizer leaves nothing of the arguments" 0 "$(grep -c 'icmp' "$work/effect.ll")"
 
 # 4. In the IR, with no flag: a call per contract that smith prove finds by name, at -O0 and optimized.
 for level in -O0 -O2; do
     $cc $flags $level -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
     ir=$(cat "$work/clamp.ll")
-    expect_contains "IR $level: SMITH_REQUIRES is a call" "$ir" "call void @smith_contract_requires(i1 noundef zeroext"
-    expect_contains "IR $level: SMITH_ENSURES is a call" "$ir" "call void @smith_contract_ensures("
-    expect_contains "IR $level: SMITH_INVARIANT is a call" "$ir" "call void @smith_contract_invariant("
+    expect_contains "IR $level: smith_requires is a call" "$ir" "call void @smith_contract_requires(i1 noundef zeroext"
+    expect_contains "IR $level: smith_ensures is a call" "$ir" "call void @smith_contract_ensures(i1"
+    expect_contains "IR $level: smith_invariant is a call" "$ir" "call void @smith_contract_invariant(i1"
 done
-expect_contains "IR: the call carries the expression's text" "$ir" 'c"low <= high\00"'
-expect_contains "IR: ... and the line" "$ir" "i32 noundef 14)"
 expect_contains "IR: SMITH_CONTRACT_FOR is a global named for the type" "$ir" "@smith_contract_for_OpsBegin = "
 $cc $flags -DNDEBUG -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
 calls=$(grep -c 'call void @smith_contract_' "$work/clamp.ll")
