@@ -5,7 +5,7 @@
 # process per test, and every check must give the same result.
 # parts is a comma-separated list of the parts to run (default all): the file is in parts that each work in projects of
 # their own, so that build.c can run them as tasks side by side (main, shrink_int, shrink_list, shrink_normal, alongside,
-# budget, misc, workers, reports, flags, inprocess).
+# budget, misc, workers, reports, flags, inprocess, lang).
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -1617,6 +1617,146 @@ if "$smith" dbg --version >/dev/null 2>&1; then
     capture "$smith" dbg -b -o "b test_inproc.c:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
     expect_contains "in-process: smith dbg stops at a breakpoint inside a test" "$out" "stop reason = breakpoint 1.1"
     expect_contains "in-process: ... and shows its local" "$out" "(int) answer = 42"
+fi
+fi
+
+# 13. Tests in .smith files: found by name in a file with no module line and in a module (`export void test_x(void) {`,
+# its C name a_b_test_x and its symbol a::b::test_x), shown and selected by the name as written, and a failure's report
+# names the .smith line and the function as written. A library in the module `smith::test` is machinery, like the C one.
+if part lang; then
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    echo "skipped: this smith's clang has no token hook, so no .smith tests"
+else
+    mkdir -p "$work/lang/tests/geometry" "$work/lang/src/geometry" "$work/lang/src/smith/test" && cd "$work/lang" || exit 1
+    cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Werror", "-I", ".smith/include", nullptr);
+    SmithObject box = {.compiler = "smith-cc", .source = "src/geometry/box.smith", .output = "build/box.o", .flags = flags};
+    smith_object(b, &box);
+    SmithObject checks = {.compiler = "smith-cc", .source = "src/smith/test/helpers.smith", .output = "build/checks.o", .flags = flags};
+    smith_object(b, &checks);
+    SmithTests tests = {
+        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", "tests/test_*.smith", "tests/**/*_test.smith", nullptr)),
+        .objects = (const SmithObject *[]){&box, &checks, nullptr},
+        .flags = flags,
+    };
+    smith_tests(b, &tests);
+    smith_default(b, smith_list(b, "build/tests", nullptr));
+}
+C
+    cat >src/geometry/box.smith <<'C'
+module geometry::box;
+
+export u64 area(u64 width, u64 height) {
+    return width * height;
+}
+C
+    cat >src/smith/test/helpers.smith <<'C'
+module smith::test::helpers;
+import <smith/test.h>;
+
+// A check of a library written as a module under smith::test: its frames are machinery, never the failing line.
+export void require(bool condition) {
+    c::smith_check(condition);
+}
+C
+    cat >tests/test_plain.smith <<'C'
+import <smith/test.h>;
+
+void test_plain_works(void) {
+    c::smith_check_equal_u64(2 + 2, 4);
+}
+
+void test_plain_fails(void) {
+    u64 n = 3;
+    c::smith_check_equal_u64(n, 4);
+}
+
+void test_plain_property(c::SmithKey key) {
+    c::smith_check(c::smith_key_bits(key, 0) == c::smith_key_bits(key, 0));
+}
+C
+    cat >tests/geometry/box_test.smith <<'C'
+module geometry::box_test;
+import <smith/test.h>;
+import geometry::box;
+import smith::test::helpers as helpers;
+
+export void test_area(void) {
+    c::smith_check_equal_u64(box::area(2, 3), 6);
+}
+
+export void test_area_fails(void) {
+    u64 expected = 7;
+    c::smith_check_equal_u64(box::area(2, 3), expected);
+}
+
+export void test_area_through_a_library(void) {
+    helpers::require(box::area(2, 3) == 7);
+}
+
+export void test_area_property(c::SmithKey key) {
+    u64 side = c::smith_key_bits(key, 0) % 1000;
+    c::smith_check_equal_u64(box::area(side, 1), side);
+}
+
+// Not exported: private to the module, nothing can call it, so it is not a test.
+[[maybe_unused]] void test_private(void) {
+}
+C
+    capture "$smith" build
+    expect "smith tests: the runner builds" 0 "$rc"
+    if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
+    capture build/tests $iso --list
+    expect "smith tests: found, a module's by its written name" "geometry::box_test::area
+geometry::box_test::area_fails
+geometry::box_test::area_through_a_library
+geometry::box_test::area_property
+plain_works
+plain_fails
+plain_property" "$out"
+    capture grep -F 'void geometry_box_test_test_area(void)' build/tests_list.h
+    expect_contains "smith tests: ... the prototype has the symbol of the export" "$out" '__asm__("_geometry::box_test::test_area")'
+    capture build/tests $iso --test geometry::box_test
+    expect_contains "smith tests: --test selects by the written name (the module: four tests)" "$out" "2 passed, 2 failed"
+    capture build/tests $iso --test geometry::box_test::test_area_fails
+    expect_contains "smith tests: --test takes the name with test_ as written in the source" "$out" "FAIL geometry::box_test::area_fails"
+    expect_contains "smith tests: ... and runs that one only" "$out" "0 passed, 1 failed"
+    capture build/tests $iso --test test_plain_works
+    expect_contains "smith tests: a test of a file with no module by the name in the source" "$out" "1 passed, 0 failed"
+    capture build/tests $iso --test plain_property --seeds 5 --verbose
+    expect_contains "smith tests: a property test in a .smith file runs on keys" "$out" "PASS plain_property (5 seeds)"
+    capture build/tests $iso --test geometry::box_test::area_property --seeds 5 --verbose
+    expect_contains "smith tests: ... and so does a module's" "$out" "PASS geometry::box_test::area_property (5 seeds)"
+    capture build/tests $iso --list
+    expect_lacks "smith tests: a private test is not found" "$out" "private"
+
+    cp tests/test_plain.smith tests/test_again.smith
+    capture "$smith" build
+    expect "smith tests: the same test in two files fails the build" 1 "$rc"
+    expect_contains "smith tests: ... naming both files" "$out$err" "smith: smith_tests: test_plain_works is defined in tests/test_again.smith and in tests/test_plain.smith"
+    rm tests/test_again.smith
+    capture "$smith" build
+    expect "smith tests: ... and builds again without it" 0 "$rc"
+
+    if "$smith" symbolize --available; then
+        capture "$smith" test --test geometry::box_test::area_fails
+        line=$(line_of tests/geometry/box_test.smith 'c::smith_check_equal_u64(box::area(2, 3), expected);')
+        expect_contains "smith tests: a failing check names the .smith line" "$out" "check failed at tests/geometry/box_test.smith:$line"
+        expect_contains "smith tests: ... its source" "$out" "c::smith_check_equal_u64(box::area(2, 3), expected);"
+        expect_contains "smith tests: ... the function as written, in the chain" "$out" "tests/geometry/box_test.smith:$line     geometry::box_test::test_area_fails"
+        capture "$smith" test --test geometry::box_test::area_through_a_library
+        line=$(line_of tests/geometry/box_test.smith 'helpers::require(box::area(2, 3) == 7);')
+        expect_contains "smith tests: a frame of the module smith::test is not the failing line" "$out" "check failed at tests/geometry/box_test.smith:$line"
+        expect_lacks "smith tests: ... nor in the chain" "$out" "smith::test::"
+        capture "$smith" test --test plain_fails
+        line=$(line_of tests/test_plain.smith 'c::smith_check_equal_u64(n, 4);')
+        expect_contains "smith tests: a test of a file with no module is named as written" "$out" "tests/test_plain.smith:$line      test_plain_fails"
+        capture "$smith" test --test geometry::box_test::test_area_property
+        expect_contains "smith tests: smith test passes the written name through" "$out" "1 passed, 0 failed"
+    fi
 fi
 fi
 

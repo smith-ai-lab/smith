@@ -1,0 +1,3 @@
+knowledge/alpha.md: type 'contract' needs owner
+knowledge/data.md: type 'dataset' is not one of contract
+smith docs: 2 concepts, 2 problems

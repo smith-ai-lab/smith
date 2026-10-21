@@ -98,6 +98,9 @@ class NameSource {
     // Where in a module's source the declaration that stands at a place of its generated header is (invalid for any
     // other place).
     virtual SourceLocation sourceOf(SourceLocation at) = 0;
+    // Whether a place is in an interface the lowering generated (a module's header, or its source read in memory as
+    // one) and not in text the user wrote.
+    virtual bool generatedAt(SourceLocation at) = 0;
 };
 
 // What a hook shares with the consumer it puts in front of the diagnostics: the hook may be gone when a late diagnostic
@@ -106,6 +109,11 @@ struct PresenterLink {
     NameSource *source = nullptr;
     std::set<unsigned> suppressed;
 };
+
+// The engine a tool reports its own findings from, which the next hook of this thread puts its Presenter in front of
+// (see smith::presentThrough), and the Presenter it made.
+thread_local DiagnosticsEngine *toolEngine = nullptr;
+thread_local DiagnosticConsumer *toolConsumer = nullptr;
 
 // Shows the diagnostics of a .smith file as the source wrote it, in front of whatever shows them (clang's printer, a
 // language server):
@@ -146,8 +154,16 @@ class Presenter final : public DiagnosticConsumer {
         // one points at the token it copies.
         SourceLocation at = info.getLocation();
         if (link->source != nullptr) {
+            // A tool's finding about the interface of an imported module is about text the user did not write there:
+            // the module's own file is checked as itself.
+            if (tool && level != DiagnosticsEngine::Note && link->source->generatedAt(at)) {
+                dropNotes = true;
+                return;
+            }
             SourceLocation origin = link->source->originOf(at);
-            if (origin.isValid() && level != DiagnosticsEngine::Note) {
+            // A tool reports a name once, at the first declaration it finds, which is the copy: the finding is the
+            // definition's (and the compiler's, which has its own, is not).
+            if (origin.isValid() && level != DiagnosticsEngine::Note && !tool) {
                 dropNotes = true;
                 return;
             }
@@ -165,7 +181,20 @@ class Presenter final : public DiagnosticConsumer {
     DiagnosticConsumer *inner;
     std::shared_ptr<PresenterLink> link;
     bool dropNotes = false;
+    bool tool = false; // in front of the engine of a tool's findings, not the compiler's
 
+  public:
+    // The next translation unit's hook speaks through the same consumer (see smith::presentThrough).
+    void relink(std::shared_ptr<PresenterLink> next) {
+        link = std::move(next);
+        dropNotes = false;
+    }
+
+    // Puts a consumer like this one in front of the engine a tool reports its own findings from, or hands the one
+    // already there to `link`.
+    static void presentToolEngine(const std::shared_ptr<PresenterLink> &link);
+
+  private:
     // The text with the names written as the source writes them.
     std::string written(StringRef text) {
         std::string out;
@@ -216,6 +245,14 @@ class Presenter final : public DiagnosticConsumer {
         std::string shown = written(formatted);
         bool changed = shown != formatted.str() || at != info.getLocation();
         std::vector<FixItHint> hints(info.getFixItHints().begin(), info.getFixItHints().end());
+        if (tool) { // a fix in a copy or in a generated interface is not a change to the user's text
+            size_t before = hints.size();
+            llvm::erase_if(hints, [this](const FixItHint &hint) {
+                SourceLocation begin = hint.RemoveRange.getBegin();
+                return link->source->originOf(begin).isValid() || link->source->generatedAt(begin);
+            });
+            changed = changed || hints.size() != before;
+        }
         for (FixItHint &hint : hints) {
             std::string code = fixed(info, hint);
             if (code == hint.CodeToInsert) continue;
@@ -271,7 +308,11 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
-        diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
+        // compiler's, and would take this one's number for one of its checks'; a built-in diagnostic that is the text
+        // alone has no such number.
+        diagnostic = toolEngine != nullptr ? diag::err_apinotes_message
+                                           : PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
         // clangd's preamble of a file that starts with code, as every module does, is the empty text before it, and
         // under -Wpedantic that is "a translation unit with no declaration". The file is not empty.
         if (SM.getBufferData(MainFile).empty()) {
@@ -887,7 +928,8 @@ class SmithHook final : public TokenHook, public NameSource {
             while (begin > 0 && action.reinjected[begin - 1] == reinjected)
                 begin -= 1;
             auto tokens = std::make_unique<Token[]>(end - begin);
-            std::copy(action.tokens.begin() + begin, action.tokens.begin() + end, tokens.get());
+            std::copy(action.tokens.begin() + static_cast<std::ptrdiff_t>(begin),
+                      action.tokens.begin() + static_cast<std::ptrdiff_t>(end), tokens.get());
             if (!reinjected) {
                 for (size_t i = begin; i < end; i++)
                     replay[action.tokens[i].getLocation().getRawEncoding()] += 1;
@@ -938,7 +980,7 @@ class SmithHook final : public TokenHook, public NameSource {
         std::vector<std::pair<unsigned, SourceLocation>> &list = origins[id.getHashValue()];
         for (auto &[token, offset, origin] : spots) {
             list.emplace_back(offset, origin);
-            token->setLocation(start.getLocWithOffset(offset));
+            token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
         }
     }
 
@@ -1009,6 +1051,19 @@ class SmithHook final : public TokenHook, public NameSource {
             break;
         }
         return entry;
+    }
+
+    bool generatedAt(SourceLocation at) override {
+        if (!at.isFileID() || SM.getFileID(at) == MainFile) return false;
+        FileID file = SM.getFileID(at);
+        bool invalid = false;
+        StringRef text = SM.getBufferData(file, &invalid);
+        std::string source, module;
+        if (invalid) return false;
+        if (generatedBy(text, source, module)) return true;
+        // A module's source read as its interface: the one .smith file that is not the file being compiled.
+        OptionalFileEntryRef entry = SM.getFileEntryRefForID(file);
+        return entry && entry->getName().ends_with(".smith");
     }
 
     SourceLocation sourceOf(SourceLocation at) override {
@@ -1520,6 +1575,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (inner == nullptr) return;
         std::unique_ptr<DiagnosticConsumer> owned = diagnostics.takeClient();
         diagnostics.setClient(new Presenter(std::move(owned), inner, link), /*ShouldOwnClient=*/true);
+        Presenter::presentToolEngine(link);
     }
 
     static void copyName(const SmithWrittenName &from, smith::WrittenName &to) {
@@ -1618,7 +1674,10 @@ bool debugName(const NamedDecl *decl, std::string &scope, std::string &name) {
 std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
     SourceManager &sm = pp.getSourceManager();
     OptionalFileEntryRef entry = sm.getFileEntryRefForID(sm.getMainFileID());
-    if (!entry || !entry->getName().ends_with(".smith")) return nullptr;
+    if (!entry || !entry->getName().ends_with(".smith")) {
+        Presenter::presentToolEngine(nullptr); // what the last .smith file taught the tool's consumer is not this one's
+        return nullptr;
+    }
     return std::make_unique<SmithHook>(pp);
 }
 
@@ -1632,7 +1691,28 @@ extern "C" void smith_hook_install() {
 #endif
 }
 
+void Presenter::presentToolEngine(const std::shared_ptr<PresenterLink> &link) {
+    if (toolEngine == nullptr) return;
+    DiagnosticConsumer *client = toolEngine->getClient();
+    if (client == nullptr) return;
+    std::shared_ptr<PresenterLink> use = link ? link : std::make_shared<PresenterLink>();
+    if (client == toolConsumer) {
+        static_cast<Presenter *>(client)->relink(use);
+        return;
+    }
+    if (link == nullptr) return; // nothing to show yet
+    auto *presenter = new Presenter(nullptr, client, use);
+    presenter->tool = true;
+    toolConsumer = presenter;
+    toolEngine->setClient(presenter, /*ShouldOwnClient=*/true);
+}
+
 namespace smith {
+
+void presentThrough(DiagnosticsEngine &engine) {
+    toolEngine = &engine;
+}
+
 namespace {
 std::mutex registryLock;
 std::map<std::string, std::shared_ptr<const FileNames>> registry;

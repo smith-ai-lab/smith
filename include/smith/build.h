@@ -28,6 +28,7 @@ typedef struct {
     int (*run)(SmithRun *run); // a C function in build.c instead of .command; 0 succeeds
     const char *const *args;   // given to .run as run->args
     bool content_hash;         // later: rerun only when the inputs' bytes changed
+    bool test;                 // a task only: `smith test` runs it (smith_tests sets it on its task)
 } SmithStep;
 
 void build(SmithBuild *b); // what the project writes
@@ -45,7 +46,10 @@ void smith_step(SmithBuild *b, SmithStep *step);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
 // start with '/' or '-', end with '/', or hold an empty, '.' or '..' component (check-alone/src/a.c is a name). A task
-// declared again under one name with every field equal changes nothing; with any field different it is an error
+// declared again under one name with every field equal changes nothing; with any field different it is an error.
+// A task or alias may not be named after a verb (fmt, lint, docs, prove, check, run, test): each verb does one fixed
+// thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
+// tests, which `smith test` runs (smith_tests does it for its own)
 void smith_task(SmithBuild *b, const char *name, SmithStep *step);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error
@@ -107,7 +111,9 @@ const char *smith_package(SmithBuild *b, const SmithPackage *package);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
-// joins lists; the last argument is nullptr
+// joins lists; the last argument is nullptr. That nullptr ends the arguments, so no list may be nullptr (a nullptr
+// list cannot be told from the end): a nullptr first list is a build.c error, and one after the first would silently
+// drop the lists behind it. An empty list is (const char *[]){nullptr}.
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...);
 // format applied to each item ("out/%s")
 const char *const *smith_map(SmithBuild *b, const char *const *items, const char *format);
@@ -260,7 +266,7 @@ typedef struct {
 //     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
 //     smith_library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
 //     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
-//   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
+//   the task <name> (a .run task, on the console, with .test: `smith test` runs it): runs <output> with
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
 //     the runner, so they are built before the tests run and a change to one reruns them.

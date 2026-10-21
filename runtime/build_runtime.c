@@ -351,6 +351,7 @@ static const char *smith_step_difference(const SmithStep *left, const SmithStep 
     if (!smith_same_text(left->pool, right->pool)) return ".pool";
     if (left->restat != right->restat) return ".restat";
     if (left->always != right->always) return ".always";
+    if (left->test != right->test) return ".test";
     return nullptr;
 }
 
@@ -373,6 +374,7 @@ static const SmithEntry *smith_find_output(const char *const *outputs, const cha
 void smith_step(SmithBuild *b, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_name_step(step);
+    if (step->test) smith_fail(".test is for a task: `smith test` runs tasks; use smith_task");
     smith_check_step(step);
     SmithStep copy = smith_copy_step(step);
     bool stamp = smith_count(copy.outputs) == 0 || copy.stamp != nullptr;
@@ -407,10 +409,26 @@ static void smith_check_task(const SmithStep *step) {
     smith_check_step(step);
 }
 
+// The verbs whose meaning is fixed (docs/build-c.md): a task or alias of their name would say another thing, so
+// build.c may not declare one. smith_tests makes the task `test` itself.
+static const char *const smith_verb_names[] = {"fmt", "lint", "docs", "prove", "check", "run", "test"};
+static bool smith_verb_task_allowed;
+
+static void smith_refuse_verb_name(const char *what, const char *name) {
+    if (smith_verb_task_allowed) return;
+    for (size_t i = 0; i < sizeof smith_verb_names / sizeof smith_verb_names[0]; i++) {
+        if (strcmp(name, smith_verb_names[i]) != 0) continue;
+        smith_fail("%s '%s' is named after a verb; `smith %s` does the same thing in every project, so use it, or "
+                   "name %s another way and run it with `smith build <name>`",
+                   what, name, name, what);
+    }
+}
+
 void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_context = nullptr;
     smith_check_path_name("a task", name);
+    smith_refuse_verb_name("task", name);
     smith_context = smith_text("task %s", name);
     smith_check_task(step);
     SmithStep copy = smith_copy_step(step);
@@ -437,6 +455,7 @@ void smith_alias(SmithBuild *b, const char *name, const char *const *targets) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     smith_check_path_name("an alias", name);
+    smith_refuse_verb_name("alias", name);
     smith_context = smith_text("alias %s", name);
     if (targets == nullptr) smith_fail("the targets list is nullptr; use an empty list");
     SmithEntry *entry = smith_find_named(name);
@@ -996,6 +1015,14 @@ const char *smith_fmt(SmithBuild *b, const char *format, ...) {
 
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     SMITH_ASSERT(b != nullptr);
+    // nullptr ends the arguments, so a nullptr in first place cannot be told from an empty list, and the lists after it
+    // would be dropped without a word (a list that starts from an unset `selected`): it is an error, not an empty list.
+    if (first == nullptr) {
+        smith_context = nullptr;
+        smith_fail(
+            "smith_cat: the first list is nullptr, and nullptr ends the arguments, so the lists after it would be "
+            "dropped; an empty list is (const char *[]){nullptr}");
+    }
     static const char *const *lists[smith_cat_lists_max];
     size_t lists_count = 0;
     va_list args;
@@ -1160,6 +1187,11 @@ typedef struct {
 static SmithObjectRow smith_object_rows[smith_objects_max];
 static size_t smith_object_row_count;
 static bool smith_compile_commands_called;
+static const char *smith_programs[smith_objects_max];               // the output of each smith_program, for `smith run`
+static const char *const *smith_program_sources[smith_objects_max]; // the sources of its objects, for `smith prove`
+static bool smith_program_is_tests[smith_objects_max];              // the runner smith_tests makes
+static size_t smith_program_count;
+static bool smith_making_tests;
 
 typedef struct {
     const char *source;
@@ -1334,8 +1366,16 @@ static void smith_require_text(const char *call, const char *field, const char *
 // `smith cc` and `smith c++`.
 static void smith_require_program(const char *call, const char *field, const char *value) {
     smith_require_text(call, field, value);
-    if (strcmp(value, "smith") == 0) {
-        smith_fail("%s: .%s is \"smith\", which is not a compiler; use \"smith-cc\" or \"smith-c++\"", call, field);
+    // "smith" or a path that ends in /smith (CC=$HOME/.local/bin/smith in the environment, or -DCC=): the program run
+    // would be `smith -std=gnu23 ...`, which is not a smith command, so it is refused here, before anything runs.
+    const char *slash = strrchr(value, '/');
+    const char *base = slash == nullptr ? value : slash + 1;
+    if (strcmp(base, "smith") == 0) {
+        size_t folder = (size_t)(base - value);
+        smith_fail(
+            "%s: .%s is \"%s\", which is not a compiler (smith is a set of verbs); use \"%.*ssmith-cc\" for C or "
+            "\"%.*ssmith-c++\" for C++, the links that act as `smith cc` and `smith c++`",
+            call, field, value, (int)folder, value, (int)folder, value);
     }
 }
 
@@ -1677,11 +1717,13 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     size_t count = smith_count((const char *const *)program->objects);
     const SmithObject **rows = (const SmithObject **)smith_new_list(count);
     const char **outputs = smith_new_list(count);
+    const char **sources = smith_new_list(count);
     for (size_t i = 0; i < count; i++) {
         const SmithObjectRow *row = smith_find_row(program->objects[i], program->objects[i]->output);
         if (row == nullptr) smith_fail("smith_program: .objects[%zu] was never passed to smith_object", i);
         rows[i] = &row->object;
         outputs[i] = row->object.output;
+        sources[i] = row->object.source;
     }
     SmithProgram copy = *program;
     copy.linker = smith_copy_string(program->linker);
@@ -1699,6 +1741,10 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         .outputs = smith_one(copy.output),
     };
     smith_step(b, &copy.step);
+    if (smith_program_count >= smith_objects_max) smith_too_many("programs", smith_objects_max);
+    smith_program_sources[smith_program_count] = sources;
+    smith_program_is_tests[smith_program_count] = smith_making_tests;
+    smith_programs[smith_program_count++] = copy.output;
     *program = copy;
 }
 
@@ -1770,11 +1816,20 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
-static void smith_put_compile_commands(FILE *out, const SmithBuild *b) {
+// Whether an earlier compile is of the same source: `smith lint` reads the first of each.
+static bool smith_listed_before(size_t row) {
+    for (size_t i = 0; i < row; i++) {
+        if (strcmp(smith_object_rows[i].object.source, smith_object_rows[row].object.source) == 0) return true;
+    }
+    return false;
+}
+
+// first_once: each source once, by its first compile (what clang-tidy reads); else each output, as the editor's file.
+static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool first_once) {
     fputs("[\n", out);
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
-        if (!smith_object_rows[i].listed) continue;
+        if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
         smith_json_entry(out, b->root, object->source, object->output, smith_object_rows[i].object.step.command);
         fputs(",\n", out);
     }
@@ -1794,17 +1849,152 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
     smith_check_write_path(path);
     FILE *counter = fopen("/dev/null", "w");
     if (counter == nullptr) smith_fail("cannot open /dev/null");
-    smith_put_compile_commands(counter, b);
+    smith_put_compile_commands(counter, b, false);
     long size = ftell(counter);
     fclose(counter);
     SMITH_ASSERT(size > 0);
     char *text = smith_alloc((size_t)size + 1);
     FILE *out = fmemopen(text, (size_t)size + 1, "w");
     if (out == nullptr) smith_fail("cannot render %s", path);
-    smith_put_compile_commands(out, b);
+    smith_put_compile_commands(out, b, false);
     SMITH_ASSERT(fclose(out) == 0);
     text[size] = '\0';
     smith_write(b, path, text);
+}
+
+// What the verbs learn from the build (smith lint, prove, test, run and check; docs/build-c.md). Every run of build.c
+// writes .smith/build.info, one line per fact, and .smith/compile_commands.json for clang-tidy, and the manifest gets
+// two phony targets: smith_needs, the generated files the project's compiles read, and smith_tests, the tests.
+//   compile<TAB>source<TAB>word...   a source of the project's own that the build compiles, with the words of its first
+//                      compile after the compiler; not a generated file, not under .smith/, not an absolute path (a
+//                      package)
+//   test<TAB>task      a task that `smith test` runs
+//   program<TAB>path   the output of a smith_program
+//   unit<TAB>source... the own sources of a program's objects (not of the tests' runner): what `smith prove` proves
+//                      together
+//   default<TAB>target a target of smith_default, with the aliases opened
+constexpr size_t smith_targets_max = 4096;
+
+static bool smith_is_compiled_extension(const char *source) {
+    static const char *const extensions[] = {".c", ".m", ".mm", ".cpp", ".cc", ".cxx", ".smith"};
+    for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++) {
+        if (smith_ends_with(source, extensions[i])) return true;
+    }
+    return false;
+}
+
+static bool smith_is_own_source(const char *source) {
+    if (source[0] == '/' || strncmp(source, ".smith/", 7) == 0 || strchr(source, '\n') != nullptr) return false;
+    if (!smith_is_compiled_extension(source)) return false;
+    const char *shared = nullptr;
+    return smith_find_output(smith_one(source), &shared) == nullptr; // a generated file is not the project's own
+}
+
+// The generated files the project's sources read: the implicit and order-only inputs of their compiles that a step
+// makes.
+static const char *const *smith_needed_files(SmithBuild *b) {
+    const char *const *needs = smith_list(b, nullptr);
+    for (size_t i = 0; i < smith_object_row_count; i++) {
+        const SmithObject *object = &smith_object_rows[i].object;
+        if (!smith_is_own_source(object->source)) continue;
+        const char *const *inputs = smith_cat(b, object->step.implicit_inputs, object->step.order_only_inputs, nullptr);
+        for (size_t j = 0; inputs[j] != nullptr; j++) {
+            const char *shared = nullptr;
+            if (smith_find_output(smith_one(inputs[j]), &shared) != nullptr)
+                needs = smith_cat(b, needs, smith_one(inputs[j]), nullptr);
+        }
+    }
+    return needs;
+}
+
+static const char *const *smith_test_tasks(SmithBuild *b) {
+    const char *const *tasks = smith_list(b, nullptr);
+    for (size_t i = 0; i < smith_entry_count; i++) {
+        if (smith_entries[i].kind == SmithEntryKind_Task && smith_entries[i].step.test)
+            tasks = smith_cat(b, tasks, smith_one(smith_entries[i].name), nullptr);
+    }
+    return tasks;
+}
+
+// smith_default's targets with each alias replaced by its targets (and theirs), in order.
+static const char *const *smith_default_targets(SmithBuild *b) {
+    const char *queue[smith_targets_max];
+    size_t count = 0;
+    for (size_t i = 0; i < smith_default_count; i++) {
+        if (count >= smith_targets_max) smith_too_many("default targets", smith_targets_max);
+        queue[count++] = smith_defaults[i];
+    }
+    const char *const *result = smith_list(b, nullptr);
+    for (size_t at = 0; at < count; at++) { // bounded: each pass takes one name, and the queue holds smith_targets_max
+        const SmithEntry *entry = smith_find_named(queue[at]);
+        if (entry == nullptr || entry->kind != SmithEntryKind_Alias) {
+            result = smith_cat(b, result, smith_one(queue[at]), nullptr);
+            continue;
+        }
+        for (size_t j = 0; entry->targets[j] != nullptr; j++) {
+            if (count >= smith_targets_max) smith_too_many("default targets", smith_targets_max);
+            queue[count++] = entry->targets[j];
+        }
+    }
+    return result;
+}
+
+static void smith_put_build_info(FILE *out, SmithBuild *b) {
+    for (size_t i = 0; i < smith_object_row_count; i++) {
+        const char *source = smith_object_rows[i].object.source;
+        if (!smith_is_own_source(source) || smith_listed_before(i)) continue;
+        fprintf(out, "compile\t%s", source);
+        const char *const *command = smith_object_rows[i].object.step.command;
+        for (size_t j = 1; command[j] != nullptr; j++) // the words after the compiler, a tab each
+            fprintf(out, "\t%s", command[j]);
+        fputc('\n', out);
+    }
+    for (size_t i = 0; i < smith_command_row_count; i++) { // sources the build never compiles (smith_compile_command)
+        const SmithCommandRow *row = &smith_command_rows[i];
+        if (!smith_is_own_source(row->source)) continue;
+        fprintf(out, "compile\t%s", row->source);
+        for (size_t j = 1; row->arguments[j] != nullptr; j++)
+            fprintf(out, "\t%s", row->arguments[j]);
+        fputc('\n', out);
+    }
+    fputs("compile\tbuild.c", out); // build.c itself, with the flags smith compiles it with
+    for (size_t j = 1; smith_build_c_words[j] != nullptr; j++)
+        fprintf(out, "\t%s", smith_build_c_words[j]);
+    fputc('\n', out);
+    const char *const *tests = smith_test_tasks(b);
+    for (size_t i = 0; tests[i] != nullptr; i++)
+        fprintf(out, "test\t%s\n", tests[i]);
+    for (size_t i = 0; i < smith_program_count; i++) {
+        fprintf(out, "program\t%s\n", smith_programs[i]);
+        if (smith_program_is_tests[i]) continue; // a runner is the tests' own, which `smith prove` leaves out
+        fputs("unit", out);
+        for (size_t j = 0; smith_program_sources[i][j] != nullptr; j++) {
+            if (smith_is_own_source(smith_program_sources[i][j])) fprintf(out, "\t%s", smith_program_sources[i][j]);
+        }
+        fputc('\n', out);
+    }
+    const char *const *defaults = smith_default_targets(b);
+    for (size_t i = 0; defaults[i] != nullptr; i++)
+        fprintf(out, "default\t%s\n", defaults[i]);
+}
+
+// .smith/build.info, and .smith/compile_commands.json, which `smith lint` hands to clang-tidy: every compile of the
+// build with its flags, whether or not build.c calls smith_compile_commands (that file is the editor's, the project's).
+static void smith_write_build_info(SmithBuild *b) {
+    char *text = nullptr;
+    size_t size = 0;
+    FILE *out = open_memstream(&text, &size);
+    if (out == nullptr) smith_fail("cannot render .smith/build.info");
+    smith_put_build_info(out, b);
+    SMITH_ASSERT(fclose(out) == 0);
+    smith_write_if_different(".smith/build.info", text, size);
+    free(text);
+    out = open_memstream(&text, &size);
+    if (out == nullptr) smith_fail("cannot render .smith/compile_commands.json");
+    smith_put_compile_commands(out, b, true);
+    SMITH_ASSERT(fclose(out) == 0);
+    smith_write_if_different(".smith/compile_commands.json", text, size);
+    free(text);
 }
 
 // smith_tests: smith's test library and runner, linked with the project's test files.
@@ -1812,9 +2002,15 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 constexpr size_t smith_tests_max = 65536;
 
 // The name in a line that defines a test, `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` with
-// <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. *length is the name's length, test_ not counted.
-static const char *smith_tests_match(const char *line, size_t *length, bool *property) {
+// <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...`
+// (a private one is `static`, which nothing can call), and its key may be written `c::SmithKey`. *length is the name's
+// length, test_ not counted.
+static const char *smith_tests_match(const char *line, bool module, size_t *length, bool *property) {
     const char *prefix = "void test_";
+    if (module) {
+        if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
+        line += strlen("export ");
+    }
     if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
     const char *name = line + strlen(prefix);
     size_t size = strspn(name, "abcdefghijklmnopqrstuvwxyz0123456789_");
@@ -1823,39 +2019,89 @@ static const char *smith_tests_match(const char *line, size_t *length, bool *pro
     *length = size;
     *property = false;
     if (strcmp(rest, "(void) {") == 0) return name;
-    if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) != 0) return nullptr;
-    const char *key = rest + strlen("(SmithKey ");
-    size_t key_size = strspn(key, "abcdefghijklmnopqrstuvwxyz_");
-    if (key_size == 0 || strcmp(key + key_size, ") {") != 0) return nullptr;
+    if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) == 0) {
+        rest += strlen("(SmithKey ");
+    } else if (strncmp(rest, "(c::SmithKey ", strlen("(c::SmithKey ")) == 0) {
+        rest += strlen("(c::SmithKey ");
+    } else {
+        return nullptr;
+    }
+    size_t key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
+    if (key_size == 0 || strcmp(rest + key_size, ") {") != 0) return nullptr;
     *property = true;
     return name;
 }
 
+// The module a `.smith` file's line declares, `module a::b;`, as written ("a::b"), or nullptr.
+static const char *smith_tests_module_line(const char *line) {
+    const char *prefix = "module ";
+    if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
+    const char *name = line + strlen(prefix);
+    size_t size = strspn(name, "abcdefghijklmnopqrstuvwxyz0123456789_:");
+    if (size == 0 || strcmp(name + size, ";") != 0) return nullptr;
+    return smith_text("%.*s", (int)size, name);
+}
+
 typedef struct {
-    const char *name; // with the test_ prefix
+    const char *name;   // what the runner shows and --test selects: the written name without test_, `a::b::x`
+    const char *symbol; // the C name: test_x, and a_b_test_x in a module
+    const char *label;  // a module's export has the symbol `a::b::test_x` (an asm label), else nullptr
     const char *file;
     bool property;
 } SmithTestFound;
+
+// a::b and test_x give a_b_test_x, as the lowering names an export.
+static const char *smith_tests_symbol(const char *module, const char *test) {
+    if (module == nullptr) return test;
+    char *flat = smith_alloc(strlen(module) + 1);
+    size_t used = 0;
+    for (size_t i = 0; module[i] != '\0'; i++) { // bounded by the module's name
+        if (module[i] == ':' && module[i + 1] == ':') {
+            flat[used++] = '_';
+            i += 1;
+        } else {
+            flat[used++] = module[i];
+        }
+    }
+    flat[used] = '\0';
+    return smith_text("%s_%s", flat, test);
+}
+
+static bool smith_tests_is_smith(const char *path) {
+    size_t length = strlen(path);
+    return length > strlen(".smith") && strcmp(path + length - strlen(".smith"), ".smith") == 0;
+}
 
 // Every test in the files, in file order and line order. A name defined twice is an error that names both files.
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
     for (size_t i = 0; run->inputs[i] != nullptr; i++) { // bounded by smith_copy_list
         const char *const *lines = smith_lines(run->b, run->inputs[i]);
+        bool in_smith = smith_tests_is_smith(run->inputs[i]);
+        const char *module = nullptr;
         for (size_t j = 0; lines[j] != nullptr; j++) { // bounded by smith_split_lines
+            if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             size_t length = 0;
             bool property = false;
-            const char *name = smith_tests_match(lines[j], &length, &property);
+            const char *name = smith_tests_match(lines[j], module != nullptr, &length, &property);
             if (name == nullptr) continue;
-            const char *full = smith_text("test_%.*s", (int)length, name);
+            const char *test = smith_text("test_%.*s", (int)length, name);
+            const char *symbol = smith_tests_symbol(module, test);
+            const char *written = module != nullptr ? smith_text("%s::%s", module, test) : test;
             for (size_t k = 0; k < *count; k++) {
-                if (strcmp(found[k].name, full) != 0) continue;
-                fprintf(stderr, "smith: smith_tests: %s is defined in %s and in %s\n", full, found[k].file,
+                if (strcmp(found[k].symbol, symbol) != 0) continue;
+                fprintf(stderr, "smith: smith_tests: %s is defined in %s and in %s\n", written, found[k].file,
                         run->inputs[i]);
                 return false;
             }
             if (*count >= smith_tests_max) smith_too_many("tests", smith_tests_max);
-            found[(*count)++] = (SmithTestFound){full, run->inputs[i], property};
+            found[(*count)++] = (SmithTestFound){
+                .name = module != nullptr ? smith_text("%s::%.*s", module, (int)length, name) : test + strlen("test_"),
+                .symbol = symbol,
+                .label = module != nullptr ? written : nullptr,
+                .file = run->inputs[i],
+                .property = property,
+            };
         }
     }
     return true;
@@ -1872,10 +2118,10 @@ static int smith_tests_scan(SmithRun *run) {
     const char **rows = smith_new_list(count);
     for (size_t i = 0; i < count; i++) {
         const char *argument = found[i].property ? "SmithKey key" : "void";
-        prototypes[i] = smith_text("void %s(%s);\n", found[i].name, argument);
-        rows[i] =
-            smith_text("    {\"%s\", %s, %s},\n", found[i].name + strlen("test_"),
-                       found[i].property ? "nullptr" : found[i].name, found[i].property ? found[i].name : "nullptr");
+        const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
+        prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
+        rows[i] = smith_text("    {\"%s\", %s, %s},\n", found[i].name, found[i].property ? "nullptr" : found[i].symbol,
+                             found[i].property ? found[i].symbol : "nullptr");
     }
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
                                     "#include <smith/random.h>\n\n%s",
@@ -1983,14 +2229,19 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
         .flags = copy.link_flags,
         .objects = (const SmithObject *const *)objects,
     };
+    smith_making_tests = true;
     smith_program(b, &program);
+    smith_making_tests = false;
     SmithStep task = {
         .run = smith_tests_run,
         .inputs = smith_cat(b, program.step.outputs, copy.inputs, nullptr),
         .args = smith_tests_arguments(b, copy.output),
         .pool = "console",
+        .test = true,
     };
+    smith_verb_task_allowed = true; // the task `test` is smith_tests'
     smith_task(b, name, &task);
+    smith_verb_task_allowed = false;
     copy.step = task;
     *tests = copy;
 }
@@ -2499,7 +2750,7 @@ static void smith_put_regenerate_edge(FILE *out) {
     fputs(" | .smith/program\n", out);
 }
 
-static void smith_put_manifest(FILE *out) {
+static void smith_put_manifest(FILE *out, SmithBuild *b) {
     fputs("# Written by smith build from build.c. Edit build.c, not this file.\n", out);
     fputs("ninja_required_version = 1.10\nbuilddir = .smith\nrule step\n  command = $cmd\n", out);
     if (smith_defer_count > 0) smith_put_regenerate_rule(out);
@@ -2514,6 +2765,8 @@ static void smith_put_manifest(FILE *out) {
     for (size_t i = 0; i < smith_entry_count; i++)
         smith_put_entry(out, &smith_entries[i]);
     if (smith_defer_count > 0) smith_put_regenerate_edge(out);
+    smith_put_phony(out, "smith_needs", smith_needed_files(b));
+    smith_put_phony(out, "smith_tests", smith_test_tasks(b));
     // ninja builds every target when there is no default line, so an empty default names a target that does nothing.
     if (smith_default_count == 0) fputs("build smith_nothing: phony\ndefault smith_nothing", out);
     if (smith_default_count > 0) fputs("default", out);
@@ -2542,11 +2795,11 @@ static bool smith_same_file(const char *left, const char *right) {
 // Writes the manifest through a temporary file and renames it only when the bytes differ, so its mtime moves only
 // when the build does. When ninja asked for the regeneration it always replaces it: the new mtime is past the needs,
 // so ninja reloads once and settles.
-static void smith_write_manifest(const char *path) {
+static void smith_write_manifest(const char *path, SmithBuild *b) {
     const char *temporary = smith_text("%s.tmp", path);
     FILE *out = fopen(temporary, "wb");
     if (out == nullptr) smith_fail("cannot write %s", temporary);
-    smith_put_manifest(out);
+    smith_put_manifest(out, b);
     if (fclose(out) != 0) smith_fail("cannot write %s", temporary);
     if (!smith_regenerating && smith_same_file(temporary, path)) {
         unlink(temporary);
@@ -2668,6 +2921,7 @@ int main(int argc, char **argv) {
     if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");
     smith_write_compiler_files();
-    smith_write_manifest(argv[first]);
+    smith_write_manifest(argv[first], &b);
+    smith_write_build_info(&b);
     return 0;
 }

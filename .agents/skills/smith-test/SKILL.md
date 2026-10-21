@@ -29,6 +29,25 @@ void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 1
 - `void test_<name>(void) {` is a test; `void test_<name>(SmithKey key) {` is a property test. `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`.
 - A property test draws everything from its key (derive one key per use) and is run on `--seeds` keys. The seed in a failure replays it exactly.
 
+### Tests in `.smith`
+
+Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/**/*_test.smith", nullptr))`; `import <smith/test.h>;` and the checks are `c::smith_check_equal_u64(...)` until the library is a module). The same lines are tests:
+
+```c
+// tests/geometry/box_test.smith
+module geometry::box_test;
+import <smith/test.h>;
+import geometry::box;
+
+export void test_area(void) {                 // `export`: a private function is static, nothing can call it
+    c::smith_check_equal_u64(box::area(2, 3), 6);
+}
+export void test_area_property(c::SmithKey key) { ... }
+```
+
+- In a file with no `module` line, `void test_x(void) {` is a test with no `export`, named `x`. In a module the test is shown, listed and selected by its name as written, `geometry::box_test::area` (`smith test --test geometry::box_test` runs the module's tests; `--test geometry::box_test::test_area` works too, `test_` as in the source). Two files cannot define the same test (a module's tests are `a::b::test_x`, so only the same module and name collide).
+- A failure names the `.smith` line and its source, and the function as written (`tests/geometry/box_test.smith:12  geometry::box_test::test_area_fails`). Frames of the test library (`smith_test_*`, and `smith::test::*` once it is a module) and of check functions are left out of the report.
+
 ## The checks
 
 Write checks as plain functions. A failure shows the line that called the check and the call chain, read from the stack and

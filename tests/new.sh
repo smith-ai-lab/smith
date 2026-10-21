@@ -191,6 +191,7 @@ capture smith build check
 expect_contains "new hello: smith build check is refused for the verb" "$err" "check is a verb, not a target of smith build; run \`smith check\`"
 capture smith check
 expect "new hello: smith check passes on the new project" 0 "$rc"
+if [ "$rc" -ne 0 ]; then echo "$err" | tail -n 30; fi
 printf 'int   misformatted;\n' >>main.c
 capture smith check
 expect_contains "new hello: smith check fails on a misformatted file" "$out$err" "misformatted"
@@ -266,6 +267,57 @@ for mode in debug release fast; do
     capture build/$mode/hello
     expect "libraries: the $mode program runs" "libraries ok" "$out"
 done
+cd "$work" || exit 1
+
+# 1d. The verbs read what the build declares, in a git copy of the generated project: prove proves the contracts of the
+# sources that are compiled, fmt formats what git sees (and leaves out .gitignore and .clang-format-ignore), lint reports
+# what clang-tidy finds, and check reports every part that fails.
+mkdir verbs
+(cd hello && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd verbs && tar xf -)
+cd verbs || exit 1
+git init -q -b main && git add -A && git commit -q -m first
+printf '#pragma once\n#include <stdint.h>\n\nint32_t clamp(int32_t x, int32_t low, int32_t high);\nint32_t draw_health(int32_t health, int32_t max_health);\nint32_t pinned(int32_t x);\n' >clamp.h
+{ printf '#include "clamp.h"\n'; cat "$here/tests/prove/clamp.c"; } >clamp.c
+sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", "clamp.c", nullptr}|' \
+    -e 's|(const char \*\[\]){"-ffp-contract=off", nullptr}|(const char *[]){"-ffp-contract=off", "-I", ".smith/include", nullptr}|' \
+    build.c >build.c.new && mv build.c.new build.c
+capture smith prove
+if [ "$(has "$err" "has no prover")" = yes ]; then
+    echo "skip  new verbs: smith prove (this smith has no prover)"
+else
+    expect "new verbs: smith prove proves the contracts of the compiled sources" 0 "$rc"
+    expect_contains "new verbs: ... both functions" "$out" "2 proved, 0 failed"
+    printf '#include "clamp.h"\n\nint32_t pinned(int32_t x) {\n    return clamp(x, 10, 5);\n}\n' >bad_caller.c
+    sed 's|"clamp.c", nullptr}|"clamp.c", "bad_caller.c", nullptr}|' build.c >build.c.new && mv build.c.new build.c
+    capture smith prove
+    expect "new verbs: a caller that breaks a contract fails smith prove" 1 "$rc"
+    expect_contains "new verbs: ... at the call" "$out" "bad_caller.c:4: the call of clamp may break smith_requires(low <= high)"
+    rm bad_caller.c
+    sed 's|, "bad_caller.c"||' build.c >build.c.new && mv build.c.new build.c
+fi
+capture smith fmt
+expect "new verbs: smith fmt formats the files of a tree" 0 "$rc"
+printf 'int   untracked_file;\n' >extra.c
+printf 'int   ignored_file;\n' >ignored.c
+printf 'int   left_alone;\n' >left.c
+printf 'ignored.c\n' >>.gitignore
+printf 'left.c\n' >.clang-format-ignore
+capture smith fmt
+expect "new verbs: smith fmt formats a file git has not seen yet" "int untracked_file;" "$(cat extra.c)"
+expect "new verbs: ... not one .gitignore leaves out" "int   ignored_file;" "$(cat ignored.c)"
+expect "new verbs: ... nor one .clang-format-ignore names" "int   left_alone;" "$(cat left.c)"
+rm extra.c ignored.c left.c .clang-format-ignore
+git checkout -q -- .gitignore
+printf 'int   BadName = 0;\n' >>primes.c
+capture smith lint
+expect "new verbs: smith lint fails on what clang-tidy finds" 1 "$rc"
+expect_contains "new verbs: ... naming the check" "$out$err" "readability-identifier-naming"
+expect_contains "new verbs: ... and how many files" "$err" "clang-tidy failed on 1 of 5 files"
+capture smith check
+expect "new verbs: smith check fails when parts do" 1 "$rc"
+expect_contains "new verbs: ... names the parts that failed, in order" "$err" "smith check: failed: fmt lint"
+expect_contains "new verbs: ... and the parts that passed" "$err" "smith check: test ok"
+git checkout -q -- primes.c
 cd "$work" || exit 1
 
 # 2. A second run creates nothing.
@@ -414,12 +466,13 @@ expect "docs: the index lists the concept with its own description" \
     "- [The program](program.md): $(sed -n 's/^description: //p' knowledge/program.md)" "$(grep '^- \[' knowledge/index.md)"
 capture smith docs
 expect "docs: smith docs passes on a new project" 0 "$rc"
+expect_contains "docs: ... on the concept of the template" "$out" "smith docs: 1 concepts, 0 problems"
+expect_contains "docs: the allowed types are declared in the index" "$(cat knowledge/index.md)" \
+    "types: convention, architecture, contract, design"
+sed 's/^types: .*/types: contract/' knowledge/index.md >index.new && mv index.new knowledge/index.md
 capture smith docs
-expect "docs: ... and does not run again when no document changed" no "$(has "$out" "concepts")"
-printf '\nA rule.\n' >>AGENTS.md
-capture smith docs
-expect_contains "docs: ... runs again when a document changed" "$out" "smith docs: 1 concepts, 0 problems"
-git checkout -q -- AGENTS.md
+expect_contains "docs: a type the index no longer declares is refused" "$err" "type 'architecture' is not one of contract"
+git checkout -q -- knowledge/index.md
 capture smith docs .
 expect "docs: smith docs . checks with the default types" 0 "$rc"
 capture smith build docs

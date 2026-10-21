@@ -133,7 +133,8 @@ static bool smith_job_process_poll(SmithExec *exec, SmithJob *job) {
 
 static void smith_job_process_stop(SmithExec *exec, SmithJob *job, int signal_number) {
     (void)exec;
-    if (!job->capture.done && job->capture.process.id > 0) kill(-job->capture.process.id, signal_number);
+    // Never a process that has been waited for: its id may be another program's by now, even while its output is read.
+    (void)smith_capture_stop(&job->capture, signal_number);
 }
 
 // A console job has the terminal, so its output is not captured, and it stays in this process group so that a signal

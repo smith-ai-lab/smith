@@ -1716,7 +1716,7 @@ void build(SmithBuild *b) {
         .description = "check a",
     };
     smith_step(b, &same);
-    smith_alias(b, "check", check.outputs);
+    smith_alias(b, "syntax", check.outputs);
     smith_default(b, check.outputs);
 }
 C
@@ -2321,6 +2321,107 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
 fi
 
+# 13b. The verbs (issue #40): no task or alias is named after one, .test marks a project's tests, and every run of build.c
+# writes what the verbs read, .smith/build.info and .smith/compile_commands.json (docs/build-c.md).
+for verb in fmt lint docs prove check run test; do
+    project
+    cat >build.c <<C
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "$verb", &step);
+    smith_default(b, step.outputs);
+}
+C
+    build
+    expect_status "verbs: a task named $verb is refused" 2
+    expect_contains "verbs: ... $verb names the verb" "$err" "task '$verb' is named after a verb; \`smith $verb\` does the same thing in every project"
+    cat >build.c <<C
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "other", &step);
+    smith_alias(b, "$verb", step.outputs);
+    smith_default(b, step.outputs);
+}
+C
+    build
+    expect_status "verbs: an alias named $verb is refused" 2
+    expect_contains "verbs: ... and says alias" "$err" "alias '$verb' is named after a verb"
+done
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}, .outputs = (const char *[]){"o", nullptr}, .test = true};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "verbs: .test on a step is refused" 2
+expect_contains "verbs: ... it is for tasks" "$err" ".test is for a task"
+
+project
+mkdir tests
+printf 'int main(void) { return 0; }\n' >main.c
+printf 'int helper(void) { return 1; }\n' >helper.c
+printf 'int other(void) { return 2; }\n' >other.c
+printf 'void test_one(void) {}\n' >tests/test_one.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject main_object = {.compiler = "cc", .source = "main.c", .output = "build/main.o",
+                               .flags = (const char *[]){"-DFIRST", nullptr}};
+    smith_object(b, &main_object);
+    SmithObject again = {.compiler = "cc", .source = "main.c", .output = "build/again.o",
+                         .flags = (const char *[]){"-DSECOND", nullptr}};
+    smith_object(b, &again);
+    SmithStep generate = {.command = (const char *[]){"sh", "-c", "echo 'int made(void) { return 3; }' > $0", "build/made.c", nullptr},
+                          .outputs = (const char *[]){"build/made.c", nullptr}};
+    smith_step(b, &generate);
+    SmithObject made = {.compiler = "cc", .source = "build/made.c", .output = "build/made.o", .flags = nullptr};
+    smith_object(b, &made);
+    SmithObject helper = {.compiler = "cc", .source = "helper.c", .output = "build/helper.o", .flags = nullptr,
+                          .implicit_inputs = generate.outputs};
+    smith_object(b, &helper);
+    SmithProgram program = {.linker = "cc", .output = "build/program",
+                            .objects = (const SmithObject *[]){&main_object, &helper, &made, nullptr}};
+    smith_program(b, &program);
+    smith_compile_command(b, "cc", "other.c", (const char *[]){"-DOTHER", nullptr});
+    SmithTests tests = {.sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)), .flags = (const char *[]){"-I", ".smith/include", nullptr}};
+    smith_tests(b, &tests);
+    smith_alias(b, "everything", program.step.outputs);
+    smith_default(b, smith_list(b, "everything", nullptr));
+}
+C
+build build/main.o
+expect "verbs: build.c runs with a task test made by smith_tests" 0 "$rc"
+info=$(cat .smith/build.info)
+tab=$(printf '\t')
+expect "verbs: build.info has the first compile of main.c, once, with its flags" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}main.c${tab}-DFIRST${tab}-MMD")"
+expect "verbs: ... not its second compile" 0 "$(printf '%s\n' "$info" | grep -c -e '-DSECOND')"
+expect "verbs: ... helper.c, which reads a generated file" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}helper.c${tab}")"
+expect "verbs: ... other.c, which smith_compile_command declares" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}other.c${tab}.*-DOTHER")"
+expect "verbs: ... the tests' source" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}tests/test_one.c${tab}")"
+expect "verbs: ... build.c itself" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}build.c${tab}")"
+expect "verbs: ... no generated source" 0 "$(printf '%s\n' "$info" | grep -c "made.c")"
+expect "verbs: ... no source under .smith/" 0 "$(printf '%s\n' "$info" | grep -c "^compile${tab}.smith/")"
+expect "verbs: ... the task of smith_tests is a test" 1 "$(printf '%s\n' "$info" | grep -c "^test${tab}test$")"
+expect "verbs: ... the programs" 1 "$(printf '%s\n' "$info" | grep -c "^program${tab}build/program$")"
+expect "verbs: ... the default, its alias opened" 1 "$(printf '%s\n' "$info" | grep -c "^default${tab}build/program$")"
+expect "verbs: the compile database lists main.c once" 1 "$(grep -c '"file": "main.c"' .smith/compile_commands.json)"
+expect "verbs: ... with the first compile's flags" 1 "$(grep -c -e '-DFIRST' .smith/compile_commands.json)"
+expect "verbs: ... not the second's" 0 "$(grep -c -e '-DSECOND' .smith/compile_commands.json)"
+expect "verbs: smith_needs is the generated files the compiles read" yes "$(grep -q '^build smith_needs: phony build/made.c' .smith/build.ninja && echo yes || echo no)"
+expect "verbs: smith_tests is the test tasks" yes "$(grep -q '^build smith_tests: phony test$' .smith/build.ninja && echo yes || echo no)"
+build smith_needs
+expect "verbs: building smith_needs makes the generated file" yes "$([ -f build/made.c ] && echo yes || echo no)"
+
 # 14. The executor (smith build runs the manifest itself). Manifests written by hand run through
 # `smith --smith-exec <manifest>`, which reads the same language and behaves as ninja did.
 exec_run() { capture "$smith" --smith-exec build.ninja "$@"; }
@@ -2791,18 +2892,18 @@ expect_contains "smith upgrade: and then settles" "$out" "no work to do"
 # What a smith with clang inside says about its clang is its identity: a rebuilt smith reports the same, a rebuilt LLVM
 # another. A stand-in smith that prints the two lines shows both (the real one is covered above and by run.sh).
 mkdir fake
-cat >fake/smith <<'SH'
+cat >fake/smith-cc <<'SH'
 #!/bin/sh
 case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\nidentity %s\n' "$(cat "$0.id")" ;; *) echo "$0" >>runs ;; esac
 while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : >"$2"; fi; shift; done
 SH
-chmod +x fake/smith
-echo "llvm-23.1.3 aaaa" >fake/smith.id
+chmod +x fake/smith-cc
+echo "llvm-23.1.3 aaaa" >fake/smith-cc.id
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    SmithObject a = {.compiler = "fake/smith", .source = "a.c", .output = "build/a.o"};
+    SmithObject a = {.compiler = "fake/smith-cc", .source = "a.c", .output = "build/a.o"};
     smith_object(b, &a);
     smith_default(b, a.step.outputs);
 }
@@ -2810,11 +2911,11 @@ C
 rm -rf build runs
 build
 expect "identity: the first build compiles" 1 "$(lines runs)"
-cp fake/smith fake/smith.new
-mv fake/smith.new fake/smith
+cp fake/smith-cc fake/smith-cc.new
+mv fake/smith-cc.new fake/smith-cc
 build
 expect_contains "identity: a smith rebuilt with the same LLVM rebuilds nothing" "$out" "no work to do"
-echo "llvm-23.1.3 bbbb" >fake/smith.id
+echo "llvm-23.1.3 bbbb" >fake/smith-cc.id
 build
 expect "identity: a smith linked against another LLVM rebuilds the object" 2 "$(lines runs)"
 build
@@ -2958,6 +3059,59 @@ capture "$smith" --smith-lower src/lib/text.smith
 expect_status "modules: the top-level --smith-lower is gone" fail
 capture "$smith" cc --smith-lower src/lib/text.smith
 expect_contains "modules: smith cc --smith-lower prints the lowering" "$out" "lib_text_make"
+
+# 13z. smith_cat: a nullptr first list would end the arguments and drop the other lists, so it is an error that says so.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *selected = nullptr;
+    const char *const *joined = smith_cat(b, selected, (const char *[]){"--function=x", nullptr}, nullptr);
+    smith_write(b, "joined.txt", smith_join(b, joined, " "));
+}
+C
+build
+expect_status "smith_cat: a nullptr first list fails" fail
+expect_contains "smith_cat: ... as a build.c error that says why" "$err" "smith: build.c: smith_cat: the first list is nullptr"
+expect_contains "smith_cat: ... and what to write instead" "$err" "(const char *[]){nullptr}"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *selected = (const char *[]){nullptr};
+    const char *const *joined = smith_cat(b, selected, (const char *[]){"--function=x", nullptr}, nullptr);
+    smith_write(b, "joined.txt", smith_join(b, joined, " "));
+}
+C
+build
+expect "smith_cat: an empty first list keeps the others" "--function=x" "$(cat joined.txt 2>/dev/null)"
+
+# 13y. A compiler named smith, by name, by path or from the environment (CC=$HOME/.local/bin/smith), is refused before
+# anything runs, with the hint to use smith-cc or smith-c++.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject app = {.compiler = smith_option_value(b, "CC", smith_env(b, "CC", "smith-cc"), "the compiler"),
+                       .source = "main.c", .output = "main.o"};
+    smith_object(b, &app);
+    smith_default(b, app.step.outputs);
+}
+C
+echo 'int main(void) { return 0; }' >main.c
+capture env CC="$smith" "$smith" build
+expect_status "CC=<path>/smith in the environment is refused" fail
+expect_contains "CC=<path>/smith: ... as a build.c error naming the value" "$err" "smith: build.c: smith_object: .compiler is \"$smith\""
+expect_contains "CC=<path>/smith: ... with the hint for C" "$err" "use \"$(dirname "$smith")/smith-cc\" for C"
+expect_contains "CC=<path>/smith: ... and for C++" "$err" "smith-c++\" for C++"
+expect "CC=<path>/smith: nothing ran" "" "$(ls main.o .smith/compiler 2>/dev/null)"
+capture "$smith" build -DCC=smith
+expect_status "-DCC=smith is refused" fail
+expect_contains "-DCC=smith: ... with the hint" "$err" "use \"smith-cc\" for C"
+capture env CC=smith-cc "$smith" build
+expect "CC=smith-cc still builds" 0 "$rc"
 
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1

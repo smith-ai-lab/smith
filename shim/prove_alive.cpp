@@ -149,12 +149,9 @@ Shape shape_of(const llvm::DIType *type) {
         case llvm::dwarf::DW_ATE_boolean:
             return Shape::Boolean;
         case llvm::dwarf::DW_ATE_unsigned:
-            return Shape::Unsigned;
         case llvm::dwarf::DW_ATE_unsigned_char:
             return Shape::Unsigned;
-        case llvm::dwarf::DW_ATE_signed_char:
-            return Shape::Signed;
-        default:
+        default: // signed, signed_char and the rest
             return Shape::Signed;
         }
     }
@@ -325,6 +322,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 if (auto *constant = dynamic_cast<IR::IntConst *>(condition);
                     constant != nullptr && constant->getInt() != nullptr && *constant->getInt() == 0)
                     condition = nullptr; // a point with no condition fails when it is reached
+                if (!id) continue;
                 auto *point = new SmithPoint(static_cast<unsigned>(*id), condition);
                 points.push_back(point);
                 block->getInstr(i) = std::unique_ptr<IR::Instr>(point);

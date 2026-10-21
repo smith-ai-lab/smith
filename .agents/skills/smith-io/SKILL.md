@@ -125,7 +125,7 @@ For a program that drives another (a server holding debugger children that speak
 
 - `smith_child_write_async(&child, &op, data, size)` completes when all the bytes are in the pipe, or fails: `EPIPE` when the child closed its stdin or exited (`op.size` is what was taken first). SIGPIPE cannot kill the program. A write bigger than the pipe (64 KiB) completes as the child reads, so write and read together on one loop and nothing deadlocks. `data` stays yours until done.
 - `smith_child_read_async(&child, &op, buffer, capacity)` completes with whatever has arrived (`op.data`, `op.size`, at least one byte, not NUL-terminated), or `op.end` when the child closed its stdout.
-- `smith_child_close_input(&child)` closes its stdin, so it sees the end of input (`cat` exits). `smith_child_kill(&child, signal)` signals the whole group (`ESRCH` if there is none). `smith_processes_wait_async(&io.processes, &op, child.process)` waits for the exit. `smith_child_close(&child)` closes the pipes still open, once, after the last op is done and the child has exited.
+- `smith_child_close_input(&child)` closes its stdin, so it sees the end of input (`cat` exits). `smith_child_kill(&child, signal)` signals the whole group (`ESRCH` if there is none). `smith_child_wait_async(&child, &op)` waits for the exit; once that op is done the child's id is free for another program, so `smith_child_kill` returns `ESRCH` and sends nothing (wait with `smith_processes_wait_async(&io.processes, &op, child.process)` and the kill cannot know: then never kill an id after its wait). The same holds for `smith_capture_stop(&capture, signal)`, which signals a capture's group only while its process has not been waited for. `smith_child_close(&child)` closes the pipes still open, once, after the last op is done and the child has exited.
 - One write, one read and one wait may be pending on a child at once; several children, the program's own stdin (`smith_console_read_async`), timers and exits all wait in the same `smith_io_run`.
 
 ```c
@@ -136,7 +136,7 @@ SmithOp write = {}, read = {}, wait = {};
 char buffer[4096];
 smith_child_write_async(&child, &write, request, request_size);
 smith_child_read_async(&child, &read, buffer, sizeof buffer);
-smith_processes_wait_async(&io.processes, &wait, child.process);
+smith_child_wait_async(&child, &wait);
 // loop on smith_io_run; resubmit read when read.done and !read.end; finish when wait.done
 ```
 

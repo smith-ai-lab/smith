@@ -416,7 +416,7 @@ class Layer {
         smith::Qualifier qualifier = smith::qualifierOf(pathOfUri(request.uri));
         bool behind = qualifier.present && !qualifier.is_c && qualifier.line == (uint32_t)request.line &&
                       request.character >= (int64_t)qualifier.column - (int64_t)qualifier.partial.size() &&
-                      request.character <= (int64_t)(qualifier.column + qualifier.partial.size());
+                      request.character <= (int64_t)qualifier.column + (int64_t)qualifier.partial.size();
         if (qualifier.present && qualifier.is_c) return; // C's own names, as they are
         if (!behind) {
             for (Value &entry : *items) {
