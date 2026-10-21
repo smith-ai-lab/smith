@@ -121,7 +121,7 @@ done
 expect "new hello: build.c turns modules on" yes "$(grep -q 'smith_modules(b' build.c && echo yes || echo no)"
 expect "new hello: the builds compile with modules" 3 "$(grep -c "fmodules-cache-path=$XDG_CACHE_HOME/smith/modules" .smith/build.ninja)"
 expect "new hello: the module cache is the shared one" yes "$(exists "$XDG_CACHE_HOME/smith/modules/modules.timestamp")"
-expect "new hello: compile_commands.json has no module flags" no "$(has "$(cat compile_commands.json)" "fmodule")"
+expect "new hello: compile_commands.json has the module flags" yes "$(has "$(cat compile_commands.json)" "fmodule")"
 expect "new hello: compile_commands has main.c" yes "$(grep -q '"main.c"' compile_commands.json && echo yes || echo no)"
 expect "new hello: compile_commands has build.c" yes "$(grep -q '"build.c"' compile_commands.json && echo yes || echo no)"
 debug_command=$(awk '/"file"/ { n++ } n == 1' compile_commands.json)

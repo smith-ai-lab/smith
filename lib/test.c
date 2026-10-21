@@ -683,6 +683,7 @@ typedef struct {
     size_t jobs;
     unsigned timeout;
     bool shrink;
+    unsigned shrink_seconds; // the time shrinking one failure may take
     bool full;
     bool list;
     bool verbose;
@@ -1268,7 +1269,7 @@ static void smith_test_report(const SmithTest *test, const SmithTestOptions *opt
 constexpr size_t smith_test_draws_max = 65536; // words recorded; past it, no more are
 constexpr size_t smith_test_slots = 131072;    // a power of two, twice the words: the hash table is never full
 constexpr unsigned smith_test_shrink_runs_max = 1000;
-constexpr double smith_test_shrink_seconds_max = 10.0;
+constexpr unsigned smith_test_shrink_seconds_default = 10;
 
 typedef struct {
     uint64_t key;
@@ -1478,7 +1479,7 @@ static void smith_test_shrink_run(const SmithTest *test, const SmithTestOptions 
                                 .seed = run->seed,
                                 .best = &smith_test_tries[0],
                                 .candidate = &smith_test_tries[1],
-                                .deadline = smith_test_seconds() + smith_test_shrink_seconds_max};
+                                .deadline = smith_test_seconds() + options->shrink_seconds};
     smith_test_draws_clear(smith_test_overrides);
     smith_test_discard(&smith_test_workers[smith_test_shrink_slot]); // a worker an earlier shrink left may be dirty
     smith_test_try_run(shrink); // the same key again, recording; it must fail as it did
@@ -1660,6 +1661,10 @@ static bool smith_test_parse_value(SmithTestOptions *options, const char *flag, 
         options->shrink = number == 1;
         return number <= 1;
     }
+    if (strcmp(flag, "--shrink-seconds") == 0) {
+        options->shrink_seconds = (unsigned)number;
+        return number > 0 && number <= 86400;
+    }
     if (strcmp(flag, "--shuffle") == 0) {
         options->shuffle_seed = number;
         options->shuffle_given = true;
@@ -1749,12 +1754,13 @@ int main(int argc, char **argv) {
         .jobs = cores > 0 && (size_t)cores <= smith_test_jobs_max ? (size_t)cores : smith_test_jobs_max,
         .timeout = 10,
         .shrink = true,
+        .shrink_seconds = smith_test_shrink_seconds_default,
         .color = isatty(STDOUT_FILENO) != 0 && getenv("NO_COLOR") == nullptr,
     };
     if (!smith_test_parse_options(argc, argv, &options)) {
         fprintf(stderr,
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
-                "[--timeout <seconds>] [--shrink 0|1] [--shuffle <seed>] [--isolate] [--full] [--list] [--verbose] "
+                "[--timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] [--shuffle <seed>] [--isolate] [--full] [--list] [--verbose] "
                 "[--stats]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;

@@ -400,7 +400,7 @@ expect_contains "aborts: a SIGSEGV fails" "$out" "FAIL abort_segv"
 expect_contains "aborts: ... saying it crashed" "$out" "it crashed with SIGSEGV"
 expect_contains "aborts: ... and showing what it printed first" "$out" "before the crash"
 capture build/tests $iso --test abort_hangs --timeout 1
-expect_contains "aborts: a hang is the test's timeout" "$out" "FAIL abort_hangs: timed out after 1.0 s"
+expect_contains "aborts: a hang is the test's timeout" "$out" "FAIL abort_hangs: timed out after 1."
 capture build/tests $iso --test abort_exits_zero
 expect_contains "aborts: exit(0) is a return, not an abort" "$out" "expected an abort; it returned"
 capture build/tests $iso --test abort_ --timeout 1
@@ -459,9 +459,9 @@ expect_contains "isolation: an ASan report is shown" "$out" "AddressSanitizer: h
 expect_contains "isolation: ... under the test's FAIL line" "$out" "FAIL overflow: killed by SIGABRT"
 expect_contains "isolation: ... with the note" "$out" "    note: index 8"
 capture build/tests $iso --test sleeps --timeout 1
-expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1.0 s"
+expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1."
 capture build/tests $iso --test alarm_hangs
-expect_contains "isolation: a test's own alarm ends it as a timeout, with the measured time" "$out" "FAIL alarm_hangs: timed out after 1.0 s"
+expect_contains "isolation: a test's own alarm ends it as a timeout, with the measured time" "$out" "FAIL alarm_hangs: timed out after 1."
 capture build/tests $iso --test board_note
 expect_contains "note: several lines show in full" "$out" "    note: board
   . x .
@@ -566,7 +566,7 @@ capture "$smith" build
 expect "shrink: the runner builds" 0 "$rc"
 
 line=$(line_of tests/test_shrink.c 'SMITH_CHECK(x, <, 500);')
-capture build/tests $iso --test shrink_int
+capture build/tests $iso --test shrink_int --shrink-seconds 3600
 seed=$(printf '%s' "$out" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
 expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
   tests/test_shrink.c:$line
@@ -587,19 +587,19 @@ expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
 capture "$smith" build test $isod -DTEST=shrink_int -DSEED="$seed"
 expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
 
-first=$(build/tests $iso --test shrink_list 2>&1 | plain)
+first=$(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain)
 expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
 expect_contains "shrink: ... of 91" "$first" "    item = 91   (long long)"
-second=$(build/tests $iso --test shrink_list 2>&1 | plain)
+second=$(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain)
 expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
 
-capture build/tests $iso --test shrink_normal --seeds 5000
+capture build/tests $iso --test shrink_normal --shrink-seconds 3600 --seeds 5000
 z=$(printf '%s' "$out" | sed -n 's/^    z *= \([0-9.e+-]*\) .*/\1/p')
 expect_contains "shrink: a normal with z < 3 shrinks" "$out" "FAIL shrink_normal with seed"
 expect "shrink: ... to the z nearest 3 from above" yes "$(awk -v z="$z" 'BEGIN { print (z >= 3 && z < 3.0000001) ? "yes" : "no" }')"
 
 line=$(grep -n -F 'SMITH_CHECK(x, <, 500);' tests/test_shrink.c | sed -n 2p | cut -d: -f1)
-capture build/tests $iso --test shrink_moves
+capture build/tests $iso --test shrink_moves --shrink-seconds 3600
 expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
 expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
 
@@ -1090,7 +1090,7 @@ expect_contains "workers: ... and the tests after it still run" "$out" "3 passed
 expect "workers: ... the crash cost a fresh worker (forks: 2 against one per test)" "$(by_mode 2 4)" "$(forks_of "$out")"
 
 capture build/tests $iso --test late_ --jobs 1 --timeout 1 --stats
-expect_contains "workers: a timeout fails its test" "$out" "FAIL late_2_sleeps: timed out after 1.0 s"
+expect_contains "workers: a timeout fails its test" "$out" "FAIL late_2_sleeps: timed out after 1."
 expect_contains "workers: ... and the tests around it pass" "$out" "2 passed, 1 failed"
 expect "workers: ... it replaced the worker" "$(by_mode 2 3)" "$(forks_of "$out")"
 
