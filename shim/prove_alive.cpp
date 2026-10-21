@@ -15,6 +15,7 @@
 #include "ir/state.h"
 #include "llvm_util/llvm2alive.h"
 #include "llvm_util/utils.h"
+#include "smt/ctx.h"
 #include "smt/smt.h"
 #include "smt/solver.h"
 #include "tools/transform.h"
@@ -30,6 +31,8 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <z3.h>
+
 #include <dirent.h>
 #include <unistd.h>
 
@@ -41,13 +44,54 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <sys/resource.h>
 #include <thread>
+#include <time.h>
 #include <vector>
 
 namespace prove {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+} // namespace
+
+double process_cpu_seconds() {
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return static_cast<double>(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) +
+           static_cast<double>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6;
+}
+
+double thread_cpu_seconds() {
+    timespec now{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+    return static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / 1e9;
+}
+
+namespace {
+
+// Runs `work`, which asks Z3 on this thread while nothing else computes, and interrupts Z3 once the process has used
+// `seconds` more CPU time (Z3's own time limit is wall time). Returns whether it had to.
+template <class Work> bool with_z3_cpu_limit(double seconds, Work work) {
+    std::atomic<bool> done{false};
+    std::atomic<bool> interrupted{false};
+    const double begin = process_cpu_seconds();
+    std::thread watcher([&] {
+        while (!done) {
+            if (process_cpu_seconds() - begin >= seconds) {
+                interrupted = true;
+                Z3_interrupt(smt::ctx());
+                return;
+            }
+            usleep(5000);
+        }
+    });
+    work();
+    done = true;
+    watcher.join();
+    return interrupted;
+}
 
 double seconds_since(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
@@ -244,6 +288,13 @@ struct Answer {
 Outcome alive_prove(Prepared &prepared, const Options &options) {
     Outcome outcome;
     Clock::time_point start = Clock::now();
+    const double cpu_start = process_cpu_seconds();
+    // What the budget counts (see Options): this thread's CPU time except where it ran queries with the others, plus
+    // the time the queries take on solver_threads cores, round by round.
+    const double thread_start = thread_cpu_seconds();
+    double in_rounds = 0;
+    double round_charges = 0;
+    auto charged = [&] { return thread_cpu_seconds() - thread_start - in_rounds + round_charges; };
     llvm::Function &function = *prepared.function;
     llvm::Module &module = *prepared.module;
     Unit &unit = prepared.unit;
@@ -268,14 +319,22 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 if (!argument->hasName() && !llvm::isa<llvm::Constant>(argument)) argument->setName("argument");
             }
         }
-        std::set<std::string> given_memory; // loads of what a parameter or a global holds, which is values
+        std::set<std::string> given_memory;         // loads of what a parameter or a global holds, which is values
+        std::set<const llvm::AllocaInst *> havoced; // the bookkeeping of the preparing is not for Alive2
+        for (llvm::Instruction &instruction : llvm::instructions(function)) {
+            if (instruction.getMetadata("smith.havoced") == nullptr) continue;
+            havoced.insert(llvm::cast<llvm::AllocaInst>(&instruction));
+            instruction.setMetadata("smith.havoced", nullptr);
+        }
         std::map<std::string, std::pair<std::string, unsigned>> locations; // where each named instruction is written
         for (llvm::Instruction &instruction : llvm::instructions(function)) {
             if (instruction.getType()->isVoidTy()) continue;
             if (!instruction.hasName()) instruction.setName("t");
             if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
                 const llvm::Value *object = llvm::getUnderlyingObject(load->getPointerOperand());
-                if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object))
+                auto *local = llvm::dyn_cast<llvm::AllocaInst>(object); // one a call was allowed to change
+                if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object) ||
+                    (local != nullptr && havoced.count(local) != 0))
                     given_memory.insert(llvm_util::value_name(instruction));
             }
             if (instruction.getDebugLoc()) {
@@ -329,16 +388,21 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         tools::Transform transform;
         transform.src = std::move(*source);
         transform.tgt = std::move(*target);
-        smt::set_query_timeout(std::to_string(static_cast<long>(options.budget_seconds * 1000) + 1));
+        // Z3 (the fallback for a query Bitwuzla cannot read, and the values of a counterexample) has only a wall clock,
+        // so it gets the budget as that
+        smt::set_query_timeout(
+            std::to_string(static_cast<long>(options.budget_seconds * Options::solver_threads * 1000) + 1));
         solver_context.reset(); // takes the timeout
         transform.preprocess();
         tools::TransformVerify verifier(transform, false);
         auto [state, target_state] = verifier.exec();
         if (options.dump) std::cerr << transform.src << "\n";
         if (options.dump) std::cerr << "symbolic execution took " << seconds_since(start) << " s\n";
-        if (seconds_since(start) > options.budget_seconds) {
+        if (charged() > options.budget_seconds) {
             outcome.status = Outcome::Timeout;
             outcome.seconds = seconds_since(start);
+            outcome.cpu_seconds = process_cpu_seconds() - cpu_start;
+            outcome.charged = charged();
             return outcome;
         }
 
@@ -449,6 +513,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             smt::expr whole;
             std::string text;
             Verdict verdict = Verdict::Unknown;
+            double cpu = 0; // the CPU time its query took
         };
         auto prepare = [&](Job &job, const smt::expr &formula, const char *name) {
             job.whole = axioms && assumptions && formula;
@@ -464,29 +529,47 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 job.text = smtlib_of(job.whole, name);
             }
         };
-        // Decides the jobs on several threads; false when the budget ran out first.
+        // Decides the jobs on several threads; false when the budget ran out first. The round is charged the longest
+        // query or all of them divided by the threads, whichever is more: what it takes on that many idle cores.
         auto solve = [&](const std::vector<Job *> &jobs, const char *name) {
-            double left = options.budget_seconds - seconds_since(start);
+            double left = options.budget_seconds - charged();
             if (left <= 0) return false;
             std::atomic<size_t> next{0};
+            const double process_start = process_cpu_seconds();
             auto work = [&] {
                 for (size_t i = next++; i < jobs.size(); i = next++) {
-                    if (!jobs[i]->text.empty()) jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left);
+                    if (jobs[i]->text.empty()) continue;
+                    double before = thread_cpu_seconds();
+                    jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left, process_start, Options::solver_threads);
+                    jobs[i]->cpu = thread_cpu_seconds() - before;
                 }
             };
             std::vector<std::thread> threads;
-            size_t count = std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()), jobs.size());
+            size_t count = std::min<size_t>(
+                std::min(Options::solver_threads, std::max(1u, std::thread::hardware_concurrency())), jobs.size());
             for (size_t i = 1; i < count; i++)
                 threads.emplace_back(work);
+            double main_before = thread_cpu_seconds();
             work();
+            in_rounds += thread_cpu_seconds() - main_before;
             for (std::thread &thread : threads)
                 thread.join();
+            double longest = 0;
+            double total = 0;
+            for (Job *job : jobs) {
+                longest = std::max(longest, job->cpu);
+                total += job->cpu;
+            }
+            round_charges += std::max(longest, total / Options::solver_threads);
             for (Job *job : jobs) {
                 if (job->verdict == Verdict::Timeout) return false;
                 if (job->verdict != Verdict::Unknown || job->text.empty()) continue;
                 smt::Solver fallback(true); // a query Bitwuzla cannot read: Z3 decides it, if it can
                 fallback.add(job->whole);
-                smt::Result answer = fallback.check(name);
+                smt::Result answer;
+                bool out_of_time = with_z3_cpu_limit(std::max(0.0, options.budget_seconds - charged()),
+                                                     [&] { answer = fallback.check(name); });
+                if (out_of_time) return false;
                 job->verdict = answer.isSat() ? Verdict::Sat : answer.isUnsat() ? Verdict::Unsat : Verdict::Unknown;
             }
             return true;
@@ -651,10 +734,12 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 break;
             }
             // a counterexample: Z3 finds its values, if it does it quickly
-            smt::set_query_timeout("3000");
+            smt::set_query_timeout("3000000");
             smt::Solver finder(true);
             finder.add(task.job.whole);
-            smt::Result found = finder.check(task.name);
+            smt::Result found;
+            with_z3_cpu_limit(std::min(3.0, std::max(0.5, options.budget_seconds - charged())),
+                              [&] { found = finder.check(task.name); });
             const smt::Model *model = found.isSat() ? &found.getModel() : nullptr;
             outcome.findings.push_back(task.point != nullptr ? describe(*task.point, model)
                                                              : describe_unlocated(*task.instruction, model));
@@ -674,6 +759,8 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         outcome.error = "Alive2 failed on " + unit.name + " (out of memory, or a construct it does not know)";
     }
     outcome.seconds = seconds_since(start);
+    outcome.cpu_seconds = process_cpu_seconds() - cpu_start;
+    outcome.charged = charged();
     return outcome;
 }
 

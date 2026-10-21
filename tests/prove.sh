@@ -117,10 +117,84 @@ expect_contains "loop: with no bound is an error" "$out" "unbounded.c:8: cannot 
 prove "$cases/message.m"
 expect_contains "Objective-C: a message send is an error" "$out" "message.m:10: cannot be proved: an Objective-C message send"
 
-# 7. A proof that runs out of time fails, like a test that times out.
+# 7. A proof that runs out of time fails, like a test that times out. The budget is CPU time (so that a busy machine does
+# not change a verdict), counted as on 8 idle cores: this one query runs on one thread, and 2 s of it is the whole budget.
 prove --budget=2 "$cases/division.c"
 expect "budget: fails" 1 "$rc"
-expect_contains "budget: ... as a timeout" "$out" "timed out after"
+expect_contains "budget: ... as a budget of CPU time" "$out" "over its budget of 2 s of CPU time"
+expect_contains "budget: ... that says what it used" "$out" "having used 2."
+
+# 7b. A proof's process ends with its parent: kill the parent (a timeout around the command, a closed terminal) while a
+# proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
+"$smith" prove --budget=30 "$cases/division.c" -- -I "$here/include" >/dev/null 2>&1 &
+parent=$!
+sleep 3
+children=$(pgrep -P "$parent")
+kill -9 "$parent"
+wait "$parent" 2>/dev/null
+sleep 1
+alive=
+for child in $children; do
+    kill -0 "$child" 2>/dev/null && alive="$alive $child"
+done
+[ -n "$children" ] && expect "orphan: a proof was running when its parent was killed" yes yes || expect "orphan: a proof was running" yes "no child"
+expect "orphan: the proof's process ends with its parent" "" "$alive"
+for child in $alive; do kill -9 "$child" 2>/dev/null; done
+
+# 7c. A caller assumes the callee's smith_ensures about the memory the callee wrote (issue #41), and nothing else.
+for function in five set_five three_then_bump bump two push two_through_a_pointer uses_bump_twice_read bump_twice_read; do
+    prove --function=$function "$cases/memory.c"
+    expect "memory: $function is proved" 0 "$rc"
+done
+prove --function=too_much "$cases/memory.c"
+expect "memory: a caller that wants more than the callee promises fails" 1 "$rc"
+expect_contains "memory: ... at its own smith_ensures" "$out" "memory.c:47: smith_ensures(value == 4) may be false"
+expect_contains "memory: ... with a value the callee allows" "$out" "counterexample: value = "
+for function in relies_on_the_body clobbered_local clobbered_parameter; do
+    prove --function=$function "$cases/memory.c"
+    expect "memory: $function relies on what the callee does not promise and fails" 1 "$rc"
+    expect_contains "memory: ... with a counterexample, not poison and not undefined behaviour" "$out" "may be false"
+    expect_contains "memory: ... that is a value" "$out" "first = "
+    case $out in *poison* | *"undefined behaviour"*) expect "memory: $function names no poison" "none" "$out" ;; esac
+done
+
+# 7c2. A const pointer is not written by a call, and a callee with many blocks is used through its contract.
+for function in add_if_set turn_after spread spread_then_check; do
+    prove --function=$function "$cases/readonly.c"
+    expect "readonly: $function is proved" 0 "$rc"
+done
+prove --function=grows_by_one "$cases/readonly.c"
+expect "readonly: a claim stronger than the contract fails" 1 "$rc"
+expect_contains "readonly: ... with its line" "$out" "readonly.c:43: smith_ensures(now == old + 1) may be false"
+
+# 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
+for function in apply_move count_of bump_count is_step; do
+    prove --function=$function "$cases/by_value.c"
+    expect "by value: $function is proved" 0 "$rc"
+done
+prove --function=same_row "$cases/by_value.c"
+expect "by value: a wrong promise about the fields fails" 1 "$rc"
+expect_contains "by value: ... as a promise that may be false" "$out" "by_value.c:30: smith_ensures(move.row == move.dest_row) may be false"
+case $out in *poison* | *"undefined behaviour"*) expect "by value: the counterexample is not poison" "a value" "$out" ;; *) expect "by value: the counterexample is not poison" "a value" "a value" ;; esac
+
+# 7e. A file that does not compile is an error with clang's message, never "nothing to prove".
+printf '#include <smith/contract.h>\nint f(int x) { return x +; }\n' >"$work/syntax_error.c" # not a .c file of the repository: the tree-sitter test would call it a parse error
+prove "$work/syntax_error.c"
+expect "compile error: fails" 1 "$rc"
+expect_contains "compile error: ... with clang's message" "$out" "syntax_error.c:2:26: error: expected expression"
+case $out in *"nothing to prove"*) expect "compile error: is not nothing to prove" "an error" "$out" ;; *) expect "compile error: is not nothing to prove" "an error" "an error" ;; esac
+prove "$cases/memory.c" "$work/syntax_error.c"
+expect "compile error: in the second file fails" 1 "$rc"
+prove "$work/does-not-exist.c"
+expect "missing file: fails" 1 "$rc"
+expect_contains "missing file: ... and names it" "$out" "does-not-exist.c"
+
+# 7f. A function with a variable argument list does not stop the others; calling it is an error that says so.
+prove --function=twice "$cases/varargs.c"
+expect "varargs: another function is proved" 0 "$rc"
+prove --function=uses_sum "$cases/varargs.c"
+expect "varargs: calling one is an error" 1 "$rc"
+expect_contains "varargs: ... that names the call" "$out" "varargs.c:25: cannot be proved: a call of sum, which takes a variable argument list"
 
 # 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 # before the fixes (else-if, col > 1) fails with a counterexample.

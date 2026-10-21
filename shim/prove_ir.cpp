@@ -43,7 +43,9 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -219,6 +221,10 @@ struct Analyses {
 // proof of the result holds for the original in every case LLVM keeps defined.
 const char *const clean_pipeline = "sroa<modify-cfg>,early-cse,simplifycfg,dce";
 
+// The same without early-cse, which would replace a load by the value an earlier store wrote. A contract is evaluated
+// where the caller can read the memory the callee wrote, so the loads of its snapshot must stay loads.
+const char *const light_pipeline = "sroa<modify-cfg>,simplifycfg,dce";
+
 // Loops of constant bounds are unrolled, whatever the cost model thinks.
 const char *const unroll_pipeline =
     "loop-simplify,lcssa,loop(indvars),loop-unroll<O3;full-unroll-max=1000000;no-partial;no-runtime;upperbound>,"
@@ -353,6 +359,16 @@ void mark_accessed_parameters(Function &function) {
                     widest = std::max(widest, store->getAlign());
                     stored = true;
                 }
+            } else if (auto *call = dyn_cast<CallBase>(&instruction)) {
+                // Passed on to a function that stores through its parameter (one used through its contract is not
+                // inlined): the object must be writable and aligned for that too.
+                Function *callee = direct_callee(call);
+                if (callee == nullptr || callee->isIntrinsic()) continue;
+                for (unsigned a = 0; a < call->arg_size() && a < callee->arg_size(); a++) {
+                    if (getUnderlyingObject(call->getArgOperand(a)) != argument) continue;
+                    if (callee->getArg(a)->hasAttribute(Attribute::Writable)) stored = true;
+                    if (MaybeAlign align = callee->getArg(a)->getParamAlign()) widest = std::max(widest, *align);
+                }
             }
         }
         if (widest > Align(1)) argument->addAttr(Attribute::getWithAlignment(function.getContext(), widest));
@@ -371,8 +387,8 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             if (call == nullptr) continue;
             Function *callee = call->getCalledFunction();
             if (callee == nullptr || callee->isDeclaration() || callee == &function || is_modular(*callee) ||
-                recursive.count(callee) != 0)
-                continue;
+                recursive.count(callee) != 0 || callee->isVarArg())
+                continue; // a variable argument list cannot be inlined into a function that has none
             target = call;
             break;
         }
@@ -385,6 +401,43 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             return false;
         }
     }
+}
+
+const char *const snapshot_suffix = ".smith.contract";
+
+// A modular function is used through its contract, and a contract about memory is about the memory after the call.
+// The function that is proved (and called) is cleaned until a load that follows a store is the stored value; the
+// contract is read from this copy, made before that, in which a load of the callee's memory is still a load.
+void make_snapshot(Function &function) {
+    ValueToValueMapTy map;
+    Function *copy = CloneFunction(&function, map);
+    copy->setName(function.getName() + snapshot_suffix);
+    copy->setLinkage(GlobalValue::InternalLinkage);
+    copy->addFnAttr("smith.snapshot");
+    // A check that traps (UBSan's, an unreachable) does not decide whether a contract after it holds: the function is
+    // proved on its own not to trap. Left in, every block after a check would be control dependent on every branch
+    // before it (a trap is an exit, so nothing after it post-dominates what came before), and the slice of a contract
+    // would take in the body's loads.
+    SmallVector<CondBrInst *, 16> checks;
+    for (BasicBlock &block : *copy) {
+        auto *branch = dyn_cast<CondBrInst>(block.getTerminator());
+        if (branch == nullptr) continue;
+        if (isa<UnreachableInst>(branch->getSuccessor(0)->getTerminator()) ||
+            isa<UnreachableInst>(branch->getSuccessor(1)->getTerminator()))
+            checks.push_back(branch);
+    }
+    for (CondBrInst *branch : checks) {
+        bool first_traps = isa<UnreachableInst>(branch->getSuccessor(0)->getTerminator());
+        BasicBlock *kept = branch->getSuccessor(first_traps ? 1 : 0);
+        if (isa<UnreachableInst>(kept->getTerminator())) continue; // both trap: leave it
+        UncondBrInst::Create(kept, branch->getIterator());
+        branch->eraseFromParent();
+    }
+    removeUnreachableBlocks(*copy);
+}
+
+bool is_snapshot(const Function &function) {
+    return function.hasFnAttribute("smith.snapshot");
 }
 
 } // namespace
@@ -430,7 +483,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     Analyses analyses;
     for (Function &function : module) {
         if (function.isDeclaration()) continue;
-        if (!analyses.run_function(function, clean_pipeline, error)) return false;
+        if (!analyses.run_function(function, light_pipeline, error)) return false;
         mark_pointer_parameters(function);
     }
 
@@ -449,6 +502,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     for (Function *function : order) {
         if (program.recursive.count(function) != 0) continue;
         if (!inline_helpers(*function, program.recursive, error)) return false;
+        if (is_modular(*function)) make_snapshot(*function);
         if (!analyses.run_function(*function, clean_pipeline, error)) return false;
         mark_accessed_parameters(*function);
     }
@@ -463,7 +517,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
 std::vector<std::string> program_units(const Program &program) {
     std::vector<std::string> names;
     for (const Function &function : *program.module) {
-        if (function.isDeclaration()) continue;
+        if (function.isDeclaration() || is_snapshot(function)) continue;
         bool unit = has_any_own_contract(function);
         if (!unit && program.called.count(&function) == 0) {
             for (const Instruction &instruction : instructions(function)) {
@@ -502,6 +556,7 @@ struct Analysis {
     PostDominatorTree post;
     DenseMap<const BasicBlock *, SmallPtrSet<const BasicBlock *, 4>> control; // block -> the blocks that decide it
     SmallVector<const Instruction *, 16> writers;
+    mutable DenseMap<const BasicBlock *, SmallPtrSet<const BasicBlock *, 32>> reachable;
 
     explicit Analysis(Function &function) : function(function), dominators(function), post(function) {
         for (BasicBlock &block : function) {
@@ -534,16 +589,35 @@ struct Analysis {
         return instruction.mayWriteToMemory();
     }
 
+    // Whether execution can go from `from` to `to`. LLVM's isPotentiallyReachable gives up after 32 blocks and answers
+    // yes, and a function with its contracts' helpers inlined has hundreds: every load would be "read after a write".
+    bool reaches(const Instruction *from, const Instruction *to) const {
+        const BasicBlock *start = from->getParent();
+        if (start == to->getParent() && from->comesBefore(to)) return true;
+        auto found = reachable.find(start);
+        if (found == reachable.end()) { // the blocks reachable by one step or more, from the end of `start`
+            SmallPtrSet<const BasicBlock *, 32> seen;
+            SmallVector<const BasicBlock *, 32> work(successors(start).begin(), successors(start).end());
+            while (!work.empty()) {
+                const BasicBlock *block = work.pop_back_val();
+                if (!seen.insert(block).second) continue;
+                work.append(successors(block).begin(), successors(block).end());
+            }
+            found = reachable.insert({start, std::move(seen)}).first;
+        }
+        return found->second.contains(to->getParent());
+    }
+
     bool written_before(const Instruction &load) const {
         for (const Instruction *writer : writers) {
-            if (writer != &load && isPotentiallyReachable(writer, &load, nullptr, &dominators)) return true;
+            if (writer != &load && reaches(writer, &load)) return true;
         }
         return false;
     }
 
     bool written_after(const Instruction &load) const {
         for (const Instruction *writer : writers) {
-            if (writer != &load && isPotentiallyReachable(&load, writer, nullptr, &dominators)) return true;
+            if (writer != &load && reaches(&load, writer)) return true;
         }
         return false;
     }
@@ -577,7 +651,9 @@ bool compute_cone(Analysis &analysis, ArrayRef<Instruction *> roots, const Value
                 return false;
             }
             if (split_old && !analysis.written_before(*load)) {
-                cone.old_loads.push_back(const_cast<LoadInst *>(load));
+                // Once: the load leaves `keep`, so a second user of it adds it to the work again, and a load listed
+                // twice is one parameter of the slice taken twice.
+                if (!llvm::is_contained(cone.old_loads, load)) cone.old_loads.push_back(const_cast<LoadInst *>(load));
                 cone.keep.erase(instruction);
                 continue;
             }
@@ -723,6 +799,7 @@ Slices build_slices(Function &callee) {
         if (contract_of(&instruction) == Contract::Ensures) ensures_roots.push_back(&instruction);
     }
     std::string name = callee.getName().str();
+    if (StringRef(name).ends_with(snapshot_suffix)) name.resize(name.size() - strlen(snapshot_suffix));
     if (!requires_roots.empty()) {
         Cone cone;
         if (!compute_cone(analysis, requires_roots, nullptr, false, cone, slices.error)) return slices;
@@ -812,6 +889,7 @@ struct UnitContext {
     const std::set<std::string> &recursive; // the names of the functions that call themselves
     std::map<Function *, Slices> slices;
     std::unique_ptr<Unprovable> unprovable;
+    unsigned havocs = 0; // the objects a call has been allowed to change
 
     void fail(const Instruction *at, std::string what, std::string fix) {
         auto failure = std::make_unique<Unprovable>();
@@ -860,10 +938,95 @@ bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
     return true;
 }
 
+// Copies `bytes` from `source` to `destination` with loads and stores of the widest integer the alignment allows,
+// inserted before `at`. (llvm.memcpy of a whole object becomes a lambda over the memory array in Alive2's encoding,
+// which Bitwuzla cannot read.) Returns the last store.
+Instruction *copy_object(Instruction *at, const DebugLoc &location, Value *destination, Value *source, uint64_t bytes,
+                         Align align) {
+    IRBuilder<> builder(at);
+    builder.SetCurrentDebugLocation(location);
+    unsigned widest = align.value() >= 8 ? 8 : static_cast<unsigned>(align.value());
+    Instruction *last = nullptr;
+    for (uint64_t offset = 0; offset < bytes;) {
+        unsigned size = widest;
+        while (size > 1 && (offset + size > bytes || offset % size != 0))
+            size /= 2;
+        Type *type = builder.getIntNTy(size * 8);
+        Align here = commonAlignment(align, offset);
+        Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), source, offset);
+        Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), destination, offset);
+        last = builder.CreateAlignedStore(builder.CreateAlignedLoad(type, from, here), to, here);
+        offset += size;
+    }
+    return last;
+}
+
+// Alive2 does not change a local object (an alloca of the function) when a call writes through a pointer to it: its
+// model of a call havocs the memory of other blocks and leaves a TODO for locals. A caller would then know what the
+// callee never promised (`first == 9` after a call that overwrote it). So after the call each local object it was given
+// is overwritten by the bytes of a global of its own that nothing initializes: arbitrary, and different at every call,
+// before the callee's contract is assumed of it. Returns the last instruction it inserted (`call` when none).
+Instruction *havoc_locals(UnitContext &context, CallBase &call, Function &callee, Instruction *last,
+                          const SmallPtrSetImpl<const Value *> &readonly) {
+    MemoryEffects effects = callee.getMemoryEffects();
+    if (!isModSet(effects.getModRef(IRMemLocation::ArgMem)) && !isModSet(effects.getModRef(IRMemLocation::Other)))
+        return last;
+    const DataLayout &layout = context.module.getDataLayout();
+    SmallPtrSet<const AllocaInst *, 4> done;
+    for (Value *argument : call.args()) {
+        if (!argument->getType()->isPointerTy() || readonly.contains(argument)) continue;
+        auto *object = dyn_cast<AllocaInst>(getUnderlyingObject(argument));
+        if (object == nullptr || !done.insert(object).second) continue;
+        std::optional<TypeSize> size = object->getAllocationSize(layout);
+        if (!size || size->isScalable() || size->getFixedValue() == 0) continue;
+        LLVMContext &llvm_context = context.module.getContext();
+        auto *type = ArrayType::get(Type::getInt8Ty(llvm_context), size->getFixedValue());
+        auto *source =
+            new GlobalVariable(context.module, type, false, GlobalValue::InternalLinkage,
+                               ConstantAggregateZero::get(type), "smith.havoc." + std::to_string(context.havocs++));
+        source->setAlignment(object->getAlign());
+        object->setMetadata("smith.havoced",
+                            MDNode::get(llvm_context, {}));          // what it holds is values, as a parameter's
+        context.function.setMemoryEffects(MemoryEffects::unknown()); // it now reads a global, whatever it inferred
+        last = copy_object(last->getNextNode(), call.getDebugLoc(), object, source, size->getFixedValue(),
+                           object->getAlign());
+    }
+    return last;
+}
+
+// A pointer the callee takes as `readonly` (a `const T *`) is not written by the call. Alive2 is told only that the
+// call may write through its pointers (a `readonly` call argument it takes as the call's promise, and reports a call
+// that might write it as undefined behaviour), so the attribute is dropped from the call and the promise kept by hand:
+// the call is given a copy of the object, made before it, and everything else (the contract's slices, the code after
+// the call) keeps reading the object itself, which no call can have changed.
+void pass_copies_of_readonly(Function &function, CallBase &call, Function &callee, IRBuilder<> &entry,
+                             SmallPtrSetImpl<const Value *> &copies) {
+    MemoryEffects effects = callee.getMemoryEffects();
+    if (!isModSet(effects.getModRef(IRMemLocation::ArgMem)) && !isModSet(effects.getModRef(IRMemLocation::Other)))
+        return;
+    for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
+        Value *pointer = call.getArgOperand(i);
+        if (!pointer->getType()->isPointerTy()) continue;
+        if (!callee.hasParamAttribute(i, Attribute::ReadOnly) && !callee.hasParamAttribute(i, Attribute::ReadNone))
+            continue;
+        uint64_t bytes = callee.getParamDereferenceableBytes(i);
+        if (bytes == 0) continue;
+        Align align = callee.getParamAlign(i).valueOrOne();
+        auto *copy = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(function.getContext()), bytes));
+        copy->setAlignment(align);
+        copy_object(&call, call.getDebugLoc(), copy, pointer, bytes, align);
+        call.setArgOperand(i, copy);
+        copies.insert(copy);
+    }
+}
+
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
 bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     auto cached = context.slices.find(&callee);
-    if (cached == context.slices.end()) cached = context.slices.emplace(&callee, build_slices(callee)).first;
+    if (cached == context.slices.end()) {
+        Function *snapshot = context.module.getFunction(callee.getName().str() + snapshot_suffix);
+        cached = context.slices.emplace(&callee, build_slices(snapshot != nullptr ? *snapshot : callee)).first;
+    }
     Slices &slices = cached->second;
     if (!slices.ok) {
         context.fail(&call, "cannot use the contract of " + source_name(callee) + ": " + slices.error, "");
@@ -894,6 +1057,8 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
                                      "lost across the call");
     }
     IRBuilder<> entry(&*function.getEntryBlock().getFirstInsertionPt());
+    SmallPtrSet<const Value *, 2> copies; // what the call is given in place of the objects it may not write
+    pass_copies_of_readonly(function, call, callee, entry, copies);
     SmallVector<Value *, 4> slots;
     for (Type *type : slices.old_types)
         slots.push_back(entry.CreateAlloca(type));
@@ -919,7 +1084,9 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
         SmallVector<Value *, 8> with_result(arguments.begin(), arguments.end());
         if (slices.has_result) with_result.push_back(&call);
         with_result.append(olds.begin(), olds.end());
-        auto *ensures_call = CallInst::Create(slices.ensures_slice, with_result, "", call.getNextNode()->getIterator());
+        Instruction *after = havoc_locals(context, call, callee, &call, copies);
+        auto *ensures_call =
+            CallInst::Create(slices.ensures_slice, with_result, "", after->getNextNode()->getIterator());
         ensures_call->setDebugLoc(call.getDebugLoc());
         if (!inline_slice(context, *ensures_call, call_site)) return false;
     }
@@ -960,6 +1127,11 @@ bool resolve_calls(UnitContext &context) {
                 call->setMetadata("smith.resolved", MDNode::get(function.getContext(), {}));
                 target = nullptr;
                 continue;
+            }
+            if (callee->isVarArg() && !callee->isDeclaration()) {
+                context.fail(call, "a call of " + source_name(*callee) + ", which takes a variable argument list",
+                             "call a function with fixed parameters; a variable argument list is not proved");
+                return false;
             }
             if (!callee->isDeclaration()) {
                 if (callee == &function) {
@@ -1128,17 +1300,33 @@ class Normalizer {
 
 // Attributes LLVM 23 infers that the Alive2 this was built with does not know. Dropping nofree only loses what it said.
 void drop_unsupported_attributes(Function &function) {
-    for (unsigned i = 0; i < function.arg_size(); i++)
+    // `readnone` on a pointer a callee never touches (inferred too) makes Alive2 report the call as undefined behaviour
+    // when the caller's pointer is `readonly`, an access it does not make.
+    // `readonly` goes too (the promise is kept by hand where a contract is used, see pass_copies_of_readonly), and
+    // `initializes`, which LLVM infers from a body, makes Alive2 check that the function stores those bytes and report
+    // a load of what a call left there as undefined behaviour; what the bytes hold after a call is the callee's
+    // contract.
+    for (unsigned i = 0; i < function.arg_size(); i++) {
         function.removeParamAttr(i, Attribute::NoFree);
+        function.removeParamAttr(i, Attribute::Initializes);
+    }
     for (Function &callee : *function.getParent()) {
-        for (unsigned i = 0; i < callee.arg_size(); i++)
+        for (unsigned i = 0; i < callee.arg_size(); i++) {
             callee.removeParamAttr(i, Attribute::NoFree);
+            callee.removeParamAttr(i, Attribute::Initializes);
+            callee.removeParamAttr(i, Attribute::ReadNone);
+            callee.removeParamAttr(i, Attribute::ReadOnly);
+        }
     }
     for (Instruction &instruction : instructions(function)) {
         auto *call = dyn_cast<CallBase>(&instruction);
         if (call == nullptr) continue;
-        for (unsigned i = 0; i < call->arg_size(); i++)
+        for (unsigned i = 0; i < call->arg_size(); i++) {
             call->removeParamAttr(i, Attribute::NoFree);
+            call->removeParamAttr(i, Attribute::Initializes);
+            call->removeParamAttr(i, Attribute::ReadNone);
+            call->removeParamAttr(i, Attribute::ReadOnly);
+        }
     }
 }
 
@@ -1195,6 +1383,11 @@ Prepared program_prepare(Program &program, const std::string &name) {
     prepared.module = CloneModule(*program.module);
     prepared.function = prepared.module->getFunction(name);
     Function &function = *prepared.function;
+    // A value a caller passes is a value. clang writes noundef on a scalar parameter, but not on the integers a struct
+    // passed by value is split into (a 4-byte Move arrives as one i32), which Alive2 would then take as poison.
+    for (Argument &argument : function.args()) {
+        if (!argument.getType()->isPointerTy()) argument.addAttr(Attribute::NoUndef);
+    }
     prepared.unit.name = source_name(function);
     if (const DISubprogram *subprogram = function.getSubprogram()) {
         prepared.unit.file = subprogram->getFilename().str();

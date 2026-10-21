@@ -72,7 +72,18 @@ struct Unprovable {
 
 // Settings of one run.
 struct Options {
+    // The budget is CPU time, not wall time, so that a busy machine does not change a verdict. A proof is charged what
+    // it would take on `solver_threads` idle cores: the CPU time of what runs one thing after another, plus, for the
+    // queries that run side by side, the longest of them or all of them divided by `solver_threads`, whichever is more.
+    // Each of those is a CPU time, which does not depend on what else the machine runs. Bitwuzla runs the queries of a
+    // proof on that many threads at most, on every machine.
     double budget_seconds = 10;
+    static constexpr unsigned solver_threads = 8;
+    // The most CPU time the whole process may use before the kernel stops it, the backstop for a solver that does not
+    // look at its budget.
+    double cpu_limit() const {
+        return budget_seconds * solver_threads * 1.25 + 5;
+    }
     bool verbose = false;
     std::vector<std::string> only; // function names; empty: every function with a contract
     bool dump = false;             // print the IR each function is proved from
@@ -115,8 +126,13 @@ Prepared program_prepare(Program &program, const std::string &name);
 // Timeout: the deadline passed. Unknown: the solver could not read or decide the query.
 enum class Verdict { Unsat, Sat, Unknown, Timeout };
 
-// Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable, within `seconds`.
-Verdict bitwuzla_check(const std::string &query, double seconds);
+// Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable. It stops when the calling thread has used `seconds` of CPU
+// time, or when the process has used `threads * seconds` since it was at `process_start` (the queries that run side by
+// side share a budget).
+Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads);
+
+// CPU time (user and system) the calling thread has used.
+double thread_cpu_seconds();
 
 // ---- shim/prove_alive.cpp ----
 
@@ -131,9 +147,14 @@ struct Finding {
 struct Outcome {
     enum Status { Proved, Failed, Timeout, Error } status = Proved;
     std::vector<Finding> findings;
-    std::string error; // for Error
-    double seconds = 0;
+    std::string error;      // for Error
+    double seconds = 0;     // wall time
+    double cpu_seconds = 0; // CPU time of the process, every thread, since the proof began
+    double charged = 0;     // what the budget counts: the time on solver_threads idle cores (see Options)
 };
+
+// CPU time (user and system, every thread) the process has used.
+double process_cpu_seconds();
 
 // Proves every point of one prepared function with Alive2 and Z3 within the budget.
 Outcome alive_prove(Prepared &prepared, const Options &options);

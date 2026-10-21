@@ -6,7 +6,6 @@
 #include "bitwuzla/cpp/bitwuzla.h"
 #include "bitwuzla/cpp/parser.h"
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -14,30 +13,34 @@
 namespace prove {
 namespace {
 
-// Stops the solver at a deadline.
+// Stops the solver at a budget of CPU time (see bitwuzla_check).
 class Deadline final : public bitwuzla::Terminator {
   public:
-    explicit Deadline(double seconds)
-        : end(std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<long>(seconds * 1000))) {}
+    Deadline(double seconds, double process_start, unsigned threads)
+        : seconds(seconds), threads(threads), process_start(process_start), thread_start(thread_cpu_seconds()) {}
     bool terminate() override {
-        expired = expired || std::chrono::steady_clock::now() >= end;
+        expired = expired || thread_cpu_seconds() - thread_start >= seconds ||
+                  (process_cpu_seconds() - process_start) / threads >= seconds;
         return expired;
     }
     bool expired = false;
 
   private:
-    std::chrono::steady_clock::time_point end;
+    double seconds;
+    unsigned threads;
+    double process_start;
+    double thread_start;
 };
 
 } // namespace
 
-Verdict bitwuzla_check(const std::string &query, double seconds) {
+Verdict bitwuzla_check(const std::string &query, double seconds, double process_start, unsigned threads) {
     try {
         bitwuzla::TermManager manager;
         bitwuzla::Options options;
         std::ostringstream answer;
         bitwuzla::parser::Parser parser(manager, options, "smt2", &answer);
-        Deadline deadline(seconds);
+        Deadline deadline(seconds, process_start, threads);
         parser.configure_terminator(&deadline);
         parser.parse(query, false, false);
         if (deadline.expired) return Verdict::Timeout;
