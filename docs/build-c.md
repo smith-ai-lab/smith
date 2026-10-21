@@ -176,6 +176,36 @@ build.c has two layers, and a project may use either or both.
   A program's step lists the objects' outputs as inputs and the libraries that are files (a path with `/`, or ending in
   `.a`, `.dylib` or `.so`, and not starting with `-`) as implicit inputs; `-framework X` is not a file.
 
+## Packages: `smith_package`
+
+A package is an archive named in build.c by a URL and the SHA-256 of its bytes, as in Zig. There is no registry, no
+version solving and no lock file: the hash is the lock, so the same hash always gives the same bytes.
+
+```c
+const char *cmake = smith_package(b, &(SmithPackage){
+    .url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz",
+    .hash = "sha256:...", // `smith fetch <url>` prints this line
+});
+// cmake is "<cache>/smith/packages/<hex>"; bin/cmake is under it
+```
+
+- **Cache:** `$XDG_CACHE_HOME/smith/packages/<hex>/`, or `~/.cache/smith/packages/<hex>/`, keyed by the archive's hash.
+  `smith_package` fetches, verifies and extracts on the first use and afterwards only looks the folder up, so a build
+  works offline once it has fetched. It returns the absolute path, which is stable and can go in steps, `-I` flags and
+  objects. An archive with one top-level folder is returned as the contents of that folder.
+- **Safe to interrupt:** the archive goes to a temporary file, its SHA-256 is checked, it is extracted into a temporary
+  folder, and only then is the folder renamed to its hash. A folder named by a hash is therefore always complete; a
+  killed fetch leaves only `.tmp-*` names, which nothing reads.
+- **Errors:** a wrong hash names the URL, the expected hash and the actual one. `-DOFFLINE` makes a package missing from
+  the cache an error that names its URL, with no fetch. build.c runs on every `smith build`, so a package is fetched
+  when build.c asks for it, before ninja runs.
+- **`smith fetch <url>`** downloads the archive, prints `.hash = "sha256:...",` to paste into build.c, and leaves the
+  package in the cache.
+- **Download and extraction** use `/usr/bin/curl` (https, or `file://` for tests; `$SMITH_CURL` picks another curl) and
+  `/usr/bin/tar -xf`, which on macOS reads `.tar.gz`, `.tar.xz` and `.zip`. The download is one internal function, so
+  smith's own HTTP client can replace curl later without changing this. SHA-256 is in smith, checked against the NIST
+  test vectors in `tests/build.sh`. macOS only for now.
+
 ## Tests: `smith_tests` and `<smith/test.h>`
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
@@ -384,6 +414,22 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // build.c asks. An unknown name is an error that lists the known names ("arena", "random", "test"; random uses the arena,
 // so a project that compiles one compiles both; smith_tests compiles "test").
 const char *smith_library(SmithBuild *b, const char *name);
+
+// A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
+// version solving and no lock file: the hash is the lock, and the same hash always gives the same bytes.
+typedef struct {
+    const char *url;  // https:// (file:// for tests)
+    const char *hash; // "sha256:<64 hex digits>" of the archive's bytes; `smith fetch <url>` prints the line to paste
+} SmithPackage;
+// The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
+// ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash. Fetched, verified and extracted on
+// the first use (/usr/bin/curl and /usr/bin/tar, so .tar.gz, .tar.xz and .zip; $SMITH_CURL picks another curl);
+// afterwards it is only looked up, so a build works offline once it has fetched. When the archive holds one top-level
+// folder, the path is that folder's contents. The package appears in the cache only when it is complete: a fetch that
+// is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
+// -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
+// so it can go in steps, -I flags and objects. macOS only for now.
+const char *smith_package(SmithBuild *b, const SmithPackage *package);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
