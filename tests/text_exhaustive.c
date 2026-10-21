@@ -79,7 +79,9 @@ static void *exhaustive_run_f64(void *argument) {
     Work *work = argument;
     char text[128];
     for (uint64_t i = work->first; i < exhaustive_double_samples; i += work->stride) {
-        double d = __builtin_bit_cast(double, i * exhaustive_double_stride);
+        uint64_t pattern = i;
+        pattern *= exhaustive_double_stride;
+        double d = __builtin_bit_cast(double, pattern);
         if (d != d || d > DBL_MAX || d < -DBL_MAX) continue;
         work->finite += 1;
         bool good = exhaustive_written(d);
@@ -89,8 +91,7 @@ static void *exhaustive_run_f64(void *argument) {
         good = exhaustive_agrees_f64(text, d, false) && good;
         if (good) continue;
         work->mismatches += 1;
-        if (work->mismatches <= exhaustive_report_max)
-            printf("MISMATCH 0x%016" PRIx64 " \"%s\"\n", i * exhaustive_double_stride, text);
+        if (work->mismatches <= exhaustive_report_max) printf("MISMATCH 0x%016" PRIx64 " \"%s\"\n", pattern, text);
     }
     return nullptr;
 }
