@@ -1046,7 +1046,6 @@ static const char *const smith_build_c_words[] = {"smith", "-std=gnu23",     "-g
 
 // Clang modules (smith_modules): a module map per header folder, one module per header, and the flags that use them.
 
-constexpr char smith_modules_cache[] = ".smith/cache/modules";
 constexpr char smith_modules_library_folder[] = ".smith/include/smith";
 
 static const char *const *smith_modules_flags; // nullptr while modules are off
@@ -1168,12 +1167,19 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     size_t count = smith_count(folders);
     if (smith_count(textual) > smith_entries_max) smith_too_many("textual headers", smith_entries_max);
     smith_modules_check_overlap(folders, count);
-    const char **flags = smith_new_list(count + 3);
+    char cache[PATH_MAX];
+    SmithPackageError error;
+    if (!smith_cache_folder(SmithCache_Modules, cache, &error)) smith_fail("smith_modules: %s", error.text);
+    const char **flags = smith_new_list(count + 5);
     flags[0] = "-fmodules";
-    flags[1] = smith_text("-fmodules-cache-path=%s", smith_modules_cache);
+    flags[1] = smith_text("-fmodules-cache-path=%s", cache); // one cache for every project and worktree
+    // The pruning rule is the same as the package cache's, and written in every command: clang removes a module unused
+    // for 31 days, and checks at most once a week.
+    flags[2] = smith_text("-fmodules-prune-interval=%d", smith_cache_prune_interval);
+    flags[3] = smith_text("-fmodules-prune-after=%d", smith_cache_prune_after);
     for (size_t i = 0; i < count; i++)
-        flags[2 + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
-    flags[2 + count] = smith_modules_write(b, smith_modules_library_folder, textual);
+        flags[4 + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
+    flags[4 + count] = smith_modules_write(b, smith_modules_library_folder, textual);
     for (size_t i = 0; textual[i] != nullptr; i++) {
         if (!smith_modules_textual_used[i])
             smith_fail("smith_modules: the textual header '%s' is not under any of the folders (spell it as a glob "
