@@ -972,8 +972,8 @@ typedef struct {
 } SmithJsonValueFrame;
 
 // Writes a scalar, or the start of a container (pushing it), as the value `current`.
-static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValue *current,
-                                    SmithJsonValueFrame *stack, size_t depth) {
+static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValue *current, SmithJsonValueFrame *stack,
+                                    size_t depth) {
     switch (current->kind) {
     case SmithJsonKind_Null:
         smith_json_write_null(writer);
