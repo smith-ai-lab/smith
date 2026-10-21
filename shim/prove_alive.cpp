@@ -271,14 +271,22 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 if (!argument->hasName() && !llvm::isa<llvm::Constant>(argument)) argument->setName("argument");
             }
         }
-        std::set<std::string> given_memory; // loads of what a parameter or a global holds, which is values
+        std::set<std::string> given_memory;         // loads of what a parameter or a global holds, which is values
+        std::set<const llvm::AllocaInst *> havoced; // the bookkeeping of the preparing is not for Alive2
+        for (llvm::Instruction &instruction : llvm::instructions(function)) {
+            if (instruction.getMetadata("smith.havoced") == nullptr) continue;
+            havoced.insert(llvm::cast<llvm::AllocaInst>(&instruction));
+            instruction.setMetadata("smith.havoced", nullptr);
+        }
         std::map<std::string, std::pair<std::string, unsigned>> locations; // where each named instruction is written
         for (llvm::Instruction &instruction : llvm::instructions(function)) {
             if (instruction.getType()->isVoidTy()) continue;
             if (!instruction.hasName()) instruction.setName("t");
             if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
                 const llvm::Value *object = llvm::getUnderlyingObject(load->getPointerOperand());
-                if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object))
+                auto *local = llvm::dyn_cast<llvm::AllocaInst>(object); // one a call was allowed to change
+                if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object) ||
+                    (local != nullptr && havoced.count(local) != 0))
                     given_memory.insert(llvm_util::value_name(instruction));
             }
             if (instruction.getDebugLoc()) {

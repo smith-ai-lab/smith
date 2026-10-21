@@ -605,7 +605,9 @@ bool compute_cone(Analysis &analysis, ArrayRef<Instruction *> roots, const Value
                 return false;
             }
             if (split_old && !analysis.written_before(*load)) {
-                cone.old_loads.push_back(const_cast<LoadInst *>(load));
+                // Once: the load leaves `keep`, so a second user of it adds it to the work again, and a load listed
+                // twice is one parameter of the slice taken twice.
+                if (!llvm::is_contained(cone.old_loads, load)) cone.old_loads.push_back(const_cast<LoadInst *>(load));
                 cone.keep.erase(instruction);
                 continue;
             }
@@ -841,6 +843,7 @@ struct UnitContext {
     const std::set<std::string> &recursive; // the names of the functions that call themselves
     std::map<Function *, Slices> slices;
     std::unique_ptr<Unprovable> unprovable;
+    unsigned havocs = 0; // the objects a call has been allowed to change
 
     void fail(const Instruction *at, std::string what, std::string fix) {
         auto failure = std::make_unique<Unprovable>();
@@ -887,6 +890,41 @@ bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
         }
     }
     return true;
+}
+
+// Alive2 does not change a local object (an alloca of the function) when a call writes through a pointer to it: its
+// model of a call havocs the memory of other blocks and leaves a TODO for locals. A caller would then know what the
+// callee never promised (`first == 9` after a call that overwrote it). So after the call each local object it was given
+// is overwritten by the bytes of a global of its own that nothing initializes: arbitrary, and different at every call,
+// before the callee's contract is assumed of it. Returns the last instruction it inserted (`call` when none).
+Instruction *havoc_locals(UnitContext &context, CallBase &call, Function &callee) {
+    MemoryEffects effects = callee.getMemoryEffects();
+    Instruction *last = &call;
+    if (!isModSet(effects.getModRef(IRMemLocation::ArgMem)) && !isModSet(effects.getModRef(IRMemLocation::Other)))
+        return last;
+    const DataLayout &layout = context.module.getDataLayout();
+    SmallPtrSet<const AllocaInst *, 4> done;
+    for (Value *argument : call.args()) {
+        if (!argument->getType()->isPointerTy()) continue;
+        auto *object = dyn_cast<AllocaInst>(getUnderlyingObject(argument));
+        if (object == nullptr || !done.insert(object).second) continue;
+        std::optional<TypeSize> size = object->getAllocationSize(layout);
+        if (!size || size->isScalable() || size->getFixedValue() == 0) continue;
+        LLVMContext &llvm_context = context.module.getContext();
+        auto *type = ArrayType::get(Type::getInt8Ty(llvm_context), size->getFixedValue());
+        auto *source =
+            new GlobalVariable(context.module, type, false, GlobalValue::InternalLinkage,
+                               ConstantAggregateZero::get(type), "smith.havoc." + std::to_string(context.havocs++));
+        source->setAlignment(object->getAlign());
+        IRBuilder<> builder(last->getNextNode());
+        builder.SetCurrentDebugLocation(call.getDebugLoc());
+        object->setMetadata("smith.havoced",
+                            MDNode::get(llvm_context, {}));          // what it holds is values, as a parameter's
+        context.function.setMemoryEffects(MemoryEffects::unknown()); // it now reads a global, whatever it inferred
+        last = builder.CreateMemCpy(object, object->getAlign(), source, object->getAlign(),
+                                    builder.getInt64(size->getFixedValue()));
+    }
+    return last;
 }
 
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
@@ -951,7 +989,9 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
         SmallVector<Value *, 8> with_result(arguments.begin(), arguments.end());
         if (slices.has_result) with_result.push_back(&call);
         with_result.append(olds.begin(), olds.end());
-        auto *ensures_call = CallInst::Create(slices.ensures_slice, with_result, "", call.getNextNode()->getIterator());
+        Instruction *after = havoc_locals(context, call, callee);
+        auto *ensures_call =
+            CallInst::Create(slices.ensures_slice, with_result, "", after->getNextNode()->getIterator());
         ensures_call->setDebugLoc(call.getDebugLoc());
         if (!inline_slice(context, *ensures_call, call_site)) return false;
     }
@@ -1162,17 +1202,26 @@ class Normalizer {
 
 // Attributes LLVM 23 infers that the Alive2 this was built with does not know. Dropping nofree only loses what it said.
 void drop_unsupported_attributes(Function &function) {
-    for (unsigned i = 0; i < function.arg_size(); i++)
+    // `initializes`, which LLVM infers from a body, makes Alive2 check that the function stores those bytes and report
+    // a load of what a call left there as undefined behaviour; what the bytes hold after a call is the callee's
+    // contract.
+    for (unsigned i = 0; i < function.arg_size(); i++) {
         function.removeParamAttr(i, Attribute::NoFree);
+        function.removeParamAttr(i, Attribute::Initializes);
+    }
     for (Function &callee : *function.getParent()) {
-        for (unsigned i = 0; i < callee.arg_size(); i++)
+        for (unsigned i = 0; i < callee.arg_size(); i++) {
             callee.removeParamAttr(i, Attribute::NoFree);
+            callee.removeParamAttr(i, Attribute::Initializes);
+        }
     }
     for (Instruction &instruction : instructions(function)) {
         auto *call = dyn_cast<CallBase>(&instruction);
         if (call == nullptr) continue;
-        for (unsigned i = 0; i < call->arg_size(); i++)
+        for (unsigned i = 0; i < call->arg_size(); i++) {
             call->removeParamAttr(i, Attribute::NoFree);
+            call->removeParamAttr(i, Attribute::Initializes);
+        }
     }
 }
 

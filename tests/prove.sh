@@ -139,6 +139,23 @@ done
 expect "orphan: the proof's process ends with its parent" "" "$alive"
 for child in $alive; do kill -9 "$child" 2>/dev/null; done
 
+# 7c. A caller assumes the callee's smith_ensures about the memory the callee wrote (issue #41), and nothing else.
+for function in five set_five three_then_bump bump two push two_through_a_pointer uses_bump_twice_read bump_twice_read; do
+    prove --function=$function "$cases/memory.c"
+    expect "memory: $function is proved" 0 "$rc"
+done
+prove --function=too_much "$cases/memory.c"
+expect "memory: a caller that wants more than the callee promises fails" 1 "$rc"
+expect_contains "memory: ... at its own smith_ensures" "$out" "memory.c:47: smith_ensures(value == 4) may be false"
+expect_contains "memory: ... with a value the callee allows" "$out" "counterexample: value = "
+for function in relies_on_the_body clobbered_local clobbered_parameter; do
+    prove --function=$function "$cases/memory.c"
+    expect "memory: $function relies on what the callee does not promise and fails" 1 "$rc"
+    expect_contains "memory: ... with a counterexample, not poison and not undefined behaviour" "$out" "may be false"
+    expect_contains "memory: ... that is a value" "$out" "first = "
+    case $out in *poison* | *"undefined behaviour"*) expect "memory: $function names no poison" "none" "$out" ;; esac
+done
+
 # 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 # before the fixes (else-if, col > 1) fails with a counterexample.
 prove --function=get_valid_diagonals "$cases/diagonals.c"
