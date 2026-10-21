@@ -188,6 +188,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "runtime/xz.c",
                                                    "runtime/untar.c",
                                                    "runtime/cache.c",
+                                                   "runtime/docs.c",
                                                    "runtime/symbolize.c",
                                                    "runtime/executor.c",
                                                    "runtime/executor_manifest.c",
@@ -590,7 +591,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
     SmithStep test = {
         .command = (const char *[]){"sh", "-c",
                                     // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena io http package random text json cache untar "
+                                    "for t in run build new docs arena io http package random text json cache untar "
                                     "resource dap tree_sitter neovim "
                                     "defer contract prove smith-lang smith-lang-c test; do env "
                                     "\"$0\" sh tests/$t.sh "

@@ -1,0 +1,2 @@
+.claude/skills: links to ../skills, not ../.agents/skills
+smith docs: 0 concepts, 1 problems

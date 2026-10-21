@@ -1,0 +1,2 @@
+knowledge/beta.md: type 'note' needs owner
+smith docs: 2 concepts, 1 problems

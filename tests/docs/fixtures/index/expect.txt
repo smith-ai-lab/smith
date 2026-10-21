@@ -1,0 +1,10 @@
+knowledge/index.md: alpha.md is listed twice
+knowledge/index.md: does not list gamma.md
+knowledge/index.md: lists aaa-ghost.md, which is not a concept on disk
+knowledge/index.md: lists ghost.md, which is not a concept on disk
+knowledge/index.md: lists nowhere.md, which is not a concept on disk
+knowledge/index.md: description of beta.md differs from its own
+knowledge/index.md: broken link ghost.md
+knowledge/index.md: broken link aaa-ghost.md
+knowledge/index.md: broken link nowhere.md
+smith docs: 3 concepts, 9 problems

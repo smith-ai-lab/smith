@@ -1766,8 +1766,9 @@ static const SmithVerb *smith_find_verb(const char *name) {
 // A name the project's build.c defines a target for, so `smith build <name>` is refused in favour of the verb.
 static bool smith_is_project_verb(const char *name) {
     const SmithVerb *verb = smith_find_verb(name);
-    return verb != nullptr && (verb->kind == SmithVerb_Project || verb->kind == SmithVerb_ProjectBare ||
-                               verb->kind == SmithVerb_ToolOrProject || verb->kind == SmithVerb_Later);
+    return verb != nullptr &&
+           (verb->kind == SmithVerb_Project || verb->kind == SmithVerb_ProjectBare ||
+            verb->kind == SmithVerb_ToolOrProject || verb->kind == SmithVerb_Docs || verb->kind == SmithVerb_Later);
 }
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
@@ -1816,6 +1817,7 @@ static size_t smith_encode_argument(char *out, size_t capacity, size_t used, con
         else
             out[used] = *c;
         used += length;
+    SmithVerb_Docs, // smith docs: checks AGENTS.md, knowledge/ and skills; the project's docs task with no arguments
     }
     out[used] = '\0';
     return used;
@@ -1839,6 +1841,7 @@ static int smith_project_main(const SmithVerb *verb, int count, char **args, con
         } else {
             if (verb->kind == SmithVerb_ProjectBare) {
                 smith_die(smith_exit_usage, "takes no arguments but -D options", verb->name);
+    {"docs", SmithVerb_Docs, nullptr},
             }
             joined_used = smith_encode_argument(joined, sizeof joined, joined_used, arg);
         }
@@ -1958,6 +1961,9 @@ int main(int argc, char **argv) {
     if (strcmp(name, "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
     if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0)
         return smith_compile_main(argc, argv, 0, false, self);
+// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, and the project's docs task with no arguments.
+#include "runtime/docs.c"
+
     if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
         return smith_compile_main(argc, argv, 0, true, self);
     if (argc < 2) {
@@ -1976,3 +1982,6 @@ int main(int argc, char **argv) {
     if (verb == nullptr) smith_bare_arguments(argc, argv);
     return smith_dispatch(verb, argc, argv, self);
 }
+    case SmithVerb_Docs:
+        return smith_docs_main(verb, argc - 2, argv + 2, self);
+          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"

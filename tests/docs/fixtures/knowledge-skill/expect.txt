@@ -1,0 +1,4 @@
+knowledge/alpha.md: links the skill ../.agents/skills/a/SKILL.md; knowledge never links skills
+knowledge/alpha.md: links the skill ../knowledge/../.agents/skills/a/; knowledge never links skills
+knowledge/alpha.md: links the skill ../.claude/skills/a/SKILL.md; knowledge never links skills
+smith docs: 1 concepts, 3 problems
