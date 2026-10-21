@@ -1,12 +1,15 @@
 // smith: a drop-in compiler driver.
 //
-// Milestone 0 is a pure passthrough. It picks a backend by the kind of input, then replaces itself with that compiler
-// and hands over the arguments untouched:
-//   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set;
-//   - anything else goes to upstream LLVM's clang: $SMITH_CLANG if set, else Homebrew's llvm
-//     (/opt/homebrew/opt/llvm/bin/clang), else the first clang on PATH that is not smith itself. Invoked as `smith++`
-//     it uses clang++ instead ($SMITH_CLANGXX). On macOS it also picks the SDK through the environment, never a flag:
-//     see smith_sdk_environment.
+// Milestone 0 is a pure passthrough. It picks a backend by the kind of input, then runs that compiler on the arguments,
+// untouched:
+//   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set, which smith
+//     replaces itself with;
+//   - anything else goes to upstream LLVM's clang. A smith built with SMITH_IN_PROCESS has clang linked in
+//     (shim/clang.cpp) and runs clang's own main on the arguments, in its own process, unless $SMITH_CLANG names an
+//     external clang to run instead. The stage0, built by one `cc` command, has no clang in it: it replaces itself with
+//     an external one, $SMITH_CLANG if set, else Homebrew's llvm (/opt/homebrew/opt/llvm/bin/clang), else the first
+//     clang on PATH that is not smith itself. Invoked as `smith++` it uses clang++ ($SMITH_CLANGXX). On macOS it also
+//     picks the SDK through the environment, never a flag: see smith_sdk_environment.
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
@@ -24,6 +27,12 @@
 #include <unistd.h>
 
 extern char **environ;
+
+#ifdef SMITH_IN_PROCESS
+// shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (SMITH_LLVM_BIN's clang or clang++) on
+// argv[1 .. argc). argv[0] is ignored.
+int smith_clang_main(const char *program, int argc, char **argv);
+#endif
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -53,8 +62,8 @@ typedef enum {
     //   - their flags differ (C takes -std=gnu23, frameworks and link flags; Metal takes -std=metal... and its own
     //     options), so one command line cannot be right for both;
     //   - their outputs cannot be one file;
-    //   - smith hands each command to exactly one compiler with execv, which is why the exit status and signals are
-    //     the compiler's. Running two would need a parent process to wait and combine their results.
+    //   - smith hands each command to exactly one compiler, in its own process or by execv, which is why the exit
+    //     status and signals are the compiler's. Running two would need a parent process to wait and combine them.
     SmithRoute_Mixed,
 } SmithRoute;
 
@@ -324,10 +333,38 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
     return smith_exit_missing;
 }
 
-static int smith_route_clang(char **argv, int first, bool which, const char *self) {
-    SMITH_ASSERT(first >= 1);
+#ifdef SMITH_IN_PROCESS
+// Whether clang runs in this process: unless the caller's variable names an external clang to run instead.
+static bool smith_runs_in_process(const char *override_name) {
+    const char *override = getenv(override_name);
+    return override == nullptr || *override == '\0';
+}
+
+static int smith_route_in_process(int argc, char **argv, int first, bool which, bool plus, const char *self) {
+    char program[PATH_MAX];
+    int written = snprintf(program, sizeof program, "%s/%s", SMITH_LLVM_BIN, plus ? "clang++" : "clang");
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // a short constant folder and a tool name
+    if (which) {
+        printf("clang in-process %s\n", program);
+        return 0;
+    }
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
+    if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv + first - 1);
+    return smith_clang_main(program, argc - first + 1, argv + first - 1);
+}
+#endif
+
+static int smith_route_clang(int argc, char **argv, int first, bool which, const char *self) {
+    SMITH_ASSERT(first >= 1 && argc >= first);
     bool plus = smith_ends_with(smith_base_name(argv[0]), "++");
     const char *tool = plus ? "clang++" : "clang";
+#ifdef SMITH_IN_PROCESS
+    if (smith_runs_in_process(plus ? "SMITH_CLANGXX" : "SMITH_CLANG")) {
+        return smith_route_in_process(argc, argv, first, which, plus, self);
+    }
+#endif
     char program[PATH_MAX];
     smith_find_clang(tool, plus ? "SMITH_CLANGXX" : "SMITH_CLANG", self, program);
     if (which) {
@@ -584,6 +621,18 @@ static void smith_build_prepare(const char *clang) {
     smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }
 
+// What compiles and links build.c: an external clang, found as for any compile, or smith itself when clang is in it.
+static void smith_build_compiler(const char *self, char *out) {
+#ifdef SMITH_IN_PROCESS
+    if (smith_runs_in_process("SMITH_CLANG")) {
+        int written = snprintf(out, PATH_MAX, "%s", self);
+        SMITH_ASSERT(written > 0 && written < PATH_MAX); // self came from a PATH_MAX buffer
+        return;
+    }
+#endif
+    smith_find_clang("clang", "SMITH_CLANG", self, out);
+}
+
 static int smith_build_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
@@ -603,7 +652,7 @@ static int smith_build_main(int count, char **args, const char *self) {
     smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
 
     char clang[PATH_MAX];
-    smith_find_clang("clang", "SMITH_CLANG", self, clang);
+    smith_build_compiler(self, clang);
 #ifdef __APPLE__
     smith_sdk_environment(self); // ninja and the compiles it starts inherit it, as do the programs build.c runs
 #endif
@@ -954,7 +1003,7 @@ int main(int argc, char **argv) {
     case SmithRoute_Metal:
         return smith_route_metal(count, args, which, self);
     case SmithRoute_Clang:
-        return smith_route_clang(argv, first, which, self);
+        return smith_route_clang(argc, argv, first, which, self);
     }
     return smith_exit_missing;
 }
