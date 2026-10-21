@@ -49,6 +49,10 @@ typedef struct {
 // large for a float (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
 [[nodiscard]] bool smith_text_parse_f32(SmithText word, float *value);
 
+// The same for a double: the double nearest the number, ties to even, as strtod gives in the C locale, for any number
+// of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
+[[nodiscard]] bool smith_text_parse_f64(SmithText word, double *value);
+
 // Writes a number into out, which has room for smith_text_number_capacity characters, and returns how many it wrote.
 // There is no terminator.
 constexpr size_t smith_text_number_capacity = 20;
