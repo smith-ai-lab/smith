@@ -887,7 +887,8 @@ class SmithHook final : public TokenHook, public NameSource {
             while (begin > 0 && action.reinjected[begin - 1] == reinjected)
                 begin -= 1;
             auto tokens = std::make_unique<Token[]>(end - begin);
-            std::copy(action.tokens.begin() + begin, action.tokens.begin() + end, tokens.get());
+            std::copy(action.tokens.begin() + static_cast<std::ptrdiff_t>(begin),
+                      action.tokens.begin() + static_cast<std::ptrdiff_t>(end), tokens.get());
             if (!reinjected) {
                 for (size_t i = begin; i < end; i++)
                     replay[action.tokens[i].getLocation().getRawEncoding()] += 1;
@@ -938,7 +939,7 @@ class SmithHook final : public TokenHook, public NameSource {
         std::vector<std::pair<unsigned, SourceLocation>> &list = origins[id.getHashValue()];
         for (auto &[token, offset, origin] : spots) {
             list.emplace_back(offset, origin);
-            token->setLocation(start.getLocWithOffset(offset));
+            token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
         }
     }
 

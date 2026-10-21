@@ -8,9 +8,10 @@
 // broken, needs only a C23 compiler:
 //   mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc
 //
-// Verbs, which run the target of their name: smith test, smith check (check-format, lint, test and compare), smith fmt
-// (rewrites the sources) and smith lint. Targets of smith build: the default, text-exhaustive, compare -DREAL=...,
-// check-format, install (-DCC=..., -DPREFIX=...), llvm and clean.
+// The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
+// in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
+// prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
+// smith build: the default, text-exhaustive, test-compare -DREAL=..., install (-DCC=..., -DPREFIX=...), llvm and clean.
 #include <smith/build.h>
 
 #include <string.h>
@@ -35,219 +36,6 @@ typedef struct {
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
 static const char *build_variable(SmithBuild *b, const char *name, const char *fallback, const char *description) {
     return smith_option_value(b, name, smith_env(b, name, fallback), description);
-}
-
-// Formatting and lint are smith's own: `smith fmt` and `smith lint` of the smith this build makes, which are
-// clang-format and clang-tidy of the LLVM linked into it (a stage0 runs Homebrew's, $SMITH_CLANG_FORMAT and
-// $SMITH_CLANG_TIDY). The text is for sh, inside double quotes.
-static const char *build_smith_tool(SmithBuild *b, const char *binary, const char *tool) {
-    return smith_fmt(b, "\"%s\" %s", binary, tool);
-}
-
-// The tools must be one major version, so every machine formats and lints alike. The version is the one smith links
-// (scripts/llvm.sh), or the one Homebrew's pinned tools are for a stage0; it is also named in AGENTS.md.
-static SmithStep build_check_llvm(SmithBuild *b, const char *binary) {
-    SmithStep check_llvm = {
-        .command =
-            (const char *[]){"sh", "-c",
-                             smith_fmt(b,
-                                       "for tool in fmt lint; do "
-                                       "major=$(\"%s\" $tool --version 2>/dev/null | sed -n 's/.*version "
-                                       "\\([0-9][0-9]*\\)\\..*/\\1/p' | head -n 1); "
-                                       "if [ \"$major\" != 23 ]; then echo \"smith $tool: need LLVM 23, found "
-                                       "${major:-none}; build smith with LLVM (smith build llvm), or for a stage0 "
-                                       "brew install llvm\"; exit 1; fi; done",
-                                       binary),
-                             nullptr},
-        .inputs = (const char *[]){binary, nullptr},
-    };
-    smith_task(b, "check-llvm", &check_llvm);
-    return check_llvm;
-}
-
-// Rewrites the sources in the style of .clang-format (format), or fails on any file clang-format would change
-// (check-format; `smith fmt` fixes them).
-static void build_format(SmithBuild *b, const char *format, const char *const *llvm, const char *const *sources) {
-    // The C files of the `smith new` templates follow the template's own rules, which are smith's, comments aside.
-    const char *new_files = "templates/new/build.c templates/new/main.c";
-    SmithStep rewrite = {
-        .command =
-            smith_cat(b,
-                      (const char *[]){"sh", "-c",
-                                       smith_fmt(b, "%s -i \"$@\" && %s -i --style=file:templates/new/clang-format %s",
-                                                 format, format, new_files),
-                                       "sh", nullptr},
-                      sources, nullptr),
-        .inputs = llvm,
-    };
-    smith_task(b, "fmt", &rewrite);
-    SmithStep check_format = {
-        .command = smith_cat(
-            b,
-            (const char *[]){
-                "sh", "-c",
-                smith_fmt(
-                    b,
-                    "%s --dry-run --Werror \"$@\" && %s --dry-run --Werror --style=file:templates/new/clang-format %s",
-                    format, format, new_files),
-                "sh", nullptr},
-            sources, nullptr),
-        .inputs = llvm,
-    };
-    smith_task(b, "check-format", &check_format);
-}
-
-// The tree-sitter runtime that tests/tree_sitter.c includes, by version: tests/tree_sitter.sh pins the same archive by
-// hash, and `smith fetch` of this URL puts it in the package cache for the lint of the driver.
-static const char build_tree_sitter_runtime_url[] =
-    "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
-
-// clang-tidy (.clang-tidy) over each source with the flags the build uses, against Xcode's SDK. build.c is tidied too,
-// with -I include, where it finds <smith/build.h>. The `smith new` templates are tidied with their own rules
-// and their own standard, gnu2y.
-static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const char *const *llvm,
-                       const char *const *cflags) {
-    const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
-    SmithStep check_tidy = {
-        .command = smith_cat(
-            b,
-            (const char *[]){"sh", "-c",
-                             smith_fmt(b,
-                                       "root=$(%s %s 2>&1 | sed -n 's/^smith: .* is in //p') && "
-                                       "%s --quiet smith.c -- \"$@\" %s && "
-                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
-                                       "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
-                                       "%s --quiet runtime/commit.c -- \"$@\" %s && "
-                                       "%s --quiet runtime/pack_data.c -- \"$@\" "
-                                       "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' %s && "
-                                       "%s --quiet scripts/pack.c -- \"$@\" %s && "
-                                       "%s --quiet scripts/defer_init.c -- \"$@\" %s && "
-                                       "%s --quiet build.c -- \"$@\" -I include %s && "
-                                       "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                       "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/http.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/http.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/text.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/text.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/json.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/json.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/tree_sitter.c -- \"$@\" -I \"$root/lib/include\" %s && "
-                                       "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
-                                       "for f in build main; do %s --quiet "
-                                       "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                       "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                       fetch, build_tree_sitter_runtime_url, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk),
-                             "sh", nullptr},
-            cflags, nullptr),
-        .inputs = llvm,
-    };
-    smith_task(b, "lint", &check_tidy);
-}
-
-// Formatting, lint, the routing tests and the comparison with the real compiler.
-// The files `smith fmt` checks: smith's own sources, its libraries and their tests.
-static const char *const build_format_sources[] = {"smith.c",
-                                                   "shim/clang.cpp",
-                                                   "shim/hook.cpp",
-                                                   "shim/lsp.cpp",
-                                                   "shim/names.h",
-                                                   "shim/prove.cpp",
-                                                   "shim/prove.hpp",
-                                                   "shim/prove_alive.cpp",
-                                                   "shim/prove_bitwuzla.cpp",
-                                                   "shim/prove_ir.cpp",
-                                                   "shim/format.cpp",
-                                                   "shim/tidy.cpp",
-                                                   "shim/clangd.cpp",
-                                                   "shim/symbolize.cpp",
-                                                   "shim/lldb.cpp",
-                                                   "shim/lldb_dap.cpp",
-                                                   "tests/dap_client.c",
-                                                   "tests/lsp_client.c",
-                                                   "scripts/pack.c",
-                                                   "scripts/pack.h",
-                                                   "scripts/defer_init.c",
-                                                   "runtime/pack_data.c",
-                                                   "runtime/commit.c",
-                                                   "build.c",
-                                                   "tests/stub.c",
-                                                   "runtime/build_runtime.c",
-                                                   "runtime/package.c",
-                                                   "runtime/gzip.c",
-                                                   "runtime/xz.c",
-                                                   "runtime/untar.c",
-                                                   "runtime/cache.c",
-                                                   "runtime/docs.c",
-                                                   "runtime/symbolize.c",
-                                                   "runtime/executor.c",
-                                                   "runtime/executor_manifest.c",
-                                                   "runtime/executor_state.c",
-                                                   "runtime/executor_plan.c",
-                                                   "runtime/executor_run.c",
-                                                   "runtime/executor_tools.c",
-                                                   "runtime/lang.h",
-                                                   "runtime/lang.c",
-                                                   "runtime/lang_out.c",
-                                                   "runtime/lang_decl.c",
-                                                   "runtime/lang_names.c",
-                                                   "runtime/lang_import.c",
-                                                   "runtime/lang_head.c",
-                                                   "runtime/lang_sparse.c",
-                                                   "runtime/lang_declare.c",
-                                                   "runtime/lang_stream.c",
-                                                   "runtime/lang_lex.c",
-                                                   "runtime/lang_command.c",
-                                                   "include/smith/build.h",
-                                                   "include/smith/arena.h",
-                                                   "lib/arena.c",
-                                                   "tests/arena.c",
-                                                   "include/smith/io.h",
-                                                   "lib/io.c",
-                                                   "tests/io.c",
-                                                   "include/smith/http.h",
-                                                   "lib/http.c",
-                                                   "tests/http.c",
-                                                   "include/smith/random.h",
-                                                   "lib/random.c",
-                                                   "tests/random.c",
-                                                   "tests/untar.c",
-                                                   "include/smith/test.h",
-                                                   "include/smith/contract.h",
-                                                   "lib/contract.c",
-                                                   "include/smith/text.h",
-                                                   "lib/text.c",
-                                                   "tests/text.c",
-                                                   "tests/text_exhaustive.c",
-                                                   "include/smith/json.h",
-                                                   "lib/json.c",
-                                                   "tests/json.c",
-                                                   "tests/tree_sitter.c",
-                                                   "lib/test.c",
-                                                   "include/smith/trace.h",
-                                                   "lib/trace.c",
-                                                   nullptr};
-
-static void build_checks(SmithBuild *b, const BuildConfig *config) {
-    const char *format = build_smith_tool(b, config->binary, "fmt");
-    const char *tidy = build_smith_tool(b, config->binary, "lint");
-    SmithStep check_llvm = build_check_llvm(b, config->binary);
-    build_format(b, format, check_llvm.outputs, build_format_sources);
-    build_tidy(b, tidy, build_smith_tool(b, config->binary, "fetch"), check_llvm.outputs, config->cflags);
-    smith_alias(b, "check", (const char *[]){"check-format", "lint", "test", "compare", nullptr});
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -592,7 +380,18 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
     smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
 }
 
-// One task per test script of tests/, `test-<task>`, and `test` an alias of them all, so the executor runs them side by
+// Sources the build never compiles on their own, which `smith lint` (and the editor) still read with the flags the
+// scripts give them: the libraries and their tests. tests/stub.c is built (build_other_objects) with its -D.
+static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
+    const char *const *flags = smith_cat(b, config->cflags, smith_list(b, "-I", "include", nullptr), nullptr);
+    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
+    for (size_t i = 0; sources[i] != nullptr; i++) {
+        if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0) continue;
+        smith_compile_command(b, config->cc, sources[i], flags);
+    }
+}
+
+// One task per test script of tests/, `test-<task>`, each one of smith's tests, so `smith test` runs them side by
 // side. The scripts are independent: each works in a folder of its own (mktemp) and with caches of its own
 // (XDG_CACHE_HOME, and XDG_DATA_HOME where it starts compilers), and the one folder they may share, where a smith
 // writes the clang files and its programs on first use, is written by rename. `run` is the routing tests with stub
@@ -646,7 +445,8 @@ static const BuildTestScript build_test_scripts[] = {
 
 constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof build_test_scripts[0];
 
-// The task of every script, and the alias `test` of them; returns the list, which the install waits for.
+// The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
+// waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     const char *names[build_test_script_count + 1];
     const char *early[build_test_script_count + 1];
@@ -669,12 +469,12 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
             .inputs = (const char *[]){binary, nullptr},
             .order_only_inputs = row->phase == 2 ? smith_cat(b, early, nullptr) : smith_list(b, nullptr),
+            .test = true,
         };
         smith_task(b, names[i], &step);
     }
     names[build_test_script_count] = nullptr;
     const char *const *tasks = smith_cat(b, names, nullptr);
-    smith_alias(b, "test", tasks);
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command = (const char *[]){"sh", "-c", "env CC=\"$0\" sh tests/text.sh \"$1\" exhaustive", config->cc, binary,
@@ -685,18 +485,20 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
     return tasks;
 }
 
-// Runs a table of invocations through a real compiler and through smith, and compares stdout, stderr, exit status and
-// the files produced. REAL is the compiler: the clang of the LLVM that smith links, or Homebrew's on macOS for a smith
-// without clang inside, else for example -DREAL=$(command -v clang).
+// One of smith's tests, `test-compare`: runs a table of invocations through a real compiler and through smith, and
+// compares stdout, stderr, exit status and the files produced. REAL is the compiler: the clang of the LLVM that smith
+// links, or Homebrew's on macOS for a smith without clang inside, else for example -DREAL=/usr/bin/clang.
 static void build_compare(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep compare = {
-        .command = config->real[0] != '\0'
-                       ? (const char *[]){"sh", "tests/compare.sh", binary, config->real, nullptr}
-                       : (const char *[]){"sh", "-c", "echo 'usage: smith build compare -DREAL=/path/to/clang'; exit 2",
-                                          nullptr},
+        .command =
+            config->real[0] != '\0'
+                ? (const char *[]){"sh", "tests/compare.sh", binary, config->real, nullptr}
+                : (const char *[]){"sh", "-c", "echo 'usage: smith build test-compare -DREAL=/path/to/clang'; exit 2",
+                                   nullptr},
         .inputs = (const char *[]){binary, nullptr},
+        .test = true,
     };
-    smith_task(b, "compare", &compare);
+    smith_task(b, "test-compare", &compare);
 }
 
 // Copies smith, once its tests pass, to $PREFIX/bin, with the links smith-cc and smith-c++ (and without the old
@@ -892,10 +694,10 @@ void build(SmithBuild *b) {
 
     SmithStep smith = build_programs(b, &config, folder);
     build_other_objects(b, &config, folder);
+    build_unbuilt_sources(b, &config);
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary);
     build_compare(b, &config, config.binary);
-    build_checks(b, &config);
     build_install(b, &config, config.binary, tested);
     build_llvm(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};

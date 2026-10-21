@@ -65,7 +65,7 @@ Arguments parse(int argc, char **argv) {
         } else if (argument.rfind("--function=", 0) == 0) {
             arguments.options.only.push_back(argument.substr(11));
         } else if (argument.rfind("--budget=", 0) == 0) {
-            arguments.options.budget_seconds = std::atof(argument.c_str() + 9);
+            arguments.options.budget_seconds = std::strtod(argument.c_str() + 9, nullptr);
             if (arguments.options.budget_seconds <= 0) usage("--budget wants a number of seconds");
         } else if (!argument.empty() && argument[0] == '-') {
             usage(("unknown option " + argument).c_str());
