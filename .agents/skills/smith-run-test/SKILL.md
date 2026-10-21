@@ -24,7 +24,7 @@ Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --see
 
 ## When it goes wrong
 
-- `smith run: build.c defines no task or alias named run`: the project has no such target; add `smith_task(b, "run", ...)` (the smith-build skill). The same for `test`, `check`, `fmt`, `lint`.
+- `smith run: build.c defines no task or alias named run`: the project has no such target; add `smith_task(b, "run", ...)` (the smith-build skill). The same for `test`, `prove`, `check`, `fmt`, `lint`. A project made by `smith new` has all of them; one that predates `test` and `prove` in the template adds `smith_tests` and a `prove` task (copy them from `smith new`'s build.c).
 - `this verb was given arguments, but build.c does not read them`: the task does not call `smith_args(b)`; give the arguments to its command.
 - `test is a verb, not a target of smith build`: `smith build run|test|check|fmt|lint` are refused. Use the verb.
 - `no build.c in this folder`: run it from the project's folder.

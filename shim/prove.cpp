@@ -315,8 +315,14 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         (prove_in_child(loaded, name, source_name, arguments.options) == 0 ? proved : failed)++;
     }
     if (proved + failed == 0) {
-        std::printf("smith: prove: no function with smith_requires, smith_ensures or smith_invariant%s\n",
-                    arguments.options.only.empty() ? "" : " by that name");
+        // A project that has written no contract yet has nothing to prove, which is not a failure; a --function that
+        // matches nothing is a mistake in the command.
+        if (arguments.options.only.empty()) {
+            std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or "
+                        "smith_invariant\n");
+            return 0;
+        }
+        std::printf("smith: prove: no function with smith_requires, smith_ensures or smith_invariant by that name\n");
         return 1;
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();

@@ -201,7 +201,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
   input) into the failing line and the call chain; it needs the full smith.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
-  `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
+  `main.c` and `primes.c` (a few lines of modern C, split so that a test can call them), a test in `tests/` that `smith test` runs (`smith_tests`), a `prove` task for `smith prove` (nothing to prove until a contract is written), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and

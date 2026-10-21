@@ -37,9 +37,9 @@ shim() { # folder, version line
     chmod +x "$1/smith"
 }
 head=$(git -C "$here" rev-parse HEAD 2>/dev/null || true)
-shim "$work/same" "smith 0.0 (x) commit $head"
-shim "$work/different" "smith 0.0 (x) commit 0123456789abcdef0123456789abcdef01234567"
-shim "$work/unknown" "smith 0.0 (x)"
+shim "$work/same" "smith 0.0 commit $head"
+shim "$work/different" "smith 0.0 commit 0123456789abcdef0123456789abcdef01234567"
+shim "$work/unknown" "smith 0.0"
 
 # one NAME PATH [nvim arguments]: runs test NAME with PATH, prints its line, counts it.
 one() {

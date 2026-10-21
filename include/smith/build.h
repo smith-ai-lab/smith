@@ -85,7 +85,8 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test",
 // "text", "trace"; random and io use the arena (io uses random too), so a project that compiles one compiles them all;
-// smith_tests compiles "test" and "trace"; "contract" needs "trace").
+// smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them; "contract" needs
+// "trace").
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
@@ -235,7 +236,7 @@ void smith_modules(SmithBuild *b, const SmithModules *modules);
 typedef struct {
     const char *compiler;       // compiles and links the tests, by default "smith-cc"
     const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
-    const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
+    const SmithObject *const *objects; // the code under test, linked in (nullptr for none)
     const char *const *flags;          // for the test files and smith's test library
     const char *const *link_flags;
     const char *const *inputs; // files the tests read when they run, such as compiled shaders; built first
@@ -255,8 +256,10 @@ typedef struct {
 //     so a test_ function the scan missed, because it is formatted another way, is a compile error.
 //   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
-//     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
-//     second time; the call fails and says which smith_library to add when one is missing.
+//     The objects are in <output>_objects/. smith's arena, random, trace and contract libraries are compiled here with
+//     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
+//     smith_library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
+//     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
 //   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
