@@ -194,8 +194,7 @@ export T *push_array(Arena *a, type T, usize count) {
             (call_expression
               (identifier)
               (argument_list
-                (type_descriptor
-                  (type_identifier))
+                (identifier)
                 (binary_expression
                   (identifier)
                   (sizeof_expression

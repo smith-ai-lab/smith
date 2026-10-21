@@ -148,8 +148,9 @@ module.exports = grammar(C, {
       )),
       ')',
     ),
+    // (a call such as `c::strlen(path)` is an expression, not a type with a function declarator)
     _argument: $ => choice(
-      $.expression,
+      prec.dynamic(3, $.expression),
       $.compound_statement,
       prec.dynamic(-1, $.type_descriptor),
       alias(choice('==', '!=', '<', '>', '<=', '>=', '&&', '||'), $.operator),

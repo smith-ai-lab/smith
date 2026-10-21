@@ -151,8 +151,7 @@ void f(void) {
           (call_expression
             (identifier)
             (argument_list
-              (type_descriptor
-                (type_identifier))
+              (identifier)
               (type_descriptor
                 (type_qualifier)
                 (primitive_type)
@@ -273,8 +272,7 @@ void f(void) {
         (call_expression
           (identifier)
           (argument_list
-            (type_descriptor
-              (type_identifier))
+            (identifier)
             (block_expression
               (primitive_type)
               (parameter_list
@@ -291,8 +289,7 @@ void f(void) {
         (call_expression
           (identifier)
           (argument_list
-            (type_descriptor
-              (type_identifier))
+            (identifier)
             (block_expression
               (parameter_list
                 (parameter_declaration

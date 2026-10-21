@@ -23,8 +23,7 @@ void f(void) {
             (identifier)
             (identifier))
           (argument_list
-            (type_descriptor
-              (type_identifier))))))))
+            (identifier)))))))
 
 ================================================================================
 a name from a C header
@@ -54,10 +53,9 @@ void f(void) {
             (string_literal
               (string_content)
               (escape_sequence))
-            (type_descriptor
-              (scoped_type_identifier
-                (identifier)
-                (type_identifier)))))))))
+            (scoped_identifier
+              (identifier)
+              (identifier))))))))
 
 ================================================================================
 a deeper path stays one node
