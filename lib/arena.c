@@ -6,17 +6,35 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Sanitizer builds poison everything past the cursor, start each push on an ASan granule and leave a poisoned gap after
-// it, so ASan catches a read or write outside the pushes.
+// Sanitizer builds start each push on an ASan granule and leave a poisoned gap after it, and poison the memory past the
+// cursor, so ASan catches a read or write outside the pushes. The poison is lazy. An arena may be a 64 GiB reservation,
+// and poisoning all of it would commit its shadow (an eighth of it, 8 GiB) before the program pushed anything. So the
+// arena keeps a high-water mark `touched`, with the invariant that [used, touched) is poisoned and the memory past
+// `touched` has not been poisoned by this arena. Every push keeps touched >= used + window by poisoning [touched,
+// used + window) (capped at the capacity); reset and the end of a scope poison [used, touched) again. Shadow memory
+// then grows with what the program has used, not with the capacity. The window is 64 KiB: an overflow past the top
+// of the arena lands in poison unless it runs more than 64 KiB past the last push, which is longer than the overruns
+// that come from off-by-one, off-by-a-row and short-array mistakes, while the shadow it costs is 8 KiB.
 #if __has_feature(address_sanitizer)
 #include <sanitizer/asan_interface.h>
 
-constexpr size_t smith_arena_poison_granule = 8; // ASan tracks memory in 8-byte granules
-constexpr size_t smith_arena_poison_gap = 16;    // poisoned bytes left after each push
+constexpr size_t smith_arena_poison_granule = 8;               // ASan tracks memory in 8-byte granules
+constexpr size_t smith_arena_poison_gap = 16;                  // poisoned bytes left after each push
+constexpr size_t smith_arena_poison_window = (size_t)64 << 10; // poisoned past the cursor after each push
 
+// Poisons [used, touched) again, after a reset or the end of a scope.
 static void smith_arena_poison_unused(const SmithArena *arena) {
-    assert(arena->used <= arena->capacity);
-    ASAN_POISON_MEMORY_REGION(arena->memory + arena->used, arena->capacity - arena->used);
+    assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
+    ASAN_POISON_MEMORY_REGION(arena->memory + arena->used, arena->touched - arena->used);
+}
+
+// Keeps touched >= used + window, poisoning what is new.
+static void smith_arena_poison_ahead(SmithArena *arena) {
+    size_t room = arena->capacity - arena->used;
+    size_t target = arena->used + (room < smith_arena_poison_window ? room : smith_arena_poison_window);
+    if (target <= arena->touched) return;
+    ASAN_POISON_MEMORY_REGION(arena->memory + arena->touched, target - arena->touched);
+    arena->touched = target;
 }
 #endif
 
@@ -57,11 +75,7 @@ SmithArena smith_arena_make(void *memory, size_t capacity) {
     assert(memory != nullptr);
     assert(((uintptr_t)memory & (smith_arena_align_max - 1)) == 0);
     assert(capacity > 0);
-    SmithArena arena = {.memory = memory, .capacity = capacity};
-#if __has_feature(address_sanitizer)
-    smith_arena_poison_unused(&arena);
-#endif
-    return arena;
+    return (SmithArena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
 }
 
 bool smith_arena_fits(const SmithArena *arena, size_t size, size_t align) {
@@ -76,9 +90,10 @@ void *smith_arena_push(SmithArena *arena, size_t size, size_t align) {
     unsigned char *result = arena->memory + arena->used + padding;
     arena->used += padding + size;
 #if __has_feature(address_sanitizer)
-    ASAN_UNPOISON_MEMORY_REGION(result, size);
     size_t gap = arena->capacity - arena->used;
     arena->used += gap < smith_arena_poison_gap ? gap : smith_arena_poison_gap;
+    smith_arena_poison_ahead(arena);           // poisons the padding, the new memory and the gap...
+    ASAN_UNPOISON_MEMORY_REGION(result, size); // ...and the push alone is made addressable
 #endif
     memset(result, 0, size);
 

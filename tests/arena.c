@@ -1,12 +1,18 @@
 // Tests of <smith/arena.h>, run by tests/arena.sh: with no argument, the checks below; with an argument, one stop:
 //   stop  a push past the capacity (built with -DNDEBUG, it must still stop with a message)
 //   oob   a write just past a push (built with -fsanitize=address, ASan must catch it)
+//   big   a 64 GiB reservation made into an arena, and a few pushes: prints how much memory that made resident
+//   bigoob, bigfar  the same arena, a write one byte past a push and 60,000 bytes past it (ASan must catch both)
+//   stale  a read of a push after a reset (ASan must catch it)
 #include <smith/arena.h>
 
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+
+#include <mach/mach.h>
 
 constexpr size_t test_capacity = 4096;
 
@@ -134,7 +140,51 @@ static void test_determinism(void) {
     assert(first.used == second.used);
 }
 
+static size_t test_resident(void) {
+    mach_task_basic_info_data_t info = {};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    kern_return_t result = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count);
+    assert(result == KERN_SUCCESS);
+    (void)result;
+    return info.resident_size;
+}
+
+constexpr size_t test_reservation = (size_t)64 << 30;
+
+static SmithArena test_big_arena(void) {
+    void *memory =
+        mmap(nullptr, test_reservation, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    assert(memory != MAP_FAILED);
+    return smith_arena_make(memory, test_reservation);
+}
+
+static int test_big(void) {
+    size_t before = test_resident();
+    SmithArena arena = test_big_arena();
+    unsigned char *bytes = smith_arena_push(&arena, 10, 1);
+    bytes[9] = 1;
+    size_t grown = test_resident() - before;
+    printf("resident growth %zu KiB\n", grown >> 10);
+    return grown < ((size_t)16 << 20) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "big") == 0) return test_big();
+    if (argc > 1 && (strcmp(argv[1], "bigoob") == 0 || strcmp(argv[1], "bigfar") == 0)) {
+        SmithArena arena = test_big_arena();
+        volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
+        bytes[strcmp(argv[1], "bigoob") == 0 ? 10 : 60000] = 1;
+        printf("not reached\n");
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "stale") == 0) {
+        static TestMemory memory;
+        SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+        volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
+        smith_arena_reset(&arena);
+        printf("not reached %d\n", bytes[0]);
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "stop") == 0) {
         static TestMemory memory;
         SmithArena arena = smith_arena_make(memory.bytes, 128);
