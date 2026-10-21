@@ -1,21 +1,29 @@
 // smith's test library: the checks' failures, the memory of a test, and the runner, which is this library's main.
 // The design is in include/smith/test.h and docs/build-c.md.
 //
-// The runner forks a child for each test. The child writes what a failure needs to know (the check's file and line, the
-// values, the note) to a block of memory it shares with the runner, so it survives however the child ends: a failed
-// check, a crash or a kill. Everything the child prints goes down a pipe, and is shown only when the test fails.
+// The runner forks a pool of workers, once each (`--jobs` of them), and sends each one the tests to run, one after
+// another, in-process. A worker writes what a failure needs to know (the check's file and line, the values, the note)
+// to a block of memory it shares with the runner, so it survives however the worker ends: a failed check (which unwinds
+// to the worker's loop with siglongjmp), a crash or a kill. Everything the worker prints goes down a pipe, and is
+// shown only when the test fails. A crash, a timeout or a sanitizer report ends a worker, and the runner forks the
+// next.
+// `--isolate` keeps the process-per-test runner: a child for each test, and for each SMITH_CHECK_ABORTS.
 #include <smith/test.h>
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <poll.h>
+#include <setjmp.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -32,7 +40,7 @@ constexpr size_t smith_test_output_capacity = 64U << 10;  // what a failing test
 constexpr size_t smith_test_output_limit = 16U << 20;     // a child that writes more is killed
 constexpr size_t smith_test_jobs_max = 256;
 constexpr size_t smith_test_alternate_stack = 64U << 10;
-constexpr int smith_test_failure_status = 99; // a child whose check failed exits with this
+constexpr int smith_test_failure_status = 99; // a process whose check failed exits with this
 constexpr int smith_test_signal_status = 128; // a child that catches a fatal signal exits with 128 + its number
 constexpr int smith_test_usage_status = 2;
 
@@ -55,6 +63,7 @@ typedef struct {
     const char *file; // the failed check's file: a string literal of the program, valid in every process forked from it
     int line;         // 0 when no check has failed
     uint64_t seed;    // the property test's current key
+    bool aborting;    // a SMITH_CHECK_ABORTS is running in a worker, and file and line are its
     char note[smith_test_note_capacity];
     char detail[smith_test_detail_capacity]; // the failed check's values, as lines
 } SmithTestShared;
@@ -66,6 +75,14 @@ static unsigned char *smith_test_memory;
 static size_t smith_test_memory_used; // a multiple of smith_arena_align_max
 static unsigned smith_test_timeout_seconds = 10;
 static bool smith_test_full_run; // the runner was given --full; set before any test forks, so every child sees it
+static bool smith_test_worker;   // this process is a worker: a failed check unwinds to its loop
+static sigjmp_buf smith_test_loop_jump;
+static sigjmp_buf smith_test_abort_jump;
+static uint64_t *smith_test_forks; // the forks of the whole run, counted in memory every process shares
+
+static void smith_test_count_fork(void) {
+    if (smith_test_forks != nullptr) __atomic_fetch_add(smith_test_forks, 1, __ATOMIC_RELAXED);
+}
 
 bool smith_test_full(void) {
     return smith_test_full_run;
@@ -77,6 +94,7 @@ static void smith_test_reset(void) {
     smith_test_shared->line = 0;
     smith_test_shared->note[0] = '\0';
     smith_test_shared->detail[0] = '\0';
+    smith_test_shared->aborting = false;
 }
 
 SmithArena smith_test_arena(size_t capacity) {
@@ -334,11 +352,33 @@ static void smith_test_write_values(SmithTestLine *lines, size_t count) {
     }
 }
 
-[[noreturn]] static void smith_test_end(const char *file, int line) {
+// Where a SMITH_CHECK_ABORTS stands in a worker. Set by the macro's functions and by the signal handler.
+constexpr int smith_test_abort_idle = 0;
+constexpr int smith_test_abort_running = 1; // the expression is running, its output captured
+constexpr int smith_test_abort_returned_state = 2;
+constexpr int smith_test_abort_signaled = 3; // it raised SIGABRT or SIGTRAP, which the handler caught
+constexpr int smith_test_abort_failed = 4;   // a check inside it failed
+static volatile sig_atomic_t smith_test_abort_state = smith_test_abort_idle;
+static volatile sig_atomic_t smith_test_abort_signal;
+
+// Ends the test with a failed check. In a worker the test unwinds to the worker's loop, unless the worker is to be
+// retired (its state cannot be trusted: a sanitizer reported), and then it exits as a process-per-test child does.
+[[noreturn]] static void smith_test_stop(const char *file, int line, bool retire) {
     fflush(nullptr);
     smith_test_shared->file = file;
     smith_test_shared->line = line;
+    if (smith_test_worker && !retire) {
+        if (smith_test_abort_state == smith_test_abort_running) {
+            smith_test_abort_state = smith_test_abort_failed;
+            siglongjmp(smith_test_abort_jump, 2);
+        }
+        siglongjmp(smith_test_loop_jump, 1);
+    }
     _exit(smith_test_failure_status);
+}
+
+[[noreturn]] static void smith_test_end(const char *file, int line) {
+    smith_test_stop(file, line, false);
 }
 
 void smith_test_fail_condition(const char *file, int line) {
@@ -376,6 +416,12 @@ void smith_test_fail_near(const char *a_text, const char *b_text, const char *to
 }
 
 // SMITH_CHECK_ABORTS.
+//
+// In a worker the expression runs in-process with its output going to a temporary file. A SIGABRT or SIGTRAP is caught
+// by the handler, which jumps back to the macro; the check then reads the file, and a sanitizer's report in it fails
+// the check and retires the worker. Any other signal, an exit or a timeout ends the worker, and the runner finds the
+// check in the shared block (`aborting`) and judges how it ended. With --isolate the expression runs in a forked child
+// and the parent judges its end, as it always has.
 
 typedef struct {
     pid_t child;
@@ -384,13 +430,14 @@ typedef struct {
 
 static SmithTestDeath smith_test_death;
 
-bool smith_test_abort_child(void) {
+static bool smith_test_abort_fork(void) {
     int ends[2];
     if (pipe(ends) != 0) {
         perror("smith: pipe");
         abort();
     }
     fflush(nullptr); // or the child prints what is still buffered a second time
+    smith_test_count_fork();
     pid_t child = fork();
     if (child < 0) {
         perror("smith: fork");
@@ -409,7 +456,93 @@ bool smith_test_abort_child(void) {
     return false;
 }
 
+// What a worker's death check captured: its output goes to a file while the expression runs.
+typedef struct {
+    int file; // -1 until the first check
+    int out;  // the real stdout and stderr, saved while the output is captured
+    int err;
+    struct rlimit size; // the file-size limit before the capture lowered it
+} SmithTestCapture;
+
+static SmithTestCapture smith_test_capture = {.file = -1, .out = -1, .err = -1};
+static volatile sig_atomic_t smith_test_capturing;
+
+static void smith_test_capture_start(void) {
+    if (smith_test_capture.file < 0) {
+        FILE *file = tmpfile();
+        if (file == nullptr) {
+            perror("smith: tmpfile");
+            abort();
+        }
+        smith_test_capture.file = fileno(file);
+    }
+    if (ftruncate(smith_test_capture.file, 0) != 0 || lseek(smith_test_capture.file, 0, SEEK_SET) != 0) {
+        perror("smith: capture");
+        abort();
+    }
+    fflush(nullptr);
+    // A flood stops at the limit the child of --isolate is killed at: a write past it fails, SIGXFSZ being ignored.
+    getrlimit(RLIMIT_FSIZE, &smith_test_capture.size);
+    struct rlimit lowered = smith_test_capture.size;
+    if (lowered.rlim_max > smith_test_output_limit) {
+        lowered.rlim_cur = smith_test_output_limit;
+        setrlimit(RLIMIT_FSIZE, &lowered);
+    }
+    smith_test_capture.out = dup(STDOUT_FILENO);
+    smith_test_capture.err = dup(STDERR_FILENO);
+    dup2(smith_test_capture.file, STDOUT_FILENO);
+    dup2(smith_test_capture.file, STDERR_FILENO);
+    smith_test_capturing = 1;
+}
+
+// Gives the real output back. Safe to call from a signal handler, and when no capture is on.
+static void smith_test_capture_stop(void) {
+    if (!smith_test_capturing) return;
+    smith_test_capturing = 0;
+    dup2(smith_test_capture.out, STDOUT_FILENO);
+    dup2(smith_test_capture.err, STDERR_FILENO);
+    close(smith_test_capture.out);
+    close(smith_test_capture.err);
+    setrlimit(RLIMIT_FSIZE, &smith_test_capture.size);
+}
+
+// What the expression wrote: its first capacity bytes, read after the capture has stopped.
+static size_t smith_test_capture_read(char *text, size_t capacity) {
+    ssize_t got = pread(smith_test_capture.file, text, capacity, 0);
+    return got > 0 ? (size_t)got : 0;
+}
+
+// For a worker about to die while a check runs: stops the capture and writes what it holds to the real stderr, so the
+// runner shows it with the failure. Only calls that are safe in a signal handler.
+static void smith_test_capture_forward(void) {
+    if (!smith_test_capturing) return;
+    smith_test_capture_stop();
+    char chunk[4096];
+    off_t at = 0;
+    for (size_t reads = 0; reads < smith_test_output_capacity / sizeof chunk; reads++) {
+        ssize_t got = pread(smith_test_capture.file, chunk, sizeof chunk, at);
+        if (got <= 0) break;
+        (void)!write(STDERR_FILENO, chunk, (size_t)got);
+        at += got;
+    }
+}
+
+bool smith_test_abort_child(const char *file, int line) {
+    assert(file != nullptr && line > 0);
+    if (!smith_test_worker) return smith_test_abort_fork();
+    smith_test_shared->file = file;
+    smith_test_shared->line = line;
+    smith_test_shared->aborting = true;
+    smith_test_capture_start();
+    smith_test_abort_state = smith_test_abort_running; // a timeout ends the worker: it is the test's, as it always was
+    return true;
+}
+
 void smith_test_abort_returned(void) {
+    if (smith_test_worker) {
+        smith_test_abort_state = smith_test_abort_returned_state;
+        return;
+    }
     fflush(nullptr);
     _exit(0);
 }
@@ -437,7 +570,7 @@ static size_t smith_test_death_read(char *text, size_t capacity) {
 
 static const char *smith_test_signal_name(int signal_number);
 
-// Whether the child's output holds a sanitizer's report.
+// Whether the output holds a sanitizer's report.
 static bool smith_test_has_report(const char *text, size_t length) {
     static const char *const markers[] = {"AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer",
                                           "ThreadSanitizer", "runtime error:"};
@@ -449,14 +582,19 @@ static bool smith_test_has_report(const char *text, size_t length) {
     return false;
 }
 
-// Why the child's end is not the stop a death test expects, written into message, or nullptr when it is: SIGABRT or
-// SIGTRAP (an assert, abort(), __builtin_trap, the arena's capacity stop; a caught one exits with 128 plus its number)
-// and no sanitizer report in the output. A sanitizer report, any other signal and any other exit are bugs.
-static const char *smith_test_death_verdict(int status, const char *text, size_t length, char *message,
+// A wait status as the signal that ended the process (or 0) and its exit status (or 0). A process that caught a fatal
+// signal exited with 128 plus its number, which counts as the signal.
+static void smith_test_status_split(int status, int *signal_number, int *code) {
+    *signal_number = smith_test_status_signal(status);
+    *code = smith_test_status_code(status);
+    if (*code > smith_test_signal_status) *signal_number = *code - smith_test_signal_status;
+}
+
+// Why the end of an expression is not the stop a death test expects, written into message, or nullptr when it is:
+// SIGABRT or SIGTRAP (an assert, abort(), __builtin_trap, the arena's capacity stop) and no sanitizer report in the
+// output. A sanitizer report, any other signal and any other exit are bugs.
+static const char *smith_test_death_verdict(int signal_number, int code, const char *text, size_t length, char *message,
                                             size_t capacity) {
-    int signal_number = smith_test_status_signal(status);
-    int code = smith_test_status_code(status);
-    if (code > smith_test_signal_status) signal_number = code - smith_test_signal_status;
     if (signal_number == SIGALRM) return "expected an abort; it timed out";
     if (smith_test_has_report(text, length))
         return "expected an abort; it was stopped by a sanitizer report, which is a bug, not the stop the test "
@@ -477,8 +615,7 @@ static const char *smith_test_death_verdict(int status, const char *text, size_t
     return message;
 }
 
-void smith_test_abort_judge(const char *file, int line) {
-    assert(file != nullptr && line > 0);
+static void smith_test_abort_judge_child(const char *file, int line) {
     static char text[smith_test_output_capacity];
     size_t kept = smith_test_death_read(text, sizeof text);
     int status = 0;
@@ -486,12 +623,51 @@ void smith_test_abort_judge(const char *file, int line) {
         perror("smith: waitpid");
         abort();
     }
+    int signal_number = 0;
+    int code = 0;
+    smith_test_status_split(status, &signal_number, &code);
     char message[160];
-    const char *verdict = smith_test_death_verdict(status, text, kept, message, sizeof message);
+    const char *verdict = smith_test_death_verdict(signal_number, code, text, kept, message, sizeof message);
     if (verdict == nullptr) return;
     if (kept > 0) fwrite(text, 1, kept, stderr); // the child's output is shown for a failure only
     snprintf(smith_test_shared->detail, smith_test_detail_capacity, "%s\n", verdict);
     smith_test_end(file, line);
+}
+
+// A worker's judgment of the expression it ran in-process: how it ended, and what it printed.
+static void smith_test_abort_judge_worker(const char *file, int line) {
+    int state = smith_test_abort_state;
+    assert(state != smith_test_abort_idle && state != smith_test_abort_running);
+    int signal_number = state == smith_test_abort_signaled ? (int)smith_test_abort_signal : 0;
+    int code = state == smith_test_abort_failed ? smith_test_failure_status : 0;
+    fflush(nullptr);
+    smith_test_abort_state = smith_test_abort_idle;
+    smith_test_capture_stop();
+    smith_test_shared->aborting = false;
+    static char text[smith_test_output_capacity];
+    size_t kept = smith_test_capture_read(text, sizeof text);
+    char message[160];
+    const char *verdict = smith_test_death_verdict(signal_number, code, text, kept, message, sizeof message);
+    if (verdict == nullptr) {
+        smith_test_shared->file = nullptr;
+        smith_test_shared->line = 0;
+        return;
+    }
+    if (kept > 0) fwrite(text, 1, kept, stderr);
+    snprintf(smith_test_shared->detail, smith_test_detail_capacity, "%s\n", verdict);
+    smith_test_stop(file, line, smith_test_has_report(text, kept)); // after a report the worker is not trusted
+}
+
+void smith_test_abort_judge(const char *file, int line) {
+    assert(file != nullptr && line > 0);
+    if (smith_test_worker)
+        smith_test_abort_judge_worker(file, line);
+    else
+        smith_test_abort_judge_child(file, line);
+}
+
+sigjmp_buf *smith_test_abort_jump_buffer(void) {
+    return &smith_test_abort_jump;
 }
 
 // The runner.
@@ -509,11 +685,16 @@ typedef struct {
     bool list;
     bool verbose;
     bool color;
+    bool isolate;       // a process for each test, as before the workers
+    bool stats;         // print the forks the run made
+    bool shuffle_given; // run the tests in an order drawn from shuffle_seed
+    uint64_t shuffle_seed;
 } SmithTestOptions;
 
 constexpr uint64_t smith_test_seeds_default = 100;
 constexpr uint64_t smith_test_seeds_max = 1'000'000'000;
-constexpr uint64_t smith_test_seed_root = 0x5eed; // the key the properties' seeds are drawn from
+constexpr uint64_t smith_test_seed_root = 0x5eed;    // the key the properties' seeds are drawn from
+constexpr size_t smith_test_commands_max = 1U << 30; // what a worker serves before it exits and is forked again
 
 typedef enum : unsigned char {
     SmithTestEnd_Passed,
@@ -532,18 +713,16 @@ typedef struct {
 typedef struct {
     char text[smith_test_output_capacity];
     size_t kept;  // bytes in text
-    size_t total; // bytes the child wrote
+    size_t total; // bytes the test wrote
 } SmithTestOutput;
 
-// One test's run: filled in as its child runs and ends, and printed once every test before it has been.
+// One test's run: filled in as its process runs and ends, and printed once every test before it has been.
 typedef struct {
-    pid_t child;
-    int input; // the read end of the child's output, -1 once it has closed
     double start;
     double seconds;
     bool finished;
     SmithTestOutcome outcome;
-    uint64_t seed; // a property test's key when the child ended
+    uint64_t seed; // a property test's key when the test ended
     const char *file;
     int line;
     char note[smith_test_note_capacity];
@@ -552,6 +731,19 @@ typedef struct {
     unsigned shrink_runs; // the runs shrinking took, 0 when it did not run
     bool shrink_changed;  // it found a smaller failure
 } SmithTestRun;
+
+// What the runner sends a worker: the test to run, and the one key to run a property test on, if any.
+typedef struct {
+    uint32_t test; // the row of smith_test_table
+    bool seed_given;
+    uint64_t seed;
+} SmithTestCommand;
+
+// What a worker sends back when a test ended in it without ending the worker: a pass or a failed check. A worker
+// that ended some other way sends nothing, and its process's end is the runner's answer.
+typedef struct {
+    SmithTestEnd end;
+} SmithTestReply;
 
 static void smith_test_die(const char *call) {
     perror(call);
@@ -572,12 +764,22 @@ static void *smith_test_map(size_t bytes, int flags) {
     return memory;
 }
 
+// A process that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for a death
+// test or a crashing test. AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers, whose report ends in
+// abort(). While a worker runs a SMITH_CHECK_ABORTS, SIGABRT and SIGTRAP are what the check expects: they jump back to
+// it.
 static void smith_test_on_signal(int signal_number) {
+    if (smith_test_abort_state == smith_test_abort_running) {
+        if (signal_number == SIGABRT || signal_number == SIGTRAP) {
+            smith_test_abort_signal = signal_number;
+            smith_test_abort_state = smith_test_abort_signaled;
+            siglongjmp(smith_test_abort_jump, 1);
+        }
+        smith_test_capture_forward();
+    }
     _exit(smith_test_signal_status + signal_number);
 }
 
-// A child that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for a death test
-// or a crashing test. AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers, whose report ends in abort().
 static void smith_test_catch_signals(void) {
     static unsigned char stack[smith_test_alternate_stack];
     stack_t alternate = {.ss_sp = stack, .ss_size = sizeof stack};
@@ -605,11 +807,26 @@ static void smith_test_run_key(const SmithTest *test, const SmithTestOptions *op
 }
 
 static uint64_t smith_test_hook(SmithKey key, uint64_t n, uint64_t bits);
-static bool smith_test_hooking; // the next child installs the hook
+static bool smith_test_hooking; // the next process forked installs the hook
 
-// In the child: send all output down the pipe, run the test and exit 0 if it returns.
-[[noreturn]] static void smith_test_child(const SmithTest *test, const SmithTestOptions *options,
-                                          SmithTestShared *shared, int output) {
+// Runs the test: once, or a property test on its one key or on all of them.
+static void smith_test_execute(const SmithTest *test, const SmithTestOptions *options,
+                               const SmithTestCommand *command) {
+    if (test->plain != nullptr) {
+        smith_test_reset();
+        alarm(options->timeout);
+        test->plain();
+    } else if (command->seed_given) {
+        smith_test_run_key(test, options, command->seed);
+    } else {
+        SmithKey root = smith_key_make(smith_test_seed_root);
+        for (uint64_t i = 0; i < options->seed_count; i++)
+            smith_test_run_key(test, options, smith_key_bits(root, i));
+    }
+}
+
+// In a forked process, before its first test: all output goes down the pipe.
+static void smith_test_setup(const SmithTestOptions *options, SmithTestShared *shared, int output) {
     smith_test_shared = shared;
     smith_test_timeout_seconds = options->timeout;
     smith_test_catch_signals();
@@ -617,18 +834,53 @@ static bool smith_test_hooking; // the next child installs the hook
     if (dup2(output, STDOUT_FILENO) < 0 || dup2(output, STDERR_FILENO) < 0) _exit(smith_test_usage_status);
     close(output);
     setvbuf(stdout, nullptr, _IONBF, 0);
-    if (test->plain != nullptr) {
-        smith_test_reset();
-        alarm(options->timeout);
-        test->plain();
-    } else if (options->seed_given) {
-        smith_test_run_key(test, options, options->seed);
-    } else {
-        SmithKey root = smith_key_make(smith_test_seed_root);
-        for (uint64_t i = 0; i < options->seed_count; i++)
-            smith_test_run_key(test, options, smith_key_bits(root, i));
-    }
+}
+
+// --isolate: the process runs its one test and exits 0 if it returns.
+[[noreturn]] static void smith_test_child(const SmithTest *test, const SmithTestOptions *options,
+                                          SmithTestShared *shared, int output, const SmithTestCommand *command) {
+    smith_test_setup(options, shared, output);
+    smith_test_execute(test, options, command);
     fflush(nullptr);
+    _exit(0);
+}
+
+// A worker's test: the end it came to without the worker ending. The arenas, the note and the alarm are the test's own
+// (smith_test_execute resets them before each test and each key); a failed check lands back here.
+static SmithTestEnd smith_test_serve(const SmithTestOptions *options, const SmithTestCommand *command) {
+    const SmithTest *test = &smith_test_table[command->test];
+    int jumped = sigsetjmp(smith_test_loop_jump, 1);
+    if (jumped == 0) smith_test_execute(test, options, command);
+    smith_test_capture_stop();
+    smith_test_abort_state = smith_test_abort_idle;
+    alarm(0); // an idle worker is not on the clock
+    fflush(nullptr);
+    setvbuf(stdout, nullptr, _IONBF, 0); // a test may have given stdout a buffer of its own
+    return jumped == 0 ? SmithTestEnd_Passed : SmithTestEnd_Check;
+}
+
+// A worker that exits while a death check runs gives the output the check held back to the runner.
+static void smith_test_on_exit(void) {
+    if (smith_test_abort_state == smith_test_abort_running) {
+        fflush(nullptr);
+        smith_test_capture_forward();
+    }
+}
+
+// A worker's life: it takes a command, runs the test, and answers, until the runner closes the socket.
+[[noreturn]] static void smith_test_worker_main(const SmithTestOptions *options, SmithTestShared *shared, int control,
+                                                int output) {
+    smith_test_worker = true;
+    signal(SIGPIPE, SIG_DFL);
+    signal(SIGXFSZ, SIG_IGN);
+    smith_test_setup(options, shared, output);
+    atexit(smith_test_on_exit);
+    for (size_t served = 0; served < smith_test_commands_max; served++) {
+        SmithTestCommand command;
+        if (read(control, &command, sizeof command) != (ssize_t)sizeof command) break;
+        SmithTestReply reply = {.end = smith_test_serve(options, &command)};
+        if (write(control, &reply, sizeof reply) != (ssize_t)sizeof reply) break;
+    }
     _exit(0);
 }
 
@@ -655,9 +907,9 @@ static const char *smith_test_signal_name(int signal_number) {
 
 static SmithTestOutcome smith_test_judge(int status, bool flood) {
     if (flood) return (SmithTestOutcome){.end = SmithTestEnd_Flood};
-    int signal_number = smith_test_status_signal(status);
-    int code = smith_test_status_code(status);
-    if (code > smith_test_signal_status) signal_number = code - smith_test_signal_status;
+    int signal_number = 0;
+    int code = 0;
+    smith_test_status_split(status, &signal_number, &code);
     if (signal_number == SIGALRM) return (SmithTestOutcome){.end = SmithTestEnd_Timeout, .number = SIGALRM};
     if (signal_number != 0) return (SmithTestOutcome){.end = SmithTestEnd_Signal, .number = signal_number};
     if (code == 0) return (SmithTestOutcome){.end = SmithTestEnd_Passed};
@@ -665,56 +917,223 @@ static SmithTestOutcome smith_test_judge(int status, bool flood) {
     return (SmithTestOutcome){.end = SmithTestEnd_Exit, .number = code};
 }
 
-// Forks the test's child, its output going down a pipe the runner reads.
-static void smith_test_start(const SmithTest *test, const SmithTestOptions *options, SmithTestShared *shared,
-                             SmithTestRun *run) {
+// The processes. A job is a slot; the last slot is for shrinking, and its worker installs the random hook. With
+// --isolate a slot holds the process of one test, and has no control socket.
+typedef struct {
+    pid_t pid;   // 0 when the slot has no process
+    int control; // the runner's end of the socket the commands and replies go over; -1 with --isolate
+    int output;  // the read end of the process's output
+    bool output_eof;
+} SmithTestWorker;
+
+static SmithTestWorker smith_test_workers[smith_test_jobs_max + 1];
+constexpr size_t smith_test_shrink_slot = smith_test_jobs_max;
+
+static void smith_test_close_worker(SmithTestWorker *worker) {
+    if (worker->control >= 0) close(worker->control);
+    if (worker->output >= 0) close(worker->output);
+    worker->control = -1;
+    worker->output = -1;
+}
+
+// Ends a worker that is idle, or is of no use: its process is killed and reaped.
+static void smith_test_discard(SmithTestWorker *worker) {
+    if (worker->pid == 0) return;
+    kill(worker->pid, SIGKILL);
+    smith_test_close_worker(worker);
+    int status = 0;
+    waitpid(worker->pid, &status, 0);
+    worker->pid = 0;
+}
+
+// In a new process: the other jobs' descriptors are not its to hold, or the runner closing them would not end them.
+static void smith_test_close_others(size_t slot) {
+    for (size_t other = 0; other <= smith_test_jobs_max; other++) {
+        if (other != slot && smith_test_workers[other].pid != 0) smith_test_close_worker(&smith_test_workers[other]);
+    }
+}
+
+// Forks the slot's worker, which serves commands until its socket closes.
+static void smith_test_spawn(const SmithTestOptions *options, size_t slot) {
+    int output[2];
+    int control[2];
+    if (pipe(output) != 0) smith_test_die("pipe");
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0) smith_test_die("socketpair");
+    fflush(nullptr);
+    smith_test_count_fork();
+    smith_test_hooking = slot == smith_test_shrink_slot;
+    pid_t child = fork();
+    if (child < 0) smith_test_die("fork");
+    if (child == 0) {
+        close(output[0]);
+        close(control[0]);
+        smith_test_close_others(slot);
+        smith_test_worker_main(options, &smith_test_shared_slots[slot], control[1], output[1]);
+    }
+    smith_test_hooking = false;
+    close(output[1]);
+    close(control[1]);
+    // NOLINTNEXTLINE(bugprone-signed-bitwise): fcntl's O_* flags are signed ints defined by the system header
+    if (fcntl(output[0], F_SETFL, O_NONBLOCK) != 0) smith_test_die("fcntl");
+    smith_test_workers[slot] = (SmithTestWorker){.pid = child, .control = control[0], .output = output[0]};
+}
+
+// --isolate: forks the test's child, its output going down a pipe the runner reads.
+static void smith_test_start_isolated(const SmithTest *test, const SmithTestOptions *options, size_t slot,
+                                      const SmithTestCommand *command) {
     int ends[2];
     if (pipe(ends) != 0) smith_test_die("pipe");
-    memset(shared, 0, sizeof *shared);
     fflush(nullptr);
+    smith_test_count_fork();
+    smith_test_hooking = slot == smith_test_shrink_slot;
     pid_t child = fork();
     if (child < 0) smith_test_die("fork");
     if (child == 0) {
         close(ends[0]);
-        smith_test_child(test, options, shared, ends[1]);
+        smith_test_child(test, options, &smith_test_shared_slots[slot], ends[1], command);
     }
+    smith_test_hooking = false;
     close(ends[1]);
-    run->child = child;
-    run->input = ends[0];
-    run->start = smith_test_seconds();
+    smith_test_workers[slot] = (SmithTestWorker){.pid = child, .control = -1, .output = ends[0]};
 }
 
-// Reads what is waiting from the child, keeping the start of it. Returns false once the child has closed its output or
-// has written more than smith_test_output_limit, which kills it.
-static bool smith_test_read(SmithTestRun *run) {
+// Starts the test in the slot: a command to its worker (forked first if it has none), or its own child with --isolate.
+static void smith_test_dispatch(const SmithTestOptions *options, size_t slot, const SmithTest *test,
+                                SmithTestRun *run) {
+    memset(&smith_test_shared_slots[slot], 0, sizeof smith_test_shared_slots[slot]);
+    SmithTestCommand command = {
+        .test = (uint32_t)(test - smith_test_table), .seed_given = options->seed_given, .seed = options->seed};
+    if (options->isolate) {
+        smith_test_start_isolated(test, options, slot, &command);
+        run->start = smith_test_seconds();
+        return;
+    }
+    for (int attempt = 0; attempt < 2; attempt++) { // a worker that died while idle is replaced once
+        SmithTestWorker *worker = &smith_test_workers[slot];
+        if (worker->pid == 0) smith_test_spawn(options, slot);
+        run->start = smith_test_seconds();
+        if (write(worker->control, &command, sizeof command) == (ssize_t)sizeof command) return;
+        smith_test_discard(worker);
+    }
+    smith_test_die("write");
+}
+
+typedef enum : unsigned char {
+    SmithTestRead_Data,
+    SmithTestRead_Empty,
+    SmithTestRead_Closed, // the process closed its output, or wrote more than smith_test_output_limit and was killed
+} SmithTestRead;
+
+// Reads what is waiting from the process, keeping the start of it.
+static SmithTestRead smith_test_read(SmithTestWorker *worker, SmithTestRun *run) {
     SmithTestOutput *output = &run->output;
     char chunk[4096];
-    ssize_t got = read(run->input, chunk, sizeof chunk);
-    if (got <= 0) return false;
+    ssize_t got = read(worker->output, chunk, sizeof chunk);
+    if (got < 0) return errno == EAGAIN || errno == EINTR ? SmithTestRead_Empty : SmithTestRead_Closed;
+    if (got == 0) return SmithTestRead_Closed;
     size_t room = smith_test_output_capacity - output->kept;
     size_t keep = (size_t)got < room ? (size_t)got : room;
     memcpy(output->text + output->kept, chunk, keep);
     output->kept += keep;
     output->total += (size_t)got;
-    if (output->total < smith_test_output_limit) return true;
-    kill(run->child, SIGKILL);
-    return false;
+    if (output->total < smith_test_output_limit) return SmithTestRead_Data;
+    kill(worker->pid, SIGKILL);
+    return SmithTestRead_Closed;
 }
 
-// Waits for the ended child and judges how it ended; what it left in the shared block is copied to the run.
-static void smith_test_finish(SmithTestRun *run, const SmithTestShared *shared) {
-    close(run->input);
-    run->input = -1;
+// Everything the process wrote before it answered or died is in the pipe: take it, so it is this test's output.
+static void smith_test_drain(SmithTestWorker *worker, SmithTestRun *run) {
+    for (size_t reads = 0; reads <= smith_test_output_limit / 4096 + 1 && !worker->output_eof; reads++) {
+        SmithTestRead got = smith_test_read(worker, run);
+        if (got == SmithTestRead_Closed) worker->output_eof = true;
+        if (got != SmithTestRead_Data) break;
+    }
+}
+
+// A worker that died while a SMITH_CHECK_ABORTS ran: the check is where it failed, and how the worker ended says why.
+static void smith_test_judge_death_check(SmithTestRun *run, int status) {
+    int signal_number = 0;
+    int code = 0;
+    smith_test_status_split(status, &signal_number, &code);
+    char message[160];
+    const char *verdict =
+        smith_test_death_verdict(signal_number, code, run->output.text, run->output.kept, message, sizeof message);
+    if (verdict == nullptr) return;
+    run->outcome = (SmithTestOutcome){.end = SmithTestEnd_Check};
+    snprintf(run->detail, sizeof run->detail, "%s\n", verdict);
+}
+
+// The test has ended, by the worker's answer or (reply is nullptr) by the process's end: judge it, and copy what it
+// left in the shared block to the run.
+static void smith_test_finish(size_t slot, SmithTestRun *run, const SmithTestReply *reply) {
+    SmithTestWorker *worker = &smith_test_workers[slot];
+    const SmithTestShared *shared = &smith_test_shared_slots[slot];
+    smith_test_drain(worker, run);
     int status = 0;
-    if (waitpid(run->child, &status, 0) != run->child) smith_test_die("waitpid");
+    if (reply == nullptr) {
+        smith_test_close_worker(worker);
+        if (waitpid(worker->pid, &status, 0) != worker->pid) smith_test_die("waitpid");
+        worker->pid = 0;
+        run->outcome = smith_test_judge(status, run->output.total >= smith_test_output_limit);
+    } else {
+        run->outcome = (SmithTestOutcome){.end = reply->end};
+    }
     run->seconds = smith_test_seconds() - run->start;
-    run->outcome = smith_test_judge(status, run->output.total >= smith_test_output_limit);
     run->seed = shared->seed;
     run->file = shared->file;
     run->line = shared->line;
     memcpy(run->note, shared->note, sizeof run->note);
     memcpy(run->detail, shared->detail, sizeof run->detail);
+    if (reply == nullptr && shared->aborting && shared->line > 0 && run->outcome.end != SmithTestEnd_Flood &&
+        run->outcome.end != SmithTestEnd_Timeout)
+        smith_test_judge_death_check(run, status);
+    // After a sanitizer's report the worker is not trusted, whatever the test came to.
+    if (reply != nullptr && smith_test_has_report(run->output.text, run->output.kept)) smith_test_discard(worker);
     run->finished = true;
+}
+
+// What a poll said about a busy slot. True once its test has finished.
+static bool smith_test_service(size_t slot, SmithTestRun *run, short output_events, short control_events) {
+    SmithTestWorker *worker = &smith_test_workers[slot];
+    if (worker->control < 0) { // --isolate: the test is over when its output ends
+        if (smith_test_read(worker, run) != SmithTestRead_Closed) return false;
+        smith_test_finish(slot, run, nullptr);
+        return true;
+    }
+    if (output_events != 0 && !worker->output_eof && smith_test_read(worker, run) == SmithTestRead_Closed)
+        worker->output_eof = true;
+    if (control_events == 0) return false;
+    SmithTestReply reply;
+    ssize_t got = read(worker->control, &reply, sizeof reply);
+    if (got < 0 && errno == EINTR) return false;
+    smith_test_finish(slot, run, got == (ssize_t)sizeof reply ? &reply : nullptr);
+    return true;
+}
+
+// Waits for the test in the slot to finish; nothing else runs meanwhile.
+static void smith_test_wait(size_t slot, SmithTestRun *run) {
+    SmithTestWorker *worker = &smith_test_workers[slot];
+    for (;;) { // the test ends, or dies, or its alarm kills it
+        struct pollfd polls[2] = {{.fd = worker->output_eof ? -1 : worker->output, .events = POLLIN},
+                                  {.fd = worker->control, .events = POLLIN}};
+        if (poll(polls, 2, -1) < 0) {
+            if (errno == EINTR) continue;
+            smith_test_die("poll");
+        }
+        if (smith_test_service(slot, run, polls[0].revents, polls[1].revents)) return;
+    }
+}
+
+// Ends the workers, which are idle: closing a socket ends its worker.
+static void smith_test_stop_workers(void) {
+    for (size_t slot = 0; slot <= smith_test_jobs_max; slot++) {
+        SmithTestWorker *worker = &smith_test_workers[slot];
+        if (worker->pid == 0) continue;
+        smith_test_close_worker(worker);
+        int status = 0;
+        waitpid(worker->pid, &status, 0);
+        worker->pid = 0;
+    }
 }
 
 // Printing.
@@ -824,11 +1243,12 @@ static void smith_test_report(const SmithTest *test, const SmithTestOptions *opt
 // Shrinking.
 //
 // A property test draws every number from its key's words (smith_key_bits). When a key fails, the runner reruns that
-// key with smith's random hook installed in the child, which records each (key, n) the test asks for, in first-use
+// key in a worker with smith's random hook installed, which records each (key, n) the test asks for, in first-use
 // order, with the word it got. Then the runner tries to make the failure smaller: for each recorded word in order it
 // tries 0, the simplest value of every distribution, and when the test then no longer fails it searches between 0 and
-// the word for the smallest one that still does. Each try is a child with an override table that the hook reads. A try
-// keeps the failure only when it is the same: the same check (file and line), or the same signal or exit status.
+// the word for the smallest one that still does. Each try is a run in that worker (a fork only when the try kills it),
+// with an override table that the hook reads. A try keeps the failure only when it is the same: the same check (file
+// and line), or the same signal or exit status.
 
 constexpr size_t smith_test_draws_max = 65536; // words recorded; past it, no more are
 constexpr size_t smith_test_slots = 131072;    // a power of two, twice the words: the hash table is never full
@@ -850,7 +1270,7 @@ typedef struct {
 } SmithTestDraws;
 
 static SmithTestDraws *smith_test_recorded;  // what the child asked for: the child writes, the runner reads
-static SmithTestDraws *smith_test_overrides; // the words to give instead: the runner writes, the child reads
+static SmithTestDraws *smith_test_overrides; // the words to give instead: the runner writes, the worker reads
 
 static uint64_t smith_test_mix(uint64_t key, uint64_t n) {
     uint64_t z = key ^ (n * 0x9e3779b97f4a7c15ULL);
@@ -937,8 +1357,8 @@ static bool smith_test_budget(const SmithTestShrink *shrink) {
     return shrink->runs < smith_test_shrink_runs_max && smith_test_seconds() < shrink->deadline;
 }
 
-// Runs the key once more as a child that records its draws, with the overrides in place. The run lands in
-// shrink->candidate, with its output.
+// Runs the key once more in the shrinking worker, which records its draws, with the overrides in place. The run lands
+// in shrink->candidate, with its output.
 static void smith_test_try_run(SmithTestShrink *shrink) {
     SmithTestRun *run = shrink->candidate;
     SmithTestOptions options = *shrink->options;
@@ -946,13 +1366,8 @@ static void smith_test_try_run(SmithTestShrink *shrink) {
     options.seed = shrink->seed;
     smith_test_draws_clear(smith_test_recorded);
     memset(run, 0, sizeof *run);
-    smith_test_hooking = true;
-    SmithTestShared *shared = &smith_test_shared_slots[smith_test_jobs_max];
-    smith_test_start(shrink->test, &options, shared, run);
-    smith_test_hooking = false;
-    while (smith_test_read(run)) {
-    }
-    smith_test_finish(run, shared);
+    smith_test_dispatch(&options, smith_test_shrink_slot, shrink->test, run);
+    smith_test_wait(smith_test_shrink_slot, run);
     shrink->runs += 1;
 }
 
@@ -1064,34 +1479,37 @@ static void smith_test_shrink(const SmithTest *test, const SmithTestOptions *opt
 
 constexpr size_t smith_test_idle = SIZE_MAX; // a job with no test
 
-// Everything a run needs: the tests chosen, a run for each, and what each job is running now.
+// Everything a run needs: the tests chosen, a run for each, the order they start in, and what each job is running now.
 typedef struct {
     const SmithTestOptions *options;
-    const SmithTest **tests; // the chosen tests, in order
+    const SmithTest **tests; // the chosen tests, in table order
     SmithTestRun *runs;      // one per chosen test
+    size_t *order;           // the chosen tests in the order they start: the table's, or shuffled
     size_t count;
-    SmithTestShared *shared;             // one per job
     size_t running[smith_test_jobs_max]; // the chosen test each job is running, or smith_test_idle
-    struct pollfd polls[smith_test_jobs_max];
+    struct pollfd polls[2 * smith_test_jobs_max];
 } SmithTestPlan;
 
-// Waits until some job has output or has ended, and reads it; a job whose child has ended is finished and freed.
+// Waits until some job has output or has ended, and reads it; a job whose test has ended is finished and freed.
 static void smith_test_pump(SmithTestPlan *plan) {
     size_t jobs = plan->options->jobs;
     for (size_t job = 0; job < jobs; job++) {
+        const SmithTestWorker *worker = &smith_test_workers[job];
         bool busy = plan->running[job] != smith_test_idle;
-        plan->polls[job] = (struct pollfd){.fd = busy ? plan->runs[plan->running[job]].input : -1, .events = POLLIN};
+        plan->polls[2 * job] =
+            (struct pollfd){.fd = busy && !worker->output_eof ? worker->output : -1, .events = POLLIN};
+        plan->polls[2 * job + 1] = (struct pollfd){.fd = busy ? worker->control : -1, .events = POLLIN};
     }
-    if (poll(plan->polls, (nfds_t)jobs, -1) < 0) {
+    if (poll(plan->polls, (nfds_t)(2 * jobs), -1) < 0) {
         if (errno == EINTR) return;
         smith_test_die("poll");
     }
     for (size_t job = 0; job < jobs; job++) {
-        if (plan->running[job] == smith_test_idle || plan->polls[job].revents == 0) continue;
-        SmithTestRun *run = &plan->runs[plan->running[job]];
-        if (smith_test_read(run)) continue;
-        smith_test_finish(run, &plan->shared[job]);
-        plan->running[job] = smith_test_idle;
+        short output_events = plan->polls[2 * job].revents;
+        short control_events = plan->polls[2 * job + 1].revents;
+        if (plan->running[job] == smith_test_idle || (output_events == 0 && control_events == 0)) continue;
+        if (smith_test_service(job, &plan->runs[plan->running[job]], output_events, control_events))
+            plan->running[job] = smith_test_idle;
     }
 }
 
@@ -1099,8 +1517,9 @@ static void smith_test_pump(SmithTestPlan *plan) {
 static bool smith_test_launch(SmithTestPlan *plan, size_t *next) {
     for (size_t job = 0; job < plan->options->jobs; job++) {
         if (plan->running[job] != smith_test_idle) continue;
-        smith_test_start(plan->tests[*next], plan->options, &plan->shared[job], &plan->runs[*next]);
-        plan->running[job] = *next;
+        size_t chosen = plan->order[*next];
+        smith_test_dispatch(plan->options, job, plan->tests[chosen], &plan->runs[chosen]);
+        plan->running[job] = chosen;
         *next += 1;
         return true;
     }
@@ -1114,16 +1533,16 @@ static bool smith_test_any_running(const SmithTestPlan *plan) {
     return false;
 }
 
-// Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it has finished. A
-// failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking takes
-// seconds, and while it ran nothing would read the other children's pipes or judge their timeouts, so a result would
-// depend on another test. Then the held failures are shrunk and printed in order.
+// Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it (in table order) has
+// finished. A failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking
+// takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result
+// would depend on another test. Then the held failures are shrunk and printed in order.
 static void smith_test_run_all(SmithTestPlan *plan) {
     for (size_t job = 0; job < smith_test_jobs_max; job++)
         plan->running[job] = smith_test_idle;
     size_t next = 0;
     size_t printed = 0;
-    for (;;) { // each pass starts a child, finishes one or reads output, and there are finitely many tests
+    for (;;) { // each pass starts a test, finishes one or reads output, and there are finitely many tests
         while (next < plan->count && smith_test_launch(plan, &next)) {
         }
         if (smith_test_any_running(plan)) smith_test_pump(plan);
@@ -1138,6 +1557,7 @@ static void smith_test_run_all(SmithTestPlan *plan) {
         smith_test_shrink(plan->tests[printed], plan->options, &plan->runs[printed]);
         smith_test_report(plan->tests[printed], plan->options, &plan->runs[printed]);
     }
+    smith_test_stop_workers();
 }
 
 // Whether run i comes after run j when the runs are listed slowest first, the earlier of equal times first.
@@ -1210,6 +1630,11 @@ static bool smith_test_parse_value(SmithTestOptions *options, const char *flag, 
         options->shrink = number == 1;
         return number <= 1;
     }
+    if (strcmp(flag, "--shuffle") == 0) {
+        options->shuffle_seed = number;
+        options->shuffle_given = true;
+        return true;
+    }
     return false;
 }
 
@@ -1222,6 +1647,10 @@ static bool smith_test_parse_options(int argc, char **argv, SmithTestOptions *op
             options->verbose = true;
         } else if (strcmp(flag, "--full") == 0) {
             options->full = true;
+        } else if (strcmp(flag, "--isolate") == 0) {
+            options->isolate = true;
+        } else if (strcmp(flag, "--stats") == 0) {
+            options->stats = true;
         } else if (i + 1 >= argc || !smith_test_parse_value(options, flag, argv[i + 1])) {
             return false;
         } else {
@@ -1240,6 +1669,17 @@ static bool smith_test_selects(const SmithTestOptions *options, const char *name
     return strstr(name, options->filter) != nullptr;
 }
 
+// Fisher-Yates, drawing from the seed: the same seed gives the same order. This finds a test that passes only because
+// of what ran before it.
+static void smith_test_shuffle(size_t *order, size_t count, uint64_t seed) {
+    for (size_t i = count; i > 1; i--) {
+        size_t other = (size_t)(smith_test_mix(seed, i) % i);
+        size_t kept = order[i - 1];
+        order[i - 1] = order[other];
+        order[other] = kept;
+    }
+}
+
 // The tests the options choose, in order, with a run for each.
 static SmithTestPlan smith_test_plan(const SmithTestOptions *options) {
     SmithTestPlan plan = {.options = options};
@@ -1252,10 +1692,13 @@ static SmithTestPlan smith_test_plan(const SmithTestOptions *options) {
         plan.count += 1;
     }
     plan.runs = smith_test_map(plan.count * sizeof(SmithTestRun) + 1, MAP_PRIVATE);
-    plan.shared = smith_test_map((smith_test_jobs_max + 1) * sizeof(SmithTestShared), MAP_SHARED);
-    smith_test_shared_slots = plan.shared; // the last one is for shrinking
+    plan.order = smith_test_map((plan.count + 1) * sizeof(size_t), MAP_PRIVATE);
+    for (size_t i = 0; i < plan.count; i++)
+        plan.order[i] = i;
+    if (options->shuffle_given) smith_test_shuffle(plan.order, plan.count, options->shuffle_seed);
+    smith_test_shared_slots = smith_test_map((smith_test_jobs_max + 1) * sizeof(SmithTestShared), MAP_SHARED);
     smith_test_recorded = smith_test_map(sizeof *smith_test_recorded, MAP_SHARED);
-    smith_test_overrides = smith_test_map(sizeof *smith_test_overrides, MAP_PRIVATE);
+    smith_test_overrides = smith_test_map(sizeof *smith_test_overrides, MAP_SHARED);
     return plan;
 }
 
@@ -1271,12 +1714,15 @@ int main(int argc, char **argv) {
     if (!smith_test_parse_options(argc, argv, &options)) {
         fprintf(stderr,
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
-                "[--timeout <seconds>] [--shrink 0|1] [--full] [--list] [--verbose]\n",
+                "[--timeout <seconds>] [--shrink 0|1] [--shuffle <seed>] [--isolate] [--full] [--list] [--verbose] "
+                "[--stats]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;
     }
     double start = smith_test_seconds();
     smith_test_full_run = options.full;
+    signal(SIGPIPE, SIG_IGN); // a worker that died while idle is a failed write, not the end of the runner
+    smith_test_forks = smith_test_map(sizeof *smith_test_forks, MAP_SHARED);
     smith_test_memory = smith_test_map(smith_test_memory_capacity, MAP_PRIVATE);
     SmithTestPlan plan = smith_test_plan(&options);
     if (options.list) {
@@ -1294,5 +1740,6 @@ int main(int argc, char **argv) {
         failed += plan.runs[i].outcome.end != SmithTestEnd_Passed ? 1 : 0;
     smith_test_print_slowest(&plan);
     printf("\n%zu passed, %zu failed in %.2f s\n", plan.count - failed, failed, smith_test_seconds() - start);
+    if (options.stats) printf("forks: %llu\n", (unsigned long long)*smith_test_forks);
     return failed == 0 ? 0 : 1;
 }

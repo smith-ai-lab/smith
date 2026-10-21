@@ -4,22 +4,32 @@
 //   void test_sorted(SmithKey key) { ... }   // a property test: it runs on 100 keys, and a failure prints its seed
 //
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
-// `void test_<name>(SmithKey key) {` by name, and the library's main runs them, each in a process of its own, in
-// parallel, with failures printed with both values and their types. `smith build test` runs them; the options are
-// -DTEST=<substring>, -DSEED=<n>, -DSEEDS=<n>, -DJOBS=<n>, -DSHRINK=0|1 and -DFULL (docs/build-c.md).
+// `void test_<name>(SmithKey key) {` by name, and the library's main runs them, in parallel, with failures printed with
+// both values and their types. `smith build test` runs them; the options are -DTEST=<substring>, -DSEED=<n>,
+// -DSEEDS=<n>, -DJOBS=<n>, -DSHRINK=0|1, -DSHUFFLE=<seed>, -DISOLATE and -DFULL (docs/build-c.md).
+//
+// The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
+// process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
+// process stays for the next test that worker runs. A crash, a timeout, an exit or a sanitizer report ends the worker
+// and the runner forks another, so one such test fails alone. Which tests share a worker depends on timing, unless
+// there is one job. A test must not depend on another: -DSHUFFLE=<seed> runs the tests in a shuffled order to find one
+// that does (with -DJOBS=1 the order, and so the failure, replays from the seed), and -DISOLATE=1 gives every test a
+// process of its own, which is also what to use under a debugger that cannot follow a fork.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
 // more than this header.
 //
-// The runner sets a timer for each test (`--timeout`, 10 s). A test that calls `alarm` itself replaces that timer, and
-// when its alarm fires the test ends as a timeout, reported with the time it ran ("timed out after 2.0 s").
+// The runner sets a timer for each test and for each key of a property test (`--timeout`, 10 s). A test that calls
+// `alarm` itself replaces that timer, and when its alarm fires the test ends as a timeout, reported with the time it
+// ran
+// ("timed out after 2.0 s"). The runner clears the timer when a test ends.
 //
 // A test whose heavy checks have a full size reads smith_test_full(): false by default, true when the run was asked
 // for it (`smith build test -DFULL`, the runner's --full). The test picks its size from it and checks the same
 // properties either way; the default run keeps `smith build test` fast, and -DFULL is the slow pass.
 //
 // The checks are macros because only a macro can capture an expression's text, its file and its line, and evaluate an
-// expression later in a child process.
+// expression where the check can catch its end.
 //
 //   SMITH_CHECK(condition)            a bool, or anything that converts to one
 //   SMITH_CHECK(a, op, b)             op is ==, !=, <, <=, > or >=; each argument is evaluated once, and both values
@@ -32,17 +42,21 @@
 //                                     not 0, and a NaN is itself. A failure prints both values, shortest and in hex; a
 //                                     NaN or an infinity also shows its bits. For determinism: the same inputs must
 //                                     give the same bits, not merely near ones.
-//   SMITH_CHECK_ABORTS(expression)    the expression stops the program on purpose: it dies by SIGABRT or SIGTRAP (an
+//   SMITH_CHECK_ABORTS(expression)    the expression stops the program on purpose: it raises SIGABRT or SIGTRAP (an
 //                                     assert, abort(), __builtin_trap, the arena's capacity stop) with no sanitizer
-//                                     report in its output. It runs in a child process. It fails, showing the child's
-//                                     output, if the child returns, exits non-zero, crashes with another signal
-//                                     (SIGSEGV), or prints a sanitizer report: a memory bug is not the stop the test
-//                                     expected.
+//                                     report in its output. In a worker it runs in this process: the signal is caught
+//                                     and the check goes on, and the expression's effects (its writes) stay. With
+//                                     --isolate it runs in a child process. It fails, showing the expression's output,
+//                                     if it returns, exits (which ends the worker), crashes with another signal
+//                                     (SIGSEGV), or prints a sanitizer report (which retires the worker): a memory bug
+//                                     is not the stop the test expected. A variable the expression changes and the
+//                                     test reads afterwards should be volatile, as with any longjmp.
 //
 // A failed check ends the test, so nothing after it runs. Because the arguments of SMITH_CHECK are separated by
 // commas, a comma outside parentheses in an argument (a compound literal's braces) splits it: parenthesize it.
 #pragma once
 
+#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -129,11 +143,15 @@ extern const size_t smith_test_count;
 
 #define SMITH_TEST_REAL_TYPE(value) typeof(_Generic((value), float: 0.0F, double: 0.0))
 
+// The sigsetjmp is here, not in a function, because it must return into a frame that is still live: the runner jumps
+// back to it when the expression raises SIGABRT or SIGTRAP, or a check inside it fails.
 #define SMITH_CHECK_ABORTS(expression) \
     do { \
-        if (smith_test_abort_child()) { \
-            (void)(expression); \
-            smith_test_abort_returned(); \
+        if (sigsetjmp(*smith_test_abort_jump_buffer(), 1) == 0) { \
+            if (smith_test_abort_child(__FILE__, __LINE__)) { \
+                (void)(expression); \
+                smith_test_abort_returned(); \
+            } \
         } \
         smith_test_abort_judge(__FILE__, __LINE__); \
     } while (0)
@@ -243,9 +261,13 @@ typedef struct {
 [[noreturn]] void smith_test_fail_near(const char *a_text, const char *b_text, const char *tolerance_text,
                                        const SmithTestValue values[4], const char *file, int line);
 
-// SMITH_CHECK_ABORTS: forks. The child returns true and runs the expression, then calls smith_test_abort_returned; the
-// parent returns false from the first and calls smith_test_abort_judge, which fails the check unless the child stopped
-// by SIGABRT or SIGTRAP with no sanitizer report in its output.
-[[nodiscard]] bool smith_test_abort_child(void);
-[[noreturn]] void smith_test_abort_returned(void);
+// SMITH_CHECK_ABORTS. In a worker, abort_child captures the output and returns true; the expression runs;
+// abort_returned notes that it returned; and abort_judge fails the check unless the expression stopped by SIGABRT or
+// SIGTRAP with no sanitizer report in its output. A SIGABRT or SIGTRAP, or a failed check inside the expression, jumps
+// back to the macro's sigsetjmp (abort_jump_buffer), which goes straight to abort_judge. With --isolate the child
+// forks: it returns true in the child, which runs the expression and exits in abort_returned, and false in the parent,
+// whose abort_judge reads how the child ended.
+[[nodiscard]] sigjmp_buf *smith_test_abort_jump_buffer(void);
+[[nodiscard]] bool smith_test_abort_child(const char *file, int line);
+void smith_test_abort_returned(void);
 void smith_test_abort_judge(const char *file, int line);
