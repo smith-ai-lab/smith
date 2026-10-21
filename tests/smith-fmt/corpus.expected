@@ -368,6 +368,224 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
+==> export-inline/src/math/small.smith <==
+module math::small;
+
+import <stdint.h>;
+
+// Defined in the header, as `static inline`: the includer compiles it, so it has no symbol of the module's.
+export inline u32 twice(u32 x) {
+    return x * 2; // the body is the header's too
+}
+
+export inline u32 clamp(u32 x, u32 low, u32 high) {
+    if (x < low) return low;
+    if (x > high) return high;
+    return x;
+}
+
+// Inline functions call each other, and the module's other exports.
+export inline u32 clamp_twice(u32 x) {
+    return clamp(twice(x), 10, 100);
+}
+
+export u32 regular(u32 x) {
+    return twice(x) + 1;
+}
+==> foreign-extern/src/sys/world.smith <==
+module sys::world;
+
+import <string.h>;
+
+// `extern` without `export` declares a symbol that C defines: it keeps its C name (no sys_world_ prefix, no label).
+extern char **environ;
+extern u32 foreign_counter;
+extern u32 foreign_triple(u32 x);
+
+export u32 env_count(void) {
+    u32 count = 0;
+    for (char **entry = environ; *entry != nullptr; entry++)
+        count += 1;
+    return count;
+}
+
+export u32 counter_times_three(void) {
+    return foreign_triple(foreign_counter);
+}
+
+// An exported extern is still the module's own symbol, defined in C by its C name.
+export extern u32 owned;
+==> header-conditional-define/src/cfg/mode.smith <==
+module cfg::mode;
+
+// Kept verbatim: the includer's flags choose the branch.
+#ifdef WIDE
+export typedef struct {
+    u64 value;
+} Cell;
+#else
+export typedef struct {
+    u32 value;
+} Cell;
+#endif
+
+#if defined(WIDE) && WIDE > 1
+export u32 width(void) {
+    return 128;
+}
+#elif defined(WIDE)
+export u32 width(void) {
+    return 64;
+}
+#else
+export u32 width(void) {
+    return 32;
+}
+#endif
+
+// A branch that holds no export is dropped from the header.
+#ifdef UNUSED
+static u32 hidden = 1;
+#endif
+
+#if 0
+export u32 never(void) {
+    return 0;
+}
+#else
+export u32 always(void) {
+    return 1;
+}
+#endif
+
+#ifdef OUTER
+#ifdef INNER
+export u32 nested(void) {
+    return 3;
+}
+#endif
+#endif
+
+export u32 plain(void) {
+    return 5;
+}
+==> header-conditional/src/cfg/mode.smith <==
+module cfg::mode;
+
+// Kept verbatim: the includer's flags choose the branch.
+#ifdef WIDE
+export typedef struct {
+    u64 value;
+} Cell;
+#else
+export typedef struct {
+    u32 value;
+} Cell;
+#endif
+
+#if defined(WIDE) && WIDE > 1
+export u32 width(void) {
+    return 128;
+}
+#elif defined(WIDE)
+export u32 width(void) {
+    return 64;
+}
+#else
+export u32 width(void) {
+    return 32;
+}
+#endif
+
+// A branch that holds no export is dropped from the header.
+#ifdef UNUSED
+static u32 hidden = 1;
+#endif
+
+#if 0
+export u32 never(void) {
+    return 0;
+}
+#else
+export u32 always(void) {
+    return 1;
+}
+#endif
+
+#ifdef OUTER
+#ifdef INNER
+export u32 nested(void) {
+    return 3;
+}
+#endif
+#endif
+
+export u32 plain(void) {
+    return 5;
+}
+==> header-docs/src/geo/shape.smith <==
+// A file comment that is not above an export: not in the header.
+
+module geo::shape;
+
+import <stdint.h>;
+
+// A point on the plane.
+// Both coordinates are in meters.
+export typedef struct {
+    u32 x; // east
+    u32 y; /* north */
+    /* the height, kept inside the type */
+    u32 z;
+} Point;
+
+/* The squared distance from the origin. */
+export u64 norm2(Point p) {
+    return (u64)p.x * p.x + (u64)p.y * p.y + (u64)p.z * p.z;
+}
+
+// Not a doc comment: a blank line separates it from the export.
+
+export u32 origin_count = 1; // how many origins there are
+
+/** Whether the point is the origin. */
+[[smith::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+    return norm2(p) == 0;
+}
+
+// A private function has no comment in the header.
+static u32 helper(void) {
+    return 7;
+}
+
+export u32 seven(void); // declared here, defined in C
+==> header-in-memory/src/lib.smith <==
+module lib;
+
+// Doc comments are not kept in the interface read in memory; conditionals and inline bodies are.
+#ifdef FAST
+export inline u32 cost(u32 n) {
+    return n;
+}
+#else
+export u32 cost(u32 n) {
+    return n * 10;
+}
+#endif
+
+export inline u32 twice(u32 n) {
+    return cost(n) * 2;
+}
+==> header-in-memory/src/main.smith <==
+module main;
+
+import lib;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%u %u\n", lib::cost(3), lib::twice(3));
+    return 0;
+}
 ==> import-c-header/src/main.smith <==
 import <math.h>;
 import <sys/wait.h>;
