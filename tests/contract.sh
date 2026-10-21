@@ -242,6 +242,39 @@ capture ./build/tests
 summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
 expect "project: ... and the tests of code with contracts pass" "$count passed, 0 failed" "$summary"
 
+# The static analyzer (clang-tidy's clang-analyzer-*) takes a contract as an assumption: an index a smith_requires
+# bounds is not reported, with and without NDEBUG, and an index nothing bounds still is.
+cat >"$work/bounded.c" <<'C'
+#include <smith/contract.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+static int32_t cells[8];
+
+int32_t read_cell(size_t index) {
+    smith_requires(index < 8);
+    return cells[index];
+}
+
+void write_cell(size_t index, int32_t value) {
+    smith_requires(index < 8);
+    cells[index] = value;
+}
+
+int32_t read_past_the_end(void) {
+    size_t index = 8;
+    return cells[index];
+}
+C
+if "$smith" lint --version >/dev/null 2>&1; then
+    for mode in "" -DNDEBUG; do
+        capture "$smith" lint --checks='-*,clang-analyzer-*' "$work/bounded.c" -- -std=gnu2y -I "$here/include" $mode
+        found=$(printf '%s\n' "$out" | grep 'ArrayBound' | sed -e 's/^[^:]*:\([0-9]*\):.*/\1/' | tr '\n' ' ')
+        expect "analyzer${mode:+ $mode}: only the unbounded index is reported" "20 " "$found"
+    done
+fi
+
 echo
 echo "$total contract checks, $failures failed"
 [ "$failures" -eq 0 ]

@@ -77,7 +77,7 @@ every other target (`release`, `fast`, `compare`, `clean`) is still `smith build
 For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, the first word of a
 `compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
 `smith-cc` and `smith-c++`, which act as `smith cc` and `smith c++` by their name. A `build.c` names them as its
-compilers (`.compiler = "smith-cc"`); `"smith"` alone is an error that says so, since `smith foo.c` has no meaning.
+compilers (`.compiler = "smith-cc"`); `"smith"` alone, or a path that ends in `/smith` (an environment's `CC=$HOME/.local/bin/smith`), is an error that says so before anything runs, since `smith foo.c` has no meaning.
 
 ## How smith build runs
 
@@ -1108,7 +1108,8 @@ Rules:
 - A list ends in `nullptr`, and a list is never itself `nullptr`. An empty list is `(const char *[]){nullptr}`;
   `smith_glob` and `smith_when` return one when there is nothing. A loop starts from one:
   `objects = smith_cat(b, objects, cc.outputs, nullptr)`. The `nullptr` that ends `smith_cat`'s arguments is the only
-  one.
+  one: it cannot tell a `nullptr` list from the end, so a `nullptr` first list is an error, and one in the middle drops the
+  lists behind it.
 - A compound literal lives only until the end of its block. Every smith call copies what it is given, so a literal
   passed straight to a call is safe, and what a call returns lives until the build ends. A literal returned from a
   function, or stored in a struct that outlives its block, dangles: the game port's raw translation crashed on one, and

@@ -234,6 +234,41 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     return status;
 }
 
+// Every --function must name a function the prover read. One that names nothing is an error, never a skip: clang does
+// not emit a static function that nothing calls, so a harness written as one is silently absent from the IR and the run
+// would count as a success. One that is defined but is not a unit (no contract, not a caller of a contract) is an error
+// too. Returns false after printing each such name.
+bool check_wanted_functions(const prove::Program &loaded, const std::vector<std::string> &only) {
+    const std::vector<std::string> units = prove::program_units(loaded);
+    bool ok = true;
+    for (const std::string &name : only) {
+        bool defined = false;
+        bool unit = false;
+        for (const llvm::Function &function : *loaded.module) { // bounded by the functions of the module
+            if (function.isDeclaration()) continue;
+            std::string function_name = function.getName().str();
+            if (prove::program_label(loaded, function_name) != name) continue;
+            defined = true;
+            for (const std::string &candidate : units)
+                unit = unit || candidate == function_name;
+        }
+        if (unit) continue;
+        ok = false;
+        if (defined)
+            std::fprintf(stderr,
+                         "smith: prove: --function=%s: the function has no smith_requires, smith_ensures or "
+                         "smith_invariant, and calls none that has one, so there is nothing to prove\n",
+                         name.c_str());
+        else
+            std::fprintf(stderr,
+                         "smith: prove: --function=%s: no function by that name in the code the prover read; if the "
+                         "source defines it, it is a static function that nothing calls, which clang does not emit "
+                         "(mark it [[gnu::used]] to keep it)\n",
+                         name.c_str());
+    }
+    return ok;
+}
+
 // Proves each function in a process of its own, so that a crash or a function that will not finish is a failure of that
 // function and nothing more, and the budget is a clock the prover cannot overrun. Returns 0 for a proof, 1 for a
 // failure.
@@ -325,6 +360,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     rmdir(directory.data());
     if (result != 0) return result;
 
+    if (!check_wanted_functions(loaded, arguments.options.only)) return 1;
     unsigned proved = 0;
     unsigned failed = 0;
     for (const std::string &name : prove::program_units(loaded)) {
@@ -338,15 +374,11 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         (prove_in_child(loaded, name, source_name, arguments.options) == 0 ? proved : failed)++;
     }
     if (proved + failed == 0) {
-        // A project that has written no contract yet has nothing to prove, which is not a failure; a --function that
-        // matches nothing is a mistake in the command.
-        if (arguments.options.only.empty()) {
-            std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or "
-                        "smith_invariant\n");
-            return 0;
-        }
-        std::printf("smith: prove: no function with smith_requires, smith_ensures or smith_invariant by that name\n");
-        return 1;
+        // A project that has written no contract yet has nothing to prove, which is not a failure (a --function that
+        // names nothing was refused above).
+        std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or "
+                    "smith_invariant\n");
+        return 0;
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
     std::printf("%u proved, %u failed in %.2f s\n", proved, failed, seconds);

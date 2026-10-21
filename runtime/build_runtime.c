@@ -996,6 +996,14 @@ const char *smith_fmt(SmithBuild *b, const char *format, ...) {
 
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     SMITH_ASSERT(b != nullptr);
+    // nullptr ends the arguments, so a nullptr in first place cannot be told from an empty list, and the lists after it
+    // would be dropped without a word (a list that starts from an unset `selected`): it is an error, not an empty list.
+    if (first == nullptr) {
+        smith_context = nullptr;
+        smith_fail(
+            "smith_cat: the first list is nullptr, and nullptr ends the arguments, so the lists after it would be "
+            "dropped; an empty list is (const char *[]){nullptr}");
+    }
     static const char *const *lists[smith_cat_lists_max];
     size_t lists_count = 0;
     va_list args;
@@ -1334,8 +1342,16 @@ static void smith_require_text(const char *call, const char *field, const char *
 // `smith cc` and `smith c++`.
 static void smith_require_program(const char *call, const char *field, const char *value) {
     smith_require_text(call, field, value);
-    if (strcmp(value, "smith") == 0) {
-        smith_fail("%s: .%s is \"smith\", which is not a compiler; use \"smith-cc\" or \"smith-c++\"", call, field);
+    // "smith" or a path that ends in /smith (CC=$HOME/.local/bin/smith in the environment, or -DCC=): the program run
+    // would be `smith -std=gnu23 ...`, which is not a smith command, so it is refused here, before anything runs.
+    const char *slash = strrchr(value, '/');
+    const char *base = slash == nullptr ? value : slash + 1;
+    if (strcmp(base, "smith") == 0) {
+        size_t folder = (size_t)(base - value);
+        smith_fail(
+            "%s: .%s is \"%s\", which is not a compiler (smith is a set of verbs); use \"%.*ssmith-cc\" for C or "
+            "\"%.*ssmith-c++\" for C++, the links that act as `smith cc` and `smith c++`",
+            call, field, value, (int)folder, value, (int)folder, value);
     }
 }
 
