@@ -38,7 +38,7 @@ host=/usr/bin
     -DCMAKE_C_COMPILER=$host/clang -DCMAKE_CXX_COMPILER=$host/clang++ \
     -DCMAKE_OSX_SYSROOT="$sdk" \
     -DPython3_EXECUTABLE="$python/bin/python3" \
-    -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld' \
+    -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld;lldb' \
     -DLLVM_ENABLE_RUNTIMES='compiler-rt' \
     -DLLVM_TARGETS_TO_BUILD=AArch64 \
     -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_EH=ON \
@@ -47,6 +47,8 @@ host=/usr/bin
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_FFI=OFF -DLLVM_ENABLE_CURL=OFF \
     -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_ENABLE_BINDINGS=OFF -DCLANG_INCLUDE_TESTS=OFF \
+    -DLLDB_USE_SYSTEM_DEBUGSERVER=ON -DLLDB_ENABLE_PYTHON=OFF -DLLDB_ENABLE_LUA=OFF -DLLDB_ENABLE_LIBEDIT=OFF \
+    -DLLDB_ENABLE_CURSES=OFF -DLLDB_ENABLE_LZMA=OFF -DLLDB_ENABLE_LIBXML2=OFF -DLLDB_INCLUDE_TESTS=OFF \
     -DCOMPILER_RT_INCLUDE_TESTS=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF \
     -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
 nice "$ninja" -C "$cache/build" install
@@ -100,6 +102,23 @@ rm -f "$cache/install/lib/libsmithtools.a"
 /usr/bin/ar rcs "$cache/install/lib/libsmithtools.a" "$tools"/out/*.o
 # ---- end of the tools step.
 
+# ---- step: lldb (#20, for `smith dbg` and `smith dap`, #7). Self-contained: it reads the build tree and the install, and
+# ---- writes only the lldb archives in the install. lldb is built without Python, libedit, curses, lua, lzma and libxml2,
+# ---- and with the system's debugserver (LLDB_USE_SYSTEM_DEBUGSERVER). Its components are static archives (build/lib), which
+# ---- the build folds into liblldb.dylib; they are copied to the install beside the others, as liblldb<Component>.a, and the
+# ---- mains of the lldb driver and of lldb-dap (their one `main` renamed) are kept as libsmithlldb.a, the way clang's are.
+lldbdir=$cache/build/tools/lldb/tools
+mkdir -p "$cache/build/smith-lldb"
+rm -f "$cache/install/lib/libsmithlldb.a" "$cache/build/smith-lldb"/*.o
+cp "$cache"/build/lib/liblldb[A-Z]*.a "$cache/install/lib/"
+"$cache/install/bin/llvm-objcopy" --redefine-sym _main=_smith_lldb_main "$lldbdir/driver/CMakeFiles/lldb.dir/Driver.cpp.o" \
+    "$cache/build/smith-lldb/Driver.o"
+cp "$lldbdir/driver/CMakeFiles/lldb.dir/Platform.cpp.o" "$cache/build/smith-lldb/Platform.o"
+"$cache/install/bin/llvm-objcopy" --redefine-sym _main=_smith_lldb_dap_main \
+    "$lldbdir/lldb-dap/tool/CMakeFiles/lldb-dap.dir/lldb-dap.cpp.o" "$cache/build/smith-lldb/lldb-dap.o"
+/usr/bin/ar rcs "$cache/install/lib/libsmithlldb.a" "$cache"/build/smith-lldb/*.o
+# ---- end of the lldb step.
+
 # ---- step: the identity, written last. Every step above and any added later goes before it, and what it hashes is
 # ---- everything smith links.
 # What the compiler and the linker smith links are: the version, and a hash of the archives it links (clang's, LLVM's and
@@ -112,7 +131,7 @@ hash=$(cat "$cache"/install/lib/libclang[A-Z]*.a "$cache"/install/lib/libLLVM*.a
     "$cache"/install/lib/liblldCommon.a \
     "$cache"/install/lib/libclangd[A-Z]*.a \
     "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o" \
-    "$tools"/out/*.o |
+    "$tools"/out/*.o "$cache"/install/lib/liblldb[A-Z]*.a "$cache"/build/smith-lldb/*.o |
     /usr/bin/shasum -a 256 | cut -d' ' -f1)
 echo "llvm-23.1.3 $hash" >"$cache/install/lib/smith-clang.id"
 echo "$cache/install" >"$stamp"

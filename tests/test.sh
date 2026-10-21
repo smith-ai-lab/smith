@@ -1518,7 +1518,7 @@ flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 
 for standard in gnu2y gnu23; do
     for library in test random arena trace; do
         # shellcheck disable=SC2086
-        capture /opt/homebrew/opt/llvm/bin/clang -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
+        capture "$smith" -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
         expect "flags: lib/$library.c compiles clean under $standard with the template's warnings" 0 "$rc"
         [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
     done
