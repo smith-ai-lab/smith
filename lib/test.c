@@ -8,7 +8,7 @@
 // shown only when the test fails. A crash, a timeout or a sanitizer report ends a worker, and the runner forks the
 // next.
 // `--isolate` keeps the process-per-test runner: a child for each test, and for each SMITH_CHECK_ABORTS.
-#include <smith/test.h>
+#include "../include/smith/test.h"
 
 #include <assert.h>
 #include <errno.h>

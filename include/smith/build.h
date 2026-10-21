@@ -122,16 +122,16 @@ const char *smith_replace_extension(SmithBuild *b, const char *path, const char 
 // `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
 // may call any function here, smith_defer included. The program calls `more` itself while it runs, for each call whose
 // needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
-// regeneration edge on every call's needs, so ninja builds the needs, runs the program again with them in place, and
-// reloads. A pending `more` may be the one that calls smith_default.
+// regeneration edge on every call's needs, so the executor builds the needs, runs the program again with them in place,
+// and reloads. A pending `more` may be the one that calls smith_default.
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b));
 // One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
 // is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
 // missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
-// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step. The
-// step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
+// Steps written as C functions. A step or task with .run (and no .command) calls it when the executor runs the step.
+// The step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
 // <path>... --arg <word>...`, where <function> is the function's address minus the address of a fixed function in the
 // program, in hex (the program is each .run edge's implicit input, so the offset is valid for the run that uses it).
 // With --run the program does not call build() or any smith_defer callback: it makes a SmithBuild (os, arch, root,
@@ -253,7 +253,7 @@ typedef struct {
 //   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
 //     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink), -DSHUFFLE (--shuffle) and the booleans -DFULL (--full)
 //     and -DISOLATE (--isolate), each read with smith_option_value or smith_option, so a project that reads the same
-//     name gets the same value. .inputs are the task's inputs after the runner, so ninja builds them before the tests
+//     name gets the same value. .inputs are the task's inputs after the runner, so they are built before the tests
 //     run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,

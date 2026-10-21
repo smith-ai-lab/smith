@@ -73,8 +73,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
-- **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs ninja.** It is recognised only
-  as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
+- **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs that manifest itself, with no
+  ninja.** The executor (`runtime/executor*.c`, on `<smith/io.h>`) reads the subset of ninja's language that smith
+  writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
+  recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
   clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
 - **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (Homebrew's clangd builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
@@ -101,7 +103,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - smith builds itself with its own `build.c`, so the installed smith must have `smith build`. `smith build` builds
   `build/<OS>-<arch>/smith` and the `smith++` link: with the LLVM install of `smith build llvm` (or `-DLLVM=`) it links
   clang in and compiles in its own process, else it builds the stage0, which runs an external clang. `smith build test`
-  runs the routing tests against stub compilers, then the `smith build` tests with real ninja and clang;
+  runs the routing tests against stub compilers, then the `smith build` tests with a real clang;
   `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
 - `smith build check` checks formatting and clang-tidy (the same configs as game, build.c included), then runs the
@@ -137,8 +139,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
   on `<cache>/smith/lock`). Tests: `tests/cache.sh`, with caches of their own. See [docs/build-c.md](docs/build-c.md).
 - `SMITH_CLANG`, `SMITH_CLANGXX` (an external clang, instead of the one inside smith) and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
-  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
-  runs.
+  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA=<ninja>` makes `smith build` run its
+  manifest with that ninja instead of smith's own executor.
 
 ## How to work
 

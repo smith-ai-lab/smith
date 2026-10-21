@@ -1101,19 +1101,40 @@ static const SmithFakeProgram *smith_fake_program(const SmithFake *fake, const c
     return nullptr;
 }
 
-// Starts argv with stdin from /dev/null; out and err, when not -1, replace stdout and stderr in the child.
-static SmithError smith_spawn(const char *const *argv, int out, int err, int *id) {
+typedef struct {
+    int out;       // when not -1, replaces the child's stdout
+    int err;       // the same for stderr
+    bool leader;   // the child starts its own process group
+    bool terminal; // the child keeps this process's stdin; otherwise it reads /dev/null
+} SmithSpawn;
+
+// Starts argv as the spawn says.
+static SmithError smith_spawn_in(const char *const *argv, SmithSpawn spawn, int *id) {
+    int out = spawn.out;
+    int err = spawn.err;
+    bool leader = spawn.leader;
     posix_spawn_file_actions_t actions = {};
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    if (!spawn.terminal) posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     if (out >= 0) posix_spawn_file_actions_adddup2(&actions, out, STDOUT_FILENO);
     if (err >= 0) posix_spawn_file_actions_adddup2(&actions, err, STDERR_FILENO);
+    posix_spawnattr_t attributes = {};
+    posix_spawnattr_init(&attributes);
+    if (leader) {
+        posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+        posix_spawnattr_setpgroup(&attributes, 0);
+    }
     pid_t pid = 0;
     // posix_spawnp takes char *const *, though it never writes to the arguments.
-    int code = posix_spawnp(&pid, argv[0], &actions, nullptr, (char *const *)(uintptr_t)argv, environ);
+    int code = posix_spawnp(&pid, argv[0], &actions, &attributes, (char *const *)(uintptr_t)argv, environ);
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     *id = (int)pid;
     return smith_error_make(code, "run", argv[0]);
+}
+
+static SmithError smith_spawn(const char *const *argv, int out, int err, int *id) {
+    return smith_spawn_in(argv, (SmithSpawn){.out = out, .err = err}, id);
 }
 
 SmithError smith_processes_spawn(SmithProcesses *processes, const char *const *argv, SmithProcess *process) {
@@ -1123,6 +1144,12 @@ SmithError smith_processes_spawn(SmithProcesses *processes, const char *const *a
     const SmithFakeProgram *program = smith_fake_program(fake, argv[0], &process->id);
     if (program == nullptr) return smith_error_make(ENOENT, "run", argv[0]);
     return smith_fake_capture(fake, false, program->output);
+}
+
+SmithError smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv, SmithProcess *process) {
+    assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
+    if (processes->loop->fake != nullptr) return smith_processes_spawn(processes, argv, process);
+    return smith_spawn_in(argv, (SmithSpawn){.out = -1, .err = -1, .terminal = true}, &process->id);
 }
 
 void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process) {
@@ -1734,6 +1761,119 @@ const char *smith_io_test_request(const SmithIo *io, const char *host, uint16_t 
     if (io->loop->servers == nullptr) return nullptr;
     const SmithFakeServer *server = smith_net_server_find(io->loop->servers, host, port, n, false);
     return server != nullptr && server->used ? server->request : nullptr;
+}
+
+// ---------------------------------------------------------------- captured processes
+
+// Starts the process with one pipe for stdout and stderr; the wait is submitted at once, the first read by the poll.
+static SmithError smith_capture_start(SmithLoop *loop, const char *const *argv, SmithCapture *capture) {
+    int pipes[2] = {-1, -1};
+    if (pipe(pipes) != 0) return smith_error_make(errno, "pipe for", argv[0]);
+    fcntl(pipes[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+    SmithError error =
+        smith_spawn_in(argv, (SmithSpawn){.out = pipes[1], .err = pipes[1], .leader = true}, &capture->process.id);
+    close(pipes[1]);
+    if (error.code != 0) {
+        close(pipes[0]);
+        return error;
+    }
+    capture->internal.descriptor = pipes[0];
+    smith_op_start(&capture->internal.wait, loop, SmithOpKind_ProcessWait);
+    capture->internal.wait.internal.process = capture->process.id;
+    smith_loop_submit(loop, &capture->internal.wait);
+    return error;
+}
+
+// The fake runs nothing: the scripted program's output and status are the result, and the capture is done at once.
+static SmithError smith_capture_fake(SmithFake *fake, SmithArena *arena, const char *const *argv,
+                                     SmithCapture *capture) {
+    const SmithFakeProgram *program = smith_fake_program(fake, argv[0], &capture->process.id);
+    if (program == nullptr) return smith_error_make(ENOENT, "run", argv[0]);
+    capture->exit_status = program->status;
+    capture->output_size = strlen(program->output);
+    char *copy = smith_arena_push(arena, capture->output_size + 1, 1);
+    memcpy(copy, program->output, capture->output_size + 1);
+    capture->output = copy;
+    capture->done = true;
+    return (SmithError){};
+}
+
+SmithError smith_processes_capture_async(SmithProcesses *processes, SmithArena *arena, const char *const *argv,
+                                         SmithCapture *capture) {
+    assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr && capture != nullptr);
+    SmithLoop *loop = processes->loop;
+    *capture = (SmithCapture){};
+    capture->internal.loop = loop;
+    capture->internal.arena = arena;
+    if (loop->fake != nullptr) return smith_capture_fake(loop->fake, arena, argv, capture);
+    return smith_capture_start(loop, argv, capture);
+}
+
+// Whether the arena can hold the block the output would double into.
+static bool smith_capture_can_grow(const SmithCapture *capture) {
+    return smith_arena_fits(capture->internal.arena, capture->internal.capacity * 2, 1);
+}
+
+// Makes room for the next read. When the arena cannot hold more, the capture keeps what it has: it gives up its last
+// block's worth of bytes as a place to read the rest into, which is read and thrown away, so the process is never
+// stopped by a full pipe and the output is cut instead.
+static void smith_capture_room(SmithCapture *capture) {
+    bool full =
+        capture->internal.data != nullptr && capture->internal.capacity - capture->output_size <= smith_io_chunk;
+    if (full && !capture->truncated && !smith_capture_can_grow(capture)) {
+        capture->truncated = true;
+        capture->output_size = capture->internal.capacity - smith_io_chunk - 1;
+    }
+    if (capture->truncated) return;
+    SmithGrow grow = {.arena = capture->internal.arena,
+                      .data = capture->internal.data,
+                      .size = capture->output_size,
+                      .capacity = capture->internal.capacity};
+    smith_grow_reserve(&grow, smith_io_chunk);
+    capture->internal.data = grow.data;
+    capture->internal.capacity = grow.capacity;
+}
+
+// Takes a finished read into the capture, closing the pipe at its end; then submits the next read.
+static void smith_capture_feed(SmithCapture *capture) {
+    SmithOp *read = &capture->internal.read;
+    if (capture->internal.reading && !read->done) return;
+    if (capture->internal.reading) {
+        if (!capture->truncated) capture->output_size += read->size;
+        capture->internal.reading = false;
+        if (read->end || read->error.code != 0) {
+            if (read->error.code != 0 && capture->error.code == 0) capture->error = read->error;
+            close(capture->internal.descriptor);
+            capture->internal.descriptor = -1;
+        }
+    }
+    if (capture->internal.descriptor < 0) return;
+    smith_capture_room(capture);
+    smith_op_start(read, capture->internal.loop, SmithOpKind_PipeRead);
+    read->internal.descriptor = capture->internal.descriptor;
+    read->internal.destination = capture->internal.data + capture->output_size;
+    read->internal.capacity = capture->internal.capacity - capture->output_size - 1;
+    smith_loop_submit(capture->internal.loop, read);
+    capture->internal.reading = true;
+}
+
+bool smith_capture_poll(SmithCapture *capture) {
+    assert(capture != nullptr);
+    if (capture->done) return true;
+    smith_capture_feed(capture);
+    SmithOp *wait = &capture->internal.wait;
+    if (!capture->internal.exited && wait->done) {
+        capture->internal.exited = true;
+        capture->exit_status = wait->exit_status;
+        capture->signal = wait->signal;
+        if (wait->error.code != 0 && capture->error.code == 0) capture->error = wait->error;
+    }
+    if (!capture->internal.exited || capture->internal.descriptor >= 0) return false;
+    capture->internal.data[capture->output_size] = 0;
+    capture->output = (const char *)capture->internal.data;
+    capture->done = true;
+    return true;
 }
 
 // ---------------------------------------------------------------- arguments
