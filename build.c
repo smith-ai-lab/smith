@@ -591,17 +591,21 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // writes the clang files and its programs on first use, is written by rename. `run` is the routing tests with stub
 // compilers (no clang or Xcode needed); the others use real ninja, clang and git. A script that takes long is several
 // rows, one per shard (tests/test.sh takes "isolate" and a list of its parts). Add a script by adding a row, in order.
+// `prove` is phase 2: a proof runs Bitwuzla on every core (about 14 s of CPU for a 2 s proof), so with every other
+// script running it took more than its 10 s budget; it starts when the short scripts are done, and the long ones (phase
+// 1) run on beside it.
 typedef struct {
     const char *task;
     const char *script;
     const char *mode;  // the script's second argument, or nullptr
     const char *shard; // its third (a list of parts of the script), or nullptr
+    int phase; // 0 starts at once; 1 is one of the long tasks; 2 waits for every task of phase 0 (see build_test)
 } BuildTestScript;
 
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr},
-    {"build", "build", nullptr, nullptr},
+    {"build", "build", nullptr, nullptr, 1},
     {"cache", "cache", nullptr, nullptr},
     {"contract", "contract", nullptr, nullptr},
     {"dap", "dap", nullptr, nullptr},
@@ -614,22 +618,22 @@ static const BuildTestScript build_test_scripts[] = {
     {"neovim", "neovim", nullptr, nullptr},
     {"new", "new", nullptr, nullptr},
     {"package", "package", nullptr, nullptr},
-    {"prove", "prove", nullptr, nullptr},
+    {"prove", "prove", nullptr, nullptr, 2},
     {"random", "random", nullptr, nullptr},
     {"resource", "resource", nullptr, nullptr},
     {"run", "run", nullptr, nullptr},
     {"smith-fmt", "smith-fmt", nullptr, nullptr},
     {"smith-lang", "smith-lang", nullptr, nullptr},
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr},
-    {"test", "test", nullptr, nullptr},
-    {"isolate-main", "test", "isolate", "main"},
-    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags"},
-    {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget"},
-    {"isolate-shrink-list", "test", "isolate", "shrink_list"},
-    {"isolate-shrink-normal", "test", "isolate", "shrink_normal"},
+    {"test", "test", nullptr, nullptr, 1},
+    {"isolate-main", "test", "isolate", "main", 1},
+    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags", 1},
+    {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
+    {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
+    {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
     {"text", "text", nullptr, nullptr},
     {"tree_sitter", "tree_sitter", nullptr, nullptr},
-    {"untar", "untar", nullptr, nullptr},
+    {"untar", "untar", nullptr, nullptr, 1},
 };
 // clang-format on
 
@@ -638,6 +642,13 @@ constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof bu
 // The task of every script, and the alias `test` of them; returns the list, which the install waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     const char *names[build_test_script_count + 1];
+    const char *early[build_test_script_count + 1];
+    size_t early_count = 0;
+    for (size_t i = 0; i < build_test_script_count; i++) {
+        names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
+        if (build_test_scripts[i].phase == 0) early[early_count++] = names[i];
+    }
+    early[early_count] = nullptr;
     for (size_t i = 0; i < build_test_script_count; i++) {
         const BuildTestScript *row = &build_test_scripts[i];
         const char *mode = row->mode != nullptr ? row->mode : "";
@@ -650,8 +661,8 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
             .description =
                 smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
             .inputs = (const char *[]){binary, nullptr},
+            .order_only_inputs = row->phase == 2 ? smith_cat(b, early, nullptr) : smith_list(b, nullptr),
         };
-        names[i] = smith_fmt(b, "test-%s", row->task);
         smith_task(b, names[i], &step);
     }
     names[build_test_script_count] = nullptr;
