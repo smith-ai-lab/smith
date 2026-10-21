@@ -102,6 +102,13 @@ typedef struct {
     uint32_t canonical_length;
 } SmithTypeQuery;
 
+// The type of an expression, for a generic whose type is not written at the call (`test::check_equal(a, b)`).
+typedef struct {
+    char written[256];   // as the parser's types are written, typedef names kept (`Point`), without qualifiers
+    char canonical[256]; // with every typedef looked through: the identity of the type
+    const char *why;     // when the host cannot say: what it could not understand (valid until the next question)
+} SmithExprType;
+
 // What a sparse host offers besides the watched identifiers and the end of the file.
 typedef enum {
     SmithWatch_Names,  // nothing else
@@ -124,6 +131,9 @@ typedef struct {
     bool (*type_info)(void *context, const char *name, uint32_t length, SmithLookupKind space, SmithTypeInfo *info);
     // A type written as tokens: false when the host cannot read it (then the spelling itself identifies it).
     bool (*type_query)(void *context, const char *spelling, uint32_t length, SmithTypeQuery *out);
+    // The type of an expression written as tokens separated by \x1f (names, fields, `*`, `&`, `[]`, casts, literals,
+    // calls), after `derefs` dereferences, in the scope the parser is in. False with `out->why` when it cannot say.
+    bool (*expr_type)(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out);
     // A generic instance is about to be emitted (`id` is in the tokens that follow): the instance whose body asked for
     // it (0: the file's own code), the call that did, and how to name it in a note.
     void (*instance)(void *context, uint32_t id, uint32_t parent, uint32_t call_location, const char *description);

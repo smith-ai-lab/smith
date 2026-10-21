@@ -329,6 +329,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
         host.type_query = &SmithHook::typeQuery;
+        host.expr_type = &SmithHook::exprType;
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
@@ -1565,6 +1566,206 @@ class SmithHook final : public TokenHook, public NameSource {
             out->size = ast.getTypeSizeInChars(canonical).getQuantity();
             out->alignment = ast.getTypeAlignInChars(canonical).getQuantity();
         }
+        return true;
+    }
+
+    // ---- The type of an expression
+    //
+    // `test::check_equal(a, b)` leaves T to be told from its arguments. The arguments are the lowered tokens of a name,
+    // a field chain, `*e`, `&e`, `e[i]`, a call, a cast or a literal: what a person writes to name a value. Anything
+    // else (arithmetic, a conditional) is not typed, and the call must say its type. The scope is the parser's, so a
+    // local declared by an earlier statement is found.
+    std::string typeWhy;
+
+    static size_t closingOf(const std::vector<std::string> &tokens, size_t open, size_t end) {
+        int depth = 0;
+        for (size_t at = open; at < end; at++) {
+            const std::string &token = tokens[at];
+            if (token == "(" || token == "[" || token == "{") depth += 1;
+            if (token == ")" || token == "]" || token == "}") depth -= 1;
+            if (depth == 0) return at;
+        }
+        return end;
+    }
+
+    QualType literalType(const std::string &token) {
+        ASTContext &ast = sema->getASTContext();
+        if (token[0] == '"') return ast.getPointerType(ast.CharTy);
+        if (token[0] == '\'') return ast.IntTy;
+        if (token == "true" || token == "false") return ast.BoolTy;
+        bool hex = token.size() > 1 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X');
+        bool real = !hex && token.find_first_of(".eE") != std::string::npos;
+        char last = static_cast<char>(std::tolower(static_cast<unsigned char>(token.back())));
+        if (real) return last == 'f' ? ast.FloatTy : ast.DoubleTy;
+        bool isUnsigned = token.find_first_of("uU") != std::string::npos;
+        size_t longs =
+            static_cast<size_t>(std::count_if(token.begin(), token.end(), [](char c) { return c == 'l' || c == 'L'; }));
+        if (longs >= 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
+        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
+        return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
+    }
+
+    // The type of the name (a variable, a parameter, a function): null with typeWhy when it is not found.
+    QualType nameType(const std::string &name) {
+        auto *decl = dyn_cast_or_null<ValueDecl>(findDecl(name.data(), name.size(), SmithLookup_Value));
+        if (decl == nullptr) {
+            typeWhy = "`" + name + "` is not a name the compiler knows here";
+            return QualType();
+        }
+        return decl->getType();
+    }
+
+    QualType memberType(QualType base, bool arrow, const std::string &name) {
+        if (arrow) {
+            if (!base->isPointerType()) {
+                typeWhy = "`->` needs a pointer";
+                return QualType();
+            }
+            base = base->getPointeeType();
+        }
+        const RecordDecl *record = base->getAsRecordDecl();
+        if (record == nullptr) {
+            typeWhy = "`." + name + "` needs a struct or union";
+            return QualType();
+        }
+        for (const FieldDecl *field : record->fields()) {
+            if (field->getName() == name) return field->getType();
+        }
+        typeWhy = "no field `" + name + "`";
+        return QualType();
+    }
+
+    QualType elementType(QualType type) {
+        if (type->isPointerType()) return type->getPointeeType();
+        if (const auto *array = sema->getASTContext().getAsArrayType(type)) return array->getElementType();
+        typeWhy = "that is not a pointer or an array";
+        return QualType();
+    }
+
+    QualType resultOfCall(QualType callee) {
+        if (callee->isPointerType()) callee = callee->getPointeeType();
+        if (const auto *function = callee->getAs<FunctionType>()) return function->getReturnType();
+        typeWhy = "that is not a function";
+        return QualType();
+    }
+
+    // The primary expression at the start of [begin, end): its type, and where it ends in `next`.
+    QualType primaryType(const std::vector<std::string> &t, size_t begin, size_t end, size_t *next) {
+        const std::string &token = t[begin];
+        *next = begin + 1;
+        bool word = std::isalpha(static_cast<unsigned char>(token[0])) || token[0] == '_';
+        if (!word) {
+            if (std::isdigit(static_cast<unsigned char>(token[0])) || token[0] == '"' || token[0] == '\'')
+                return literalType(token);
+            typeWhy = "`" + token + "` does not begin a name or a literal";
+            return QualType();
+        }
+        if (token == "true" || token == "false") return literalType(token);
+        QualType type = nameType(token);
+        if (type.isNull() || begin + 1 >= end || t[begin + 1] != "(") return type;
+        size_t close = closingOf(t, begin + 1, end);
+        *next = close + 1;
+        return resultOfCall(type);
+    }
+
+    // One step after a primary expression: `.f`, `->f`, `[i]` or a call.
+    QualType postfixType(const std::vector<std::string> &t, size_t *at, size_t end, QualType type) {
+        const std::string &token = t[*at];
+        if ((token == "." || token == "->") && *at + 1 < end) {
+            QualType member = memberType(type, token == "->", t[*at + 1]);
+            *at += 2;
+            return member;
+        }
+        if (token == "[" || token == "(") {
+            *at = closingOf(t, *at, end) + 1;
+            return token == "[" ? elementType(type) : resultOfCall(type);
+        }
+        typeWhy = "`" + token + "` is not understood in this expression";
+        return QualType();
+    }
+
+    QualType prefixType(const std::string &op, QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (op == "*") return elementType(type);
+        if (op == "&") return ast.getPointerType(type);
+        if (op == "!") return ast.IntTy;
+        return type; // - + ~
+    }
+
+    // The type of the expression the tokens spell, unqualified, with arrays and functions as pointers.
+    QualType expressionType(std::vector<std::string> t) {
+        size_t begin = 0;
+        size_t end = t.size();
+        for (size_t guard = 0;
+             guard < end && end - begin >= 2 && t[begin] == "(" && closingOf(t, begin, end) == end - 1; guard++) {
+            begin += 1; // the parentheses around it all
+            end -= 1;
+        }
+        if (begin >= end) {
+            typeWhy = "the expression is empty";
+            return QualType();
+        }
+        if (t[begin] == "(") { // a cast: its type is the type
+            size_t close = closingOf(t, begin, end);
+            std::string spelling;
+            for (size_t at = begin + 1; at < close; at++)
+                spelling += (at > begin + 1 ? " " : "") + t[at];
+            QualType cast = close + 1 < end ? readType(spelling) : QualType();
+            if (!cast.isNull()) return finishType(cast);
+        }
+        std::vector<std::string> prefix;
+        while (begin < end && (t[begin] == "*" || t[begin] == "&" || t[begin] == "-" || t[begin] == "+" ||
+                               t[begin] == "!" || t[begin] == "~")) {
+            prefix.push_back(t[begin++]);
+        }
+        if (begin >= end) {
+            typeWhy = "an operator has no operand";
+            return QualType();
+        }
+        size_t at = 0;
+        QualType type = primaryType(t, begin, end, &at);
+        for (size_t guard = 0; !type.isNull() && at < end && guard < end; guard++)
+            type = postfixType(t, &at, end, type);
+        for (size_t i = prefix.size(); !type.isNull() && i > 0; i--)
+            type = prefixType(prefix[i - 1], type);
+        return type.isNull() ? type : finishType(type);
+    }
+
+    QualType finishType(QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (type->isArrayType()) return ast.getPointerType(elementType(type));
+        if (type->isFunctionType()) return ast.getPointerType(type);
+        return type.getUnqualifiedType();
+    }
+
+    static bool exprType(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        *out = SmithExprType{};
+        if (self->sema == nullptr) return false;
+        self->typeWhy.clear();
+        std::vector<std::string> parts;
+        std::string current;
+        for (uint32_t at = 0; at < length; at++) {
+            if (tokens[at] == '\x1f') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += tokens[at];
+            }
+        }
+        if (!current.empty()) parts.push_back(current);
+        QualType type = parts.empty() ? QualType() : self->expressionType(parts);
+        for (uint32_t i = 0; !type.isNull() && i < derefs; i++)
+            type = self->elementType(type);
+        if (!type.isNull()) type = self->finishType(type);
+        if (type.isNull()) {
+            self->queryText = self->typeWhy.empty() ? "that expression's type is not understood" : self->typeWhy;
+            out->why = self->queryText.c_str();
+            return false;
+        }
+        const PrintingPolicy &policy = self->sema->getASTContext().getPrintingPolicy();
+        snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
+        snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
         return true;
     }
 
