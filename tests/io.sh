@@ -108,6 +108,23 @@ expect "console: an empty input ends at once" "0 0 lines, last=" "$rc $out"
 capture sh -c "head -c 100000 /dev/zero | tr '\\0' x | '$work/bin/fast' lines"
 expect "console: a line longer than the buffer" "0 1 lines, last=$(head -c 100000 /dev/zero | tr '\0' x)" "$rc $out"
 
+# 5b. The same loop ends when stdin is a regular file, which kqueue never reports readable at its end, however it is
+# fed. The lines program stops itself with SIGALRM after 10 s, so a hang is a failure (status 142).
+printf 'a\nb\nlast' >"$work/lines.txt"
+: >"$work/empty.txt"
+capture sh -c "'$work/bin/fast' lines <'$work/lines.txt'"
+expect "console: a regular file with lines ends" "0 3 lines, last=last" "$rc $out"
+capture sh -c "'$work/bin/asan' lines <'$work/lines.txt'"
+expect "console: ... under ASan too" "0 3 lines, last=last" "$rc $out"
+capture sh -c "'$work/bin/fast' lines <'$work/empty.txt'"
+expect "console: an empty regular file ends" "0 0 lines, last=" "$rc $out"
+capture sh -c "'$work/bin/fast' lines </dev/null"
+expect "console: /dev/null ends" "0 0 lines, last=" "$rc $out"
+capture sh -c "printf 'a\nb\nlast' | '$work/bin/fast' lines"
+expect "console: a pipe ends" "0 3 lines, last=last" "$rc $out"
+capture sh -c "(printf 'a\nb\n'; exit 0) | '$work/bin/fast' lines"
+expect "console: a pipe closed early ends with the lines it had" "0 2 lines, last=b" "$rc $out"
+
 # 6. A project gets io with smith_library, along with the arena and random it uses, and one line makes everything.
 mkdir "$work/project" && cd "$work/project" || exit 1
 cat >build.c <<'C'

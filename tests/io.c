@@ -548,6 +548,7 @@ static void test_carve(void) {
 // ---------------------------------------------------------------- programs run by the script
 
 static int program_lines(void) {
+    alarm(10); // a read that never ends is a failure, not a hang
     SmithIo io = smith_io_make(0, nullptr);
     size_t lines = 0;
     const char *last = "";

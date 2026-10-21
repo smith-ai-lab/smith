@@ -7,7 +7,7 @@ description: "Using <smith/io.h>, smith's io: one SmithIo made in main holds the
 
 This skill ships in the smith plugin, from `.agents/skills/smith-io/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
 
-Everything a program does to the world outside it is a value you hold and pass on. The header is `.smith/include/smith/io.h`; read it first. macOS only for now (kqueue); the API is completion-based so io_uring and IOCP can fit later without changing callers.
+Everything a program does to the world outside it is a value you hold and pass on. The header is `.smith/include/smith/io.h`; read it first. It runs on macOS, on kqueue; operations complete in `SmithOp`s the caller owns.
 
 ## One io in main
 
@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 | `io.processes` | spawn, wait, run and capture |
 | `io.args` | `count`, `values` and the environment (`smith_args_env`) |
 
-The network comes in the next version as `io.net`. There are no options until a program needs one.
+There is no network and there are no options.
 
 ## Pass only what is needed
 
@@ -126,7 +126,7 @@ for (size_t round = 0; round < round_max && !(timer.done && wait.done); round++)
     (void)smith_io_run(&io, smith_io_forever);   // or a timeout in ns; 0 only polls
 ```
 
-`smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async` and `smith_processes_wait_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed, and an io_uring or IOCP backend completes the same struct by its user data. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
+`smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async` and `smith_processes_wait_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
 
 macOS has no asynchronous file IO, so file operations run synchronously, in submission order, inside `smith_io_run`. Sockets, pipes, timers and process exits wait on kqueue. Every blocking call is an op run to completion on this same loop.
 

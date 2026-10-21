@@ -549,6 +549,17 @@ static void smith_loop_unlink(SmithLoop *loop, SmithOp *op) {
     op->internal.next = nullptr;
 }
 
+// <sys/stat.h> writes S_ISREG's masks as octal literals, which C2y deprecates; the warning is about the SDK's macros.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-octal-literals"
+// Whether kqueue can say when a read on the descriptor would finish: pipes, sockets and terminals, not files.
+static bool smith_descriptor_waitable(int descriptor) {
+    struct stat info = {};
+    if (fstat(descriptor, &info) != 0) return false;
+    return S_ISFIFO(info.st_mode) || S_ISSOCK(info.st_mode) || S_ISCHR(info.st_mode);
+}
+#pragma clang diagnostic pop
+
 // Asks the kernel to tell us when the op can finish. False means it cannot be watched, so the op is simply run when
 // the loop next looks (a regular file or /dev/null is always readable).
 static bool smith_loop_watch(SmithLoop *loop, SmithOp *op) {
@@ -560,6 +571,10 @@ static bool smith_loop_watch(SmithLoop *loop, SmithOp *op) {
     switch (op->internal.kind) {
     case SmithOpKind_ConsoleRead:
     case SmithOpKind_PipeRead:
+        // kqueue reports a regular file readable only while its offset is before the end, so at the end it would never
+        // fire: a file (or anything but a pipe, a socket or a terminal) is read at once, and a read at its end returns
+        // 0.
+        if (!smith_descriptor_waitable(op->internal.descriptor)) return false;
         ident = (uintptr_t)op->internal.descriptor;
         filter = EVFILT_READ;
         break;
