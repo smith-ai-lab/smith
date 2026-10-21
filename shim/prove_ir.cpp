@@ -408,6 +408,11 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         }
     }
     Module &module = *program.module;
+    bool contracts = false;
+    for (Function &function :
+         module) // with no contract there is nothing to prove, nor to prepare (the inlining and the
+        contracts = contracts || contract_name(function.getName()); // verifier would still read every function)
+    if (!contracts) return true;
     for (Function &function : module) {
         for (const Use &use : function.uses()) {
             auto *call = dyn_cast<CallBase>(use.getUser());
@@ -1017,9 +1022,7 @@ class Normalizer {
         for (Instruction *instruction : calls) {
             Contract kind = contract_of(instruction);
             bool own = kind != Contract::None && owner_id(*instruction) == function_id(context.function);
-            if (kind == Contract::Requires && own) {
-                point(instruction, Kind::Premise, instruction->getOperand(0), true);
-            } else if (kind == Contract::Ensures && !own) {
+            if ((kind == Contract::Requires && own) || (kind == Contract::Ensures && !own)) {
                 point(instruction, Kind::Premise, instruction->getOperand(0), true);
             } else if (kind != Contract::None) {
                 Kind point_kind = kind == Contract::Requires  ? Kind::Requires

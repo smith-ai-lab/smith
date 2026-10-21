@@ -140,7 +140,19 @@ prove --function=nothing "$work/plain.c"
 expect_contains "--function that matches nothing says so" "$out" "by that name"
 expect "--function that matches nothing fails" 1 "$rc"
 
-# 10. A module written in .smith is compiled as `smith cc` compiles it, and its functions are named as written
+# 10. A --function that names no function the prover read is an error, never a skip.
+prove --function=harness_kept --function=harness_dropped "$cases/static_harness.c"
+expect "--function of an unemitted static: fails" 1 "$rc"
+expect_contains "... and names it" "$out" "--function=harness_dropped: no function by that name"
+expect_contains "... with the likely cause" "$out" "static function that nothing calls"
+expect_contains "... and the fix" "$out" "[[gnu::used]]"
+prove --function=harness_kept "$cases/static_harness.c"
+expect "--function of a kept static: proved" 0 "$rc"
+prove --function=no_contract "$cases/static_harness.c"
+expect "--function of a function with no contract: fails" 1 "$rc"
+expect_contains "... says there is nothing to prove" "$out" "so there is nothing to prove"
+
+# 11. A module written in .smith is compiled as `smith cc` compiles it, and its functions are named as written
 # (geometry::box::clamp, never geometry_box_clamp), in the report, in -v and in --function.
 if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
     box=$cases/geometry/box.smith

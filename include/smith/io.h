@@ -137,6 +137,7 @@ typedef struct SmithOp {
         size_t capacity;
         int descriptor;
         int process;
+        bool *reaped; // process waits: set when the wait has reaped the process (smith_child_wait_async)
         uint64_t deadline;
         bool ready;
         bool fill;
@@ -319,6 +320,10 @@ typedef struct {
                                                         SmithProcess *process);
 // Completes when the process has exited, with op->exit_status or op->signal.
 void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
+// A process id is free to be used again once its wait has completed, so a signal sent to it after that may reach
+// another program, and nothing may signal one after its wait. smith_child_kill and smith_capture_stop know it for the
+// processes they own; for a SmithProcess of smith_processes_spawn that is the caller's to keep: do not kill an id
+// after the wait for it has completed.
 // A process whose stdout and stderr are captured together (as `2>&1`, so the lines come in the order the process wrote
 // them) while it runs on the loop, so a program can run several at once and print each one's output whole when it ends.
 // The caller owns the struct and keeps it where it is until done.
@@ -351,6 +356,11 @@ typedef struct SmithCapture {
 // Takes in what smith_io_run completed and submits the next read; true once the capture is done. Call it after each
 // smith_io_run for every capture still running.
 [[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
+// Sends the signal to the capture's process group, unless its wait has completed: the id is then free for another
+// program, so ESRCH is returned and nothing is sent. That is also the answer once the capture is done. A process that
+// has exited but whose output is still being read (a child of it holds the pipe) is therefore not reached either; it
+// ends on its own or when the caller gives up on the output.
+[[nodiscard]] SmithError smith_capture_stop(SmithCapture *capture, int signal);
 // A process started with pipes (smith_processes_start_piped): the program writes to its stdin and reads its stdout, as
 // ops on the loop, so one smith_io_run waits on several children's output, the program's own stdin, timers and exits
 // together. The caller owns the struct and keeps it where it is until the child is closed. The child leads a process
@@ -360,11 +370,13 @@ typedef struct SmithCapture {
 // One write, one read and one wait may be pending on a child at once. Close a descriptor's side
 // (smith_child_close_input, smith_child_close) only when no op on it is pending.
 typedef struct SmithChild {
-    SmithProcess process; // wait for it with smith_processes_wait_async(processes, op, child.process)
+    SmithProcess process; // wait for it with smith_child_wait_async (smith_processes_wait_async cannot tell
+                          // smith_child_kill that the process is gone)
     struct {              // private to the library
         SmithLoop *loop;
-        int input;  // the write end of the child's stdin; -1 once closed
-        int output; // the read end of the child's stdout; -1 once closed
+        bool reaped; // the wait of smith_child_wait_async has completed: the id may be another program's now
+        int input;   // the write end of the child's stdin; -1 once closed
+        int output;  // the read end of the child's stdout; -1 once closed
     } internal;
 } SmithChild;
 // Starts argv[0] (found on PATH) with a pipe for stdin and a pipe for stdout and returns at once. The error is that it
@@ -381,9 +393,14 @@ void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, s
 // op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
 // and nothing was read.
 void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, size_t capacity);
+// Completes when the child has exited, with op->exit_status or op->signal, like smith_processes_wait_async; afterwards
+// smith_child_kill does not signal the child's id, which is free for another program from then on. The child stays
+// where it is until the op is done.
+void smith_child_wait_async(SmithChild *child, SmithOp *op);
 // Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
 void smith_child_close_input(SmithChild *child);
-// Sends the signal to the child's process group. ESRCH if there is nothing left to signal.
+// Sends the signal to the child's process group. ESRCH if there is nothing left to signal: also, with no signal
+// sent, once the wait of smith_child_wait_async has completed, since the id could then be another program's.
 [[nodiscard]] SmithError smith_child_kill(SmithChild *child, int signal);
 // Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
 // child anyway), and call this once, after the last op on the child is done.

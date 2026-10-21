@@ -77,15 +77,21 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
   a compiler is `smith-cc` or `smith-c++`; `"smith"` is refused with that hint.
 - **`smith docs` checks a project's AGENTS.md, `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every
-  project with them** (`runtime/docs.c`; skill smith-docs); concept types are options of the check, set in build.c.
-- **A project verb runs the task or alias of its name in the project's `build.c`**: `smith run`, `smith test`,
-  `smith check`, and `smith fmt` and `smith lint` with no arguments (with arguments they are clang-format and
-  clang-tidy). There is no second list of what a project is: the build file defines the targets, as it defines
-  everything, and `smith_tests` already names `test`. `smith run` and `smith test` give their arguments (not their `-D`
-  options) to the task through `smith_args(b)`: the program's for `run`, the test runner's own options for `test`
-  (`--test`, `--seed`, `--jobs`, `--full`, ...). `smith prove` is the prover with arguments and the project's `prove` task with none;
-  `smith dbg` comes with issue #7 and says so until then (a row of the verb table in `smith.c`). The verbs are not targets of `smith build`: `smith build test`
-  is refused with a pointer to `smith test`, so each thing has one way.
+  project with them** (`runtime/docs.c`; skill smith-docs); the concept types and required fields are `types:` and
+  `requires:` in the frontmatter of `knowledge/index.md`, and the command line's `--type` and `--require` replace them.
+- **The verbs have fixed meanings, and a project's own tasks run with `smith build <task>`** (issue #40;
+  `runtime/verbs.c`, docs/build-c.md). Each verb acts on what the project already declares, and smith keeps no list of
+  its own: `smith fmt` formats every C, C++, Objective-C and `.smith` file git sees to `.clang-format` (what
+  `.clang-format-ignore` names is left alone); `smith lint` is clang-tidy on the project's own sources among the build's
+  compiles, in parallel; `smith docs` checks AGENTS.md, `knowledge/` and `.agents/skills/` (the concept types and
+  required fields are declared in `knowledge/index.md`'s frontmatter); `smith prove` proves the contracts of the
+  C sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
+  that `smith_default` names, when it names exactly one (its arguments go to the program); `smith check` runs fmt (the dry
+  run), docs, lint, test and prove, reports every part and fails if any did. With arguments `fmt`, `lint` and `prove`
+  are clang-format, clang-tidy and the prover, as before. `smith_task` and `smith_alias` refuse a name that is a verb. A
+  run of build.c writes `.smith/build.info` and `.smith/compile_commands.json`, which the verbs read, and the manifest's
+  targets `smith_needs` and `smith_tests`. `smith build <verb>` is refused with a pointer to the verb. `smith prove` is
+  the prover with arguments; `smith dbg` is lldb.
 - **smith compiles in its own process**, by running clang's own `clang_main` on the arguments (`shim/clang.cpp`), so
   every flag, diagnostic, exit status, signal and crash report is clang's, and so are pipes. `SMITH_CLANG` runs an
   external clang instead, `execv`ed with its full path as `argv[0]` (gcc finds its files from it), as `.metal` runs
@@ -141,6 +147,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
   hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
   writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+- **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`; no LLVM change). clang-tidy builds each file's
+  command with the driver, not `createInvocation`, so `shim/tidy.cpp` carries `ArgumentsAdjusters.cpp` whole with
+  `smith_lang_command` called in `getStripPluginsAdjuster` (the last adjuster; same rule as `smith cc`), and installs the
+  token hook. A check reports from an engine of its own, so the hook puts the same consumer in front of it
+  (`smith::presentThrough`): names, notes and fix-its as written, a prototype's lowering copy moved to the definition's
+  name, a finding in a generated or in-memory interface dropped (the module's own file is linted as itself).
+  `readability-identifier-naming` judges the written name: a wrapper module, registered after clang-tidy's, replaces that
+  one check with `SmithNaming` (it holds the final real check, whose private decisions it reaches by an explicit
+  instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
+  because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
+  it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
+  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
@@ -193,14 +211,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `build/<OS>-<arch>/smith` and the `smith-cc` and `smith-c++` links: with the LLVM install of `smith build llvm` (or
   `-DLLVM=`) it links clang in and compiles in its own process, else it builds the stage0, which runs an external
   clang. `smith test` runs the routing tests against stub compilers (each through `smith cc` and through `smith-cc`),
-  then the `smith build` tests with a real clang; each `tests/*.sh` is a task of its own (`test-<name>`) and `test` their alias,
+  then the `smith build` tests with a real clang; each `tests/*.sh` is a task of its own (`test-<name>`, with `.test`, which `smith test` runs),
   so they run side by side (skill smith-development);
-  `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
+  `smith build test-compare` (one of smith's tests, so `smith test` and `smith check` run it) runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
-- `smith check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
-  same configs as game, build.c included), then runs the
-  `test` and `compare` targets; it must pass before a change is done. `smith fmt` (no arguments) rewrites the sources,
-  and `smith lint` runs clang-tidy over them.
+- `smith check` is the standard one here too: `smith fmt` (the dry run) over every file git sees, `smith docs`, `smith
+  lint` (clang-tidy over the compiles of `build.c`, which also declares the libraries' and tests' sources with
+  `smith_compile_command`; `shim/.clang-tidy` is the C++ glue's own rules), `smith test` (the `test-<name>` tasks, `test-compare`
+  among them) and `smith prove`; it must pass before a change is done. `smith fmt` (no arguments) rewrites the sources.
 - `smith build install` runs the tests, then copies smith and the `smith-cc` and `smith-c++` links to `$PREFIX/bin`
   (and removes an old `smith++` there) (`-DPREFIX=`,
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
@@ -220,7 +238,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
   input) into the failing line and the call chain; it needs the full smith.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
-  `main.c` and `primes.c` (a few lines of modern C, split so that a test can call them), a test in `tests/` that `smith test` runs (`smith_tests`), a `prove` task for `smith prove` (nothing to prove until a contract is written), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
+  `main.c` and `primes.c` (a few lines of modern C, split so that a test can call them), a test in `tests/` that `smith test` runs (`smith_tests`), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and

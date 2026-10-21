@@ -29,7 +29,7 @@ The format is [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/blo
 - The body states rules in short declarative sentences, with tables for mappings. A draft concept may end with one "Today" line saying what exists now.
 - Concepts link each other with relative links (`[the program](program.md)`). The sentence around a link says how the two relate.
 - `index.md` has `okf_version: "0.2"` in its frontmatter and lists every concept, with its `description` copied word for word, as `- [Title](name.md): description`.
-- To allow another type of concept, or to require a field of one, edit the `docs` step in `build.c`: `--type <name>` once for each allowed type, and `--require <type>:<field>[=<value>,...]` for a field a type must have.
+- The types a concept may have, and the fields a type must have, are declared in `index.md`'s frontmatter: `types: convention, architecture, contract, design`, and `requires: <type>:<field>[=<value>,...]; ...` for a field a type must have (values separated by commas, requirements by `;`).
 
 ### Add or change a concept
 

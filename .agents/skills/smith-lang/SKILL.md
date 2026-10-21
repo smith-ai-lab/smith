@@ -30,6 +30,10 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 `smith fmt x.smith` formats a `.smith` file as C, keeping `::` paths and the `module`/`import` lines whole (load `smith-check`).
 
+## Linting
+
+`smith lint x.smith -- <flags>` lints a `.smith` file with the project's `.clang-tidy`, reading it as `smith cc` does and reporting at the source's lines with the names as written: a module's exports are judged by `readability-identifier-naming` as `area` and `Box`, not as `geometry_box_area`, and `--fix` edits the source's own tokens (load `smith-check`).
+
 ## Building them
 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").

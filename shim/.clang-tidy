@@ -1,0 +1,10 @@
+# clang-tidy's rules for the C++ in shim/, which is glue to LLVM's own C++ API. The root .clang-tidy holds smith's C rules;
+# these inherit them and leave out what only fits C:
+#   readability-identifier-naming: the glue overrides and calls LLVM's camelCase methods and follows its style.
+#   misc-no-recursion: clang's AST visitors and the lowering's parsers recurse, as LLVM's own code does.
+#   readability-function-size: the visitors and the tool mains are as long as the API they walk.
+InheritParentConfig: true
+Checks: >
+  -readability-identifier-naming,
+  -misc-no-recursion,
+  -readability-function-size

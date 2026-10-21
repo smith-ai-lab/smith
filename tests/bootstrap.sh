@@ -41,8 +41,8 @@ for file in $files; do
         $envw "$@" cc --smith-header "$src" -o "$work/header.h" || return 1
         grep '^#include' "$work/header.h" | awk '!seen[$0]++' >"$work/inc"
         $envw "$@" cc --smith-lower "$src" >"$work/low.c" || return 1
-        { head -n 1 "$file"; cat "$work/inc"
-          awk 'NR==FNR{inc[$0]=1;next} /^#if/{d++} /^#endif/{d--} d==0&&($0 in inc){next} {print}' "$work/inc" "$work/low.c"; }
+        { head -n 1 "$file"; echo "// NOLINTBEGIN"; cat "$work/inc"
+          awk 'NR==FNR{inc[$0]=1;next} /^#if/{d++} /^#endif/{d--} d==0&&($0 in inc){next} {print}' "$work/inc" "$work/low.c"; echo "// NOLINTEND"; }
     }
     lower "" "$smith" >"$work/full.c" 2>"$work/full.err"
     cmp -s "$work/full.c" "$file"
