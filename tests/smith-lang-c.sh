@@ -4,10 +4,10 @@
 # Each source is compiled twice with the same flags, once as x.c and once as x.smith (in a copy of the tree, so that its
 # #includes find what they found), and the two results must be identical. They are compared as assembly (-S), which is
 # stricter than objects and shows where they differ; the one thing that may differ is the file's own name, where a
-# program prints it (its extension): __FILE__ is set to one name, and ".smith" at the end of a name in a string is read
-# as ".c" on both sides. Then each program in tests/smith-lang-c/ (array parameters and sizeof of one, a [*]
-# prototype, the language's words as names, ordinary constructs) is built and run as x.c and as x.smith, and both must
-# print what x.out holds. The test needs a smith with clang inside; a stage0 skips it.
+# program prints it (its extension): __FILE__ is set to one name, and the file's own name with ".smith" in a string is
+# read as ".c" (only its own: other strings that end in ".smith" are code, and must match). Then each program in
+# tests/smith-lang-c/ (array parameters and sizeof of one, a [*] prototype, the language's words as names, ordinary
+# constructs) is built and run as x.c and as x.smith, and both must print what x.out holds. The test needs a smith with clang inside; a stage0 skips it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -34,6 +34,8 @@ compare() { # name, source, extra flags
     mkdir -p "$work/plain" "$work/lowered"
     # The renamed copy sits where the original does, so that #include "..." finds its neighbours.
     smith_file="${2%.c}.smith"
+    base=$(basename "${2%.c}")
+    own="s/\([^A-Za-z0-9_]\)$base\.smith\"/\1$base.c\"/g"
     cp "$2" "$smith_file"
     # shellcheck disable=SC2086
     "$smith" cc $flags $3 -S "$2" -o "$work/plain/$1.s" 2>"$work/plain/$1.err"
@@ -42,10 +44,9 @@ compare() { # name, source, extra flags
     "$smith" cc $flags $3 -S "$smith_file" -o "$work/lowered/$1.s" 2>"$work/lowered/$1.err"
     lowered=$?
     rm -f "$smith_file"
-    # Both sides read ".smith" at the end of a name in a string as ".c" (the source's own strings that say ".smith" too).
-    for side in plain lowered; do
-        sed 's/\([A-Za-z0-9_]\)\.smith"/\1.c"/g' "$work/$side/$1.s" >"$work/$side/$1.n" 2>/dev/null
-    done
+    # The file's own name in a string is read as ".c" on the lowered side; any other ".smith" in a string is code.
+    cp "$work/plain/$1.s" "$work/plain/$1.n" 2>/dev/null
+    sed "$own" "$work/lowered/$1.s" >"$work/lowered/$1.n" 2>/dev/null
     if [ $plain != $lowered ]; then
         failures=$((failures + 1))
         echo "FAIL  $1: exit $plain as .c, $lowered as .smith"
