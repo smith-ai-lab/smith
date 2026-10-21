@@ -32,14 +32,19 @@ extern char **environ;
 #include "scripts/pack.h"
 
 #include <compression.h>
+#include <dirent.h>
 #include <ftw.h>
 #include <inttypes.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <sys/time.h>
+#include <time.h>
 
 // SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (scripts/llvm.sh), compiled in by
 // build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
 // else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
 // that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
-int smith_clang_main(const char *program, int argc, char **argv, bool lld);
+int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
 // shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
 int smith_lld_main(int argc, char **argv);
 #endif
@@ -482,38 +487,144 @@ static void smith_resource_unpack(const char *folder) {
     }
 }
 
-// Makes <folder>/bin/<name> the smith that is running. The driver runs its program again, with -cc1, for each step of a
-// compile that has more than one (a compile and a link, say), so that program must be smith itself, which runs -cc1 in
-// process. A hard link keeps working when the smith it was made from is replaced or removed (as an install does);
-// across volumes it is a symbolic link. Built beside its place and renamed into it, so that a process which starts
-// meanwhile finds a whole one, and smith_resource_ensure makes it again for the next smith that runs, so it never
-// dangles.
-static void smith_resource_program(const char *folder, const char *self, const char *name) {
-    char path[PATH_MAX];
-    char temporary[PATH_MAX];
-    int written = snprintf(path, sizeof path, "%s/bin/%s", folder, name);
-    SMITH_ASSERT(written > 0 && (size_t)written < sizeof path - 32);
-    written = snprintf(temporary, sizeof temporary, "%s.%d.tmp", path, (int)getpid());
-    SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary);
-    smith_make_folders(path, false);
-    unlink(temporary);
-    if (link(self, temporary) != 0 && symlink(self, temporary) != 0) smith_die(smith_exit_usage, "cannot link", path);
-    if (rename(temporary, path) != 0) smith_die(smith_exit_usage, "cannot create", path);
+// The programs the driver runs, apart from the files it reads. The runtime folder above is named for the contents and
+// the compiler's identity, and never moves, because a sanitized binary records a path into it. The programs are hard
+// links to the smith that is running, and many different smiths (the installed one, a build of a branch, another
+// agent's) share one runtime folder, so they live in a folder named for the smith itself, its LC_UUID:
+// <data>/smith/programs/<uuid>/{bin/clang, bin/clang++, bin/ld, lib -> the runtime folder's lib}. Two smiths never
+// share or remake each other's links, and a smith without lld has no `ld` to be found. The driver runs `bin/clang`
+// again with -cc1 for a compile with more than one step, so it must be smith, which runs -cc1 in process; a hard link
+// keeps working when the smith it was made from is replaced or removed, as an install does (a symbolic link across
+// volumes). The folder is built beside its place and renamed into it, so one that exists is whole.
+//
+// A folder not used for 31 days is removed when a new one is made (using one touches it once a day), and so is a half
+// built one older than an hour. Only the runtime folder must live forever.
+constexpr time_t smith_programs_idle_seconds = 31L * 24 * 3600;
+constexpr time_t smith_programs_touch_seconds = 24L * 3600;
+constexpr time_t smith_programs_temporary_seconds = 3600;
+
+// The hex of the running executable's LC_UUID, which the linker derives from its contents: the same smith is the same
+// name, another build another.
+static void smith_self_uuid(char *out, size_t size) {
+    SMITH_ASSERT(size >= 33);
+    const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(0);
+    SMITH_ASSERT(header != nullptr && header->magic == MH_MAGIC_64);
+    const struct load_command *command = (const struct load_command *)(header + 1);
+    for (uint32_t i = 0; i < header->ncmds; i++) { // bounded by the header
+        if (command->cmd == LC_UUID) {
+            const struct uuid_command *uuid = (const struct uuid_command *)command;
+            for (size_t k = 0; k < sizeof uuid->uuid; k++)
+                snprintf(out + 2 * k, 3, "%02x", uuid->uuid[k]);
+            return;
+        }
+        command = (const struct load_command *)((const char *)command + command->cmdsize);
+    }
+    smith_die(smith_exit_usage, "this smith has no LC_UUID", nullptr);
 }
 
-// Makes the folder and its programs exist; a second call, or a second process, finds them and does nothing.
-static void smith_resource_ensure(const char *folder, const char *self) {
-    if (!smith_is_folder(folder)) smith_resource_unpack(folder);
-    struct stat mine;
-    SMITH_ASSERT(stat(self, &mine) == 0);
-    static const char *const names[] = {"clang", "clang++", "ld"};
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+// <data>/smith/programs/<uuid>, from the runtime folder <data>/smith/clang/<name>.
+static void smith_programs_folder(const char *runtime, char *programs) {
+    char uuid[33];
+    smith_self_uuid(uuid, sizeof uuid);
+    const char *clang = strstr(runtime, "/smith/clang/");
+    SMITH_ASSERT(clang != nullptr);
+    int written = snprintf(programs, PATH_MAX, "%.*s/smith/programs/%s", (int)(clang - runtime), runtime, uuid);
+    SMITH_ASSERT(written > 0 && written < PATH_MAX - 32);
+}
+
+// Removes what the folder `parent` holds that is idle for too long, but `keep`.
+static void smith_programs_prune(const char *parent, const char *keep) {
+    DIR *directory = opendir(parent);
+    if (directory == nullptr) return;
+    time_t now = time(nullptr);
+    for (struct dirent *entry = readdir(directory); entry != nullptr; entry = readdir(directory)) { // the folder's size
+        if (entry->d_name[0] == '.') continue;
         char path[PATH_MAX];
-        struct stat theirs;
-        snprintf(path, sizeof path, "%s/bin/%s", folder, names[i]);
-        bool same = stat(path, &theirs) == 0 && theirs.st_dev == mine.st_dev && theirs.st_ino == mine.st_ino;
-        if (!same) smith_resource_program(folder, self, names[i]);
+        int written = snprintf(path, sizeof path, "%s/%s", parent, entry->d_name);
+        if (written <= 0 || written >= (int)sizeof path || strcmp(path, keep) == 0) continue;
+        struct stat info;
+        if (lstat(path, &info) != 0) continue;
+        bool temporary = smith_ends_with(entry->d_name, ".tmp");
+        time_t idle = now - info.st_mtime;
+        if (idle > (temporary ? smith_programs_temporary_seconds : smith_programs_idle_seconds))
+            smith_remove_tree(path);
     }
+    closedir(directory);
+}
+
+// Removes the half-made links an older smith left in the runtime folder's bin (it made them there, and raced). Its
+// finished links stay, for that smith.
+static void smith_programs_sweep_legacy(const char *runtime) {
+    char bin[PATH_MAX];
+    snprintf(bin, sizeof bin, "%s/bin", runtime);
+    DIR *directory = opendir(bin);
+    if (directory == nullptr) return;
+    time_t now = time(nullptr);
+    for (struct dirent *entry = readdir(directory); entry != nullptr; entry = readdir(directory)) { // the folder's size
+        char path[PATH_MAX];
+        int written = snprintf(path, sizeof path, "%s/%s", bin, entry->d_name);
+        struct stat info;
+        if (written <= 0 || written >= (int)sizeof path || !smith_ends_with(entry->d_name, ".tmp")) continue;
+        if (lstat(path, &info) == 0 && now - info.st_mtime > smith_programs_temporary_seconds) unlink(path);
+    }
+    closedir(directory);
+}
+
+static void smith_programs_make(const char *runtime, const char *programs, const char *self) {
+    char temporary[PATH_MAX];
+    int written = snprintf(temporary, sizeof temporary, "%s.%d.tmp", programs, (int)getpid());
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary - 32);
+    smith_remove_tree(temporary);
+    smith_make_folders(temporary, true);
+    static const char *const names[] = {"clang", "clang++", "ld"};
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/bin", temporary);
+    if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
+        if (link(self, path) != 0 && symlink(self, path) != 0) smith_die(smith_exit_usage, "cannot link", path);
+    }
+    char target[PATH_MAX];
+    snprintf(target, sizeof target, "%s/lib", runtime);
+    snprintf(path, sizeof path, "%s/lib", temporary);
+    if (symlink(target, path) != 0) smith_die(smith_exit_usage, "cannot link", path);
+    if (rename(temporary, programs) != 0) { // another process of this smith may have won
+        bool won = smith_is_folder(programs);
+        smith_remove_tree(temporary);
+        if (!won) smith_die(smith_exit_usage, "cannot create", programs);
+    }
+}
+
+// Makes the runtime folder and this smith's programs exist; a second call, or a second process, finds them.
+static void smith_resource_ensure(const char *runtime, const char *programs, const char *self) {
+    if (!smith_is_folder(runtime)) smith_resource_unpack(runtime);
+    struct stat info;
+    if (stat(programs, &info) == 0 && S_ISDIR(info.st_mode)) {
+        if (time(nullptr) - info.st_mtime > smith_programs_touch_seconds) utimes(programs, nullptr);
+        return;
+    }
+    smith_programs_make(runtime, programs, self);
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof parent, "%s", programs);
+    *strrchr(parent, '/') = '\0';
+    smith_programs_prune(parent, programs);
+    smith_programs_sweep_legacy(runtime);
+}
+
+// The compiler's resource directory in the runtime folder: lib/clang/<major>, the one folder in lib/clang.
+static void smith_resource_directory(const char *runtime, char *out) {
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof parent, "%s/lib/clang", runtime);
+    DIR *directory = opendir(parent);
+    SMITH_ASSERT(directory != nullptr);
+    out[0] = '\0';
+    for (struct dirent *entry = readdir(directory); entry != nullptr && out[0] == '\0'; entry = readdir(directory)) {
+        if (entry->d_name[0] == '.') continue;
+        int written = snprintf(out, PATH_MAX, "%s/%s", parent, entry->d_name);
+        SMITH_ASSERT(written > 0 && written < PATH_MAX);
+    }
+    closedir(directory);
+    SMITH_ASSERT(out[0] != '\0');
 }
 
 // smith run as `ld`, which is what <folder>/bin/ld is: the driver looks for its linker beside its own program before
@@ -542,20 +653,24 @@ static bool smith_runs_in_process(const char *override_name) {
 
 static int smith_route_in_process(int argc, char **argv, int first, bool which, bool plus, const char *self) {
     char folder[PATH_MAX];
+    char programs[PATH_MAX];
     char program[PATH_MAX];
     smith_resource_folder(folder);
-    int written = snprintf(program, sizeof program, "%s/bin/%s", folder, plus ? "clang++" : "clang");
-    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_resource_folder leaves room for it
+    smith_programs_folder(folder, programs);
+    int written = snprintf(program, sizeof program, "%s/bin/%s", programs, plus ? "clang++" : "clang");
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_programs_folder leaves room for it
     if (which) { // names the program but writes nothing: its folder is made by the first compile
         printf("clang in-process %s\nidentity %s\n", program, SMITH_CLANG_ID);
         return 0;
     }
-    smith_resource_ensure(folder, self);
+    smith_resource_ensure(folder, programs, self);
+    char resource[PATH_MAX];
+    smith_resource_directory(folder, resource);
 #ifdef __APPLE__
     smith_sdk_environment(self);
 #endif
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv + first - 1);
-    return smith_clang_main(program, argc - first + 1, argv + first - 1, !smith_has_linker_override());
+    return smith_clang_main(program, argc - first + 1, argv + first - 1, !smith_has_linker_override(), resource);
 }
 #endif
 

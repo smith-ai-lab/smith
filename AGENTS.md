@@ -13,9 +13,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   - **The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
     smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
     `libLTO.dylib`, which the system `ld` loads for `-flto` (lld has LLVM inside and needs none). On first use (about 1 s, then a `stat`) smith writes them
-    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`) and runs the driver as that
-    folder's `bin/clang`, a hard link to smith itself (the driver runs its program again with `-cc1` for any compile
-    that has more than one step). The key is the pack's contents and the identity of the compiler and linker.
+    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`); the key is the pack's contents
+    and the identity of the compiler and linker. The programs the driver runs (`bin/clang`, `bin/clang++`, `bin/ld`,
+    hard links to smith itself; it runs `clang` again with `-cc1` for any compile with more than one step) are not in
+    it: they are in `$XDG_DATA_HOME/smith/programs/<LC_UUID of the running smith>/`, whose `lib` links to that
+    folder's, and the shim passes `-resource-dir` for it. So the installed smith, a dev build and another agent's
+    never share or remake each other's links, and a smith without lld has no `ld`. A programs folder idle for 31 days
+    is removed when a new one is made (using one touches it once a day); only the runtime folder lives forever.
   - **That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
     binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and
     an emptied `~/.cache` leave every built binary running. Old folders stay for the binaries built against them (about

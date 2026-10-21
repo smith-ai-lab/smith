@@ -77,6 +77,7 @@ direct_env() {
 # in the LLVM that smith links, which every case must match.
 real_prefix=$(cd "$realdir/.." && pwd -P)
 smith_prefix=$real_prefix
+smith_runtime=
 inproc=$("$smith" --smith-which -c a.c | head -n 1)
 # A smith with clang inside links with lld, which Apple's ld and lld write differently, so the programs are compared by what
 # they print, and the real clang is told the linker's version that smith tells the driver for lld (shim/clang.cpp), since
@@ -86,14 +87,19 @@ case $inproc in
 "clang in-process "*)
     smith_prefix=${inproc#clang in-process }
     smith_prefix=${smith_prefix%/bin/clang}
+    # The programs (bin/clang) and the files the driver reads (lib/clang) are in two folders; both are the real LLVM here.
+    smith_runtime=$("$smith" -print-resource-dir)
+    smith_runtime=${smith_runtime%/lib/clang/*}
     real_flags=-mlinker-version=1115.7.3
     ;;
 esac
 normalize() { # via
     prefix=$real_prefix
     [ "$1" = smith ] && prefix=$smith_prefix
+    runtime=$prefix
+    [ "$1" = smith ] && [ -n "$smith_runtime" ] && runtime=$smith_runtime
     for kind in out err; do
-        sed -e "s|$prefix|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
+        sed -e "s|$prefix|LLVM|g" -e "s|$runtime|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
             -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' "log/$kind.$1" >"log/$kind.$1.n"
         mv "log/$kind.$1.n" "log/$kind.$1"
     done

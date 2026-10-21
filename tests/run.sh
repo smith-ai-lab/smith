@@ -86,12 +86,12 @@ if [ "$(uname -s)" = Darwin ]; then
     "clang in-process "/*/bin/clang)
         # A smith with clang linked in compiles in its own process unless SMITH_CLANG names a clang to run instead.
         llvm_clang=${out#clang in-process }
-        # The program is in the folder smith writes clang's files to on first use, which --smith-which does not make.
+        # The program is in the folder smith makes for itself on first use (named for its LC_UUID), which --smith-which does not make.
         case $llvm_clang in
-        */smith/clang/llvm-*/bin/clang) found=yes ;;
+        */smith/programs/*/bin/clang) found=yes ;;
         *) found=$llvm_clang ;;
         esac
-        expect "in-process: the default is clang inside smith, run as the bin/clang of its own folder of clang's files" yes "$found"
+        expect "in-process: the default is clang inside smith, run as the bin/clang of a folder of its own" yes "$found"
         case $which_identity in
         "identity llvm-"*" "*) expect "in-process: --smith-which names the identity of the clang inside" yes yes ;;
         *) expect "in-process: --smith-which names the identity of the clang inside" "identity llvm-<version> <hash>" "$which_identity" ;;

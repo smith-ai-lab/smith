@@ -23,11 +23,15 @@ int clang_main(int argc, char **argv, const llvm::ToolContext &context);
 // -no-canonical-prefixes goes first, so a later -canonical-prefixes from the user wins. It makes the driver take
 // `program` as its own path, not this executable's, so it finds the resource directory (builtin headers, compiler-rt),
 // dsymutil and the other tools beside `program`, exactly as the clang binary there does.
-extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld) {
+extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource) {
     llvm::SmallVector<char *, 64> arguments;
     arguments.push_back(const_cast<char *>(program));
     bool cc1 = argc > 1 && std::strncmp(argv[1], "-cc1", 4) == 0; // an internal tool, which takes no driver flags
     if (!cc1) arguments.push_back(const_cast<char *>("-no-canonical-prefixes"));
+    if (!cc1) { // the programs are in a folder of their own, the files the driver reads in another
+        arguments.push_back(const_cast<char *>("-resource-dir"));
+        arguments.push_back(const_cast<char *>(resource));
+    }
     if (!cc1 && lld) arguments.push_back(const_cast<char *>("-mlinker-version=1115.7.3"));
     for (int i = 1; i < argc; i++)
         arguments.push_back(argv[i]);
