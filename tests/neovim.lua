@@ -189,6 +189,107 @@ function tests.lsp_attach_smith_alone()
   wait("the server to stop", function() return client:is_stopped() end, 15000)
 end
 
+-- A scratch folder with `files` ({ name = text }) in it, and the file type Neovim gives `name` there.
+local function filetype_of(folder, files, name)
+  for file, text in pairs(files) do
+    vim.fn.mkdir(vim.fs.dirname(folder .. "/" .. file), "p")
+    vim.fn.writefile(vim.split(text, "\n"), folder .. "/" .. file) end
+  vim.cmd("edit " .. vim.fn.fnameescape(folder .. "/" .. name))
+  return vim.bo.filetype
+end
+
+function tests.header_in_project()
+  local base = vim.fn.tempname()
+  equal("c", filetype_of(base .. "/a", { ["build.c"] = "", ["x.h"] = "", ["x.c"] = "" }, "x.h"), "a .h beside a .c")
+  equal("c", filetype_of(base .. "/b", { ["build.c"] = "", ["x.h"] = "", ["x.smith"] = "" }, "x.h"), "a .h beside a .smith")
+  equal("cpp", filetype_of(base .. "/c", { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "a .h beside a .cpp")
+  equal("objc", filetype_of(base .. "/d", { ["build.c"] = "", ["x.h"] = "", ["x.m"] = "" }, "x.h"), "a .h beside a .m")
+  equal("objcpp", filetype_of(base .. "/e", { ["build.c"] = "", ["x.h"] = "", ["x.mm"] = "" }, "x.h"), "a .h beside a .mm")
+  local only_c = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.smith\t-O2\ncompile\tb.c\t-g\ntest\tt\n" }
+  equal("c", filetype_of(base .. "/f", only_c, "lone.h"), "no sibling, the build compiles only .smith and .c")
+  -- found from a folder below the project root
+  vim.fn.mkdir(base .. "/f/include/deep", "p")
+  vim.fn.writefile({}, base .. "/f/include/deep/y.h")
+  vim.cmd("edit " .. vim.fn.fnameescape(base .. "/f/include/deep/y.h"))
+  equal("c", vim.bo.filetype, "a header below the project root")
+  local mixed = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.c\ncompile\tb.cpp\n" }
+  equal("cpp", filetype_of(base .. "/g", mixed, "lone.h"), "a C++ compile leaves Neovim's rule")
+  local objective = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.c\ncompile\tb.m\n" }
+  equal("objc", filetype_of(base .. "/h", objective, "lone.h"), "C and Objective-C compiles")
+  equal("cpp", filetype_of(base .. "/i", { ["build.c"] = "", ["lone.h"] = "" }, "lone.h"), "no build.info, no sibling")
+end
+
+function tests.header_outside()
+  local base = vim.fn.tempname()
+  equal("cpp", filetype_of(base, { ["x.h"] = "", ["x.c"] = "" }, "x.h"), "outside a smith project Neovim's rule stands")
+end
+
+-- Run with g:c_syntax_for_h set: the user's choice is Neovim's rule even beside a .cpp.
+function tests.header_user_choice()
+  local base = vim.fn.tempname()
+  equal("c", filetype_of(base, { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "g:c_syntax_for_h wins")
+end
+
+-- The launch configuration that builds: first in the list, then the one that prompts.
+function tests.dap_build_configuration()
+  local dap = require("dap")
+  for _, filetype in ipairs({ "c", "cpp", "objc", "objcpp", "smith" }) do
+    local configurations = dap.configurations[filetype]
+    equal("smith: build and launch the program", configurations[1].name, "the first configuration for " .. filetype)
+    equal("function", type(configurations[1].program), "its program is a function")
+    equal("smith: launch a program", configurations[2].name, "the prompting configuration stays, second")
+  end
+end
+
+-- Runs `program` of the first configuration as nvim-dap does, in a coroutine; returns what it returned, and the
+-- notifications it made. The editor must not be frozen: a timer keeps running while the build does.
+local function run_program(folder)
+  vim.cmd.cd(vim.fn.fnameescape(folder))
+  local notices = {}
+  vim.notify = function(message, level) table.insert(notices, { message = message, level = level }) end
+  local ticks = 0
+  local timer = vim.uv.new_timer()
+  timer:start(0, 20, function() ticks = ticks + 1 end)
+  local result, finished
+  local thread = coroutine.create(function()
+    result = require("dap").configurations.c[1].program()
+    finished = true
+  end)
+  assert(coroutine.resume(thread))
+  check(not finished, "program yields while the build runs")
+  wait("the build", function() return finished end)
+  timer:stop()
+  timer:close()
+  check(ticks > 0, "the event loop kept running during the build (" .. ticks .. " ticks)")
+  return result, notices
+end
+
+function tests.dap_build_program()
+  local program = run_program(os.getenv("SMITH_NEW"))
+  equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW") .. "/build/debug/hello"), vim.uv.fs_realpath(program), "the program")
+  check(program:sub(1, 1) == "/", "an absolute path: " .. program)
+  check(vim.uv.fs_stat(program), "the program was built")
+  local configuration = require("dap").configurations.c[1]
+  equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW")), vim.uv.fs_realpath(configuration.cwd()), "cwd is the project root")
+end
+
+function tests.dap_build_fails()
+  local program, notices = run_program(os.getenv("SMITH_BROKEN"))
+  check(program == require("dap").ABORT, "a failed build aborts: " .. vim.inspect(program))
+  equal(1, #notices, "one notification")
+  equal(vim.log.levels.ERROR, notices[1].level, "at ERROR")
+  check(notices[1].message:find("error", 1, true), "it shows the build's error output: " .. notices[1].message)
+end
+
+function tests.dap_program_of()
+  local of = require("smith.dap").program_of
+  equal("build/debug/a", of("program\tbuild/debug/a\nprogram\tbuild/debug/b\ndefault\tbuild/debug/a\n"), "the one named")
+  local none, message = of("program\tbuild/a\ndefault\tother\n")
+  check(none == nil and message:find("names no program", 1, true), "none: " .. tostring(message))
+  local two, many = of("program\ta\nprogram\tb\ndefault\ta\ndefault\tb\n")
+  check(two == nil and many:find("names more than one program: a, b", 1, true), "two: " .. tostring(many))
+end
+
 function tests.dap_registers()
   local dap = require("dap")
   check(dap.adapters.smith, "the smith adapter is registered")
