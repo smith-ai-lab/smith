@@ -53,7 +53,9 @@ corpus=tests/smith-lang/cases
 : >"$work/corpus"
 for file in $(find "$corpus" -name '*.smith' -path '*/src/*' | LC_ALL=C sort); do
     echo "==> ${file#"$corpus"/} <==" >>"$work/corpus"
-    format "$here/$file" <"$file" >>"$work/corpus" 2>&1
+    # The cases are in .clang-format-ignore (they are inputs written as the case needs), so the text is formatted under
+    # another name, in the style of this folder.
+    "$smith" fmt --style="file:$here/.clang-format" --assume-filename="$work/case.smith" <"$file" >>"$work/corpus" 2>&1
 done
 if [ "${UPDATE:-}" = 1 ]; then
     mkdir -p tests/smith-fmt
@@ -124,14 +126,14 @@ expect ".c files still read import as a name" "u32 f(void) {
 }" "$(printf 'u32 f(void) {\nimport value = 1;\nreturn value;\n}\n' | format "$here/x.c")"
 
 # --- `smith fmt` with no arguments --------------------------------------------------------------------------------------
-# The build.c `smith new` writes formats every .smith file of the project; `check` (check-format) fails on a file it
-# would change.
+# In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
 project=$work/project
 mkdir -p "$project/src/a" "$project/tests"
 sed 's/@NAME@/demo/g' templates/new/build.c >"$project/build.c"
 for f in main.c primes.c primes.h; do sed 's/@NAME@/demo/g' "templates/new/$f" >"$project/$f"; done
 sed 's/@NAME@/demo/g' templates/new/test_primes.c >"$project/tests/test_primes.c"
 cp templates/new/clang-format "$project/.clang-format"
+git -C "$project" init -q
 printf 'module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n' >"$project/src/a/b.smith"
 total=$((total + 1))
 if (cd "$project" && "$smith" fmt --dry-run --Werror src/a/b.smith >/dev/null 2>&1); then
@@ -139,7 +141,7 @@ if (cd "$project" && "$smith" fmt --dry-run --Werror src/a/b.smith >/dev/null 2>
 else
     echo "ok    the project's .smith file is reported unformatted by clang-format"
 fi
-(cd "$project" && PATH="$(dirname "$smith"):$PATH" "$smith" fmt >"$work/fmt.out" 2>&1) # the task runs `smith` from PATH
+(cd "$project" && "$smith" fmt >"$work/fmt.out" 2>&1)
 expect "smith fmt with no arguments formats the project's .smith files" "module a::b;
 import <sys/wait.h>;
 export u32 f(x::T *p) {

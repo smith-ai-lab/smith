@@ -294,15 +294,29 @@ expect "the name clang acts as smith cc" "$(lines "clang argv0=$cl" '[-c]' '[a.c
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/driver/clang++" -c a.cpp
 expect "the name clang++ acts as smith c++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
-# fmt and lint with no arguments, or only -D options of the build, are the project's verbs; the folder has no build.c.
+# The verbs that read the build need a build.c; with no arguments (or only -D options of the build) they act on the
+# project, and the folder has none.
 mkdir "$work/empty"
-for verb in fmt lint run test check; do
+for verb in lint run test; do
     capture sh -c "cd '$work/empty' && '$smith' $verb -DX=1"
     expect "$verb -DX=1: the project's verb, which needs a build.c" "smith: no build.c in this folder" "$err"
 done
+# fmt lists the files git sees, and the folder is no repository.
+capture sh -c "cd '$work/empty' && GIT_CEILING_DIRECTORIES='$work' '$smith' fmt"
+expect "fmt: outside a git repository it says to name the files" \
+    "smith: this folder is not a git repository, so smith fmt has no list of files; name them: smith fmt -i <files>" \
+    "$err"
+# check formats and checks the docs first, then needs the build for the rest.
+capture sh -c "cd '$work/empty' && GIT_CEILING_DIRECTORIES='$work' '$smith' check"
+expect "check: a part that fails is reported, and the exit status is 1" 1 "$rc"
+case $err in
+*"smith check: fmt FAILED (status 2)"*"smith check: docs ok"*"smith check: no build.c, so lint, test and prove are skipped"*"smith check: failed: fmt") ok=yes ;;
+*) ok=no ;;
+esac
+expect "check: every part is reported, in order, and the failures are summed up" yes "$ok"
 
 # A project verb is a verb, not a target of smith build.
-for verb in run test check fmt lint prove; do
+for verb in run test check fmt lint prove docs; do
     capture "$smith" build "$verb"
     expect "build $verb: refused, with a pointer to the verb" \
         "smith: $verb is a verb, not a target of smith build; run \`smith $verb\`" "$err"
