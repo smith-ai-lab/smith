@@ -441,6 +441,18 @@ static const char *const build_smith_inputs[] = {
     "runtime/untar.c",
     "runtime/cache.c",
     "runtime/symbolize.c",
+    "runtime/mcp.c",
+    "runtime/mcp_text.c",
+    "runtime/mcp_dap.c",
+    "runtime/mcp_show.c",
+    "runtime/mcp_tools.c",
+    "runtime/mcp_serve.c",
+    "runtime/protocol/protocol.h",
+    "runtime/protocol/protocol.c",
+    "runtime/protocol/dap.h",
+    "runtime/protocol/dap.c",
+    "runtime/protocol/mcp.h",
+    "runtime/protocol/mcp.c",
     "include/smith/arena.h",
     "lib/arena.c",
     "include/smith/io.h",
@@ -472,6 +484,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang_names.c",
     "runtime/lang_import.c",
     "runtime/lang_head.c",
+    "runtime/lang_generic.c",
     "runtime/lang_sparse.c",
     "runtime/lang_declare.c",
     "runtime/lang_stream.c",
@@ -504,14 +517,27 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                                   smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
                       smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
                       smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
-                      smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}), nullptr),
+                      smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+                      smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
-    const SmithObject *objects[18] = {&object, &commit};
-    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 2);
+    // smith mcp stands on the text module, which is its lowering in bootstrap/ (it defines SmithText itself, so it is
+    // an object of its own beside smith.c, which sees only <smith/text.h>).
+    SmithObject text = {
+        .compiler = config->cc,
+        .source = "bootstrap/lib/smith/text.c",
+        .output = smith_fmt(b, "%s/text.o", folder),
+        .flags = config->cflags,
+    };
+    const SmithObject *objects[19] = {&object, &commit};
+    if (in_process) {
+        smith_object(b, &text);
+        objects[2] = &text;
+        build_shims(b, config, folder, pack, &shims, objects + 3);
+    }
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
@@ -600,6 +626,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"json", "json", nullptr, nullptr, 0},
     {"lint-smith", "lint-smith", nullptr, nullptr, 0},
     {"lsp", "lsp", nullptr, nullptr, 0},
+    {"mcp", "mcp", nullptr, nullptr, 0},
     {"neovim", "neovim", nullptr, nullptr, 0},
     {"new", "new", nullptr, nullptr, 0},
     {"package", "package", nullptr, nullptr, 0},

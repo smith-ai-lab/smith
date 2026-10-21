@@ -15,7 +15,8 @@
 (call_expression function: (scoped_identifier name: (identifier) @function.call))
 "::" @punctuation.delimiter
 
-; T max(type T, T a, T b)
+; T max(constexpr type T, T a, T b)
+(type_parameter "constexpr" @keyword.modifier)
 (type_parameter "type" @keyword.type)
 (type_parameter name: (identifier) @type)
 

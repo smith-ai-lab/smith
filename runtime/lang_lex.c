@@ -49,6 +49,7 @@ typedef struct {
     bool trivia_reported;
     char *capture; // else of printing the first error, it is kept here as `line:column: message`
     size_t capture_capacity;
+    void *names; // the keyword-as-name state (SmithRawNames) every token read passes through, looked-at ones too
 } SmithLangRaw;
 
 static bool smith_raw_is_name_start(char c) {
@@ -523,7 +524,8 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
             memcpy(names->renamed, token->text, token->length);
             names->renamed[token->length] = '_';
             names->renamed[token->length + 1] = 0;
-            token->text = names->renamed;
+            // kept for good: tokens read ahead are still held when the next one is renamed
+            token->text = smith_lang_str(smith_lang_store(raw->lang, names->renamed, token->length + 1));
             token->length += 1;
         }
     }
@@ -554,12 +556,14 @@ static void smith_lang_keep_aside(bool save) {
         memcpy(smith_lang_saved_scratch, smith_lang_scratch, sizeof smith_lang_scratch);
         memcpy(smith_lang_saved_header_body, smith_lang_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_saved_header_full, smith_lang_header_full, sizeof smith_lang_header_full);
+        smith_lang_generics_aside(true, &smith_lang_instance);
     } else {
         memcpy(&smith_lang_instance, &smith_lang_saved_instance, sizeof smith_lang_instance);
         memcpy(smith_lang_chars, smith_lang_saved_chars, sizeof smith_lang_chars);
         memcpy(smith_lang_scratch, smith_lang_saved_scratch, sizeof smith_lang_scratch);
         memcpy(smith_lang_header_body, smith_lang_saved_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_header_full, smith_lang_saved_header_full, sizeof smith_lang_header_full);
+        smith_lang_generics_aside(false, &smith_lang_instance);
     }
 }
 
@@ -567,6 +571,10 @@ static void smith_lang_keep_aside(bool save) {
 constexpr size_t smith_lang_lines_max = (size_t)1 << 20;
 static uint32_t smith_lang_line_starts[smith_lang_lines_max];
 static size_t smith_lang_line_count;
+
+static bool smith_lang_lines_known(void) {
+    return smith_lang_line_count > 0;
+}
 
 static void smith_lang_index_lines(size_t length) {
     smith_lang_line_count = 0;
@@ -595,6 +603,14 @@ static size_t smith_lang_column_of(uint32_t offset) {
     return offset - smith_lang_line_starts[smith_lang_line_of(offset) - 1] + 1;
 }
 
+// The next token, checked for a keyword used as a name. Every token the lowering reads, ahead or not, comes through
+// here once and in order.
+static void smith_raw_next_named(void *context, SmithToken *token, bool unexpanded) {
+    SmithLangRaw *raw = context;
+    smith_raw_next(context, token, unexpanded);
+    smith_raw_names(raw, raw->names, token);
+}
+
 // Lowers the module's source with the plain lexer. The tables are the run's when it returns, and smith_lang_keep_aside
 // has put the caller's away: the caller reads what it wants and then puts them back.
 static SmithLang *smith_lang_run_interface(const char *file, const char *text, size_t length, char *error,
@@ -613,18 +629,19 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
     lang->aligned_column = 1;
     SmithHost host = {
         .context = &raw,
-        .next = smith_raw_next,
+        .next = smith_raw_next_named,
         .emit = smith_raw_emit,
         .include = smith_raw_include,
         .error = smith_raw_error,
         .lookup = smith_raw_lookup,
         .main_file = file,
+        .maybe_generic = true,
     };
     SmithRawNames names = {0};
+    raw.names = &names;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
-        smith_raw_next(&raw, &token, false);
-        smith_raw_names(&raw, &names, &token);
+        smith_raw_next_named(&raw, &token, false);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
@@ -679,12 +696,13 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     smith_raw_directives_next = 0;
     smith_raw_directive_pool_used = 0;
     if (!smith_raw_read_source(path, &raw.length)) smith_die(smith_exit_missing, "cannot read", path);
+    smith_lang_index_lines(raw.length);
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
     lang->dump_enabled = print_lowered;
     SmithHost host = {
         .context = &raw,
-        .next = smith_raw_next,
+        .next = smith_raw_next_named,
         .emit = smith_raw_emit,
         .include = smith_raw_include,
         .error = smith_raw_error,
@@ -693,16 +711,17 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .field = nullptr,
         .read_header = nullptr,
         .main_file = path,
+        .maybe_generic = true,
     };
     SmithRawNames names = {0};
+    raw.names = &names;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
-        smith_raw_next(&raw, &token, false);
+        smith_raw_next_named(&raw, &token, false);
         if (guard == 0 && header_path != nullptr && !smith_lang_ident(&token, "module")) {
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
             return 1;
         }
-        smith_raw_names(&raw, &names, &token);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }

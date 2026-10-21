@@ -1924,6 +1924,18 @@ static bool smith_only_options(int count, char **args) {
 // `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
+// `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
+// with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
+// text and protocol code (docs/protocol.md; text is the module smith::text, linked from its lowering in bootstrap/),
+// and on the io included above.
+#ifdef SMITH_MCP
+#include "lib/json.c"
+#include "runtime/mcp.c"
+#include "runtime/protocol/dap.c"
+#include "runtime/protocol/mcp.c"
+#include "runtime/protocol/protocol.c"
+#endif
+
 // The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
 #include "runtime/verbs.c"
 
@@ -1940,6 +1952,7 @@ typedef enum {
     SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
+    SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
     SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
     SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the fixed action on the project with none
     SmithVerb_Project, // the fixed action on the project; the arguments are the action's (the runner's, the program's)
@@ -1971,6 +1984,7 @@ static const SmithVerb smith_verbs[] = {
     {"prove", SmithVerb_ToolOrProject, smith_prove_project},
     {"dbg", SmithVerb_Tool, nullptr},
     {"dap", SmithVerb_Tool, nullptr},
+    {"mcp", SmithVerb_Mcp, nullptr},
 };
 
 static const SmithVerb *smith_find_verb(const char *name) {
@@ -2012,6 +2026,13 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_cache_main(argc - 2, argv + 2);
     case SmithVerb_Tool:
         return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
+    case SmithVerb_Mcp:
+#ifdef SMITH_MCP
+        return smith_mcp_main(argc - 2, argv + 2, self);
+#else
+        fprintf(stderr, "smith: mcp needs the full smith (clang inside); this one is the stage0 (docs/mcp.md)\n");
+        return smith_exit_missing;
+#endif
     case SmithVerb_Docs:
         return smith_docs_main(argc - 2, argv + 2);
     case SmithVerb_Symbolize:
@@ -2040,6 +2061,7 @@ static void smith_usage(FILE *out) {
           "                          clang-tidy\n"
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
+          "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
           "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",

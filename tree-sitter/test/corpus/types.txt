@@ -137,7 +137,7 @@ void f(int u8) {
 a type parameter
 ================================================================================
 
-T max(type T, T a, T b);
+T max(constexpr type T, T a, T b);
 
 --------------------------------------------------------------------------------
 
@@ -161,7 +161,7 @@ T max(type T, T a, T b);
 type parameters of an exported function
 ================================================================================
 
-export T *push_array(Arena *a, type T, usize count) {
+export T *push_array(Arena *a, constexpr type T, usize count) {
     return (T *)push_bytes(a, count * sizeof(T), alignof(T));
 }
 
@@ -276,7 +276,7 @@ void f(void) {
 if constexpr
 ================================================================================
 
-void write_value(type T, T value) {
+void write_value(constexpr type T, T value) {
     if constexpr (T == f32 || T == f64) {
         a();
     } else if constexpr (sizeof(T) == 8) {
