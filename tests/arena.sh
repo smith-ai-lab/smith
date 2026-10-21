@@ -173,8 +173,8 @@ expect "project: an unchanged library is not rewritten" "$before" "$after"
 entry=$(grep -A12 '"file": "main.c"' compile_commands.json | tr -d '\n')
 expect_contains "project: compile_commands.json gives main.c the include flag" "$entry" '"-I"'
 expect_contains "project: ... which is .smith/include" "$entry" '".smith/include"'
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    capture /opt/homebrew/opt/llvm/bin/clangd --check=main.c
+if "$smith" lsp --version >/dev/null 2>&1; then
+    capture "$smith" lsp --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"
 fi
