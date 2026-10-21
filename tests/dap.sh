@@ -28,7 +28,7 @@ expect_contains() { # name, text, needle
     esac
 }
 
-if [ "$("$smith" --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)" != "clang in-process" ]; then
+if [ "$("$smith" cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)" != "clang in-process" ]; then
     echo "skipped: this smith has no clang inside (the stage0)"
     exit 0
 fi
@@ -59,7 +59,7 @@ int main(void) {
     return r == 7 ? 0 : 1;
 }
 EOF
-if ! "$smith" -g -O0 prog.c -o prog; then
+if ! "$smith" cc -g -O0 prog.c -o prog; then
     echo "FAIL  prog.c does not build"
     exit 1
 fi
@@ -80,7 +80,7 @@ expect_contains "dbg prints a backtrace" "$out" "frame #0: "
 expect_contains "dbg's backtrace has the caller" "$out" "main at prog.c"
 
 # smith dap: a client writes DAP messages, and the adapter's replies are read back.
-if ! "$smith" -std=gnu23 "$here/tests/dap_client.c" -o "$work/dap_client"; then
+if ! "$smith" cc -std=gnu23 "$here/tests/dap_client.c" -o "$work/dap_client"; then
     echo "FAIL  tests/dap_client.c does not build"
     exit 1
 fi
