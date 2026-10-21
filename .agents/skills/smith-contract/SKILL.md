@@ -45,7 +45,7 @@ for (uint8_t square = 0; square < squares; square++) {
 
 ```c
 SmithObject contract = {
-    .compiler = "smith",
+    .compiler = "smith-cc",
     .source = smith_library(b, "contract"),
     .output = "build/smith/contract.o",
     .flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr),
