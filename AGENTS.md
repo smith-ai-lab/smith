@@ -5,14 +5,22 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 
 ## Decisions (change one only with the owner)
 
-- **The best compiler on each platform.** On macOS that is Apple's: `/usr/bin/clang` (it runs through xcrun, which
-  finds the SDK) for C, C++ and Objective-C, and `metal` (`xcrun -sdk macosx metal`, or `$SMITH_METAL`) for `.metal`.
-  Upstream's AddressSanitizer costs about 40 ms per process there, in LLVM 22 and 23 alike, against 3 to 9 ms for
-  Apple's; it made game's sanitized tests 13 s instead of 2.4 s. Elsewhere, upstream clang. `.metal` and other inputs
-  in one command are refused.
-- **clang-format and clang-tidy come from one pinned upstream LLVM** on every platform, so formatting and lint are the
-  same everywhere: Homebrew `llvm` 23.1.3, held with `brew pin`. Apple ships no clang-tidy and an older clang-format.
-  On macOS, clangd and lldb are Apple's, matching the compiler.
+- **One compiler, upstream LLVM: the one smith will ship.** For now that is Homebrew's `llvm` 23.1.3, held with
+  `brew pin`, for C, C++ and Objective-C; later smith links its own static build. `.metal` goes to Apple's `metal`
+  (`xcrun -sdk macosx metal`, or `$SMITH_METAL`), and `.metal` and other inputs in one command are refused.
+  - **The SDK is chosen through the environment, never a flag.** Homebrew's clang reads a default config
+    (`/opt/homebrew/etc/clang/*.cfg`) that forces `-isysroot` to the Command Line Tools SDK, and that wins over
+    `SDKROOT`, though `xcrun` and `metal` use Xcode's. So on macOS smith sets, for each the caller has not set,
+    `CLANG_NO_DEFAULT_CONFIG=1` and `SDKROOT=$(xcrun --show-sdk-path)`. The caller's own `SDKROOT`, `-isysroot` and
+    `--config` win.
+  - **The cost is in sanitized processes.** Upstream's AddressSanitizer starts a process in about 80 ms against 18 ms
+    for Apple's (measured here, 40 runs of an empty sanitized program). game's sanitized tests, run three times each
+    after a clean build: 5.0, 5.5 and 5.8 s under Homebrew's clang, 2.9, 3.0 and 2.8 s under Apple's (a second round on
+    a busier machine: 6.9 to 7.2 s against 4.5 to 4.8 s).
+- **clang-format, clang-tidy and clangd come from the same pinned upstream LLVM** on every platform, so formatting,
+  lint and the editor are the same everywhere. Use `/opt/homebrew/opt/llvm/bin/clangd` with no `--query-driver`: with
+  it clangd puts the SDK's include paths ahead of clang's own headers, and Apple's SDK module map refuses that order,
+  so it fails on modules. lldb stays Apple's, since Homebrew's llvm ships none.
 - **smith never changes a default, so adopting it is trivial and each step is optional.**
   1. **Use the smith command instead of clang.** For C, C++ and Objective-C it is a pure passthrough: smith never adds,
      removes or reorders flags, so the build cannot change.
@@ -57,7 +65,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 
 - smith builds itself with its own `build.c`, so the installed smith must have `smith build`. `smith build` builds
   `build/<OS>-<arch>/smith` and the `smith++` link; `smith build test` runs the routing tests against stub compilers,
-  then the `smith build` tests with real ninja and clang; `smith build compare -DREAL=/usr/bin/clang` runs the same
+  then the `smith build` tests with real ninja and clang; `smith build compare -DREAL=/opt/homebrew/opt/llvm/bin/clang` runs the same
   invocations through clang and smith.
 - `smith build check` checks formatting and clang-tidy (the same configs as game, build.c included), then runs the
   `test` and `compare` targets; it must pass before a change is done. `smith build format` rewrites the sources.
@@ -119,5 +127,5 @@ which are fixed at their source (checkers' history up to 2d6bbfa still has them,
 - A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 - Apple's `metal` output is not reproducible (two identical builds of learner's shaders differ), so compare shaders by
   the command smith runs, not by bytes.
-- Why upstream's ASan is slow on macOS is not known: the time is kernel time, in both `fork` and `posix_spawn`, which
+- Why upstream's ASan is slow on macOS (about 80 ms a process against 18 ms for Apple's) is not known: the time is kernel time, in both `fork` and `posix_spawn`, which
   only root can trace.
