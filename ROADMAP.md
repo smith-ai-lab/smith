@@ -35,7 +35,7 @@ In order. Each step starts only with the owner. AGENTS.md holds the rules; this 
      - `test_death_<name>` must die;
      - `void test_prop_<name>(u64 seed)` runs over many seeds and prints the failing one.
      
-     smith generates the runner: one process per test, in parallel. The tests compile with the flags `build.c` gives
+     smith generates the runner: long-lived workers run the tests in parallel (`--isolate` gives each its own process). The tests compile with the flags `build.c` gives
      them; nothing is added by default. A project can choose the files, the links and the flags, or keep its own
      runner and take only the generated list of tests.
 5. **`.smith` files**: C plus syntax that replaces macros, lowered to plain C with `#line` so clang, lldb and the checker

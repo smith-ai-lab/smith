@@ -1,6 +1,6 @@
 ---
 name: smith-test
-description: "Using <smith/test.h> and smith_tests, smith's tests: checks that print both values, a process per test, property tests on keys. Load when code includes <smith/test.h>, when a build.c calls smith_tests, when running smith build test, or on a question about writing, running or debugging a C test."
+description: "Using <smith/test.h> and smith_tests, smith's tests: checks that print both values, workers that run the tests, property tests on keys. Load when code includes <smith/test.h>, when a build.c calls smith_tests, when running smith build test, or on a question about writing, running or debugging a C test."
 ---
 
 # Tests: smith's test library
@@ -42,11 +42,15 @@ SMITH_CHECK_ABORTS(expression)      // the expression stops the program on purpo
 - A comparison evaluates each argument once and converts `b` to `a`'s type, so a lossy comparison (`SMITH_CHECK(count, ==, 3.5)`) is a `-Wconversion` error. Put the value under test first.
 - Pointers compare, and print, as addresses. An array decays; `const` drops.
 - A failed check ends the test. A comma outside parentheses inside an argument splits it; parenthesize.
-- `SMITH_CHECK_ABORTS` forks and is strict: it passes only when the child dies by SIGABRT or SIGTRAP (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop) and its output holds no sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer", "runtime error:"). It fails, showing the child's output, if the child returns, exits non-zero, crashes with another signal (SIGSEGV) or is stopped by a sanitizer report, so a memory bug before the assertion cannot pass. A timeout fails too.
+- `SMITH_CHECK_ABORTS` is strict: it passes only when the expression raises SIGABRT or SIGTRAP (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop) and its output holds no sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer", "runtime error:"). It fails, showing the expression's output, if it returns, exits, crashes with another signal (SIGSEGV) or is stopped by a sanitizer report, so a memory bug before the assertion cannot pass. The expression runs in the worker's own process (in a child with `-DISOLATE`), so its effects stay: make a variable it changes that you read afterwards `volatile`. A hang is the test's timeout.
 
 ## Run them
 
-`smith build test`, with `-DTEST=<substring>` (one test, or every name that contains it), `-DSEED=<n>` (a property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100), `-DJOBS=<n>`, `-DSHRINK=0|1` and `-DFULL` (the heavy checks at full size). The runner `build/tests` takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--full`, `--list` and `--verbose`, so under a debugger it is `lldb -- build/tests --test name --jobs 1`.
+`smith build test`, with `-DTEST=<substring>` (one test, or every name that contains it), `-DSEED=<n>` (a property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100), `-DJOBS=<n>`, `-DSHRINK=0|1`, `-DSHUFFLE=<seed>`, `-DISOLATE` and `-DFULL` (the heavy checks at full size). The runner `build/tests` takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shuffle <seed>`, `--isolate`, `--stats` (prints how many forks the run made), `--full`, `--list` and `--verbose`, so under a debugger it is `lldb -- build/tests --test name --jobs 1 --isolate`.
+
+### Workers
+
+The runner forks `--jobs` workers once and each runs the tests it is sent, one after another, in its own process. Each test starts with its arenas given back and an empty note; everything else it leaves behind (globals, open files, the heap) stays for the next test on that worker, and which tests share a worker depends on timing unless `--jobs 1`. So a test must not depend on another. `-DSHUFFLE=<seed>` runs the tests in a shuffled order to find one that does; with `-DJOBS=1` the same seed replays it. A crash, a timeout, an exit or a sanitizer's report ends the worker, which fails that test as before, and the runner forks the next. `-DISOLATE` runs each test in a process of its own, as before the workers. This matters most with upstream LLVM's AddressSanitizer, which costs about 40 ms of kernel time for each fork or `posix_spawn` on macOS.
 
 A failure looks like this; the last line reproduces it:
 
@@ -64,7 +68,7 @@ A test with a heavy check picks its size from `smith_test_full()`, false by defa
 
 A failing property test is shrunk before it is shown: the runner reruns the key, tries each random word it drew as 0 and then as the smallest word that still fails the same check (file and line) or the same signal, within 1,000 runs or 10 s, so a failure shows `x = 500` rather than a random 64-bit draw; the header says `shrunk in 41 runs`. The rerun line names the original seed and shrinks to the same case again; `-DSHRINK=0` shows the unshrunk failure. This works because every distribution in smith-random maps word 0 to its simplest value, so draw everything from the key with smith's distributions. Your own distribution should do the same: spend the key with `smith_key_bits`, `smith_key_unit_float` or `smith_key_unit_double`, and make word 0 the simplest value.
 
-A crash is `FAIL name: killed by SIGSEGV` with the process's stderr under it (a sanitizer's report), a timeout `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). Each test runs in a process of its own, so one crash fails one test and the rest run. A passing test's output is hidden.
+A crash is `FAIL name: killed by SIGSEGV` with the process's stderr under it (a sanitizer's report), a timeout `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). One crash fails one test, and the rest run on a fresh worker. A passing test's output is hidden.
 
 ## Set it up
 

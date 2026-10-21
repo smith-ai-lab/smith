@@ -179,7 +179,7 @@ build.c has two layers, and a project may use either or both.
 ## Tests: `smith_tests` and `<smith/test.h>`
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
-types, a process per test, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
+types, workers that run the tests in parallel, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
 with the exact commands) builds that runner from the project's test files and adds the task `smith build test`.
 
 ```c
@@ -209,7 +209,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 ```
 
 - **Macros only for checks.** Only a macro can capture an expression's text, its file and its line, and evaluate an
-  expression later in a child process. A test is a plain function; there is no `TEST()` macro and no registration.
+  expression where the check can catch its end. A test is a plain function; there is no `TEST()` macro and no registration.
 - **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
   because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {` or
   `void test_<name>(SmithKey key) {` (`<name>` in `[a-z0-9_]`, the parameter's name in `[a-z_]`) and writes
@@ -228,22 +228,37 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
   compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
   infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
-- **`SMITH_CHECK_ABORTS`** forks; the child runs the expression. It checks that the program stops on purpose: the check
-  passes when the child dies by `SIGABRT` or `SIGTRAP` (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity
-  stop) and its output holds no sanitizer report. It fails, with the child's output shown, when the child returns
-  ("it returned"), exits non-zero ("it exited with status N"), crashes with another signal such as `SIGSEGV` ("it
-  crashed"), is stopped by a sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer",
-  "ThreadSanitizer" or "runtime error:" in its output: a bug, not the stop the test expected) or times out. So a memory
-  bug before the assertion cannot make the test pass. The child's output is discarded on a pass.
+- **`SMITH_CHECK_ABORTS`** runs the expression in the worker's own process, with its output going to a temporary file.
+  It checks that the program stops on purpose: the check passes when the expression raises `SIGABRT` or `SIGTRAP` (an
+  `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop), which the worker catches and jumps back from with
+  `siglongjmp`, and its output holds no sanitizer report. It fails, with the expression's output shown, when it
+  returns ("it returned"), exits ("it exited with status N"; the exit ends the worker), crashes with another signal
+  such as `SIGSEGV` ("it crashed"; the worker ends), or is stopped by a sanitizer report ("AddressSanitizer",
+  "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer" or "runtime error:" in its output: a bug, not the
+  stop the test expected; the worker is retired). So a memory bug before the assertion cannot make the test pass. The
+  output is discarded on a pass. A hang is the test's timeout, which ends the worker. With `--isolate` the expression
+  runs in a forked child and the parent judges how it ended, as before the workers. In a worker the expression's
+  effects (writes to variables) stay, as with any `longjmp`; a variable it changes that the test reads afterwards
+  should be `volatile`.
 - **`smith_test_note(format, ...)`** prints under a failure, whether a failed check, a crash or a timeout; each note
   replaces the last. **`smith_test_arena(capacity)`** is the test's memory, from a block the runner reserved once with
   `mmap`, given back before each test and each key.
-- **The runner** runs a process per test, in parallel, and prints results in table order. Output is captured and
-  shown only for a failing test (the first 64 KiB; a child that writes 16 MiB is killed). The options come from
+- **The runner** forks `--jobs` workers (the cores by default), once each and when one is needed, and sends each the
+  tests to run, one after another, in its own process. Before each test and each key of a property test the worker gives
+  the arenas back, clears the note and sets `alarm(timeout)`; it clears the alarm when the test ends. A failed check
+  unwinds with `siglongjmp` to the worker's loop and the result goes back through shared memory, so the worker lives
+  on. A crash, a timeout, an exit, output past 16 MiB or a sanitizer's report (in the output of a failed or a passing
+  test) ends the worker: the runner records the failure as it always has, forks a fresh worker and goes on, so a
+  crash fails only its own test. What a test leaves in global variables, files and the process stays for the next
+  test on that worker, and which tests share a worker depends on timing unless `--jobs 1`; `--shuffle <seed>` runs the
+  tests in a shuffled order to find such a dependence (it replays with `--jobs 1`), and `--isolate` keeps the old
+  process per test (and per `SMITH_CHECK_ABORTS`), exactly. `--stats` prints how many forks the run made. Results are
+  printed in table order, in either mode. Output is captured and
+  shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options come from
   `-DTEST=<substring>` (a test named exactly that, else every test whose name contains it), `-DSEED=<n>` (each
   property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100 by default), `-DJOBS=<n>` (default: the
-  cores), `-DSHRINK=0|1` and `-DFULL`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
-  test and per key), `--shrink 0|1`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
+  cores), `-DSHRINK=0|1`, `-DSHUFFLE=<seed>`, `-DISOLATE` and `-DFULL`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
+  test and per key), `--shrink 0|1`, `--shuffle <seed>`, `--isolate`, `--stats`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
   so a project that reads the same name gets the same value. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
 - **Full size: `smith_test_full()`.** It is false by default and true when the run was given `-DFULL` (the runner's
@@ -272,12 +287,12 @@ smith_tests(b, &tests);                              // tests.step is the task "
   The check's source line is read from the file when the failure is reported, and left out when the file cannot be read.
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a timeout is
   `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
-- **A failing property test is shrunk.** The runner reruns the failing key as a child that has `smith_random_hook`
+- **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own that has `smith_random_hook`
   (in `<smith/random.h>`) set, which records each `(key, n)` the test asks `smith_key_bits` for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest
   value (0 or the bound nearest it for an integer, about the mean for a normal, false, the identity permutation). For
   each recorded word in order the runner tries 0; if the test then stops failing it binary-searches between 0 and the
-  word for the smallest one that still fails. Each try is a child process that reads an override table from memory.
+  word for the smallest one that still fails. Each try is a run in that worker, which reads an override table from shared memory; a try that kills the worker costs a fork, and nothing else does.
   A try is kept only when the failure is the same: the same check (file and line), or the same signal or exit status;
   a failure that moves to another check is not kept. Passes repeat until none improves, within 1,000 runs or 10
   seconds, whichever comes first, and the same seed gives the same shrunk case (when the runs limit ends it; the
@@ -285,7 +300,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and `shrunk in k runs`; the rerun line names the original seed, and rerunning it shrinks to the same case again.
   `-DSHRINK=0` shows the unshrunk failure. Shrinking starts only when every other test has finished (a shrinkable
   failure and the results after it are held until then, and printed in order), so a result never depends on another
-  test: nothing stops reading the other children's pipes or judging their timeouts. A timeout is not shrunk (each try would take the whole timeout), and a failure
+  test: nothing stops reading the other workers' pipes or judging their timeouts. A timeout is not shrunk (each try would take the whole timeout), and a failure
   that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
