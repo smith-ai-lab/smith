@@ -5,7 +5,7 @@ local M = {}
 
 M.config = {
   cmd = { "smith", "lsp" },
-  filetypes = { "c", "cpp", "objc", "objcpp" },
+  filetypes = { "c", "cpp", "objc", "objcpp", "smith" },
   root_markers = { "build.c", "build.smith", "compile_commands.json", ".git" },
 }
 

@@ -49,7 +49,8 @@
         ".mm": "objective-cpp",
         ".cpp": "cpp",
         ".cc": "cpp",
-        ".hpp": "cpp"
+        ".hpp": "cpp",
+        ".smith": "smith"
       }
     }
   }

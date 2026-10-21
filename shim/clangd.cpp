@@ -9,6 +9,12 @@
 #include <cstdlib>
 #include <memory>
 
+// shim/hook.cpp: makes every translation unit with a .smith main file, clangd's included, offer its tokens to the
+// lowering.
+#ifdef SMITH_HOOK
+extern "C" void smith_hook_install();
+#endif
+
 namespace clang::clangd {
 class Transport;
 
@@ -29,5 +35,8 @@ std::unique_ptr<Transport> newXPCTransport() {
 // status.
 extern "C" int smith_clangd_main(int argc, char **argv) {
     smith_tool_start("__smith_lsp", argv[0]);
+#ifdef SMITH_HOOK
+    smith_hook_install();
+#endif
     return clang::clangd::clangdMain(argc, argv);
 }

@@ -129,7 +129,7 @@ function tests.lsp_config()
   local config = vim.lsp.config.smith
   check(config, "vim.lsp.config.smith is defined")
   equal({ "smith", "lsp" }, config.cmd, "the server command")
-  equal({ "c", "cpp", "objc", "objcpp" }, config.filetypes, "the file types")
+  equal({ "c", "cpp", "objc", "objcpp", "smith" }, config.filetypes, "the file types")
   equal({ "build.c", "build.smith", "compile_commands.json", ".git" }, config.root_markers, "the root markers")
   check(not vim.lsp.is_enabled("smith"), "the plugin does not enable the server")
   vim.cmd("edit " .. vim.fn.fnameescape(project .. "/main.c"))
@@ -144,6 +144,26 @@ function tests.lsp_attach()
   wait("smith lsp to attach", function() return #vim.lsp.get_clients({ bufnr = buffer, name = "smith" }) > 0 end)
   local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
   equal(vim.fs.normalize(vim.uv.fs_realpath(project)), vim.fs.normalize(vim.uv.fs_realpath(client.root_dir)), "the root")
+  client:stop(true)
+  wait("the server to stop", function() return client:is_stopped() end, 15000)
+end
+
+-- A .smith buffer gets the same server, and its diagnostics come from the lowering and clang at the text as written.
+function tests.lsp_attach_smith()
+  vim.lsp.enable("smith")
+  vim.cmd("edit " .. vim.fn.fnameescape(project .. "/main.smith"))
+  local buffer = vim.api.nvim_get_current_buf()
+  equal("smith", vim.bo[buffer].filetype, "the file type")
+  wait("smith lsp to attach", function() return #vim.lsp.get_clients({ bufnr = buffer, name = "smith" }) > 0 end)
+  wait("diagnostics", function() return #vim.diagnostic.get(buffer) > 0 end)
+  local messages = {}
+  for _, diagnostic in ipairs(vim.diagnostic.get(buffer)) do
+    check(not diagnostic.message:find("compiler job", 1, true), "clangd has a compile command: " .. diagnostic.message)
+    table.insert(messages, diagnostic.lnum .. ":" .. diagnostic.col .. " " .. diagnostic.message)
+  end
+  check(#messages == 1 and messages[1]:find("^0:44 ") and messages[1]:find("missing", 1, true),
+    "the one error is clang's, on line 1: " .. vim.inspect(messages))
+  local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
   client:stop(true)
   wait("the server to stop", function() return client:is_stopped() end, 15000)
 end

@@ -32,7 +32,7 @@ changes a debug configuration of yours.
   Without `smith` on the `PATH` the plugin says once that it cannot build the parser.
 - **Plain C stays C**: `module`, `import`, `export`, `type`, `throw`, `new` and `class` are names wherever C allows names
   (`int import;`, `module = 1;`, `s->type`), and `u8` is a variable in a file that declares one.
-- **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc` and `objcpp`, with the
+- **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc`, `objcpp` and `smith`, with the
   root markers `build.c`, `build.smith`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
   Do not add `--query-driver` (clangd then puts the SDK's include paths ahead of clang's own and the SDK's modules fail).
   Override anything with `vim.lsp.config("smith", { ... })`.
@@ -45,7 +45,6 @@ changes a debug configuration of yours.
 
 ## What waits
 
-- `smith lsp` for `.smith` files, so the language server attaches to them: issue #26.
 - `smith dap` and `smith dbg` for `.smith` programs (names in backtraces, `b game::replay::open`): issue #27.
 - Upstream registrations (Neovim's file types, nvim-treesitter, nvim-lspconfig), later, as contributions.
 
@@ -74,7 +73,9 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
   without the CLI), the samples in `tests/tree_sitter_cases`, the #11 corpus (`tests/smith-lang/cases`, when it exists;
   `SMITH_LANG_CASES=<folder>` checks a copy), and every `.c` and `.h` file of smith, all of which must parse with no
   `ERROR` or `MISSING` node. The driver is compiled by smith against the tree-sitter runtime, pinned by hash.
+- `tests/lsp.sh` (not Neovim): a real `smith lsp` session over stdio on a scratch project of two modules (`.smith` diagnostics
+  at the right line and column, hover, definition across modules, symbols, completion, a C file unchanged).
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
-  file of a scratch project, the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
+  file and to a `.smith` buffer of a scratch project (with a clang error at its column), the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
   version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.

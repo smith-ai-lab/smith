@@ -23,6 +23,9 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
 
 # A scratch project for the language server, and a nvim-dap that is only a table.
 mkdir "$work/project" && printf 'int main(void) { return 0; }\n' >"$work/project/main.c" && : >"$work/project/build.c"
+printf 'int main(void) { u32 x = 1; return (int)x - missing; }\n' >"$work/project/main.smith"
+printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c","-c","main.smith"]}]\n' "$work/project" \
+    >"$work/project/compile_commands.json"
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {} }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.
@@ -65,6 +68,7 @@ one highlight_buffer "$base"
 one plain_c "$base"
 one lsp_config "$base"
 one lsp_attach "$base"
+one lsp_attach_smith "$base"
 
 # nvim-dap on the runtimepath: the adapter registers at startup; a user's own adapter and configurations stay.
 one dap_registers "$base" --cmd "set runtimepath+=$work/fakedap"

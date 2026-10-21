@@ -595,7 +595,8 @@ file ([smith-lang.md](smith-lang.md)). Nothing else in build.c changes: the mani
   importers.
 - a C or C++ source that includes a module's header (`#include "game/replay.h"`) needs `-I .smith/include` in its own
   flags and the header in its `.implicit_inputs` (`.smith/include/game/replay.h`), as for any generated header.
-- `compile_commands.json` lists a `.smith` source with its flags, `-I .smith/include` included.
+- `compile_commands.json` lists a `.smith` source with its flags, `-I .smith/include` included, and `-x c` after the compiler
+  (not in the manifest: `smith-cc` adds it itself, and clangd, which reads this file, does not know the extension).
 
 A stage0 (no clang inside, so no token hook) still writes the headers; the compile of a `.smith` source fails there,
 saying the compiler needs the token hook. `tests/build.sh` section 15 builds three modules and a C file, and checks the
