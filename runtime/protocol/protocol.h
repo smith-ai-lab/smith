@@ -13,10 +13,18 @@
 // the arena holding whatever it had pushed: run it inside a scope, or throw the arena away.
 #pragma once
 
+// A project finds the headers with -I .smith/include; smith.c, built with one cc command and no -I, finds them beside.
+#if __has_include(<smith/arena.h>)
 #include <smith/arena.h>
 #include <smith/json.h>
 #include <smith/random.h>
 #include <smith/text.h>
+#else
+#include "../../include/smith/arena.h"
+#include "../../include/smith/json.h"
+#include "../../include/smith/random.h"
+#include "../../include/smith/text.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>

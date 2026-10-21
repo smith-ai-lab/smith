@@ -38,11 +38,7 @@ for file in $files; do
     lower() { # environment words (unquoted), then the program
         envw=$1
         shift
-        $envw "$@" cc --smith-header "$src" -o "$work/header.h" || return 1
-        grep '^#include' "$work/header.h" | awk '!seen[$0]++' >"$work/inc"
-        $envw "$@" cc --smith-lower "$src" >"$work/low.c" || return 1
-        { head -n 1 "$file"; echo "// NOLINTBEGIN"; cat "$work/inc"
-          awk 'NR==FNR{inc[$0]=1;next} /^#if/{d++} /^#endif/{d--} d==0&&($0 in inc){next} {print}' "$work/inc" "$work/low.c"; echo "// NOLINTEND"; }
+        $envw sh scripts/bootstrap.sh "$@" "$src" "$work/lowered.c" && cat "$work/lowered.c"
     }
     lower "" "$smith" >"$work/full.c" 2>"$work/full.err"
     cmp -s "$work/full.c" "$file"
@@ -53,7 +49,7 @@ for file in $files; do
     expect "$file: the stage0 lowers $src to the same bytes" $?
 
     # Nothing of the machine is read: no SDK, no include path, no environment.
-    lower "env -i PATH=/usr/bin SDKROOT=/nonexistent CPATH=/nonexistent C_INCLUDE_PATH=/nonexistent" "$smith" \
+    lower "env -i PATH=/usr/bin:/bin SDKROOT=/nonexistent CPATH=/nonexistent C_INCLUDE_PATH=/nonexistent" "$smith" \
         >"$work/hostile.c" 2>"$work/hostile.err"
     cmp -s "$work/hostile.c" "$file"
     expect "$file: the lowering reads nothing of the machine (no SDK, no environment)" $?
