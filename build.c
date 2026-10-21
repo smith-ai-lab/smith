@@ -637,6 +637,9 @@ constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof bu
 
 // The task of every script, and the alias `test` of them; returns the list, which the install waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
+    // At most this many scripts at once: the sanitized processes they start cost kernel time (about 80 ms each), and
+    // with every script at once a test that takes 5 s alone reached its 10 s budget.
+    smith_pool(b, "tests", 8);
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++) {
         const BuildTestScript *row = &build_test_scripts[i];
@@ -650,6 +653,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
             .description =
                 smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
             .inputs = (const char *[]){binary, nullptr},
+            .pool = "tests",
         };
         names[i] = smith_fmt(b, "test-%s", row->task);
         smith_task(b, names[i], &step);
