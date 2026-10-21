@@ -241,7 +241,8 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
         if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) length = 0;
     }
     close(pipes[0]);
-    while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == '\r')) length -= 1;
+    while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == '\r'))
+        length -= 1;
     out[length] = '\0';
     return length > 0 && strchr(out, '\n') == nullptr;
 }
