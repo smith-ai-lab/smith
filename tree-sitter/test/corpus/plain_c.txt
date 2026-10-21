@@ -1,0 +1,257 @@
+================================================================================
+module, import, export and type are ordinary variables
+================================================================================
+
+int module;
+int import;
+int export;
+int type;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier)))
+
+================================================================================
+they are ordinary names in expressions
+================================================================================
+
+void f(void) {
+    module = 1;
+    import = module + 1;
+    export += type;
+    type = '5';
+    int x = import * export;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (number_literal)))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (binary_expression
+            (identifier)
+            (number_literal))))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (identifier)))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (char_literal
+            (character))))
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (binary_expression
+            (identifier)
+            (identifier)))))))
+
+================================================================================
+they are ordinary functions, fields and parameters
+================================================================================
+
+int import(int module, int type);
+struct S { int module; int export; };
+int g(struct S *s) { return s->module + s->export + import(1, 2); }
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))
+        (parameter_declaration
+          (primitive_type)
+          (identifier)))))
+  (struct_specifier
+    (type_identifier)
+    (field_declaration_list
+      (field_declaration
+        (primitive_type)
+        (field_identifier))
+      (field_declaration
+        (primitive_type)
+        (field_identifier))))
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (struct_specifier
+            (type_identifier))
+          (pointer_declarator
+            (identifier)))))
+    (compound_statement
+      (return_statement
+        (binary_expression
+          (binary_expression
+            (field_expression
+              (identifier)
+              (field_identifier))
+            (field_expression
+              (identifier)
+              (field_identifier)))
+          (call_expression
+            (identifier)
+            (argument_list
+              (number_literal)
+              (number_literal))))))))
+
+================================================================================
+they are ordinary types
+================================================================================
+
+typedef int module;
+module *a;
+import b = 7;
+type t;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (type_definition
+    (primitive_type)
+    (type_identifier))
+  (declaration
+    (type_identifier)
+    (pointer_declarator
+      (identifier)))
+  (declaration
+    (type_identifier)
+    (init_declarator
+      (identifier)
+      (number_literal)))
+  (declaration
+    (type_identifier)
+    (identifier)))
+
+================================================================================
+C++ keywords are ordinary names
+================================================================================
+
+int throw_count(int new, int class, int throw) {
+    return new + class + throw;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))
+        (parameter_declaration
+          (primitive_type)
+          (identifier))
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (return_statement
+        (binary_expression
+          (binary_expression
+            (identifier)
+            (identifier))
+          (identifier))))))
+
+================================================================================
+c is an ordinary identifier and c.x a field
+================================================================================
+
+struct P { int x; };
+int f(struct P c) { return c.x; }
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (struct_specifier
+    (type_identifier)
+    (field_declaration_list
+      (field_declaration
+        (primitive_type)
+        (field_identifier))))
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (struct_specifier
+            (type_identifier))
+          (identifier))))
+    (compound_statement
+      (return_statement
+        (field_expression
+          (identifier)
+          (field_identifier))))))
+
+================================================================================
+plain C is unchanged
+================================================================================
+
+#include <stdio.h>
+
+int main(void) {
+    printf("hello\n");
+    return 0;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (preproc_include
+    (system_lib_string))
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (string_literal
+              (string_content)
+              (escape_sequence)))))
+      (return_statement
+        (number_literal)))))

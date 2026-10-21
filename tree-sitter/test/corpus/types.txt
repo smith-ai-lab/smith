@@ -1,0 +1,370 @@
+================================================================================
+the sized types
+================================================================================
+
+u8 a; u16 b; u32 c; u64 d;
+i8 e; i16 f; i32 g; i64 h;
+usize i; isize j; f16 k; f32 l; f64 m;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier))
+  (declaration
+    (primitive_type)
+    (identifier)))
+
+================================================================================
+sized types in a function
+================================================================================
+
+f32 root(const u8 *data, usize size) {
+    u32 total = (u32)size;
+    return (f32)total;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_qualifier)
+          (primitive_type)
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (cast_expression
+            (type_descriptor
+              (primitive_type))
+            (identifier))))
+      (return_statement
+        (cast_expression
+          (type_descriptor
+            (primitive_type))
+          (identifier))))))
+
+================================================================================
+a file may declare its own sized name
+================================================================================
+
+void f(int u8) {
+    int f32 = 1;
+    printf("%d %d", u8 + 1, f32 + 1);
+    u8 = 3;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (number_literal)))
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (string_literal
+              (string_content))
+            (binary_expression
+              (identifier)
+              (number_literal))
+            (binary_expression
+              (identifier)
+              (number_literal)))))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (number_literal))))))
+
+================================================================================
+a type parameter
+================================================================================
+
+T max(type T, T a, T b);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (type_identifier)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_parameter
+            (identifier)))
+        (parameter_declaration
+          (type_identifier)
+          (identifier))
+        (parameter_declaration
+          (type_identifier)
+          (identifier))))))
+
+================================================================================
+type parameters of an exported function
+================================================================================
+
+export T *push_array(Arena *a, type T, usize count) {
+    return (T *)push_bytes(a, count * sizeof(T), alignof(T));
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (function_definition
+      (type_identifier)
+      (pointer_declarator
+        (function_declarator
+          (identifier)
+          (parameter_list
+            (parameter_declaration
+              (type_identifier)
+              (pointer_declarator
+                (identifier)))
+            (parameter_declaration
+              (type_parameter
+                (identifier)))
+            (parameter_declaration
+              (primitive_type)
+              (identifier)))))
+      (compound_statement
+        (return_statement
+          (cast_expression
+            (type_descriptor
+              (type_identifier)
+              (abstract_pointer_declarator))
+            (call_expression
+              (identifier)
+              (argument_list
+                (type_descriptor
+                  (type_identifier))
+                (binary_expression
+                  (identifier)
+                  (sizeof_expression
+                    (parenthesized_expression
+                      (identifier))))
+                (alignof_expression
+                  (type_descriptor
+                    (type_identifier)))))))))))
+
+================================================================================
+a type passed where an argument goes
+================================================================================
+
+void f(void) {
+    Point *p = arena::push(&io.arena, Point);
+    f32 *xs = arena::push_array(&io.arena, f32, 1024);
+    unsigned char *s = push(&a, unsigned char, 3);
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (declaration
+        (type_identifier)
+        (init_declarator
+          (pointer_declarator
+            (identifier))
+          (call_expression
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (argument_list
+              (pointer_expression
+                (field_expression
+                  (identifier)
+                  (field_identifier)))
+              (identifier)))))
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (pointer_declarator
+            (identifier))
+          (call_expression
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (argument_list
+              (pointer_expression
+                (field_expression
+                  (identifier)
+                  (field_identifier)))
+              (identifier)
+              (number_literal)))))
+      (declaration
+        (sized_type_specifier
+          (primitive_type))
+        (init_declarator
+          (pointer_declarator
+            (identifier))
+          (call_expression
+            (identifier)
+            (argument_list
+              (pointer_expression
+                (identifier))
+              (type_descriptor
+                (sized_type_specifier
+                  (primitive_type)))
+              (number_literal))))))))
+
+================================================================================
+if constexpr
+================================================================================
+
+void write_value(type T, T value) {
+    if constexpr (T == f32 || T == f64) {
+        a();
+    } else if constexpr (sizeof(T) == 8) {
+        b();
+    } else {
+        c();
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_parameter
+            (identifier)))
+        (parameter_declaration
+          (type_identifier)
+          (identifier))))
+    (compound_statement
+      (if_statement
+        (parenthesized_expression
+          (binary_expression
+            (binary_expression
+              (identifier)
+              (identifier))
+            (binary_expression
+              (identifier)
+              (identifier))))
+        (compound_statement
+          (expression_statement
+            (call_expression
+              (identifier)
+              (argument_list))))
+        (else_clause
+          (if_statement
+            (parenthesized_expression
+              (binary_expression
+                (sizeof_expression
+                  (parenthesized_expression
+                    (identifier)))
+                (number_literal)))
+            (compound_statement
+              (expression_statement
+                (call_expression
+                  (identifier)
+                  (argument_list))))
+            (else_clause
+              (compound_statement
+                (expression_statement
+                  (call_expression
+                    (identifier)
+                    (argument_list)))))))))))
+
+================================================================================
+an ordinary if is unchanged
+================================================================================
+
+void f(void) {
+    if (x) y();
+    else z();
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (if_statement
+        (parenthesized_expression
+          (identifier))
+        (expression_statement
+          (call_expression
+            (identifier)
+            (argument_list)))
+        (else_clause
+          (expression_statement
+            (call_expression
+              (identifier)
+              (argument_list))))))))

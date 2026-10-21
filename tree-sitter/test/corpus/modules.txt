@@ -1,0 +1,299 @@
+================================================================================
+module line
+================================================================================
+
+module game::replay;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (module_declaration
+    (module_path
+      (identifier)
+      (identifier))))
+
+================================================================================
+module line with one name
+================================================================================
+
+module main;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (module_declaration
+    (module_path
+      (identifier))))
+
+================================================================================
+import a module
+================================================================================
+
+import lib::text;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (import_declaration
+    (module_path
+      (identifier)
+      (identifier))))
+
+================================================================================
+import a module under another name
+================================================================================
+
+import lib::text as tx;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (import_declaration
+    (module_path
+      (identifier)
+      (identifier))
+    (identifier)))
+
+================================================================================
+import a system header
+================================================================================
+
+import <sys/wait.h>;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (import_declaration
+    (system_lib_string)))
+
+================================================================================
+import a header beside the file
+================================================================================
+
+import "local.h";
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (import_declaration
+    (string_literal
+      (string_content))))
+
+================================================================================
+export a function with a body
+================================================================================
+
+export Replay open(Handle *handle, const char *path) {
+    return helper();
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (function_definition
+      (type_identifier)
+      (function_declarator
+        (identifier)
+        (parameter_list
+          (parameter_declaration
+            (type_identifier)
+            (pointer_declarator
+              (identifier)))
+          (parameter_declaration
+            (type_qualifier)
+            (primitive_type)
+            (pointer_declarator
+              (identifier)))))
+      (compound_statement
+        (return_statement
+          (call_expression
+            (identifier)
+            (argument_list)))))))
+
+================================================================================
+export a function without a body
+================================================================================
+
+export u64 checksum(const u8 *data, usize size);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (declaration
+      (primitive_type)
+      (function_declarator
+        (identifier)
+        (parameter_list
+          (parameter_declaration
+            (type_qualifier)
+            (primitive_type)
+            (pointer_declarator
+              (identifier)))
+          (parameter_declaration
+            (primitive_type)
+            (identifier)))))))
+
+================================================================================
+export a typedef
+================================================================================
+
+export typedef struct { u64 frames; tx::Text name; } Replay;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (type_definition
+      (struct_specifier
+        (field_declaration_list
+          (field_declaration
+            (primitive_type)
+            (field_identifier))
+          (field_declaration
+            (scoped_type_identifier
+              (identifier)
+              (type_identifier))
+            (field_identifier))))
+      (type_identifier))))
+
+================================================================================
+export constexpr and a global
+================================================================================
+
+export constexpr u32 version = 3;
+export u32 counter = 7;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (declaration
+      (type_qualifier)
+      (primitive_type)
+      (init_declarator
+        (identifier)
+        (number_literal))))
+  (export_declaration
+    (declaration
+      (primitive_type)
+      (init_declarator
+        (identifier)
+        (number_literal)))))
+
+================================================================================
+export a struct, a union and an enum tag
+================================================================================
+
+export struct Circle { f64 radius; };
+export enum Mode { Fast, Slow };
+export union Word { u32 whole; u8 bytes[4]; };
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (export_declaration
+    (struct_specifier
+      (type_identifier)
+      (field_declaration_list
+        (field_declaration
+          (primitive_type)
+          (field_identifier)))))
+  (export_declaration
+    (enum_specifier
+      (type_identifier)
+      (enumerator_list
+        (enumerator
+          (identifier))
+        (enumerator
+          (identifier)))))
+  (export_declaration
+    (union_specifier
+      (type_identifier)
+      (field_declaration_list
+        (field_declaration
+          (primitive_type)
+          (field_identifier))
+        (field_declaration
+          (primitive_type)
+          (array_declarator
+            (field_identifier)
+            (number_literal)))))))
+
+================================================================================
+a whole module
+================================================================================
+
+module game::replay;
+import lib::text as tx;
+import <string.h>;
+
+export typedef struct Handle { i32 fd; } Handle;
+
+u32 helper(void) {
+    return c::strlen("x");
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (module_declaration
+    (module_path
+      (identifier)
+      (identifier)))
+  (import_declaration
+    (module_path
+      (identifier)
+      (identifier))
+    (identifier))
+  (import_declaration
+    (system_lib_string))
+  (export_declaration
+    (type_definition
+      (struct_specifier
+        (type_identifier)
+        (field_declaration_list
+          (field_declaration
+            (primitive_type)
+            (field_identifier))))
+      (type_identifier)))
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type))))
+    (compound_statement
+      (return_statement
+        (call_expression
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (argument_list
+            (string_literal
+              (string_content))))))))
+
+================================================================================
+export under a conditional
+================================================================================
+
+#if defined(__APPLE__)
+export int only_here(void);
+#endif
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (preproc_if
+    (preproc_defined
+      (identifier))
+    (export_declaration
+      (declaration
+        (primitive_type)
+        (function_declarator
+          (identifier)
+          (parameter_list
+            (parameter_declaration
+              (primitive_type))))))))
