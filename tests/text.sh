@@ -38,6 +38,11 @@ mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/b
 PATH="$work/bin:$PATH"
 cc=${CC:-cc}
 
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    echo "skip  text: this smith has no clang with the token hook inside (the library is a .smith module)"
+    exit 0
+fi
+
 if [ "${2:-}" = exhaustive ]; then
     "$smith" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I "$here/include" "$here/tests/text_exhaustive.c" "$here/lib/smith/text.smith" \
         -pthread -o "$work/exhaustive" || exit 1
