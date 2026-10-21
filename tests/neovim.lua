@@ -432,6 +432,263 @@ function tests.dap_absent()
   check(not require("smith.dap").register(), "nothing registers without nvim-dap")
 end
 
+-- ---- neotest-smith (docs/neovim.md). neotest itself is not installed for the tests: a stand-in `nio` and
+-- `neotest.lib` give the adapter what it asks of them (the parse of positions is the adapter's own query run here).
+
+local function stub_neotest()
+  package.preload["nio"] = function()
+    return {
+      scheduler = function() end,
+      -- calls fn with a callback in the last position (argc) and waits for it, as a task would
+      wrap = function(fn, argc)
+        return function(...)
+          local args = { ... }
+          local done, results
+          args[argc] = function(...)
+            results = { n = select("#", ...), ... }
+            done = true
+          end
+          fn(unpack(args, 1, argc))
+          vim.wait(600000, function() return done end, 20)
+          return unpack(results, 1, results.n)
+        end
+      end,
+    }
+  end
+  local function tree_of(list)
+    return {
+      data = function() return list[1] end,
+      iter_nodes = function()
+        local index = 0
+        return function()
+          index = index + 1
+          local position = list[index]
+          if position then return index, { data = function() return position end } end
+        end
+      end,
+    }
+  end
+  package.preload["neotest.lib"] = function()
+    return {
+      treesitter = {
+        parse_positions_from_string = function(path, content, query, options)
+          local lang = path:match("%.smith$") and "smith" or "c"
+          local parser = vim.treesitter.get_string_parser(content, lang)
+          local root = parser:parse()[1]:root()
+          local list = { { type = "file", path = path, id = path, name = vim.fs.basename(path) } }
+          local parsed = vim.treesitter.query.parse(lang, query)
+          for _, match in parsed:iter_matches(root, content, 0, -1) do
+            local captured = {}
+            for id, nodes in pairs(match) do
+              captured[parsed.captures[id]] = type(nodes) == "table" and nodes[#nodes] or nodes
+            end
+            local position = options.build_position(path, content, captured)
+            position.id = path .. "::" .. position.name
+            table.insert(list, position)
+          end
+          return tree_of(list)
+        end,
+      },
+    }
+  end
+  return tree_of
+end
+
+local function write_project(files)
+  local folder = vim.fn.tempname()
+  for name, text in pairs(files) do
+    vim.fn.mkdir(vim.fs.dirname(folder .. "/" .. name), "p")
+    vim.fn.writefile(vim.split(text, "\n"), folder .. "/" .. name)
+  end
+  return folder
+end
+
+local smith_test_source = table.concat({
+  "module geometry::box_test;",
+  "import <smith/test.h>;",
+  "",
+  "export void test_area(void) {",
+  "    c::smith_check_equal_i32(1, 1);",
+  "}",
+  "",
+  "void helper(void) {",
+  "}",
+  "",
+  "export void test_perimeter(void) {",
+  "}",
+}, "\n")
+
+function tests.neotest_is_test_file()
+  local adapter = require("neotest-smith")
+  local folder = os.getenv("SMITH_NEW")
+  local test_file = vim.fn.glob(folder .. "/tests/test_*.c")
+  check(adapter.is_test_file(test_file), "tests/test_*.c of a project")
+  check(not adapter.is_test_file(folder .. "/main.c"), "main.c is not a test file")
+  check(not adapter.is_test_file(folder .. "/build.c"), "build.c is not a test file")
+  local other = write_project({ ["build.c"] = "", ["box_test.smith"] = "", ["box.smith"] = "", ["test_box.h"] = "" })
+  check(adapter.is_test_file(other .. "/box_test.smith"), "*_test.smith")
+  check(not adapter.is_test_file(other .. "/box.smith"), "box.smith")
+  check(not adapter.is_test_file(other .. "/test_box.h"), "only .c and .smith")
+  local alone = write_project({ ["test_x.c"] = "" })
+  check(not adapter.is_test_file(alone .. "/test_x.c"), "outside a smith project")
+  equal(vim.uv.fs_realpath(folder), vim.uv.fs_realpath(adapter.root(folder .. "/tests")), "the root")
+  equal(nil, adapter.root(alone), "no root outside a project")
+  check(not adapter.filter_dir("build") and adapter.filter_dir("tests"), "build/ is left out")
+end
+
+function tests.neotest_shown_name()
+  local shown = require("neotest-smith").shown_name
+  equal("area", shown("test_area"), "a C test")
+  equal("geometry::box_test::area", shown("geometry::box_test::test_area"), "a module's test")
+  equal("test_", shown("test_"), "a name that is only the prefix stays")
+end
+
+function tests.neotest_discover_c()
+  stub_neotest()
+  local folder = os.getenv("SMITH_NEW")
+  local path = vim.fn.glob(folder .. "/tests/test_*.c")
+  local expected = {}
+  for _, line in ipairs(vim.fn.readfile(path)) do
+    local found = line:match("^void (test_[%w_]+)%(")
+    if found then table.insert(expected, found) end
+  end
+  check(#expected > 0, "the new project has tests")
+  local found = {}
+  for _, node in require("neotest-smith").discover_positions(path):iter_nodes() do
+    local position = node:data()
+    if position.type == "test" then table.insert(found, position.name) end
+  end
+  equal(expected, found, "the test functions, named as --test takes them")
+end
+
+function tests.neotest_discover_smith()
+  stub_neotest()
+  parser_ready()
+  local folder = write_project({ ["build.c"] = "", ["box_test.smith"] = smith_test_source })
+  local found = {}
+  for _, node in require("neotest-smith").discover_positions(folder .. "/box_test.smith"):iter_nodes() do
+    local position = node:data()
+    if position.type == "test" then
+      table.insert(found, { position.name, position.range[1] })
+    end
+  end
+  equal({ { "geometry::box_test::test_area", 3 }, { "geometry::box_test::test_perimeter", 10 } }, found,
+    "the tests, with the module in the name, and not the helper")
+end
+
+local function spec_for(position, strategy)
+  local adapter = require("neotest-smith")
+  return adapter.build_spec({
+    tree = { data = function() return position end },
+    strategy = strategy or "integrated",
+  })
+end
+
+function tests.neotest_build_spec()
+  stub_neotest()
+  local folder = os.getenv("SMITH_NEW")
+  local root = vim.uv.fs_realpath(folder)
+  local c_file = vim.fn.glob(folder .. "/tests/test_*.c")
+  local test = { type = "test", name = "test_x", path = c_file, id = c_file .. "::test_x" }
+  local spec = spec_for(test)
+  equal({ "smith", "test", "--test", "test_x", "--verbose" }, spec.command, "a test")
+  equal(folder, spec.cwd, "cwd is the root")
+  equal({ "smith", "test", "--verbose" }, spec_for({ type = "file", name = "t", path = c_file, id = c_file }).command,
+    "a .c file runs the suite")
+  local module_file = write_project({ ["build.c"] = "", ["box_test.smith"] = smith_test_source })
+  equal({ "smith", "test", "--test", "geometry::box_test::", "--verbose" },
+    spec_for({ type = "file", name = "t", path = module_file .. "/box_test.smith", id = "x" }).command,
+    "a .smith file selects its module")
+  equal({ "smith", "test", "--verbose" }, spec_for({ type = "dir", name = "p", path = folder, id = folder }).command,
+    "the suite")
+  local debug_spec = spec_for(test, "dap")
+  local strategy = debug_spec.strategy
+  equal("smith", strategy.type, "the dap adapter")
+  equal("launch", strategy.request, "the request")
+  equal(root .. "/build/tests", vim.uv.fs_realpath(strategy.program), "the runner, built")
+  check(strategy.program:sub(1, 1) == "/", "an absolute path")
+  check(vim.uv.fs_stat(strategy.program), "the runner exists")
+  equal({ "--test", "test_x", "--in-process" }, strategy.args, "the test, in the runner's own process")
+  equal(folder, strategy.cwd, "the project root")
+  equal(nil, spec_for({ type = "file", name = "t", path = c_file, id = c_file }, "dap"), "only a test is debugged")
+end
+
+-- Real output of the runner (`smith test --verbose`) for one passing and one failing test: with the check's block
+-- right under FAIL (the runner run directly), and as `smith test` prints it, after the summary.
+local direct_output = [[
+PASS test_primes::the_first_five_primes_add_up_to_28
+FAIL test_primes::no_primes_add_up_to_nothing
+  tests/test_primes.smith:12
+      c::smith_check_equal_i32(primes::sum(0), 1);
+    primes::sum(0) = 0, 1   (i32)
+
+slowest:
+      0.00 s  test_primes::the_first_five_primes_add_up_to_28
+
+1 passed, 1 failed in 0.01 s
+]]
+local piped_output = [[
+[15/15] .smith/program --run fffffffffffe5c60 --input build/tests --arg build/tests --arg --verbose
+<ESC>[32mPASS<ESC>[0m test_primes::the_first_five_primes_add_up_to_28
+<ESC>[31mFAIL<ESC>[0m test_primes::no_primes_add_up_to_nothing
+  check failed at tests/test_primes.smith:12
+
+slowest:
+      0.00 s  test_primes::the_first_five_primes_add_up_to_28
+
+1 passed, 1 failed in 0.01 s
+       12 |     c::smith_check_equal_i32(primes::sum(0), 1);
+            primes::sum(0) = 0, 1   (i32)
+  called from
+    tests/test_primes.smith:12     test_primes::test_no_primes_add_up_to_nothing
+    .smith/lib/test.c:943          smith_test_execute
+smith: test: failed (status 1)
+]]
+piped_output = piped_output:gsub("<ESC>", "\27")
+
+local function results_of(output, context, code)
+  local tree_of = stub_neotest()
+  local path = vim.fn.tempname()
+  vim.fn.writefile(vim.split(output, "\n"), path)
+  local file = "/p/tests/test_primes.smith"
+  local list = {
+    { type = "file", id = file, path = file, name = "test_primes.smith" },
+    { type = "test", id = file .. "::a", path = file, name = "test_primes::test_the_first_five_primes_add_up_to_28" },
+    { type = "test", id = file .. "::b", path = file, name = "test_primes::test_no_primes_add_up_to_nothing" },
+    { type = "test", id = file .. "::c", path = file, name = "test_primes::test_never_ran" },
+  }
+  return require("neotest-smith").results({ context = context or {} }, { output = path, code = code or 1 }, tree_of(list)),
+    file
+end
+
+function tests.neotest_results()
+  for _, output in ipairs({ direct_output, piped_output }) do
+    local results, file = results_of(output)
+    equal("passed", results[file .. "::a"].status, "the passing test")
+    local failed = results[file .. "::b"]
+    equal("failed", failed.status, "the failing test")
+    equal(11, failed.errors[1].line, "at the failing check's line, 0-based")
+    check(failed.errors[1].message:find("primes::sum(0) = 0, 1", 1, true), "with the values: " .. failed.errors[1].message)
+    equal("skipped", results[file .. "::c"].status, "a test that did not run")
+    equal("failed", results[file].status, "the file failed when a test did")
+  end
+  -- only the line under FAIL, the values lost: the failing check's line, and the check as written in the file
+  local file = vim.fn.tempname() .. "/tests/test_primes.smith"
+  vim.fn.mkdir(vim.fs.dirname(file), "p")
+  vim.fn.writefile({ "module test_primes;", "", "export void test_x(void) {", "    c::check(1, 2);", "}" }, file)
+  local tree_of = stub_neotest()
+  local output = vim.fn.tempname()
+  vim.fn.writefile({ "FAIL test_primes::x", "  check failed at tests/test_primes.smith:4", "", "1 passed, 1 failed" }, output)
+  local lost = require("neotest-smith").results({ context = {} }, { output = output, code = 1 }, tree_of({
+    { type = "file", id = file, path = file, name = "f" },
+    { type = "test", id = file .. "::x", path = file, name = "test_primes::test_x" },
+  }))[file .. "::x"]
+  equal(3, lost.errors[1].line, "the line is known")
+  equal("check failed: c::check(1, 2);", lost.errors[1].message, "the check as written")
+  local debugged = results_of("", { debugging = true }, 0)
+  equal("passed", debugged["/p/tests/test_primes.smith::a"].status, "a debugged test that printed nothing and exited 0")
+end
+
 local function version_check()
   local notices = {}
   vim.notify = function(message) table.insert(notices, message) end
