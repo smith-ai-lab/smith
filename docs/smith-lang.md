@@ -40,13 +40,44 @@ u32 helper(void) { … }                              // private
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
 - **Sized types**, in any `.smith` file: `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize` (`size_t`), `isize` (`ptrdiff_t`),
-  `f16` (`_Float16`), `f32`, `f64`. They are spellings of the standard types, never typedefs. A file that declares its
-  own `u32` (or a variable named `u8`) keeps it.
+  `f16` (`_Float16`), `f32`, `f64`. They are typedefs of the standard types (`typedef __INT32_TYPE__ i32;`), so the same
+  types (`%llu`, `_Generic` and a C header's `uint64_t` agree) and a diagnostic names them as written:
+  `initializing 'i32' (aka 'int')`. The typedef is made when the file first uses the name and declares nothing of that
+  name, so a file that declares its own `u32` (or a variable named `u8`) keeps it, and a C header's `typedef uint32_t
+  u32;` is fine (it conflicts only where the types differ, and then clang says so). The typedefs are implicit: they are
+  in no header. A module's generated C header says `uint32_t`, so a C file that includes it has no `i32`.
+- **C is C2y** in a `.smith` file: `smith cc x.smith` adds `-std=gnu2y` (the standard `smith new` uses), so `auto x = f();`,
+  `::` and `_Countof` work with no flag. A `-std=` of the caller's wins, and none is added beside a C++ input.
 - **Errors**, each pointing at the `.smith` text: an exported declaration naming a private type; an import cycle
   (`a -> b -> a`); `export` in a file with no `module` line; a module name that
   does not match the path; a bare C name from an imported header; an import after a declaration; a module that is not found; the
-  `module` line not first; an export that declares two names.
+  `module` line not first; an export that declares two names; a C keyword used as a name.
+  - **A module that is not found** is one error, naming what was tried (``cannot find module `foo`: no `foo.h` in the
+    include paths, no `foo.smith` among the input files, and nothing at the path the name implies (`src/foo.smith`)``),
+    and the uses of its names (`foo::f`) report nothing more. The same for a cycle and for a module whose source has an
+    error.
+  - **A keyword where a name goes**: after a sized type name (and `*` or a qualifier), a C keyword that cannot continue
+    the type is the name of something. ``foo.smith:3:12: error: `double` is a C keyword; it cannot name a function``,
+    and likewise a variable, parameter, field or type. The name is then read as an identifier, so clang adds no cascade
+    (a later use of the misnamed thing in an expression, `return int;`, is still clang's "expected expression"). A
+    keyword after another type (`Point double(...)`) is clang's own message.
 - **Not yet:** selective imports, re-exports, a module over several files.
+
+## One command
+
+```
+smith cc main.smith foo.smith -o prog      # main.smith has `import foo;`; foo.smith is `module foo;`
+smith cc -c main.smith                     # finds foo.smith by path, too
+```
+
+When `import foo;` finds no `foo.h` on the include path, smith looks for the module's source: first among the `.smith`
+files on the command line (`SMITH_LANG_INPUTS`, which `smith cc` sets for the compiles it runs), then at the path the name
+implies under the importing module's root (for `module main;` in `dir/main.smith`, `import foo` is `dir/foo.smith`, and
+`a::b` is `dir/a/b.smith`; a file with no `module` line has its own folder for a root). The module's interface (what
+`smith cc --smith-header` would write) is made in memory and read as the header, which the compile's depfile names by the
+source; nothing is written. A header on the include path (as `smith build` writes them) is used instead, and is no
+slower. Linking is as in C: name every source on the command line, or use a build.c. On a laptop under load, the compile
+of a small `main.smith` took 21.5 ms with a header on the path and 22.0 ms reading the source (60 alternating runs).
 
 ## Lowering
 
@@ -107,6 +138,20 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
     (under 1%).
   - **What is watched:** `module`, `import`, `export`, the sized type names, each import binding (`c` included), and in a
     module its own file-scope names and the names its imported headers declared.
+  - **The sized types are made by the hook**, with no macro in the way: at the first use of a sized name that nothing
+    declares, the hook adds an implicit `TypedefDecl` to the translation unit (`Sema::PushOnScopeChains`), and the token
+    stays the name as written, so clang's diagnostics say `i32` (aka `int`) and print no "expanded from macro" notes. To the
+    lowering the name is still undeclared (the hook answers its questions that way), so a generated header gets the
+    standard C types. Without a `Sema` (`clang -E`) the old macro text is used.
+  - **After a sized type name** the hook looks at the next token whatever mode it is in (it is offered it, and passes over
+    what it would not have been offered): a C keyword there that is no continuation of a type is reported by the lowering's
+    own words (`smith_lang_keyword_name_use` reads the text around it for what it names) and read as an identifier.
+    `smith cc --smith-header` does the same on its own tokens, so a bad module fails at its header.
+  - **A module found by its source** is made in memory by `smith_lang_interface` (the header pass over a text; the
+    lowering's tables are kept aside and put back, since an importer's own lowering is in the middle of its work). The
+    text becomes the contents the file manager has for the source file, which the include then reads; its imports of other
+    modules found the same way are rewritten to include their sources. Uses of a module that could not be imported are
+    kept out of the diagnostics by a consumer in front of clang's (`Suppressing` in `shim/hook.cpp`), by location.
 - **The questions** the lowering asks the parser (`SmithHost` in `runtime/lang.h`) are answered from `Sema`'s name lookup
   in the current scope, so locals and parameters count and only completed declarations are visible (the hook runs one
   token ahead of the parser): is this name declared, and a type or a value; was it declared by an `import`ed header; and
@@ -127,12 +172,12 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   and the source locations the hook keeps are the positions the editor shows. Two things differ from a compile.
   The lowering is C with static tables and no malloc, so one exists per process; a clangd parses many files at once, so a
   hook takes it when it is made and gives it back at the end of its file (`Lowering` in `shim/hook.cpp`), and
-  `.smith` parses in a clangd run one at a time. And `compile_commands.json` carries `-x c` for a `.smith` source
+  `.smith` parses in a clangd run one at a time. And `compile_commands.json` carries `-x c -std=gnu2y` for a `.smith` source
   (clangd does not know the extension; `smith cc` adds it itself), which `smith build` writes. The module headers are
   read through the file manager's file system, so a relative `-I .smith/include` means the command's directory. Because a
   module starts with code, clangd's preamble for it is empty, and the "translation unit with no declaration" extension
   warning that C gives for that is turned off for an empty main buffer. `tests/lsp.sh` drives a real session.
-- **Routing**: `smith cc x.smith` runs clang as `-x c x.smith`; the extension turns the hook on. A smith whose clang
+- **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
 
 ## Known limits

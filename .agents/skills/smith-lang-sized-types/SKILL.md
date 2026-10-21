@@ -19,12 +19,14 @@ They work in any `.smith` file, with no import and no module line:
 
 ## What they are
 
-Spellings of the standard types, never typedefs: `u64` is the compiler's own `uint64_t` (`unsigned long long` on macOS), the same type, so `%llu`, `_Generic` and a C header's `uint64_t` agree. No `<stdint.h>` or `<stddef.h>` is needed to use them. Generated C headers say `uint64_t` and include `<stdint.h>`.
+Typedefs of the standard types: `u64` is `typedef __UINT64_TYPE__ u64;`, the compiler's own `uint64_t` (`unsigned long long` on macOS), the same type, so `%llu`, `_Generic` and a C header's `uint64_t` agree. The typedef is made where the file first uses the name (and declares nothing of it), is in no header, and needs no `<stdint.h>` or `<stddef.h>`. Generated C headers say `uint64_t` and include `<stdint.h>`, so a C file that includes one does not get `u64`.
 
 ## When a name is yours
 
-A file that declares its own `u32` (a typedef, a variable, a field named `u8`) keeps it: plain C that already uses these names compiles as it did. A name after `.` or `->` is a field. A declaration such as `int u8 = 4;` declares a variable.
+A file that declares its own `u32` (a typedef, a variable, a field named `u8`) keeps it: plain C that already uses these names compiles as it did. A name after `.` or `->` is a field. A declaration such as `int u8 = 4;` declares a variable. A C header with `typedef uint32_t u32;` is fine: it is the same type. It conflicts only where the types differ (`typedef long u32;`, after the file has used `u32`), and clang says `typedef redefinition with different types`.
 
 ## Errors
 
-A diagnostic prints the compiler's spelling (`unsigned int`), not `u32`.
+A diagnostic names the type as written, with what it is: ``initializing 'i32' (aka 'int') with an expression of type 'char[6]'``, with no "expanded from macro" notes.
+
+A C keyword used as a name after a sized type, `i32 double(i32 x)`, is ``double` is a C keyword; it cannot name a function`` (likewise a variable, parameter, field or type), at the name.
