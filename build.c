@@ -129,6 +129,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "tests/stub.c",
                                                   "runtime/build_runtime.c",
                                                   "runtime/package.c",
+                                                  "runtime/cache.c",
                                                   "include/smith/build.h",
                                                   "include/smith/arena.h",
                                                   "lib/arena.c",
@@ -158,12 +159,13 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = config->cflags,
-        .implicit_inputs = (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c",
-                                            "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
-                                            "include/smith/random.h", "lib/random.c", "include/smith/test.h",
-                                            "lib/test.c", "templates/new/build.c", "templates/new/main.c",
-                                            "templates/new/gitignore", "templates/new/clang-format",
-                                            "templates/new/clang-tidy", "templates/new/claude-settings.json", nullptr},
+        .implicit_inputs =
+            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c", "runtime/cache.c",
+                             "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
+                             "include/smith/random.h", "lib/random.c", "include/smith/test.h", "lib/test.c",
+                             "templates/new/build.c", "templates/new/main.c", "templates/new/gitignore",
+                             "templates/new/clang-format", "templates/new/clang-tidy",
+                             "templates/new/claude-settings.json", nullptr},
     };
     smith_object(b, &object);
     SmithProgram program = {
@@ -208,13 +210,12 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command =
-            (const char *[]){
-                "sh", "-c",
-                // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                "for t in run build new arena io random test; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done; "
-                "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                                    "for t in run build new arena io random cache test; do env \"$0\" sh tests/$t.sh "
+                                    "\"$1\" || exit 1; done; "
+                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);

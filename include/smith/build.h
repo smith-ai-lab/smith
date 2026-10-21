@@ -209,13 +209,15 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
 // afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each header under
 // the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own headers
 // (.smith/include/smith/) are modules too. smith writes the module maps to .smith/modules/ and clang keeps its cache in
-// .smith/cache/modules/, which `smith build -t clean` and a project's clean leave alone and `rm -rf .smith` removes
-// safely. Every covered compile gets `-fmodules -fmodules-cache-path=.smith/cache/modules` and one
-// `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported, so
-// editing a header rebuilds exactly the sources that import it. compile_commands.json leaves these flags out: the
-// editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules.
-// A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed
-// in .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
+// $XDG_CACHE_HOME/smith/modules (or ~/.cache/smith/modules), shared by every project and worktree and keyed by the
+// compile's flags and the header's path, so the SDK's modules are built once per machine; `smith cache` shows it and
+// `smith cache clean` empties it. Every covered compile gets `-fmodules -fmodules-cache-path=<that folder>`,
+// `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400` (a module unused for 31 days is removed, checked at
+// most once a week) and one `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and
+// the headers imported, so editing a header rebuilds exactly the sources that import it. compile_commands.json leaves
+// these flags out: the editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules. A
+// header that cannot be compiled alone, or that clang must include more than once with different macros, is listed in
+// .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
 typedef struct {
     const char *const *folders; // header folders below the project, such as "src"; a folder covers its subfolders
     const char *const *textual; // headers that stay textual

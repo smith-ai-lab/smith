@@ -7,6 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
+export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
 
 failures=0
 total=0
@@ -2068,6 +2069,7 @@ mkdir "$pk/home"
 HOME=$pk/home capture "$smith" fetch "$tar_url"
 expect "package: with no XDG_CACHE_HOME the cache is ~/.cache" "hello package" \
     "$(cat "$pk/home/.cache/smith/packages/$tar_hex/hello.txt" 2>/dev/null)"
+export XDG_CACHE_HOME=$work/xdg-cache
 unset SMITH_CURL CURL_LOG
 
 # SHA-256 against the NIST vectors (FIPS 180-2 examples, and the empty message), and shasum.
@@ -2089,7 +2091,7 @@ for size in 55 56 57 63 64 65 119 120 128; do # around the padding boundaries
     expect "sha256: $size bytes equal shasum" "$(shasum -a 256 "$pk/size" | cut -d' ' -f1)" "$(sha "$pk/size")"
 done
 
-# 11b. smith_modules: Clang modules, one module per header, maps in .smith/modules and a cache in .smith/cache/modules.
+# 11b. smith_modules: Clang modules, one module per header, maps in .smith/modules and the shared cache in $XDG_CACHE_HOME/smith/modules.
 project
 mkdir inc
 printf '#pragma once\n#include <stdint.h>\nint a_value(void);\n' >inc/a.h
@@ -2122,7 +2124,7 @@ void build(SmithBuild *b) {
 C
 build -v
 expect "modules: the project builds" 0 "$rc"
-expect_contains "modules: the compile has -fmodules" "$out" "cc -fmodules -fmodules-cache-path=.smith/cache/modules -fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23"
+expect_contains "modules: the compile has -fmodules" "$out" "cc -fmodules -fmodules-cache-path=$XDG_CACHE_HOME/smith/modules -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 -fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23"
 expect "modules: the program runs" 2 "$(./build/app)"
 case $(cat compile_commands.json) in *fmodule*) expect "modules: the editor's compile_commands.json has no module flags" none present ;; *) expect "modules: the editor's compile_commands.json has no module flags" ok ok ;; esac
 expect "modules: a map per folder and one for smith's headers" ".smith/modules/inc.modulemap .smith/modules/smith.modulemap" "$(echo .smith/modules/*.modulemap)"
@@ -2164,7 +2166,8 @@ expect "modules: the program runs after the flag change" 2 "$(./build/app)"
 rm -rf build
 build
 expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
-expect_contains "modules: the cache is under .smith" "$(ls .smith/cache/modules)" "modules.timestamp"
+expect_contains "modules: the cache is the shared one" "$(ls "$XDG_CACHE_HOME/smith/modules")" "modules.timestamp"
+expect "modules: and nothing is cached under .smith" no "$([ -e .smith/cache ] && echo yes || echo no)"
 if [ -x /usr/bin/clangd ]; then
     capture /usr/bin/clangd --query-driver="$HOME/.local/bin/smith*,/usr/bin/*" --check="$(pwd -P)/x.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
@@ -2200,7 +2203,7 @@ void build(SmithBuild *b) {
 C
 ok=0
 for round in 1 2 3 4 5 6 7 8 9 10; do
-    rm -rf build .smith/cache
+    rm -rf build "$XDG_CACHE_HOME/smith/modules"
     build -j 16
     [ "$rc" -eq 0 ] && ok=$((ok + 1))
 done
@@ -2264,7 +2267,7 @@ C
 build
 expect "modules: a plain and a sanitized object build" 0 "$rc"
 expect "modules: the program runs" 0 "$(./build/app >/dev/null 2>&1; echo $?)"
-hashes=$(find .smith/cache/modules -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+hashes=$(find "$XDG_CACHE_HOME/smith/modules" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [ "$hashes" -ge 2 ] && expect "modules: the two builds have caches of their own" ok ok || expect "modules: the two builds have caches of their own" ">= 2" "$hashes"
 capture "$smith" build -t compdb
 expect_contains "modules: ninja's compile commands carry the flags" "$out" "-fmodules"

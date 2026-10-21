@@ -64,8 +64,8 @@ static SmithStep build_program(SmithBuild *b, const char *variant, const char *c
 
 void build(SmithBuild *b) {
     // Clang modules: every #include of a system header, of a smith library's, and of a header in .folders becomes an
-    // import, parsed once and cached in .smith/cache/modules, so the build gets faster as it grows. The source stays
-    // plain C. When you add a folder of headers, such as "include", list it here:
+    // import, parsed once and cached once per machine in ~/.cache/smith/modules, so the build gets faster as it grows.
+    // The source stays plain C. When you add a folder of headers, such as "include", list it here:
     // .folders = (const char *[]){"include", nullptr}. A header that only works after another include is a compile
     // error here; make it include what it uses, or list it in .textual. Delete this call to turn modules off.
     smith_modules(b, &(SmithModules){});

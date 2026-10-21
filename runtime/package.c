@@ -5,6 +5,12 @@
 // The cache is $XDG_CACHE_HOME/smith/packages/<hex>/, or ~/.cache/smith/packages/<hex>/, keyed by the archive's hash. A
 // package is downloaded to a temporary file, verified, extracted into a temporary folder and only then renamed into
 // place, so a folder named by a hash is always complete. Temporary names start with ".tmp-", which no hash does.
+//
+// The same folder holds the module cache (smith/modules), and one rule serves both: an entry unused for 31 days is
+// removed, checked at most once a week. clang applies it to modules through the flags smith passes. smith applies it
+// to packages: each use touches <hex>.used beside the package, and a build that finds the weekly check due (a
+// `prune.timestamp` older than a week) removes the packages whose <hex>.used is older than 31 days. See the comment
+// above smith_package_prune_entry for why that is safe beside a build that is using one.
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -18,6 +24,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
@@ -25,6 +32,11 @@ constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the t
 constexpr size_t smith_package_error_size = 2048;
 constexpr size_t smith_package_read_size = 65536;
 constexpr int smith_package_wait_tries = 1000;
+
+// The one pruning rule of both caches, in seconds. clang gets them as -fmodules-prune-interval and
+// -fmodules-prune-after; smith applies them to packages itself.
+constexpr int smith_cache_prune_interval = 604800; // checked at most once a week (7 days)
+constexpr int smith_cache_prune_after = 2678400;   // an entry unused for 31 days is removed
 
 typedef struct {
     uint32_t state[8];
@@ -224,21 +236,134 @@ static bool smith_package_extract(const char *archive, const char *folder) {
     return smith_package_spawn(args[0], args) == 0;
 }
 
-// $XDG_CACHE_HOME/smith/packages, or ~/.cache/smith/packages.
-static bool smith_package_root(char *out, SmithPackageError *error) {
+typedef enum {
+    SmithCache_Modules,
+    SmithCache_Packages,
+} SmithCacheKind;
+
+static const char *smith_cache_name(SmithCacheKind kind) {
+    return kind == SmithCache_Modules ? "modules" : "packages";
+}
+
+// $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
+static bool smith_cache_base(char *out, SmithPackageError *error) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
     int written = 0;
     if (xdg != nullptr && *xdg != '\0') {
         if (xdg[0] != '/') return smith_package_fail(error, "XDG_CACHE_HOME is not an absolute path: %s", xdg);
-        written = snprintf(out, PATH_MAX, "%s/smith/packages", xdg);
+        written = snprintf(out, PATH_MAX, "%s/smith", xdg);
     } else if (home != nullptr && home[0] == '/') {
-        written = snprintf(out, PATH_MAX, "%s/.cache/smith/packages", home);
+        written = snprintf(out, PATH_MAX, "%s/.cache/smith", home);
     } else {
         return smith_package_fail(error, "no cache folder: set XDG_CACHE_HOME or HOME");
     }
     if (written <= 0 || written >= PATH_MAX) return smith_package_fail(error, "the cache path is too long");
     return true;
+}
+
+// The folder of one cache: <base>/modules or <base>/packages.
+static bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageError *error) {
+    char base[PATH_MAX];
+    if (!smith_cache_base(base, error)) return false;
+    int written = snprintf(out, PATH_MAX, "%s/%s", base, smith_cache_name(kind));
+    if (written <= 0 || written >= PATH_MAX) return smith_package_fail(error, "the cache path is too long");
+    return true;
+}
+
+static bool smith_package_root(char *out, SmithPackageError *error) {
+    return smith_cache_folder(SmithCache_Packages, out, error);
+}
+
+// Creates the file or sets its times to now. Best effort: a cache folder that cannot be written is not an error here.
+static bool smith_cache_touch(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0) return false;
+    bool ok = futimens(fd, nullptr) == 0;
+    close(fd);
+    return ok;
+}
+
+static bool smith_cache_join(char *out, const char *folder, const char *name, const char *suffix) {
+    int written = snprintf(out, PATH_MAX, "%s/%s%s", folder, name, suffix);
+    return written > 0 && written < PATH_MAX;
+}
+
+static bool smith_cache_older(const struct stat *info, time_t now, int seconds) {
+    return now - info->st_mtime > seconds;
+}
+
+// Records that a build uses the package <hex>: <packages>/<hex>.used.
+static void smith_package_use(const char *packages, const char *digits) {
+    char stamp[PATH_MAX];
+    if (smith_cache_join(stamp, packages, digits, ".used")) smith_cache_touch(stamp);
+}
+
+// Prunes one entry of the packages folder.
+//
+// Safety beside a build that uses a package. A build touches <hex>.used BEFORE it looks for the folder <hex>, and a
+// package is removed only after it is renamed out of the way and its stamp is read AGAIN. So when a build and a prune
+// meet, one of two things happens. The build's look comes first: its touch came before that, the prune's second read
+// sees the fresh stamp, and the package is renamed back, so it is never removed. Or the prune's rename comes first: the
+// build finds no folder and fetches the package again. Either way the build gets a complete folder, and a package a
+// build touched in the last 31 days is never removed. Nothing named ".tmp-" (a fetch in progress) is removed unless it
+// is itself older than 31 days. A package with no stamp (made before pruning existed) is stamped now, not removed.
+static void smith_package_prune_entry(const char *packages, const char *name, time_t now) {
+    char path[PATH_MAX];
+    struct stat info;
+    if (strcmp(name, "prune.timestamp") == 0 || !smith_cache_join(path, packages, name, "")) return;
+    if (lstat(path, &info) != 0) return;
+    size_t length = strlen(name);
+    if (strncmp(name, ".tmp-", 5) == 0) {
+        if (smith_cache_older(&info, now, smith_cache_prune_after)) smith_package_remove(path);
+        return;
+    }
+    if (length > 5 && strcmp(name + length - 5, ".used") == 0) { // a stamp whose package is gone
+        char folder[PATH_MAX];
+        snprintf(folder, sizeof folder, "%s", path);
+        folder[strlen(folder) - 5] = '\0';
+        if (!smith_package_is_folder(folder) && smith_cache_older(&info, now, smith_cache_prune_after)) remove(path);
+        return;
+    }
+    char stamp[PATH_MAX];
+    char parked[PATH_MAX];
+    int stamp_length = snprintf(stamp, sizeof stamp, "%s.used", path);
+    int parked_length = snprintf(parked, sizeof parked, "%s/.tmp-prune-%d-%s", packages, (int)getpid(), name);
+    if (!S_ISDIR(info.st_mode) || stamp_length >= PATH_MAX || parked_length >= PATH_MAX) return;
+    struct stat used;
+    if (stat(stamp, &used) != 0) {
+        smith_cache_touch(stamp);
+        return;
+    }
+    if (!smith_cache_older(&used, now, smith_cache_prune_after)) return;
+    if (rename(path, parked) != 0) return;
+    if (stat(stamp, &used) == 0 && !smith_cache_older(&used, now, smith_cache_prune_after)) {
+        if (rename(parked, path) != 0) smith_package_remove(parked);
+        return;
+    }
+    smith_package_remove(parked);
+    remove(stamp);
+}
+
+// The weekly check, as part of every smith_package. When it is not due this is one stat of prune.timestamp. When it is
+// due, the timestamp is touched first, so a build that starts meanwhile skips the check, and then each entry is looked
+// at once.
+static void smith_package_prune(const char *packages) {
+    char marker[PATH_MAX];
+    if (!smith_cache_join(marker, packages, "prune.timestamp", "")) return;
+    time_t now = time(nullptr);
+    struct stat info;
+    if (stat(marker, &info) == 0 && !smith_cache_older(&info, now, smith_cache_prune_interval)) return;
+    if (!smith_cache_touch(marker)) return; // no packages folder yet
+    DIR *dir = opendir(packages);
+    if (dir == nullptr) return;
+    for (size_t i = 0; i < 1000000; i++) {
+        struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        smith_package_prune_entry(packages, entry->d_name, now);
+    }
+    closedir(dir);
 }
 
 // "sha256:<64 hex digits>" to its lowercase digits. False when it is not that.
@@ -336,17 +461,21 @@ static bool smith_package_ensure(const char *url, const char *wanted, bool offli
         SMITH_ASSERT(written > 0 && written < PATH_MAX);
         snprintf(expected, sizeof expected, "sha256:%s", digits);
         snprintf(hash, smith_package_hash_size, "%s", expected);
+        smith_package_use(temps.packages, digits); // before the look below, and before a prune: see the prune's comment
+        smith_package_prune(temps.packages);
         if (smith_package_is_folder(folder)) return true;
         if (offline) return smith_package_fail(error, "%s is not in the cache and -DOFFLINE forbids fetching it", url);
     }
     if (!smith_package_make_folders(temps.packages)) {
         return smith_package_fail(error, "cannot make the cache folder %s", temps.packages);
     }
+    if (wanted == nullptr) smith_package_prune(temps.packages);
     smith_package_temps(&temps);
     bool ok = smith_package_download(url, temps.download)
                   ? smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error)
                   : smith_package_fail(error, "cannot download %s", url);
     smith_package_remove(temps.download);
     smith_package_remove(temps.extract);
+    if (ok) smith_package_use(temps.packages, hash + 7);
     return ok;
 }

@@ -6,6 +6,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
+export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
 failures=0
 total=0
 out=
