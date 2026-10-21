@@ -53,5 +53,13 @@
         ".smith": "smith"
       }
     }
+  },
+  "mcpServers": {
+    "smith": {
+      "command": "smith",
+      "args": [
+        "mcp"
+      ]
+    }
   }
 }

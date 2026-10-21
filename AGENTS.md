@@ -228,6 +228,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `<smith/json.h>`. The output is committed (a fresh clone and the stage0 need no network); `smith check` runs `check-protocol`, which fails when a
   committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol.sh` builds and runs the tests under
   the sanitizers. See [docs/protocol.md](docs/protocol.md).
+- **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [docs/mcp.md](docs/mcp.md), skill smith-debug): eleven tools
+  (`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
+  generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp.sh` runs it on the
+  fake io and end to end.
 - **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
   `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
   modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages

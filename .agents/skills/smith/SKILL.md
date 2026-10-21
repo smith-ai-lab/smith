@@ -14,7 +14,8 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd and
 - `smith run`, `smith test`: run the program, run the tests. Load `smith-run-test`; `smith-test` for writing tests.
 - `smith check`, `smith fmt`, `smith lint`, `smith lsp`: format, lint, all checks, the editor. Load `smith-check`.
 - `smith docs`: checks AGENTS.md, knowledge/ (an OKF bundle) and the skills of a project, and says the format. Load `smith-docs`.
-- `smith prove`: load `smith-contract`. `smith dbg` says it is not available yet.
+- `smith prove`: load `smith-contract`.
+- `smith dbg`, `smith dap`, `smith mcp`: debugging, at a terminal, in an editor, and as tools for an agent. Load `smith-debug`.
 - `smith new`, `smith fetch`, `smith cache`: start a project, fetch a package, show and clean the caches (the smith-build skill).
 - `smith version`: prints the version and, after `commit`, the commit smith was built from.
 - `.smith` files, C with modules (`module a::b;`, `import`, `export`, `c::printf`, `u32`): load `smith-lang`, then `smith-lang-modules`, `smith-lang-c-interop` or `smith-lang-sized-types`.
