@@ -820,9 +820,9 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
-        .inputs =
-            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh", "scripts/prove-libs.sh",
-                             "scripts/bitwuzla.sh", "patches/clang-token-hook.patch", nullptr},
+        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh",
+                                   "scripts/prove-libs.sh", "scripts/bitwuzla.sh", "patches/clang-token-hook.patch",
+                                   "patches/clang-debug-name.patch", nullptr},
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);

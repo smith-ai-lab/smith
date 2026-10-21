@@ -1,0 +1,131 @@
+--- a/clang/include/clang/CodeGen/ModuleBuilder.h
++++ b/clang/include/clang/CodeGen/ModuleBuilder.h
+@@ -32,6 +32,7 @@
+ inline constexpr llvm::StringRef ClangTrapPrefix = "__clang_trap_msg";
+ 
+ namespace clang {
++class NamedDecl;
+ class BaseSubobject;
+ class CodeGenOptions;
+ class CoverageSourceInfo;
+@@ -149,6 +150,17 @@
+ /// lifetime.
+ std::optional<std::pair<StringRef, StringRef>>
+ DemangleTrapReasonInDebugInfo(StringRef FuncName);
++
++/// A front end for a language lowered to C may show its declarations in debug
++/// info as the source wrote them: a name inside modules, `a::b::f`, becomes
++/// the name `f` in the namespaces `a` and `b`, as C++ would write it. Asked
++/// for each function, variable, typedef and tag whose debug info is made;
++/// returns true and sets \param Scope (`a::b`) and \param Name (`f`) to
++/// replace what clang would use, or false to keep it. Null (the default)
++/// changes nothing.
++#define CLANG_HAS_DEBUG_NAME_HOOK 1
++extern bool (*DebugNameHook)(const NamedDecl *D, std::string &Scope,
++                             std::string &Name);
+ } // namespace CodeGen
+ 
+ } // end namespace clang
+--- a/clang/lib/CodeGen/CGDebugInfo.cpp
++++ b/clang/lib/CodeGen/CGDebugInfo.cpp
+@@ -390,9 +390,34 @@
+     LexicalBlockStack.emplace_back(
+         DBuilder.createLexicalBlockFile(Scope, CurLocFile));
+   }
++}
++
++bool (*clang::CodeGen::DebugNameHook)(const NamedDecl *D, std::string &Scope,
++                                      std::string &Name) = nullptr;
++
++static bool hookedDebugName(const Decl *D, std::string &Scope,
++                            std::string &Name) {
++  const auto *ND = dyn_cast<NamedDecl>(D);
++  return ND && CodeGen::DebugNameHook &&
++         CodeGen::DebugNameHook(ND, Scope, Name);
+ }
+ 
++/// The namespaces `a` then `b` of the scope "a::b", innermost.
++static llvm::DIScope *hookedScope(llvm::DIBuilder &DBuilder,
++                                  llvm::DIScope *Root, StringRef Scope) {
++  llvm::DIScope *Parent = Root;
++  while (!Scope.empty()) {
++    auto [Head, Tail] = Scope.split("::");
++    Parent = DBuilder.createNameSpace(Parent, Head, false);
++    Scope = Tail;
++  }
++  return Parent;
++}
++
+ llvm::DIScope *CGDebugInfo::getDeclContextDescriptor(const Decl *D) {
++  if (std::string Scope, Name;
++      hookedDebugName(D, Scope, Name) && !Scope.empty())
++    return hookedScope(DBuilder, TheCU, Scope);
+   llvm::DIScope *Mod = getParentModuleOrNull(D);
+   return getContextDescriptor(cast<Decl>(D->getDeclContext()),
+                               Mod ? Mod : TheCU);
+@@ -491,8 +516,11 @@
+ 
+   // quick optimization to avoid having to intern strings that are already
+   // stored reliably elsewhere
+-  if (const IdentifierInfo *II = RD->getIdentifier())
++  if (const IdentifierInfo *II = RD->getIdentifier()) {
++    if (std::string Scope, Name; hookedDebugName(RD, Scope, Name))
++      return internString(Name);
+     return II->getName();
++  }
+ 
+   // The CodeView printer in LLVM wants to see the names of unnamed types
+   // because they need to have a unique identifier.
+@@ -1782,7 +1810,12 @@
+   if (isa<RecordDecl>(DC))
+     Flags = getAccessFlag(Ty->getDecl()->getAccess(), cast<RecordDecl>(DC));
+ 
+-  return DBuilder.createTypedef(Underlying, Ty->getDecl()->getName(),
++  std::string HookedScope, HookedName;
++  StringRef TypedefName =
++      hookedDebugName(Ty->getDecl(), HookedScope, HookedName)
++          ? internString(HookedName)
++          : Ty->getDecl()->getName();
++  return DBuilder.createTypedef(Underlying, TypedefName,
+                                 getOrCreateFile(Loc), getLineNumber(Loc),
+                                 getDeclContextDescriptor(Ty->getDecl()), Align,
+                                 Flags, Annotations);
+@@ -4580,7 +4613,9 @@
+                  dyn_cast_or_null<RecordDecl>(FD->getDeclContext())) {
+       llvm::DIScope *Mod = getParentModuleOrNull(RDecl);
+       FDContext = getContextDescriptor(RDecl, Mod ? Mod : TheCU);
+-    }
++    } else if (std::string Scope, HookedName;
++               hookedDebugName(FD, Scope, HookedName) && !Scope.empty())
++      FDContext = hookedScope(DBuilder, TheCU, Scope);
+   }
+   if (CGM.getCodeGenOpts().hasReducedDebugInfo()) {
+     // Check if it is a noreturn-marked function
+@@ -4612,6 +4647,8 @@
+   }
+ 
+   Name = VD->getName();
++  if (std::string Scope, Hooked; hookedDebugName(VD, Scope, Hooked))
++    Name = internString(Hooked);
+   if (VD->getDeclContext() && !isa<FunctionDecl>(VD->getDeclContext()) &&
+       !isa<ObjCMethodDecl>(VD->getDeclContext()))
+     LinkageName = CGM.getMangledName(VD);
+@@ -4644,6 +4681,9 @@
+ 
+   llvm::DIScope *Mod = getParentModuleOrNull(VD);
+   VDContext = getContextDescriptor(cast<Decl>(DC), Mod ? Mod : TheCU);
++  if (std::string Scope, HookedName;
++      hookedDebugName(VD, Scope, HookedName) && !Scope.empty())
++    VDContext = hookedScope(DBuilder, TheCU, Scope);
+ }
+ 
+ llvm::DISubprogram *CGDebugInfo::getFunctionFwdDeclOrStub(GlobalDecl GD,
+@@ -6137,6 +6177,8 @@
+   const NamedDecl *ND = dyn_cast<NamedDecl>(D);
+   if (!ND)
+     return Name;
++  if (std::string Scope; hookedDebugName(ND, Scope, Name))
++    return Name;
+   llvm::codegenoptions::DebugTemplateNamesKind TemplateNamesKind =
+       CGM.getCodeGenOpts().getDebugSimpleTemplateNames();
+ 
