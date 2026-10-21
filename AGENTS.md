@@ -90,13 +90,16 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - Small Conventional Commits.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 
-## Bugs the checker must find (`~/Documents/checkers/checkers.c`)
+## checkers (`~/Documents/checkers`)
 
-- `get_user_move` tests `from_char <= 'H'` twice and never `to_char`, so column I reads `cells[row][8]` (line 112).
-- At end of input `get_user_move` loops forever: `scanf` returns `EOF` and nothing ends the loop.
-- `get_valid_diagonals` and `get_valid_jumps` miss legal moves (`else if`; `col > 1`, `row > 1`, `col > 2` off by one):
-  419,348 over 200,000 random boards, and no illegal move generated.
-- `apply_follow_up_jumps` recurses, at most twice nested (three jumps in a chain): men only move forward, two rows a jump. CBMC proves the bound.
+A small checkers game, men only, kept small enough to reason about and to prove correct. Its tests found these bugs,
+which are fixed at their source (checkers' history up to 2d6bbfa still has them, as cases for `smith build prove`):
+- `get_user_move` tested `from_char <= 'H'` twice and never `to_char`, so column I read `cells[row][8]`.
+- At end of input `get_user_move` looped forever: `scanf` returned `EOF` and nothing ended the loop.
+- `get_valid_diagonals` and `get_valid_jumps` missed legal moves (`else if`; `col > 1`, `row > 1`, `col > 2` off by
+  one): 419,348 over 200,000 random boards, and no illegal move generated.
+- `apply_follow_up_jumps` recursed. It is now a loop bounded by three jumps a turn (men only move forward, two rows a
+  jump), the bound CBMC proved.
 
 ## Known gaps
 
