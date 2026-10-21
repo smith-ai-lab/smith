@@ -10,6 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace clang {
+class DiagnosticsEngine;
+}
+
 namespace smith {
 
 // One name the lowering made: `geometry_box_Box` is written `box::Box` in a file that imports the module, `Box` in the
@@ -44,6 +48,10 @@ struct FileNames {
         return found == index.end() ? nullptr : &names[found->second];
     }
 };
+
+// Puts what shows the diagnostics of `engine` behind the consumer that shows the compiler's, when the translation unit
+// being compiled is a .smith file (clang-tidy reports its checks' findings from an engine of its own).
+void presentThrough(clang::DiagnosticsEngine &engine);
 
 // What the last parse of the file at `path` that reached its end learned; null for a file that is no .smith file or
 // was not parsed.

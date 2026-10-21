@@ -1,3 +1,4 @@
+#include <stdio.h>
 __UINT32_TYPE__ const first = 1;
 __UINT32_TYPE__ static second = 2;
 unsigned long third = 3;

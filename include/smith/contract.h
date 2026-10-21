@@ -48,7 +48,20 @@ void smith_contract_requires(bool condition);
 void smith_contract_ensures(bool condition);
 void smith_contract_invariant(bool condition);
 
-#ifdef NDEBUG
+// clang's static analyzer (clang-tidy's clang-analyzer-*, `smith lint`) cannot see what a call means, so without help
+// it reports every index a contract bounds. Under __clang_analyzer__ (defined only there) each is an assumption, as the
+// failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as above.
+#ifdef __clang_analyzer__
+[[gnu::always_inline]] static inline void smith_requires(bool condition) {
+    __builtin_assume(condition);
+}
+[[gnu::always_inline]] static inline void smith_ensures(bool condition) {
+    __builtin_assume(condition);
+}
+[[gnu::always_inline]] static inline void smith_invariant(bool condition) {
+    __builtin_assume(condition);
+}
+#elifdef NDEBUG
 [[gnu::always_inline]] static inline void smith_requires(bool condition) {
     (void)condition;
 }

@@ -845,6 +845,13 @@ static const unsigned char smith_build_untar[] = {
 
 // smith's libraries: each header and source is written into the project's .smith/ on every `smith build`, where build.c
 // finds the source with smith_library and the compiles find the header through -I .smith/include.
+//
+// The registry. A library is its header, include/smith/<name>.h, and its source, which is C (lib/<name>.c, written to
+// .smith/lib/<name>.c) or a .smith module (lib/smith/<name>.smith, written to .smith/lib/smith/<name>.smith, where the
+// module smith::<name> lives at its path). C or .smith, the C API is the header: a .smith module's header is generated
+// (`smith cc --smith-header`) and committed, because the stage0 has no hook, embeds the header as bytes and only a
+// smith with the hook compiles the module; `check` fails when regenerating it gives other bytes. Porting a library is
+// one change in each of two places below: its source's #embed path, and the `false` of its row in smith_libraries.
 static const unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
@@ -884,7 +891,7 @@ static const unsigned char smith_text_header[] = {
 #embed "include/smith/text.h"
 };
 static const unsigned char smith_text_source[] = {
-#embed "lib/text.c"
+#embed "lib/smith/text.smith"
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
@@ -915,18 +922,22 @@ typedef struct {
     size_t header_size;
     const unsigned char *source;
     size_t source_size;
+    bool lang; // the source is a .smith module, not C
 } SmithLibrary;
 
+// One row per library, in order of name: SMITH_LIBRARY(name, lang) uses the arrays smith_<name>_header and _source.
+#define SMITH_LIBRARY(library, is_lang) \
+    {#library, \
+     smith_##library##_header, \
+     sizeof smith_##library##_header, \
+     smith_##library##_source, \
+     sizeof smith_##library##_source, \
+     is_lang}
+
 static const SmithLibrary smith_libraries[] = {
-    {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
-    {"contract", smith_contract_header, sizeof smith_contract_header, smith_contract_source,
-     sizeof smith_contract_source},
-    {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
-    {"json", smith_json_header, sizeof smith_json_header, smith_json_source, sizeof smith_json_source},
-    {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
-    {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
-    {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
-    {"trace", smith_trace_header, sizeof smith_trace_header, smith_trace_source, sizeof smith_trace_source},
+    SMITH_LIBRARY(arena, false), SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),
+    SMITH_LIBRARY(json, false),  SMITH_LIBRARY(random, false),   SMITH_LIBRARY(test, false),
+    SMITH_LIBRARY(text, true),   SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
@@ -1093,15 +1104,54 @@ static void smith_build_split(int count, char **args, char **ninja_argv, char **
     program_argv[*program_used] = nullptr;
 }
 
-// Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c.
+// A .smith library's committed header says it was generated from lib/smith/<name>.smith, and the header step of a build
+// generates it from .smith/lib/smith/<name>.smith: the first line differs. The header is written with the step's line,
+// so that both write the same bytes (the step then leaves the file alone and no importer is rebuilt).
+static void smith_write_library_header(const char *path, const SmithLibrary *library) {
+    static unsigned char bytes[1 << 16];
+    char from[PATH_MAX];
+    char to[PATH_MAX];
+    int written = snprintf(from, sizeof from, " from lib/smith/%s.smith.", library->name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof from);
+    written = snprintf(to, sizeof to, " from .smith/lib/smith/%s.smith.", library->name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof to);
+    const char *header = (const char *)library->header;
+    const char *line_end = memchr(header, '\n', library->header_size);
+    SMITH_ASSERT(line_end != nullptr);
+    const char *found = memmem(header, (size_t)(line_end - header), from, strlen(from));
+    SMITH_ASSERT(found != nullptr); // not a header generated from its module: run smith build headers
+    size_t before = (size_t)(found - header);
+    size_t after = before + strlen(from);
+    size_t size = library->header_size - strlen(from) + strlen(to);
+    SMITH_ASSERT(size <= sizeof bytes);
+    memcpy(bytes, header, before);
+    memcpy(bytes + before, to, strlen(to));
+    memcpy(bytes + before + strlen(to), header + after, library->header_size - after);
+    smith_write_if_changed(path, bytes, size);
+}
+
+// Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c, or for a .smith
+// module to .smith/lib/smith/<name>.smith (removing a <name>.c an older smith left, which smith_library would find
+// first).
 static void smith_build_write_libraries(void) {
     for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
         const SmithLibrary *library = &smith_libraries[i];
         char path[PATH_MAX];
         int written = snprintf(path, sizeof path, ".smith/include/smith/%s.h", library->name);
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
-        smith_write_if_changed(path, library->header, library->header_size);
-        written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+        if (library->lang) {
+            smith_write_library_header(path, library);
+        } else {
+            smith_write_if_changed(path, library->header, library->header_size);
+        }
+        if (library->lang) {
+            written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+            SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+            unlink(path);
+            written = snprintf(path, sizeof path, ".smith/lib/smith/%s.smith", library->name);
+        } else {
+            written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+        }
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
         smith_write_if_changed(path, library->source, library->source_size);
     }
@@ -1112,6 +1162,7 @@ static void smith_build_prepare(const char *clang, bool in_process) {
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
+    smith_make_folder(".smith/lib/smith");
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/bootstrap");
     static char manifest[smith_build_manifest_max];
@@ -1227,7 +1278,15 @@ static int smith_build_with_ninja(char *ninja, char **ninja_argv, char **program
     return smith_exit_missing;
 }
 
-static bool smith_is_project_verb(const char *name);
+// The verbs whose meaning is fixed in every project: build.c may not name a task after one (runtime/build_runtime.c),
+// and `smith build <name>` says to run the verb.
+static bool smith_is_project_verb(const char *name) {
+    static const char *const names[] = {"fmt", "lint", "docs", "prove", "check", "run", "test"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (strcmp(name, names[i]) == 0) return true;
+    }
+    return false;
+}
 
 // `smith build run` is `smith run`: a project verb is a verb, so it has one way to be run. Anything after -t is the
 // tool's own arguments.
@@ -1240,7 +1299,8 @@ static void smith_build_refuse_verbs(int count, char **args) {
     }
 }
 
-// verb is nullptr for `smith build`, and the project verb that runs this build (smith_project_main) otherwise.
+// verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
+// nullptr: its targets are smith's own, smith_needs and smith_tests).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
@@ -1814,70 +1874,6 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     return smith_exit_missing;
 }
 
-// smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
-// kinds, a case in smith_dispatch. A verb whose row says Project, ProjectBare or ToolOrProject runs the target of its
-// name from the project's build.c (smith_project_main), and `smith build <name>` is refused for it.
-typedef enum {
-    SmithVerb_Cc,    // the compiler for C, Objective-C and Metal, with clang's arguments
-    SmithVerb_Cxx,   // the same for C++
-    SmithVerb_Build, // the project's build.c
-    SmithVerb_New,
-    SmithVerb_Fetch,
-    SmithVerb_Cache,
-    SmithVerb_Docs, // smith docs: checks AGENTS.md, knowledge/ and skills; the project's docs task with no arguments
-    SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
-    SmithVerb_Version,       // smith version: the version line and the commit smith was built from
-    SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
-    SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
-    SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the project's target of the name with none
-    SmithVerb_Project,       // the project's target of the name; the arguments are the target's (smith_args)
-    SmithVerb_ProjectBare,   // the same, with no arguments
-    SmithVerb_Later,         // not available yet: says so and names the issue
-} SmithVerbKind;
-
-typedef struct {
-    const char *name;
-    SmithVerbKind kind;
-    const char *later; // for SmithVerb_Later, what it waits for
-} SmithVerb;
-
-static const SmithVerb smith_verbs[] = {
-    {"cc", SmithVerb_Cc, nullptr},
-    {"c++", SmithVerb_Cxx, nullptr},
-    {"build", SmithVerb_Build, nullptr},
-    {"new", SmithVerb_New, nullptr},
-    {"fetch", SmithVerb_Fetch, nullptr},
-    {"cache", SmithVerb_Cache, nullptr},
-    {"symbolize", SmithVerb_Symbolize, nullptr},
-    {"docs", SmithVerb_Docs, nullptr},
-    {"version", SmithVerb_Version, nullptr},
-    {"fmt", SmithVerb_ToolOrProject, nullptr},
-    {"lint", SmithVerb_ToolOrProject, nullptr},
-    {"lsp", SmithVerb_Tool, nullptr},
-    {"run", SmithVerb_Project, nullptr},
-    {"test", SmithVerb_Project, nullptr},
-    {"check", SmithVerb_ProjectBare, nullptr},
-    {"prove", SmithVerb_ToolOrProject, nullptr},
-    {"dbg", SmithVerb_Tool, nullptr},
-    {"dap", SmithVerb_Tool, nullptr},
-    {"mcp", SmithVerb_Mcp, nullptr},
-};
-
-static const SmithVerb *smith_find_verb(const char *name) {
-    for (size_t i = 0; i < sizeof smith_verbs / sizeof smith_verbs[0]; i++) {
-        if (strcmp(name, smith_verbs[i].name) == 0) return &smith_verbs[i];
-    }
-    return nullptr;
-}
-
-// A name the project's build.c defines a target for, so `smith build <name>` is refused in favour of the verb.
-static bool smith_is_project_verb(const char *name) {
-    const SmithVerb *verb = smith_find_verb(name);
-    return verb != nullptr &&
-           (verb->kind == SmithVerb_Project || verb->kind == SmithVerb_ProjectBare ||
-            verb->kind == SmithVerb_ToolOrProject || verb->kind == SmithVerb_Docs || verb->kind == SmithVerb_Later);
-}
-
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
 // and --smith-header and --smith-lower are the .smith helpers.
@@ -1908,68 +1904,6 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     return smith_exit_missing;
 }
 
-// The project verbs: run, test and check, and fmt and lint with no arguments. Each builds the target of its name, which
-// the project's build.c defines, and runs it (docs/build-c.md). Arguments that start with -D are the build's options,
-// as for `smith build`; the rest are the verb's own: the program's for run, the test runner's for test. They reach
-// build.c as one option, -DSMITH_ARGS (each argument after a ";", see smith_encode_argument), which smith_args reads;
-// `--` ends the -D options, so that a program can take one.
-constexpr size_t smith_verb_args_max = 16384;
-
-// Appends ";" and the argument to the text of -DSMITH_ARGS, with "%", ";" and newline as %25, %3B and %0A, so that no
-// character of an argument is a separator or a newline (build.c's regeneration rule holds every -D option as a command
-// word, and a command word holds none). smith_args in the runtime decodes it. Returns the new length.
-static size_t smith_encode_argument(char *out, size_t capacity, size_t used, const char *arg) {
-    SMITH_ASSERT(used < capacity);
-    if (used + 2 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
-    out[used++] = ';';
-    for (const char *c = arg; *c != '\0'; c++) { // bounded by the argument
-        const char *piece = *c == '%' ? "%25" : *c == ';' ? "%3B" : *c == '\n' ? "%0A" : nullptr;
-        size_t length = piece != nullptr ? 3 : 1;
-        if (used + length + 1 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
-        if (piece != nullptr)
-            memcpy(out + used, piece, length);
-        else
-            out[used] = *c;
-        used += length;
-    }
-    out[used] = '\0';
-    return used;
-}
-
-static int smith_project_main(const SmithVerb *verb, int count, char **args, const char *self) {
-    SMITH_ASSERT(count >= 0 && verb != nullptr);
-    if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
-    static char *build_args[smith_build_args_max + 2];
-    static char joined[smith_verb_args_max] = "-DSMITH_ARGS=";
-    constexpr size_t prefix = sizeof "-DSMITH_ARGS=" - 1;
-    size_t used = 0;
-    size_t joined_used = prefix;
-    bool options_end = false;
-    for (int i = 0; i < count; i++) { // bounded by count, which is checked above
-        const char *arg = args[i];
-        if (!options_end && strcmp(arg, "--") == 0) {
-            options_end = true;
-        } else if (!options_end && strncmp(arg, "-D", 2) == 0) {
-            build_args[used++] = args[i];
-        } else {
-            if (verb->kind == SmithVerb_ProjectBare) {
-                smith_die(smith_exit_usage, "takes no arguments but -D options", verb->name);
-            }
-            joined_used = smith_encode_argument(joined, sizeof joined, joined_used, arg);
-        }
-    }
-    joined[joined_used] = '\0';
-    if (joined_used > prefix) build_args[used++] = joined;
-    build_args[used++] = (char *)verb->name;
-    return smith_build_main((int)used, build_args, self, verb->name);
-}
-
-// The hook for a verb that has not arrived: prove (issue #8) says so until their row changes kind.
-static int smith_later_main(const SmithVerb *verb) {
-    fprintf(stderr, "smith: %s is not available yet (%s)\n", verb->name, verb->later);
-    return smith_exit_usage;
-}
-
 // Whether every argument is a -D option of the build, which neither clang-format nor clang-tidy has (none is true).
 static bool smith_only_options(int count, char **args) {
     for (int i = 0; i < count; i++) { // bounded by count
@@ -1978,20 +1912,78 @@ static bool smith_only_options(int count, char **args) {
     return true;
 }
 
-// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, and the project's docs task with no arguments.
+// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
-// text and protocol code (docs/protocol.md), and on the io included above.
+// text and protocol code (docs/protocol.md; text is the module smith::text, linked from its lowering in bootstrap/),
+// and on the io included above.
 #ifdef SMITH_MCP
 #include "lib/json.c"
-#include "lib/text.c"
 #include "runtime/mcp.c"
 #include "runtime/protocol/dap.c"
 #include "runtime/protocol/mcp.c"
 #include "runtime/protocol/protocol.c"
 #endif
+
+// The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
+#include "runtime/verbs.c"
+
+// smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
+// kinds, a case in smith_dispatch. A verb whose row says Project, ProjectBare or ToolOrProject does one fixed thing to
+// the project (runtime/verbs.c), and `smith build <name>` is refused for it.
+typedef enum {
+    SmithVerb_Cc,    // the compiler for C, Objective-C and Metal, with clang's arguments
+    SmithVerb_Cxx,   // the same for C++
+    SmithVerb_Build, // the project's build.c
+    SmithVerb_New,
+    SmithVerb_Fetch,
+    SmithVerb_Cache,
+    SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
+    SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
+    SmithVerb_Version,       // smith version: the version line and the commit smith was built from
+    SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
+    SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
+    SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the fixed action on the project with none
+    SmithVerb_Project, // the fixed action on the project; the arguments are the action's (the runner's, the program's)
+    SmithVerb_ProjectBare, // the same, with no arguments but -D options
+} SmithVerbKind;
+
+typedef struct {
+    const char *name;
+    SmithVerbKind kind;
+    int (*project)(int count, char **args, const char *self); // what the verb does for the project itself
+} SmithVerb;
+
+static const SmithVerb smith_verbs[] = {
+    {"cc", SmithVerb_Cc, nullptr},
+    {"c++", SmithVerb_Cxx, nullptr},
+    {"build", SmithVerb_Build, nullptr},
+    {"new", SmithVerb_New, nullptr},
+    {"fetch", SmithVerb_Fetch, nullptr},
+    {"cache", SmithVerb_Cache, nullptr},
+    {"symbolize", SmithVerb_Symbolize, nullptr},
+    {"docs", SmithVerb_Docs, nullptr},
+    {"version", SmithVerb_Version, nullptr},
+    {"fmt", SmithVerb_ToolOrProject, smith_fmt_verb},
+    {"lint", SmithVerb_ToolOrProject, smith_lint_project},
+    {"lsp", SmithVerb_Tool, nullptr},
+    {"run", SmithVerb_Project, smith_run_project},
+    {"test", SmithVerb_Project, smith_test_project},
+    {"check", SmithVerb_ProjectBare, smith_check_project},
+    {"prove", SmithVerb_ToolOrProject, smith_prove_project},
+    {"dbg", SmithVerb_Tool, nullptr},
+    {"dap", SmithVerb_Tool, nullptr},
+    {"mcp", SmithVerb_Mcp, nullptr},
+};
+
+static const SmithVerb *smith_find_verb(const char *name) {
+    for (size_t i = 0; i < sizeof smith_verbs / sizeof smith_verbs[0]; i++) {
+        if (strcmp(name, smith_verbs[i].name) == 0) return &smith_verbs[i];
+    }
+    return nullptr;
+}
 
 // The commit smith was built from is in runtime/commit.c (`smith build` compiles it with -DSMITH_COMMIT and links it,
 // and passes -DSMITH_COMMIT_LINKED here, so that a new commit recompiles that file alone). A smith built with one cc
@@ -2033,7 +2025,7 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_exit_missing;
 #endif
     case SmithVerb_Docs:
-        return smith_docs_main(verb, argc - 2, argv + 2, self);
+        return smith_docs_main(argc - 2, argv + 2);
     case SmithVerb_Symbolize:
         return smith_symbolize_main(argc - 2, argv + 2);
     case SmithVerb_Version:
@@ -2043,12 +2035,10 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
             if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
             return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
         }
-        return smith_project_main(verb, argc - 2, argv + 2, self);
+        return verb->project(argc - 2, argv + 2, self);
     case SmithVerb_Project:
     case SmithVerb_ProjectBare:
-        return smith_project_main(verb, argc - 2, argv + 2, self);
-    case SmithVerb_Later:
-        return smith_later_main(verb);
+        return verb->project(argc - 2, argv + 2, self);
     }
     return smith_exit_missing;
 }

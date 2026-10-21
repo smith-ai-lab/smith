@@ -7,8 +7,9 @@
 //              [--depfile <path> --target <path>] [<root>]       root is the project, "." by default
 //
 // - Every concept, knowledge/<name>.md other than index.md and log.md, has a kebab-case file name and frontmatter
-//   holding type, title and description, and its type is one the project allows (--type; without it convention,
-//   architecture, contract and design). --require makes a field a must for a type, optionally from a list of values.
+//   holding type, title and description, and its type is one the project allows: `types:` in the frontmatter of
+//   knowledge/index.md (or --type, which replaces it; without either convention, architecture, contract and design).
+//   `requires:` there (or --require) makes a field a must for a type, optionally from a list of values.
 // - knowledge/index.md has okf_version in its frontmatter and lists exactly the concepts on disk, each as a list item
 //   "- [Title](name.md): description" whose description is the concept's own, word for word.
 // - Every skill, .agents/skills/<name>/SKILL.md, has frontmatter with a name matching its folder and a description.
@@ -991,12 +992,60 @@ static SmithDocsArena smith_docs_map(size_t size) {
     return (SmithDocsArena){.base = memory, .size = size};
 }
 
+// The next item of a list in a frontmatter value, split at `separator`, stripped and copied (C string) into the arena;
+// nullptr at the end. *rest is what is left.
+static const char *smith_docs_next_item(SmithDocs *docs, SmithDocsText *rest, char separator) {
+    for (uint32_t guard = 0; rest->length > 0 && guard < smith_docs_types_max * 4; guard++) { // bounded by the items
+        uint64_t at = 0;
+        while (at < rest->length && rest->begin[at] != separator) {
+            at += 1;
+        }
+        SmithDocsText item = smith_docs_strip((SmithDocsText){rest->begin, at});
+        uint64_t used = at < rest->length ? at + 1 : at;
+        rest->begin += used;
+        rest->length -= used;
+        if (item.length == 0) continue;
+        char *copy = SMITH_DOCS_PUSH(&docs->arena, char, item.length + 1);
+        memcpy(copy, item.begin, item.length);
+        copy[item.length] = '\0';
+        return copy;
+    }
+    return nullptr;
+}
+
+// The concept types and required fields a project allows are declared in knowledge/index.md, in its frontmatter:
+//   types: convention, architecture, contract, design
+//   requires: design:status=draft,accepted; contract:owner
+// `types` lists the allowed types (without it: convention, architecture, contract and design), and `requires` the
+// fields a type must have, each optionally from a list of values, the requirements separated by ";". The command line's
+// --type and --require replace what the index declares.
+static void smith_docs_declared(SmithDocs *docs) {
+    if (!smith_docs_exists(docs, "knowledge/index.md")) return;
+    SmithDocsFields fields;
+    if (!smith_docs_frontmatter(smith_docs_read(docs, "knowledge/index.md"), &fields)) return;
+    if (docs->type_count == 0) {
+        SmithDocsText types = smith_docs_get(&fields, "types");
+        for (const char *type = smith_docs_next_item(docs, &types, ','); type != nullptr;
+             type = smith_docs_next_item(docs, &types, ',')) {
+            if (docs->type_count == smith_docs_types_max) smith_docs_usage();
+            docs->types[docs->type_count++] = type;
+        }
+    }
+    if (docs->requirement_count > 0) return;
+    SmithDocsText requires = smith_docs_get(&fields, "requires");
+    for (const char *spec = smith_docs_next_item(docs, &requires, ';'); spec != nullptr;
+         spec = smith_docs_next_item(docs, &requires, ';')) {
+        smith_docs_add_requirement(docs, spec);
+    }
+}
+
 static int smith_docs_check(int count, char **args) {
     SmithDocs docs = {.root = "."};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
     docs.arena = smith_docs_map(smith_docs_memory_size);
     docs.depends = smith_docs_map(smith_docs_depends_size);
     docs.depended = SMITH_DOCS_PUSH(&docs.depends, const char *, smith_docs_depends_max);
+    smith_docs_declared(&docs);
     smith_docs_run(&docs);
     printf("smith docs: %u concepts, %u problems\n", docs.concepts, docs.problems);
     if (output.depfile != nullptr && !smith_docs_write_depfile(&docs, output.depfile, output.target)) {
@@ -1005,13 +1054,8 @@ static int smith_docs_check(int count, char **args) {
     return docs.problems > 0 ? smith_docs_status_problems : 0;
 }
 
-// `smith docs` with arguments is the check, on the project they name (the current folder by default). With none, a
-// project that has a build.c runs the `docs` task of it, which carries the project's declaration of types and the
-// depfile of the stamp; one without a build.c is checked as it is.
-static int smith_docs_main(const SmithVerb *verb, int count, char **args, const char *self) {
-    if (smith_only_options(count, args)) {
-        struct stat info;
-        if (stat("build.c", &info) == 0) return smith_project_main(verb, count, args, self);
-    }
-    return smith_docs_check(count, args);
+// `smith docs`: the check on the project they name (the current folder by default), with the types and required fields
+// knowledge/index.md declares. Its arguments are the check's options.
+static int smith_docs_main(int count, char **args) {
+    return smith_docs_check(smith_only_options(count, args) ? 0 : count, args);
 }

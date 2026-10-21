@@ -1,0 +1,6 @@
+module num;
+
+// Adds two values of one type: it works for the types `+` works for.
+export T add(constexpr type T, T a, T b) {
+    return a + b;
+}

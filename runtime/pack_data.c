@@ -4,6 +4,7 @@
 #include "../scripts/pack.h"
 
 const unsigned char smith_clang_resource[] = {
+// NOLINTNEXTLINE(bugprone-string-literal-with-embedded-nul): a binary file, embedded on purpose
 #embed SMITH_CLANG_RESOURCE
 };
 const size_t smith_clang_resource_size = sizeof smith_clang_resource;

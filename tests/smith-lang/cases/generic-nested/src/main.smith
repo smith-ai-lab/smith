@@ -1,0 +1,20 @@
+module main;
+
+import arena;
+import list;
+import <stdio.h>;
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    u8 storage[256];
+    arena::Arena a = arena::make(storage, sizeof storage);
+    Point *p = list::make_two(&a, Point);
+    p->x = 7;
+    usize after_point = list::measure(&a, u64);
+    c::printf("%d %zu %zu\n", p->x, after_point, a.used);
+    return 0;
+}

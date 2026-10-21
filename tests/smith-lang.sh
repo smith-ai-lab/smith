@@ -12,10 +12,13 @@
 #   expect/lowered/  the C each file is lowered to (a.b.c), by `smith cc --smith-lower`: the lowering of the text as written,
 #                    with no macros and no parser (the build's own run is checked by the program, the symbols and the headers)
 #   expect/header/   the generated header of each module (a.b.h)
+#   expect/generics/ what the compile wrote for generic functions (a.b.c; SMITH_LANG_GENERICS): the calls, each as its
+#                    statement expression, and the instances, in order. `--smith-lower` cannot show them, because it reads
+#                    no header. Only a case with this folder is checked against it
 #   expect/symbols   the symbols the objects define (nm -g), sorted
 #   flags            extra compiler flags, if any
 #   ask              types to ask the parser about at the end of each file (SMITH_LANG_ASK), and expect/ask its answers
-#   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch folder),
+#   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch folder, @REPO@ smith's own),
 #                    run in src/ as a user would, with no flag of the harness's, so that smith's own defaults (the C2y
 #                    standard, finding a module's source) are what is tested; the program, if the command made
 #                    @OUT@/program, is run, and expect/stderr, if there, is the whole of the diagnostics
@@ -77,7 +80,7 @@ build_case() { # out
     [ -f ask ] && ask=$(cat ask)
     for file in $sources; do
         module=$(echo "${file%.smith}" | tr / .)
-        SMITH_LANG_ASK=$ask "$smith" cc $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
+        SMITH_LANG_GENERICS="$out/generics/$module.c" SMITH_LANG_ASK=$ask "$smith" cc $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
         "$smith" cc --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
         objects="$objects $out/obj/$module.o"
     done
@@ -109,7 +112,7 @@ build_cmd_case() { # out
     out=$1
     status=0
     objects=""
-    arguments=$(sed "s|@OUT@|$out|g" cmd)
+    arguments=$(sed "s|@OUT@|$out|g; s|@REPO@|$here/..|g" cmd)
     # shellcheck disable=SC2086
     (cd src && "$smith" cc -fno-color-diagnostics $arguments) 2>>"$out/stderr" || status=1
     : >"$out/stdout"
@@ -121,7 +124,7 @@ build_cmd_case() { # out
 run_case() { # name
     name=$1
     out=$work/$name
-    mkdir -p "$out/include" "$out/lowered" "$out/header" "$out/obj"
+    mkdir -p "$out/include" "$out/lowered" "$out/header" "$out/generics" "$out/obj"
     : >"$out/stderr"
     cd "$corpus/$name" || return
     if [ -f cmd ]; then build_cmd_case "$out"; else build_case "$out"; fi
@@ -149,20 +152,23 @@ run_case() { # name
         check "$name: the output" expect/stdout "$out/stdout"
     fi
     if [ "${UPDATE:-}" = 1 ]; then # the files a successful build made are the expectation
-        [ $status = 0 ] && for actual in "$out"/lowered/*.c "$out"/header/*.h; do
+        compiled=
+        [ -d expect/generics ] && compiled="$out/generics/*.c"
+        # shellcheck disable=SC2086
+        [ $status = 0 ] && for actual in "$out"/lowered/*.c "$out"/header/*.h $compiled; do
             [ -s "$actual" ] || continue
             kind=$(basename "$(dirname "$actual")")
             check "$name: $kind $(basename "$actual")" "expect/$kind/$(basename "$actual")" "$actual"
         done
     else
-        for expected in expect/lowered/* expect/header/*; do
+        for expected in expect/lowered/* expect/header/* expect/generics/*; do
             [ -f "$expected" ] || continue
             kind=$(basename "$(dirname "$expected")")
             check "$name: $kind $(basename "$expected")" "$expected" "$out/$kind/$(basename "$expected")"
         done
     fi
     if [ -f ask ]; then # what the parser answers about the types named in `ask`
-        grep '^ask' "$out/stderr" >"$out/asked"
+        grep '^ask\|^query' "$out/stderr" >"$out/asked"
         check "$name: the answers" expect/ask "$out/asked"
     fi
     if [ -f expect/symbols ]; then

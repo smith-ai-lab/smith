@@ -30,14 +30,22 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 `smith fmt x.smith` formats a `.smith` file as C, keeping `::` paths and the `module`/`import` lines whole (load `smith-check`).
 
+## Linting
+
+`smith lint x.smith -- <flags>` lints a `.smith` file with the project's `.clang-tidy`, reading it as `smith cc` does and reporting at the source's lines with the names as written: a module's exports are judged by `readability-identifier-naming` as `area` and `Box`, not as `geometry_box_area`, and `--fix` edits the source's own tokens (load `smith-check`).
+
 ## Building them
 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
 
+## Tests and proofs
+
+`smith_tests` finds `.smith` tests: `void test_x(void) {` in a file with no `module` line, `export void test_x(void) {` in a module; the runner, `--test` and a failure's report name them as written (`geometry::box_test::area`, a `.smith` line and function). `smith prove geometry/box.smith` names functions as written too. See `smith-test` (".smith tests") and `smith-contract`.
+
 ## Two commands under the compiler
 
 - `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
-- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser: how to see what a rule does.
+- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written): how to see what a rule does.
 
 ## In the editor
 
