@@ -141,6 +141,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
   hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
   writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+- **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`; no LLVM change). clang-tidy builds each file's
+  command with the driver, not `createInvocation`, so `shim/tidy.cpp` carries `ArgumentsAdjusters.cpp` whole with
+  `smith_lang_command` called in `getStripPluginsAdjuster` (the last adjuster; same rule as `smith cc`), and installs the
+  token hook. A check reports from an engine of its own, so the hook puts the same consumer in front of it
+  (`smith::presentThrough`): names, notes and fix-its as written, a prototype's lowering copy moved to the definition's
+  name, a finding in a generated or in-memory interface dropped (the module's own file is linted as itself).
+  `readability-identifier-naming` judges the written name: a wrapper module, registered after clang-tidy's, replaces that
+  one check with `SmithNaming` (it holds the final real check, whose private decisions it reaches by an explicit
+  instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
+  because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
+  it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
+  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
