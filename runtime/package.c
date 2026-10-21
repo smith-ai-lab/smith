@@ -195,6 +195,15 @@ static void smith_package_remove(const char *path) {
     if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
 }
 
+// The archive readers, in smith's own code, so extraction runs no other process: gzip, then xz (which uses gzip's
+// CRCs), then tar (which uses both). The order matters, so each include is a block of its own that clang-format leaves
+// be.
+#include "gzip.c"
+
+#include "xz.c"
+
+#include "untar.c"
+
 // Runs a program as a child with the caller's stdout and stderr, and waits. The result is its exit status, 128 plus the
 // signal that killed it, or 127 when it cannot start.
 static int smith_package_spawn(const char *program, char *const *args) {
@@ -229,11 +238,6 @@ static bool smith_package_download(const char *url, const char *destination) {
                     (char *)url,
                     nullptr};
     return smith_package_spawn(curl, args) == 0;
-}
-
-static bool smith_package_extract(const char *archive, const char *folder) {
-    char *args[] = {(char *)"/usr/bin/tar", (char *)"-xf", (char *)archive, (char *)"-C", (char *)folder, nullptr};
-    return smith_package_spawn(args[0], args) == 0;
 }
 
 typedef enum {
@@ -380,8 +384,8 @@ static bool smith_package_parse_hash(const char *hash, char digits[smith_sha256_
 }
 
 // The folder to move into place: the archive's one top-level folder when it has exactly one entry (as `zig fetch` and
-// tar --strip-components=1 do), else the extraction folder itself.
-static bool smith_package_contents(const char *extract, char *contents, SmithPackageError *error) {
+// tar --strip-components=1 do), else the extraction folder itself. `single` says which.
+static bool smith_package_contents(const char *extract, char *contents, bool *single, SmithPackageError *error) {
     DIR *dir = opendir(extract);
     if (dir == nullptr) return smith_package_fail(error, "cannot read %s", extract);
     size_t entries = 0;
@@ -396,8 +400,8 @@ static bool smith_package_contents(const char *extract, char *contents, SmithPac
     closedir(dir);
     if (entries == 0) return smith_package_fail(error, "the archive is empty");
     struct stat info;
-    bool single = entries == 1 && lstat(only, &info) == 0 && S_ISDIR(info.st_mode);
-    int written = snprintf(contents, PATH_MAX, "%s", single ? only : extract);
+    *single = entries == 1 && lstat(only, &info) == 0 && S_ISDIR(info.st_mode);
+    int written = snprintf(contents, PATH_MAX, "%s", *single ? only : extract);
     SMITH_ASSERT(written > 0 && written < PATH_MAX);
     return true;
 }
@@ -431,11 +435,19 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     SMITH_ASSERT(written > 0 && written < PATH_MAX);
     if (smith_package_is_folder(folder)) return true;
     if (mkdir(temps->extract, 0777) != 0) return smith_package_fail(error, "cannot make %s", temps->extract);
-    if (!smith_package_extract(temps->download, temps->extract)) {
-        return smith_package_fail(error, "cannot extract %s (downloaded from %s)", temps->download, url);
+    SmithExtracted extracted;
+    if (!smith_package_extract(temps->download, temps->extract, &extracted, error)) {
+        char reason[smith_package_error_size];
+        snprintf(reason, sizeof reason, "%s", error->text);
+        return smith_package_fail(error, "cannot extract %s: %s", url, reason);
     }
     char contents[PATH_MAX];
-    if (!smith_package_contents(temps->extract, contents, error)) return false;
+    bool single = false;
+    if (!smith_package_contents(temps->extract, contents, &single, error)) return false;
+    if (single && extracted.climbing[0] != '\0') {
+        return smith_package_fail(error, "cannot extract %s: the symlink \"%.200s\" points outside the package folder",
+                                  url, extracted.climbing);
+    }
     if (rename(contents, folder) != 0 && !smith_package_is_folder(folder)) { // another process may have won
         return smith_package_fail(error, "cannot move the package into %s: %s", folder, strerror(errno));
     }
