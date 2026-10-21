@@ -311,6 +311,10 @@ typedef struct {
 // Starts argv[0] with no stdin and the program's own stdout and stderr, without waiting.
 [[nodiscard]] SmithError smith_processes_spawn(SmithProcesses *processes, const char *const *argv,
                                                SmithProcess *process);
+// Starts argv[0] with the program's own stdin, stdout and stderr, in this process group, so a signal from the terminal
+// reaches it: for a program that talks to the person at the terminal. Without waiting.
+[[nodiscard]] SmithError smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv,
+                                                        SmithProcess *process);
 // Completes when the process has exited, with op->exit_status or op->signal.
 void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
 // A process whose stdout and stderr are captured together (as `2>&1`, so the lines come in the order the process wrote
@@ -325,7 +329,8 @@ typedef struct SmithCapture {
     int signal;           // the signal that killed it, or 0
     const char *output;   // stdout and stderr, NUL-terminated, in the arena given at the start
     size_t output_size;
-    struct { // private to the library
+    bool truncated; // the arena had no room for all of the output: the end of it was read and dropped
+    struct {        // private to the library
         SmithLoop *loop;
         SmithArena *arena;
         unsigned char *data;

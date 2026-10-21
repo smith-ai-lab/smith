@@ -113,6 +113,12 @@ Reading a large file with `smith_files_read` copies it into the arena; mapping i
 
 A program that runs several copies of itself spawns `args.values[0]` with `smith_processes_spawn`, waits with `smith_processes_wait_async` on all of them in one loop, and gets their results from files they wrote with `smith_files_write` and `SmithWrite_Atomic`, in a folder named from `io.key` under `$TMPDIR`; each copy builds what it needs again, since nothing is shared.
 
+## Many processes, each with its output whole
+
+`smith_processes_run` blocks until one process ends. To run several at once and get each one's output when it ends (a build's jobs), start them with `smith_processes_capture_async(&io.processes, &arena, argv, &capture)` and keep the `SmithCapture` where it is. Its stdout and stderr share one pipe, so the lines are in the order the process wrote them, and the process leads a process group of its own (`kill(-capture.process.id, SIGINT)` reaches its children too). After each `smith_io_run`, call `smith_capture_poll(&capture)` for every capture still running: it takes in what the loop completed, submits the next read, and returns true once the process has exited and its output is read to the end. Then `capture.exit_status`, `capture.signal`, `capture.output` and `capture.output_size` are set. Give each capture an arena it can fill: the output grows in the arena by doubling, and when the arena is full the process still runs to its end, `capture.truncated` is set and the end of the output is dropped.
+
+`smith_processes_spawn_terminal` starts a program that talks to the person at the terminal: it keeps this process's stdin, stdout and stderr and stays in this process group, so a Ctrl-C reaches it. (`smith_processes_spawn` gives the program `/dev/null` for stdin.) Wait for it with `smith_processes_wait_async`.
+
 ## Asynchronous calls
 
 To wait on several things in one loop, submit operations in `SmithOp`s you own and run the loop:

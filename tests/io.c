@@ -242,6 +242,15 @@ static void test_real_capture(SmithIo *io) {
     assert(capture.output_size == 300005 && capture.output[299999] == 'x' &&
            strcmp(capture.output + 300000, "done\n") == 0);
 
+    // An arena too small for the output: the process still runs to its end, and the output is cut.
+    SmithArena small = smith_arena_carve(&io->arena, (size_t)1 << 20);
+    const char *const flood[] = {"/bin/sh", "-c", "head -c 5000000 /dev/zero | tr '\\0' y; exit 4", nullptr};
+    assert(smith_processes_capture_async(&io->processes, &small, flood, &capture).code == 0);
+    test_capture_wait(io, &capture);
+    assert(capture.truncated && capture.exit_status == 4 && capture.output_size > 0);
+    assert(capture.output_size < ((size_t)1 << 20) && capture.output[0] == 'y');
+    assert(capture.output[capture.output_size - 1] == 'y' && capture.output[capture.output_size] == '\0');
+
     const char *const killed[] = {"/bin/sh", "-c", "echo before; kill -9 $$", nullptr};
     assert(smith_processes_capture_async(&io->processes, &io->arena, killed, &capture).code == 0);
     test_capture_wait(io, &capture);
@@ -259,6 +268,33 @@ static void test_real_capture(SmithIo *io) {
 
     const char *const nothing[] = {"/no/such/program", nullptr};
     assert(smith_processes_capture_async(&io->processes, &io->arena, nothing, &capture).code == ENOENT);
+}
+
+// A program that talks to the terminal keeps the stdin of this process, where smith_processes_spawn gives it /dev/null.
+static void test_real_terminal(SmithIo *io) {
+    int pipes[2];
+    assert(pipe(pipes) == 0);
+    int saved = dup(STDIN_FILENO);
+    dup2(pipes[0], STDIN_FILENO);
+    assert(write(pipes[1], "hello\n", 6) == 6);
+    const char *const reader[] = {"/bin/sh", "-c", "read line; test \"$line\" = hello", nullptr};
+    SmithProcess process = {};
+    assert(smith_processes_spawn_terminal(&io->processes, reader, &process).code == 0);
+    SmithOp wait = {};
+    smith_processes_wait_async(&io->processes, &wait, process);
+    for (size_t round = 0; round < test_rounds_max && !wait.done; round++)
+        (void)smith_io_run(io, smith_io_forever);
+    assert(wait.done && wait.exit_status == 0 && wait.signal == 0);
+    const char *const nothing[] = {"/bin/sh", "-c", "read line; test -z \"$line\"", nullptr};
+    assert(smith_processes_spawn(&io->processes, nothing, &process).code == 0); // /dev/null: end of input at once
+    smith_processes_wait_async(&io->processes, &wait, process);
+    for (size_t round = 0; round < test_rounds_max && !wait.done; round++)
+        (void)smith_io_run(io, smith_io_forever);
+    assert(wait.done && wait.exit_status == 0);
+    dup2(saved, STDIN_FILENO);
+    close(saved);
+    close(pipes[0]);
+    close(pipes[1]);
 }
 
 static void test_real_clock(SmithIo *io) {
@@ -823,6 +859,7 @@ int main(int argc, char **argv) {
     test_real_processes_run(&io);
     test_real_wait_several(&io);
     test_real_capture(&io);
+    test_real_terminal(&io);
     test_real_clock(&io);
     test_real_console_pipe(&io);
     test_real_tree(&io);
