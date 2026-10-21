@@ -3,9 +3,10 @@
 // Milestone 0 is a pure passthrough. It picks a backend by the kind of input, then replaces itself with that compiler
 // and hands over the arguments untouched:
 //   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set;
-//   - anything else goes to the platform's best clang: $SMITH_CLANG if set, else Apple's on macOS (/usr/bin/clang runs
-//     it through xcrun, which also finds the SDK), else Homebrew's LLVM, else the first clang on PATH that is not smith
-//     itself. Invoked as `smith++` it uses clang++ instead ($SMITH_CLANGXX).
+//   - anything else goes to upstream LLVM's clang: $SMITH_CLANG if set, else Homebrew's llvm
+//     (/opt/homebrew/opt/llvm/bin/clang), else the first clang on PATH that is not smith itself. Invoked as `smith++`
+//     it uses clang++ instead ($SMITH_CLANGXX). On macOS it also picks the SDK through the environment, never a flag:
+//     see smith_sdk_environment.
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
@@ -21,6 +22,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -182,8 +185,7 @@ static bool smith_find_in_path(const char *tool, const char *self, char *out) {
     return false;
 }
 
-// The compiler for the route: the environment's choice, else Apple's clang on macOS, else Homebrew's LLVM, else PATH.
-// Apple's clang is the default there because upstream's AddressSanitizer costs about 40 ms per process on macOS.
+// The compiler for the route: the environment's choice, else Homebrew's LLVM, else (not on macOS) the first on PATH.
 static void smith_find_clang(const char *tool, const char *override_name, const char *self, char *out) {
     SMITH_ASSERT(tool != nullptr && override_name != nullptr && self != nullptr && out != nullptr);
     const char *override = getenv(override_name);
@@ -194,21 +196,69 @@ static void smith_find_clang(const char *tool, const char *override_name, const 
         SMITH_ASSERT(written > 0 && written < PATH_MAX); // stat failed on a path of PATH_MAX or more bytes
         return;
     }
-    static const char *const prefixes[] = {
-#ifdef __APPLE__
-        "/usr/bin/",
-#endif
-        "/opt/homebrew/opt/llvm/bin/",
-        "/usr/local/opt/llvm/bin/",
-    };
+    static const char *const prefixes[] = {"/opt/homebrew/opt/llvm/bin/", "/usr/local/opt/llvm/bin/"};
     for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++) {
         int written = snprintf(out, PATH_MAX, "%s%s", prefixes[i], tool);
         SMITH_ASSERT(written > 0 && written < PATH_MAX); // a short constant prefix and a tool name
         if (smith_is_usable(out, self)) return;
     }
+#ifdef __APPLE__
+    // No search of PATH on macOS: the clang there would be Apple's, and the owner chose one compiler.
+    fprintf(stderr, "smith: cannot find %s in /opt/homebrew/opt/llvm/bin: run `brew install llvm`, or set %s\n", tool,
+            override_name);
+    exit(smith_exit_missing);
+#else
     if (smith_find_in_path(tool, self, out)) return;
     smith_die(smith_exit_missing, "cannot find a compiler; set SMITH_CLANG or SMITH_CLANGXX, tried", tool);
+#endif
 }
+
+#ifdef __APPLE__
+// Runs `xcrun --show-sdk-path` and writes its one line to out. False when xcrun is missing or fails.
+static bool smith_xcrun_sdk(const char *self, char *out) {
+    char xcrun[PATH_MAX];
+    if (!smith_find_in_path("xcrun", self, xcrun)) return false;
+    int pipes[2];
+    if (pipe(pipes) != 0) return false;
+    posix_spawn_file_actions_t actions;
+    SMITH_ASSERT(posix_spawn_file_actions_init(&actions) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, pipes[1], 1) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addclose(&actions, pipes[0]) == 0);
+    char *args[] = {xcrun, (char *)"--show-sdk-path", nullptr};
+    pid_t pid = 0;
+    int spawned = posix_spawn(&pid, xcrun, &actions, nullptr, args, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    size_t length = 0;
+    if (spawned == 0) {
+        ssize_t got = 0;
+        // Each read adds to length and the buffer is full at PATH_MAX - 1, so the loop ends.
+        while (length < PATH_MAX - 1 && (got = read(pipes[0], out + length, PATH_MAX - 1 - length)) > 0) {
+            length += (size_t)got;
+        }
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) length = 0;
+    }
+    close(pipes[0]);
+    while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == '\r')) length -= 1;
+    out[length] = '\0';
+    return length > 0 && strchr(out, '\n') == nullptr;
+}
+
+// Homebrew's clang reads a default config that forces -isysroot to the Command Line Tools SDK, which can differ from
+// the Xcode SDK that xcrun and metal use, and that -isysroot wins over SDKROOT. So, for each variable the caller has
+// not set:
+//   - CLANG_NO_DEFAULT_CONFIG=1 turns that config off, so SDKROOT and -isysroot decide;
+//   - SDKROOT is what `xcrun --show-sdk-path` says, which is what Apple's clang used.
+// The caller's own SDKROOT, -isysroot and --config are never touched. No flag is added.
+static void smith_sdk_environment(const char *self) {
+    if (getenv("CLANG_NO_DEFAULT_CONFIG") == nullptr) setenv("CLANG_NO_DEFAULT_CONFIG", "1", 0);
+    if (getenv("SDKROOT") != nullptr) return;
+    char sdk[PATH_MAX];
+    if (smith_xcrun_sdk(self, sdk)) setenv("SDKROOT", sdk, 0);
+}
+#endif
 
 static void smith_show_command(const char *verb, const char *program, char *const *args) {
     fprintf(stderr, "smith: %s %s", verb, program);
@@ -284,6 +334,9 @@ static int smith_route_clang(char **argv, int first, bool which, const char *sel
         return 0;
     }
     argv[first - 1] = program; // the full path, so a compiler that finds its own files from argv[0] still can
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
     smith_run(program, argv + first - 1);
     return smith_exit_missing;
 }
@@ -347,8 +400,6 @@ static const SmithLibrary smith_libraries[] = {
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
 };
-
-extern char **environ;
 
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
@@ -552,6 +603,9 @@ static int smith_build_main(int count, char **args, const char *self) {
 
     char clang[PATH_MAX];
     smith_find_clang("clang", "SMITH_CLANG", self, clang);
+#ifdef __APPLE__
+    smith_sdk_environment(self); // ninja and the compiles it starts inherit it, as do the programs build.c runs
+#endif
     smith_build_prepare(clang);
     char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/bootstrap/build.ninja", nullptr};
     int status = smith_build_spawn(ninja, bootstrap_argv);

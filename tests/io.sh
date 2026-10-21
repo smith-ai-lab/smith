@@ -167,8 +167,8 @@ expect "project: the header is written" yes "$([ -f .smith/include/smith/io.h ] 
 expect "project: the source is written" yes "$([ -f .smith/lib/io.c ] && echo yes)"
 capture build/app
 expect "project: the program runs" "0 write 0, words 4, seed 1" "$rc $out"
-if [ -x /usr/bin/clangd ]; then
-    capture /usr/bin/clangd --check=main.c
+if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
+    capture /opt/homebrew/opt/llvm/bin/clangd --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"
 fi

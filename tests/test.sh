@@ -1192,9 +1192,9 @@ cd "$work/main" || exit 1
 
 # 9. Tools: clangd reads a test file without errors.
 cd "$work/main" || exit 1
-if [ -x /usr/bin/clangd ]; then
+if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
     capture "$smith" build
-    capture /usr/bin/clangd --check=tests/test_checks.c
+    capture /opt/homebrew/opt/llvm/bin/clangd --check=tests/test_checks.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
@@ -1206,7 +1206,7 @@ flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 
 for standard in gnu2y gnu23; do
     for library in test random arena; do
         # shellcheck disable=SC2086
-        capture /usr/bin/clang -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
+        capture /opt/homebrew/opt/llvm/bin/clang -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
         expect "flags: lib/$library.c compiles clean under $standard with the template's warnings" 0 "$rc"
         [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
     done

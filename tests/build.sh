@@ -1521,7 +1521,7 @@ expect "compile_commands.json: a changed flag changes it" yes "$changed"
 # the build.c entry compiles build.c with exactly these arguments
 args=$(sed -n '/"file": "build.c"/,/^    \]/p' compile_commands.json | sed -n 's/^      "\(.*\)",\{0,1\}$/\1/p' | tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')
 # shellcheck disable=SC2086
-capture /usr/bin/clang $args -fsyntax-only build.c
+capture /opt/homebrew/opt/llvm/bin/clang $args -fsyntax-only build.c
 expect "build.c entry: clang -fsyntax-only with its arguments succeeds" "0 " "$rc $err"
 bootstrap_flags=$(sed -n 's/.*command = [^ ]* \(-std=gnu23.*-I \.smith\/include\) -MMD.*/\1/p' .smith/bootstrap/build.ninja | head -n 1)
 entry_flags=$(echo $args)

@@ -157,8 +157,8 @@ if [ -x "$llvm/clang-format" ] && [ -x "$llvm/clang-tidy" ]; then
 else
     echo "skip  new hello: clang-format and clang-tidy (no LLVM at $llvm)"
 fi
-if [ -x /usr/bin/clangd ]; then
-    capture /usr/bin/clangd --check=main.c
+if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
+    capture /opt/homebrew/opt/llvm/bin/clangd --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "new hello: clangd reports no errors in main.c" 0 "$errors"
 fi

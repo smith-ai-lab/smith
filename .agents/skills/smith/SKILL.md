@@ -12,8 +12,9 @@ smith is a drop-in replacement for clang, written in C. Its home is https://gith
 ## Which compiler runs
 
 - Inputs that are all `.metal` files go to Apple's metal compiler: `xcrun -sdk macosx metal`, or `$SMITH_METAL`.
-- Everything else goes to the platform's best clang: Apple's on macOS (`/usr/bin/clang`, which runs through xcrun and finds the SDK), otherwise upstream clang.
+- Everything else goes to upstream LLVM's clang, the same compiler on every platform: on macOS Homebrew's `llvm` (`/opt/homebrew/opt/llvm/bin/clang`, from `brew install llvm`). Apple's `/usr/bin/clang` is not used.
 - `$SMITH_CLANG` overrides the clang choice.
+- On macOS smith picks the SDK through the environment, never a flag. Homebrew's clang reads a default config that forces `-isysroot` to the Command Line Tools SDK, which can differ from the Xcode SDK that `xcrun` and `metal` use. So, for each variable you have not set, smith sets `CLANG_NO_DEFAULT_CONFIG=1` and `SDKROOT` to `xcrun --show-sdk-path`. Your own `SDKROOT`, `-isysroot` or `--config` wins; set `CLANG_NO_DEFAULT_CONFIG` yourself to keep the default config.
 - Invoked as `smith++`, it uses clang++ (`$SMITH_CLANGXX`). It is the same program under another name. Only linking C++ needs it.
 
 ## Use it
@@ -31,7 +32,7 @@ smith is a drop-in replacement for clang, written in C. Its home is https://gith
 2. A message that starts with `smith:` is smith's own:
    - `.metal and other inputs need different compilers and flags; compile the shaders in their own command`: `.metal` needs Apple's metal compiler and the rest needs clang, with different flags (`-std=gnu23` and link flags against `-std=metal...`) and different outputs, and smith hands each command to exactly one compiler. Run the shaders in their own command with their own flags, as a Makefile shader rule does.
    - `not an executable: <path>` or `refers to smith itself: <path>`: a `SMITH_*` variable is wrong. Fix or unset it.
-   - `cannot find a compiler; set SMITH_CLANG or SMITH_CLANGXX, tried <tool>`: no clang is installed. Set the variable to one.
+   - `cannot find clang in /opt/homebrew/opt/llvm/bin: run `brew install llvm`, or set SMITH_CLANG` (macOS), or `cannot find a compiler; set SMITH_CLANG or SMITH_CLANGXX, tried <tool>` (elsewhere): no clang is installed. Install LLVM, or set the variable to a clang.
    - `cannot find xcrun`: the Xcode command line tools are missing, so metal cannot run.
    - `cannot execute <program>`: the chosen program exists but would not start. Run it by hand.
    The wording is in https://github.com/adam-r-kowalski/smith/blob/main/smith.c.

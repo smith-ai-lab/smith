@@ -223,7 +223,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
 }
 
 // Runs a table of invocations through a real compiler and through smith, and compares stdout, stderr, exit status and
-// the files produced. REAL is the compiler: /usr/bin/clang on macOS, else for example -DREAL=$(command -v clang).
+// the files produced. REAL is the compiler: Homebrew's clang on macOS, else for example -DREAL=$(command -v clang).
 static void build_compare(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep compare = {
         .command = config->real[0] != '\0'
@@ -288,8 +288,8 @@ void build(SmithBuild *b) {
     BuildConfig config = {
         .cc = build_variable(b, "CC", "cc", "the compiler that builds smith"),
         .prefix = build_variable(b, "PREFIX", smith_fmt(b, "%s/.local", smith_env(b, "HOME", "")), "install here"),
-        // The compiler `compare` checks smith against; Apple's clang is the one smith picks on macOS.
-        .real = build_variable(b, "REAL", strcmp(b->os, "Darwin") == 0 ? "/usr/bin/clang" : "",
+        // The compiler `compare` checks smith against; Homebrew's clang is the one smith picks on macOS.
+        .real = build_variable(b, "REAL", strcmp(b->os, "Darwin") == 0 ? "/opt/homebrew/opt/llvm/bin/clang" : "",
                                "the compiler `compare` checks smith against"),
         .llvm_bin = build_variable(b, "LLVM_BIN", nullptr, "the bin folder of LLVM 23"),
     };

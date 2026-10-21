@@ -79,10 +79,38 @@ capture env SMITH_CLANGXX="$work/bin/clang++" "$work/smith++" -c a.cpp
 expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
 if [ "$(uname -s)" = Darwin ]; then
-    capture env -u SMITH_CLANG "$smith" --smith-which -c a.c
-    expect "on macOS the default is Apple's clang" "clang /usr/bin/clang" "$out"
-    capture env -u SMITH_CLANGXX "$work/smith++" --smith-which -c a.cpp
-    expect "on macOS smith++ defaults to Apple's clang++" "clang /usr/bin/clang++" "$out"
+    if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
+        capture env -u SMITH_CLANG "$smith" --smith-which -c a.c
+        expect "on macOS the default is Homebrew's clang" "clang /opt/homebrew/opt/llvm/bin/clang" "$out"
+        capture env -u SMITH_CLANGXX "$work/smith++" --smith-which -c a.cpp
+        expect "on macOS smith++ defaults to Homebrew's clang++" "clang /opt/homebrew/opt/llvm/bin/clang++" "$out"
+    fi
+    if [ ! -x /opt/homebrew/opt/llvm/bin/clang ] && [ ! -x /usr/local/opt/llvm/bin/clang ]; then
+        capture env -u SMITH_CLANG "$smith" -c a.c
+        expect "macOS without Homebrew's llvm: the error names brew install llvm and SMITH_CLANG" \
+            "smith: cannot find clang in /opt/homebrew/opt/llvm/bin: run \`brew install llvm\`, or set SMITH_CLANG" "$err"
+    fi
+    # The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
+    capture env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG PATH="$work/bin:$PATH" STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 \
+        SMITH_CLANG="$cl" "$smith" -c a.c
+    expect "macOS: SDKROOT comes from xcrun and the default config is off, with no flag added" \
+        "$(lines 'env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1' "clang argv0=$cl" '[-c]' '[a.c]')" "$out"
+    capture env -u CLANG_NO_DEFAULT_CONFIG SDKROOT=/mine PATH="$work/bin:$PATH" STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 \
+        SMITH_CLANG="$cl" "$smith" -c a.c
+    expect "macOS: the caller's SDKROOT wins, and the default config is still off" \
+        "$(lines 'env SDKROOT=/mine CLANG_NO_DEFAULT_CONFIG=1' "clang argv0=$cl" '[-c]' '[a.c]')" "$out"
+    capture env -u SDKROOT CLANG_NO_DEFAULT_CONFIG=0 PATH="$work/bin:$PATH" STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 \
+        SMITH_CLANG="$cl" "$smith" -c a.c
+    expect "macOS: the caller's CLANG_NO_DEFAULT_CONFIG wins" \
+        "$(lines 'env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=0' "clang argv0=$cl" '[-c]' '[a.c]')" "$out"
+    capture env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG PATH="$work/bin:$PATH" STUB_SDK=/stub/sdk STUB_XCRUN_FAIL=1 \
+        STUB_SHOW_ENV=1 SMITH_CLANG="$cl" "$smith" -c a.c
+    expect "macOS: when xcrun fails SDKROOT stays unset" \
+        "$(lines 'env SDKROOT=(unset) CLANG_NO_DEFAULT_CONFIG=1' "clang argv0=$cl" '[-c]' '[a.c]')" "$out"
+    capture env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG PATH="$work/bin:$PATH" STUB_SDK=/stub/sdk STUB_SHOW_ENV=1 \
+        SMITH_CLANG="$cl" "$smith" -isysroot /mine/sdk -c a.c
+    expect "macOS: the caller's -isysroot is forwarded untouched" \
+        "$(lines 'env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1' "clang argv0=$cl" '[-isysroot]' '[/mine/sdk]' '[-c]' '[a.c]')" "$out"
 fi
 
 capture env SMITH_CLANG="$work/bin/selfclang" "$smith" a.c
