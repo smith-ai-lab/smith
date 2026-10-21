@@ -120,6 +120,16 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   need no look ahead. `smith_lang_fast` (`runtime/lang_declare.c`) answers each token as keep, rename, sized type or
   drop, or says it needs the slow path (`smith_lang_feed`), which can look ahead; the answer is given before anything
   was changed. `SMITH_HOOK_STATS=1` prints how many tokens each way took.
+- **In clangd**: `smith lsp` installs the same hook (`smith_clangd_main` calls `smith_hook_install`), so every parse of
+  a `.smith` file in clangd (the open file, its preamble, the background index, a completion) is lowered as a compile is,
+  and the source locations the hook keeps are the positions the editor shows. Two things differ from a compile.
+  The lowering is C with static tables and no malloc, so one exists per process; a clangd parses many files at once, so a
+  hook takes it when it is made and gives it back at the end of its file (`Lowering` in `shim/hook.cpp`), and
+  `.smith` parses in a clangd run one at a time. And `compile_commands.json` carries `-x c` for a `.smith` source
+  (clangd does not know the extension; `smith cc` adds it itself), which `smith build` writes. The module headers are
+  read through the file manager's file system, so a relative `-I .smith/include` means the command's directory. Because a
+  module starts with code, clangd's preamble for it is empty, and the "translation unit with no declaration" extension
+  warning that C gives for that is turned off for an empty main buffer. `tests/lsp.sh` drives a real session.
 - **Routing**: `smith cc x.smith` runs clang as `-x c x.smith`; the extension turns the hook on. A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
 
@@ -131,6 +141,8 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
 - A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
 - Diagnostics show lowered names (`game_replay_open`); mapping them back to `game::replay::open` is the consumer's work.
+  So do hover, symbols and completion in `smith lsp`, whose completion after `x::` is empty and whose go-to-definition
+  lands on the generated header until the background index has the module's source.
 - `-x smith` is not a clang language: the `.smith` extension and `-x c` stand for it.
 - `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
   location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);

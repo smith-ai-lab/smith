@@ -32,6 +32,10 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 - `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
 - `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser: how to see what a rule does.
 
+## In the editor
+
+`smith lsp` (clangd) lowers `.smith` files too, so an editor or an agent gets diagnostics (the lowering's own included), hover, go-to-definition across modules, symbols and completion on them as on C. Positions are those of the `.smith` text; names in hover, symbols, completion and clang's messages are the lowered C names (`geometry_box_area`), and completion after `x::` is empty. The file must be in `compile_commands.json` (`smith build` writes it) and the modules' headers built. See `smith-check` ("`.smith` files").
+
 ## Errors
 
 Every error points at the `.smith` text. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.

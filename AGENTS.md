@@ -113,6 +113,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
   modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
+- **`smith lsp` lowers `.smith` files too.** `smith_clangd_main` installs the same token hook, so a parse of a `.smith`
+  file in clangd is lowered as a compile's is and positions are those of the source; no LLVM change. The lowering is
+  C with static tables, so a hook holds it from its making to the end of its file and clangd's `.smith` parses take
+  turns. `compile_commands.json` carries `-x c` for `.smith` sources (clangd does not know the extension). Names in hover,
+  symbols and completion are the lowered C names, and completion after `x::` is empty
+  (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

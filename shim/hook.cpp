@@ -5,6 +5,8 @@
 // leaves Preprocessor::Lex. Everything here is smith's. It stays small and C++ only because clang's API is: the logic
 // is in C, in the lowering.
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticParse.h"
+#include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/HeaderSearch.h"
@@ -21,13 +23,16 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/VirtualFileSystem.h"
 
 extern "C" {
 #include "../runtime/lang.h"
 }
 
 #include <chrono>
+#include <condition_variable>
 #include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -44,11 +49,42 @@ struct Action {
     SourceLocation at;
 };
 
+// The lowering (runtime/lang*.c) is plain C with static tables, no malloc, so a process has one of it. A compile has
+// one translation unit and never notices; clangd parses many at once (a thread for each open file, the background
+// index), so a hook takes the lowering when it is made and gives it back when it has seen the end of its file (or when
+// its parse is torn down). Parses of .smith files in one process are one at a time between those two points; headers
+// and C files are not held up. It is not a mutex because a hook may be destroyed on another thread than the one that
+// made it.
+struct Lowering {
+    static inline std::mutex lock;
+    static inline std::condition_variable freed;
+    static inline bool busy = false;
+
+    static void acquire(bool &holding) {
+        std::unique_lock<std::mutex> guard(lock);
+        freed.wait(guard, [] { return !busy; });
+        busy = true;
+        holding = true;
+    }
+
+    static void release(bool &holding) {
+        if (!holding) return;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            busy = false;
+        }
+        holding = false;
+        freed.notify_one();
+    }
+};
+
 class SmithHook final : public TokenHook {
   public:
+    bool holding = false; // this hook has the lowering
     explicit SmithHook(Preprocessor &pp) : PP(pp), SM(pp.getSourceManager()), MainFile(SM.getMainFileID()) {
         mainBegin = SM.getLocForStartOfFile(MainFile).getRawEncoding();
         mainEnd = SM.getLocForEndOfFile(MainFile).getRawEncoding();
+        Lowering::acquire(holding);
         lang = smith_lang_new();
         host.context = this;
         host.next = &SmithHook::nextToken;
@@ -71,6 +107,12 @@ class SmithHook final : public TokenHook {
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        // clangd's preamble of a file that starts with code, as every module does, is the empty text before it, and
+        // under -Wpedantic that is "a translation unit with no declaration". The file is not empty.
+        if (SM.getBufferData(MainFile).empty()) {
+            PP.getDiagnostics().setSeverity(diag::ext_empty_translation_unit, diag::Severity::Ignored,
+                                            SourceLocation());
+        }
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
         smith_lang_watch_basics(&host);
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
@@ -83,6 +125,7 @@ class SmithHook final : public TokenHook {
     }
     void semaDestroyed() override {
         sema = nullptr;
+        Lowering::release(holding); // a parse that stopped before the end of the file
     }
 
     // SMITH_HOOK_STATS=1: what the hook was offered and what it cost, printed at the end of the file.
@@ -102,7 +145,18 @@ class SmithHook final : public TokenHook {
                 (unsigned long long)stats.held, stats.nanoseconds / 1e6, stats.slow_nanoseconds / 1e6);
     }
 
+    ~SmithHook() override {
+        Lowering::release(holding);
+    }
+
     bool transform(Preprocessor &, Token &tok) override {
+        bool end = tok.is(tok::eof); // the lowering is done with its state once it has seen the end of the file
+        bool consumed = measured(tok);
+        if (end) Lowering::release(holding);
+        return consumed;
+    }
+
+    bool measured(Token &tok) {
         if (!stats.on) return offer(tok);
         if (tok.is(tok::eof)) report();
         auto begin = std::chrono::steady_clock::now();
@@ -734,8 +788,10 @@ class SmithHook final : public TokenHook {
         auto *self = static_cast<SmithHook *>(context);
         for (DirectoryLookup &directory : self->PP.getHeaderSearchInfo().search_dir_range()) {
             if (!directory.isNormalDir()) continue;
+            // Through the file manager's file system, so that a relative -I means what it means to the tool that set
+            // the working directory: clangd serves many projects from one process.
             std::string path = directory.getName().str() + "/" + relative;
-            auto buffer = llvm::MemoryBuffer::getFile(path);
+            auto buffer = self->PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
             if (!buffer) continue;
             self->headerFile = std::move(*buffer);
             *text = self->headerFile->getBufferStart();

@@ -175,6 +175,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "shim/lldb.cpp",
                                                    "shim/lldb_dap.cpp",
                                                    "tests/dap_client.c",
+                                                   "tests/lsp_client.c",
                                                    "scripts/pack.c",
                                                    "scripts/pack.h",
                                                    "scripts/defer_init.c",
@@ -592,7 +593,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
         .command = (const char *[]){"sh", "-c",
                                     // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
                                     "for t in run build new docs arena io http package random text json cache untar "
-                                    "resource dap tree_sitter neovim "
+                                    "resource dap lsp tree_sitter neovim "
                                     "defer contract prove smith-lang smith-lang-c smith-fmt test; do env "
                                     "\"$0\" sh tests/$t.sh "
                                     "\"$1\" || exit 1; done; "
