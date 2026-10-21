@@ -84,7 +84,7 @@ function tests.highlights()
     "export tx::Text open(const char *path) {",
     "    return tx::make(c::strlen(path));",
     "}",
-    "T max(type T, T a, T b);",
+    "T max(constexpr type T, T a, T b);",
   }, "\n"))
   check(has(found["keyword.import"], "module"), "module is a keyword.import: " .. vim.inspect(found))
   check(has(found["keyword.import"], "import"), "import is a keyword.import")

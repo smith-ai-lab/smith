@@ -1,0 +1,16 @@
+// Nothing here uses the question: the test asks the parser what it makes of these types, written as tokens the way a
+// generic's call will give them (see `ask` and expect/ask), at the end of the file.
+typedef struct {
+    u8 tag;
+    u64 value;
+} Packet;
+
+typedef Packet Alias;
+
+enum Color { Red, Green };
+
+typedef enum Color Paint;
+
+int main(void) {
+    return 0;
+}

@@ -34,6 +34,15 @@ static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, cons
                                     const char *bind, size_t bind_length);
 static void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor);
 
+// runtime/lang_generic.c
+static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, size_t length);
+static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                    const SmithLangBinding *binding, const SmithToken *member);
+static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                         const SmithLangName *known);
+static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, const SmithLangName *known,
+                                            const char *name, size_t length, uint32_t location);
+
 static uint32_t smith_lang_hash(const char *text, size_t length) {
     uint32_t hash = 2166136261U;
     for (size_t i = 0; i < length; i++) { // bounded by the name
@@ -248,7 +257,7 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
     smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, chosen ? 0 : strlen(lang->prefix),
                            lang->module_text, true, chosen ? name : nullptr, chosen ? length : 0);
     if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
-    if (host->rename != nullptr) {
+    if (host->rename != nullptr && !lang->decl.generic) { // a generic is not a name to rewrite where it stands
         const char *prefixed = smith_lang_prefixed(lang, name, length);
         host->rename(host->context, name, (uint32_t)length, prefixed, (uint32_t)lang->tmp_length);
     }
@@ -330,6 +339,8 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         smith_lang_allow(lang, taken.location);
         *result = smith_lang_made(name, taken.text, taken.length, true);
         result->location = taken.location;
+    } else if (smith_lang_generic_call(lang, host, name, binding, &taken)) {
+        lang->namespace_done = true; // the call, with its arguments, is written
     } else {
         const char *prefix = smith_lang_str(binding->prefix);
         size_t prefix_length = binding->prefix.length;
@@ -467,8 +478,14 @@ static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host,
     SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);
     if (sized.replaced) return sized;
     if (smith_lang_is_member_name(lang, host, context, &next)) return smith_lang_keep();
+    if (lang->recording && smith_lang_is_type_param(lang, name, length)) {
+        SmithLangLowered param = smith_lang_keep(); // T: kept as written, and marked when it is kept
+        param.is_type = true;
+        return param;
+    }
     SmithLangName *known = lang->is_module ? smith_lang_name_find(lang, name, length) : nullptr;
     if (known != nullptr) {
+        if (lang->recording) smith_lang_generic_private_name(lang, host, known, name, length, location);
         if (lang->decl.checking && !known->exported &&
             (known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag)) {
             smith_lang_error(lang, host, location, "an exported declaration names `%.*s`, which is private; export it",

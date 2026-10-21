@@ -1,0 +1,21 @@
+import arena;
+#include <stdio.h>
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    u8 storage[256];
+    arena::Arena a = arena::make(storage, sizeof storage);
+    Point *p = arena::push(&a, Point);
+    p->x = 3;
+    p->y = 4;
+    u64 *n = arena::push(&a, u64);
+    *n = 5;
+    Point *q = arena::push(&a, Point);
+    q->x = p->x + 10;
+    printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
+    return 0;
+}

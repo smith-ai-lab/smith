@@ -324,7 +324,10 @@ given (`tests/lint-smith.sh`).
   token ahead of the parser): is this name declared, and a type or a value; was it declared by an `import`ed header; and
   for a typedef or tag, its size, alignment and fields (names and the spelling of their types). The lowering uses the
   first two; the others are the questions first-class types and reflection will ask (issue #15), built and tested now
-  (`SMITH_LANG_ASK=Packet,struct Header` prints what the parser answers at the end of the file).
+  (`SMITH_LANG_ASK=Packet,struct Header` prints what the parser answers at the end of the file). A type written as
+  tokens (`const char *`, a typedef, `struct S`, the sized types' own names, pointers) is asked with `type_query`: its
+  canonical spelling (typedefs looked through, the identity of a generic's instance), size, alignment, and whether it
+  is an integer, a float, signed, a pointer, a bool, an enum or a record (`SMITH_LANG_ASK='?const char *,?Packet'`).
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
   clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with
   the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `smith cc --smith-header`) reads every

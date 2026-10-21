@@ -24,7 +24,7 @@ changes a debug configuration of yours.
 
 - **`.smith` files** get the `smith` file type and tree-sitter highlighting: `module`, `import`, `as` and `export`,
   the `a::b` paths of modules (`module` for each name in a path, `punctuation.delimiter` for `::`), `c::printf` as a
-  call, `tx::Text` as a type, `type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
+  call, `tx::Text` as a type, `constexpr type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
   inherited): `vim.wo.foldexpr = "v:lua.vim.treesitter.foldexpr()"` uses the folds; indents are for nvim-treesitter.
 - **The parser** is compiled on first use (a few seconds, in the background, while the first `.smith` buffer opens) by
   `smith cc -shared` into `stdpath("data")/smith/parser/smith-<hash of parser.c>.so`, and again only when `parser.c`
@@ -55,7 +55,7 @@ changes a debug configuration of yours.
 
 `tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
 ([smith-lang.md](smith-lang.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[smith::c_name]]` attributes before it, on a
-declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `type T` parameters,
+declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr type T` parameters,
 `if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types
 and operators as macro arguments (`SMITH_ARENA_PUSH(&a, long double)`, `SMITH_CHECK(a, ==, b)`), a macro that defines

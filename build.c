@@ -479,6 +479,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang_names.c",
     "runtime/lang_import.c",
     "runtime/lang_head.c",
+    "runtime/lang_generic.c",
     "runtime/lang_sparse.c",
     "runtime/lang_declare.c",
     "runtime/lang_stream.c",
