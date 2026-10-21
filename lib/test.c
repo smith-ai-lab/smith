@@ -370,6 +370,7 @@ constexpr int smith_test_abort_signaled = 3; // it raised SIGABRT or SIGTRAP, wh
 constexpr int smith_test_abort_failed = 4;   // a check inside it failed
 static volatile sig_atomic_t smith_test_abort_state = smith_test_abort_idle;
 static volatile sig_atomic_t smith_test_abort_signal;
+static volatile sig_atomic_t smith_test_death_child; // this process is the child of a SMITH_CHECK_ABORTS (--isolate)
 
 // Ends the test with a failed check. In a worker the test unwinds to the worker's loop, unless the worker is to be
 // retired (its state cannot be trusted: a sanitizer reported), and then it exits as a process-per-test child does.
@@ -441,9 +442,15 @@ void smith_check(bool condition) {
     smith_test_check_condition(condition);
 }
 
-// A contract or a library's check (smith_failure) failed in a test: the test fails with the stack it brought.
+// A contract or a library's check (smith_failure) failed in a test: the test fails with the stack it brought. Under a
+// SMITH_CHECK_ABORTS it is the stop the check expects, as an assert's is: the program aborts (in a worker the handler
+// jumps back to the check; in a child of --isolate the abort ends the child).
 static void smith_test_on_failure(SmithFailureKind kind, const uintptr_t *frames, size_t count) {
     assert(frames != nullptr || count == 0);
+    if (smith_test_abort_state == smith_test_abort_running || smith_test_death_child) {
+        fflush(nullptr);
+        abort();
+    }
     smith_test_shared->heading = smith_failure_heading(kind);
     smith_test_shared->frame_count = count < smith_trace_frames_max ? count : smith_trace_frames_max;
     memcpy(smith_test_shared->frames, frames, smith_test_shared->frame_count * sizeof frames[0]);
@@ -544,6 +551,7 @@ static bool smith_test_abort_fork(void) {
         abort();
     }
     if (child == 0) {
+        smith_test_death_child = 1;
         close(ends[0]);
         dup2(ends[1], STDOUT_FILENO);
         dup2(ends[1], STDERR_FILENO);

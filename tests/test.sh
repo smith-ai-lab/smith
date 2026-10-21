@@ -1420,6 +1420,59 @@ M
 "
 fi
 
+# A failed contract is a failure like a failed check: smith_failure gives it the same report, and a SMITH_CHECK_ABORTS
+# still passes on it, as it does on an assert.
+if "$smith" symbolize --available; then
+    project "$work/contracts"
+    {
+        sed -e '/^    SmithTests tests = {/,$d' build.c
+        cat <<'C'
+    SmithObject contract = {.compiler = "smith", .source = smith_library(b, "contract"), .output = "build/smith/contract.o", .flags = flags};
+    smith_object(b, &contract);
+    SmithTests tests = {
+        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+        .objects = (const SmithObject *[]){&arena, &random, &contract, nullptr},
+        .flags = flags,
+        .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
+    };
+    smith_tests(b, &tests);
+    smith_default(b, smith_list(b, "build/tests", nullptr));
+}
+C
+    } >build.c.new && mv build.c.new build.c
+    cat >tests/test_contracts.c <<'C'
+#include <smith/contract.h>
+#include <smith/test.h>
+
+static int halve(int value) {
+    smith_requires(value % 2 == 0);
+    return value / 2;
+}
+
+void test_requires_fails(void) {
+    int odd = 7;
+    (void)halve(odd);
+}
+
+void test_requires_aborts(void) {
+    SMITH_CHECK_ABORTS((void)halve(5));
+}
+
+void test_requires_holds(void) {
+    smith_check_equal_i32(halve(8), 4);
+}
+C
+    capture "$smith" build test $isod -DSAN=0
+    line=$(line_of tests/test_contracts.c 'smith_requires(value % 2 == 0);')
+    expect_contains "contract: a failed smith_requires names its line" "$out$err" "  requires failed at tests/test_contracts.c:$line"
+    expect_contains "contract: ... shows the source" "$out$err" "$line |     smith_requires(value % 2 == 0);"
+    caller=$(line_of tests/test_contracts.c '(void)halve(odd);')
+    expect_contains "contract: ... and the call chain, with the caller" "$out$err" "tests/test_contracts.c:$caller"
+    expect_contains "contract: SMITH_CHECK_ABORTS passes on a failed contract, and the true one passes" "$out$err" "2 passed, 1 failed"
+    expect_lacks "contract: ... with no smith_failure frame in the chain" "$out$err" "smith_failure"
+    cd "$work/main" || exit 1
+fi
+
 # A sanitizer's report is symbolized by smith, through the llvm-symbolizer protocol, and AddressSanitizer's own stack is
 # what the failure shows.
 if "$smith" symbolize --available; then

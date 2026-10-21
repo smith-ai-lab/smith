@@ -200,8 +200,8 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "tests/text.c",
                                                   "tests/text_exhaustive.c",
                                                   "lib/test.c",
-                                            "include/smith/trace.h",
-                                            "lib/trace.c",
+                                                  "include/smith/trace.h",
+                                                  "lib/trace.c",
                                                   "include/smith/trace.h",
                                                   "lib/trace.c",
                                                   nullptr};

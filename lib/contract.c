@@ -1,23 +1,19 @@
-// <smith/contract.h>'s checks: a failed contract says which kind failed and stops the program. They are external
-// functions, so that the call stays in the IR at every optimization level, where `smith prove` finds it.
+// <smith/contract.h>'s checks. A failed contract is a failure like a failed check: smith_failure (<smith/trace.h>) says
+// which kind failed, records the stack, and stops the program (or, in a test, fails it with the same report as a failed
+// check: the failing line and the call chain). They are external functions, so that the call stays in the IR at every
+// optimization level, where `smith prove` finds it. A program that uses them links the trace library too
+// (smith_library(b, "trace"); smith_tests does it itself).
 #include <smith/contract.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-
-[[noreturn]] static void smith_contract_fail(const char *kind) {
-    (void)fprintf(stderr, "smith: %s failed\n", kind);
-    abort();
-}
+#include <smith/trace.h>
 
 void smith_contract_requires(bool condition) {
-    if (!condition) smith_contract_fail("smith_requires");
+    if (!condition) smith_failure(SmithFailure_Requires);
 }
 
 void smith_contract_ensures(bool condition) {
-    if (!condition) smith_contract_fail("smith_ensures");
+    if (!condition) smith_failure(SmithFailure_Ensures);
 }
 
 void smith_contract_invariant(bool condition) {
-    if (!condition) smith_contract_fail("smith_invariant");
+    if (!condition) smith_failure(SmithFailure_Invariant);
 }
