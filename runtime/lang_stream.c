@@ -43,6 +43,10 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
         SmithLangBinding *binding = smith_lang_binding_find(lang, token->text, token->length);
         if (binding != nullptr) {
             if (smith_lang_namespace(lang, host, token, binding, &resolved)) {
+                if (lang->namespace_done) { // a generic call, written with its arguments
+                    lang->namespace_done = false;
+                    return;
+                }
                 smith_lang_emit(lang, host, resolved);
                 bool is_type = !binding->is_c &&
                                host->lookup(host->context, resolved.text, resolved.length, SmithLookup_Type).kind ==
@@ -51,6 +55,10 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
                 return;
             }
         }
+    }
+    if (lang->is_module && !lang->prev_member) {
+        const SmithLangName *known = smith_lang_name_find(lang, token->text, token->length);
+        if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
     }
     if (smith_lang_stream_declared(lang, host, token)) {
         smith_lang_track(lang, token, false);
@@ -113,13 +121,15 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
     lang->decl = (SmithLangDecl){0};
     lang->decl.exported = lang->pending_export;
     lang->decl.checking = lang->pending_export;
+    lang->decl.generic = lang->generic_next; // a generic is not written to the header: no comment or #if goes for it
+    lang->generic_next = false;
     if (lang->pending_export) {
         lang->decl.c_name = lang->pending_c_name;
         lang->decl.c_name_location = lang->pending_c_name_location;
     }
     lang->pending_c_name = (SmithLangText){0, 0};
-    lang->export_active = lang->pending_export;
-    if (lang->pending_export) {
+    lang->export_active = lang->pending_export && !lang->decl.generic;
+    if (lang->pending_export && !lang->decl.generic) {
         smith_lang_trivia_export(lang);
     } else {
         lang->doc_pending = false;
@@ -136,8 +146,9 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 }
 
 static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    if (lang->is_module && host->previous != nullptr && !lang->pending_export) { // a private one streams
-        smith_lang_declare_process(lang, host, token);
+    lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
+    if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next) {
+        smith_lang_declare_process(lang, host, token); // a private one streams
         return;
     }
     lang->seen_declaration = true;
@@ -328,7 +339,8 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
         used = smith_lang_append(out, capacity, used, " %s", smith_lang_str(name->name));
         if (name->c_name.length > 0) used = smith_lang_append(out, capacity, used, "=%s", smith_lang_str(name->c_name));
     }
-    return smith_lang_append(out, capacity, used, "\n");
+    used = smith_lang_append(out, capacity, used, "\n");
+    return smith_lang_generic_lines(lang, out, capacity, used);
 }
 
 // The module's generated header: what C and C++ include to call it, and what importers read.
@@ -368,6 +380,10 @@ void smith_lang_finish(SmithLang *lang) {
     if (lang->dump_enabled && dump != nullptr) {
         if (lang->dump_used < smith_lang_dump_max) smith_lang_dump[lang->dump_used++] = '\n';
         smith_lang_write_file(dump, smith_lang_dump, lang->dump_used);
+    }
+    const char *generics = getenv("SMITH_LANG_GENERICS");
+    if (lang->gen_dump_on && generics != nullptr) {
+        smith_lang_write_file(generics, smith_lang_gen_dump, lang->gen_dump_used);
     }
     const char *header = getenv("SMITH_LANG_HEADER");
     if (lang->is_module && header != nullptr)
@@ -449,6 +465,7 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
         smith_lang_emit_head(lang, host, true, false);
         smith_lang_end_declaration(lang);
     }
+    smith_lang_generic_instances(lang, host);
     smith_lang_ask(lang, host);
     smith_lang_finish(lang);
     smith_lang_emit_kept(lang, host, token);
@@ -497,12 +514,15 @@ SmithLang *smith_lang_new(void) {
     lang->started = true;
     lang->pending = SIZE_MAX;
     lang->dump_enabled = getenv("SMITH_LANG_DUMP") != nullptr;
+    lang->gen_dump_on = getenv("SMITH_LANG_GENERICS") != nullptr;
+    smith_lang_generics_reset();
     return lang;
 }
 
 bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->broken) return false;
     if (lang->main_file == nullptr) lang->main_file = host->main_file;
+    lang->host_now = host;
     lang->queue_head = 0;
     lang->queue_count = 0;
     lang->batch_in = 0;

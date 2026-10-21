@@ -1,0 +1,19 @@
+module arena;
+
+export typedef struct {
+    u8 *base;
+    usize used;
+    usize capacity;
+} Arena;
+
+export Arena make(u8 *memory, usize capacity) {
+    return (Arena){memory, 0, capacity};
+}
+
+// Room for one value of any type, aligned for it.
+export T *push(Arena *a, constexpr type T) {
+    usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
+    T *result = (T *)(a->base + aligned);
+    a->used = aligned + sizeof(T);
+    return result;
+}

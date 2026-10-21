@@ -52,8 +52,10 @@ struct Action {
     bool include = false;
     bool angled = false;
     std::vector<Token> tokens;
-    std::vector<bool> reinjected; // per token: put back as a copy the parser's tokens do not count (see replay)
-    std::vector<bool> synthetic;  // per token: the source has no token of it (see relocate)
+    std::vector<bool> reinjected;   // per token: put back as a copy the parser's tokens do not count (see replay)
+    std::vector<bool> synthetic;    // per token: the source has no token of it (see relocate)
+    std::vector<uint32_t> instance; // per token: the generic instance whose body it is in (0: none)
+    std::vector<std::string> text;  // per token of an instance: its spelling
     std::string header;
     std::string preface; // lines to include first (the headers an interface read in memory needs)
     SourceLocation at;
@@ -98,12 +100,16 @@ class NameSource {
     // Where in a module's source the declaration that stands at a place of its generated header is (invalid for any
     // other place).
     virtual SourceLocation sourceOf(SourceLocation at) = 0;
+    // When a place is in the code of a generic instance: the notes that say where the instance was asked for, the
+    // innermost first (each a place and its text).
+    virtual bool instanceNotes(SourceLocation at, std::vector<std::pair<SourceLocation, std::string>> &notes) = 0;
 };
 
 // What a hook shares with the consumer it puts in front of the diagnostics: the hook may be gone when a late diagnostic
 // is made, so it takes its name from here.
 struct PresenterLink {
     NameSource *source = nullptr;
+    unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
 };
 
@@ -125,16 +131,19 @@ class Presenter final : public DiagnosticConsumer {
         inner->BeginSourceFile(options, pp);
     }
     void EndSourceFile() override {
+        flushInstanceNotes();
         inner->EndSourceFile();
     }
     void clear() override {
         DiagnosticConsumer::clear();
+        flushInstanceNotes();
         inner->clear();
     }
     bool IncludeInDiagnosticCounts() const override {
         return inner->IncludeInDiagnosticCounts();
     }
     void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level != DiagnosticsEngine::Note) flushInstanceNotes(); // the notes of the last error come after its own
         if (level == DiagnosticsEngine::Note) {
             if (dropNotes) return;
         } else {
@@ -147,9 +156,16 @@ class Presenter final : public DiagnosticConsumer {
         SourceLocation at = info.getLocation();
         if (link->source != nullptr) {
             SourceLocation origin = link->source->originOf(at);
-            if (origin.isValid() && level != DiagnosticsEngine::Note) {
+            std::vector<std::pair<SourceLocation, std::string>> chain;
+            bool instance = origin.isValid() && link->source->instanceNotes(at, chain);
+            if (origin.isValid() && level != DiagnosticsEngine::Note && !instance) {
                 dropNotes = true;
                 return;
+            }
+            if (instance &&
+                level != DiagnosticsEngine::Note) { // an error in an instance: where it was asked for follows
+                pendingNotes = std::move(chain);
+                engine = info.getDiags();
             }
             if (origin.isValid()) at = origin;
             // A place in a module's generated header is where the module's source declares it.
@@ -165,6 +181,19 @@ class Presenter final : public DiagnosticConsumer {
     DiagnosticConsumer *inner;
     std::shared_ptr<PresenterLink> link;
     bool dropNotes = false;
+    std::vector<std::pair<SourceLocation, std::string>> pendingNotes; // of the error just passed on
+    const DiagnosticsEngine *engine = nullptr;
+
+    // The notes that name the instances an error is in, after the error and its own notes.
+    void flushInstanceNotes() {
+        std::vector<std::pair<SourceLocation, std::string>> notes = std::move(pendingNotes);
+        pendingNotes.clear();
+        for (auto &[where, text] : notes) {
+            DiagnosticStorage storage;
+            Diagnostic note(engine, where, link->noteId, storage, text);
+            inner->HandleDiagnostic(DiagnosticsEngine::Note, note);
+        }
+    }
 
     // The text with the names written as the source writes them.
     std::string written(StringRef text) {
@@ -263,6 +292,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
         host.type_query = &SmithHook::typeQuery;
+        host.instance = &SmithHook::instanceBegin;
+        host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
@@ -274,6 +305,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
         diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        link->noteId = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Note, "%0");
         // clangd's preamble of a file that starts with code, as every module does, is the empty text before it, and
         // under -Wpedantic that is "a translation unit with no declaration". The file is not empty.
         if (SM.getBufferData(MainFile).empty()) {
@@ -632,6 +664,8 @@ class SmithHook final : public TokenHook, public NameSource {
     std::vector<Token> out;
     std::vector<bool> outReinjected; // per token of `out`
     std::vector<bool> outSynthetic;
+    std::vector<uint32_t> outInstance; // per token of `out`: the generic instance it is in the body of (0: none)
+    std::vector<std::string> outText;  // per token of `out` in an instance: its spelling
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
     llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
@@ -795,6 +829,8 @@ class SmithHook final : public TokenHook, public NameSource {
         out.clear();
         outReinjected.clear();
         outSynthetic.clear();
+        outInstance.clear();
+        outText.clear();
         actions.clear();
         texts.Reset();
         pool.push_back(tok);
@@ -905,10 +941,14 @@ class SmithHook final : public TokenHook, public NameSource {
         action.tokens = std::move(out);
         action.reinjected = std::move(outReinjected);
         action.synthetic = std::move(outSynthetic);
+        action.instance = std::move(outInstance);
+        action.text = std::move(outText);
         actions.push_back(std::move(action));
         out.clear();
         outReinjected.clear();
         outSynthetic.clear();
+        outInstance.clear();
+        outText.clear();
     }
 
     // ---- Relocation
@@ -920,13 +960,109 @@ class SmithHook final : public TokenHook, public NameSource {
     // there are the definition's again, so the Presenter leaves them out.
     llvm::DenseMap<unsigned, std::vector<std::pair<unsigned, SourceLocation>>> origins; // by buffer, by offset
 
+    // ---- Generic instances
+    //
+    // The code of an instance is the generic's own tokens, so its places are the generic's source, and an error in it
+    // must be reported there. But the generic's source is not parsed once: it is parsed for each instance, and an error
+    // belongs to one. So the tokens of an instance get a buffer of their own, as a copy's do (`origins` says where
+    // each token is from), and the buffer says which instance it is: the Presenter reports at the origin and adds a
+    // note where the instance was asked for (and, for an instance asked for by another, where that was).
+    struct InstanceInfo {
+        unsigned parent;
+        SourceLocation call;
+        std::string description;
+    };
+    std::map<unsigned, InstanceInfo> instances;       // by id
+    llvm::DenseMap<unsigned, unsigned> instanceFiles; // the buffer of an instance's tokens, to its id
+    std::map<std::string, FileID> placedFiles;
+
+    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description};
+    }
+
+    // The file of a module's source, as the text the module has (a module found by its source is given to the file
+    // manager as its interface, which has not the bodies of generics).
+    FileID fileFor(const std::string &path) {
+        auto known = placedFiles.find(path);
+        if (known != placedFiles.end()) return known->second;
+        FileID id;
+        for (auto &[name, entry] : interfaces) {
+            if (entry.ok && entry.source == path) {
+                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User);
+                break;
+            }
+        }
+        if (id.isInvalid()) {
+            if (auto file = PP.getFileManager().getFileRef(path)) {
+                id = SM.getOrCreateFileID(*file, SrcMgr::C_User);
+            } else {
+                llvm::consumeError(file.takeError());
+            }
+        }
+        placedFiles[path] = id;
+        return id;
+    }
+
+    static uint32_t locatePlace(void *context, const char *file, uint32_t line, uint32_t column) {
+        auto *self = static_cast<SmithHook *>(context);
+        FileID id = self->fileFor(file);
+        if (id.isInvalid()) return UINT32_MAX;
+        SourceLocation at = self->SM.translateLineCol(id, line, column == 0 ? 1 : column);
+        return at.isValid() ? at.getRawEncoding() : UINT32_MAX;
+    }
+
+    bool instanceNotes(SourceLocation at, std::vector<std::pair<SourceLocation, std::string>> &notes) override {
+        if (!at.isFileID() || instanceFiles.empty()) return false;
+        auto file = instanceFiles.find(SM.getFileID(at).getHashValue());
+        if (file == instanceFiles.end()) return false;
+        unsigned id = file->second;
+        for (size_t depth = 0; id != 0 && depth < 40; depth++) { // the chain of instances that asked for this one
+            auto found = instances.find(id);
+            if (found == instances.end()) break;
+            notes.emplace_back(found->second.call,
+                               "in instance " + found->second.description + ", requested from here");
+            id = found->second.parent;
+        }
+        return !notes.empty();
+    }
+
+    // Gives the tokens of each instance a buffer of its own.
+    void relocateInstances() {
+        struct Spots {
+            std::string text;
+            std::vector<std::tuple<Token *, unsigned, SourceLocation>> tokens;
+        };
+        std::map<unsigned, Spots> byInstance;
+        for (Action &action : actions) {
+            for (size_t i = 0; i < action.tokens.size() && i < action.instance.size(); i++) {
+                if (action.instance[i] == 0) continue;
+                Spots &spots = byInstance[action.instance[i]];
+                spots.tokens.emplace_back(&action.tokens[i], spots.text.size(), action.tokens[i].getLocation());
+                spots.text += action.text[i] + " ";
+            }
+        }
+        for (auto &[id, spots] : byInstance) {
+            FileID file =
+                SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(spots.text, "<smith-instance>"), SrcMgr::C_User);
+            SourceLocation start = SM.getLocForStartOfFile(file);
+            std::vector<std::pair<unsigned, SourceLocation>> &list = origins[file.getHashValue()];
+            for (auto &[token, offset, origin] : spots.tokens) {
+                list.emplace_back(offset, origin);
+                token->setLocation(start.getLocWithOffset(offset));
+            }
+            instanceFiles[file.getHashValue()] = id;
+        }
+    }
+
     void relocate() {
+        relocateInstances();
         std::string text;
         std::vector<std::tuple<Token *, unsigned, SourceLocation>> spots; // the token, its offset, where it is from
         SourceLocation first;
         for (Action &action : actions) {
             for (size_t i = 0; i < action.tokens.size(); i++) {
-                if (!action.synthetic[i]) continue;
+                if (!action.synthetic[i] || (i < action.instance.size() && action.instance[i] != 0)) continue;
                 Token &token = action.tokens[i];
                 if (first.isInvalid()) first = token.getLocation();
                 spots.emplace_back(&token, text.size(), token.getLocation());
@@ -1129,6 +1265,8 @@ class SmithHook final : public TokenHook, public NameSource {
         self->outReinjected.push_back(!real);
         self->outSynthetic.push_back(token->copy && made.getLocation().isFileID() &&
                                      self->spelledInMain(made.getLocation()));
+        self->outInstance.push_back(token->instance);
+        self->outText.push_back(token->instance != 0 ? std::string(token->text, token->length) : std::string());
     }
 
     static void includeHeader(void *context, const char *header, bool angled) {

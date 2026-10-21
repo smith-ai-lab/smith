@@ -415,6 +415,143 @@ export u32 counter_times_three(void) {
 
 // An exported extern is still the module's own symbol, defined in C by its C name.
 export extern u32 owned;
+==> generic-bare-type/src/num.smith <==
+module num;
+
+export T add(type T, T a, T b) {
+    return a + b;
+}
+==> generic-call/src/arena.smith <==
+module arena;
+
+export typedef struct {
+    u8 *base;
+    usize used;
+    usize capacity;
+} Arena;
+
+export Arena make(u8 *memory, usize capacity) {
+    return (Arena){memory, 0, capacity};
+}
+
+// Room for one value of any type, aligned for it.
+export T *push(Arena *a, constexpr type T) {
+    usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
+    T *result = (T *)(a->base + aligned);
+    a->used = aligned + sizeof(T);
+    return result;
+}
+==> generic-call/src/main.smith <==
+import arena;
+#include <stdio.h>
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    u8 storage[256];
+    arena::Arena a = arena::make(storage, sizeof storage);
+    Point *p = arena::push(&a, Point);
+    p->x = 3;
+    p->y = 4;
+    u64 *n = arena::push(&a, u64);
+    *n = 5;
+    Point *q = arena::push(&a, Point);
+    q->x = p->x + 10;
+    printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
+    return 0;
+}
+==> generic-error-instance/src/main.smith <==
+module main;
+
+import num;
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    i32 three = num::add(i32, 1, 2);
+    Point a = {1, 2};
+    Point b = num::add(Point, a, a);
+    return three + b.x;
+}
+==> generic-error-instance/src/num.smith <==
+module num;
+
+// Adds two values of one type: it works for the types `+` works for.
+export T add(constexpr type T, T a, T b) {
+    return a + b;
+}
+==> generic-nested/src/arena.smith <==
+module arena;
+
+export typedef struct {
+    u8 *base;
+    usize used;
+    usize capacity;
+} Arena;
+
+export Arena make(u8 *memory, usize capacity) {
+    return (Arena){memory, 0, capacity};
+}
+
+// Room for one value of any type, aligned for it.
+export T *push(Arena *a, constexpr type T) {
+    usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
+    T *result = (T *)(a->base + aligned);
+    a->used = aligned + sizeof(T);
+    return result;
+}
+==> generic-nested/src/list.smith <==
+module list;
+
+import arena;
+
+// A generic that asks for another module's generic, and for one of its own: the instances nest.
+export T *make(arena::Arena *a, constexpr type T) {
+    return arena::push(a, T);
+}
+
+export T *make_two(arena::Arena *a, constexpr type T) {
+    make(a, T);
+    return make(a, T);
+}
+
+// An ordinary function of the module, called from a generic's body.
+export usize bytes(arena::Arena *a) {
+    return a->used;
+}
+
+export usize measure(arena::Arena *a, constexpr type T) {
+    T *value = make(a, T);
+    (void)value;
+    return bytes(a);
+}
+==> generic-nested/src/main.smith <==
+module main;
+
+import arena;
+import list;
+import <stdio.h>;
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+int main(void) {
+    u8 storage[256];
+    arena::Arena a = arena::make(storage, sizeof storage);
+    Point *p = list::make_two(&a, Point);
+    p->x = 7;
+    usize after_point = list::measure(&a, u64);
+    c::printf("%d %zu %zu\n", p->x, after_point, a.used);
+    return 0;
+}
 ==> header-conditional-define/src/cfg/mode.smith <==
 module cfg::mode;
 
@@ -1267,5 +1404,22 @@ i32 main() {
     int numbers[] = {4, 8, 15, 16, 23, 42};
     auto count = _Countof(numbers);
     printf("%zu\n", count);
+    return 0;
+}
+==> type-query/src/main.smith <==
+// Nothing here uses the question: the test asks the parser what it makes of these types, written as tokens the way a
+// generic's call will give them (see `ask` and expect/ask), at the end of the file.
+typedef struct {
+    u8 tag;
+    u64 value;
+} Packet;
+
+typedef Packet Alias;
+
+enum Color { Red, Green };
+
+typedef enum Color Paint;
+
+int main(void) {
     return 0;
 }

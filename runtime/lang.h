@@ -56,10 +56,9 @@ typedef struct {
     bool synthetic;    // emitted: it has no counterpart in the source (a `static`, a symbol label, a prototype's copy)
     bool copy;         // emitted: part of a copy of a declaration's head (the prototype of a definition), all of it
     bool name;         // emitted: the name a declaration introduces
-    uint8_t generic_param; // emitted, in a generic's body: 1 + the type parameter this identifier names (0: none)
-    uint32_t instance;     // emitted: the generic instance whose body the token belongs to (0: none)
-    uint32_t location;     // the host's source location, kept by every token derived from this one
-    uint32_t handle;       // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
+    uint32_t instance; // emitted: the generic instance whose body the token belongs to (0: none)
+    uint32_t location; // the host's source location, kept by every token derived from this one
+    uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
     uint32_t length;
     const char *text;
     const char *header_text; // emitted: the spelling in a generated header, when it differs (uint64_t for u64)
@@ -125,9 +124,9 @@ typedef struct {
     bool (*type_info)(void *context, const char *name, uint32_t length, SmithLookupKind space, SmithTypeInfo *info);
     // A type written as tokens: false when the host cannot read it (then the spelling itself identifies it).
     bool (*type_query)(void *context, const char *spelling, uint32_t length, SmithTypeQuery *out);
-    // A generic instance is about to be emitted (`id` is in the tokens that follow): the call that asked for it and
-    // how to name it in a note.
-    void (*instance)(void *context, uint32_t id, uint32_t call_location, const char *description);
+    // A generic instance is about to be emitted (`id` is in the tokens that follow): the instance whose body asked for
+    // it (0: the file's own code), the call that did, and how to name it in a note.
+    void (*instance)(void *context, uint32_t id, uint32_t parent, uint32_t call_location, const char *description);
     // The host location of a line and column (from 1) of a file, or UINT32_MAX when it cannot say.
     uint32_t (*locate)(void *context, const char *file, uint32_t line, uint32_t column);
     // The `index`th field of a struct or union: its name and the spelling of its type, valid until the next call.
