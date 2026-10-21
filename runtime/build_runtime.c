@@ -1114,9 +1114,11 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
     return list;
 }
 
-// The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries.
-// smith writes every library it ships to .smith/lib/ before build.c runs, so that folder is the list: smith.c's table
-// is the only one, and the two cannot disagree.
+// The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries. A library's source is C
+// (.smith/lib/<name>.c) or a .smith module (.smith/lib/smith/<name>.smith, the module smith::<name>); its header is
+// .smith/include/smith/<name>.h either way.
+// smith writes every library it ships before build.c runs, so that folder is the list: smith.c's table is the only
+// one, and the two cannot disagree.
 const char *smith_library(SmithBuild *b, const char *name) {
     SMITH_ASSERT(b != nullptr && name != nullptr);
     smith_context = nullptr;
@@ -1125,12 +1127,19 @@ const char *smith_library(SmithBuild *b, const char *name) {
         plain = plain && ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_');
     const char *source = smith_fmt(b, ".smith/lib/%s.c", name);
     if (plain && access(source, R_OK) == 0) return source;
+    source = smith_fmt(b, ".smith/lib/smith/%s.smith", name);
+    if (plain && access(source, R_OK) == 0) return source;
     const char *const *found = smith_glob(b, smith_list(b, ".smith/lib/*.c", nullptr));
+    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/smith/*.smith", nullptr));
     const char *const *names = smith_list(b, nullptr);
     for (size_t i = 0; found[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(b, names,
                           smith_list(b, smith_replace_extension(b, found[i] + strlen(".smith/lib/"), ""), nullptr),
                           nullptr);
+    for (size_t i = 0; modules[i] != nullptr; i++) // bounded by the glob's result
+        names = smith_cat(
+            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/smith/"), ""), nullptr),
+            nullptr);
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
 }
 

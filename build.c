@@ -11,7 +11,8 @@
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
 // prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
-// smith build: the default, text-exhaustive, test-compare -DREAL=..., install (-DCC=..., -DPREFIX=...), llvm and clean.
+// smith build: the default, text-exhaustive, headers, bootstrap, test-compare -DREAL=..., install (-DCC=...,
+// -DPREFIX=...), llvm and clean.
 #include <smith/build.h>
 
 #include <stdio.h>
@@ -97,9 +98,9 @@ static int build_protocol_run(SmithRun *run) {
 }
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build.
+// scripts/pack.c, a tool of the build. text is the module smith::text, compiled from its lowering in bootstrap/.
 static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c", "lib/arena.c", "lib/text.c", "lib/json.c"};
+    const char *const sources[] = {"scripts/protocol.c", "lib/arena.c", "bootstrap/lib/smith/text.c", "lib/json.c"};
     SmithObject objects[4] = {};
     const SmithObject *linked[5] = {};
     for (size_t i = 0; i < 4; i++) {
@@ -130,6 +131,86 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
         .test = true,
     };
     smith_task(b, "check-protocol", &check);
+}
+
+// The libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>): their C headers,
+// include/smith/<name>.h, are generated and committed, because the stage0 has no hook and embeds them as bytes. Porting
+// a library adds its name here. `smith build headers` regenerates them; `check-headers` (a test, so part of `smith
+// check`) fails when a committed header differs from what its module generates.
+static const char *const build_generated_headers[] = {"text", nullptr};
+
+// Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
+static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
+    const char *names = smith_join(b, build_generated_headers, " ");
+    return (SmithStep){
+        .command = smith_list(b, "sh", "-c",
+                              smith_fmt(b,
+                                        "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
+                                        "for name in %s; do "
+                                        "\"$0\" cc --smith-header lib/smith/$name.smith -o \"$dir/$name.h\" || exit 1; "
+                                        "%s; done; exit $status",
+                                        names, action),
+                              config->binary, nullptr),
+        .inputs = smith_list(b, config->binary, nullptr),
+    };
+}
+
+static void build_headers(SmithBuild *b, const BuildConfig *config) {
+    SmithStep rewrite = build_header_step(b, config, "cp \"$dir/$name.h\" include/smith/$name.h");
+    SmithStep check = build_header_step(b, config,
+                                        "cmp -s \"$dir/$name.h\" include/smith/$name.h || { echo "
+                                        "\"include/smith/$name.h is not what lib/smith/$name.smith generates; run "
+                                        "smith build headers\"; status=1; }");
+    check.test = true; // part of `smith test`, so of `smith check`
+    smith_task(b, "headers", &rewrite);
+    smith_task(b, "check-headers", &check);
+}
+
+// The .smith sources that smith's own build compiles (the protocol generator, and later smith itself): bootstrap/ holds
+// the lowering of each, as C, at the same path with `.c` for `.smith` (bootstrap/lib/smith/text.c). The build compiles
+// that C with whatever compiler builds smith (CC, a plain `cc` included), so neither the stage0 nor an older installed
+// smith needs to know the newest language, and a fresh clone builds with a C23 compiler alone. A source joins this list
+// when smith's build compiles it. `smith build bootstrap` rewrites the files with the smith just built;
+// `check-bootstrap` (a test, so part of `smith check`) lowers again and fails naming each file that is not what its
+// source lowers to now. A file is a first line saying where it is from, `// NOLINTBEGIN` (it is generated, so `smith
+// lint` leaves it alone, and ends with `// NOLINTEND`), the `#include`s of the module's header, then `smith cc
+// --smith-lower` of the source, which needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The
+// bootstrap").
+static const char *const build_bootstrap_sources[] = {"lib/smith/text.smith", nullptr};
+
+// Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
+static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
+    const char *sources = smith_join(b, build_bootstrap_sources, " ");
+    return (SmithStep){
+        .command =
+            smith_list(b, "sh", "-c",
+                       smith_fmt(b,
+                                 "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
+                                 "for src in %s; do out=bootstrap/${src%%.smith}.c; "
+                                 "\"$0\" cc --smith-header \"$src\" -o \"$dir/header.h\" || exit 1; "
+                                 "grep '^#include' \"$dir/header.h\" | awk '!seen[$0]++' >\"$dir/inc\"; "
+                                 "\"$0\" cc --smith-lower \"$src\" >\"$dir/low.c\" || exit 1; "
+                                 "{ printf '// Generated by smith from %%s. Do not edit; run smith build "
+                                 "bootstrap.\\n// NOLINTBEGIN\\n' \"$src\"; "
+                                 "cat \"$dir/inc\"; awk 'NR==FNR{inc[$0]=1;next} /^#if/{d++} /^#endif/{d--} "
+                                 "d==0&&($0 in inc){next} {print}' \"$dir/inc\" \"$dir/low.c\"; echo '// NOLINTEND'; } "
+                                 ">\"$dir/out.c\"; "
+                                 "%s; done; exit $status",
+                                 sources, action),
+                       config->binary, nullptr),
+        .inputs = smith_list(b, config->binary, nullptr),
+    };
+}
+
+static void build_bootstrap(SmithBuild *b, const BuildConfig *config) {
+    SmithStep rewrite =
+        build_bootstrap_step(b, config, "mkdir -p \"$(dirname \"$out\")\" && cp \"$dir/out.c\" \"$out\"");
+    SmithStep check = build_bootstrap_step(b, config,
+                                           "cmp -s \"$dir/out.c\" \"$out\" || { echo \"$out is not what $src lowers "
+                                           "to; run smith build bootstrap\"; status=1; }");
+    check.test = true;
+    smith_task(b, "bootstrap", &rewrite);
+    smith_task(b, "check-bootstrap", &check);
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -377,7 +458,7 @@ static const char *const build_smith_inputs[] = {
     "include/smith/contract.h",
     "lib/contract.c",
     "include/smith/text.h",
-    "lib/text.c",
+    "lib/smith/text.smith",
     "include/smith/json.h",
     "lib/json.c",
     "include/smith/http.h",
@@ -484,6 +565,8 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0) continue;
         smith_compile_command(b, config->cc, sources[i], flags);
     }
+    // The text library is a module, linted as written.
+    smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -510,6 +593,7 @@ typedef struct {
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
+    {"bootstrap", "bootstrap", nullptr, nullptr, 0},
     {"build", "build", nullptr, nullptr, 1},
     {"cache", "cache", nullptr, nullptr, 0},
     {"contract", "contract", nullptr, nullptr, 0},
@@ -798,6 +882,8 @@ void build(SmithBuild *b) {
     build_unbuilt_sources(b, &config);
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
+    build_headers(b, &config);
+    build_bootstrap(b, &config);
     const char *const *tested = build_test(b, &config, config.binary);
     build_compare(b, &config, config.binary);
     build_install(b, &config, config.binary, tested);
