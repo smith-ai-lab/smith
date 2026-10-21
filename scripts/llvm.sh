@@ -32,4 +32,10 @@ host=/usr/bin
     -DCOMPILER_RT_INCLUDE_TESTS=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF \
     -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
 nice ninja -C "$cache/build" install
+# The clang binary's own main is a library function, clang_main, in these four objects (the fifth, clang-driver.cpp.o, is
+# its main). smith links them to compile in its own process, so they go beside the libraries as libclangmain.a.
+objects=$cache/build/tools/clang/tools/driver/CMakeFiles/clang.dir
+rm -f "$cache/install/lib/libclangmain.a"
+/usr/bin/ar rcs "$cache/install/lib/libclangmain.a" "$objects/driver.cpp.o" "$objects/cc1_main.cpp.o" \
+    "$objects/cc1as_main.cpp.o" "$objects/cc1gen_reproducer_main.cpp.o"
 echo "$cache/install" >"$stamp"
