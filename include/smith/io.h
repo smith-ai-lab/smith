@@ -97,6 +97,16 @@ typedef enum {
     SmithOpKind_ProcessWait,
 } SmithOpKind;
 
+// How smith_files_write puts the bytes in the file.
+typedef enum {
+    SmithWrite_Replace, // creates the file or replaces what it held
+    SmithWrite_Atomic,  // the same, so that nobody sees it half written: the bytes go to "<path>.tmp" and are renamed
+                        // over the path, and a failure leaves the old file as it was
+    SmithWrite_Append,  // adds size bytes to the end, creating the file if it is not there
+    SmithWrite_New,     // creates the file only if there is none: EEXIST if the path is taken, which is how a program
+                        // makes a unique name, by trying another
+} SmithWrite;
+
 typedef struct SmithOp {
     bool done;        // set by smith_io_run when the op finished, successfully or not
     SmithError error; // valid once done
@@ -120,6 +130,7 @@ typedef struct SmithOp {
         uint64_t deadline;
         bool ready;
         bool fill;
+        SmithWrite mode;
     } internal;
 } SmithOp;
 
@@ -172,12 +183,6 @@ typedef struct {
 // failure to reserve memory, stops the program with a message.
 [[nodiscard]] SmithIo smith_io_make(int argc, char **argv);
 
-// A second arena of capacity bytes out of the address space of io.arena, for a program that wants arenas with different
-// lifetimes (one reset every frame, one for the run). It takes the next capacity bytes after what io.arena has used,
-// aligned to smith_arena_align_max, and touches none of them: the pages cost memory only when the new arena is used, so
-// a program can carve hundreds of MiB at start. What io.arena pushes after the carve lands past it.
-[[nodiscard]] SmithArena smith_io_carve(SmithIo *io, size_t capacity);
-
 // Releases the reservation and the event loop. A program need not call it: the process ends.
 void smith_io_close(SmithIo *io);
 
@@ -194,21 +199,15 @@ size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
 
 // The whole file, in the arena.
 [[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena, const char *path);
-// Creates or replaces the file with size bytes.
-[[nodiscard]] SmithError smith_files_write(SmithFiles *files, const char *path, const void *data, size_t size);
+// Writes size bytes to the file as the mode says.
+[[nodiscard]] SmithError smith_files_write(SmithFiles *files, const char *path, const void *data, size_t size,
+                                           SmithWrite mode);
 void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, const char *path);
-void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, size_t size);
+void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, size_t size,
+                             SmithWrite mode);
 
 // The calls below run at once and only block: they do not queue behind asynchronous file operations still pending.
 
-// Adds size bytes to the end of the file, creating it if it is not there.
-[[nodiscard]] SmithError smith_files_append(SmithFiles *files, const char *path, const void *data, size_t size);
-// Creates the file with size bytes, and only if there is none: EEXIST if the path is taken. A program makes a unique
-// name by trying another when it gets EEXIST.
-[[nodiscard]] SmithError smith_files_create(SmithFiles *files, const char *path, const void *data, size_t size);
-// Creates or replaces the file so that nobody sees it half written: the bytes go to "<path>.tmp" and are renamed over
-// the path. A failure leaves the old file as it was.
-[[nodiscard]] SmithError smith_files_write_atomic(SmithFiles *files, const char *path, const void *data, size_t size);
 // Deletes a file (not a folder: EPERM).
 [[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
 // Makes the folder and the ones above it that are missing; one that is there already is success.
@@ -246,10 +245,6 @@ typedef struct {
 // so a large file costs only the pages used. The mapping is private: writes change the memory and never the file. It
 // lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
 [[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path);
-
-// The absolute path with symbolic links, "." and ".." resolved, in the arena. The path must exist. The fake's root is
-// "/", so a relative path "a/b" there is "/a/b".
-[[nodiscard]] SmithRead smith_files_resolve(SmithFiles *files, SmithArena *arena, const char *path);
 
 // --- console ---
 

@@ -4,6 +4,9 @@
 //   big   a 64 GiB reservation made into an arena, and a few pushes: prints how much memory that made resident
 //   bigoob, bigfar  the same arena, a write one byte past a push and 60,000 bytes past it (ASan must catch both)
 //   stale  a read of a push after a reset (ASan must catch it)
+//   carvelazy  two 1 GiB arenas carved out of a 64 GiB one: resident growth stays small
+//   carveoob, carvefar, carvestale  the same three ASan catches in a carved arena
+//   carvestop  a carve past the parent's capacity stops
 #include <smith/arena.h>
 
 #include <assert.h>
@@ -168,8 +171,76 @@ static int test_big(void) {
     return grown < ((size_t)16 << 20) ? 0 : 1;
 }
 
+// Carved arenas are separate, aligned, laid out after what the parent used, and the parent goes on after them.
+static void test_carve(void) {
+    static TestMemory memory;
+    SmithArena parent = smith_arena_make(memory.bytes, sizeof memory.bytes);
+    unsigned char *before = smith_arena_push(&parent, 10, 1);
+    SmithArena first = smith_arena_carve(&parent, 1000);
+    SmithArena second = smith_arena_carve(&parent, 2000);
+    unsigned char *after = smith_arena_push(&parent, 10, 1);
+    assert(first.capacity == 1000 && second.capacity == 2000 && first.used == 0 && second.used == 0);
+    assert((uintptr_t)first.memory % smith_arena_align_max == 0 &&
+           (uintptr_t)second.memory % smith_arena_align_max == 0);
+    assert(first.memory > before && second.memory >= first.memory + 1000 && after >= second.memory + 2000);
+    assert(parent.used >= 3010);
+    unsigned char *a = SMITH_ARENA_PUSH_ARRAY(&first, unsigned char, 900);
+    unsigned char *b = SMITH_ARENA_PUSH_ARRAY(&second, unsigned char, 1900);
+    memset(a, 1, 900);
+    memset(b, 2, 1900);
+    after[9] = 3;
+    smith_arena_reset(&first); // a reset gives back its own memory only
+    assert(b[1899] == 2 && after[9] == 3);
+    unsigned char *again = SMITH_ARENA_PUSH_ARRAY(&first, unsigned char, 900);
+    assert(again == a && again[0] == 0); // zeroed again
+}
+
+static SmithArena test_carved_arena(size_t capacity) {
+    static SmithArena parent;
+    parent = test_big_arena();
+    return smith_arena_carve(&parent, capacity);
+}
+
+static int test_carve_lazy(void) {
+    size_t before = test_resident();
+    SmithArena parent = test_big_arena();
+    SmithArena first = smith_arena_carve(&parent, (size_t)1 << 30);
+    SmithArena second = smith_arena_carve(&parent, (size_t)1 << 30);
+    unsigned char *a = smith_arena_push(&first, 10, 1);
+    unsigned char *b = smith_arena_push(&second, 10, 1);
+    a[9] = 1;
+    b[9] = 2;
+    unsigned char *c = smith_arena_push(&parent, 10, 1); // after both
+    c[9] = 3;
+    size_t grown = test_resident() - before;
+    printf("resident growth %zu KiB after carving 2 GiB\n", grown >> 10);
+    return grown < ((size_t)16 << 20) && c >= second.memory + ((size_t)1 << 30) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "big") == 0) return test_big();
+    if (argc > 1 && strcmp(argv[1], "carvelazy") == 0) return test_carve_lazy();
+    if (argc > 1 && (strcmp(argv[1], "carveoob") == 0 || strcmp(argv[1], "carvefar") == 0)) {
+        SmithArena arena = test_carved_arena((size_t)1 << 30);
+        volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
+        bytes[strcmp(argv[1], "carveoob") == 0 ? 10 : 60000] = 1;
+        printf("not reached\n");
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "carvestale") == 0) {
+        SmithArena arena = test_carved_arena((size_t)1 << 30);
+        volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
+        smith_arena_reset(&arena);
+        printf("not reached %d\n", bytes[0]);
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "carvestop") == 0) {
+        static TestMemory memory;
+        SmithArena parent = smith_arena_make(memory.bytes, 1024);
+        SmithArena child = smith_arena_carve(&parent, 2048);
+        printf("not reached %zu\n", child.capacity);
+        return 0;
+    }
     if (argc > 1 && (strcmp(argv[1], "bigoob") == 0 || strcmp(argv[1], "bigfar") == 0)) {
         SmithArena arena = test_big_arena();
         volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
@@ -208,6 +279,7 @@ int main(int argc, char **argv) {
     test_fits();
     test_reset_and_scopes();
     test_determinism();
+    test_carve();
     printf("arena: all checks passed\n");
     return 0;
 }

@@ -26,6 +26,10 @@ Foo *foos = SMITH_ARENA_PUSH_ARRAY(&arena, Foo, count);  // zeroed, count * size
 - `smith_arena_fits(&arena, size, align)` asks whether a push would fit.
 - A scope gives back what a stretch of work pushed: `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);`. Scopes end in reverse order of beginning, and `smith_arena_reset(&arena)` is allowed only with none open; both are `assert`s.
 
+## Carve arenas out of a reservation
+
+`SmithArena frame = smith_arena_carve(&parent, capacity);` takes the next `capacity` bytes after the parent's cursor (aligned to `smith_arena_align_max`) as an arena of its own, and moves the parent's cursor past them. Nothing is touched or poisoned, so out of a big reservation (the 64 GiB arena of `smith_io_make`) a program carves several arenas with different lifetimes at start, such as one for the run, one per level and one reset every frame, and pages are committed only as each is used. Under AddressSanitizer each carved arena poisons lazily for itself and catches the same overflows and stale reads as any arena. Carving past the parent's capacity is the same stop as a push; a scope open on the parent is an `assert`, since ending it would hand the carved memory back. Do not reset the parent after carving.
+
 ## Get the library in build.c
 
 smith writes the header and the source into `.smith/` on every `smith build`. The project compiles the source itself, with its own flags, so sanitizers and warnings match its code:

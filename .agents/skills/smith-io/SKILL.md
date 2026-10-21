@@ -77,7 +77,7 @@ if (text.error.code != 0) {
 
 ## Blocking calls
 
-For simple code: `smith_files_read(files, arena, path)`, `smith_files_write(files, path, data, size)`, `smith_console_print(console, text)`, `smith_console_print_error`, `smith_console_read_line(console, arena)`, `smith_clock_now(clock)` (monotonic ns), `smith_clock_wall(clock)`, `smith_clock_sleep(clock, ns)`, `smith_processes_run(processes, arena, argv)` (stdout, stderr, exit status and signal in a `SmithProcessResult`; a missing program is `ENOENT`).
+For simple code: `smith_files_read(files, arena, path)`, `smith_files_write(files, path, data, size, SmithWrite_Replace)`, `smith_console_print(console, text)`, `smith_console_print_error`, `smith_console_read_line(console, arena)`, `smith_clock_now(clock)` (monotonic ns), `smith_clock_wall(clock)`, `smith_clock_sleep(clock, ns)`, `smith_processes_run(processes, arena, argv)` (stdout, stderr, exit status and signal in a `SmithProcessResult`; a missing program is `ENOENT`).
 
 `smith_console_printf(console, format, ...)` and `smith_console_eprintf` format into a 4 KiB buffer and print (`EMSGSIZE` past it). They are not `[[nodiscard]]`: a report of a hundred lines has nowhere to say that stdout closed.
 
@@ -91,7 +91,7 @@ for (size_t turn = 0; turn < turn_max; turn++) {
 }
 ```
 
-## Folders, appends, maps, the environment
+## Write modes, folders, maps, the environment
 
 These block and run at once (they do not queue behind pending asynchronous file operations), on the real io and the fake alike:
 
@@ -100,19 +100,17 @@ These block and run at once (they do not queue behind pending asynchronous file 
 | `smith_files_info(files, path)` | `folder`, `writable`, `size`; `ENOENT` if nothing is there |
 | `smith_files_list(files, arena, folder)` | entries (`name`, `folder`, `size`) sorted by name, without `.` and `..` |
 | `smith_files_make_folder(files, path)` | like `mkdir -p`; a folder that is there is success |
-| `smith_files_append(files, path, data, size)` | adds to the end, creating the file |
-| `smith_files_create(files, path, data, size)` | creates, and only if there is none: `EEXIST` otherwise, which is how a program makes a unique name |
-| `smith_files_write_atomic(files, path, data, size)` | writes `<path>.tmp` and renames it over the path, so nobody sees half a file |
+| `smith_files_write(files, path, data, size, mode)` | writes the bytes as the mode says: `SmithWrite_Replace` (create or replace), `SmithWrite_Atomic` (write `<path>.tmp` and rename it over the path, so nobody sees half a file), `SmithWrite_Append` (add to the end, creating the file) or `SmithWrite_New` (create only if there is none: `EEXIST` otherwise, which is how a program makes a unique name) |
 | `smith_files_remove(files, path)` | deletes a file (a folder is `EPERM`) |
 | `smith_files_map(files, path)` | maps the file: nothing is read until the memory is touched, so a 150 MB asset costs only the pages used. Private and writable (writes never reach the file), for the life of the program; an empty file is `EINVAL`. The fake gives a copy |
-| `smith_files_resolve(files, arena, path)` | the absolute path with links, `.` and `..` resolved; it must exist |
 | `smith_args_env(&io.args, "NAME")` | the variable's value, or `nullptr`; the real io asks the process each time |
 | `smith_processes_cores(&io.processes)` | how many processes can run at once |
-| `smith_io_carve(&io, capacity)` | a second `SmithArena` out of `io.arena`'s address space (aligned, nothing touched), for arenas with different lifetimes, such as one reset every frame |
+
+For several arenas with different lifetimes, such as one reset every frame, carve them out of `io.arena` with `smith_arena_carve` (see smith-arena): the 64 GiB reservation commits pages only as they are used.
 
 Reading a large file with `smith_files_read` copies it into the arena; mapping it does not. Choose the map for assets read in place, the read for text.
 
-A program that runs several copies of itself spawns `args.values[0]` with `smith_processes_spawn`, waits with `smith_processes_wait_async` on all of them in one loop, and gets their results from files they wrote with `smith_files_write_atomic`, in a folder named from `io.key` under `$TMPDIR`; each copy builds what it needs again, since nothing is shared.
+A program that runs several copies of itself spawns `args.values[0]` with `smith_processes_spawn`, waits with `smith_processes_wait_async` on all of them in one loop, and gets their results from files they wrote with `smith_files_write` and `SmithWrite_Atomic`, in a folder named from `io.key` under `$TMPDIR`; each copy builds what it needs again, since nothing is shared.
 
 ## Asynchronous calls
 

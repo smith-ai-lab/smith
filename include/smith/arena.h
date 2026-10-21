@@ -54,6 +54,14 @@ typedef struct {
 // Whether a push of size at align would fit.
 [[nodiscard]] bool smith_arena_fits(const SmithArena *arena, size_t size, size_t align);
 
+// A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,
+// aligned to smith_arena_align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so
+// when the parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages
+// only as it is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset
+// every frame, one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the
+// parent has no scope open, since the end of the scope would hand the carved memory back.
+[[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, size_t capacity);
+
 // Frees everything. Asserts no scope is open.
 void smith_arena_reset(SmithArena *arena);
 

@@ -82,6 +82,23 @@ expect_contains "lazy: a write 60,000 bytes past a push is caught (inside the wi
 capture "$work/asan" stale
 expect_contains "lazy: a read of a push after a reset is caught" "$err" "use-after-poison"
 
+# 3b. A carved arena is a sub-arena of a reservation: it commits nothing until used, and under ASan it poisons lazily
+# for itself, so it catches what any arena catches.
+capture "$work/asan" carvelazy
+expect "carve: 2 GiB carved out of a 64 GiB arena under ASan makes little memory resident" 0 "$rc"
+expect_contains "carve: ... the growth is printed" "$out" "resident growth"
+capture "$work/plain" carvelazy
+expect "carve: the same without ASan" 0 "$rc"
+capture "$work/asan" carveoob
+expect_contains "carve: a write one byte past a push in a carved arena is caught" "$err" "AddressSanitizer"
+capture "$work/asan" carvefar
+expect_contains "carve: a write 60,000 bytes past a push is caught (inside the window)" "$err" "AddressSanitizer"
+capture "$work/asan" carvestale
+expect_contains "carve: a read of a push after a reset is caught" "$err" "use-after-poison"
+capture "$work/fast" carvestop
+expect "carve: past the parent's capacity the status is abort's" 134 "$rc"
+expect_contains "carve: ... and the message names the request" "$err" "push of 2048 bytes"
+
 # 3b. The wrong pointer type is a compile error with the macro.
 cat >"$work/wrong.c" <<'C'
 #include <smith/arena.h>

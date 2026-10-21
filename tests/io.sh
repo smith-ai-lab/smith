@@ -171,7 +171,7 @@ static size_t count_words(SmithFiles *files, SmithArena *arena, const char *path
 
 int main(int argc, char **argv) {
     SmithIo io = smith_io_make(argc, argv);
-    SmithError error = smith_files_write(&io.files, "words.txt", "one two  three\nfour", 19);
+    SmithError error = smith_files_write(&io.files, "words.txt", "one two  three\nfour", 19, SmithWrite_Replace);
     printf("write %d, words %zu, seed %d\n", error.code, count_words(&io.files, &io.arena, "words.txt"), io.seed != 0);
     return 0;
 }

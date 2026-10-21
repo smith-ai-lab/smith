@@ -112,6 +112,24 @@ void *smith_arena_push_array(SmithArena *arena, size_t size, size_t count, size_
     return smith_arena_push(arena, size * count, align);
 }
 
+SmithArena smith_arena_carve(SmithArena *parent, size_t capacity) {
+    assert(parent != nullptr && capacity > 0);
+    assert(parent->scopes == 0); // ending a scope would give the carved memory back
+    size_t start = (parent->used + smith_arena_align_max - 1) & ~(smith_arena_align_max - 1);
+    if (start > parent->capacity || capacity > parent->capacity - start)
+        smith_arena_stop(parent, capacity, smith_arena_align_max);
+    unsigned char *memory = parent->memory + start;
+    parent->used = start + capacity;
+#if __has_feature(address_sanitizer)
+    // The parent poisoned a window past its old cursor, which the carved memory now covers: it is the new arena's, and
+    // it poisons for itself. The parent's poison resumes past the carve.
+    if (parent->touched > start)
+        ASAN_UNPOISON_MEMORY_REGION(memory, (parent->touched < parent->used ? parent->touched : parent->used) - start);
+    if (parent->touched < parent->used) parent->touched = parent->used;
+#endif
+    return smith_arena_make(memory, capacity);
+}
+
 void smith_arena_reset(SmithArena *arena) {
     assert(arena != nullptr);
     assert(arena->used <= arena->capacity);
