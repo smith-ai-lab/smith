@@ -1969,7 +1969,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 3 + smith_count((const char *const *)tests->objects));
+    const char **objects = smith_new_list(count + 4 + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
@@ -1978,6 +1978,10 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
     if (!smith_tests_links(tests, ".smith/lib/trace.c")) // a project that links the trace library itself is not doubled
         objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "trace"), copy.flags, nullptr);
+    // Code under test that makes a contract (<smith/contract.h>) calls the contract library, as every test calls the
+    // test library: the runner links it, as it does trace, unless the project links it itself.
+    if (!smith_tests_links(tests, ".smith/lib/contract.c"))
+        objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "contract"), copy.flags, nullptr);
     for (size_t i = 0; tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];
     SmithProgram program = {

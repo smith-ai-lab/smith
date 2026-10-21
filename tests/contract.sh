@@ -228,6 +228,20 @@ count=$(grep -c '^void test_' "$here/tests/contract.c")
 expect "project: all $count tests pass" "$count passed, 0 failed" "$summary"
 expect "project: the header is written" yes "$([ -f .smith/include/smith/contract.h ] && echo yes)"
 
+# smith_tests links the contract library itself, so a project that does not list it (the code under test makes
+# contracts and the project never wired the library) still links.
+sed -e 's/"arena", "contract", "random"/"arena", "random"/' -e 's/objects\[3\]/objects[2]/' \
+    -e 's/&objects\[2\], nullptr/nullptr/' build.c >build.nocontract.c
+grep -q '"arena", "random"' build.nocontract.c || { echo "FAIL  the sed of build.c did not apply"; failures=$((failures + 1)); }
+mv build.nocontract.c build.c
+capture smith build clean
+capture smith build
+[ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
+expect "project: smith_tests links the contract library when .objects leaves it out" 0 "$rc"
+capture ./build/tests
+summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
+expect "project: ... and the tests of code with contracts pass" "$count passed, 0 failed" "$summary"
+
 echo
 echo "$total contract checks, $failures failed"
 [ "$failures" -eq 0 ]
