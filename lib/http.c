@@ -29,8 +29,10 @@ typedef struct {
 
 // Everything one download uses, so that the steps below take one argument.
 typedef struct {
+    SmithIo *io;
     SmithNet *net;
     SmithFiles *files;
+    size_t received; // bytes received, head and body
     const char *path;
     char url[smith_http_url_max]; // the URL being fetched now (after redirects)
     SmithHttpUrl parsed;
@@ -186,6 +188,36 @@ static bool smith_http_header(const SmithHttp *http, const char *name, char *out
     return false;
 }
 
+// ---------------------------------------------------------------- receiving
+
+// One receive, given up on when nothing arrives for smith_http_idle_ns: the connection is closed, which ends the
+// receive, and the result is ETIMEDOUT with the URL and the bytes that did arrive.
+static SmithRead smith_http_receive(SmithHttp *http, SmithConnection *connection, void *buffer, size_t capacity) {
+    constexpr size_t rounds_max = (size_t)1 << 20;
+    SmithOp receive = {};
+    smith_net_receive_async(http->net, &receive, connection, buffer, capacity);
+    uint64_t start = smith_clock_now(&http->io->clock);
+    for (size_t round = 0; round < rounds_max && !receive.done; round++) {
+        uint64_t waited = smith_clock_now(&http->io->clock) - start;
+        if (waited >= smith_http_idle_ns) break;
+        (void)smith_io_run(http->io, (int64_t)(smith_http_idle_ns - waited));
+    }
+    if (receive.done) {
+        http->received += receive.size;
+        return (SmithRead){.error = receive.error, .data = receive.data, .size = receive.size, .end = receive.end};
+    }
+    SmithOp close = {};
+    smith_net_close_async(http->net, &close, connection);
+    for (size_t round = 0; round < rounds_max && !(receive.done && close.done); round++)
+        (void)smith_io_run(http->io, smith_io_forever);
+    SmithRead timed_out = {};
+    timed_out.error.code = ETIMEDOUT;
+    snprintf(timed_out.error.message, sizeof timed_out.error.message,
+             "GET %.*s: timed out: nothing received for %llu s, after %zu bytes", (int)smith_http_shown, http->url,
+             (unsigned long long)(smith_http_idle_ns / 1'000'000'000), http->received);
+    return timed_out;
+}
+
 // ---------------------------------------------------------------- the body
 
 typedef enum {
@@ -328,8 +360,9 @@ static void smith_http_read_body(SmithHttp *http, SmithConnection *connection, S
     smith_http_feed(http, body, http->read_buffer, already);
     for (size_t round = 0;
          round < smith_http_rounds_max && !body->done && !body->malformed && http->result.error.code == 0; round++) {
-        SmithRead read = smith_net_receive(http->net, connection, http->read_buffer, smith_http_read_size);
+        SmithRead read = smith_http_receive(http, connection, http->read_buffer, smith_http_read_size);
         if (read.error.code != 0) {
+            smith_http_flush(http); // the file keeps the body that arrived
             http->result.error = read.error;
             return;
         }
@@ -366,8 +399,8 @@ static void smith_http_request(SmithHttp *http, SmithConnection *connection) {
 static size_t smith_http_read_head(SmithHttp *http, SmithConnection *connection) {
     http->head_size = 0;
     for (size_t round = 0; round < smith_http_head_max; round++) {
-        SmithRead read = smith_net_receive(http->net, connection, http->head + http->head_size,
-                                           smith_http_head_max - http->head_size);
+        SmithRead read =
+            smith_http_receive(http, connection, http->head + http->head_size, smith_http_head_max - http->head_size);
         if (read.error.code != 0) {
             http->result.error = read.error;
             return SIZE_MAX;
@@ -515,17 +548,19 @@ static void smith_http_run(SmithHttp *http, const char *url) {
     }
 }
 
-SmithHttpResult smith_http_get(SmithNet *net, SmithFiles *files, SmithArena *arena, const char *url, const char *path) {
-    assert(net != nullptr && files != nullptr && arena != nullptr && url != nullptr && path != nullptr);
+SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path) {
+    assert(io != nullptr && url != nullptr && path != nullptr);
+    SmithArena *arena = &io->arena;
     SmithArenaScope scope = smith_arena_scope_begin(arena);
     SmithHttp *http = SMITH_ARENA_PUSH(arena, SmithHttp);
-    http->net = net;
-    http->files = files;
+    http->io = io;
+    http->net = &io->net;
+    http->files = &io->files;
     http->path = path;
     http->read_buffer = smith_arena_push(arena, smith_http_read_size, 1);
     http->write_buffer = smith_arena_push(arena, smith_http_write_size, 1);
     http->result.error =
-        smith_files_write(files, path, "", 0, SmithWrite_Replace); // an empty file, or none if it fails
+        smith_files_write(&io->files, path, "", 0, SmithWrite_Replace); // an empty file, or none if it fails
     if (http->result.error.code == 0) smith_http_run(http, url);
     SmithHttpResult result = http->result;
     smith_arena_scope_end(scope);

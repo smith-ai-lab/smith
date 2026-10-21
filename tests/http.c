@@ -28,7 +28,7 @@ static void serve_chunks(SmithIo *io, const char *host, const char *response, si
 }
 
 static SmithHttpResult get(SmithIo *io, const char *url) {
-    return smith_http_get(&io->net, &io->files, &io->arena, url, "download.bin");
+    return smith_http_get(io, url, "download.bin");
 }
 
 static const char *body_of(SmithIo *io) {
@@ -213,6 +213,38 @@ static void check_large(SmithIo *io) {
         assert((unsigned char)read.data[i] == (unsigned char)(i * 31 + i / 251));
 }
 
+// A server that sends part of its answer and then says nothing: the download fails after smith_http_idle_ns of the
+// io's clock, which the fake io lets pass. The message names the URL and what had arrived, and the file keeps the body
+// so far.
+static void check_stall(SmithIo *io) {
+    const char *answers[] = {"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789",
+                             "HTTP/1.1 200 OK\r\nContent-Le", ""};
+    const char *hosts[] = {"stall1.example", "stall2.example", "stall3.example"};
+    for (size_t i = 0; i < 3; i++) {
+        SmithNetServer server = {
+            .host = hosts[i], .port = 443, .response = answers[i], .response_size = strlen(answers[i]), .stall = true};
+        assert(smith_io_test_add_server(io, server).code == 0);
+        char url[64];
+        snprintf(url, sizeof url, "https://%s/slow", hosts[i]);
+        uint64_t before = smith_clock_now(&io->clock);
+        SmithHttpResult result = get(io, url);
+        assert(result.error.code == ETIMEDOUT && contains(result.error.message, url));
+        char shown[32];
+        snprintf(shown, sizeof shown, "after %zu bytes", strlen(answers[i]));
+        assert(contains(result.error.message, shown) && contains(result.error.message, "nothing received for 60 s"));
+        assert(smith_clock_now(&io->clock) - before >= smith_http_idle_ns);
+    }
+    assert(strcmp(body_of(io), "") == 0); // the last one never got a body
+    SmithNetServer server = {.host = "stall4.example",
+                             .port = 443,
+                             .response = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789",
+                             .response_size = 50,
+                             .stall = true};
+    assert(smith_io_test_add_server(io, server).code == 0);
+    SmithHttpResult result = get(io, "https://stall4.example/slow");
+    assert(result.error.code == ETIMEDOUT && strcmp(body_of(io), "0123456789") == 0);
+}
+
 static void run_checks(SmithIo *io) {
     check_basics(io);
     check_chunked(io);
@@ -227,6 +259,7 @@ int main(void) {
     static TestMemory memory;
     SmithIo fake = smith_io_make_test((SmithIoTest){.memory = memory.bytes, .capacity = sizeof memory.bytes});
     run_checks(&fake);
+    check_stall(&fake);
     SmithIo real = smith_io_make(0, nullptr);
     run_checks(&real);
     check_large(&real);

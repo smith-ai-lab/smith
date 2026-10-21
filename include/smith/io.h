@@ -199,7 +199,9 @@ typedef struct {
 void smith_io_close(SmithIo *io);
 
 // Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
-// completed. File operations always complete here. The fake io never waits: it completes what is ready now.
+// completed. File operations always complete here. The fake io never waits: it completes what is ready now, and when
+// given a time to wait and nothing is ready it lets that much of its clock pass (that is how it waits) and completes
+// what became ready.
 size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
 
 // --- errors ---
@@ -402,6 +404,8 @@ typedef struct {
     size_t chunk;
     int error;
     const char *tls_failure;
+    bool
+        stall; // after the response, a receive never completes: the server has gone quiet (a closed connection ends it)
 } SmithNetServer;
 [[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server);
 // The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there

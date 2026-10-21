@@ -68,6 +68,7 @@ typedef struct {
     size_t chunk;
     int error;
     const char *tls_failure;
+    bool stall; // after the response, a receive waits for ever
     bool used;
     char *request; // smith_io_request_max + 1 bytes
     size_t request_size;
@@ -132,6 +133,7 @@ struct SmithLoop {
 static void smith_net_drain(SmithLoop *loop, size_t *completed);
 static void smith_net_complete_scripted(SmithLoop *loop, SmithOp *op);
 static bool smith_net_scripted(const SmithLoop *loop);
+static bool smith_net_stalled(const SmithOp *op);
 
 // ---------------------------------------------------------------- errors
 
@@ -798,6 +800,7 @@ static void smith_loop_complete(SmithLoop *loop, SmithOp *op) {
 }
 
 static bool smith_op_ready(const SmithLoop *loop, const SmithOp *op) {
+    if (smith_net_stalled(op)) return false;
     if (loop->fake != nullptr && op->internal.kind == SmithOpKind_Timeout)
         return loop->fake->monotonic >= op->internal.deadline;
     return op->internal.ready;
@@ -822,6 +825,11 @@ static size_t smith_loop_complete_ready(SmithLoop *loop) {
 static size_t smith_loop_run(SmithLoop *loop, int64_t timeout_ns) {
     assert(loop != nullptr);
     size_t completed = smith_loop_complete_ready(loop);
+    if (loop->fake != nullptr && completed == 0 && timeout_ns > 0) { // the fake waits by letting its clock pass
+        loop->fake->monotonic += (uint64_t)timeout_ns;
+        loop->fake->wall += timeout_ns;
+        completed = smith_loop_complete_ready(loop);
+    }
     if (loop->fake != nullptr || loop->pending == 0) return completed;
     if (completed > 0) timeout_ns = 0;
     struct timespec limit = {.tv_sec = timeout_ns / (int64_t)smith_io_nanoseconds,
@@ -1527,6 +1535,15 @@ static SmithFakeServer *smith_net_server_find(SmithFakeNet *net, const char *hos
     return nullptr;
 }
 
+// A receive on a scripted connection whose server has sent everything and stalls.
+static bool smith_net_stalled(const SmithOp *op) {
+    if (op->internal.kind != SmithOpKind_NetReceive) return false;
+    const SmithConnection *connection = op->internal.connection;
+    const SmithFakeServer *server = connection->internal.script;
+    return server != nullptr && server->stall && connection->internal.position == server->response_size &&
+           !atomic_load(&connection->internal.closed);
+}
+
 static void smith_net_scripted_connect(SmithLoop *loop, SmithOp *op, SmithConnection *connection) {
     const char *host = connection->internal.name;
     SmithFakeServer *server = nullptr;
@@ -1639,7 +1656,10 @@ void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connec
 void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection) {
     smith_net_start(net, op, connection, SmithOpKind_NetClose);
     smith_loop_submit(net->loop, op);
-    if (smith_net_scripted(net->loop)) return;
+    if (smith_net_scripted(net->loop)) {
+        atomic_store(&connection->internal.closed, true); // a receive waiting on the script is cancelled
+        return;
+    }
     if (connection->internal.handle == nullptr || atomic_load(&connection->internal.closed)) {
         smith_net_finish(net->loop, op, (SmithError){});
         return;
@@ -1704,6 +1724,7 @@ SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server) {
                                .chunk = server.chunk,
                                .error = server.error,
                                .tls_failure = tls_failure,
+                               .stall = server.stall,
                                .request = smith_arena_push(&io->arena, smith_io_request_max + 1, 1)};
     return (SmithError){};
 }

@@ -254,7 +254,7 @@ static int smith_package_spawn(const char *program, char *const *args) {
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
 static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
     SMITH_ASSERT(io != nullptr);
-    SmithHttpResult result = smith_http_get(&io->net, &io->files, &io->arena, url, destination);
+    SmithHttpResult result = smith_http_get(io, url, destination);
     if (result.error.code == 0) return true;
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }

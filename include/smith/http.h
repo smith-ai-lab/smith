@@ -2,7 +2,7 @@
 // package and nothing more: GET, redirects, the body streamed to a file. No cookies, no authentication, no
 // compression, no HTTP/2, no keep-alive (every request is one connection, closed after the response).
 //
-//   SmithHttpResult result = smith_http_get(&io.net, &io.files, &io.arena, "https://example.com/a.tar.gz", "a.tar.gz");
+//   SmithHttpResult result = smith_http_get(&io, "https://example.com/a.tar.gz", "a.tar.gz");
 //   if (result.error.code != 0) { smith_console_print_error(&io.console, result.error.message); ... }
 //
 // The body goes to the file as it arrives, through io.files, a block at a time: a 150 MB download holds about 400 KiB
@@ -12,6 +12,9 @@
 // Redirects (301, 302, 303, 307 and 308) are followed up to ten times, and only to https: a redirect to http:// or any
 // other scheme is refused, as is a first URL that is not https:// (or file://, which copies a local file and exists for
 // tests). Certificates are the system's (see <smith/io.h>) and cannot be turned off.
+//
+// A server that sends nothing for smith_http_idle_ns (60 s) fails the download with ETIMEDOUT and a message that names
+// the URL and the bytes received so far; the clock is io's, so the fake io tests it by letting its clock pass.
 //
 // Errors are values with messages that name the URL: a TLS or network failure keeps io's error and code; a status other
 // than 2xx is ENOENT for 404 and 410 and EPROTO for the rest ("GET https://host/a: HTTP 404 Not Found"); a redirect
@@ -34,7 +37,8 @@ typedef struct {
     size_t redirects; // redirects followed
 } SmithHttpResult;
 
-// Downloads url to the file at path, replacing what is there. The arena holds the buffers for the call and is given
-// back when it returns.
-[[nodiscard]] SmithHttpResult smith_http_get(SmithNet *net, SmithFiles *files, SmithArena *arena, const char *url,
-                                             const char *path);
+constexpr uint64_t smith_http_idle_ns = 60'000'000'000;
+
+// Downloads url to the file at path, replacing what is there. The io's arena holds the buffers for the call and is
+// given back when it returns.
+[[nodiscard]] SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path);

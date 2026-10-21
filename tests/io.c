@@ -319,6 +319,11 @@ static void test_fake_clock(TestMemory *memory) {
     assert(smith_io_run(&io, 0) == 1 && timer.done && timer.error.code == 0);
     assert(smith_clock_sleep(&io.clock, 0).code == 0);
     assert(smith_clock_sleep(&io.clock, 5).code == EDEADLK); // nothing could ever wake it
+    // Given a time to wait, the fake lets that much of its clock pass, and completes what became ready.
+    smith_clock_timeout_async(&io.clock, &timer, 1000);
+    uint64_t before = smith_clock_now(&io.clock);
+    assert(smith_io_run(&io, 999) == 0 && !timer.done && smith_clock_now(&io.clock) == before + 999);
+    assert(smith_io_run(&io, 1) == 1 && timer.done && smith_clock_now(&io.clock) == before + 1000);
 }
 
 static void test_fake_rest(TestMemory *memory) {
