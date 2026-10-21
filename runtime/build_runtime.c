@@ -1084,13 +1084,16 @@ const char *smith_package(SmithBuild *b, const SmithPackage *package) {
     char hash[smith_package_hash_size];
     SmithPackageError error;
     // A package already in the cache is only looked up; a fetch prints a line first, since a download can be slow.
-    if (smith_package_ensure(package->url, package->hash, true, folder, hash, &error)) return smith_copy_string(folder);
+    if (smith_package_ensure(nullptr, package->url, package->hash, true, folder, hash, &error)) {
+        return smith_copy_string(folder);
+    }
     if (offline) smith_fail("smith_package: %s", error.text);
     fprintf(stderr, "smith: fetching %s\n", package->url);
     fflush(stderr);
-    if (!smith_package_ensure(package->url, package->hash, false, folder, hash, &error)) {
-        smith_fail("smith_package: %s", error.text);
-    }
+    SmithIo io = smith_io_make(0, nullptr);
+    bool fetched = smith_package_ensure(&io, package->url, package->hash, false, folder, hash, &error);
+    smith_io_close(&io);
+    if (!fetched) smith_fail("smith_package: %s", error.text);
     return smith_copy_string(folder);
 }
 

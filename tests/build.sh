@@ -1945,33 +1945,16 @@ rm output
 build -n
 expect "ninja arguments: -n does not build" "no" "$([ -e output ] && echo yes || echo no)"
 
-# 11. Packages: a URL and a hash, fetched with a curl shim that counts its calls, into a cache of its own.
+# 11. Packages: a URL and a hash, fetched over file:// (the network is tested in tests/package.sh) into a cache of its own.
 pk=$work/packages
 mkdir -p "$pk/src/pkg-1.0/bin"
 printf 'hello package\n' >"$pk/src/pkg-1.0/hello.txt"
 printf '#!/bin/sh\necho tool ran\n' >"$pk/src/pkg-1.0/bin/tool"
 chmod +x "$pk/src/pkg-1.0/bin/tool"
 (cd "$pk/src" && tar -czf ../pkg.tar.gz pkg-1.0 && tar -cJf ../pkg.tar.xz pkg-1.0 && zip -qr ../pkg.zip pkg-1.0)
-cat >"$pk/curl" <<'SH'
-#!/bin/sh
-echo call >>"$CURL_LOG"
-if [ "${CURL_INTERRUPT:-}" = 1 ]; then
-    while [ $# -gt 0 ]; do
-        [ "$1" = --output ] && out=$2
-        shift
-    done
-    head -c 100 /dev/urandom >"$out"
-    kill -9 "$PPID"
-    exit 1
-fi
-exec /usr/bin/curl "$@"
-SH
-chmod +x "$pk/curl"
-export SMITH_CURL=$pk/curl CURL_LOG=$pk/curl.log
 tar_url=file://$pk/pkg.tar.gz
 tar_hash=sha256:$(shasum -a 256 "$pk/pkg.tar.gz" | cut -d' ' -f1)
 tar_hex=${tar_hash#sha256:}
-curl_calls() { lines "$CURL_LOG"; }
 project
 cat >build.c <<'C'
 #include <smith/build.h>
@@ -1992,24 +1975,20 @@ void build(SmithBuild *b) {
 }
 C
 export XDG_CACHE_HOME=$pk/cache
-rm -f "$CURL_LOG"
 build -DURL="$tar_url" -DHASH="$tar_hash"
 expect "package: the first build exits 0" 0 "$rc"
 expect_contains "package: it says it is fetching" "$err" "fetching $tar_url"
 expect "package: the path is in the cache, by hash" "$pk/cache/smith/packages/$tar_hex" "$(cat path.txt 2>/dev/null)"
 expect "package: the archive's one top folder is stripped and its files are used" "hello package" "$(cat out.txt 2>/dev/null)"
 expect "package: modes survive extraction" "tool ran" "$("$pk/cache/smith/packages/$tar_hex/bin/tool" 2>&1)"
-expect "package: the first build called curl once" 1 "$(curl_calls)"
 expect "package: no temporary file is left in the cache" 0 "$(ls -A "$pk/cache/smith/packages" | grep -c '^\.tmp')"
 mv "$pk/pkg.tar.gz" "$pk/pkg.tar.gz.away"
 build -DURL="$tar_url" -DHASH="$tar_hash"
 expect "package: a second build exits 0 with the archive gone" 0 "$rc"
-expect "package: a second build does not call curl" 1 "$(curl_calls)"
 expect_contains "package: a second build says nothing about fetching" "x$err" "x"
 mv "$pk/pkg.tar.gz.away" "$pk/pkg.tar.gz"
 build -DURL="$tar_url" -DHASH="$tar_hash" -DOFFLINE
 expect "package: -DOFFLINE succeeds when it is cached" 0 "$rc"
-expect "package: and does not call curl" 1 "$(curl_calls)"
 
 wrong=sha256:$(printf 'f%.0s' $(seq 64))
 build -DURL="$tar_url" -DHASH="$wrong"
@@ -2023,24 +2002,21 @@ build -DURL="$tar_url" -DHASH=sha256:abc
 expect_status "package: a malformed hash fails" fail
 expect_contains "package: the message says what a hash looks like" "$err" "64 hex digits"
 
-# An interrupted fetch (curl writes half a file and kills the build program) leaves no complete package.
+# A fetch that fails (the file is not there) leaves no complete package and no temporary file; the next build is fine.
 export XDG_CACHE_HOME=$pk/cache2
-export CURL_INTERRUPT=1
-build -DURL="$tar_url" -DHASH="$tar_hash"
-unset CURL_INTERRUPT
-expect_status "package: an interrupted fetch fails" fail
+build -DURL="file://$pk/absent.tar.gz" -DHASH="$tar_hash"
+expect_status "package: a failed fetch fails the build" fail
+expect_contains "package: ... naming the URL" "$err" "file://$pk/absent.tar.gz"
 expect "package: nothing is in the cache under the hash" no "$([ -e "$pk/cache2/smith/packages/$tar_hex" ] && echo yes || echo no)"
-expect "package: the leftover is a temporary name only" yes "$(ls -A "$pk/cache2/smith/packages" | grep -q '^\.tmp' && echo yes || echo no)"
+expect "package: and no temporary file is left" 0 "$(ls -A "$pk/cache2/smith/packages" | grep -c '^\.tmp')"
 build -DURL="$tar_url" -DHASH="$tar_hash"
 expect "package: the next build fetches it properly" "0 hello package" "$rc $(cat out.txt 2>/dev/null)"
 
 # -DOFFLINE with an empty cache is an error that names the URL and fetches nothing.
 export XDG_CACHE_HOME=$pk/cache3
-before=$(curl_calls)
 build -DURL="$tar_url" -DHASH="$tar_hash" -DOFFLINE
 expect_status "package: -DOFFLINE fails when the package is missing" fail
 expect_contains "package: the message names the URL" "$err" "$tar_url"
-expect "package: -DOFFLINE does not call curl" "$before" "$(curl_calls)"
 expect "package: and makes no package" no "$([ -e "$pk/cache3/smith/packages/$tar_hex" ] && echo yes || echo no)"
 
 # smith fetch prints the line to paste, and leaves the package in the cache.
@@ -2073,7 +2049,6 @@ HOME=$pk/home capture "$smith" fetch "$tar_url"
 expect "package: with no XDG_CACHE_HOME the cache is ~/.cache" "hello package" \
     "$(cat "$pk/home/.cache/smith/packages/$tar_hex/hello.txt" 2>/dev/null)"
 export XDG_CACHE_HOME=$work/xdg-cache
-unset SMITH_CURL CURL_LOG
 
 # SHA-256 against the NIST vectors (FIPS 180-2 examples, and the empty message), and shasum.
 sha() { "$smith" --smith-sha256 "$1"; }

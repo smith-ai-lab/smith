@@ -428,6 +428,15 @@ static const unsigned char smith_random_source[] = {
 #embed "lib/random.c"
 };
 
+// The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
+// .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
+static const unsigned char smith_embedded_http_header[] = {
+#embed "include/smith/http.h"
+};
+static const unsigned char smith_embedded_http_source[] = {
+#embed "lib/http.c"
+};
+
 static const unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
 };
@@ -620,6 +629,7 @@ static void smith_build_prepare(const char *clang) {
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
+    smith_make_folder(".smith/internal");
     smith_make_folder(".smith/bootstrap");
     static char manifest[smith_build_manifest_max];
     size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang);
@@ -627,6 +637,9 @@ static void smith_build_prepare(const char *clang) {
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
     smith_build_write_libraries();
+    smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
+                           sizeof smith_embedded_http_header);
+    smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
     smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
@@ -687,9 +700,10 @@ static int smith_fetch_main(int count, char **args) {
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
     SmithPackageError error;
-    if (!smith_package_ensure(args[0], nullptr, false, folder, hash, &error)) {
-        smith_die(smith_exit_usage, "fetch failed:", error.text);
-    }
+    SmithIo io = smith_io_make(0, nullptr);
+    bool fetched = smith_package_ensure(&io, args[0], nullptr, false, folder, hash, &error);
+    smith_io_close(&io);
+    if (!fetched) smith_die(smith_exit_usage, "fetch failed:", error.text);
     printf(".hash = \"%s\",\n", hash);
     fflush(stdout);
     fprintf(stderr, "smith: %s is in %s\n", args[0], folder);
