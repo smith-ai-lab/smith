@@ -37,6 +37,10 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
+- **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
+  exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs, and a
+  contract per function, so that callers use the contract instead of the body. Proofs are cached by content, and only
+  what changed is proved again.
 - **smith's libraries are a modern standard library for C, holding only what is proven.**
   - **Joining:** a library joins when two projects need the same thing (game's trigonometry and random's logarithm make
     `<smith/math.h>`), never on speculation. So there are no vectors or tensors until a second project needs one.
