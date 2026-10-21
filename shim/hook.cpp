@@ -12,6 +12,7 @@
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/CodeGen/ModuleBuilder.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/MacroInfo.h"
@@ -278,6 +279,7 @@ class SmithHook final : public TokenHook, public NameSource {
                                             SourceLocation());
         }
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
+        debugOwner = this;
         link->source = this;
         installPresenter();
         smith_lang_watch_basics(&host);
@@ -313,7 +315,11 @@ class SmithHook final : public TokenHook, public NameSource {
                 (unsigned long long)stats.held, stats.nanoseconds / 1e6, stats.slow_nanoseconds / 1e6);
     }
 
+    // The hook of this thread's compile, which names the debug info (debugName below).
+    static inline thread_local NameSource *debugOwner = nullptr;
+
     ~SmithHook() override {
+        if (debugOwner == this) debugOwner = nullptr;
         link->source = nullptr;
         giveBack();
     }
@@ -1578,6 +1584,28 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 };
 
+#ifdef CLANG_HAS_DEBUG_NAME_HOOK
+// The debugger shows a .smith declaration as the source writes it, with its whole module name, the same in every
+// compile unit (patches/clang-debug-name.patch asks for each function, variable, typedef and tag). A type is `Box` in
+// the namespaces `geometry` and `box`, so that lldb prints `geometry::box::Box` and parses it in an expression. A
+// function or a variable is named `geometry::box::area` at the top, because lldb shows a C function by its DW_AT_name
+// only, and a namespace would leave it `area`. A name the lowering did not make, and everything in a file that is no
+// .smith file, keeps clang's.
+bool debugName(const NamedDecl *decl, std::string &scope, std::string &name) {
+    NameSource *hook = SmithHook::debugOwner;
+    if (hook == nullptr || !decl->getDeclContext()->getRedeclContext()->isTranslationUnit()) return false;
+    bool object = isa<FunctionDecl>(decl) || isa<VarDecl>(decl);
+    if (!object && !isa<TypedefNameDecl>(decl) && !isa<TagDecl>(decl)) return false;
+    const IdentifierInfo *identifier = decl->getIdentifier();
+    smith::WrittenName written;
+    if (identifier == nullptr || !hook->writtenName(identifier->getName(), written) || written.module.empty())
+        return false;
+    scope = object ? "" : written.module;
+    name = object ? written.module + "::" + written.member : written.member;
+    return true;
+}
+#endif
+
 std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
     SourceManager &sm = pp.getSourceManager();
     OptionalFileEntryRef entry = sm.getFileEntryRefForID(sm.getMainFileID());
@@ -1590,6 +1618,9 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
 // Makes every translation unit in this process offer its .smith main file to the lowering.
 extern "C" void smith_hook_install() {
     Preprocessor::TokenHookFactory = makeHook;
+#ifdef CLANG_HAS_DEBUG_NAME_HOOK
+    clang::CodeGen::DebugNameHook = debugName;
+#endif
 }
 
 namespace smith {

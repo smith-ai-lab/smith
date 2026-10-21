@@ -17,6 +17,8 @@ This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md`
 - A program that forks (smith's test runner `--jobs`, servers): the breakpoint hits in the child, which the debugger does not follow on macOS and which dies with SIGTRAP. Run the program with its option for one process. For smith's test runner that is `--in-process`: `smith dbg -b -o 'b test_x.c:12' -o run -o 'frame variable' -o kill build/tests -- --test name --in-process`. It runs the tests in the runner's own process, with no fork and no timeout, so a crash or hang ends the run; `--jobs 1` and `--isolate` still fork, and the breakpoint then hits in a child the debugger does not follow.
 - No Python scripting, no `gui` (curses): the `script` command is absent. Everything else is lldb's.
 
+- **`.smith` programs** (compile each source to a `.o` and link, or use `smith build`): frames, `bt` and types show the whole module name, `geometry::box::area(b=...)` and `(geometry::box::Box) b`, and `p (geometry::box::Box)b` and `type lookup geometry::box::Box` work. Break with `b geometry::box::area` or `br set -r box::area`; `b box::area` and `b area` do not resolve. A function cannot be called from `p` by its module name.
+
 ## smith dap: an editor
 
 `smith dap` speaks DAP on stdin and stdout. An editor starts it as the debug adapter; the editor sends `launch` with `program`, `args`, `cwd`, then `setBreakpoints`.
