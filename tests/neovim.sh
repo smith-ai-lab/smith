@@ -83,7 +83,12 @@ one lsp_attach_smith_alone "$base"
 
 # nvim-dap on the runtimepath: the adapter registers at startup; a user's own adapter and configurations stay.
 one dap_registers "$base" --cmd "set runtimepath+=$work/fakedap"
-one dap_build_configuration "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_one_configuration "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_test_under_cursor "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_main_under_cursor "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_test_name_in_module "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_asks_without_project "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_runner_of "$base"
 one dap_build_program "$base" --cmd "set runtimepath+=$work/fakedap"
 one dap_build_fails "$base" --cmd "set runtimepath+=$work/fakedap"
 one dap_program_of "$base"

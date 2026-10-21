@@ -230,21 +230,29 @@ function tests.header_user_choice()
   equal("c", filetype_of(base, { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "g:c_syntax_for_h wins")
 end
 
--- The launch configuration that builds: first in the list, then the one that prompts.
-function tests.dap_build_configuration()
+-- One launch configuration per file type, so nvim-dap asks nothing: callable, with `program` and `cwd` as plain fields
+-- for an nvim-dap that does not call it.
+function tests.dap_one_configuration()
   local dap = require("dap")
   for _, filetype in ipairs({ "c", "cpp", "objc", "objcpp", "smith" }) do
     local configurations = dap.configurations[filetype]
-    equal("smith: build and launch the program", configurations[1].name, "the first configuration for " .. filetype)
-    equal("function", type(configurations[1].program), "its program is a function")
-    equal("smith: launch a program", configurations[2].name, "the prompting configuration stays, second")
+    equal(1, #configurations, "exactly one configuration for " .. filetype)
+    equal("smith: launch", configurations[1].name, "its name for " .. filetype)
+    equal("function", type(configurations[1].program), "its program is a function, the fallback")
+    equal("function", type(configurations[1].cwd), "its cwd is a function, the fallback")
+    equal("function", type(getmetatable(configurations[1]).__call), "it is callable")
   end
 end
 
--- Runs `program` of the first configuration as nvim-dap does, in a coroutine; returns what it returned, and the
--- notifications it made. The editor must not be frozen: a timer keeps running while the build does.
-local function run_program(folder)
+-- Calls the first configuration as nvim-dap does, in a coroutine, from `folder` with `file` open (when given, with the
+-- cursor at `line`); returns the table it returned, and the notifications it made. The editor must not be frozen: a
+-- timer keeps running while the build does.
+local function run_configuration(folder, file, line, builds)
   vim.cmd.cd(vim.fn.fnameescape(folder))
+  if file then
+    vim.cmd.edit(vim.fn.fnameescape(folder .. "/" .. file))
+    vim.api.nvim_win_set_cursor(0, { line or 1, 0 })
+  end
   local notices = {}
   vim.notify = function(message, level) table.insert(notices, { message = message, level = level }) end
   local ticks = 0
@@ -252,16 +260,21 @@ local function run_program(folder)
   timer:start(0, 20, function() ticks = ticks + 1 end)
   local result, finished
   local thread = coroutine.create(function()
-    result = require("dap").configurations.c[1].program()
+    result = require("dap").configurations.c[1]()
     finished = true
   end)
   assert(coroutine.resume(thread))
-  check(not finished, "program yields while the build runs")
+  check(builds == false or not finished, "the configuration yields while the build runs")
   wait("the build", function() return finished end)
   timer:stop()
   timer:close()
-  check(ticks > 0, "the event loop kept running during the build (" .. ticks .. " ticks)")
+  check(builds == false or ticks > 0, "the event loop kept running during the build (" .. ticks .. " ticks)")
   return result, notices
+end
+
+local function run_program(folder)
+  local configuration, notices = run_configuration(folder)
+  return configuration.program, notices, configuration
 end
 
 function tests.dap_build_program()
@@ -271,6 +284,102 @@ function tests.dap_build_program()
   check(vim.uv.fs_stat(program), "the program was built")
   local configuration = require("dap").configurations.c[1]
   equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW")), vim.uv.fs_realpath(configuration.cwd()), "cwd is the project root")
+  local _, _, called = run_program(os.getenv("SMITH_NEW"))
+  equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW")), vim.uv.fs_realpath(called.cwd), "the called configuration's cwd")
+  equal(nil, called.args, "no arguments for the program")
+  equal("smith", called.type, "its type")
+  equal("launch", called.request, "its request")
+end
+
+-- The line (1-based) of the first line of the file that has `text`.
+local function line_of(path, text)
+  for number, line in ipairs(vim.fn.readfile(path)) do
+    if line:find(text, 1, true) then return number end
+  end
+  error(text .. " is not in " .. path)
+end
+
+-- With the cursor inside a test function of tests/test_*.c: the runner, built, and --test <name> --in-process.
+function tests.dap_test_under_cursor()
+  local folder = os.getenv("SMITH_NEW")
+  local test_file = vim.fn.glob(folder .. "/tests/test_*.c")
+  check(test_file ~= "", "the new project has a test")
+  local name = vim.fn.fnamemodify(test_file, ":t")
+  local lines = vim.fn.readfile(test_file)
+  local function_line, function_name
+  for number, line in ipairs(lines) do
+    local found = line:match("^void (test_[%w_]+)%(")
+    if found then function_line, function_name = number, found break end
+  end
+  check(function_name, "a test function in " .. test_file)
+  local configuration = run_configuration(folder, "tests/" .. name, function_line + 1)
+  equal(vim.uv.fs_realpath(folder .. "/build/tests"), vim.uv.fs_realpath(configuration.program), "the runner")
+  check(configuration.program:sub(1, 1) == "/", "an absolute path: " .. configuration.program)
+  check(vim.uv.fs_stat(configuration.program), "the runner was built")
+  equal({ "--test", function_name, "--in-process" }, configuration.args, "the test, in the runner's own process")
+  equal(vim.uv.fs_realpath(folder), vim.uv.fs_realpath(configuration.cwd), "cwd is the project root")
+  -- the same without a parser
+  local original = vim.treesitter.get_node
+  vim.treesitter.get_node = function() error("no parser") end
+  equal(function_name, require("smith.dap").test_under_cursor(), "the regex finds the test without a parser")
+  vim.treesitter.get_node = original
+  -- outside the function: the program
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  equal(nil, require("smith.dap").test_under_cursor(), "the cursor above the test is in none")
+end
+
+-- The cursor in main.c is in no test: the program, no arguments.
+function tests.dap_main_under_cursor()
+  local folder = os.getenv("SMITH_NEW")
+  local configuration = run_configuration(folder, "main.c", line_of(folder .. "/main.c", "main(") + 1)
+  equal(vim.uv.fs_realpath(folder .. "/build/debug/hello"), vim.uv.fs_realpath(configuration.program), "the program")
+  equal(nil, configuration.args, "no arguments")
+end
+
+-- A .smith buffer: the name has the module; a function that is not a test is none.
+function tests.dap_test_name_in_module()
+  local dap = require("smith.dap")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "module test_primes;",
+    "import <smith/test.h>;",
+    "",
+    "export void test_one(void) {",
+    "    c::smith_check_equal_i32(1, 1);",
+    "}",
+    "",
+    "void helper(void) {",
+    "}",
+  })
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "smith"
+  vim.api.nvim_win_set_cursor(0, { 5, 4 })
+  equal("test_primes::test_one", dap.test_under_cursor(), "the module is part of the name")
+  vim.api.nvim_win_set_cursor(0, { 9, 0 })
+  equal(nil, dap.test_under_cursor(), "a function that is not a test")
+  vim.api.nvim_buf_set_lines(buffer, 0, 1, false, { "module a::b;" })
+  vim.api.nvim_win_set_cursor(0, { 5, 4 })
+  equal("a::b::test_one", dap.test_under_cursor(), "a nested module")
+  vim.bo[buffer].filetype = "text"
+  equal(nil, dap.test_under_cursor(), "only c and smith buffers")
+end
+
+-- No project: the path is asked for (and an empty answer aborts).
+function tests.dap_asks_without_project()
+  local folder = vim.fn.tempname()
+  vim.fn.mkdir(folder, "p")
+  local asked = {}
+  vim.fn.input = function(prompt, default)
+    table.insert(asked, { prompt, default })
+    return "/some/program"
+  end
+  local configuration = run_configuration(folder, nil, nil, false)
+  equal("/some/program", configuration.program, "the answer is the program")
+  equal(1, #asked, "asked once")
+  check(asked[1][2]:find(vim.uv.fs_realpath(folder), 1, true) or asked[1][2]:find(folder, 1, true), "it starts in the folder")
+  vim.fn.input = function() return "" end
+  local aborted = run_configuration(folder, nil, nil, false)
+  check(aborted.program == require("dap").ABORT, "an empty answer aborts")
 end
 
 function tests.dap_build_fails()
@@ -279,6 +388,13 @@ function tests.dap_build_fails()
   equal(1, #notices, "one notification")
   equal(vim.log.levels.ERROR, notices[1].level, "at ERROR")
   check(notices[1].message:find("error", 1, true), "it shows the build's error output: " .. notices[1].message)
+end
+
+function tests.dap_runner_of()
+  local of = require("smith.dap").runner_of
+  equal("build/tests", of("test\ttest\nprogram\tbuild/tests\nrunner\tbuild/tests\ndefault\tx\n"), "the runner line")
+  equal("build/tests", of("runner\tbuild/tests\n"), "on the first line")
+  equal(nil, of("program\tbuild/tests\ndefault\tx\n"), "a build.info without one")
 end
 
 function tests.dap_program_of()
