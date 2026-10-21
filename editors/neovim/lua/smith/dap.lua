@@ -154,13 +154,19 @@ local function function_name_by_text(buffer, row)
   return nil
 end
 
--- The `module a::b;` line of the buffer, as `a::b`; nil when there is none.
-local function module_of(buffer)
-  for _, text in ipairs(vim.api.nvim_buf_get_lines(buffer, 0, -1, false)) do
+-- The `module a::b;` line among `lines`, as `a::b`; nil when there is none.
+function M.module_of_lines(lines)
+  for _, text in ipairs(lines) do
     local name = text:match("^%s*module%s+([%w_:]+)%s*;")
     if name then return name end
   end
   return nil
+end
+
+-- The name `--test` takes for the function `name` in a file with these `lines`: `test_x`, or `a::b::test_x` in a module.
+function M.test_name(lines, name)
+  local module = M.module_of_lines(lines)
+  return module and (module .. "::" .. name) or name
 end
 
 -- The name `--test` takes for the test the cursor is in (`test_x`, or `a::b::test_x` in a `.smith` module), or nil when
@@ -172,19 +178,21 @@ function M.test_under_cursor()
   local row, col = position[1] - 1, position[2]
   local name = function_name_by_tree(buffer, row, col) or function_name_by_text(buffer, row)
   if not name or name:sub(1, 5) ~= "test_" then return nil end
-  local module = module_of(buffer)
-  return module and (module .. "::" .. name) or name
+  return M.test_name(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), name)
 end
 
 -- Builds the tests' runner and returns its absolute path: first `smith build smith_needs`, which runs build.c and so
 -- writes .smith/build.info, then the runner itself (never the `smith_tests` target, which also runs the tests). Returns
 -- nil and the message when the build fails or build.c declares no smith_tests.
-local function build_runner(root)
-  local ok, output = build_and_wait(root, "smith_needs")
+-- `run(root, target)` builds and returns ok, output (default: the one that yields inside nvim-dap's coroutine; neotest's
+-- adapter passes one that suits its own tasks).
+function M.build_runner(root, run)
+  run = run or build_and_wait
+  local ok, output = run(root, "smith_needs")
   if not ok then return nil, "smith build failed in " .. root .. "\n" .. output end
   local runner = M.runner_of(read_info(root) or "")
   if not runner then return nil, "build.c declares no smith_tests, so there is no test runner to launch" end
-  ok, output = build_and_wait(root, runner)
+  ok, output = run(root, runner)
   if not ok then return nil, "smith build failed in " .. root .. "\n" .. output end
   return absolute(root, runner)
 end
@@ -198,7 +206,7 @@ function M.configuration()
   local configuration = { type = "smith", request = "launch", name = "smith: launch" }
   configuration.cwd = root or vim.fn.getcwd()
   if test then
-    local runner, message = build_runner(root)
+    local runner, message = M.build_runner(root)
     if runner then
       configuration.program = runner
       configuration.args = { "--test", test, "--in-process" }
