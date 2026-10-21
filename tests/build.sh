@@ -1716,7 +1716,7 @@ void build(SmithBuild *b) {
         .description = "check a",
     };
     smith_step(b, &same);
-    smith_alias(b, "check", check.outputs);
+    smith_alias(b, "syntax", check.outputs);
     smith_default(b, check.outputs);
 }
 C
@@ -2320,6 +2320,107 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
 fi
+
+# 13b. The verbs (issue #40): no task or alias is named after one, .test marks a project's tests, and every run of build.c
+# writes what the verbs read, .smith/build.info and .smith/compile_commands.json (docs/build-c.md).
+for verb in fmt lint docs prove check run test; do
+    project
+    cat >build.c <<C
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "$verb", &step);
+    smith_default(b, step.outputs);
+}
+C
+    build
+    expect_status "verbs: a task named $verb is refused" 2
+    expect_contains "verbs: ... $verb names the verb" "$err" "task '$verb' is named after a verb; \`smith $verb\` does the same thing in every project"
+    cat >build.c <<C
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}};
+    smith_task(b, "other", &step);
+    smith_alias(b, "$verb", step.outputs);
+    smith_default(b, step.outputs);
+}
+C
+    build
+    expect_status "verbs: an alias named $verb is refused" 2
+    expect_contains "verbs: ... and says alias" "$err" "alias '$verb' is named after a verb"
+done
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}, .outputs = (const char *[]){"o", nullptr}, .test = true};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}
+C
+build
+expect_status "verbs: .test on a step is refused" 2
+expect_contains "verbs: ... it is for tasks" "$err" ".test is for a task"
+
+project
+mkdir tests
+printf 'int main(void) { return 0; }\n' >main.c
+printf 'int helper(void) { return 1; }\n' >helper.c
+printf 'int other(void) { return 2; }\n' >other.c
+printf 'void test_one(void) {}\n' >tests/test_one.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject main_object = {.compiler = "cc", .source = "main.c", .output = "build/main.o",
+                               .flags = (const char *[]){"-DFIRST", nullptr}};
+    smith_object(b, &main_object);
+    SmithObject again = {.compiler = "cc", .source = "main.c", .output = "build/again.o",
+                         .flags = (const char *[]){"-DSECOND", nullptr}};
+    smith_object(b, &again);
+    SmithStep generate = {.command = (const char *[]){"sh", "-c", "echo 'int made(void) { return 3; }' > $0", "build/made.c", nullptr},
+                          .outputs = (const char *[]){"build/made.c", nullptr}};
+    smith_step(b, &generate);
+    SmithObject made = {.compiler = "cc", .source = "build/made.c", .output = "build/made.o", .flags = nullptr};
+    smith_object(b, &made);
+    SmithObject helper = {.compiler = "cc", .source = "helper.c", .output = "build/helper.o", .flags = nullptr,
+                          .implicit_inputs = generate.outputs};
+    smith_object(b, &helper);
+    SmithProgram program = {.linker = "cc", .output = "build/program",
+                            .objects = (const SmithObject *[]){&main_object, &helper, &made, nullptr}};
+    smith_program(b, &program);
+    smith_compile_command(b, "cc", "other.c", (const char *[]){"-DOTHER", nullptr});
+    SmithTests tests = {.sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)), .flags = (const char *[]){"-I", ".smith/include", nullptr}};
+    smith_tests(b, &tests);
+    smith_alias(b, "everything", program.step.outputs);
+    smith_default(b, smith_list(b, "everything", nullptr));
+}
+C
+build build/main.o
+expect "verbs: build.c runs with a task test made by smith_tests" 0 "$rc"
+info=$(cat .smith/build.info)
+tab=$(printf '\t')
+expect "verbs: build.info has the first compile of main.c, once, with its flags" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}main.c${tab}-DFIRST${tab}-MMD")"
+expect "verbs: ... not its second compile" 0 "$(printf '%s\n' "$info" | grep -c -e '-DSECOND')"
+expect "verbs: ... helper.c, which reads a generated file" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}helper.c${tab}")"
+expect "verbs: ... other.c, which smith_compile_command declares" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}other.c${tab}.*-DOTHER")"
+expect "verbs: ... the tests' source" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}tests/test_one.c${tab}")"
+expect "verbs: ... build.c itself" 1 "$(printf '%s\n' "$info" | grep -c "^compile${tab}build.c${tab}")"
+expect "verbs: ... no generated source" 0 "$(printf '%s\n' "$info" | grep -c "made.c")"
+expect "verbs: ... no source under .smith/" 0 "$(printf '%s\n' "$info" | grep -c "^compile${tab}.smith/")"
+expect "verbs: ... the task of smith_tests is a test" 1 "$(printf '%s\n' "$info" | grep -c "^test${tab}test$")"
+expect "verbs: ... the programs" 1 "$(printf '%s\n' "$info" | grep -c "^program${tab}build/program$")"
+expect "verbs: ... the default, its alias opened" 1 "$(printf '%s\n' "$info" | grep -c "^default${tab}build/program$")"
+expect "verbs: the compile database lists main.c once" 1 "$(grep -c '"file": "main.c"' .smith/compile_commands.json)"
+expect "verbs: ... with the first compile's flags" 1 "$(grep -c -e '-DFIRST' .smith/compile_commands.json)"
+expect "verbs: ... not the second's" 0 "$(grep -c -e '-DSECOND' .smith/compile_commands.json)"
+expect "verbs: smith_needs is the generated files the compiles read" yes "$(grep -q '^build smith_needs: phony build/made.c' .smith/build.ninja && echo yes || echo no)"
+expect "verbs: smith_tests is the test tasks" yes "$(grep -q '^build smith_tests: phony test$' .smith/build.ninja && echo yes || echo no)"
+build smith_needs
+expect "verbs: building smith_needs makes the generated file" yes "$([ -f build/made.c ] && echo yes || echo no)"
 
 # 14. The executor (smith build runs the manifest itself). Manifests written by hand run through
 # `smith --smith-exec <manifest>`, which reads the same language and behaves as ninja did.
