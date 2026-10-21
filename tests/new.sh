@@ -158,8 +158,8 @@ int main(int argc, char **argv) {
     return 0;
 }
 C
-capture smith run a "b c" -- -Dkeep
-expect "new hello: smith run passes its arguments to the program, -D after --" "$(lines a 'b c' -Dkeep)" \
+capture smith run a "b c" 'x;y' '5%' -- -Dkeep
+expect "new hello: smith run passes its arguments to the program, -D after --" "$(lines a 'b c' 'x;y' '5%' -Dkeep)" \
     "$(printf '%s\n' "$out" | grep -v '^\[')"
 capture smith run
 expect "new hello: smith run with none passes none" "" "$(printf '%s\n' "$out" | grep -v '^\[' | tr -d '\n')"

@@ -272,6 +272,13 @@ expect "prove: not available yet" "smith: prove is not available yet (issue #8)"
 capture "$smith" dbg
 expect "dbg: not available yet" "smith: dbg is not available yet (issue #7)" "$err"
 
+# fmt and lint with no arguments, or only -D options of the build, are the project's verbs; the folder has no build.c.
+mkdir "$work/empty"
+for verb in fmt lint run test check; do
+    capture sh -c "cd '$work/empty' && '$smith' $verb -DX=1"
+    expect "$verb -DX=1: the project's verb, which needs a build.c" "smith: no build.c in this folder" "$err"
+done
+
 # A project verb is a verb, not a target of smith build.
 for verb in run test check fmt lint prove dbg; do
     capture "$smith" build "$verb"

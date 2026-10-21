@@ -2,7 +2,7 @@
 # Tests of <smith/text.h>, with real clang and ninja. Usage: sh tests/text.sh path/to/smith [exhaustive]
 # The checks are tests/text.c, built as a scratch project's test file with smith_tests (smith's own test library), in
 # three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
-# finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith build test`.
+# finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith test`.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)

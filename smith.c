@@ -1644,9 +1644,30 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
 // The project verbs: run, test and check, and fmt and lint with no arguments. Each builds the target of its name, which
 // the project's build.c defines, and runs it (docs/build-c.md). Arguments that start with -D are the build's options,
 // as for `smith build`; the rest are the verb's own: the program's for run, the test runner's for test. They reach
-// build.c as one option, -DSMITH_ARGS, which smith_args reads; `--` ends the -D options, so that a program can take
-// one.
+// build.c as one option, -DSMITH_ARGS (each argument after a ";", see smith_encode_argument), which smith_args reads;
+// `--` ends the -D options, so that a program can take one.
 constexpr size_t smith_verb_args_max = 16384;
+
+// Appends ";" and the argument to the text of -DSMITH_ARGS, with "%", ";" and newline as %25, %3B and %0A, so that no
+// character of an argument is a separator or a newline (build.c's regeneration rule holds every -D option as a command
+// word, and a command word holds none). smith_args in the runtime decodes it. Returns the new length.
+static size_t smith_encode_argument(char *out, size_t capacity, size_t used, const char *arg) {
+    SMITH_ASSERT(used < capacity);
+    if (used + 2 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
+    out[used++] = ';';
+    for (const char *c = arg; *c != '\0'; c++) { // bounded by the argument
+        const char *piece = *c == '%' ? "%25" : *c == ';' ? "%3B" : *c == '\n' ? "%0A" : nullptr;
+        size_t length = piece != nullptr ? 3 : 1;
+        if (used + length + 1 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
+        if (piece != nullptr)
+            memcpy(out + used, piece, length);
+        else
+            out[used] = *c;
+        used += length;
+    }
+    out[used] = '\0';
+    return used;
+}
 
 static int smith_project_main(const SmithVerb *verb, int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0 && verb != nullptr);
@@ -1667,13 +1688,7 @@ static int smith_project_main(const SmithVerb *verb, int count, char **args, con
             if (verb->kind == SmithVerb_ProjectBare) {
                 smith_die(smith_exit_usage, "takes no arguments but -D options", verb->name);
             }
-            size_t length = strlen(arg);
-            if (strchr(arg, '\n') != nullptr || joined_used + length + 2 > sizeof joined) {
-                smith_die(smith_exit_usage, "an argument is too long or holds a newline", arg);
-            }
-            if (joined_used > prefix) joined[joined_used++] = '\n';
-            memcpy(joined + joined_used, arg, length);
-            joined_used += length;
+            joined_used = smith_encode_argument(joined, sizeof joined, joined_used, arg);
         }
     }
     joined[joined_used] = '\0';

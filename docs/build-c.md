@@ -49,7 +49,7 @@ day:
 
 **A verb is a target named like it.** There is no new way to describe a project: `build.c` defines the task or alias
 that a verb runs, with the calls it already has (`smith_task`, `smith_alias`, `smith_tests`), and the verb builds and
-runs that target. A project that defines none gets one message, `smith: smith run: build.c defines no task or alias
+runs that target. A project that defines none gets one message, `smith: error: smith run: build.c defines no task or alias
 named run; add smith_task(b, "run", ...)`. The reasons, in the order they were weighed:
 - `smith_tests` already names `test`; checkers, game and learner already had `run`, `check` and `format` targets, so the
   verbs ask them to rename one (`format` is `fmt`, and a `lint` alias is the clang-tidy checks), not to learn a new call.
@@ -61,7 +61,7 @@ named run; add smith_task(b, "run", ...)`. The reasons, in the order they were w
   `run` task's command (`.command = smith_cat(b, app.outputs, smith_args(b), nullptr)`); `smith_tests` appends them to
   the runner's, so `smith test --test name --seed 7 --jobs 1` is the runner's own command line, and the `-DTEST`,
   `-DSEED`, `-DSEEDS`, `-DJOBS`, `-DSHRINK`, `-DSHUFFLE`, `-DISOLATE` and `-DFULL` options it replaced are gone (one way).
-  They travel as the one option `-DSMITH_ARGS`, joined by newlines; a build.c that never calls `smith_args` and is given
+  They travel as the one option `-DSMITH_ARGS`, each after a ";" (with "%", ";" and newline escaped); a build.c that never calls `smith_args` and is given
   arguments gets an error that says so.
 - `-D` options still work on a verb (`smith test -DFONT=...`), since they are build.c's, not the verb's; `--` ends them,
   so that a program can be given one (`smith run -- -Dx`).

@@ -534,20 +534,32 @@ const char *smith_option_value(SmithBuild *b, const char *name, const char *fall
     return declared->value;
 }
 
-// The arguments `smith run` and `smith test` were given, which smith passes as the one option SMITH_ARGS, joined by
-// newlines (smith_project_main): a list, empty for none.
+// The arguments `smith run` and `smith test` were given, which smith passes as the one option SMITH_ARGS: each argument
+// after a ";", with "%", ";" and newline as %25, %3B and %0A (smith_encode_argument in smith.c). A list, empty for
+// none.
 const char *const *smith_args(SmithBuild *b) {
     SMITH_ASSERT(b != nullptr);
     const char *text = smith_option_value(b, "SMITH_ARGS", "", "the arguments of smith run and smith test");
-    size_t count = *text != '\0' ? 1 : 0;
+    size_t count = 0;
     for (const char *c = text; *c != '\0'; c++)
-        count += *c == '\n' ? 1 : 0;
+        count += *c == ';' ? 1 : 0;
     const char **list = smith_new_list(count);
     for (size_t i = 0; i < count; i++) {
-        const char *end = strchr(text, '\n');
-        size_t length = end != nullptr ? (size_t)(end - text) : strlen(text);
-        list[i] = smith_text("%.*s", (int)length, text);
-        text += length + (end != nullptr ? 1 : 0);
+        text++; // the ";"
+        size_t length = strcspn(text, ";");
+        char *argument = smith_alloc(length + 1);
+        size_t used = 0;
+        for (size_t k = 0; k < length; k++) {
+            if (text[k] == '%' && k + 2 < length) {
+                argument[used++] = (char)strtol(smith_text("%.2s", text + k + 1), nullptr, 16);
+                k += 2;
+            } else {
+                argument[used++] = text[k];
+            }
+        }
+        argument[used] = '\0';
+        list[i] = argument;
+        text += length;
     }
     return list;
 }
