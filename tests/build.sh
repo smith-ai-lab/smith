@@ -2089,6 +2089,221 @@ for size in 55 56 57 63 64 65 119 120 128; do # around the padding boundaries
     expect "sha256: $size bytes equal shasum" "$(shasum -a 256 "$pk/size" | cut -d' ' -f1)" "$(sha "$pk/size")"
 done
 
+# 11b. smith_modules: Clang modules, one module per header, maps in .smith/modules and a cache in .smith/cache/modules.
+project
+mkdir inc
+printf '#pragma once\n#include <stdint.h>\nint a_value(void);\n' >inc/a.h
+printf '#pragma once\n#include "a.h"\nint b_value(void);\n' >inc/b.h
+printf '#pragma once\nint c_value(void);\n' >inc/c.h
+printf '#include "inc/b.h"\n#include "inc/a.h"\n#include <stdio.h>\nint main(void) { printf("%%d\\n", b_value()); return 0; }\n' >x.c
+printf '#include "inc/a.h"\n#include "inc/b.h"\nint a_value(void) { return 1; }\nint b_value(void) { return a_value() + 1; }\n' >ab.c
+printf '#include "inc/c.h"\nint c_value(void) { return 3; }\n' >y.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}});
+    const char *const flags[] = {"-std=gnu23", "-Wall", "-Werror", nullptr};
+    const char *const names[] = {"x", "ab", "y", nullptr};
+    SmithObject objects[3];
+    const SmithObject *linked[4] = {};
+    for (int i = 0; names[i]; i++) {
+        objects[i] = (SmithObject){.compiler = "cc", .source = smith_fmt(b, "%s.c", names[i]),
+                                   .output = smith_fmt(b, "build/%s.o", names[i]),
+                                   .flags = smith_cat(b, flags, smith_list(b, smith_option_value(b, "EXTRA", "-DNONE", "a flag"), nullptr), nullptr)};
+        smith_object(b, &objects[i]);
+        linked[i] = &objects[i];
+    }
+    SmithProgram app = {.linker = "cc", .output = "build/app", .objects = linked};
+    smith_program(b, &app);
+    smith_compile_commands(b, "compile_commands.json");
+    smith_default(b, app.step.outputs);
+}
+C
+build -v
+expect "modules: the project builds" 0 "$rc"
+expect_contains "modules: the compile has -fmodules" "$out" "cc -fmodules -fmodules-cache-path=.smith/cache/modules -fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23"
+expect "modules: the program runs" 2 "$(./build/app)"
+case $(cat compile_commands.json) in *fmodule*) expect "modules: the editor's compile_commands.json has no module flags" none present ;; *) expect "modules: the editor's compile_commands.json has no module flags" ok ok ;; esac
+expect "modules: a map per folder and one for smith's headers" ".smith/modules/inc.modulemap .smith/modules/smith.modulemap" "$(echo .smith/modules/*.modulemap)"
+expect_contains "modules: a header is a module of its own" "$(cat .smith/modules/inc.modulemap)" "module inc_b { header \"$(pwd -P)/inc/b.h\" export * }"
+expect_contains "modules: smith's headers are modules" "$(cat .smith/modules/smith.modulemap)" "module smith_arena {"
+deps=$("$smith" build -t deps build/y.o)
+expect_contains "modules: the depfile lists the header y.c uses" "$deps" "inc/c.h"
+case $deps in *inc/a.h* | *inc/b.h*) expect "modules: y.c depends on no other header" no yes ;; *) expect "modules: y.c depends on no other header" ok ok ;; esac
+deps=$("$smith" build -t deps build/x.o)
+expect_contains "modules: the depfile lists the module map" "$deps" ".smith/modules/inc.modulemap"
+expect_contains "modules: the depfile lists b.h, which x.c includes" "$deps" "inc/b.h"
+expect_contains "modules: the depfile lists a.h, which b.h includes" "$deps" "inc/a.h"
+case $deps in *inc/c.h*) expect "modules: x.c does not depend on c.h" no yes ;; *) expect "modules: x.c does not depend on c.h" ok ok ;; esac
+build
+expect_contains "modules: a no-op rebuild does nothing" "$out" "no work to do"
+sleep 1
+echo '// edited' >>inc/c.h
+build -v
+expect_contains "modules: editing c.h rebuilds y.c" "$out" "-c y.c"
+case $out in *"-c x.c"* | *"-c ab.c"*) expect "modules: editing c.h rebuilds only y.c" no yes ;; *) expect "modules: editing c.h rebuilds only y.c" ok ok ;; esac
+sleep 1
+echo '// edited' >>inc/a.h
+build -v
+expect_contains "modules: editing a.h rebuilds x.c, which reaches it through b.h" "$out" "-c x.c"
+expect_contains "modules: editing a.h rebuilds ab.c" "$out" "-c ab.c"
+case $out in *"-c y.c"*) expect "modules: editing a.h does not rebuild y.c" no yes ;; *) expect "modules: editing a.h does not rebuild y.c" ok ok ;; esac
+expect "modules: the program still runs" 2 "$(./build/app)"
+sleep 1
+printf '#pragma once\nint d_value(void);\n' >inc/d.h
+build -v
+expect_contains "modules: a new header changes the map and rebuilds x.c" "$out" "-c x.c"
+expect_contains "modules: a new header rebuilds y.c" "$out" "-c y.c"
+build
+expect_contains "modules: then a no-op again" "$out" "no work to do"
+build -DEXTRA=-DOTHER -v
+expect "modules: a flag change builds" 0 "$rc"
+expect_contains "modules: a flag change recompiles" "$out" "-DOTHER"
+expect "modules: the program runs after the flag change" 2 "$(./build/app)"
+rm -rf build
+build
+expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
+expect_contains "modules: the cache is under .smith" "$(ls .smith/cache/modules)" "modules.timestamp"
+if [ -x /usr/bin/clangd ]; then
+    capture /usr/bin/clangd --query-driver="$HOME/.local/bin/smith*,/usr/bin/*" --check="$(pwd -P)/x.c"
+    errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
+    expect "modules: clangd reports no errors in x.c" "" "$errors"
+fi
+
+# 11c. Modules: the parallel build, ten clean builds in a row, 80 sources sharing the modules.
+project
+mkdir inc
+for n in 1 2 3 4 5 6 7 8; do
+    printf '#pragma once\n#include <stddef.h>\n#include <stdio.h>\nint h%s(int x);\n' "$n" >"inc/h$n.h"
+done
+printf '#pragma once\n#include "h1.h"\n#include "h2.h"\n#include "h3.h"\nint top(void);\n' >inc/top.h
+for n in $(seq 1 80); do
+    printf '#include "inc/top.h"\n#include "inc/h%s.h"\n#include "inc/h%s.h"\nint f%s(void) { return top() + h%s(%s); }\n' $((n % 8 + 1)) $(((n + 3) % 8 + 1)) "$n" $((n % 8 + 1)) "$n" >"s$n.c"
+done
+cat >build.c <<'C'
+#include <smith/build.h>
+
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}});
+    const char *const sources = "s*.c";
+    const char *const *files = smith_glob(b, smith_list(b, sources, nullptr));
+    const char *const *objects = smith_map(b, files, "build/%s.o");
+    for (size_t i = 0; files[i]; i++) {
+        SmithObject o = {.compiler = "cc", .source = files[i], .output = objects[i], .flags = smith_list(b, "-std=gnu23", nullptr)};
+        smith_object(b, &o);
+    }
+    smith_default(b, objects);
+}
+C
+ok=0
+for round in 1 2 3 4 5 6 7 8 9 10; do
+    rm -rf build .smith/cache
+    build -j 16
+    [ "$rc" -eq 0 ] && ok=$((ok + 1))
+done
+expect "modules: ten clean parallel builds with a cold cache succeed" 10 "$ok"
+
+# 11d. Modules: isolation. A header that only worked after another include fails, and a textual header works.
+project
+mkdir inc
+printf '#pragma once\nsize_t d_size(void);\n' >inc/needs_stddef.h
+printf 'static int TEXTUAL_NAME(void) { return VALUE; }\n' >inc/twice.h
+printf '#include <stddef.h>\n#include "inc/needs_stddef.h"\nint use(void) { return (int)d_size(); }\n' >bad.c
+printf '#define VALUE 1\n#define TEXTUAL_NAME one\n#include "inc/twice.h"\n#undef TEXTUAL_NAME\n#define TEXTUAL_NAME two\n#include "inc/twice.h"\n' >twice.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}, .textual = smith_list(b, smith_option_value(b, "TEXTUAL", nullptr, "a header"), nullptr)});
+    const char *source = smith_option_value(b, "SOURCE", "bad.c", "the source");
+    SmithObject o = {.compiler = "cc", .source = source, .output = "build/o.o", .flags = smith_list(b, "-std=gnu23", nullptr)};
+    smith_object(b, &o);
+    smith_default(b, o.step.outputs);
+}
+C
+build
+expect_status "modules: a header that needed an earlier include fails" fail
+expect_contains "modules: clang says which module and which line" "$out" "unknown type name 'size_t'"
+expect_contains "modules: and that it was building the module" "$out" "While building module 'inc_needs_stddef'"
+build -DSOURCE=twice.c
+expect_status "modules: a header included twice with different macros, not marked, fails to be a module" fail
+build -DSOURCE=twice.c -DTEXTUAL=inc/twice.h
+expect "modules: marked textual, it builds" 0 "$rc"
+expect_contains "modules: the textual header is in a module that only names it" "$(cat .smith/modules/inc.modulemap)" "textual header"
+build -DSOURCE=twice.c -DTEXTUAL=inc/nothere.h
+expect_status "modules: a textual header no folder holds is an error" fail
+expect_contains "modules: the error names it" "$err" "inc/nothere.h"
+
+# 11e. Modules: sanitized and plain builds keep their own modules, and a Metal file never gets the flags.
+project
+mkdir inc
+printf '#pragma once\nint v(void);\n' >inc/v.h
+printf '#include "inc/v.h"\nint v(void) { return 4; }\n' >p.c
+printf '#include "inc/v.h"\nint v(void);\nint main(void) { return v() - 4; }\n' >q.c
+printf 'kernel void k() {}\n' >k.metal
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}});
+    SmithObject plain = {.compiler = "cc", .source = "p.c", .output = "build/plain.o", .flags = smith_list(b, "-std=gnu23", nullptr)};
+    SmithObject asan = {.compiler = "cc", .source = "q.c", .output = "build/asan.o", .flags = smith_list(b, "-std=gnu23", "-fsanitize=address,undefined", nullptr)};
+    SmithObject metal = {.compiler = "echo", .source = "k.metal", .output = "build/k.o"};
+    smith_object(b, &plain);
+    smith_object(b, &asan);
+    smith_object(b, &metal);
+    SmithProgram app = {.linker = "cc", .output = "build/app", .flags = smith_list(b, "-fsanitize=address,undefined", nullptr), .objects = (const SmithObject *[]){&plain, &asan, nullptr}};
+    smith_program(b, &app);
+    smith_compile_commands(b, "compile_commands.json");
+    smith_default(b, app.step.outputs);
+}
+C
+build
+expect "modules: a plain and a sanitized object build" 0 "$rc"
+expect "modules: the program runs" 0 "$(./build/app >/dev/null 2>&1; echo $?)"
+hashes=$(find .smith/cache/modules -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+[ "$hashes" -ge 2 ] && expect "modules: the two builds have caches of their own" ok ok || expect "modules: the two builds have caches of their own" ">= 2" "$hashes"
+capture "$smith" build -t compdb
+expect_contains "modules: ninja's compile commands carry the flags" "$out" "-fmodules"
+case $(cat compile_commands.json 2>/dev/null) in *fmodule*) expect "modules: compile_commands.json has no module flags" none present ;; *) expect "modules: compile_commands.json has no module flags" ok ok ;; esac
+metal_line=$(printf '%s\n' "$out" | grep 'k.metal' | head -1)
+case $metal_line in *-fmodules*) expect "modules: the .metal compile has no module flags" none "$metal_line" ;; *) expect "modules: the .metal compile has no module flags" ok ok ;; esac
+
+# 11f. Modules: errors.
+project
+mkdir inc
+printf '#pragma once\n' >inc/a.h
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.compiler = "cc", .source = "a.c", .output = "build/a.o"};
+    smith_object(b, &o);
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}});
+}
+C
+printf 'int a;\n' >a.c
+build
+expect_status "modules: after smith_object is an error" fail
+expect_contains "modules: the message" "$err" "smith_modules is called after smith_object"
+for folders in '"inc", "inc/sub"' '"nothing"' '"."' '"../inc"'; do
+    cat >build.c <<C
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){$folders, nullptr}});
+    smith_default(b, smith_list(b, nullptr));
+}
+C
+    mkdir -p inc/sub
+    build
+    expect_status "modules: the folders $folders are refused" fail
+    expect_contains "modules: $folders: the message starts smith: build.c: smith_modules" "$err" "smith: build.c: smith_modules"
+done
+
 # 12. A smith built with one command.
 project
 capture "$cc" -std=gnu23 "$here/../smith.c" -o "$work/one-command-smith"
