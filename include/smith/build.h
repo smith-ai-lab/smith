@@ -205,6 +205,20 @@ void smith_program(SmithBuild *b, SmithProgram *program);
 // entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
 // smith_compile_commands, which writes the file; after it, it is an error.
 void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
+// Clang modules, off until build.c calls this, and then for every C and Objective-C source passed to smith_object
+// afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each header under
+// the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own headers
+// (.smith/include/smith/) are modules too. smith writes the module maps to .smith/modules/ and clang keeps its cache in
+// .smith/cache/modules/, which `smith build -t clean` and a project's clean leave alone and `rm -rf .smith` removes
+// safely. Every covered compile gets `-fmodules -fmodules-cache-path=.smith/cache/modules` and one
+// `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported.
+// A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed
+// in .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
+typedef struct {
+    const char *const *folders; // header folders below the project, such as "src"; a folder covers its subfolders
+    const char *const *textual; // headers that stay textual
+} SmithModules;
+void smith_modules(SmithBuild *b, const SmithModules *modules);
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 typedef struct {
     const char *compiler;       // compiles and links the tests, by default "smith"
