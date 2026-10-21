@@ -26,6 +26,8 @@ mkdir "$work/project" && printf 'int main(void) { return 0; }\n' >"$work/project
 printf 'int main(void) { u32 x = 1; return (int)x - missing; }\n' >"$work/project/main.smith"
 printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c","-c","main.smith"]}]\n' "$work/project" \
     >"$work/project/compile_commands.json"
+# A folder with a .smith file and nothing else: no build.c, no compile_commands.json, no .git.
+mkdir "$work/alone" && printf '#include <stdio.h>\n\nint main() {\n  printf("hello world\\n");\n  return zzz;\n}\n' >"$work/alone/main.smith"
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {} }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.
@@ -45,7 +47,7 @@ one() {
     shift 2
     case " ${SMITH_NVIM_ONLY:-$name} " in *" $name "*) ;; *) return ;; esac # SMITH_NVIM_ONLY="a b" runs just those
     total=$((total + 1))
-    result=$(env PATH="$path" SMITH_NVIM_TEST="$name" SMITH_REPO="$here" SMITH_PROJECT="$work/project" \
+    result=$(env PATH="$path" SMITH_NVIM_TEST="$name" SMITH_REPO="$here" SMITH_PROJECT="$work/project" SMITH_ALONE="$work/alone" \
         "$nvim" --headless -u NONE -i NONE --cmd "set runtimepath^=$here" --cmd "filetype on" --cmd "let g:smith_no_version_check = 1" \
         "$@" --cmd "runtime plugin/smith.lua" \
         -c "lua vim.api.nvim_create_autocmd('VimEnter', {once = true, callback = function() vim.schedule(function() dofile('$here/tests/neovim.lua') end) end})" 2>&1)
@@ -69,6 +71,7 @@ one plain_c "$base"
 one lsp_config "$base"
 one lsp_attach "$base"
 one lsp_attach_smith "$base"
+one lsp_attach_smith_alone "$base"
 
 # nvim-dap on the runtimepath: the adapter registers at startup; a user's own adapter and configurations stay.
 one dap_registers "$base" --cmd "set runtimepath+=$work/fakedap"

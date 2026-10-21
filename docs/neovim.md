@@ -35,7 +35,10 @@ changes a debug configuration of yours.
 - **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc`, `objcpp` and `smith`, with the
   root markers `build.c`, `build.smith`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
   Do not add `--query-driver` (clangd then puts the SDK's include paths ahead of clang's own and the SDK's modules fail).
-  Override anything with `vim.lsp.config("smith", { ... })`.
+  Override anything with `vim.lsp.config("smith", { ... })`. A `.smith` file needs nothing more for a single file or a few
+  modules in one folder: with no `build.c` and no `compile_commands.json` the server attaches in single-file mode and reads
+  the file as `smith cc` does (`-x c -std=gnu2y`), finding `import foo` by `foo.smith` beside it. A real project wants
+  the `compile_commands.json` that its `build.c` writes (`smith_compile_commands`), for its flags and include paths.
 - **Debugging**: when nvim-dap is installed (on the runtimepath at startup, or when a C or `.smith` file opens), the plugin
   registers a `smith` adapter (`smith dap`) and a launch configuration for `c`, `cpp`, `objc`, `objcpp` and `smith`, each
   only when you have not set one. It registers; it starts nothing.
@@ -74,8 +77,11 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
   `SMITH_LANG_CASES=<folder>` checks a copy), and every `.c` and `.h` file of smith, all of which must parse with no
   `ERROR` or `MISSING` node. The driver is compiled by smith against the tree-sitter runtime, pinned by hash.
 - `tests/lsp.sh` (not Neovim): a real `smith lsp` session over stdio on a scratch project of two modules (`.smith` diagnostics
-  at the right line and column, hover, definition across modules, symbols, completion, a C file unchanged).
+  at the right line and column, hover, definition across modules, symbols, completion, a C file unchanged; and with no
+  `compile_commands.json`: one file, two modules found by their source, a hand-written database without `-x c`, and a
+  command borrowed from a `.c` entry).
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
-  file and to a `.smith` buffer of a scratch project (with a clang error at its column), the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
+  file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
+  project files at all, the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
   version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.

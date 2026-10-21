@@ -172,12 +172,23 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   and the source locations the hook keeps are the positions the editor shows. Two things differ from a compile.
   The lowering is C with static tables and no malloc, so one exists per process; a clangd parses many files at once, so a
   hook takes it when it is made and gives it back at the end of its file (`Lowering` in `shim/hook.cpp`), and
-  `.smith` parses in a clangd run one at a time. And `compile_commands.json` carries `-x c -std=gnu2y` for a `.smith` source
-  (clangd does not know the extension; `smith cc` adds it itself), which `smith build` writes. The module headers are
+  `.smith` parses in a clangd run one at a time. And clangd does not know the extension, so every command it compiles a
+  `.smith` file with gets the rule `smith cc` applies (`smith_lang_command`, `runtime/lang_command.c`, one function
+  that both call): `-x c` before the file (before the `--` of clangd's commands), and `-std=gnu2y` unless the command names
+  a standard. `smith lsp` applies it in `shim/clangd.cpp`, which defines `clang::createInvocation` (the one function that
+  turns clangd's command into a compiler invocation: for the open file, the preamble and the background index) as the
+  upstream function plus that call, so it holds for the fallback command of a folder with no `compile_commands.json`
+  (`clang main.smith`), a hand-written database without `-x c`, and a command borrowed from a `.c` entry
+  (`-x c-header`). The `compile_commands.json` that `smith build` writes carries `-x c -std=gnu2y` already, so a project
+  is read exactly as it is built. With no database at all, a single file or a few modules in one folder just work:
+  `import foo` is found by `foo.smith` beside the importing file, as for `smith cc main.smith foo.smith`, and the
+  interface is made in memory (go-to-definition from `foo::f` lands in `foo.smith`). A real project wants its build.c's
+  `compile_commands.json`, for its flags and include paths. The module headers are
   read through the file manager's file system, so a relative `-I .smith/include` means the command's directory. Because a
   module starts with code, clangd's preamble for it is empty, and the "translation unit with no declaration" extension
   warning that C gives for that is turned off for an empty main buffer. `tests/lsp.sh` drives a real session.
-- **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A smith whose clang
+- **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
+  that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
 
 ## Known limits
@@ -191,6 +202,8 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   So do hover, symbols and completion in `smith lsp`, whose completion after `x::` is empty and whose go-to-definition
   lands on the generated header until the background index has the module's source.
 - `-x smith` is not a clang language: the `.smith` extension and `-x c` stand for it.
+- In `smith lsp` with no database, a "did you mean" note on a mistyped name of another module points at a line of the
+  module's in-memory interface, which is not a line of its source.
 - `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
   location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);
   the parser, the code and the debug info are unaffected. `SMITH_LANG_DUMP` shows the macro arguments of a call after

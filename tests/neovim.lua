@@ -168,6 +168,27 @@ function tests.lsp_attach_smith()
   wait("the server to stop", function() return client:is_stopped() end, 15000)
 end
 
+-- A .smith buffer in a folder with no build.c, no compile_commands.json and no .git: the server attaches (single-file
+-- mode) and reads the file as `smith cc` does, so the only diagnostic is the undefined name, at its place.
+function tests.lsp_attach_smith_alone()
+  local alone = os.getenv("SMITH_ALONE")
+  vim.lsp.enable("smith")
+  vim.cmd("edit " .. vim.fn.fnameescape(alone .. "/main.smith"))
+  local buffer = vim.api.nvim_get_current_buf()
+  wait("smith lsp to attach", function() return #vim.lsp.get_clients({ bufnr = buffer, name = "smith" }) > 0 end)
+  wait("diagnostics", function() return #vim.diagnostic.get(buffer) > 0 end)
+  local messages = {}
+  for _, diagnostic in ipairs(vim.diagnostic.get(buffer)) do
+    check(not diagnostic.message:find("compiler job", 1, true), "clangd has a compile command: " .. diagnostic.message)
+    table.insert(messages, diagnostic.lnum .. ":" .. diagnostic.col .. " " .. diagnostic.message)
+  end
+  check(#messages == 1 and messages[1]:find("^4:9 ") and messages[1]:find("zzz", 1, true),
+    "the one error is the undefined name, on line 5: " .. vim.inspect(messages))
+  local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
+  client:stop(true)
+  wait("the server to stop", function() return client:is_stopped() end, 15000)
+end
+
 function tests.dap_registers()
   local dap = require("dap")
   check(dap.adapters.smith, "the smith adapter is registered")
