@@ -40,10 +40,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     `SDKROOT`, though `xcrun` and `metal` use Xcode's. So on macOS smith sets, for each the caller has not set,
     `CLANG_NO_DEFAULT_CONFIG=1` and `SDKROOT=$(xcrun --show-sdk-path)`. The caller's own `SDKROOT`, `-isysroot` and
     `--config` win.
-  - **The cost is in sanitized processes.** Upstream's AddressSanitizer starts a process in about 80 ms against 18 ms
-    for Apple's (measured here, 40 runs of an empty sanitized program). game's sanitized tests, run three times each
-    after a clean build: 5.0, 5.5 and 5.8 s under Homebrew's clang, 2.9, 3.0 and 2.8 s under Apple's (a second round on
-    a busier machine: 6.9 to 7.2 s against 4.5 to 4.8 s).
+  - **Sanitized processes start as fast as Apple's.** Upstream compiler-rt maps AddressSanitizer's 14 TB of shadow
+    without XNU's fast-mmap flag on arm64 (it passes `VM_FLAGS_4GB_CHUNK` only on x86_64, and its 2 GB threshold
+    `2 << 30` overflows `int`), so the kernel paid per TB at every start, `fork` and exit: about 38 ms a process (80
+    under load) and 40 ms a `fork`. `patches/compiler-rt-xnu-fast-mmap.patch` (two lines, what Apple's clang does) fixes
+    both: an empty sanitized program starts in 9.0 ms against 8.3 ms for Apple's (40 runs, medians), and a full
+    `smith check` spends about 117 s of kernel time instead of about 400.
 - **`smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, from the LLVM smith compiles
   with** (linked into smith; the stage0 runs Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`,
   `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
@@ -257,9 +259,3 @@ which are fixed at their source (checkers' history up to 2d6bbfa still has them,
 - A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 - Apple's `metal` output is not reproducible (two identical builds of learner's shaders differ), so compare shaders by
   the command smith runs, not by bytes.
-- Why upstream's ASan is slow on macOS (about 80 ms a process under load, 38 ms quiet, against 8 ms for Apple's; a `fork` of a
-  sanitized process takes 40 ms against 2 ms) is known: upstream compiler-rt passes XNU's fast-mmap flag (`VM_FLAGS_4GB_CHUNK`, 4 in
-  `mmap`'s fd) for the 14 TB of shadow only on x86_64, and its 2 GB threshold `2 << 30` overflows `int` so it is never reached; the
-  kernel then maps, copies at `fork` and unmaps at exit the shadow at a cost per TB. `patches/compiler-rt-xnu-fast-mmap.patch` (two
-  lines, what Apple's clang does) fixes both: with a runtime relinked from it, 38 to 8 ms a process and 41 to 2 ms a `fork`. It takes
-  effect when `smith build llvm` is next run (the compiler-rt of the install in use is not yet built with it).

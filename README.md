@@ -114,13 +114,14 @@ arguments they run the project's tasks. With arguments they are clang-format and
 `smith dbg` is lldb, from smith's own LLVM:
 
 ```
-$ smith dbg -b -o 'b main.c:12' -o run -o 'frame variable' -o kill build/debug/hello
-Breakpoint 1: where = hello`main + 748 at main.c:12:5, address = 0x0000000100000ae4
-Process 41601 stopped
+$ smith dbg -b -o 'b primes.c:10' -o run -o 'frame variable' -o kill build/debug/hello
+Breakpoint 1: where = hello`primes_sum + 436 at primes.c:10:23, address = 0x0000000100000aec
+Process 34952 stopped
 * thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
--> 12  	    }
+-> 10  	        sum += primes[i];
+(size_t) count = 5
 (const int32_t[5]) primes = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
-(int32_t) sum = 2
+(int32_t) sum = 0
 (size_t) i = 0
 ```
 
