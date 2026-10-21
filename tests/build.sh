@@ -2791,18 +2791,18 @@ expect_contains "smith upgrade: and then settles" "$out" "no work to do"
 # What a smith with clang inside says about its clang is its identity: a rebuilt smith reports the same, a rebuilt LLVM
 # another. A stand-in smith that prints the two lines shows both (the real one is covered above and by run.sh).
 mkdir fake
-cat >fake/smith <<'SH'
+cat >fake/smith-cc <<'SH'
 #!/bin/sh
 case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\nidentity %s\n' "$(cat "$0.id")" ;; *) echo "$0" >>runs ;; esac
 while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : >"$2"; fi; shift; done
 SH
-chmod +x fake/smith
-echo "llvm-23.1.3 aaaa" >fake/smith.id
+chmod +x fake/smith-cc
+echo "llvm-23.1.3 aaaa" >fake/smith-cc.id
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    SmithObject a = {.compiler = "fake/smith", .source = "a.c", .output = "build/a.o"};
+    SmithObject a = {.compiler = "fake/smith-cc", .source = "a.c", .output = "build/a.o"};
     smith_object(b, &a);
     smith_default(b, a.step.outputs);
 }
@@ -2810,11 +2810,11 @@ C
 rm -rf build runs
 build
 expect "identity: the first build compiles" 1 "$(lines runs)"
-cp fake/smith fake/smith.new
-mv fake/smith.new fake/smith
+cp fake/smith-cc fake/smith-cc.new
+mv fake/smith-cc.new fake/smith-cc
 build
 expect_contains "identity: a smith rebuilt with the same LLVM rebuilds nothing" "$out" "no work to do"
-echo "llvm-23.1.3 bbbb" >fake/smith.id
+echo "llvm-23.1.3 bbbb" >fake/smith-cc.id
 build
 expect "identity: a smith linked against another LLVM rebuilds the object" 2 "$(lines runs)"
 build
@@ -2985,6 +2985,32 @@ void build(SmithBuild *b) {
 C
 build
 expect "smith_cat: an empty first list keeps the others" "--function=x" "$(cat joined.txt 2>/dev/null)"
+
+# 13y. A compiler named smith, by name, by path or from the environment (CC=$HOME/.local/bin/smith), is refused before
+# anything runs, with the hint to use smith-cc or smith-c++.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject app = {.compiler = smith_option_value(b, "CC", smith_env(b, "CC", "smith-cc"), "the compiler"),
+                       .source = "main.c", .output = "main.o"};
+    smith_object(b, &app);
+    smith_default(b, app.step.outputs);
+}
+C
+echo 'int main(void) { return 0; }' >main.c
+capture env CC="$smith" "$smith" build
+expect_status "CC=<path>/smith in the environment is refused" fail
+expect_contains "CC=<path>/smith: ... as a build.c error naming the value" "$err" "smith: build.c: smith_object: .compiler is \"$smith\""
+expect_contains "CC=<path>/smith: ... with the hint for C" "$err" "use \"$(dirname "$smith")/smith-cc\" for C"
+expect_contains "CC=<path>/smith: ... and for C++" "$err" "smith-c++\" for C++"
+expect "CC=<path>/smith: nothing ran" "" "$(ls main.o .smith/compiler 2>/dev/null)"
+capture "$smith" build -DCC=smith
+expect_status "-DCC=smith is refused" fail
+expect_contains "-DCC=smith: ... with the hint" "$err" "use \"smith-cc\" for C"
+capture env CC=smith-cc "$smith" build
+expect "CC=smith-cc still builds" 0 "$rc"
 
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1

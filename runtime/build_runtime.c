@@ -1342,8 +1342,16 @@ static void smith_require_text(const char *call, const char *field, const char *
 // `smith cc` and `smith c++`.
 static void smith_require_program(const char *call, const char *field, const char *value) {
     smith_require_text(call, field, value);
-    if (strcmp(value, "smith") == 0) {
-        smith_fail("%s: .%s is \"smith\", which is not a compiler; use \"smith-cc\" or \"smith-c++\"", call, field);
+    // "smith" or a path that ends in /smith (CC=$HOME/.local/bin/smith in the environment, or -DCC=): the program run
+    // would be `smith -std=gnu23 ...`, which is not a smith command, so it is refused here, before anything runs.
+    const char *slash = strrchr(value, '/');
+    const char *base = slash == nullptr ? value : slash + 1;
+    if (strcmp(base, "smith") == 0) {
+        size_t folder = (size_t)(base - value);
+        smith_fail(
+            "%s: .%s is \"%s\", which is not a compiler (smith is a set of verbs); use \"%.*ssmith-cc\" for C or "
+            "\"%.*ssmith-c++\" for C++, the links that act as `smith cc` and `smith c++`",
+            call, field, value, (int)folder, value, (int)folder, value);
     }
 }
 

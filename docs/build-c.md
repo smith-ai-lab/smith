@@ -77,7 +77,7 @@ every other target (`release`, `fast`, `compare`, `clean`) is still `smith build
 For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, the first word of a
 `compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
 `smith-cc` and `smith-c++`, which act as `smith cc` and `smith c++` by their name. A `build.c` names them as its
-compilers (`.compiler = "smith-cc"`); `"smith"` alone is an error that says so, since `smith foo.c` has no meaning.
+compilers (`.compiler = "smith-cc"`); `"smith"` alone, or a path that ends in `/smith` (an environment's `CC=$HOME/.local/bin/smith`), is an error that says so before anything runs, since `smith foo.c` has no meaning.
 
 ## How smith build runs
 
