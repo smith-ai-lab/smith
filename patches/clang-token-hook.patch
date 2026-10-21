@@ -1,0 +1,138 @@
+diff -ru a/clang/include/clang/Lex/Preprocessor.h b/clang/include/clang/Lex/Preprocessor.h
+--- a/clang/include/clang/Lex/Preprocessor.h	2026-10-21 00:44:17
++++ b/clang/include/clang/Lex/Preprocessor.h	2026-10-21 00:44:17
+@@ -83,6 +83,7 @@
+ class PreprocessorLexer;
+ class PreprocessorOptions;
+ class ScratchBuffer;
++class Sema;
+ class TargetInfo;
+ class NoTrivialPPDirectiveTracer;
+ 
+@@ -172,6 +173,28 @@
+   }
+ };
+ 
++/// A hook that rewrites the token stream after macro expansion and before the
++/// parser, for a language built on top of C by token rewriting. It is created
++/// by Preprocessor::TokenHookFactory when the main file is entered (the factory
++/// decides from the file whether the hook applies) and sees each token once:
++/// tokens replayed from the lookahead cache and ones it injected are not
++/// offered again.
++class TokenHook {
++public:
++  virtual ~TokenHook() = default;
++  /// Called with each token about to leave Preprocessor::Lex. It may read the
++  /// following tokens with PP.Lex (they are not offered to it) and put tokens
++  /// back with PP.EnterTokenStream(..., IsReinject = true). Returns true when
++  /// it consumed \p Tok (replacing it with whatever it entered, maybe nothing);
++  /// Lex then continues with the next token. Source locations are the hook's
++  /// to keep.
++  virtual bool transform(Preprocessor &PP, Token &Tok) = 0;
++  /// The Sema of this translation unit, for read-only questions about what the
++  /// parser has completed (the hook runs mid-parse, one token ahead of it).
++  virtual void semaCreated(Sema &) {}
++  virtual void semaDestroyed() {}
++};
++
+ /// Engages in a tight little dance with the lexer to efficiently
+ /// preprocess tokens.
+ ///
+@@ -183,6 +206,9 @@
+   friend class VariadicMacroScopeGuard;
+ 
+   llvm::unique_function<void(const clang::Token &)> OnToken;
++  std::unique_ptr<TokenHook> Hook;
++  bool InTokenHook = false;   // the hook is running: Lex does not offer tokens
++  bool InCachingFetch = false; // CachingLex is fetching a token not yet cached
+   /// Functor for getting the dependency preprocessor directives of a file.
+   ///
+   /// These are directives derived from a special form of lexing where the
+@@ -1384,6 +1410,12 @@
+   void setTokenWatcher(llvm::unique_function<void(const clang::Token &)> F) {
+     OnToken = std::move(F);
+   }
++
++  /// Makes the hook of a translation unit; set by a tool that links its
++  /// language in, consulted when the main file is entered. May return null.
++  static inline std::unique_ptr<TokenHook> (*TokenHookFactory)(Preprocessor &) =
++      nullptr;
++  TokenHook *getTokenHook() const { return Hook.get(); }
+ 
+   void setDependencyDirectivesGetter(DependencyDirectivesGetter &Get) {
+     GetDependencyDirectives = &Get;
+diff -ru a/clang/lib/Lex/PPCaching.cpp b/clang/lib/Lex/PPCaching.cpp
+--- a/clang/lib/Lex/PPCaching.cpp	2026-10-21 00:44:17
++++ b/clang/lib/Lex/PPCaching.cpp	2026-10-21 00:44:17
+@@ -88,7 +88,9 @@
+   }
+ 
+   ExitCachingLexMode();
++  InCachingFetch = true;
+   Lex(Result);
++  InCachingFetch = false;
+ 
+   if (isBacktrackEnabled()) {
+     // Cache the lexed token.
+diff -ru a/clang/lib/Lex/Preprocessor.cpp b/clang/lib/Lex/Preprocessor.cpp
+--- a/clang/lib/Lex/Preprocessor.cpp	2026-10-21 00:44:17
++++ b/clang/lib/Lex/Preprocessor.cpp	2026-10-21 00:44:17
+@@ -588,6 +588,8 @@
+   // information) and predefined macros aren't guaranteed to be set properly.
+   assert(NumEnteredSourceFiles == 0 && "Cannot reenter the main file!");
+   FileID MainFileID = SourceMgr.getMainFileID();
++  if (TokenHookFactory)
++    Hook = TokenHookFactory(*this);
+ 
+   // If MainFileID is loaded it means we loaded an AST file, no need to enter
+   // a main file.
+@@ -928,6 +930,10 @@
+ 
+ void Preprocessor::Lex(Token &Result) {
+   ++LexLevel;
++  // Offer the token to the hook if it is new to the parser: not read by the
++  // hook, not replayed from the cache, and not part of a directive or macro.
++  bool Offer = Hook && !InTokenHook && !InCachingLexMode() &&
++               (LexLevel == 1 || (LexLevel == 2 && InCachingFetch));
+ 
+   // We loop here until a lex function returns a token; this avoids recursion.
+   while (!CurLexerCallback(*this, Result))
+@@ -935,6 +941,17 @@
+ 
+   if (Result.is(tok::unknown) && TheModuleLoader.HadFatalFailure)
+     return;
++
++  if (Offer && Result.isNot(tok::unknown) &&
++      !Result.getFlag(Token::IsReinjected)) {
++    InTokenHook = true;
++    bool Consumed = Hook->transform(*this, Result);
++    InTokenHook = false;
++    if (Consumed) {
++      --LexLevel;
++      return Lex(Result);
++    }
++  }
+ 
+   if (Result.is(tok::code_completion) && Result.getIdentifierInfo()) {
+     // Remember the identifier before code completion token.
+diff -ru a/clang/lib/Sema/Sema.cpp b/clang/lib/Sema/Sema.cpp
+--- a/clang/lib/Sema/Sema.cpp	2026-10-21 00:44:17
++++ b/clang/lib/Sema/Sema.cpp	2026-10-21 00:44:17
+@@ -327,6 +327,8 @@
+       ArgPackSubstIndex(std::nullopt), SatisfactionCache(Context) {
+   assert(pp.TUKind == TUKind);
+   TUScope = nullptr;
++  if (TokenHook *H = PP.getTokenHook())
++    H->semaCreated(*this);
+ 
+   LoadedExternalKnownNamespaces = false;
+   for (unsigned I = 0; I != NSAPI::NumNSNumberLiteralMethods; ++I)
+@@ -602,6 +604,8 @@
+ Sema::~Sema() {
+   assert(InstantiatingSpecializations.empty() &&
+          "failed to clean up an InstantiatingTemplate?");
++  if (TokenHook *H = PP.getTokenHook())
++    H->semaDestroyed();
+ 
+   if (VisContext) FreeVisContext();
+ 

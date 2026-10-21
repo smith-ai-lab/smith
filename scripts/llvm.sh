@@ -5,8 +5,18 @@
 # hour's build: $CACHE/smith/llvm/<version>/{build,install}.
 set -eu
 src=$1 cmake=$2 python=$3 stamp=$4
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/23.1.3
+# SMITH_LLVM_NAME builds into another folder (an experiment next to the shared install: 23.1.3-hook).
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3}
 mkdir -p "$cache" "$(dirname "$stamp")"
+# --- The one change to clang: the token hook (patches/clang-token-hook.patch; issue #11) ---------------------------------
+# A token transformer on the Preprocessor, for .smith files. It patches the source tree in place, once: a tree that has it
+# already is left alone. Remove this step, and the file, to build plain LLVM.
+patch=$(cd "$(dirname "$0")/.." && pwd)/patches/clang-token-hook.patch
+if ! patch -R -p1 -s -f --dry-run -d "$src" <"$patch" >/dev/null 2>&1; then
+    patch -p1 -s -d "$src" <"$patch"
+fi
+# --- end of the token hook ------------------------------------------------------------------------------------------------
+
 # The host compiler that builds LLVM is Apple's; the clang it makes finds the SDK at run time.
 sdk=$(xcrun --show-sdk-path)
 host=/usr/bin
