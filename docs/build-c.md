@@ -155,7 +155,7 @@ build.c has two layers, and a project may use either or both.
 - **The high level** (`smith_object`, `smith_program`, `smith_compile_command`, `smith_compile_commands`) is for letting smith know what a
   compile and a link are. Each call emits ordinary steps, the same as `smith_step`, and its comment in the header states
   the exact command. `smith build -v` shows it. Nothing is hidden; the gain is that smith can write a correct
-  `compile_commands.json`, which clang's `-MJ` cannot (it records Apple clang's internal command, which upstream clangd
+  `compile_commands.json`, which clang's `-MJ` cannot (it records clang's internal command, `-cc1`, which clangd
   rejects), and which has an entry for build.c itself so an editor finds `<smith/build.h>`.
 
 `compile_commands.json` rules:
@@ -286,9 +286,11 @@ void build(SmithBuild *b) {
   import it; editing or adding a header in a folder rewrites its map, which rebuilds the sources that load it. A flag
   that changes a module's hash (a `-D`, the standard, a sanitizer) changes the command, so the objects rebuild and
   clang builds the module again under the new hash.
-- **compile_commands.json leaves the module flags out.** clangd with `--query-driver` cannot build the SDK's modules
-  (not even `#include <stdint.h>`: the SDK's map requires a feature that the extracted `-isystem` paths clear), so the
-  editor reads the plain C. `ninja -t compdb` shows the real commands. Without `--query-driver` clangd handles modules.
+- **compile_commands.json keeps the module flags**, so the editor sees what the build does. Use Homebrew's clangd with no
+  `--query-driver`: with it, clangd cannot build the SDK's modules (not even `#include <stdint.h>`: the SDK's map
+  requires a feature that the extracted `-isystem` paths clear). Measured on game's `src/platform/macos.m` with its real
+  module flags: Homebrew's clangd without `--query-driver` reports 0 errors, with it 1 (`module
+  '_c_standard_library_obsolete' requires feature 'found_incompatible_headers__check_search_paths'`).
 - **Isolation, and `.textual`.** A header is compiled alone when it is first imported, so one that works only after
   another include, or after a `#define` before it, fails there:
 
@@ -442,7 +444,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
-  flags (`/usr/bin/clangd --check` on a test file reports no errors).
+  flags (Homebrew's `clangd --check` on a test file reports no errors).
 
 ## The API
 
@@ -668,8 +670,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
 // `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400` (a module unused for 31 days is removed, checked at
 // most once a week) and one
 // `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported, so
-// editing a header rebuilds exactly the sources that import it. compile_commands.json leaves these flags out: the
-// editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules.
+// editing a header rebuilds exactly the sources that import it. compile_commands.json keeps these flags, so the
+// editor sees exactly what the build does (Homebrew's clangd, without --query-driver, builds the modules).
 // A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed
 // in .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
 typedef struct {

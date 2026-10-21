@@ -1024,7 +1024,6 @@ constexpr size_t smith_objects_max = 65536;
 typedef struct {
     const SmithObject *address; // the caller's struct, so a copy that was never registered is found out
     SmithObject object;         // the arena copy; .step is the emitted step
-    const char *const *editor;  // the compile as the editor reads it: .step.command without the module flags
     bool listed;                // false for an object declared again with the same output: one entry in the file
 } SmithObjectRow;
 
@@ -1223,7 +1222,6 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *depfile = smith_replace_extension(b, copy.output, ".d");
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
     const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
-    const char *const *editor = smith_cat(b, smith_one(copy.compiler), copy.flags, tail, nullptr);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
@@ -1236,7 +1234,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         listed = listed && strcmp(smith_object_rows[i].object.output, copy.output) != 0;
     smith_step(b, &copy.step);
     if (smith_object_row_count >= smith_objects_max) smith_too_many("objects", smith_objects_max);
-    smith_object_rows[smith_object_row_count++] = (SmithObjectRow){object, copy, editor, listed};
+    smith_object_rows[smith_object_row_count++] = (SmithObjectRow){object, copy, listed};
     *object = copy;
 }
 
@@ -1349,8 +1347,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments =
-        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_copy_list(flags), tail, nullptr);
+    const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
+                                             smith_copy_list(flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
@@ -1359,7 +1357,7 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b) {
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed) continue;
-        smith_json_entry(out, b->root, object->source, object->output, smith_object_rows[i].editor);
+        smith_json_entry(out, b->root, object->source, object->output, smith_object_rows[i].object.step.command);
         fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {

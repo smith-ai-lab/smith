@@ -214,8 +214,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
 // `smith cache clean` empties it. Every covered compile gets `-fmodules -fmodules-cache-path=<that folder>`,
 // `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400` (a module unused for 31 days is removed, checked at
 // most once a week) and one `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and
-// the headers imported, so editing a header rebuilds exactly the sources that import it. compile_commands.json leaves
-// these flags out: the editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules. A
+// the headers imported, so editing a header rebuilds exactly the sources that import it. compile_commands.json keeps
+// these flags, so the editor sees what the build does (Homebrew's clangd, without --query-driver, builds the modules). A
 // header that cannot be compiled alone, or that clang must include more than once with different macros, is listed in
 // .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
 typedef struct {

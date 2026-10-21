@@ -9,7 +9,7 @@
 #include <string.h>
 
 // C2y with every warning, and warnings as errors. C2y is the draft standard after C23; it is here for _Countof, which
-// counts an array's elements, and Apple's clang and upstream clang 21 or later accept it. If a compiler you need does
+// counts an array's elements, and upstream clang 21 or later accepts it. If a compiler you need does
 // not, use gnu23. GNU mode (gnu2y) keeps POSIX functions declared on Linux.
 static const char *const build_warnings[] = {"-std=gnu2y",
                                              "-Wall",

@@ -2126,7 +2126,7 @@ build -v
 expect "modules: the project builds" 0 "$rc"
 expect_contains "modules: the compile has -fmodules" "$out" "cc -fmodules -fmodules-cache-path=$XDG_CACHE_HOME/smith/modules -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 -fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23"
 expect "modules: the program runs" 2 "$(./build/app)"
-case $(cat compile_commands.json) in *fmodule*) expect "modules: the editor's compile_commands.json has no module flags" none present ;; *) expect "modules: the editor's compile_commands.json has no module flags" ok ok ;; esac
+case $(cat compile_commands.json) in *-fmodules-cache-path=*smith/modules*) expect "modules: compile_commands.json has the module flags the build uses" ok ok ;; *) expect "modules: compile_commands.json has the module flags the build uses" present none ;; esac
 expect "modules: a map per folder and one for smith's headers" ".smith/modules/inc.modulemap .smith/modules/smith.modulemap" "$(echo .smith/modules/*.modulemap)"
 expect_contains "modules: a header is a module of its own" "$(cat .smith/modules/inc.modulemap)" "module inc_b { header \"$(pwd -P)/inc/b.h\" export * }"
 expect_contains "modules: smith's headers are modules" "$(cat .smith/modules/smith.modulemap)" "module smith_arena {"
@@ -2168,8 +2168,8 @@ build
 expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
 expect_contains "modules: the cache is the shared one" "$(ls "$XDG_CACHE_HOME/smith/modules")" "modules.timestamp"
 expect "modules: and nothing is cached under .smith" no "$([ -e .smith/cache ] && echo yes || echo no)"
-if [ -x /usr/bin/clangd ]; then
-    capture /usr/bin/clangd --query-driver="$HOME/.local/bin/smith*,/usr/bin/*" --check="$(pwd -P)/x.c"
+if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
+    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/x.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in x.c" "" "$errors"
 fi
@@ -2271,7 +2271,7 @@ hashes=$(find "$XDG_CACHE_HOME/smith/modules" -mindepth 1 -maxdepth 1 -type d | 
 [ "$hashes" -ge 2 ] && expect "modules: the two builds have caches of their own" ok ok || expect "modules: the two builds have caches of their own" ">= 2" "$hashes"
 capture "$smith" build -t compdb
 expect_contains "modules: ninja's compile commands carry the flags" "$out" "-fmodules"
-case $(cat compile_commands.json 2>/dev/null) in *fmodule*) expect "modules: compile_commands.json has no module flags" none present ;; *) expect "modules: compile_commands.json has no module flags" ok ok ;; esac
+case $(cat compile_commands.json 2>/dev/null) in *-fmodules-cache-path=*smith/modules*) expect "modules: compile_commands.json has the module flags the build uses" ok ok ;; *) expect "modules: compile_commands.json has the module flags the build uses" present none ;; esac
 metal_line=$(printf '%s\n' "$out" | grep 'k.metal' | head -1)
 case $metal_line in *-fmodules*) expect "modules: the .metal compile has no module flags" none "$metal_line" ;; *) expect "modules: the .metal compile has no module flags" ok ok ;; esac
 
@@ -2334,6 +2334,13 @@ build -v
 expect "modules: smith's headers import alone and together" 0 "$rc"
 expect_contains "modules: the smith map is used" "$out" "-fmodule-map-file=.smith/modules/smith.modulemap"
 expect_contains "modules: the library map has io" "$(cat .smith/modules/smith.modulemap)" "module smith_io {"
+if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
+    # compile_commands.json carries the module flags, and Homebrew's clangd (no --query-driver) builds the modules.
+    expect_contains "modules: compile_commands.json names the smith map" "$(cat compile_commands.json)" "smith.modulemap"
+    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/all_of_them.c"
+    errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
+    expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
+fi
 
 # 12. A smith built with one command.
 project
