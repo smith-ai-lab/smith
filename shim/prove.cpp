@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -221,18 +222,24 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     switch (outcome.status) {
     case prove::Outcome::Proved:
         status = 0;
-        if (options.verbose) std::printf("ok    %s  %.2f s\n", label.c_str(), outcome.seconds);
+        if (options.verbose)
+            std::printf("ok    %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
+                        outcome.cpu_seconds, outcome.charged);
         break;
     case prove::Outcome::Failed:
-        std::printf("FAIL  %s  %.2f s\n", label.c_str(), outcome.seconds);
+        std::printf("FAIL  %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
+                    outcome.cpu_seconds, outcome.charged);
         for (const prove::Finding &finding : outcome.findings)
             print_finding(prepared.unit, finding);
         break;
     case prove::Outcome::Timeout:
         std::printf(
-            "FAIL  %s\n  timed out after %.1f s (the budget is %.0f s); prove it in smaller pieces: a contract on the "
-            "function that does most of the work lets callers use that instead of its body\n",
-            label.c_str(), outcome.seconds, options.budget_seconds);
+            "FAIL  %s\n  over its budget of %.0f s of CPU time (counted as on %u idle cores): it was charged "
+            "%.1f s, having used %.1f s of CPU in %.1f s of wall time, and was stopped; prove it in smaller "
+            "pieces: a contract on the function that does most of the work lets callers use that instead of its "
+            "body\n",
+            label.c_str(), options.budget_seconds, prove::Options::solver_threads, outcome.charged, outcome.cpu_seconds,
+            outcome.seconds);
         break;
     case prove::Outcome::Error:
         std::printf("FAIL  %s\n  %s\n", label.c_str(), outcome.error.c_str());
@@ -243,13 +250,27 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     return status;
 }
 
-// What keeps a proof's process from outliving what started it. The parent kills it at the budget plus two seconds, but
-// a parent that is killed itself (a timeout around the whole command, a closed terminal) cannot, and the child, busy in
-// a solver, would run on for ever with the parent's pid 1. So the child ends itself: at a hard deadline (SIGALRM, whose
-// default action no solver call can postpone), and as soon as its parent is gone (a thread that watches the parent
-// pid).
-void end_with_parent_or_budget(pid_t parent, double budget_seconds) {
-    alarm(static_cast<unsigned>(budget_seconds) + 4);
+double cpu_of(const rusage &usage) {
+    return static_cast<double>(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) +
+           static_cast<double>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6;
+}
+
+// How long the parent waits, in wall time, before it kills a proof's process: much more than the CPU budget needs,
+// since a busy machine stretches wall time, and only for a process that is blocked rather than computing.
+double wall_backstop(const prove::Options &options) {
+    return 20 * options.budget_seconds + 30;
+}
+
+// What keeps a proof's process from outliving what started it or its budget. The solver stops itself at the CPU
+// budget, but not always promptly, and a parent that is killed itself (a timeout around the whole command, a closed
+// terminal) cannot kill the child, which busy in a solver would run on for ever with the parent's pid 1. So the child
+// ends itself: at a limit of CPU time the kernel enforces (SIGXCPU), at a wall-clock limit for the time it spends
+// blocked (SIGALRM), and as soon as its parent is gone (a thread that watches the parent pid).
+void end_with_parent_or_budget(pid_t parent, const prove::Options &options) {
+    rlim_t soft = static_cast<rlim_t>(options.cpu_limit());
+    rlimit limit{soft, soft + 5};
+    setrlimit(RLIMIT_CPU, &limit);
+    alarm(static_cast<unsigned>(wall_backstop(options)) + 4);
     std::thread([parent] {
         for (;;) {
             if (getppid() != parent) _exit(3);
@@ -303,30 +324,38 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
     pid_t child = fork();
     if (child < 0) return 1;
     if (child == 0) {
-        end_with_parent_or_budget(parent, options.budget_seconds);
+        end_with_parent_or_budget(parent, options);
         int status = prove_unit(loaded, name, options);
         std::fflush(nullptr);
         _exit(status);
     }
     Clock::time_point begin = Clock::now();
-    double allowed =
-        options.budget_seconds + 2; // the child stops itself at the budget; this is for what it cannot interrupt
+    double allowed = wall_backstop(options);
     int status = 0;
+    rusage used{};
     for (;;) {
-        pid_t done = waitpid(child, &status, WNOHANG);
+        pid_t done = wait4(child, &status, WNOHANG, &used);
         if (done == child) break;
         if (std::chrono::duration<double>(Clock::now() - begin).count() > allowed) {
             kill(child, SIGKILL);
-            waitpid(child, &status, 0);
+            wait4(child, &status, 0, &used);
             std::printf(
-                "FAIL  %s\n  timed out after %.1f s (the budget is %.0f s); prove it in smaller pieces: a contract on "
-                "the function that does most of the work lets callers use that instead of its body\n",
-                label.c_str(), allowed, options.budget_seconds);
+                "FAIL  %s\n  blocked for %.0f s of wall time (the limit is %.0f s) after %.1f s of CPU: this is "
+                "a bug in smith prove, not in the function\n",
+                label.c_str(), allowed, allowed, cpu_of(used));
             return 1;
         }
         usleep(2000);
     }
     if (WIFEXITED(status)) return WEXITSTATUS(status) == 0 ? 0 : 1;
+    if (WIFSIGNALED(status) && WTERMSIG(status) == SIGXCPU) {
+        std::printf(
+            "FAIL  %s\n  over its budget of %.0f s of CPU time (counted as on %u idle cores): it has used "
+            "%.1f s of CPU and was stopped; prove it in smaller pieces: a contract on the function that does most "
+            "of the work lets callers use that instead of its body\n",
+            label.c_str(), options.budget_seconds, prove::Options::solver_threads, cpu_of(used));
+        return 1;
+    }
     std::printf("FAIL  %s\n  the prover stopped on signal %d: this is a bug in smith prove, not in the function\n",
                 label.c_str(), WIFSIGNALED(status) ? WTERMSIG(status) : 0);
     return 1;

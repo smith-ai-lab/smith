@@ -117,10 +117,12 @@ expect_contains "loop: with no bound is an error" "$out" "unbounded.c:8: cannot 
 prove "$cases/message.m"
 expect_contains "Objective-C: a message send is an error" "$out" "message.m:10: cannot be proved: an Objective-C message send"
 
-# 7. A proof that runs out of time fails, like a test that times out.
+# 7. A proof that runs out of time fails, like a test that times out. The budget is CPU time (so that a busy machine does
+# not change a verdict), counted as on 8 idle cores: this one query runs on one thread, and 2 s of it is the whole budget.
 prove --budget=2 "$cases/division.c"
 expect "budget: fails" 1 "$rc"
-expect_contains "budget: ... as a timeout" "$out" "timed out after"
+expect_contains "budget: ... as a budget of CPU time" "$out" "over its budget of 2 s of CPU time"
+expect_contains "budget: ... that says what it used" "$out" "having used 2."
 
 # 7b. A proof's process ends with its parent: kill the parent (a timeout around the command, a closed terminal) while a
 # proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
