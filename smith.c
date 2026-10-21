@@ -811,6 +811,13 @@ static const unsigned char smith_test_source[] = {
 #embed "lib/test.c"
 };
 
+static const unsigned char smith_trace_header[] = {
+#embed "include/smith/trace.h"
+};
+static const unsigned char smith_trace_source[] = {
+#embed "lib/trace.c"
+};
+
 typedef struct {
     const char *name;
     const unsigned char *header;
@@ -827,8 +834,11 @@ static const SmithLibrary smith_libraries[] = {
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
     {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
+    {"trace", smith_trace_header, sizeof smith_trace_header, smith_trace_source, sizeof smith_trace_source},
 };
 
+// `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
+#include "runtime/symbolize.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
@@ -1118,6 +1128,7 @@ static int smith_build_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
     smith_cache_hold();
+    setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
     const char *forced = getenv("SMITH_NINJA");
     bool use_ninja = forced != nullptr && *forced != '\0';
     char ninja[PATH_MAX] = "";
@@ -1546,6 +1557,8 @@ int main(int argc, char **argv) {
 #ifdef SMITH_IN_PROCESS
     if (strcmp(smith_base_name(argv[0]), "ld") == 0) return smith_route_linker(argc, argv);
 #endif
+    if (strcmp(smith_base_name(argv[0]), "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "symbolize") == 0) return smith_symbolize_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
     if (argc >= 2 && strcmp(argv[1], "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
     const SmithTool *tool = argc >= 2 ? smith_find_tool(argv[1]) : nullptr;

@@ -559,8 +559,17 @@ SmithTests tests = {
 smith_tests(b, &tests);                              // tests.step is the task "test"
 ```
 
-- **Macros only for checks.** Only a macro can capture an expression's text, its file and its line, and evaluate an
-  expression where the check can catch its end. A test is a plain function; there is no `TEST()` macro and no registration.
+- **Checks are plain functions.** A failure shows the line that called the check and the call chain, read from the
+  call stack and the source file (see "Failure reports"), so a check needs no macro to capture its text or its place.
+  A test is a plain function too; there is no `TEST()` macro and no registration. The `SMITH_CHECK` macros below are
+  the old spelling: they keep working, and are deprecated (the docs say so; no compiler warning does, because game,
+  learner and checkers have about 3,500 uses under `-Werror`).
+- **The functions:** `smith_check(bool)`; `smith_check_equal_<type>(a, b)` for `bool`, `char`, `i8` `i16` `i32` `i64`,
+  `u8` `u16` `u32` `u64`, `f32`, `f64` and `ptr`; `smith_check_near_f32(a, b, tolerance)` and `_f64`; and
+  `smith_check_same_bits_f32(a, b)` and `_f64`. The type is in the name, as `<math.h>` names `sinf` and `sin`, so there is
+  no `_Generic` and no conversion between the two values. A failed one prints `a` and `b` (and the tolerance and the
+  distance of `near`) with the short type name: `a = 3   (u64)`. `.smith` will have one generic `test.check_equal(a, b)`
+  (#15).
 - **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
   because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {` or
   `void test_<name>(SmithKey key) {` (`<name>` in `[a-z0-9_]`, the parameter's name in `[a-z_]`) and writes
@@ -579,6 +588,11 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
   compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
   infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
+- **`SMITH_CHECK_ABORTS` stays a macro, and why.** What it needs is control flow, not text: the statement must run under
+  a `sigsetjmp` that is still on the stack when the statement aborts. C has no closure, so a function form would take a
+  function pointer and a context (`smith_check_aborts(body, context)`) and every use would write a body function and a
+  context struct, more noise than the macro hides. (`.smith` has closures, and can make it a function.) The stack
+  traces took away the other reason for a macro, the captured text and line, so the macro no longer reports from them.
 - **`SMITH_CHECK_ABORTS`** runs the expression in the worker's own process, with its output going to a temporary file.
   It checks that the program stops on purpose: the check passes when the expression raises `SIGABRT` or `SIGTRAP` (an
   `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop), which the worker catches and jumps back from with
@@ -612,7 +626,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `-DTEST=<substring>` (a test named exactly that, else every test whose name contains it), `-DSEED=<n>` (each
   property test on that one seed), `-DSEEDS=<n>` (keys per property test, 100 by default), `-DJOBS=<n>` (default: the
   cores), `-DSHRINK=0|1`, `-DSHUFFLE=<seed>`, `-DISOLATE` and `-DFULL`; the binary takes `--test`, `--seed`, `--seeds`, `--jobs`, `--timeout <seconds>` (10, per
-  test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the time one shrink may take), `--shuffle <seed>`, `--isolate`, `--stats`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
+  test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the time one shrink may take), `--shuffle <seed>`, `--isolate`, `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. These are read in `build()` with `smith_option_value`,
   so a project that reads the same name gets the same value. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
 - **Full size: `smith_test_full()`.** It is false by default and true when the run was given `-DFULL` (the runner's
@@ -624,8 +638,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
   them by their path, relative to the project's root, where `smith build` runs them.
 - **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
   replays exactly.
-- **A failure prints** the test, the seed of a property test, the check's file and line, the line as written, the
-  values with their types, the note, the test's output, and the command that reruns it:
+- **A failure prints** the test, the seed of a property test, the check's file and line, the line as written, the call
+  chain, the values with their types, the note, the test's output, and the command that reruns it. The runner on its own
+  prints a macro's failure like this (`smith build test` prints the report of "Failure reports" in its place):
 
   ```
   FAIL uniform_stays_in_range with seed 6387777158891554393, shrunk in 41 runs
@@ -656,6 +671,70 @@ smith_tests(b, &tests);                              // tests.step is the task "
   failure and the results after it are held until then, and printed in order), so a result never depends on another
   test: nothing stops reading the other workers' pipes or judging their timeouts. A timeout is not shrunk (each try would take the whole timeout), and a failure
   that does not reproduce when its key is run alone (it depended on an earlier key, or on chance) is shown as it was.
+- **Failure reports.** A failure is a stack of addresses, and smith turns it into the failing line and the call chain.
+  This is `<smith/trace.h>` in the program and `smith symbolize` in smith.
+  - **In the program (`lib/trace.c`, `smith_library(b, "trace")`; `smith_tests` compiles it itself):** on a failed
+    check, a failed contract (`smith_failure(kind)`), an `assert` or a fatal signal, the program walks its stack by frame
+    pointers, which test builds keep (Apple's ABIs always do; sanitized builds pass `-fno-omit-frame-pointer`). A
+    signal's walk starts from the `ucontext` the handler is given, with the exact instruction first. It writes the raw
+    addresses to the runner's output as lines that start with `smith-trace`: a heading, the Mach-O UUID, `__TEXT`
+    address, slide and size of each image a frame falls in, and the frames (with the nearest symbol's name when the
+    writer is not a signal handler). A signal handler's part is async-signal-safe (`write(2)` and hand-formatted hex). No
+    symbolizer lives in the program, so a test binary stays as small and as quick to link as before. The walk ends at
+    `smith_test_execute`'s frame (`smith_trace_stop`), so a stack is the same however the runner reached the test, which
+    shrinking compares. The runner prints the block when it is given `--trace` (the test task passes it when smith can
+    symbolize), and for a plain-function check always, since it has no file and line of its own; a macro's failure on a
+    runner run by hand still prints the old report, so existing output does not change.
+  - **In smith (`runtime/symbolize.c`, `shim/symbolize.cpp`):** `smith build test` pipes the runner's output through
+    `smith symbolize` (the stage0 has no LLVM, so it runs the runner as before). The filter copies its input and replaces
+    each block with the report:
+
+    ```
+    FAIL moves_every_step
+      check failed at tests/moves_test.c:42
+           42 |     smith_check(moves.count == expected);
+      called from
+        tests/moves_test.c:42  moves_every_step
+        .smith/lib/test.c:931  smith_test_execute
+    ```
+
+    The failing frame is the first that is not smith's own machinery (a function whose name starts with `smith_test_`,
+    `smith_check`, `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_failure`, `smith_contract_` or
+    `smith_trace_`, or `smith.test.` and `smith.contract.` once `.smith` exists) and not in a system library, so libc's
+    abort path (`__pthread_kill`, `abort`, `__assert_rtn`) is skipped with no annotation. Inlined frames are listed as the
+    debug info has them, innermost first. The chain ends at the first frame of the runner or at `main`. The source line
+    is read from the file; if the file is newer than the program a note says the line may have changed. A stack with no
+    debug info reports the site the program gave (an old macro's file and line) or says to build with `-g`. A crash is
+    `FAIL name: killed by SIGSEGV` and then `crashed at file:line`; an `assert` is `aborted at file:line` with libc's
+    message under it. A sanitizer's report is not given a trace of its own: its stack is the report.
+  - **`smith symbolize [--binary <program>] [<file>]`** does the same for a trace saved from a run anywhere (a log, a crash
+    report, standard input). `--binary` names the program when the path in the trace is gone. A program that is not the
+    one that ran (the UUID differs) is a note and no lines, never a wrong line. `smith symbolize --available` exits 0 in
+    the full smith.
+  - **Sanitizers.** smith run under the name `llvm-symbolizer` speaks that program's protocol (`CODE "<module>[:arch]"
+    <address>` per line; the function and `file:line:column` of each frame, inlined frames first, then an empty line;
+    `--relative-address` adds `__TEXT`'s link address to an offset). `smith build test` makes `.smith/bin/llvm-symbolizer`,
+    a link to smith, and sets `ASAN_SYMBOLIZER_PATH` and `UBSAN_SYMBOLIZER_PATH` to it for the runner (unless the
+    environment names one already). AddressSanitizer and UBSan stacks then come from the same code as the test report,
+    with lines and inlined frames, and without `atos` (which needs a dSYM to give lines).
+  - **Where the DWARF is: the debug map, not a dSYM.** On macOS the linker leaves the DWARF in the object files, and
+    the binary holds a debug map (stab entries: `N_OSO` names an object and its modification time, `N_FUN` gives each
+    function's address and size). LLVM's symbolizer reads a dSYM, which `dsymutil` makes by reading every object and
+    linking its DWARF. smith reads the debug map: find the function an address is in, find the same symbol in its object
+    file, and ask the symbolizer about the object, which has its own DWARF. Measured on this machine (clean cache, 5
+    runs, fastest): a failure costs 6 to 10 ms beyond smith's 8 ms of start, and each further failure of the same run
+    about 0.1 ms (game's sanitized tests, 10 MB, 62 objects: 18 ms for one failure and 28 ms for 100; learner's, 5 MB, 57
+    objects: 14 ms and 23 ms). `dsymutil` on the same binaries takes 81 to 146 ms (game) and 36 to 75 ms (learner); made at
+    every link it adds that to every test build, passing or not, and writes a bundle a clean has to remember. A dSYM beside
+    the program, when its UUID matches, is used first, so a project that makes one gains nothing and loses nothing. The
+    price of the debug map is that the objects must be there and unchanged: an object that is gone, newer than the link
+    or inside an archive is a note ("the object file ... has changed since the program was linked"), never a guess. The
+    objects of a test build are in `build/`, where the build put them, which is where they are when a test fails. lld
+    (smith's default linker) and Apple's `ld` write the same stabs, and both are tested.
+  - **For `.smith` and #8:** `smith_failure(kind)` (`<smith/trace.h>`) is the entry point `smith_requires`, `smith_ensures`
+    and `smith_invariant` call when their condition is false. In a test it fails the test with the report above; in a
+    program it writes the heading and the trace block to standard error and calls `abort()`, so a log holds what `smith
+    symbolize` needs. The caller's frame is the failing one: a wrapper whose name starts with a prefix above is skipped.
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's

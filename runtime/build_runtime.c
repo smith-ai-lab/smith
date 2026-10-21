@@ -1569,11 +1569,7 @@ static int smith_tests_scan(SmithRun *run) {
     return 0;
 }
 
-// The task: runs the runner with the options it was given, its output going to the terminal. .args is the program and
-// its arguments.
-static int smith_tests_run(SmithRun *run) {
-    return smith_run_program(run, run->args, nullptr);
-}
+static int smith_tests_run(SmithRun *run);
 
 static bool smith_tests_links(const SmithTests *tests, const char *source) {
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++) { // bounded by the list
@@ -1666,13 +1662,15 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 2 + smith_count((const char *const *)tests->objects));
+    const char **objects = smith_new_list(count + 3 + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
                                                            smith_list(b, list_header, nullptr));
     objects[used++] = (const char *)smith_tests_object(b, &copy, list_table, copy.flags, nullptr);
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
+    if (!smith_tests_links(tests, ".smith/lib/trace.c")) // a project that links the trace library itself is not doubled
+        objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "trace"), copy.flags, nullptr);
     for (size_t i = 0; tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];
     SmithProgram program = {
@@ -1858,6 +1856,84 @@ int smith_run_program(SmithRun *run, const char *const *argv, const char *const 
     if (posix_spawnp(&pid, argv[0], nullptr, nullptr, (char *const *)argv, envp) != 0) return smith_exit_not_started;
     int status = smith_wait(argv[0], pid);
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+// The task of smith_tests: runs the runner with the options it was given. .args is the program and its arguments.
+//
+// A failure is a stack of addresses (<smith/trace.h>), and smith turns them into the failing line and the call chain,
+// so the runner's output goes through `smith symbolize` on its way to the terminal, and the runner is asked for its
+// traces
+// (--trace). That needs the full smith, which links LLVM's symbolizer: the stage0 runs the runner as it always did.
+// AddressSanitizer and UBSan symbolize their reports by starting a program named llvm-symbolizer, which here is smith.
+
+static bool smith_tests_can_symbolize(SmithRun *run, const char *self) {
+    const char *argv[] = {self, "symbolize", "--available", nullptr};
+    return smith_run_status(run, argv, nullptr) == 0;
+}
+
+// .smith/bin/llvm-symbolizer, a link to smith, which smith runs under that name as the symbolizer protocol's server.
+static const char *smith_tests_symbolizer_link(SmithRun *run, const char *self) {
+    char folder[PATH_MAX];
+    if (getcwd(folder, sizeof folder) == nullptr) smith_fail("smith_tests: cannot find the current folder");
+    const char *path = smith_fmt(run->b, "%s/.smith/bin/llvm-symbolizer", folder);
+    smith_make_parents(path);
+    unlink(path);
+    if (symlink(self, path) != 0) smith_fail("smith_tests: cannot make %s", path);
+    return path;
+}
+
+static const char *const *smith_tests_environment(SmithRun *run, const char *self) {
+    const char *link = smith_tests_symbolizer_link(run, self);
+    const char *const *environment = smith_list(run->b, nullptr);
+    static const char *const names[] = {"ASAN_SYMBOLIZER_PATH", "UBSAN_SYMBOLIZER_PATH"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (getenv(names[i]) != nullptr) continue; // the project's own choice stands
+        const char *entry = smith_fmt(run->b, "%s=%s", names[i], link);
+        environment = smith_cat(run->b, environment, smith_list(run->b, entry, nullptr), nullptr);
+    }
+    return environment;
+}
+
+static int smith_tests_exit_code(int status) {
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+static int smith_tests_run(SmithRun *run) {
+    smith_context = nullptr;
+    const char *self = getenv("SMITH_SELF");
+    if (self == nullptr || !smith_tests_can_symbolize(run, self)) return smith_run_program(run, run->args, nullptr);
+    const char *const *runner = smith_cat(run->b, run->args, smith_list(run->b, "--trace", nullptr), nullptr);
+    if (isatty(STDOUT_FILENO) != 0) runner = smith_cat(run->b, runner, smith_list(run->b, "--color", nullptr), nullptr);
+    const char *const filter[] = {self, "symbolize", nullptr};
+    int ends[2];
+    if (pipe(ends) != 0) smith_fail("smith_tests: cannot make a pipe");
+    posix_spawn_file_actions_t into_pipe;
+    posix_spawn_file_actions_t from_pipe;
+    posix_spawn_file_actions_init(&into_pipe);
+    posix_spawn_file_actions_init(&from_pipe);
+    posix_spawn_file_actions_adddup2(&into_pipe, ends[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&into_pipe, ends[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&into_pipe, ends[0]);
+    posix_spawn_file_actions_addclose(&into_pipe, ends[1]);
+    posix_spawn_file_actions_adddup2(&from_pipe, ends[0], STDIN_FILENO);
+    posix_spawn_file_actions_addclose(&from_pipe, ends[0]);
+    posix_spawn_file_actions_addclose(&from_pipe, ends[1]);
+    fflush(stdout);
+    fflush(stderr);
+    pid_t symbolizer = 0;
+    pid_t program = 0;
+    int started = posix_spawn(&symbolizer, self, &from_pipe, nullptr, (char *const *)filter, environ);
+    if (started == 0)
+        started = posix_spawnp(&program, runner[0], &into_pipe, nullptr, (char *const *)runner,
+                               smith_merge_environment(smith_tests_environment(run, self)));
+    close(ends[0]);
+    close(ends[1]);
+    posix_spawn_file_actions_destroy(&into_pipe);
+    posix_spawn_file_actions_destroy(&from_pipe);
+    if (started != 0) return smith_exit_not_started;
+    int status = smith_wait(runner[0], program);
+    (void)smith_wait(self, symbolizer);
+    return smith_tests_exit_code(status);
 }
 
 // What a .run step read, for its depfile. ninja's reader takes a space as '\ ', '#' as '\#' and '$' as '$$'.

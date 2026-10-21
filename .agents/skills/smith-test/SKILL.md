@@ -31,6 +31,19 @@ void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 1
 
 ## The checks
 
+Write checks as plain functions. A failure shows the line that called the check and the call chain, read from the stack and
+the source file, so a check needs no macro.
+
+```c
+smith_check(condition)                      // a bool
+smith_check_equal_u64(a, b)                 // bool, char, i8 i16 i32 i64, u8 u16 u32 u64, f32, f64, ptr: the type is in the name
+smith_check_near_f32(a, b, tolerance)       // |a - b| <= tolerance; also _f64; a NaN fails
+smith_check_same_bits_f64(a, b)             // bitwise identical; also _f32
+```
+
+`SMITH_CHECK_ABORTS(statement)` stays a macro (C has no closure to hand the statement to a function). The `SMITH_CHECK*`
+macros below still work and are deprecated: new tests call the functions above.
+
 ```c
 SMITH_CHECK(condition)              // a bool, or anything that converts to one
 SMITH_CHECK(a, op, b)               // op: == != < <= > >=; both values print with their types
@@ -52,7 +65,26 @@ SMITH_CHECK_ABORTS(expression)      // the expression stops the program on purpo
 
 The runner forks `--jobs` workers once and each runs the tests it is sent, one after another, in its own process. Each test starts with its arenas given back and an empty note; everything else it leaves behind (globals, open files, the heap) stays for the next test on that worker, and which tests share a worker depends on timing unless `--jobs 1`. So a test must not depend on another. `-DSHUFFLE=<seed>` runs the tests in a shuffled order to find one that does; with `-DJOBS=1` the same seed replays it. A worker is reused only after a clean pass with no `SMITH_CHECK_ABORTS`. A failed test ends its worker (a failed check unwinds out of arbitrary code and can leave state half-done), a test that ran a death check ends it too, passed or failed (a death check stands for the program ending, so shared state it left, such as a committed GPU command buffer, must not reach the next test), and so do a crash, a timeout, an exit and a sanitizer's report; the runner forks the next. Shrinking reuses one worker across its failing attempts, so the runner reruns the shrunk case once in a fresh worker; if it does not fail the same way you get the unshrunk failure and a line saying state leaked between attempts. A test that leaves global state dirty therefore only matters to the passing tests that follow it. `-DISOLATE` runs each test in a process of its own, as before the workers. This matters most with upstream LLVM's AddressSanitizer, which costs about 40 ms of kernel time for each fork or `posix_spawn` on macOS.
 
-A failure looks like this; the last line reproduces it:
+A failure in `smith build test` looks like this; the last line reproduces it. The runner only records the addresses of the stack
+(`<smith/trace.h>`); smith turns them into files, lines and source text with LLVM's symbolizer, so the program holds no
+symbolizer and the test binary links as quickly as before:
+
+```
+FAIL moves_every_step
+  check failed at tests/moves_test.c:42
+       42 |     smith_check_equal_u64(moves.count, expected);
+  called from
+    tests/moves_test.c:42  moves_every_step
+    .smith/lib/test.c:931  smith_test_execute
+    a = 3   (u64)
+    b = 4   (u64)
+    rerun: ...
+```
+
+An `assert` is `aborted at file:line`, a segfault `crashed at file:line`, with inlined frames in the chain. AddressSanitizer and
+UBSan stacks have lines too: smith answers their symbolizer protocol. A runner run by hand prints the raw `smith-trace` lines for a
+plain-function check; `smith symbolize [--binary <program>] [<log>]` turns a saved log back into the report. The older macro form of the
+same failure:
 
 ```
 FAIL uniform_stays_in_range with seed 6387777158891554393

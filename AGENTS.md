@@ -71,7 +71,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   (`lib/smith-clang.id` of the install, compiled into smith, printed by `--smith-which`), or for `SMITH_CLANG` that
   clang's file. So a smith rebuilt with the same LLVM rebuilds nothing, and a rebuilt LLVM or another clang rebuilds all.
 - **smith's own code is C23 (`-std=gnu23`), libc only, no malloc**: it allocates nothing itself. The LLVM linked into
-  it is C++ and does, and `shim/clang.cpp`, a thin C interface to it, is the only C++ in smith.
+  it is C++ and does, and the files in `shim/` (`clang.cpp`, `lld.cpp`, `symbolize.cpp`), thin C interfaces to it, are
+  the only C++ in smith.
+- **A failure's report is read from its call stack, so checks and contracts are plain functions.** The program walks its
+  stack by frame pointers and writes the addresses with each image's UUID and slide (`<smith/trace.h>`); it holds no
+  symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
+  the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
+  40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
+  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; `SMITH_CHECK_ABORTS` stays a macro.
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
@@ -134,6 +141,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
   install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+- `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
+  input) into the failing line and the call chain; it needs the full smith.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
