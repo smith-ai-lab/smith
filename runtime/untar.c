@@ -29,6 +29,7 @@ constexpr int smith_untar_write_retries = 1000;
 
 typedef enum {
     SmithUntar_Header,
+    SmithUntar_Sniff,     // the first bytes of a "._" file, which may be macOS metadata, not yet created
     SmithUntar_File,      // the data of a regular file, written as it arrives
     SmithUntar_Extension, // the data of a pax or GNU long-name entry, collected
     SmithUntar_Skip,      // data and padding that are dropped
@@ -45,6 +46,9 @@ typedef struct {
     size_t filled;
     uint64_t remaining; // bytes left in the phase
     uint64_t file_size; // of the regular file being written, to find its padding
+    uint64_t mode;      // of a "._" file that is not created yet
+    uint8_t sniff[4];   // its first bytes
+    size_t sniffed;
     unsigned zero_blocks;
     int file;            // the open regular file, or -1
     char name[PATH_MAX]; // the current entry, normalised
@@ -282,7 +286,7 @@ static bool smith_untar_file_done(SmithUntar *untar) {
     return true;
 }
 
-static bool smith_untar_regular(SmithUntar *untar, uint64_t mode, uint64_t size) {
+static bool smith_untar_create(SmithUntar *untar, uint64_t mode, uint64_t size) {
     int dir = -1;
     const char *leaf = nullptr;
     if (!smith_untar_parent(untar, &dir, &leaf)) return false;
@@ -300,6 +304,48 @@ static bool smith_untar_regular(SmithUntar *untar, uint64_t mode, uint64_t size)
     untar->phase = SmithUntar_File;
     untar->remaining = size;
     return true;
+}
+
+constexpr uint64_t smith_untar_apple_double_min = 26; // the size of an AppleDouble header
+
+// macOS tar writes a file's extended attributes as a companion entry "._name" in the AppleDouble format, and bsdtar
+// turns it back into attributes instead of making a file. smith keeps no attributes, so such an entry is dropped; it is
+// known by its name and by the format's magic number in its first bytes. A "._" file of anything else is kept.
+static bool smith_untar_regular(SmithUntar *untar, uint64_t mode, uint64_t size) {
+    const char *slash = strrchr(untar->name, '/');
+    const char *base = slash != nullptr ? slash + 1 : untar->name;
+    if (size < smith_untar_apple_double_min || strncmp(base, "._", 2) != 0)
+        return smith_untar_create(untar, mode, size);
+    untar->mode = mode;
+    untar->file_size = size;
+    untar->remaining = size;
+    untar->sniffed = 0;
+    untar->phase = SmithUntar_Sniff;
+    return true;
+}
+
+// Takes the first four bytes of a "._" file, then drops the file if they are the AppleDouble magic number, else makes
+// it and writes them. Returns the bytes taken, or 0 after setting the error.
+static size_t smith_untar_sniff(SmithUntar *untar, const uint8_t *data, size_t size) {
+    static const uint8_t magic[4] = {0x00, 0x05, 0x16, 0x07};
+    size_t take = sizeof untar->sniff - untar->sniffed;
+    if (take > size) take = size;
+    memcpy(untar->sniff + untar->sniffed, data, take);
+    untar->sniffed += take;
+    untar->remaining -= take;
+    if (untar->sniffed < sizeof untar->sniff) return take;
+    if (memcmp(untar->sniff, magic, sizeof magic) == 0) {
+        untar->remaining += (smith_untar_block - untar->file_size % smith_untar_block) % smith_untar_block;
+        untar->phase = untar->remaining > 0 ? SmithUntar_Skip : SmithUntar_Header;
+        return take;
+    }
+    if (!smith_untar_create(untar, untar->mode, untar->file_size)) return 0;
+    untar->remaining -= sizeof untar->sniff;
+    if (!smith_untar_write(untar->file, untar->sniff, sizeof untar->sniff)) {
+        smith_untar_system(untar, "write the file");
+        return 0;
+    }
+    return take;
 }
 
 static bool smith_untar_folder(SmithUntar *untar, uint64_t mode) {
@@ -583,6 +629,7 @@ static size_t smith_untar_step(SmithUntar *untar, const uint8_t *data, size_t si
         untar->filled = 0;
         return smith_untar_header(untar) ? take : 0;
     }
+    if (untar->phase == SmithUntar_Sniff) return smith_untar_sniff(untar, data, size);
     if (untar->phase == SmithUntar_Ended) {
         if (smith_untar_is_zero(data, size)) return size;
         smith_package_fail(untar->error, "tar: data follows the end of the archive");
@@ -633,8 +680,9 @@ static bool smith_untar_finish(SmithUntar *untar) {
     if (untar->phase == SmithUntar_Header && untar->filled == 0 && untar->zero_blocks == 0) {
         return smith_package_fail(untar->error, "tar: the archive ends without its end marker (it is cut off)");
     }
-    if (untar->phase == SmithUntar_File)
+    if (untar->phase == SmithUntar_File || untar->phase == SmithUntar_Sniff) {
         return smith_untar_reject(untar, "the archive ends inside this file (it is cut off)");
+    }
     return smith_package_fail(untar->error, "tar: the archive ends inside an entry (it is cut off)");
 }
 

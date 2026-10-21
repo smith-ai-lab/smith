@@ -251,6 +251,33 @@ ln "$work/hard/pkg-1.0/one" "$work/hard/pkg-1.0/two"
 fetch "$arc/hard.tar"
 expect "hard links: both names have the bytes" "shared shared" "$(cat "$package/one" "$package/two" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
 
+# macOS tar writes extended attributes as "._name" entries in the AppleDouble format and bsdtar turns them back into
+# attributes, so they never become files, and the package is still one folder. smith drops them too, by the format's
+# magic number; a "._" file of anything else is a file like any other.
+mkdir -p "$work/apple/pkg-1.0" "$work/apple-plain/pkg-1.0"
+echo first >"$work/apple/pkg-1.0/a"
+echo second >"$work/apple/pkg-1.0/b"
+printf 'a plain file that only has a name like metadata\n' >"$work/apple-plain/pkg-1.0/dot_plain"
+printf 'tiny\n' >"$work/apple-plain/pkg-1.0/dot_tiny"
+xattr -w com.example.test value "$work/apple/pkg-1.0/a" 2>/dev/null
+xattr -w com.example.test value "$work/apple/pkg-1.0/b" 2>/dev/null
+(cd "$work/apple" && env -u COPYFILE_DISABLE tar -cf "$arc/apple.tar" pkg-1.0)
+# Two files whose names start with "._" and that are not AppleDouble, appended under those names.
+(cd "$work/apple-plain" && tar -rf "$arc/apple.tar" -s ',dot_,._,' pkg-1.0/dot_plain pkg-1.0/dot_tiny)
+mkdir -p "$work/apple-expect"
+cp -R "$work/apple/pkg-1.0" "$work/apple-expect/" && xattr -cr "$work/apple-expect"
+cp "$work/apple-plain/pkg-1.0/dot_plain" "$work/apple-expect/pkg-1.0/._plain"
+cp "$work/apple-plain/pkg-1.0/dot_tiny" "$work/apple-expect/pkg-1.0/._tiny"
+# (tar -t hides these entries, since it reads them as the attributes of the next one, so look at the bytes.)
+if [ "$(grep -a -c '\._a' "$arc/apple.tar")" -gt 0 ]; then
+    fetch "$arc/apple.tar"
+    expect "AppleDouble entries become no files, and the package is still one folder" "$(listing "$work/apple-expect/pkg-1.0")" "$(listing "${package:-/nonexistent}" 2>/dev/null)"
+    gzip -c "$arc/apple.tar" >"$arc/apple.tar.gz"
+    same "AppleDouble entries in a tar.gz" "$arc/apple.tar.gz" "$work/apple-expect/pkg-1.0"
+else
+    echo "skip  AppleDouble entries: this tar writes none"
+fi
+
 # 4. Damaged archives.
 refuse "not an archive" "$work/src/pkg-1.0/hello.txt" "not a tar, tar.gz or tar.xz archive"
 : >"$arc/empty"
@@ -336,6 +363,14 @@ for seed in seed.tar seed.tar.gz seed.tar.xz sha256.tar.xz; do
     capture "$work/untar" fuzz "$work/seeds/$seed" "$work/scratch" 1500 1
     expect_contains "sanitizers: 1500 damaged copies of $seed do no harm" "$rc $out $err" "0 1500 damaged archives"
 done
+if [ -f "$arc/apple.tar.gz" ]; then
+    capture "$work/untar" prefixes "$arc/apple.tar.gz" "$work/scratch"
+    expect_contains "sanitizers: every shorter prefix of the AppleDouble tar.gz is refused" "$rc $out" "0 "
+    capture "$work/untar" prefixes "$arc/apple.tar" "$work/scratch"
+    expect_contains "sanitizers: every shorter prefix of the AppleDouble tar is refused" "$rc $out" "0 "
+    capture "$work/untar" fuzz "$arc/apple.tar" "$work/scratch" 800 6
+    expect_contains "sanitizers: damaged AppleDouble entries do no harm" "$rc $out $err" "0 800 damaged archives"
+fi
 capture "$work/untar" fuzz "$arc/pax.tar" "$work/scratch" 800 2
 expect_contains "sanitizers: damaged headers of the pax tar do no harm" "$rc $out $err" "0 800 damaged archives"
 capture "$work/untar" fuzz "$arc/long-gnu.tar" "$work/scratch" 800 3
