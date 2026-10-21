@@ -24,6 +24,23 @@ mkdir -p "$out/lib" "$out/include" "$cache/tools"
     -DZ3_BUILD_PYTHON_BINDINGS=OFF -DZ3_BUILD_JAVA_BINDINGS=OFF -DZ3_BUILD_DOTNET_BINDINGS=OFF
 nice "$ninja" -C "$cache/z3-build" install
 
+# ---- step: Z3's static initializers. libz3.a has about ten thousand, which dyld would run in every smith process at load
+# ---- (the prover is in all of them). They are moved to __DATA,__smith_prove (scripts/defer_init.c, as for the tools in
+# ---- scripts/llvm.sh), and shim/prove.cpp runs them when `smith prove` does. The archive is rebuilt from the objects of
+# ---- Z3's build, in the order Z3's own archive step used.
+"$host/clang" -std=gnu23 -O1 -Wall -Wextra -Werror "$(dirname "$0")/defer_init.c" -o "$cache/tools/defer_init"
+rm -rf "$cache/z3-deferred"
+mkdir -p "$cache/z3-deferred"
+count=0
+(cd "$cache/z3-build" && "$ninja" -t commands libz3.a | tail -n 1 | tr ' ' '\n' | grep '\.o$') >"$cache/z3-deferred/objects.txt"
+while read -r object; do
+    count=$((count + 1))
+    "$cache/tools/defer_init" "$cache/z3-build/$object" "$cache/z3-deferred/$(printf '%05d' "$count").o" prove >/dev/null
+done <"$cache/z3-deferred/objects.txt"
+rm -f "$out/lib/libz3.a"
+/usr/bin/ar rcs "$out/lib/libz3.a" "$cache"/z3-deferred/*.o
+# ---- end of the Z3 step.
+
 # Alive2 finds its version with git, which a package has none of: a stand-in that names the pin. re2c only builds its
 # own `alive` tool, which is not built here.
 printf '#!/bin/sh\necho smith-pinned\n' >"$cache/tools/git"
