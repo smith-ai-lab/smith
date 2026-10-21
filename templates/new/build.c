@@ -84,11 +84,13 @@ static void build_docs(SmithBuild *b) {
     smith_alias(b, "docs", docs.outputs);
 }
 
-// smith fmt, smith lint and smith check. The sources are listed here: add a file to the list when you add one.
+// smith fmt, smith lint and smith check. The C sources are listed here: add a file to the list when you add one. Every
+// .smith file in the project is formatted too (as C, with its `::` paths and module and import lines).
 // clang-tidy reads the flags of each file from compile_commands.json, which this build writes, so lint checks what the
 // build builds.
 static void build_checks(SmithBuild *b) {
-    const char *const *sources = smith_list(b, "main.c", "build.c", nullptr);
+    const char *const *sources = smith_cat(b, smith_list(b, "main.c", "build.c", nullptr),
+                                           smith_glob(b, smith_list(b, "**/*.smith", nullptr)), nullptr);
     SmithStep fmt = {.command = smith_cat(b, smith_list(b, "smith", "fmt", "-i", nullptr), sources, nullptr)};
     smith_task(b, "fmt", &fmt);
     SmithStep check_format = {
