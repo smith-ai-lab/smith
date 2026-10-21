@@ -50,7 +50,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <smith/arena.h>
+#include "arena.h"
 
 // clang has no _Float32 (C23 Annex H), so the types are asserted to be IEEE binary32 and binary64.
 static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53, "float and double must be IEEE");

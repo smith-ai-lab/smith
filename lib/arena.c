@@ -1,4 +1,4 @@
-#include <smith/arena.h>
+#include "../include/smith/arena.h"
 
 #include <assert.h>
 #include <stdint.h>

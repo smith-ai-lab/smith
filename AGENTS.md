@@ -69,7 +69,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
-    console, files, clock, processes, later the network), each platform behind it on its best API (kqueue on macOS).
+    console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
 ## Commands
 
@@ -98,7 +98,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
-  a hash, fetched with `/usr/bin/curl` and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`; no other
+  a hash, fetched with smith's own HTTPS client and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`; no other
   process); the hash is the lock (no registry, no lock file). `-DOFFLINE` forbids fetching. macOS only for now.
 - **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE, LZMA2 and tar, no
   vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a

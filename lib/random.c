@@ -1,4 +1,4 @@
-#include <smith/random.h>
+#include "../include/smith/random.h"
 
 // The same bits on every platform: a fused multiply-add rounds once where the standard rounds twice, and changes the
 // last bit of a draw. The pragma turns contraction off, which holds against -ffp-contract=on (clang's default) and

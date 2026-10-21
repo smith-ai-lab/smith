@@ -1,6 +1,6 @@
 // Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, included by smith.c
 // (`smith fetch`) and by the build runtime (`smith_package`), and embedded in smith so the runtime finds it next to
-// itself in .smith/. It needs SMITH_ASSERT and `environ` from its includer. See docs/build-c.md.
+// itself in .smith/. It needs SMITH_ASSERT from its includer. See docs/build-c.md.
 //
 // The cache is $XDG_CACHE_HOME/smith/packages/<hex>/, or ~/.cache/smith/packages/<hex>/, keyed by the archive's hash. A
 // package is downloaded to a temporary file, verified, extracted into a temporary folder and only then renamed into
@@ -11,27 +11,55 @@
 // to packages: each use touches <hex>.used beside the package, and a build that finds the weekly check due (a
 // `prune.timestamp` older than a week) removes the packages whose <hex>.used is older than 31 days. See the comment
 // above smith_package_prune_entry for why that is safe beside a build that is using one.
+//
+// The download is smith's own HTTPS client (<smith/http.h> on io.net), which this file includes with the libraries it
+// needs, so whoever includes this file needs nothing else. It finds them in the layout of the project's .smith/
+// (lib/ and internal/, written by `smith build`) or of smith's own repository (../lib/).
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <ftw.h>
 #include <limits.h>
-#include <spawn.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#if __has_include("lib/io.c")
+#include "internal/http.c"
+#include "lib/arena.c"
+#include "lib/io.c"
+#include "lib/random.c"
+#else
+#include "../lib/arena.c"
+#include "../lib/http.c"
+#include "../lib/io.c"
+#include "../lib/random.c"
+#endif
+#else
+// No HTTPS client yet (io is macOS only): the download fails with a message, and these stand in for io's type.
+typedef struct {
+    int unused;
+} SmithIo;
+static SmithIo smith_io_make(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    return (SmithIo){};
+}
+static void smith_io_close(SmithIo *io) {
+    (void)io;
+}
+#endif
 
 constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
 constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the terminator
 constexpr size_t smith_package_error_size = 2048;
 constexpr size_t smith_package_read_size = 65536;
-constexpr int smith_package_wait_tries = 1000;
 
 // The one pruning rule of both caches, in seconds. clang gets them as -fmodules-prune-interval and
 // -fmodules-prune-after; smith applies them to packages itself.
@@ -204,41 +232,22 @@ static void smith_package_remove(const char *path) {
 
 #include "untar.c"
 
-// Runs a program as a child with the caller's stdout and stderr, and waits. The result is its exit status, 128 plus the
-// signal that killed it, or 127 when it cannot start.
-static int smith_package_spawn(const char *program, char *const *args) {
-    pid_t pid = 0;
-    if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) return 127;
-    int status = 0;
-    int waited = -1;
-    for (int i = 0; i < smith_package_wait_tries && waited < 0; i++)
-        waited = waitpid(pid, &status, 0);
-    if (waited < 0) return 127;
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return 128 + WTERMSIG(status);
+#ifdef __APPLE__
+// The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
+// redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
+static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
+    SMITH_ASSERT(io != nullptr);
+    SmithHttpResult result = smith_http_get(io, url, destination);
+    if (result.error.code == 0) return true;
+    return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
-
-// The only place a package is downloaded: smith's own HTTP client will replace it. $SMITH_CURL picks another curl, as
-// $SMITH_NINJA picks another ninja. https only (and file:// for tests), also after a redirect.
-static bool smith_package_download(const char *url, const char *destination) {
-    const char *override = getenv("SMITH_CURL");
-    const char *curl = override != nullptr && *override != '\0' ? override : "/usr/bin/curl";
-    char *args[] = {(char *)curl,
-                    (char *)"--fail",
-                    (char *)"--location",
-                    (char *)"--silent",
-                    (char *)"--show-error",
-                    (char *)"--proto",
-                    (char *)"=https,file",
-                    (char *)"--proto-redir",
-                    (char *)"=https",
-                    (char *)"--output",
-                    (char *)destination,
-                    (char *)"--url",
-                    (char *)url,
-                    nullptr};
-    return smith_package_spawn(curl, args) == 0;
+#else
+static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
+    (void)io;
+    (void)destination;
+    return smith_package_fail(error, "cannot download %s: smith has no HTTPS client on this platform yet", url);
 }
+#endif
 
 typedef enum {
     SmithCache_Modules,
@@ -454,11 +463,12 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     return true;
 }
 
-// Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). With `wanted` (the
-// "sha256:<hex>" a build.c names) the download must match it, and a package already cached is not fetched again. With
-// nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
-// `offline` turns a missing package into an error that names the URL.
-static bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
+// Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). The io is what the
+// download uses (smith_io_make, or a test's io with a scripted network); with `offline` nothing is downloaded, so it
+// may be nullptr. With `wanted` (the "sha256:<hex>" a build.c names) the download must match it, and a package already
+// cached is not fetched again. With nullptr (`smith fetch`) the archive is always downloaded and its hash is the
+// answer, put in `hash` either way. `offline` turns a missing package into an error that names the URL.
+static bool smith_package_ensure(SmithIo *io, const char *url, const char *wanted, bool offline, char *folder,
                                  char hash[smith_package_hash_size], SmithPackageError *error) {
     SmithPackageTemps temps;
     if (!smith_package_root(temps.packages, error)) return false;
@@ -483,9 +493,8 @@ static bool smith_package_ensure(const char *url, const char *wanted, bool offli
     }
     if (wanted == nullptr) smith_package_prune(temps.packages);
     smith_package_temps(&temps);
-    bool ok = smith_package_download(url, temps.download)
-                  ? smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error)
-                  : smith_package_fail(error, "cannot download %s", url);
+    bool ok = smith_package_download(io, url, temps.download, error) &&
+              smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error);
     smith_package_remove(temps.download);
     smith_package_remove(temps.extract);
     if (ok) smith_package_use(temps.packages, hash + 7);

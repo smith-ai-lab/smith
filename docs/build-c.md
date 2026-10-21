@@ -224,9 +224,17 @@ const char *cmake = smith_package(b, &(SmithPackage){
   when build.c asks for it, before ninja runs.
 - **`smith fetch <url>`** downloads the archive, prints `.hash = "sha256:...",` to paste into build.c, and leaves the
   package in the cache.
-- **Download** uses `/usr/bin/curl` (https, or `file://` for tests; `$SMITH_CURL` picks another curl). It is one
-  internal function, so smith's own HTTP client can replace curl later without changing this. SHA-256 is in smith,
-  checked against the NIST test vectors in `tests/build.sh`. macOS only for now.
+- **Download** is smith's own HTTPS client (`lib/http.c` over `io.net`, Network.framework with the system's trust;
+  `file://` copies a local file, for tests). It follows redirects, https only (a redirect to another scheme is an
+  error), streams the body to the temporary file a block at a time, fails a server that sends nothing for 60 s with
+  `ETIMEDOUT`, and reports statuses, redirect loops, short bodies and TLS failures as messages that name the URL.
+  smith.c and the build runtime include the client with the libraries it needs (`lib/arena.c`, `random.c`, `io.c`,
+  `http.c`; the runtime gets them from `.smith/lib/` and `.smith/internal/http.c`, and `smith_library` does not offer
+  http until a second project needs it), so `cc -std=gnu23 smith.c` is still the whole build; Network.framework is
+  loaded with `dlopen` on the first download, so nothing else pays for it. SHA-256 is in smith, checked against the NIST
+  test vectors in `tests/build.sh`. The network cases are tested in `tests/package.sh` (a real cache, a scripted
+  network: redirects, a refused cross-scheme redirect, 404, a short body, a broken connection, a wrong hash, a TLS
+  failure, leftovers of a killed fetch). macOS only for now.
 - **Extraction** is smith's own code and runs no process: see [Archives](#archives) below.
 
 ## Archives
@@ -625,7 +633,7 @@ typedef struct {
 } SmithPackage;
 // The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
 // ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash. Fetched, verified and extracted on
-// the first use (/usr/bin/curl; smith itself reads .tar, .tar.gz and .tar.xz; $SMITH_CURL picks another curl);
+// the first use (smith's own HTTPS client; smith itself reads .tar, .tar.gz and .tar.xz);
 // afterwards it is only looked up, so a build works offline once it has fetched. When the archive holds one top-level
 // folder, the path is that folder's contents. The package appears in the cache only when it is complete: a fetch that
 // is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
