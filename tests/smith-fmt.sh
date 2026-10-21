@@ -77,8 +77,17 @@ different=0
 own=0 # smith's own files among them: in an agent's worktree, under .claude/worktrees, they are not to be skipped
 for root in "$here" "$HOME/Documents/game" "$HOME/Documents/virtual-cell/learner" "$HOME/Documents/checkers"; do
     [ -d "$root" ] || continue
+    # What the root's .clang-format-ignore names is never formatted (clang-format skips it under its own name, not under
+    # the .smith one), so it is not compared: each pattern, `**` read as `*`, becomes a path find leaves out.
+    set --
+    if [ -f "$root/.clang-format-ignore" ]; then
+        while IFS= read -r pattern; do
+            case $pattern in '' | '#'*) continue ;; esac
+            set -- "$@" -not -path "$root/$(printf '%s' "$pattern" | sed 's/\*\*/*/g')"
+        done <"$root/.clang-format-ignore"
+    fi
     for file in $(find "$root" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' -not -path "$root/.claude/*" \
-        -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/tree-sitter/src/*' -not -path '*/expect/*' |
+        -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/tree-sitter/src/*' -not -path '*/expect/*' "$@" |
         LC_ALL=C sort); do
         as_c=$(format "$file" <"$file" 2>&1)
         as_smith=$(format "${file%.c}.smith" <"$file" 2>&1)
