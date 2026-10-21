@@ -162,7 +162,7 @@ run_case() { # name
         done
     fi
     if [ -f ask ]; then # what the parser answers about the types named in `ask`
-        grep '^ask' "$out/stderr" >"$out/asked"
+        grep '^ask\|^query' "$out/stderr" >"$out/asked"
         check "$name: the answers" expect/ask "$out/asked"
     fi
     if [ -f expect/symbols ]; then

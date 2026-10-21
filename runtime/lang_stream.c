@@ -379,6 +379,27 @@ const char *smith_lang_header(const SmithLang *lang, size_t *length) {
     return smith_lang_header_full;
 }
 
+// `?const T *` in SMITH_LANG_ASK: what the parser says of a type written as tokens (type_query).
+static void smith_lang_ask_query(const SmithHost *host, const char *spelling, size_t length) {
+    SmithTypeQuery query = {0};
+    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)length, &query)) {
+        fprintf(stderr, "query %.*s: unknown\n", (int)length, spelling);
+        return;
+    }
+    fprintf(stderr, "query %.*s: %.*s", (int)length, spelling, (int)query.canonical_length, query.canonical);
+    if (query.complete) {
+        fprintf(stderr, ", size %llu alignment %llu", (unsigned long long)query.size,
+                (unsigned long long)query.alignment);
+    }
+    static const char *const names[] = {"integer", "float", "signed", "pointer", "bool", "enum", "record"};
+    const bool kinds[] = {query.is_integer, query.is_float, query.is_signed, query.is_pointer,
+                          query.is_bool,    query.is_enum,  query.is_record};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 7 kinds
+        if (kinds[i]) fprintf(stderr, ", %s", names[i]);
+    }
+    fputc('\n', stderr);
+}
+
 // SMITH_LANG_ASK=Name,struct Tag: at the end of the file, what the parser says of those types (their size, alignment
 // and fields). It exercises the questions that reflection will ask, and tests them.
 static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
@@ -387,6 +408,11 @@ static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
     for (const char *at = list; *at != 0;) { // each entry
         const char *end = strchr(at, ',');
         size_t length = end != nullptr ? (size_t)(end - at) : strlen(at);
+        if (at[0] == '?') {
+            smith_lang_ask_query(host, at + 1, length - 1);
+            at = end != nullptr ? end + 1 : at + length;
+            continue;
+        }
         SmithLookupKind space = SmithLookup_Type;
         const char *name = at;
         static const char *const tags[] = {"struct ", "union ", "enum "};

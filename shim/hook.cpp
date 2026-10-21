@@ -262,6 +262,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.rename = &SmithHook::renameName;
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
+        host.type_query = &SmithHook::typeQuery;
         host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
@@ -271,6 +272,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
+        host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
         diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
         // clangd's preamble of a file that starts with code, as every module does, is the empty text before it, and
         // under -Wpedantic that is "a translation unit with no declaration". The file is not empty.
@@ -1185,6 +1187,186 @@ class SmithHook final : public TokenHook, public NameSource {
         if (const RecordDecl *record = type->getAsRecordDecl()) {
             info->is_record = true;
             info->fields = std::distance(record->field_begin(), record->field_end());
+        }
+        return true;
+    }
+
+    // ---- A type written as tokens
+    //
+    // A generic's instances are told apart by their types, and its `if constexpr` asks what a type is. The type comes
+    // as the tokens the call wrote, lowered (`const geometry_Point *`, `__UINT32_TYPE__`), so a small reader of C's
+    // type names is enough: builtin type words, the sized types' own names, a typedef or a `struct`, `union` or `enum`
+    // tag, qualifiers, and pointers. Anything else (arrays, function pointers) is not read, and the lowering then
+    // identifies the type by its spelling.
+    std::string queryText;
+
+    // The builtin type the words name, or a null type.
+    QualType builtinType(const std::vector<StringRef> &words) {
+        ASTContext &ast = sema->getASTContext();
+        unsigned longs = 0, shorts = 0, chars = 0, ints = 0, floats = 0, doubles = 0, voids = 0, bools = 0, halves = 0,
+                 int128s = 0;
+        bool isSigned = false, isUnsigned = false;
+        for (StringRef word : words) {
+            if (word == "long")
+                longs += 1;
+            else if (word == "short")
+                shorts += 1;
+            else if (word == "char")
+                chars += 1;
+            else if (word == "int")
+                ints += 1;
+            else if (word == "float")
+                floats += 1;
+            else if (word == "double")
+                doubles += 1;
+            else if (word == "void")
+                voids += 1;
+            else if (word == "_Bool" || word == "bool")
+                bools += 1;
+            else if (word == "_Float16")
+                halves += 1;
+            else if (word == "__int128")
+                int128s += 1;
+            else if (word == "signed")
+                isSigned = true;
+            else if (word == "unsigned")
+                isUnsigned = true;
+            else
+                return QualType();
+        }
+        if (voids == 1) return ast.VoidTy;
+        if (bools == 1) return ast.BoolTy;
+        if (floats == 1) return ast.FloatTy;
+        if (halves == 1) return ast.Float16Ty;
+        if (doubles == 1) return longs == 1 ? ast.LongDoubleTy : ast.DoubleTy;
+        if (int128s == 1) return isUnsigned ? ast.UnsignedInt128Ty : ast.Int128Ty;
+        if (chars == 1) return isUnsigned ? ast.UnsignedCharTy : isSigned ? ast.SignedCharTy : ast.CharTy;
+        if (shorts == 1) return isUnsigned ? ast.UnsignedShortTy : ast.ShortTy;
+        if (longs == 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
+        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
+        if (ints == 1 || isSigned || isUnsigned) return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
+        return QualType();
+    }
+
+    // The type a name stands for: one of the sized types' own names (`__UINT32_TYPE__`), a typedef, or a tag after its
+    // keyword.
+    QualType namedType(StringRef name, StringRef tag) {
+        if (tag.empty()) {
+            for (const SizedName &entry : sizedTable) {
+                if (entry.macro != nullptr && name == entry.macro) return sizedType(entry.macro);
+            }
+        }
+        SmithLookupKind space = tag.empty() ? SmithLookup_Type : SmithLookup_Tag;
+        auto *decl = dyn_cast_or_null<TypeDecl>(findDecl(name.data(), name.size(), space));
+        return decl == nullptr ? QualType() : sema->getASTContext().getTypeDeclType(decl);
+    }
+
+    // The words of a spelling: names, and `*` as a word of its own.
+    static std::vector<StringRef> typeWords(StringRef spelling) {
+        std::vector<StringRef> words;
+        for (size_t at = 0; at < spelling.size();) {
+            char c = spelling[at];
+            if (c == ' ') {
+                at += 1;
+            } else if (c == '*') {
+                words.push_back(spelling.substr(at, 1));
+                at += 1;
+            } else if (isAsciiIdentifierContinue(c)) {
+                size_t end = at;
+                while (end < spelling.size() && isAsciiIdentifierContinue(spelling[end]))
+                    end += 1;
+                words.push_back(spelling.substr(at, end - at));
+                at = end;
+            } else {
+                return {};
+            }
+        }
+        return words;
+    }
+
+    QualType readType(StringRef spelling) {
+        std::vector<StringRef> words = typeWords(spelling);
+        if (words.empty()) return QualType();
+        size_t at = 0;
+        Qualifiers quals;
+        std::vector<StringRef> builtin;
+        QualType base;
+        for (; at < words.size() && words[at] != "*"; at++) {
+            StringRef word = words[at];
+            if (word == "const")
+                quals.addConst();
+            else if (word == "volatile")
+                quals.addVolatile();
+            else if (word == "restrict")
+                quals.addRestrict();
+            else if (word == "struct" || word == "union" || word == "enum") {
+                if (at + 1 >= words.size() || !base.isNull()) return QualType();
+                base = namedType(words[++at], word);
+            } else if (base.isNull() && builtin.empty() && sizedOrTypedef(word)) {
+                base = namedType(word, StringRef());
+            } else {
+                builtin.push_back(word);
+            }
+        }
+        if (base.isNull())
+            base = builtinType(builtin);
+        else if (!builtin.empty())
+            return QualType();
+        if (base.isNull()) return QualType();
+        base = sema->getASTContext().getQualifiedType(base, quals);
+        for (; at < words.size(); at++) { // pointers, and the qualifiers after each
+            if (words[at] == "*") {
+                base = sema->getASTContext().getPointerType(base);
+                continue;
+            }
+            Qualifiers after;
+            if (words[at] == "const")
+                after.addConst();
+            else if (words[at] == "volatile")
+                after.addVolatile();
+            else if (words[at] == "restrict")
+                after.addRestrict();
+            else
+                return QualType();
+            base = sema->getASTContext().getQualifiedType(base, after);
+        }
+        return base;
+    }
+
+    // Whether a word is a name (not a builtin type word or qualifier): a typedef, or a sized type's own name.
+    bool sizedOrTypedef(StringRef word) {
+        static const char *const builtinWords[] = {"signed", "unsigned", "short",   "long", "int",
+                                                   "char",   "float",    "double",  "void", "_Bool",
+                                                   "bool",   "_Float16", "__int128"};
+        for (const char *builtin : builtinWords) {
+            if (word == builtin) return false;
+        }
+        return true;
+    }
+
+    static bool typeQuery(void *context, const char *spelling, uint32_t length, SmithTypeQuery *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (self->sema == nullptr) return false;
+        QualType type = self->readType(StringRef(spelling, length));
+        if (type.isNull()) return false;
+        ASTContext &ast = self->sema->getASTContext();
+        QualType canonical = type.getCanonicalType();
+        *out = SmithTypeQuery{};
+        self->queryText = canonical.getAsString(ast.getPrintingPolicy());
+        out->canonical = self->queryText.c_str();
+        out->canonical_length = self->queryText.size();
+        out->is_bool = canonical->isBooleanType();
+        out->is_enum = canonical->isEnumeralType();
+        out->is_integer = canonical->isIntegerType() && !out->is_bool && !out->is_enum;
+        out->is_float = canonical->isRealFloatingType();
+        out->is_signed = out->is_float || canonical->isSignedIntegerOrEnumerationType();
+        out->is_pointer = canonical->isPointerType();
+        out->is_record = canonical->isRecordType();
+        out->complete = !canonical->isIncompleteType() && !canonical->isDependentType() && !canonical->isVoidType() &&
+                        !canonical->isFunctionType();
+        if (out->complete) {
+            out->size = ast.getTypeSizeInChars(canonical).getQuantity();
+            out->alignment = ast.getTypeAlignInChars(canonical).getQuantity();
         }
         return true;
     }
