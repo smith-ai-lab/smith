@@ -44,6 +44,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -219,6 +220,10 @@ struct Analyses {
 // proof of the result holds for the original in every case LLVM keeps defined.
 const char *const clean_pipeline = "sroa<modify-cfg>,early-cse,simplifycfg,dce";
 
+// The same without early-cse, which would replace a load by the value an earlier store wrote. A contract is evaluated
+// where the caller can read the memory the callee wrote, so the loads of its snapshot must stay loads.
+const char *const light_pipeline = "sroa<modify-cfg>,simplifycfg,dce";
+
 // Loops of constant bounds are unrolled, whatever the cost model thinks.
 const char *const unroll_pipeline =
     "loop-simplify,lcssa,loop(indvars),loop-unroll<O3;full-unroll-max=1000000;no-partial;no-runtime;upperbound>,"
@@ -353,6 +358,16 @@ void mark_accessed_parameters(Function &function) {
                     widest = std::max(widest, store->getAlign());
                     stored = true;
                 }
+            } else if (auto *call = dyn_cast<CallBase>(&instruction)) {
+                // Passed on to a function that stores through its parameter (one used through its contract is not
+                // inlined): the object must be writable and aligned for that too.
+                Function *callee = direct_callee(call);
+                if (callee == nullptr || callee->isIntrinsic()) continue;
+                for (unsigned a = 0; a < call->arg_size() && a < callee->arg_size(); a++) {
+                    if (getUnderlyingObject(call->getArgOperand(a)) != argument) continue;
+                    if (callee->getArg(a)->hasAttribute(Attribute::Writable)) stored = true;
+                    if (MaybeAlign align = callee->getArg(a)->getParamAlign()) widest = std::max(widest, *align);
+                }
             }
         }
         if (widest > Align(1)) argument->addAttr(Attribute::getWithAlignment(function.getContext(), widest));
@@ -385,6 +400,23 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             return false;
         }
     }
+}
+
+const char *const snapshot_suffix = ".smith.contract";
+
+// A modular function is used through its contract, and a contract about memory is about the memory after the call.
+// The function that is proved (and called) is cleaned until a load that follows a store is the stored value; the
+// contract is read from this copy, made before that, in which a load of the callee's memory is still a load.
+void make_snapshot(Function &function) {
+    ValueToValueMapTy map;
+    Function *copy = CloneFunction(&function, map);
+    copy->setName(function.getName() + snapshot_suffix);
+    copy->setLinkage(GlobalValue::InternalLinkage);
+    copy->addFnAttr("smith.snapshot");
+}
+
+bool is_snapshot(const Function &function) {
+    return function.hasFnAttribute("smith.snapshot");
 }
 
 } // namespace
@@ -425,7 +457,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     Analyses analyses;
     for (Function &function : module) {
         if (function.isDeclaration()) continue;
-        if (!analyses.run_function(function, clean_pipeline, error)) return false;
+        if (!analyses.run_function(function, light_pipeline, error)) return false;
         mark_pointer_parameters(function);
     }
 
@@ -444,6 +476,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     for (Function *function : order) {
         if (program.recursive.count(function) != 0) continue;
         if (!inline_helpers(*function, program.recursive, error)) return false;
+        if (is_modular(*function)) make_snapshot(*function);
         if (!analyses.run_function(*function, clean_pipeline, error)) return false;
         mark_accessed_parameters(*function);
     }
@@ -458,7 +491,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
 std::vector<std::string> program_units(const Program &program) {
     std::vector<std::string> names;
     for (const Function &function : *program.module) {
-        if (function.isDeclaration()) continue;
+        if (function.isDeclaration() || is_snapshot(function)) continue;
         bool unit = has_any_own_contract(function);
         if (!unit && program.called.count(&function) == 0) {
             for (const Instruction &instruction : instructions(function)) {
@@ -718,6 +751,7 @@ Slices build_slices(Function &callee) {
         if (contract_of(&instruction) == Contract::Ensures) ensures_roots.push_back(&instruction);
     }
     std::string name = callee.getName().str();
+    if (StringRef(name).ends_with(snapshot_suffix)) name.resize(name.size() - strlen(snapshot_suffix));
     if (!requires_roots.empty()) {
         Cone cone;
         if (!compute_cone(analysis, requires_roots, nullptr, false, cone, slices.error)) return slices;
@@ -858,7 +892,10 @@ bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
 bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     auto cached = context.slices.find(&callee);
-    if (cached == context.slices.end()) cached = context.slices.emplace(&callee, build_slices(callee)).first;
+    if (cached == context.slices.end()) {
+        Function *snapshot = context.module.getFunction(callee.getName().str() + snapshot_suffix);
+        cached = context.slices.emplace(&callee, build_slices(snapshot != nullptr ? *snapshot : callee)).first;
+    }
     Slices &slices = cached->second;
     if (!slices.ok) {
         context.fail(&call, "cannot use the contract of " + source_name(callee) + ": " + slices.error, "");
