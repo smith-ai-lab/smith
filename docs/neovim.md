@@ -68,8 +68,10 @@ changes a debug configuration of yours.
   a configuration. Breakpoints are set as in any nvim-dap session (`dap.toggle_breakpoint()`), before or after.
 - **neotest**: `editors/neovim/lua/neotest-smith` is an adapter for [neotest](https://github.com/nvim-neotest/neotest),
   so test nearest, file, suite and debug nearest work on smith tests. It registers nothing by itself; add it:
-  `require("neotest").setup({ adapters = { require("neotest-smith") } })` (the plugin is on the runtimepath, so
-  `require("neotest-smith")` finds it).
+  `require("neotest").setup({ adapters = { require("neotest-smith") } })`. The adapter is in `editors/neovim`, which
+  `plugin/smith.lua` puts on the runtimepath; during `init.lua` `vim.pack.add` runs no `plugin/` file (its `load` is false
+  there), so a neotest setup in `init.lua` needs the plugin loaded first:
+  `vim.pack.add({ "git@github.com:adam-r-kowalski/smith" }, { load = true })`, before the setup.
   - **Test files and tests.** A test file is a `.c` or `.smith` file in a smith project (a folder with `build.c` or
     `build.smith`) named `test_*` or `*_test`; the rule is the name only, which is cheap, the way `smith_tests` globs
     `tests/test_*.c`. The tests in it are the `test_` function definitions, found with tree-sitter (the `c` parser, or
