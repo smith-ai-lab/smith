@@ -20,7 +20,7 @@ it. `.content_hash` is declared but not implemented. The
   `build.c` changes nothing. In particular, object paths stay the same as the Makefile's, because the linked binary
   records them.
 - **No macros.** A list is a C23 compound literal that ends in `nullptr`. A loop or a function builds the rest.
-- **C23, libc only, no malloc.** Strings and lists live in smith's arena until `build` returns.
+- **C23, libc only, no malloc** in the build program. Strings and lists live in smith's arena until `build` returns.
 - **build.c reads the outside world through the `smith_*` calls**: `smith_option`, `smith_option_value`, `smith_env`,
   `smith_glob`, `smith_capture`, `smith_capture_or` and `smith_lines`. These are the calls a later cache would track, and the checks on
   `build.c` (a lint rule, the option listing) know about them. In v1 `getenv` and `fopen` would also work, because the
@@ -48,12 +48,29 @@ The driver, in order:
    `smith build`'s.
 
 The header and the runtime are embedded in smith with C23 `#embed`, so `smith build` needs nothing installed beside it.
-The compile command is `<clang> -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include`, with the clang that `smith`
-itself would pick. Bootstrapping still works with one `cc` command.
+The compile command is `<compiler> -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include`, where the compiler is smith itself
+(it compiles in its own process, or runs `$SMITH_CLANG`) or, for a stage0 smith, the external clang it would pick.
+Bootstrapping still works with one `cc` command: that builds the stage0.
 
 smith's own files all go in `.smith/`: the manifests, ninja's logs (`builddir`), the build program, stamps and task
 outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, because ninja recompacts its log and
 drops the entries that the current manifest does not have.
+
+### A change of compiler rebuilds everything
+
+ninja decides that an object is out of date from its command, its inputs and their mtimes. A new smith, or another
+`SMITH_CLANG`, changes none of them when the command says `smith`, so the objects would look up to date though another
+compiler built them, and sanitized objects from two compilers do not link together (their ASan ABIs differ). So every
+`smith_object` and `smith_program` depends on a file `.smith/compiler/<hash of the compiler word>` that says which
+compiler it is:
+- the compiler's executable: its real path, size and mtime (a copy of the same bytes is a new compiler);
+- for smith (a program named `smith...`), also the line of `<smith> --smith-which -c a.c`, and when that names an external
+  clang (`$SMITH_CLANG`), that clang's file the same way.
+
+The program writes the file on every run, and `smith build` runs the program before ninja every time, but it rewrites the
+file only when the text changes. ninja then sees a newer input only after a change of compiler, and a build with the same
+compiler stays "no work to do". Going back to the old compiler is a change as well. `tests/build.sh` covers it: a stand-in
+compiler replaced, `COMPILER` switched, smith routing to another `SMITH_CLANG`, and a smith replaced by a copy.
 
 They are not in `build/`, because a project's `clean` task usually runs `rm -rf build`, and that would delete the logs
 while ninja is still running from them. Ninja then exits 1 with "Error writing to build log" (measured). smith writes
@@ -977,8 +994,11 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
 
 ## Bootstrapping
 
-- smith itself stays plain C23 with libc only, so a fresh clone builds with one command and any C23 compiler:
-  `cc -std=gnu23 smith.c -o smith` (checked with Apple clang 21). That smith then runs smith's own `build.c`, which is
+- smith's own C stays plain C23 with libc only, and allocates nothing, so a fresh clone builds a stage0 with one command
+  and any C23 compiler: `cc -std=gnu23 smith.c -o smith` (checked with Apple clang 21). The stage0 has no C++ and no
+  LLVM, and runs an external clang. `smith build llvm` then builds our static LLVM (once, about 9 minutes), and
+  `smith build` links the full smith: `smith.c` with `-DSMITH_IN_PROCESS`, `shim/clang.cpp` (the only C++) and the
+  archives of the LLVM install, with `-Wl,-dead_strip`. The stage0 then runs smith's own `build.c`, which is
   the second project built by `build.c`, after checkers: `smith build`, `smith build test`, `smith build check`,
   `smith build install` and the rest replaced the Makefile's targets, with the same compile command and the same
   machine code.
