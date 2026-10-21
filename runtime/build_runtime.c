@@ -828,6 +828,97 @@ static void smith_write_if_different(const char *path, const char *text, size_t 
     if (rename(temporary, path) != 0) smith_fail("cannot replace %s", path);
 }
 
+// What a compiler is. ninja decides that an object is out of date from its command, its inputs and their mtimes, and a
+// new compiler changes none of them when the command says `smith`: the objects look up to date, though the old
+// compiler built them (and sanitized objects of two compilers do not link together). So each object and program depends
+// on a file in .smith/compiler/ that says which compiler it is and is rewritten, so that its mtime moves, only when
+// that changes: ninja then rebuilds every object that compiler built, and a build with the same compiler does nothing.
+// A compiler is its executable (path, size and mtime); smith is the clang it runs (see smith_compiler_identity), so a
+// new smith with the same LLVM rebuilds nothing. The files are written by every run of this
+// program, and `smith build` runs it before ninja each time.
+constexpr size_t smith_compilers_max = 64;
+static const char *smith_compilers[smith_compilers_max];
+static size_t smith_compiler_count;
+
+// The file that holds the identity of this compiler, and a note to write it.
+static const char *smith_compiler_file(const char *compiler) {
+    bool known = false;
+    for (size_t i = 0; i < smith_compiler_count; i++)
+        known = known || strcmp(smith_compilers[i], compiler) == 0;
+    if (!known) {
+        if (smith_compiler_count >= smith_compilers_max) smith_too_many("compilers", smith_compilers_max);
+        smith_compilers[smith_compiler_count++] = compiler;
+    }
+    return smith_text(".smith/compiler/%016" PRIx64, smith_hash_bytes(compiler, strlen(compiler)));
+}
+
+// The real path of an executable named by a path, or found on PATH; nullptr when there is none.
+static const char *smith_resolve_executable(const char *name) {
+    char found[PATH_MAX];
+    char real[PATH_MAX];
+    if (strchr(name, '/') != nullptr) {
+        if (realpath(name, real) == nullptr) return nullptr;
+        return smith_copy_string(real);
+    }
+    const char *path = getenv("PATH");
+    if (path == nullptr) return nullptr;
+    for (const char *start = path; *start != '\0' || start == path;) { // bounded by the length of PATH
+        const char *end = strchr(start, ':');
+        size_t length = end != nullptr ? (size_t)(end - start) : strlen(start);
+        int written = snprintf(found, sizeof found, "%.*s/%s", (int)length, length > 0 ? start : ".", name);
+        if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
+            realpath(found, real) != nullptr)
+            return smith_copy_string(real);
+        if (end == nullptr) break;
+        start = end + 1;
+    }
+    return nullptr;
+}
+
+// "<real path> <size> <mtime>" for the file at the path, or "<path> missing".
+static const char *smith_file_identity(const char *path) {
+    struct stat info;
+    if (stat(path, &info) != 0) return smith_text("%s missing", path);
+#ifdef __APPLE__
+    struct timespec modified = info.st_mtimespec;
+#else
+    struct timespec modified = info.st_mtim;
+#endif
+    return smith_text("%s %lld %lld.%09ld", path, (long long)info.st_size, (long long)modified.tv_sec,
+                      (long)modified.tv_nsec);
+}
+
+// What the compiler is. A compiler that is not smith is its executable (real path, size and mtime). Smith is not its
+// own file, which changes with every build of smith, but the clang it runs, as `<smith> --smith-which -c a.c` says:
+// with clang linked in, "clang in-process <clang>" and "identity <the version of that LLVM and a hash of what is
+// linked>", so a smith rebuilt against the same LLVM is the same compiler; with an external clang ($SMITH_CLANG, or a
+// stage0's), "clang <path>", so it is that clang's file. Anything else that is named smith is taken for a compiler like
+// another.
+static const char *smith_compiler_identity(const char *real) {
+    const char *base = strrchr(real, '/');
+    base = base != nullptr ? base + 1 : real;
+    const char *own = smith_file_identity(real);
+    if (strncmp(base, "smith", 5) != 0) return own;
+    const char *text = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
+    if (strncmp(text, "clang in-process ", 17) == 0) {
+        const char *identity = strstr(text, "\nidentity ");
+        return identity != nullptr ? smith_text("in-process %s", identity + 10) : own;
+    }
+    if (strncmp(text, "clang /", 7) == 0 && strchr(text, '\n') == nullptr)
+        return smith_text("external %s", smith_file_identity(text + 6));
+    return own;
+}
+
+static void smith_write_compiler_files(void) {
+    for (size_t i = 0; i < smith_compiler_count; i++) {
+        const char *compiler = smith_compilers[i];
+        const char *real = smith_resolve_executable(compiler);
+        const char *text =
+            smith_text("%s\n%s\n", compiler, real != nullptr ? smith_compiler_identity(real) : "missing");
+        smith_write_if_different(smith_compiler_file(compiler), text, strlen(text));
+    }
+}
+
 // A relative path with no '..' component, and nothing under .smith/, which is smith's own folder.
 static void smith_check_write_path(const char *path) {
     if (path == nullptr || *path == '\0') smith_fail("smith_write needs a path");
@@ -1225,7 +1316,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
-        .implicit_inputs = copy.implicit_inputs,
+        .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .outputs = smith_one(copy.output),
         .depfile = depfile,
     };
@@ -1288,7 +1379,8 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries, tail,
                              nullptr),
         .inputs = (const char *const *)outputs,
-        .implicit_inputs = smith_library_files(copy.libraries),
+        .implicit_inputs =
+            smith_cat(b, smith_library_files(copy.libraries), smith_one(smith_compiler_file(copy.linker)), nullptr),
         .outputs = smith_one(copy.output),
     };
     smith_step(b, &copy.step);
@@ -2191,6 +2283,7 @@ int main(int argc, char **argv) {
     // A -D that only a pending smith_defer callback reads is not known yet; stage 2 checks it.
     if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");
+    smith_write_compiler_files();
     smith_write_manifest(argv[first]);
     return 0;
 }

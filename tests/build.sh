@@ -2350,7 +2350,152 @@ expect "one command: cc -std=gnu23 smith.c builds a smith" 0 "$rc"
 capture "$work/one-command-smith" --smith-version
 expect_contains "one command: the built smith runs" "$out" "smith 0."
 
-# 13. A no-op build, timed (informational).
+# 13. A change of compiler rebuilds every object it compiled; a build with the same compiler does nothing.
+# ninja sees the same command (`smith ...`) before and after, so the objects would look up to date. Each object and
+# program depends on a file in .smith/compiler/ that says which compiler it is (see build_runtime.c).
+project
+mkdir bin
+for name in cc1 cc2 cc3; do
+    # A stand-in compiler: it writes the file after -o, saying who wrote it, and counts its runs in ./runs.
+    cat >"bin/$name" <<SH
+#!/bin/sh
+while [ \$# -gt 0 ]; do
+    if [ "\$1" = -o ]; then out=\$2; fi
+    shift
+done
+echo "$name" >"\$out"
+echo "\$0" >>"$(pwd)/runs"
+SH
+    chmod +x "bin/$name"
+done
+printf 'int main(void) { return 0; }\n' >a.c
+printf 'int f(void) { return 1; }\n' >b.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *compiler = smith_option_value(b, "COMPILER", "bin/cc1", "the compiler");
+    SmithObject a = {.compiler = compiler, .source = "a.c", .output = "build/a.o"};
+    SmithObject other = {.compiler = compiler, .source = "b.c", .output = "build/b.o"};
+    smith_object(b, &a);
+    smith_object(b, &other);
+    SmithProgram program = {.linker = "bin/cc3", .output = "build/program", .objects = (const SmithObject *[]){&a, &other, nullptr}};
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+}
+C
+build
+expect "compiler change: the first build runs the compiler on both sources and the linker" 3 "$(lines runs)"
+build
+expect_contains "compiler change: a build with the same compiler does nothing" "$out" "no work to do"
+expect "compiler change: and ran nothing" 3 "$(lines runs)"
+build -DCOMPILER=bin/cc2
+expect "compiler change: another compiler rebuilds both objects and links again" 6 "$(lines runs)"
+expect "compiler change: the object is the new compiler's" cc2 "$(cat build/a.o)"
+build -DCOMPILER=bin/cc2
+expect_contains "compiler change: the new compiler's build does nothing too" "$out" "no work to do"
+build -DCOMPILER=bin/cc1
+expect "compiler change: going back rebuilds as well" 9 "$(lines runs)"
+expect "compiler change: the object is the old compiler's again" cc1 "$(cat build/a.o)"
+# The same compiler replaced by another file: a new version.
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do\n    if [ "$1" = -o ]; then out=$2; fi\n    shift\ndone\necho cc1-new >"$out"\necho "$0" >>"%s/runs"\n' "$(pwd)" >bin/cc1.new
+chmod +x bin/cc1.new
+mv bin/cc1.new bin/cc1
+build
+expect "compiler change: the same path with another compiler in it rebuilds both objects" 12 "$(lines runs)"
+expect "compiler change: and the objects are the new one's" cc1-new "$(cat build/a.o)"
+build
+expect_contains "compiler change: and then settles" "$out" "no work to do"
+
+# smith as the compiler: what it runs is part of what it is. The external clangs are wrappers that note their runs on a.c
+# and run the real clang (smith build compiles build.c with them as well, which they let pass).
+real_clang=$(command -v cc)
+for name in w2 w3; do
+    cat >"bin/$name" <<SH
+#!/bin/sh
+case " \$* " in *" a.c "*) echo "$name" >>"$(pwd)/wrapped" ;; esac
+exec $real_clang "\$@"
+SH
+    chmod +x "bin/$name"
+done
+mkdir smith-bin
+cp "$smith" smith-bin/smith
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject a = {.compiler = "smith-bin/smith", .source = "a.c", .output = "build/a.o"};
+    smith_object(b, &a);
+    smith_default(b, a.step.outputs);
+}
+C
+rm -rf build runs
+capture env SMITH_CLANG="$(pwd)/bin/w2" "$smith" build
+expect "smith routes to an external clang: the first build runs it" w2 "$(cat wrapped)"
+capture env SMITH_CLANG="$(pwd)/bin/w2" "$smith" build
+expect_contains "smith routes to an external clang: the same clang does nothing" "$out" "no work to do"
+capture env SMITH_CLANG="$(pwd)/bin/w3" "$smith" build
+expect "smith routes to an external clang: SMITH_CLANG changed to another clang rebuilds the object" "$(printf 'w2\nw3')" "$(cat wrapped)"
+capture env SMITH_CLANG="$(pwd)/bin/w2" "$smith" build
+expect "smith routes to an external clang: and back again" "$(printf 'w2\nw3\nw2')" "$(cat wrapped)"
+printf '#!/bin/sh\ncase " $* " in *" a.c "*) echo w2new >>"%s/wrapped" ;; esac\nexec %s "$@"\n' "$(pwd)" "$real_clang" >bin/w2.new
+chmod +x bin/w2.new
+mv bin/w2.new bin/w2
+capture env SMITH_CLANG="$(pwd)/bin/w2" "$smith" build
+expect "smith routes to an external clang: a clang replaced by another in the same place rebuilds" \
+    "$(printf 'w2\nw3\nw2\nw2new')" "$(cat wrapped)"
+
+# The compiler is the clang smith runs, not smith's file: a smith replaced by a copy (a rebuilt smith) compiles the same.
+rm -rf build runs
+capture env -u SMITH_CLANG "$smith" build
+expect_contains "smith upgrade: the first build compiles the object" "$out" "a.c"
+expect "smith upgrade: with the real compiler" 0 "$rc"
+build
+expect_contains "smith upgrade: the second build does nothing" "$out" "no work to do"
+cp "$smith" smith-bin/smith.new
+mv smith-bin/smith.new smith-bin/smith
+build
+expect_contains "smith upgrade: a replaced smith with the same clang rebuilds nothing" "$out" "no work to do"
+capture env SMITH_CLANG="$(pwd)/bin/w3" "$smith" build
+expect_contains "smith upgrade: the same smith switched to an external clang rebuilds the object" "$out" "a.c"
+capture env -u SMITH_CLANG "$smith" build
+expect_contains "smith upgrade: and back to the clang inside rebuilds it again" "$out" "a.c"
+capture env -u SMITH_CLANG "$smith" build
+expect_contains "smith upgrade: and then settles" "$out" "no work to do"
+
+# What a smith with clang inside says about its clang is its identity: a rebuilt smith reports the same, a rebuilt LLVM
+# another. A stand-in smith that prints the two lines shows both (the real one is covered above and by run.sh).
+mkdir fake
+cat >fake/smith <<'SH'
+#!/bin/sh
+case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\nidentity %s\n' "$(cat "$0.id")" ;; *) echo "$0" >>runs ;; esac
+while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : >"$2"; fi; shift; done
+SH
+chmod +x fake/smith
+echo "llvm-23.1.3 aaaa" >fake/smith.id
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject a = {.compiler = "fake/smith", .source = "a.c", .output = "build/a.o"};
+    smith_object(b, &a);
+    smith_default(b, a.step.outputs);
+}
+C
+rm -rf build runs
+build
+expect "identity: the first build compiles" 1 "$(lines runs)"
+cp fake/smith fake/smith.new
+mv fake/smith.new fake/smith
+build
+expect_contains "identity: a smith rebuilt with the same LLVM rebuilds nothing" "$out" "no work to do"
+echo "llvm-23.1.3 bbbb" >fake/smith.id
+build
+expect "identity: a smith linked against another LLVM rebuilds the object" 2 "$(lines runs)"
+build
+expect_contains "identity: and then settles" "$out" "no work to do"
+
+# 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build
 start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
