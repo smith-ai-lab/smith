@@ -193,6 +193,94 @@ expect_line "c: the error is clang's, at its place" "$log" \
 case $log in *"hover util.c:3:5: function util_twice"*) chover=yes ;; *) chover=no ;; esac
 expect "c: hover" yes "$chover"
 
+# No project at all: a folder with no build.c and no compile_commands.json, where clangd's fallback command amounts to
+# `clang main.smith`. A .smith file gets what `smith cc` gives it (`-x c`, `-std=gnu2y`: smith_lang_command), so the editor
+# reads it as the CLI does.
+cd "$work" || exit 1
+mkdir -p solo modules handwritten borrowed
+cat >solo/main.smith <<'EOF'
+#include <stdio.h>
+
+int main() {
+  printf("hello world\n");
+  return 0;
+}
+EOF
+client_in() { # folder, client arguments
+    dir=$1
+    shift
+    (cd "$dir" && "$work/lsp_client" "$(command -v smith)" "$dir" "$@" 2>&1)
+}
+solo=$(cd solo && pwd -P)
+log=$(client_in "$solo" open main.smith)
+expect_line "solo: a single file with no database is read" "$log" "diagnostics main.smith"
+expect "solo: and has no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+log=$(client_in "$solo" open main.smith -- replace main.smith 'return 0' 'return zzz' -- hover main.smith 4 4 -- \
+    complete main.smith 4 7)
+expect_line "solo: an undefined name is reported at its place" "$log" "diag main.smith:5:10: Use of undeclared identifier 'zzz'"
+expect "solo: and only that" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+case $log in *"hover main.smith:4:4: function printf"*) hover=yes ;; *) hover=no ;; esac
+expect "solo: hover" yes "$hover"
+case $log in *"complete main.smith:4:7: "*printf*) completes=yes ;; *) completes=no ;; esac
+expect "solo: completion" yes "$completes"
+
+# Two modules with no build.c: `import foo` is found by its source, in the place the module name implies.
+cat >modules/main.smith <<'EOF'
+module main;
+import foo;
+import <stdio.h>;
+
+int main(void) {
+    i32 x = foo::f(10);
+    c::printf("%d\n", x);
+    return 0;
+}
+EOF
+cat >modules/foo.smith <<'EOF'
+module foo;
+
+export i32 f(i32 x) {
+    return x * 2;
+}
+EOF
+modules=$(cd modules && pwd -P)
+expect "modules: the same two files build and run with smith cc" 20 \
+    "$(cd "$modules" && smith cc main.smith foo.smith -o demo 2>&1 && ./demo)"
+log=$(client_in "$modules" open main.smith foo.smith)
+expect "modules: both files open" 2 "$(printf '%s\n' "$log" | grep -c '^diagnostics ')"
+expect "modules: with no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+log=$(client_in "$modules" open main.smith foo.smith -- replace main.smith 'foo::f' 'foo::zzzzzz')
+expect_line "modules: a typo in a call is one error, at the name" "$log" \
+    "diag main.smith:6:18: Use of undeclared identifier 'foo_zzzzzz'"
+expect "modules: and the only one" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+log=$(client_in "$modules" open main.smith foo.smith -- hover main.smith 6 18 -- \
+    definition main.smith 6 18 foo.smith:3:12)
+case $log in *"hover main.smith:6:18: function foo_f"*) hover=yes ;; *) hover=no ;; esac
+expect "modules: hover on a call into the other module" yes "$hover"
+expect_line "modules: go-to-definition lands in the other module's source" "$log" \
+    "definition main.smith:6:18 -> foo.smith:3:12"
+
+# A compile database that does not say what a .smith file is: written by hand without `-x c`, or naming only a .c file
+# (the .smith files then get a command borrowed from it).
+cp modules/main.smith modules/foo.smith handwritten/
+cp modules/main.smith modules/foo.smith borrowed/
+printf 'int util(int x) { return x; }\n' >borrowed/util.c
+cat >handwritten/compile_commands.json <<EOF
+[{"directory": "$work/handwritten", "command": "smith-cc -c main.smith -o main.o -std=gnu23", "file": "main.smith"},
+ {"directory": "$work/handwritten", "command": "smith-cc -c foo.smith -o foo.o", "file": "foo.smith"}]
+EOF
+cat >borrowed/compile_commands.json <<EOF
+[{"directory": "$work/borrowed", "command": "smith-cc -c util.c -o util.o -Wall", "file": "util.c"}]
+EOF
+for dir in handwritten borrowed; do
+    log=$(client_in "$(cd "$work/$dir" && pwd -P)" open main.smith foo.smith -- definition main.smith 6 18 foo.smith:3:12 -- \
+        replace main.smith 'foo::f' 'foo::zzzzzz')
+    expect_line "$dir: the call is found in the other module" "$log" "definition main.smith:6:18 -> foo.smith:3:12"
+    expect_line "$dir: a typo is one error, at the name" "$log" \
+        "diag main.smith:6:18: Use of undeclared identifier 'foo_zzzzzz'"
+    expect "$dir: and the only one" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+done
+
 echo
 echo "$total language server checks, $failures failed"
 [ "$failures" -eq 0 ]

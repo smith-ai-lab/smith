@@ -98,6 +98,9 @@ compile_forms() {
 
         capture env SMITH_CLANG="$cl" "$prog" $v -x c++ -c a.smith
         expect "[$form] a language named by the caller is left alone" "$(lines "clang argv0=$cl" '[-x]' '[c++]' '[-c]' '[a.smith]')" "$out"
+
+        capture env SMITH_CLANG="$cl" "$prog" $v -x c -c a.smith
+        expect "[$form] -x c is kept, and the standard is C2y as for any .smith input" "$(lines "clang argv0=$cl" '[-std=gnu2y]' '[-x]' '[c]' '[-c]' '[a.smith]')" "$out"
     else
         capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith -o out.o
         expect "[$form] a .smith input is refused by a smith without the token hook" "smith: .smith files need a smith whose clang has the token hook (patches/clang-token-hook.patch, applied by \`smith build llvm\`); this one has none" "$err"

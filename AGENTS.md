@@ -123,7 +123,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **`smith lsp` lowers `.smith` files too.** `smith_clangd_main` installs the same token hook, so a parse of a `.smith`
   file in clangd is lowered as a compile's is and positions are those of the source; no LLVM change. The lowering is
   C with static tables, so a hook holds it from its making to the end of its file and clangd's `.smith` parses take
-  turns. `compile_commands.json` carries `-x c` for `.smith` sources (clangd does not know the extension). Names in hover,
+  turns. clangd does not know the extension, so `shim/clangd.cpp` defines `clang::createInvocation` (the upstream function)
+  with the one rule of `smith cc` for `.smith` inputs (`smith_lang_command`, `runtime/lang_command.c`): `-x c`, and
+  `-std=gnu2y` unless a standard is named, for every command clangd uses, a folder with no compile database included
+  (a single file or a few modules need no build.c); no LLVM change. Names in hover,
   symbols and completion are the lowered C names, and completion after `x::` is empty
   (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a

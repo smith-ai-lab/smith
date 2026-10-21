@@ -207,6 +207,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "runtime/lang_declare.c",
                                                    "runtime/lang_stream.c",
                                                    "runtime/lang_lex.c",
+                                                   "runtime/lang_command.c",
                                                    "include/smith/build.h",
                                                    "include/smith/arena.h",
                                                    "lib/arena.c",
@@ -513,6 +514,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang_declare.c",
     "runtime/lang_stream.c",
     "runtime/lang_lex.c",
+    "runtime/lang_command.c",
     nullptr,
 };
 

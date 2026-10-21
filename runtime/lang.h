@@ -170,3 +170,12 @@ const char *smith_lang_module_name(const SmithLang *lang);
 bool smith_lang_misused_keyword(const char *text, size_t length);
 const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t start, size_t end);
 size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keyword, size_t length, const char *noun);
+
+// The command of a compile that names .smith inputs, made what `smith cc` makes it (runtime/lang_command.c):
+// `-std=gnu2y` unless the command names a standard (or has a C++ input), and `-x c` in front of each .smith input
+// (before the `--` when the inputs follow one, as clangd's commands have them). Nothing is changed when the command
+// names a language itself (`-x`), is clang's `-cc1` form, or has no .smith input. `argv[0 .. first)` are copied as they
+// are. Writes the new arguments to `out`, a null after them, `capacity` entries at most; returns their count, 0 when
+// the command stays as it is, or -1 when `out` is too small. `smith cc` and `smith lsp` (shim/clangd.cpp, for the
+// commands clangd compiles with) apply this one rule.
+int smith_lang_command(int argc, char **argv, int first, char **out, size_t capacity);
