@@ -1,0 +1,14 @@
+query __UINT32_TYPE__: unsigned int, size 4 alignment 4, integer
+query __INT8_TYPE__: signed char, size 1 alignment 1, integer, signed
+query const char *: const char *, size 8 alignment 8, pointer
+query unsigned long long: unsigned long long, size 8 alignment 8, integer
+query double: double, size 8 alignment 8, float, signed
+query _Bool: bool, size 1 alignment 1, bool
+query Packet: Packet, size 16 alignment 8, record
+query Alias *: Packet *, size 8 alignment 8, pointer
+query enum Color: enum Color, size 4 alignment 4, enum
+query Paint: enum Color, size 4 alignment 4, enum
+query void *: void *, size 8 alignment 8, pointer
+query const Packet * const: const Packet *const, size 8 alignment 8, pointer
+query Missing: unknown
+query int int: unknown

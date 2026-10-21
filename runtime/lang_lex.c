@@ -13,10 +13,31 @@ constexpr size_t smith_raw_trivia_max = (size_t)1 << 17;
 
 static SmithTrivia smith_raw_trivia[smith_raw_trivia_max];
 
+// The directives `smith cc --smith-lower` keeps, in order (runtime/lang_out.c writes each before the first token that
+// comes after it). Only that command fills the list: the compiler's run has preprocessed them already.
+typedef struct {
+    uint32_t location;
+    uint32_t length;
+    const char *text;
+} SmithRawDirective;
+
+constexpr size_t smith_raw_directives_max = (size_t)1 << 14;
+constexpr size_t smith_raw_directive_pool_max = (size_t)1 << 16;
+
+static SmithRawDirective smith_raw_directives[smith_raw_directives_max];
+static size_t smith_raw_directives_count;
+static size_t smith_raw_directives_next;
+static char smith_raw_directive_pool[smith_raw_directive_pool_max]; // the `#if B` that an `#elif B` is turned into
+static size_t smith_raw_directive_pool_used;
+
 typedef struct {
     const char *file;
     size_t length;
     size_t position;
+    bool keep;                // keep the directives (smith cc --smith-lower)
+    unsigned live_depth;      // conditionals kept and still open
+    bool zero_else;           // the `#else` of an `#if 0` was dropped, so its `#endif` is too
+    unsigned zero_else_depth; // live_depth there
     bool line_start;
     bool space;
     bool skipping;       // inside an `#if 0`
@@ -28,6 +49,7 @@ typedef struct {
     bool trivia_reported;
     char *capture; // else of printing the first error, it is kept here as `line:column: message`
     size_t capture_capacity;
+    void *names; // the keyword-as-name state (SmithRawNames) every token read passes through, looked-at ones too
 } SmithLangRaw;
 
 static bool smith_raw_is_name_start(char c) {
@@ -170,6 +192,106 @@ static void smith_raw_note_directive(SmithLangRaw *raw, const char *name, size_t
     if (entry != nullptr && opens) entry->zero = raw->skipping;
 }
 
+static void smith_raw_keep_text(SmithLangRaw *raw, size_t start, size_t end, bool as_open) {
+    const char *s = smith_lang_source;
+    while (end > start && (s[end - 1] == '\r' || s[end - 1] == ' ' || s[end - 1] == '\t'))
+        end -= 1;
+    const char *text = s + start;
+    size_t length = end - start;
+    if (as_open) { // "#elif B" is "#if B"
+        size_t word = 1;
+        while (word < length && (text[word] == ' ' || text[word] == '\t'))
+            word += 1;
+        size_t rest = length - (word + 2);
+        if (smith_raw_directive_pool_used + rest + 2 > smith_raw_directive_pool_max) as_open = false;
+        if (as_open) {
+            char *out = smith_raw_directive_pool + smith_raw_directive_pool_used;
+            out[0] = '#';
+            memcpy(out + 1, text + word + 2, rest);
+            smith_raw_directive_pool_used += rest + 1;
+            text = out;
+            length = rest + 1;
+        }
+    }
+    if (smith_raw_directives_count >= smith_raw_directives_max) {
+        smith_raw_error(raw, (uint32_t)start, "this file has more directives than smith keeps");
+        if (raw->lang != nullptr) raw->lang->errors += 1;
+        return;
+    }
+    smith_raw_directives[smith_raw_directives_count++] =
+        (SmithRawDirective){.location = (uint32_t)start, .length = (uint32_t)length, .text = text};
+}
+
+// A `#define` is kept as written, so its body must be C: a `::` or a sized type name in it would reach the compiler as
+// it is (the compiler's own run lowers the expansion, where it is used).
+static void smith_raw_check_define(SmithLangRaw *raw, size_t at, size_t end) {
+    const char *s = smith_lang_source;
+    for (size_t i = at; i < end; i++) { // bounded by the line
+        bool name_start = smith_raw_is_name_start(s[i]) && (i == at || !smith_raw_is_name(s[i - 1]));
+        size_t stop = i;
+        while (name_start && stop < end && smith_raw_is_name(s[stop]))
+            stop += 1;
+        bool bad = (s[i] == ':' && i + 1 < end && s[i + 1] == ':') ||
+                   (name_start && smith_lang_find_sized(s + i, stop - i) != nullptr);
+        if (bad) {
+            smith_raw_error(raw, (uint32_t)i,
+                            "a macro that uses `::` or a sized type cannot be kept as written; make it a function");
+            if (raw->lang != nullptr) raw->lang->errors += 1;
+            return;
+        }
+        if (name_start) i = stop - 1;
+    }
+}
+
+// Decides whether a directive is kept, and keeps it. A conditional chain that starts with `#if 0` is left out: its text
+// is not read, its `#else` branch stands alone, and an `#elif B` after it becomes the `#if B` it stands for.
+static void smith_raw_keep_directive(SmithLangRaw *raw, const char *name, size_t length, bool was_skipping,
+                                     size_t line_end) {
+    if (length == 0) return; // a null directive
+    size_t start = raw->position;
+    bool opens = smith_lang_equals(name, length, "if") || smith_lang_equals(name, length, "ifdef") ||
+                 smith_lang_equals(name, length, "ifndef");
+    bool elif = smith_lang_equals(name, length, "elif") || smith_lang_equals(name, length, "elifdef") ||
+                smith_lang_equals(name, length, "elifndef");
+    bool closes = smith_lang_equals(name, length, "endif");
+    if (was_skipping) {
+        if (raw->skipping) return;                     // inside the text that is not read
+        if (smith_lang_equals(name, length, "else")) { // the `#if 0` ended here
+            raw->zero_else = true;
+            raw->zero_else_depth = raw->live_depth;
+        } else if (elif) {
+            raw->live_depth += 1;
+            smith_raw_keep_text(raw, start, line_end, true);
+        }
+        return;
+    }
+    if (opens && raw->skipping) return; // `#if 0` itself
+    if (smith_lang_equals(name, length, "define")) {
+        size_t at = (size_t)(name - smith_lang_source) + length;
+        while (at < line_end && (smith_lang_source[at] == ' ' || smith_lang_source[at] == '\t'))
+            at += 1;
+        smith_raw_check_define(raw, at, line_end);
+    }
+    if (closes && raw->zero_else && raw->live_depth == raw->zero_else_depth) {
+        raw->zero_else = false;
+        return;
+    }
+    if (opens) raw->live_depth += 1;
+    if (closes && raw->live_depth > 0) raw->live_depth -= 1;
+    smith_raw_keep_text(raw, start, line_end, false);
+}
+
+// The next kept directive that comes before `before`, for the dump; false when there is none.
+static bool smith_raw_take_directive(uint32_t before, const char **text, size_t *length) {
+    if (smith_raw_directives_next >= smith_raw_directives_count) return false;
+    const SmithRawDirective *entry = &smith_raw_directives[smith_raw_directives_next];
+    if (entry->location >= before) return false;
+    smith_raw_directives_next += 1;
+    *text = entry->text;
+    *length = entry->length;
+    return true;
+}
+
 // A directive line: `#include` is noted for the header, anything else is skipped.
 static void smith_raw_directive(SmithLangRaw *raw) {
     const char *s = smith_lang_source;
@@ -189,6 +311,7 @@ static void smith_raw_directive(SmithLangRaw *raw) {
     unsigned depth_before = raw->skip_depth;
     smith_raw_conditional(raw, s + start, end - start, s + end, line_end - end);
     smith_raw_note_directive(raw, s + start, end - start, was_skipping, depth_before, line_end);
+    if (raw->keep) smith_raw_keep_directive(raw, s + start, end - start, was_skipping, line_end);
     if (include) {
         size_t open = end;
         while (open < line_end && (s[open] == ' ' || s[open] == '\t'))
@@ -401,7 +524,8 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
             memcpy(names->renamed, token->text, token->length);
             names->renamed[token->length] = '_';
             names->renamed[token->length + 1] = 0;
-            token->text = names->renamed;
+            // kept for good: tokens read ahead are still held when the next one is renamed
+            token->text = smith_lang_str(smith_lang_store(raw->lang, names->renamed, token->length + 1));
             token->length += 1;
         }
     }
@@ -432,12 +556,14 @@ static void smith_lang_keep_aside(bool save) {
         memcpy(smith_lang_saved_scratch, smith_lang_scratch, sizeof smith_lang_scratch);
         memcpy(smith_lang_saved_header_body, smith_lang_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_saved_header_full, smith_lang_header_full, sizeof smith_lang_header_full);
+        smith_lang_generics_aside(true, &smith_lang_instance);
     } else {
         memcpy(&smith_lang_instance, &smith_lang_saved_instance, sizeof smith_lang_instance);
         memcpy(smith_lang_chars, smith_lang_saved_chars, sizeof smith_lang_chars);
         memcpy(smith_lang_scratch, smith_lang_saved_scratch, sizeof smith_lang_scratch);
         memcpy(smith_lang_header_body, smith_lang_saved_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_header_full, smith_lang_saved_header_full, sizeof smith_lang_header_full);
+        smith_lang_generics_aside(false, &smith_lang_instance);
     }
 }
 
@@ -445,6 +571,10 @@ static void smith_lang_keep_aside(bool save) {
 constexpr size_t smith_lang_lines_max = (size_t)1 << 20;
 static uint32_t smith_lang_line_starts[smith_lang_lines_max];
 static size_t smith_lang_line_count;
+
+static bool smith_lang_lines_known(void) {
+    return smith_lang_line_count > 0;
+}
 
 static void smith_lang_index_lines(size_t length) {
     smith_lang_line_count = 0;
@@ -473,6 +603,14 @@ static size_t smith_lang_column_of(uint32_t offset) {
     return offset - smith_lang_line_starts[smith_lang_line_of(offset) - 1] + 1;
 }
 
+// The next token, checked for a keyword used as a name. Every token the lowering reads, ahead or not, comes through
+// here once and in order.
+static void smith_raw_next_named(void *context, SmithToken *token, bool unexpanded) {
+    SmithLangRaw *raw = context;
+    smith_raw_next(context, token, unexpanded);
+    smith_raw_names(raw, raw->names, token);
+}
+
 // Lowers the module's source with the plain lexer. The tables are the run's when it returns, and smith_lang_keep_aside
 // has put the caller's away: the caller reads what it wants and then puts them back.
 static SmithLang *smith_lang_run_interface(const char *file, const char *text, size_t length, char *error,
@@ -491,18 +629,19 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
     lang->aligned_column = 1;
     SmithHost host = {
         .context = &raw,
-        .next = smith_raw_next,
+        .next = smith_raw_next_named,
         .emit = smith_raw_emit,
         .include = smith_raw_include,
         .error = smith_raw_error,
         .lookup = smith_raw_lookup,
         .main_file = file,
+        .maybe_generic = true,
     };
     SmithRawNames names = {0};
+    raw.names = &names;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
-        smith_raw_next(&raw, &token, false);
-        smith_raw_names(&raw, &names, &token);
+        smith_raw_next_named(&raw, &token, false);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
@@ -552,14 +691,18 @@ size_t smith_lang_declarations(const char *file, const char *text, size_t length
 
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
-    SmithLangRaw raw = {.file = path, .line_start = true};
+    SmithLangRaw raw = {.file = path, .line_start = true, .keep = print_lowered};
+    smith_raw_directives_count = 0;
+    smith_raw_directives_next = 0;
+    smith_raw_directive_pool_used = 0;
     if (!smith_raw_read_source(path, &raw.length)) smith_die(smith_exit_missing, "cannot read", path);
+    smith_lang_index_lines(raw.length);
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
     lang->dump_enabled = print_lowered;
     SmithHost host = {
         .context = &raw,
-        .next = smith_raw_next,
+        .next = smith_raw_next_named,
         .emit = smith_raw_emit,
         .include = smith_raw_include,
         .error = smith_raw_error,
@@ -568,19 +711,21 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .field = nullptr,
         .read_header = nullptr,
         .main_file = path,
+        .maybe_generic = true,
     };
     SmithRawNames names = {0};
+    raw.names = &names;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
-        smith_raw_next(&raw, &token, false);
+        smith_raw_next_named(&raw, &token, false);
         if (guard == 0 && header_path != nullptr && !smith_lang_ident(&token, "module")) {
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
             return 1;
         }
-        smith_raw_names(&raw, &names, &token);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
+    if (print_lowered) smith_lang_dump_directives(lang, UINT32_MAX); // those after the last token
     smith_lang_finish(lang);
     if (print_lowered) {
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);

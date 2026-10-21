@@ -52,8 +52,10 @@ struct Action {
     bool include = false;
     bool angled = false;
     std::vector<Token> tokens;
-    std::vector<bool> reinjected; // per token: put back as a copy the parser's tokens do not count (see replay)
-    std::vector<bool> synthetic;  // per token: the source has no token of it (see relocate)
+    std::vector<bool> reinjected;   // per token: put back as a copy the parser's tokens do not count (see replay)
+    std::vector<bool> synthetic;    // per token: the source has no token of it (see relocate)
+    std::vector<uint32_t> instance; // per token: the generic instance whose body it is in (0: none)
+    std::vector<std::string> text;  // per token of an instance: its spelling
     std::string header;
     std::string preface; // lines to include first (the headers an interface read in memory needs)
     SourceLocation at;
@@ -98,6 +100,9 @@ class NameSource {
     // Where in a module's source the declaration that stands at a place of its generated header is (invalid for any
     // other place).
     virtual SourceLocation sourceOf(SourceLocation at) = 0;
+    // When a place is in the code of a generic instance: the notes that say where the instance was asked for, the
+    // innermost first (each a place and its text).
+    virtual bool instanceNotes(SourceLocation at, std::vector<std::pair<SourceLocation, std::string>> &notes) = 0;
     // Whether a place is in an interface the lowering generated (a module's header, or its source read in memory as
     // one) and not in text the user wrote.
     virtual bool generatedAt(SourceLocation at) = 0;
@@ -107,6 +112,7 @@ class NameSource {
 // is made, so it takes its name from here.
 struct PresenterLink {
     NameSource *source = nullptr;
+    unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
 };
 
@@ -133,16 +139,19 @@ class Presenter final : public DiagnosticConsumer {
         inner->BeginSourceFile(options, pp);
     }
     void EndSourceFile() override {
+        flushInstanceNotes();
         inner->EndSourceFile();
     }
     void clear() override {
         DiagnosticConsumer::clear();
+        flushInstanceNotes();
         inner->clear();
     }
     bool IncludeInDiagnosticCounts() const override {
         return inner->IncludeInDiagnosticCounts();
     }
     void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level != DiagnosticsEngine::Note) flushInstanceNotes(); // the notes of the last error come after its own
         if (level == DiagnosticsEngine::Note) {
             if (dropNotes) return;
         } else {
@@ -161,11 +170,18 @@ class Presenter final : public DiagnosticConsumer {
                 return;
             }
             SourceLocation origin = link->source->originOf(at);
+            std::vector<std::pair<SourceLocation, std::string>> chain;
+            bool instance = origin.isValid() && link->source->instanceNotes(at, chain);
             // A tool reports a name once, at the first declaration it finds, which is the copy: the finding is the
             // definition's (and the compiler's, which has its own, is not).
-            if (origin.isValid() && level != DiagnosticsEngine::Note && !tool) {
+            if (origin.isValid() && level != DiagnosticsEngine::Note && !tool && !instance) {
                 dropNotes = true;
                 return;
+            }
+            if (instance &&
+                level != DiagnosticsEngine::Note) { // an error in an instance: where it was asked for follows
+                pendingNotes = std::move(chain);
+                engine = info.getDiags();
             }
             if (origin.isValid()) at = origin;
             // A place in a module's generated header is where the module's source declares it.
@@ -181,6 +197,19 @@ class Presenter final : public DiagnosticConsumer {
     DiagnosticConsumer *inner;
     std::shared_ptr<PresenterLink> link;
     bool dropNotes = false;
+    std::vector<std::pair<SourceLocation, std::string>> pendingNotes; // of the error just passed on
+    const DiagnosticsEngine *engine = nullptr;
+
+    // The notes that name the instances an error is in, after the error and its own notes.
+    void flushInstanceNotes() {
+        std::vector<std::pair<SourceLocation, std::string>> notes = std::move(pendingNotes);
+        pendingNotes.clear();
+        for (auto &[where, text] : notes) {
+            DiagnosticStorage storage;
+            Diagnostic note(engine, where, link->noteId, storage, text);
+            inner->HandleDiagnostic(DiagnosticsEngine::Note, note);
+        }
+    }
     bool tool = false; // in front of the engine of a tool's findings, not the compiler's
 
   public:
@@ -299,6 +328,10 @@ class SmithHook final : public TokenHook, public NameSource {
         host.rename = &SmithHook::renameName;
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
+        host.type_query = &SmithHook::typeQuery;
+        host.expr_type = &SmithHook::exprType;
+        host.instance = &SmithHook::instanceBegin;
+        host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
@@ -308,11 +341,14 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
+        host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
         // compiler's, and would take this one's number for one of its checks'; a built-in diagnostic that is the text
         // alone has no such number.
         diagnostic = toolEngine != nullptr ? diag::err_apinotes_message
                                            : PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        link->noteId = toolEngine != nullptr ? diag::err_apinotes_message
+                                             : PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Note, "%0");
         // clangd's preamble of a file that starts with code, as every module does, is the empty text before it, and
         // under -Wpedantic that is "a translation unit with no declaration". The file is not empty.
         if (SM.getBufferData(MainFile).empty()) {
@@ -458,6 +494,9 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     bool offerLowered(Token &tok) {
+        // A pragma's annotation (`#pragma STDC FP_CONTRACT OFF`) is not a token of the program and has no spelling to
+        // lower: it goes to the parser as it is.
+        if (tok.isAnnotation() && tok.isNot(tok::annot_typename)) return false;
         if (!spelledInMain(tok.getLocation())) {
             if (tok.is(tok::eof)) return feed(tok);
             stats.outside += 1;
@@ -671,6 +710,8 @@ class SmithHook final : public TokenHook, public NameSource {
     std::vector<Token> out;
     std::vector<bool> outReinjected; // per token of `out`
     std::vector<bool> outSynthetic;
+    std::vector<uint32_t> outInstance; // per token of `out`: the generic instance it is in the body of (0: none)
+    std::vector<std::string> outText;  // per token of `out` in an instance: its spelling
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
     llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
@@ -834,6 +875,8 @@ class SmithHook final : public TokenHook, public NameSource {
         out.clear();
         outReinjected.clear();
         outSynthetic.clear();
+        outInstance.clear();
+        outText.clear();
         actions.clear();
         texts.Reset();
         pool.push_back(tok);
@@ -945,10 +988,14 @@ class SmithHook final : public TokenHook, public NameSource {
         action.tokens = std::move(out);
         action.reinjected = std::move(outReinjected);
         action.synthetic = std::move(outSynthetic);
+        action.instance = std::move(outInstance);
+        action.text = std::move(outText);
         actions.push_back(std::move(action));
         out.clear();
         outReinjected.clear();
         outSynthetic.clear();
+        outInstance.clear();
+        outText.clear();
     }
 
     // ---- Relocation
@@ -960,13 +1007,117 @@ class SmithHook final : public TokenHook, public NameSource {
     // there are the definition's again, so the Presenter leaves them out.
     llvm::DenseMap<unsigned, std::vector<std::pair<unsigned, SourceLocation>>> origins; // by buffer, by offset
 
+    // ---- Generic instances
+    //
+    // The code of an instance is the generic's own tokens, so its places are the generic's source, and an error in it
+    // must be reported there. But the generic's source is not parsed once: it is parsed for each instance, and an error
+    // belongs to one. So the tokens of an instance get a buffer of their own, as a copy's do (`origins` says where
+    // each token is from), and the buffer says which instance it is: the Presenter reports at the origin and adds a
+    // note where the instance was asked for (and, for an instance asked for by another, where that was).
+    struct InstanceInfo {
+        unsigned parent;
+        SourceLocation call;
+        std::string description;
+        SourceLocation definition; // the generic's name in its module's source
+    };
+    std::map<unsigned, InstanceInfo> instances;       // by id
+    llvm::DenseMap<unsigned, unsigned> instanceFiles; // the buffer of an instance's tokens, to its id
+    std::map<unsigned, FileID> instanceSources;       // and to the file it is a copy of
+    std::map<std::string, FileID> placedFiles;
+
+    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description,
+                              uint32_t definition) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description,
+                               SourceLocation::getFromRawEncoding(definition)};
+    }
+
+    // The file of a module's source, as the text the module has (a module found by its source is given to the file
+    // manager as its interface, which has not the bodies of generics).
+    FileID fileFor(const std::string &path) {
+        auto known = placedFiles.find(path);
+        if (known != placedFiles.end()) return known->second;
+        FileID id;
+        for (auto &[name, entry] : interfaces) {
+            if (entry.ok && entry.source == path) {
+                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User);
+                break;
+            }
+        }
+        if (id.isInvalid()) {
+            if (auto file = PP.getFileManager().getFileRef(path)) {
+                id = SM.getOrCreateFileID(*file, SrcMgr::C_User);
+            } else {
+                llvm::consumeError(file.takeError());
+            }
+        }
+        placedFiles[path] = id;
+        return id;
+    }
+
+    static uint32_t locatePlace(void *context, const char *file, uint32_t line, uint32_t column) {
+        auto *self = static_cast<SmithHook *>(context);
+        FileID id = self->fileFor(file);
+        if (id.isInvalid()) return UINT32_MAX;
+        SourceLocation at = self->SM.translateLineCol(id, line, column == 0 ? 1 : column);
+        return at.isValid() ? at.getRawEncoding() : UINT32_MAX;
+    }
+
+    bool instanceNotes(SourceLocation at, std::vector<std::pair<SourceLocation, std::string>> &notes) override {
+        if (!at.isFileID() || instanceFiles.empty()) return false;
+        auto file = instanceFiles.find(SM.getFileID(at).getHashValue());
+        if (file == instanceFiles.end()) return false;
+        unsigned id = file->second;
+        for (size_t depth = 0; id != 0 && depth < 40; depth++) { // the chain of instances that asked for this one
+            auto found = instances.find(id);
+            if (found == instances.end()) break;
+            notes.emplace_back(found->second.call,
+                               "in instance " + found->second.description + ", requested from here");
+            id = found->second.parent;
+        }
+        return !notes.empty();
+    }
+
+    // Gives the tokens of each instance a buffer of its own, a copy of its generic's source file under the same name: a
+    // token is at the offset it has in the source, so the debugger shows the generic's file, line and column (and the
+    // checksum of the file), and a diagnostic is at the place in the source. The tokens that are no source's (the call
+    // the instance is for, the instance's name) stand at the generic's name.
+    void relocateInstances() {
+        std::map<unsigned, std::vector<Token *>> byInstance;
+        for (Action &action : actions) {
+            for (size_t i = 0; i < action.tokens.size() && i < action.instance.size(); i++) {
+                if (action.instance[i] != 0) byInstance[action.instance[i]].push_back(&action.tokens[i]);
+            }
+        }
+        for (auto &[id, tokens] : byInstance) {
+            SourceLocation definition = instances[id].definition;
+            FileID source = definition.isValid() && definition.isFileID() ? SM.getFileID(definition) : FileID();
+            if (source.isInvalid()) continue; // the generic's file is not known: the tokens stay where they were
+            StringRef data = SM.getBufferData(source);
+            FileID file = SM.createFileID(
+                llvm::MemoryBuffer::getMemBuffer(data, SM.getBufferName(SM.getLocForStartOfFile(source)), false),
+                SrcMgr::C_User);
+            SourceLocation start = SM.getLocForStartOfFile(file);
+            unsigned fallback = SM.getFileOffset(definition);
+            for (Token *token : tokens) {
+                SourceLocation origin = token->getLocation();
+                bool inSource = origin.isFileID() && SM.getFileID(origin) == source;
+                token->setLocation(
+                    start.getLocWithOffset(static_cast<int>(inSource ? SM.getFileOffset(origin) : fallback)));
+            }
+            instanceFiles[file.getHashValue()] = id;
+            instanceSources[file.getHashValue()] = source;
+        }
+    }
+
     void relocate() {
+        relocateInstances();
         std::string text;
         std::vector<std::tuple<Token *, unsigned, SourceLocation>> spots; // the token, its offset, where it is from
         SourceLocation first;
         for (Action &action : actions) {
             for (size_t i = 0; i < action.tokens.size(); i++) {
-                if (!action.synthetic[i]) continue;
+                if (!action.synthetic[i] || (i < action.instance.size() && action.instance[i] != 0)) continue;
                 Token &token = action.tokens[i];
                 if (first.isInvalid()) first = token.getLocation();
                 spots.emplace_back(&token, text.size(), token.getLocation());
@@ -986,6 +1137,12 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // Where the token at a location of a relocated copy was copied from; invalid for any other location.
     SourceLocation originOf(SourceLocation at) override {
+        if (at.isFileID() && !instanceSources.empty()) { // a copy of a generic's source: the same place in the source
+            auto copy = instanceSources.find(SM.getFileID(at).getHashValue());
+            if (copy != instanceSources.end()) {
+                return SM.getLocForStartOfFile(copy->second).getLocWithOffset(static_cast<int>(SM.getFileOffset(at)));
+            }
+        }
         if (!at.isFileID() || origins.empty()) return SourceLocation();
         auto found = origins.find(SM.getFileID(at).getHashValue());
         if (found == origins.end()) return SourceLocation();
@@ -1182,6 +1339,8 @@ class SmithHook final : public TokenHook, public NameSource {
         self->outReinjected.push_back(!real);
         self->outSynthetic.push_back(token->copy && made.getLocation().isFileID() &&
                                      self->spelledInMain(made.getLocation()));
+        self->outInstance.push_back(token->instance);
+        self->outText.push_back(token->instance != 0 ? std::string(token->text, token->length) : std::string());
     }
 
     static void includeHeader(void *context, const char *header, bool angled) {
@@ -1241,6 +1400,386 @@ class SmithHook final : public TokenHook, public NameSource {
             info->is_record = true;
             info->fields = std::distance(record->field_begin(), record->field_end());
         }
+        return true;
+    }
+
+    // ---- A type written as tokens
+    //
+    // A generic's instances are told apart by their types, and its `if constexpr` asks what a type is. The type comes
+    // as the tokens the call wrote, lowered (`const geometry_Point *`, `__UINT32_TYPE__`), so a small reader of C's
+    // type names is enough: builtin type words, the sized types' own names, a typedef or a `struct`, `union` or `enum`
+    // tag, qualifiers, and pointers. Anything else (arrays, function pointers) is not read, and the lowering then
+    // identifies the type by its spelling.
+    std::string queryText;
+
+    // The builtin type the words name, or a null type.
+    QualType builtinType(const std::vector<StringRef> &words) {
+        ASTContext &ast = sema->getASTContext();
+        unsigned longs = 0, shorts = 0, chars = 0, ints = 0, floats = 0, doubles = 0, voids = 0, bools = 0, halves = 0,
+                 int128s = 0;
+        bool isSigned = false, isUnsigned = false;
+        for (StringRef word : words) {
+            if (word == "long")
+                longs += 1;
+            else if (word == "short")
+                shorts += 1;
+            else if (word == "char")
+                chars += 1;
+            else if (word == "int")
+                ints += 1;
+            else if (word == "float")
+                floats += 1;
+            else if (word == "double")
+                doubles += 1;
+            else if (word == "void")
+                voids += 1;
+            else if (word == "_Bool" || word == "bool")
+                bools += 1;
+            else if (word == "_Float16")
+                halves += 1;
+            else if (word == "__int128")
+                int128s += 1;
+            else if (word == "signed")
+                isSigned = true;
+            else if (word == "unsigned")
+                isUnsigned = true;
+            else
+                return QualType();
+        }
+        if (voids == 1) return ast.VoidTy;
+        if (bools == 1) return ast.BoolTy;
+        if (floats == 1) return ast.FloatTy;
+        if (halves == 1) return ast.Float16Ty;
+        if (doubles == 1) return longs == 1 ? ast.LongDoubleTy : ast.DoubleTy;
+        if (int128s == 1) return isUnsigned ? ast.UnsignedInt128Ty : ast.Int128Ty;
+        if (chars == 1) return isUnsigned ? ast.UnsignedCharTy : isSigned ? ast.SignedCharTy : ast.CharTy;
+        if (shorts == 1) return isUnsigned ? ast.UnsignedShortTy : ast.ShortTy;
+        if (longs == 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
+        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
+        if (ints == 1 || isSigned || isUnsigned) return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
+        return QualType();
+    }
+
+    // The type a name stands for: one of the sized types' own names (`__UINT32_TYPE__`), a typedef, or a tag after its
+    // keyword.
+    QualType namedType(StringRef name, StringRef tag) {
+        if (tag.empty()) {
+            for (const SizedName &entry : sizedTable) {
+                if (entry.macro != nullptr && name == entry.macro) return sizedType(entry.macro);
+            }
+        }
+        SmithLookupKind space = tag.empty() ? SmithLookup_Type : SmithLookup_Tag;
+        auto *decl = dyn_cast_or_null<TypeDecl>(findDecl(name.data(), name.size(), space));
+        return decl == nullptr ? QualType() : sema->getASTContext().getTypeDeclType(decl);
+    }
+
+    // The words of a spelling: names, and `*` as a word of its own.
+    static std::vector<StringRef> typeWords(StringRef spelling) {
+        std::vector<StringRef> words;
+        for (size_t at = 0; at < spelling.size();) {
+            char c = spelling[at];
+            if (c == ' ') {
+                at += 1;
+            } else if (c == '*') {
+                words.push_back(spelling.substr(at, 1));
+                at += 1;
+            } else if (isAsciiIdentifierContinue(c)) {
+                size_t end = at;
+                while (end < spelling.size() && isAsciiIdentifierContinue(spelling[end]))
+                    end += 1;
+                words.push_back(spelling.substr(at, end - at));
+                at = end;
+            } else {
+                return {};
+            }
+        }
+        return words;
+    }
+
+    QualType readType(StringRef spelling) {
+        std::vector<StringRef> words = typeWords(spelling);
+        if (words.empty()) return QualType();
+        size_t at = 0;
+        Qualifiers quals;
+        std::vector<StringRef> builtin;
+        QualType base;
+        for (; at < words.size() && words[at] != "*"; at++) {
+            StringRef word = words[at];
+            if (word == "const")
+                quals.addConst();
+            else if (word == "volatile")
+                quals.addVolatile();
+            else if (word == "restrict")
+                quals.addRestrict();
+            else if (word == "struct" || word == "union" || word == "enum") {
+                if (at + 1 >= words.size() || !base.isNull()) return QualType();
+                base = namedType(words[++at], word);
+            } else if (base.isNull() && builtin.empty() && sizedOrTypedef(word)) {
+                base = namedType(word, StringRef());
+            } else {
+                builtin.push_back(word);
+            }
+        }
+        if (base.isNull())
+            base = builtinType(builtin);
+        else if (!builtin.empty())
+            return QualType();
+        if (base.isNull()) return QualType();
+        base = sema->getASTContext().getQualifiedType(base, quals);
+        for (; at < words.size(); at++) { // pointers, and the qualifiers after each
+            if (words[at] == "*") {
+                base = sema->getASTContext().getPointerType(base);
+                continue;
+            }
+            Qualifiers after;
+            if (words[at] == "const")
+                after.addConst();
+            else if (words[at] == "volatile")
+                after.addVolatile();
+            else if (words[at] == "restrict")
+                after.addRestrict();
+            else
+                return QualType();
+            base = sema->getASTContext().getQualifiedType(base, after);
+        }
+        return base;
+    }
+
+    // Whether a word is a name (not a builtin type word or qualifier): a typedef, or a sized type's own name.
+    bool sizedOrTypedef(StringRef word) {
+        static const char *const builtinWords[] = {"signed", "unsigned", "short",   "long", "int",
+                                                   "char",   "float",    "double",  "void", "_Bool",
+                                                   "bool",   "_Float16", "__int128"};
+        for (const char *builtin : builtinWords) {
+            if (word == builtin) return false;
+        }
+        return true;
+    }
+
+    static bool typeQuery(void *context, const char *spelling, uint32_t length, SmithTypeQuery *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (self->sema == nullptr) return false;
+        QualType type = self->readType(StringRef(spelling, length));
+        if (type.isNull()) return false;
+        ASTContext &ast = self->sema->getASTContext();
+        QualType canonical = type.getCanonicalType();
+        *out = SmithTypeQuery{};
+        self->queryText = canonical.getAsString(ast.getPrintingPolicy());
+        out->canonical = self->queryText.c_str();
+        out->canonical_length = self->queryText.size();
+        out->is_bool = canonical->isBooleanType();
+        out->is_enum = canonical->isEnumeralType();
+        out->is_integer = canonical->isIntegerType() && !out->is_bool && !out->is_enum;
+        out->is_float = canonical->isRealFloatingType();
+        out->is_signed = out->is_float || canonical->isSignedIntegerOrEnumerationType();
+        out->is_pointer = canonical->isPointerType();
+        out->is_record = canonical->isRecordType();
+        out->complete = !canonical->isIncompleteType() && !canonical->isDependentType() && !canonical->isVoidType() &&
+                        !canonical->isFunctionType();
+        if (out->complete) {
+            out->size = ast.getTypeSizeInChars(canonical).getQuantity();
+            out->alignment = ast.getTypeAlignInChars(canonical).getQuantity();
+        }
+        return true;
+    }
+
+    // ---- The type of an expression
+    //
+    // `test::check_equal(a, b)` leaves T to be told from its arguments. The arguments are the lowered tokens of a name,
+    // a field chain, `*e`, `&e`, `e[i]`, a call, a cast or a literal: what a person writes to name a value. Anything
+    // else (arithmetic, a conditional) is not typed, and the call must say its type. The scope is the parser's, so a
+    // local declared by an earlier statement is found.
+    std::string typeWhy;
+
+    static size_t closingOf(const std::vector<std::string> &tokens, size_t open, size_t end) {
+        int depth = 0;
+        for (size_t at = open; at < end; at++) {
+            const std::string &token = tokens[at];
+            if (token == "(" || token == "[" || token == "{") depth += 1;
+            if (token == ")" || token == "]" || token == "}") depth -= 1;
+            if (depth == 0) return at;
+        }
+        return end;
+    }
+
+    QualType literalType(const std::string &token) {
+        ASTContext &ast = sema->getASTContext();
+        if (token[0] == '"') return ast.getPointerType(ast.CharTy);
+        if (token[0] == '\'') return ast.IntTy;
+        if (token == "true" || token == "false") return ast.BoolTy;
+        bool hex = token.size() > 1 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X');
+        bool real = !hex && token.find_first_of(".eE") != std::string::npos;
+        char last = static_cast<char>(std::tolower(static_cast<unsigned char>(token.back())));
+        if (real) return last == 'f' ? ast.FloatTy : ast.DoubleTy;
+        bool isUnsigned = token.find_first_of("uU") != std::string::npos;
+        size_t longs =
+            static_cast<size_t>(std::count_if(token.begin(), token.end(), [](char c) { return c == 'l' || c == 'L'; }));
+        if (longs >= 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
+        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
+        return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
+    }
+
+    // The type of the name (a variable, a parameter, a function): null with typeWhy when it is not found.
+    QualType nameType(const std::string &name) {
+        auto *decl = dyn_cast_or_null<ValueDecl>(findDecl(name.data(), name.size(), SmithLookup_Value));
+        if (decl == nullptr) {
+            typeWhy = "`" + name + "` is not a name the compiler knows here";
+            return QualType();
+        }
+        return decl->getType();
+    }
+
+    QualType memberType(QualType base, bool arrow, const std::string &name) {
+        if (arrow) {
+            if (!base->isPointerType()) {
+                typeWhy = "`->` needs a pointer";
+                return QualType();
+            }
+            base = base->getPointeeType();
+        }
+        const RecordDecl *record = base->getAsRecordDecl();
+        if (record == nullptr) {
+            typeWhy = "`." + name + "` needs a struct or union";
+            return QualType();
+        }
+        for (const FieldDecl *field : record->fields()) {
+            if (field->getName() == name) return field->getType();
+        }
+        typeWhy = "no field `" + name + "`";
+        return QualType();
+    }
+
+    QualType elementType(QualType type) {
+        if (type->isPointerType()) return type->getPointeeType();
+        if (const auto *array = sema->getASTContext().getAsArrayType(type)) return array->getElementType();
+        typeWhy = "that is not a pointer or an array";
+        return QualType();
+    }
+
+    QualType resultOfCall(QualType callee) {
+        if (callee->isPointerType()) callee = callee->getPointeeType();
+        if (const auto *function = callee->getAs<FunctionType>()) return function->getReturnType();
+        typeWhy = "that is not a function";
+        return QualType();
+    }
+
+    // The primary expression at the start of [begin, end): its type, and where it ends in `next`.
+    QualType primaryType(const std::vector<std::string> &t, size_t begin, size_t end, size_t *next) {
+        const std::string &token = t[begin];
+        *next = begin + 1;
+        bool word = std::isalpha(static_cast<unsigned char>(token[0])) || token[0] == '_';
+        if (!word) {
+            if (std::isdigit(static_cast<unsigned char>(token[0])) || token[0] == '"' || token[0] == '\'')
+                return literalType(token);
+            typeWhy = "`" + token + "` does not begin a name or a literal";
+            return QualType();
+        }
+        if (token == "true" || token == "false") return literalType(token);
+        QualType type = nameType(token);
+        if (type.isNull() || begin + 1 >= end || t[begin + 1] != "(") return type;
+        size_t close = closingOf(t, begin + 1, end);
+        *next = close + 1;
+        return resultOfCall(type);
+    }
+
+    // One step after a primary expression: `.f`, `->f`, `[i]` or a call.
+    QualType postfixType(const std::vector<std::string> &t, size_t *at, size_t end, QualType type) {
+        const std::string &token = t[*at];
+        if ((token == "." || token == "->") && *at + 1 < end) {
+            QualType member = memberType(type, token == "->", t[*at + 1]);
+            *at += 2;
+            return member;
+        }
+        if (token == "[" || token == "(") {
+            *at = closingOf(t, *at, end) + 1;
+            return token == "[" ? elementType(type) : resultOfCall(type);
+        }
+        typeWhy = "`" + token + "` is not understood in this expression";
+        return QualType();
+    }
+
+    QualType prefixType(const std::string &op, QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (op == "*") return elementType(type);
+        if (op == "&") return ast.getPointerType(type);
+        if (op == "!") return ast.IntTy;
+        return type; // - + ~
+    }
+
+    // The type of the expression the tokens spell, unqualified, with arrays and functions as pointers.
+    QualType expressionType(std::vector<std::string> t) {
+        size_t begin = 0;
+        size_t end = t.size();
+        for (size_t guard = 0;
+             guard < end && end - begin >= 2 && t[begin] == "(" && closingOf(t, begin, end) == end - 1; guard++) {
+            begin += 1; // the parentheses around it all
+            end -= 1;
+        }
+        if (begin >= end) {
+            typeWhy = "the expression is empty";
+            return QualType();
+        }
+        if (t[begin] == "(") { // a cast: its type is the type
+            size_t close = closingOf(t, begin, end);
+            std::string spelling;
+            for (size_t at = begin + 1; at < close; at++)
+                spelling += (at > begin + 1 ? " " : "") + t[at];
+            QualType cast = close + 1 < end ? readType(spelling) : QualType();
+            if (!cast.isNull()) return finishType(cast);
+        }
+        std::vector<std::string> prefix;
+        while (begin < end && (t[begin] == "*" || t[begin] == "&" || t[begin] == "-" || t[begin] == "+" ||
+                               t[begin] == "!" || t[begin] == "~")) {
+            prefix.push_back(t[begin++]);
+        }
+        if (begin >= end) {
+            typeWhy = "an operator has no operand";
+            return QualType();
+        }
+        size_t at = 0;
+        QualType type = primaryType(t, begin, end, &at);
+        for (size_t guard = 0; !type.isNull() && at < end && guard < end; guard++)
+            type = postfixType(t, &at, end, type);
+        for (size_t i = prefix.size(); !type.isNull() && i > 0; i--)
+            type = prefixType(prefix[i - 1], type);
+        return type.isNull() ? type : finishType(type);
+    }
+
+    QualType finishType(QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (type->isArrayType()) return ast.getPointerType(elementType(type));
+        if (type->isFunctionType()) return ast.getPointerType(type);
+        return type.getUnqualifiedType();
+    }
+
+    static bool exprType(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        *out = SmithExprType{};
+        if (self->sema == nullptr) return false;
+        self->typeWhy.clear();
+        std::vector<std::string> parts;
+        std::string current;
+        for (uint32_t at = 0; at < length; at++) {
+            if (tokens[at] == '\x1f') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += tokens[at];
+            }
+        }
+        if (!current.empty()) parts.push_back(current);
+        QualType type = parts.empty() ? QualType() : self->expressionType(parts);
+        for (uint32_t i = 0; !type.isNull() && i < derefs; i++)
+            type = self->elementType(type);
+        if (!type.isNull()) type = self->finishType(type);
+        if (type.isNull()) {
+            self->queryText = self->typeWhy.empty() ? "that expression's type is not understood" : self->typeWhy;
+            out->why = self->queryText.c_str();
+            return false;
+        }
+        const PrintingPolicy &policy = self->sema->getASTContext().getPrintingPolicy();
+        snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
+        snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
         return true;
     }
 
@@ -1611,6 +2150,28 @@ class SmithHook final : public TokenHook, public NameSource {
             copyName(found, name);
             names->index[name.lowered] = names->names.size();
             names->names.push_back(std::move(name));
+        }
+        for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
+            SmithCallSite found;
+            if (!smith_lang_call_site_at(lang, i, &found)) break;
+            smith::CallSite site;
+            SourceLocation at = SourceLocation::getFromRawEncoding(found.location);
+            if (!at.isFileID()) continue;
+            site.line = SM.getSpellingLineNumber(at) - 1;
+            site.column = SM.getSpellingColumnNumber(at) - 1;
+            site.length = found.length;
+            site.hover = found.hover;
+            if (found.definition_location != UINT32_MAX) {
+                SourceLocation def = SourceLocation::getFromRawEncoding(found.definition_location);
+                site.file = mainName;
+                site.definition_line = SM.getSpellingLineNumber(def) - 1;
+                site.definition_column = SM.getSpellingColumnNumber(def) - 1;
+            } else {
+                site.file = absolute(found.file);
+                site.definition_line = found.line > 0 ? found.line - 1 : 0;
+                site.definition_column = found.column > 0 ? found.column - 1 : 0;
+            }
+            names->calls.push_back(std::move(site));
         }
         snapshot = names;
         // A preamble is built from the start of the file, up to its first line that is no directive: a module's

@@ -53,6 +53,7 @@ kit_things_Local kit_things_twice_local(kit_things_Local value) {
 kit_things_Local result = value * 2;
 return result;
 }
+#define TRIPLE(value) ((value) * 3)
 int kit_things_triple(int value) __asm__("_kit::things::triple");
 int kit_things_triple(int value) {
 return TRIPLE(value);

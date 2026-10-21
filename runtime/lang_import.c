@@ -1,5 +1,8 @@
 // The module line, imports and exports. Included by runtime/lang.c, after runtime/lang_decl.c.
 
+// runtime/lang_generic.c
+static void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module);
+
 // Reads tokens up to the `;` that ends a line, for a line that is malformed.
 static void smith_lang_skip_line(SmithLang *lang, const SmithHost *host) {
     for (size_t i = 0; i < smith_lang_batch_max; i++) { // bounded by the batch
@@ -270,6 +273,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
         lang->smith_imports[lang->imports_count++] = smith_lang_store(lang, name.colons, strlen(name.colons));
     }
     smith_lang_written_read(lang, host, header, name.colons, bind, bind_length);
+    smith_lang_generics_load(lang, host, name.colons);
     host->include(host->context, header, false);
 }
 

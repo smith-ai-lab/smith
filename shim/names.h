@@ -38,8 +38,21 @@ struct Qualifier {
     std::string partial; // what was typed after the `::`
 };
 
+// A call to a generic where the file wrote it: the editor's hover and go-to-definition there are the lowering's own,
+// since the compiler sees an instance in its place. Lines and columns are from 0.
+struct CallSite {
+    uint32_t line = 0;
+    uint32_t column = 0;
+    uint32_t length = 0;
+    std::string hover;
+    std::string file; // where the generic is written
+    uint32_t definition_line = 0;
+    uint32_t definition_column = 0;
+};
+
 struct FileNames {
     std::string module; // of the file itself, "" for none
+    std::vector<CallSite> calls;
     std::vector<WrittenName> names;
     std::unordered_map<std::string, size_t> index; // by lowered
 

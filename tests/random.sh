@@ -49,6 +49,13 @@ expected_digest=4a2e897669d609ac
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
 sources="$here/tests/random.c $here/lib/arena.c"
 
+# The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
+hook=yes
+printf 'int main(void) { return 0; }\n' >"$work/probe.smith"
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
+module="$here/lib/smith/random.smith"
+mflags="-I $here/include -iquote $here/include/smith"
+
 # 1. The checks, in two builds: -O0 under AddressSanitizer and UBSan, and -O2.
 $cc -std=gnu23 $warn -I "$here/include" -O0 -g -fsanitize=address,undefined $sources -o "$work/asan" || exit 1
 capture "$work/asan"
@@ -61,7 +68,8 @@ echo "$out" | sed 's/^/      /'
 
 # 2. The library compiles as -std=gnu23 and -std=gnu2y with the warnings of smith new.
 for std in gnu23 gnu2y; do
-    capture $cc -std=$std $warn -I "$here/include" -c "$here/lib/random.c" -o "$work/r.o"
+    [ $hook = yes ] || break
+    capture "$smith" cc -std=$std $warn $mflags -c "$module" -o "$work/r.o"
     expect "library: compiles as -std=$std with the new project's warnings" 0 "$rc"
 done
 
@@ -87,16 +95,28 @@ digest "-std=gnu2y" -std=gnu2y -O2
 digest "-ffp-contract=fast, which the pragma defeats" -std=gnu23 -O2 -ffp-contract=fast
 digest "-O3 -march=native -ffp-contract=fast" -std=gnu23 -O3 -march=native -ffp-contract=fast
 # 4. The refusals.
-capture $cc -std=gnu23 -I "$here/include" -ffast-math -c "$here/lib/random.c" -o "$work/r.o"
-expect "refusal: -ffast-math fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
+capture $cc -std=gnu23 -I "$here/include" -ffast-math -c "$here/bootstrap/lib/smith/random.c" -o "$work/r.o"
+expect "refusal: -ffast-math fails to compile (the lowering)" yes "$([ "$rc" -ne 0 ] && echo yes)"
 expect_contains "refusal: ... with the reason" "$err" "-ffast-math changes floating-point results"
-capture $cc -std=gnu23 -I "$here/include" -Ofast -c "$here/lib/random.c" -o "$work/r.o"
-expect "refusal: -Ofast fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
+capture $cc -std=gnu23 -I "$here/include" -Ofast -c "$here/bootstrap/lib/smith/random.c" -o "$work/r.o"
+expect "refusal: -Ofast fails to compile (the lowering)" yes "$([ "$rc" -ne 0 ] && echo yes)"
+if [ $hook = yes ]; then
+    capture "$smith" cc -std=gnu23 $mflags -ffast-math -c "$module" -o "$work/r.o"
+    expect "refusal: -ffast-math fails to compile (the module)" yes "$([ "$rc" -ne 0 ] && echo yes)"
+    expect_contains "refusal: ... with the reason" "$err" "-ffast-math changes floating-point results"
+fi
 capture "$work/fast" assert
 expect "refusal: a normal with deviation 0 aborts" 134 "$rc"
 expect_contains "refusal: ... naming the assertion" "$err" "normal.deviation > 0"
 
-# 5. A project gets random and the arena with smith_library.
+# 5. A project gets random and the arena with smith_library (the library is a .smith module: it needs the hook).
+if [ $hook = no ]; then
+    echo "skip  project: this smith has no clang with the token hook inside"
+    echo
+    echo "$total random checks, $failures failed"
+    [ "$failures" -eq 0 ]
+    exit
+fi
 mkdir "$work/project" && cd "$work/project" || exit 1
 cat >build.c <<'C'
 #include <smith/build.h>
@@ -149,13 +169,13 @@ PATH="$work/bin:$PATH"
 capture "$smith" build
 expect "project: the build succeeds" 0 "$rc"
 expect "project: the header is written" yes "$([ -f .smith/include/smith/random.h ] && echo yes)"
-expect "project: the source is written" yes "$([ -f .smith/lib/random.c ] && echo yes)"
+expect "project: the source is written" yes "$([ -f .smith/lib/smith/random.smith ] && echo yes)"
 capture build/app
 expect "project: the program runs" "0 mean 0.5, normal 1, index 1" "$rc $out"
-before=$(stat -f %m .smith/lib/random.c 2>/dev/null || stat -c %Y .smith/lib/random.c)
+before=$(stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith)
 sleep 1
 capture "$smith" build
-after=$(stat -f %m .smith/lib/random.c 2>/dev/null || stat -c %Y .smith/lib/random.c)
+after=$(stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith)
 expect "project: an unchanged library is not rewritten" "$before" "$after"
 if "$smith" lsp --version >/dev/null 2>&1; then
     capture "$smith" lsp --check=main.c

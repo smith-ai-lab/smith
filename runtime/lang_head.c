@@ -360,8 +360,15 @@ static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) 
     smith_lang_emit_head(lang, host, true, false);
 }
 
+// runtime/lang_generic.c
+static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator);
+
 // The head is complete: the terminator says what follows. Writes the head, then the terminator, and picks the state.
 static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
+    if (lang->decl.generic) { // recorded, not written
+        smith_lang_generic_flush_head(lang, host, terminator);
+        return;
+    }
     SmithLangForm form = smith_lang_form(lang);
     bool is_main = false;
     if (form != SmithLangForm_Type) {

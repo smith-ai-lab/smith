@@ -38,8 +38,13 @@ mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/b
 PATH="$work/bin:$PATH"
 cc=${CC:-cc}
 
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    echo "skip  text: this smith has no clang with the token hook inside (the library is a .smith module)"
+    exit 0
+fi
+
 if [ "${2:-}" = exhaustive ]; then
-    $cc -std=gnu23 -O2 -Wall -Wextra -Werror -I "$here/include" "$here/tests/text_exhaustive.c" "$here/lib/text.c" \
+    "$smith" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I "$here/include" "$here/tests/text_exhaustive.c" "$here/lib/smith/text.smith" \
         -pthread -o "$work/exhaustive" || exit 1
     start=$(date +%s)
     "$work/exhaustive"
@@ -101,12 +106,63 @@ capture ./build/tests --full --test f32_sweep
 summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
 expect "full: the sweep of the float patterns, sixteen times denser" "1 passed, 0 failed" "$summary"
 
+# One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and a
+# .smith file that does `import smith::text;`. smith writes the header and the module's header step writes the same
+# bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
+mkdir -p "$work/both/src" && cd "$work/both" || exit 1
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Wextra", "-Werror", "-I", ".smith/include", nullptr);
+    SmithObject text = {.compiler = "smith-cc", .source = smith_library(b, "text"), .output = "build/text.o", .flags = flags};
+    smith_object(b, &text);
+    SmithObject from_smith = {.compiler = "smith-cc", .source = "src/main.smith", .output = "build/main.o", .flags = flags};
+    smith_object(b, &from_smith);
+    SmithObject from_c = {.compiler = "smith-cc", .source = "src/c.c", .output = "build/c.o", .flags = flags,
+                          .implicit_inputs = smith_list(b, ".smith/include/smith/text.h", nullptr)};
+    smith_object(b, &from_c);
+    SmithProgram program = {.linker = "smith-cc", .output = "build/prog",
+                            .objects = (const SmithObject *[]){&text, &from_smith, &from_c, nullptr}};
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+}
+C
+cat >src/main.smith <<'S'
+import <stdio.h>;
+import smith::text;
+
+extern u64 from_c(void);
+
+i32 main(void) {
+    u64 value = 0;
+    u64 parsed = text::parse_u64(text::make("42"), &value) ? value : 0;
+    c::printf("%llu %llu\n", parsed, from_c());
+    return 0;
+}
+S
+cat >src/c.c <<'C'
+#include <smith/text.h>
+
+unsigned long long from_c(void) {
+    unsigned long long value = 0;
+    return smith_text_parse_u64(smith_text_make("7"), &value) ? value : 0;
+}
+C
+capture smith build
+expect "both: C and .smith share the header, and the project builds" 0 "$rc"
+capture ./build/prog
+expect "both: the .smith and the C caller agree" "42 7" "$out"
+capture smith build
+expect "both: a second build has nothing to do" "smith: no work to do." "$(printf '%s\n%s\n' "$out" "$err" | grep -v '^$' | tail -n 1)"
+cd "$work" || exit 1
+
 # The library alone: it compiles in C23 and C2y, and with the checks off, using no library function of libc.
 for std in gnu23 gnu2y; do
-    capture $cc -std=$std -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I "$here/include" -c "$here/lib/text.c" -o "$work/text.o"
+    capture "$smith" cc -std=$std -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I "$here/include" -c "$here/lib/smith/text.smith" -o "$work/text.o"
     expect "library: compiles as $std" 0 "$rc"
 done
-capture $cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "$here/include" -c "$here/lib/text.c" -o "$work/text.o"
+capture "$smith" cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "$here/include" -c "$here/lib/smith/text.smith" -o "$work/text.o"
 undefined=$(nm -u "$work/text.o" | tr -d ' ' | grep -v -x -e _memcpy -e _memset -e _bzero -e _memmove | sort | tr '\n' ' ') # but the compiler's own calls for a big struct
 expect "library: names no libc function" "" "$undefined"
 

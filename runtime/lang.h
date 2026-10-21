@@ -56,6 +56,7 @@ typedef struct {
     bool synthetic;    // emitted: it has no counterpart in the source (a `static`, a symbol label, a prototype's copy)
     bool copy;         // emitted: part of a copy of a declaration's head (the prototype of a definition), all of it
     bool name;         // emitted: the name a declaration introduces
+    uint32_t instance; // emitted: the generic instance whose body the token belongs to (0: none)
     uint32_t location; // the host's source location, kept by every token derived from this one
     uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
     uint32_t length;
@@ -90,6 +91,24 @@ typedef struct {
     bool is_record;
 } SmithTypeInfo;
 
+// What the parser says of a type written as tokens (`const char *`, `geometry_Point`): the questions a generic's
+// `if constexpr` asks (is_integer(T), sizeof(T)) and the identity of a type for its instances.
+typedef struct {
+    bool complete; // size and alignment are known
+    bool is_integer, is_float, is_signed, is_pointer, is_bool, is_enum, is_record;
+    uint64_t size;
+    uint64_t alignment;
+    const char *canonical; // the type with every typedef looked through; valid until the next question
+    uint32_t canonical_length;
+} SmithTypeQuery;
+
+// The type of an expression, for a generic whose type is not written at the call (`test::check_equal(a, b)`).
+typedef struct {
+    char written[256];   // as the parser's types are written, typedef names kept (`Point`), without qualifiers
+    char canonical[256]; // with every typedef looked through: the identity of the type
+    const char *why;     // when the host cannot say: what it could not understand (valid until the next question)
+} SmithExprType;
+
 // What a sparse host offers besides the watched identifiers and the end of the file.
 typedef enum {
     SmithWatch_Names,  // nothing else
@@ -110,6 +129,17 @@ typedef struct {
     SmithLookup (*lookup)(void *context, const char *name, uint32_t length, SmithLookupKind space);
     // The size, alignment and field count of a complete type, named as a typedef or (for SmithLookup_Tag) as a tag.
     bool (*type_info)(void *context, const char *name, uint32_t length, SmithLookupKind space, SmithTypeInfo *info);
+    // A type written as tokens: false when the host cannot read it (then the spelling itself identifies it).
+    bool (*type_query)(void *context, const char *spelling, uint32_t length, SmithTypeQuery *out);
+    // The type of an expression written as tokens separated by \x1f (names, fields, `*`, `&`, `[]`, casts, literals,
+    // calls), after `derefs` dereferences, in the scope the parser is in. False with `out->why` when it cannot say.
+    bool (*expr_type)(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out);
+    // A generic instance is about to be emitted (`id` is in the tokens that follow): the instance whose body asked for
+    // it (0: the file's own code), the call that did, how to name it in a note, and the place of the generic's name.
+    void (*instance)(void *context, uint32_t id, uint32_t parent, uint32_t call_location, const char *description,
+                     uint32_t definition_location);
+    // The host location of a line and column (from 1) of a file, or UINT32_MAX when it cannot say.
+    uint32_t (*locate)(void *context, const char *file, uint32_t line, uint32_t column);
     // The `index`th field of a struct or union: its name and the spelling of its type, valid until the next call.
     bool (*field)(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
                   const char **field_name, const char **field_type);
@@ -126,6 +156,9 @@ typedef struct {
     // Whether the file's text may declare `main` (it contains the word); false lets a declaration be decided at its
     // first token.
     bool maybe_main;
+    // Whether the file's text may declare a generic (it contains `type `); false lets a declaration be decided at its
+    // first token.
+    bool maybe_generic;
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).
@@ -262,6 +295,21 @@ typedef struct {
 } SmithQualifier;
 
 bool smith_lang_qualifier(const SmithLang *lang, SmithQualifier *out);
+
+// A call to a generic as the file wrote it, for an editor: where the name is, what to show on hover, and where the
+// generic is written (its file and name; `location` is the host's own place when the generic is in this file, else 0).
+typedef struct {
+    uint32_t location;
+    uint32_t length;
+    char hover[1024];
+    char file[512];
+    uint32_t definition_location; // the host's place of the generic's name (UINT32_MAX: use line and column)
+    uint32_t line;                // from 1, in `file`
+    uint32_t column;
+} SmithCallSite;
+
+size_t smith_lang_call_site_count(const SmithLang *lang);
+bool smith_lang_call_site_at(const SmithLang *lang, size_t index, SmithCallSite *out);
 
 size_t smith_lang_written_count(const SmithLang *lang);
 bool smith_lang_written_at(const SmithLang *lang, size_t index, SmithWrittenName *out);

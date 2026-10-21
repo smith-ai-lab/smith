@@ -4,6 +4,7 @@
 --                  queries/smith). Neovim 0.12 loads parsers itself; the parser is the committed tree-sitter/src/parser.c,
 --                  compiled on first use with `smith cc -shared` into stdpath("data")/smith/parser.
 --   smith lsp      a "smith" config for vim.lsp, which the user turns on with vim.lsp.enable("smith").
+--   .h files       the language of the project, in a smith project only (lua/smith/filetype.lua).
 --   smith dap      a "smith" adapter for nvim-dap when it is installed.
 --   version        a warning, once, when the plugin and the installed smith are different commits.
 local M = {}
@@ -132,6 +133,7 @@ function M.load(root)
     callback = function(event) M.start(event.buf) end,
   })
   require("smith.lsp").define()
+  require("smith.filetype").register()
   local dap = require("smith.dap")
   vim.api.nvim_create_autocmd("FileType", {
     group = group,

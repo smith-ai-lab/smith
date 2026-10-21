@@ -19,8 +19,10 @@ constexpr size_t smith_lang_slots = 131072; // a power of two, twice the names
 constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
-constexpr size_t smith_lang_queue_max = 32;
+constexpr size_t smith_lang_queue_max = 256;
 constexpr size_t smith_lang_batch_max = 4096;
+constexpr size_t smith_lang_call_sites_max = 2048; // calls to generics the editor can be told of
+constexpr size_t smith_lang_call_frames_max = 16;  // generic calls inside generic calls' arguments
 constexpr size_t smith_lang_braces_max = 256;
 constexpr size_t smith_lang_bindings_max = 128;
 constexpr size_t smith_lang_imports_max = 128;
@@ -33,9 +35,20 @@ constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 constexpr size_t smith_lang_transitive_max = 32;
-constexpr size_t smith_lang_cond_depth_max = 64; // #if nested in a module the header pass reads
-constexpr size_t smith_lang_cond_lines_max = 32; // lines of one chain: #if, #elif..., #else
-constexpr size_t smith_lang_cnames_max = 1024;   // exports of imported modules that have a C name of their own
+constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
+constexpr size_t smith_lang_cond_lines_max = 32;      // lines of one chain: #if, #elif..., #else
+constexpr size_t smith_lang_cnames_max = 1024;        // exports of imported modules that have a C name of their own
+constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
+constexpr size_t smith_lang_gt_text_max = (size_t)1 << 21; // their text
+constexpr size_t smith_lang_it_max = (size_t)1 << 15;      // tokens of the types instances were asked for
+constexpr size_t smith_lang_it_text_max = (size_t)1 << 19; // their text
+constexpr size_t smith_lang_generics_max = 256;            // generics known: the module's own and the imports'
+constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
+constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameters of one generic
+constexpr size_t smith_lang_call_params_max = 16;          // parameters of one generic
+constexpr size_t smith_lang_instance_depth_max = 32;       // generics asked for by the instances of generics
+constexpr size_t smith_lang_generic_modules_max = 64;      // modules whose generics were read
+constexpr size_t smith_lang_generic_scan_max = 200;        // tokens read ahead to see whether a declaration is generic
 
 typedef enum {
     SmithLangWord_Other,
@@ -76,6 +89,25 @@ typedef enum {
     SmithLangRole_Done,     // lowered already (a namespace access, a sized type)
 } SmithLangRole;
 
+// A call to a generic being read (runtime/lang_generic.c): where it began in the pool, and the brackets seen so far.
+typedef struct {
+    uint32_t location; // of the callee's name in the file
+    uint32_t generic;
+    uint32_t instance;
+} SmithLangCallSite;
+
+typedef struct {
+    bool record; // in a generic's body: kept whole between marks, not understood yet
+    bool skip;   // the next token shown to it is the one the call began at
+    uint32_t generic_index;
+    uint32_t location;
+    uint32_t member_location;
+    uint32_t count; // smith_lang_gt.count and text_used when it began
+    uint32_t text;
+    int depth;
+    uint64_t braces; // per open bracket (bit 0 is the first): a `{`, else a `(` or `[`
+} SmithLangCallFrame;
+
 typedef struct {
     uint32_t offset;
     uint32_t length;
@@ -87,7 +119,49 @@ typedef struct {
     bool exported;
     uint32_t location;    // of the declaration's name in the source, in the host's own measure
     SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
+    uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
 } SmithLangName;
+
+// One token a generic keeps (a function with `type T` parameters, runtime/lang_generic.c), or of the calls being read
+// and the types instances were asked for. 28 bytes; the text is in the pool's own.
+typedef enum {
+    SmithLangGen_Plain,
+    SmithLangGen_CallBegin, // a call that may be to a generic: `module::member`, then the whole call, then CallEnd
+    SmithLangGen_CallEnd,
+    SmithLangGen_IfConstexpr, // `if constexpr`: the condition and the branch that is kept are chosen for each instance
+} SmithLangGenSpecial;
+
+typedef struct {
+    uint8_t kind;    // SmithTokenKind
+    uint8_t special; // SmithLangGenSpecial
+    uint8_t param;   // 1 + the type parameter the identifier names (0: none)
+    uint8_t flags;   // line start, space before, expand, name
+    uint32_t text;   // offset in the pool's text
+    uint32_t length;
+    uint32_t location; // the host's; UINT32_MAX when the token was read from a header and not placed yet
+    uint32_t line;     // in the source of the generic, for a token read from a header (0: location is the host's)
+    uint32_t column;
+} SmithLangGenToken;
+
+typedef struct {
+    SmithLangText module;  // game::replay
+    SmithLangText member;  // push
+    SmithLangText lowered; // game_replay_push
+    SmithLangText source;  // the file of the module, to place tokens read from a header
+    uint32_t first;        // the tokens in smith_lang_gt: the head, then the body
+    uint32_t count;
+    uint32_t name_index; // of the tokens: the name, `(`, the matching `)`, and the `{` of the body
+    uint32_t open_index;
+    uint32_t close_index;
+    uint32_t body_index;
+    uint8_t param_count;
+    uint8_t type_count;
+    uint8_t type_token[smith_lang_type_params_max];    // the T of each `type T`: the index of its token in the head
+    uint8_t type_position[smith_lang_type_params_max]; // and which parameter it is
+    bool is_inline;
+    bool exported;
+    bool own; // the module being lowered defines it (else an import's)
+} SmithLangGeneric;
 
 // A name the compiler sees, and how the source writes it (runtime/lang_names.c).
 typedef struct {
@@ -168,6 +242,7 @@ typedef struct {
     SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
+    bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
 } SmithLangDecl;
 
 struct SmithLang {
@@ -204,7 +279,33 @@ struct SmithLang {
     SmithLangCName cnames[smith_lang_cnames_max];
     size_t cnames_count;
     uint32_t bracket_depth;
-    char prev_name[64]; // the last token, if it was a plain name: it may be a type the parser knows
+    // Generics (runtime/lang_generic.c).
+    size_t generics_count;
+    size_t instances_count;
+    size_t instances_emitted;                             // the instances before this one have their code written
+    uint32_t cap_frames;                                  // calls being read: their tokens are kept, not written
+    SmithLangCallFrame calls[smith_lang_call_frames_max]; // the calls being read, the innermost last
+    size_t call_top;
+    size_t call_site_count;
+    SmithLangCallSite call_sites[smith_lang_call_sites_max]; // the calls as the file wrote them, for the editor
+    bool call_failed;                                        // a call nested too deep: the outermost is dropped
+    bool recording;                                          // a generic's body is being read into smith_lang_gt
+    uint32_t recording_generic;                              // its index
+    bool recording_skip;  // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;   // where in smith_lang_gt the dropped body begins
+    bool generic_next;    // the declaration about to begin is generic
+    bool generics_loaded; // the generics of the imports are read
+    SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics
+    size_t generic_modules_count;
+    bool gen_dump_on; // SMITH_LANG_GENERICS names a file for what the generics write (a test's view of it)
+    size_t gen_dump_used;
+    int gen_dump_braces;
+    int gen_dump_parens;
+    char gen_prev;
+    bool namespace_done;       // smith_lang_namespace wrote a generic call itself: there is no name to write
+    uint32_t instance_depth;   // of the instance being written (0: the file's own code)
+    uint32_t instance_current; // 1 + the instance being written (0: none)
+    char prev_name[64];        // the last token, if it was a plain name: it may be a type the parser knows
     size_t prev_name_length;
     unsigned errors;
     bool is_module;
@@ -511,6 +612,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // The head of a file-scope declaration.
 #include "lang_head.c"
+
+// Generic functions: `type T` parameters, their calls and their instances.
+#include "lang_generic.c"
 
 // A file that is not a module, with the host offering few tokens.
 #include "lang_sparse.c"

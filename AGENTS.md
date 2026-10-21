@@ -131,6 +131,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
   modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
+- **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
+  Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
+  called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
+  generic's tokens (no clang patch), writes one weak, hidden instance per canonical list of types at the end of the file,
+  and chooses the branch of each `if constexpr` for it, so the parser only ever sees ordinary functions; an error in an
+  instance is reported at the generic's source with a note at the call. An instance's code is a copy of its generic's source
+  file under the same name, so the debugger shows `pick::larger<i32>` at the generic's own lines. Value parameters and
+  functions that return `type` are the next extension.
 - **`smith lsp` lowers `.smith` files too.** `smith_clangd_main` installs the same token hook, so a parse of a `.smith`
   file in clangd is lowered as a compile's is and positions are those of the source; no LLVM change. The lowering is
   C with static tables, so a hook holds it from its making to the end of its file and clangd's `.smith` parses take
@@ -197,6 +205,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
       expression text.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
+  - **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
+    or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
+    `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
+    bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text` is the first (issue #39).
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
@@ -219,7 +232,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
   smith's included. The way back needs only a C23 compiler and a clang for build.c, and is also the first build of a
   fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc` builds
-  and installs the stage0 (set `SMITH_CLANG=/usr/bin/clang` if Homebrew's llvm is absent). To get the full smith, run
+  and installs the stage0 (set `SMITH_CLANG=/usr/bin/clang` if Homebrew's llvm is absent). The `.smith` sources smith's own build compiles are built from their
+  committed lowering in `bootstrap/` (`smith build bootstrap` writes it, `check-bootstrap` in `check` keeps it current), so that first build
+  needs no knowledge of `.smith` and the protocol generator builds with the stage0. To get the full smith, run
   `build/stage0 build llvm` (about 9 minutes once) and then `build/stage0 build install -DCC=cc`, which links clang in.
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
@@ -246,6 +261,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `<smith/json.h>`. The output is committed (a fresh clone and the stage0 need no network); `smith check` runs `check-protocol`, which fails when a
   committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol.sh` builds and runs the tests under
   the sanitizers. See [docs/protocol.md](docs/protocol.md).
+- **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [docs/mcp.md](docs/mcp.md), skill smith-debug): eleven tools
+  (`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
+  generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp.sh` runs it on the
+  fake io and end to end.
 - **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
   `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
   modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages

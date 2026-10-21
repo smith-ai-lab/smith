@@ -9,6 +9,15 @@ This skill ships in the smith plugin, from `.agents/skills/smith-text/SKILL.md` 
 
 Text is a pointer and a length (`SmithText`), never a terminated string, so a file read into memory is read where it lies. The library calls no C library function and no locale, and every loop is bounded by a length. A number written here reads back as the same value on any machine. The header is `.smith/include/smith/text.h`; read it first.
 
+**text is a `.smith` module now** (`module smith::text;`, `lib/smith/text.smith` in smith's repository, issue #39), and its C header is generated from it. C code is unchanged: `#include <smith/text.h>` and the same `SmithText`, `smith_text_make`, `smith_text_parse_f32`, ... with the same symbols. From `.smith` the module is `import smith::text;` and the names are the module's, `text::Text`, `text::make(...)`, `text::take_line(&t, &line)`, `text::parse_u64(word, &x)`, `text::number_capacity`:
+
+```c
+import smith::text;
+text::Text input = text::make("move 3 4\n");   // the same struct as C's SmithText
+```
+
+Compile the module with a smith that has clang inside (the `.smith` source is `.smith/lib/smith/text.smith`; a stage0 cannot compile it, though C code that only includes the header needs nothing). `smith cc main.smith lib/smith/text.smith -I include` builds a single command.
+
 ## Read lines and words
 
 ```c
@@ -63,7 +72,7 @@ Whatever the writers produce, the parsers read back exactly: every u64, i64 and 
 
 ## Get the library in build.c
 
-text needs nothing else. smith writes the header and the source into `.smith/` on every `smith build`:
+text needs nothing else. smith writes the header and the source (`.smith/lib/smith/text.smith`) into `.smith/` on every `smith build`; `smith_library(b, "text")` returns the source's path and `smith_object` compiles a `.smith` source as it does a `.c` (the header step and `-I .smith/include` are added for it):
 
 ```c
 SmithObject text = {.compiler = "smith-cc", .source = smith_library(b, "text"), .output = "build/smith/text.o", .flags = flags};

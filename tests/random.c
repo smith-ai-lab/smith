@@ -4,7 +4,7 @@
 //   pins     print the pinned values below as C source, for updating them on purpose
 //   assert   a normal with a deviation of 0, which must abort
 //   stats    print the measured worst errors
-#include "../lib/random.c"
+#include "../bootstrap/lib/smith/random.c"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -43,8 +43,8 @@ static const TestKnownAnswer test_known_answers[] = {
 static void test_philox(void) {
     for (size_t i = 0; i < sizeof test_known_answers / sizeof test_known_answers[0]; i++) {
         const TestKnownAnswer *vector = &test_known_answers[i];
-        SmithRandomBlock counter = {{vector->counter[0], vector->counter[1], vector->counter[2], vector->counter[3]}};
-        SmithRandomBlock out = smith_random_philox(counter, vector->key[0], vector->key[1]);
+        smith_random_Block counter = {{vector->counter[0], vector->counter[1], vector->counter[2], vector->counter[3]}};
+        smith_random_Block out = smith_random_philox(counter, vector->key[0], vector->key[1]);
         for (size_t w = 0; w < 4; w++)
             assert(out.word[w] == vector->expected[w]);
     }
@@ -773,7 +773,7 @@ static void test_index_zero_word(void) {
     SmithKey key = smith_key_make(1);
     const uint64_t spans[] = {1, 2, 3, 5, 6, 7, 10, 1000, ((uint64_t)1 << 63) + 1, UINT64_MAX};
     for (size_t i = 0; i < sizeof spans / sizeof spans[0]; i++)
-        assert(smith_random_index(key, spans[i]) == 0);
+        assert(smith_random_draw_index(key, spans[i]) == 0);
     smith_random_hook = nullptr;
 }
 

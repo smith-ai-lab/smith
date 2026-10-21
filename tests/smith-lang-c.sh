@@ -5,7 +5,7 @@
 # #includes find what they found), and the two results must be identical. They are compared as assembly (-S), which is
 # stricter than objects and shows where they differ; the one thing that may differ is the file's own name, where a
 # program prints it (its extension): __FILE__ is set to one name, and ".smith" at the end of a name in a string is read
-# as ".c". The test needs a smith with clang inside; a stage0
+# as ".c" on both sides. The test needs a smith with clang inside; a stage0
 # skips it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -21,7 +21,7 @@ if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
 fi
 
 mkdir -p "$work/tree"
-for item in smith.c build.c include lib runtime scripts templates tests shim; do
+for item in smith.c build.c bootstrap include lib runtime scripts templates tests shim; do
     cp -R "$here/$item" "$work/tree/$item"
 done
 cd "$work/tree" || exit 1
@@ -41,14 +41,18 @@ compare() { # name, source, extra flags
     "$smith" cc $flags $3 -S "$smith_file" -o "$work/lowered/$1.s" 2>"$work/lowered/$1.err"
     lowered=$?
     rm -f "$smith_file"
+    # Both sides read ".smith" at the end of a name in a string as ".c" (the source's own strings that say ".smith" too).
+    for side in plain lowered; do
+        sed 's/\([A-Za-z0-9_]\)\.smith"/\1.c"/g' "$work/$side/$1.s" >"$work/$side/$1.n" 2>/dev/null
+    done
     if [ $plain != $lowered ]; then
         failures=$((failures + 1))
         echo "FAIL  $1: exit $plain as .c, $lowered as .smith"
         sed 's/smith:/smith/' "$work/lowered/$1.err" | head -5
-    elif [ $plain = 0 ] && ! sed 's/\([A-Za-z0-9_]\)\.smith"/\1.c"/g' "$work/lowered/$1.s" | cmp -s "$work/plain/$1.s" -; then
+    elif [ $plain = 0 ] && ! cmp -s "$work/plain/$1.n" "$work/lowered/$1.n"; then
         failures=$((failures + 1))
         echo "FAIL  $1: the code differs"
-        sed 's/\([A-Za-z0-9_]\)\.smith"/\1.c"/g' "$work/lowered/$1.s" | diff "$work/plain/$1.s" - | head -10
+        diff "$work/plain/$1.n" "$work/lowered/$1.n" | head -10
     elif [ "$(sed 's/\.c\([: ]\)/.smith\1/g' "$work/plain/$1.err")" != "$(cat "$work/lowered/$1.err")" ]; then
         failures=$((failures + 1))
         echo "FAIL  $1: the messages differ"
@@ -63,10 +67,10 @@ compare build build.c ""
 compare build_runtime runtime/build_runtime.c ""
 compare stub tests/stub.c "-DNAME=\"stub\""
 compare pack scripts/pack.c ""
-for name in arena io http random text test; do
+for name in arena io http test; do
     compare "lib_$name" "lib/$name.c" ""
 done
-# Not tests/random.c: it includes lib/random.c, and both print the name "random.c", which the compiler makes one string;
+# Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes one string;
 # as random.smith it is two, so the constants after it are numbered differently. (Nothing else differs.)
 for name in arena io http text untar; do
     compare "test_$name" "tests/$name.c" ""

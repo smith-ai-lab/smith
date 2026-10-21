@@ -2413,6 +2413,8 @@ expect "verbs: ... no generated source" 0 "$(printf '%s\n' "$info" | grep -c "ma
 expect "verbs: ... no source under .smith/" 0 "$(printf '%s\n' "$info" | grep -c "^compile${tab}.smith/")"
 expect "verbs: ... the task of smith_tests is a test" 1 "$(printf '%s\n' "$info" | grep -c "^test${tab}test$")"
 expect "verbs: ... the programs" 1 "$(printf '%s\n' "$info" | grep -c "^program${tab}build/program$")"
+expect "verbs: ... the runner smith_tests makes, named as the runner" 1 "$(printf '%s\n' "$info" | grep -c "^runner${tab}build/tests$")"
+expect "verbs: ... the runner is also a program, with no unit line of its own" 1 "$(printf '%s\n' "$info" | grep -c "^program${tab}build/tests$")"
 expect "verbs: ... the default, its alias opened" 1 "$(printf '%s\n' "$info" | grep -c "^default${tab}build/program$")"
 expect "verbs: the compile database lists main.c once" 1 "$(grep -c '"file": "main.c"' .smith/compile_commands.json)"
 expect "verbs: ... with the first compile's flags" 1 "$(grep -c -e '-DFIRST' .smith/compile_commands.json)"

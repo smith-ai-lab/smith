@@ -33,6 +33,7 @@
     "./.agents/skills/smith-json/",
     "./.agents/skills/smith-lang/",
     "./.agents/skills/smith-lang-modules/",
+    "./.agents/skills/smith-lang-generics/",
     "./.agents/skills/smith-lang-c-interop/",
     "./.agents/skills/smith-lang-sized-types/"
   ],
@@ -52,6 +53,14 @@
         ".hpp": "cpp",
         ".smith": "smith"
       }
+    }
+  },
+  "mcpServers": {
+    "smith": {
+      "command": "smith",
+      "args": [
+        "mcp"
+      ]
     }
   }
 }

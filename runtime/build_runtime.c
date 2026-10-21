@@ -1114,9 +1114,11 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
     return list;
 }
 
-// The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries.
-// smith writes every library it ships to .smith/lib/ before build.c runs, so that folder is the list: smith.c's table
-// is the only one, and the two cannot disagree.
+// The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries. A library's source is C
+// (.smith/lib/<name>.c) or a .smith module (.smith/lib/smith/<name>.smith, the module smith::<name>); its header is
+// .smith/include/smith/<name>.h either way.
+// smith writes every library it ships before build.c runs, so that folder is the list: smith.c's table is the only
+// one, and the two cannot disagree.
 const char *smith_library(SmithBuild *b, const char *name) {
     SMITH_ASSERT(b != nullptr && name != nullptr);
     smith_context = nullptr;
@@ -1125,12 +1127,19 @@ const char *smith_library(SmithBuild *b, const char *name) {
         plain = plain && ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_');
     const char *source = smith_fmt(b, ".smith/lib/%s.c", name);
     if (plain && access(source, R_OK) == 0) return source;
+    source = smith_fmt(b, ".smith/lib/smith/%s.smith", name);
+    if (plain && access(source, R_OK) == 0) return source;
     const char *const *found = smith_glob(b, smith_list(b, ".smith/lib/*.c", nullptr));
+    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/smith/*.smith", nullptr));
     const char *const *names = smith_list(b, nullptr);
     for (size_t i = 0; found[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(b, names,
                           smith_list(b, smith_replace_extension(b, found[i] + strlen(".smith/lib/"), ""), nullptr),
                           nullptr);
+    for (size_t i = 0; modules[i] != nullptr; i++) // bounded by the glob's result
+        names = smith_cat(
+            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/smith/"), ""), nullptr),
+            nullptr);
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
 }
 
@@ -1387,9 +1396,17 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
     return nullptr;
 }
 
-// A .smith compile finds the modules' headers there.
-static const char *const *smith_lang_flags(SmithBuild *b, bool lang) {
-    return lang ? smith_list(b, "-I", ".smith/include", nullptr) : smith_list(b, nullptr);
+// A .smith compile finds the modules' headers there. smith's own library modules (.smith/lib/smith/<name>.smith) also
+// find the headers of their siblings by a quoted include (`#include "arena.h"`, which their generated header says too:
+// the header sits beside arena.h), as `-iquote .smith/include/smith`.
+static bool smith_ends_with(const char *text, const char *suffix);
+
+static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
+    if (!smith_ends_with(source, ".smith")) return smith_list(b, nullptr);
+    if (strncmp(source, ".smith/lib/smith/", strlen(".smith/lib/smith/")) == 0) {
+        return smith_list(b, "-I", ".smith/include", "-iquote", ".smith/include/smith", nullptr);
+    }
+    return smith_list(b, "-I", ".smith/include", nullptr);
 }
 
 // .smith sources (docs/smith-lang.md). A module's generated header is a step of its own, made from the module's tokens
@@ -1667,8 +1684,8 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         smith_lang_sources_used = true;
     }
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, lang),
-                             copy.flags, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
+                             smith_lang_flags(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = lang ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
@@ -1810,9 +1827,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments =
-        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
-                  smith_lang_flags(b, smith_ends_with(copy, ".smith")), smith_copy_list(flags), tail, nullptr);
+    const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
+                                             smith_lang_flags(b, copy), smith_copy_list(flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
@@ -1966,7 +1982,10 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
         fprintf(out, "test\t%s\n", tests[i]);
     for (size_t i = 0; i < smith_program_count; i++) {
         fprintf(out, "program\t%s\n", smith_programs[i]);
-        if (smith_program_is_tests[i]) continue; // a runner is the tests' own, which `smith prove` leaves out
+        if (smith_program_is_tests[i]) { // a runner is the tests' own, which `smith prove` leaves out
+            fprintf(out, "runner\t%s\n", smith_programs[i]);
+            continue;
+        }
         fputs("unit", out);
         for (size_t j = 0; smith_program_sources[i][j] != nullptr; j++) {
             if (smith_is_own_source(smith_program_sources[i][j])) fprintf(out, "\t%s", smith_program_sources[i][j]);
@@ -2217,9 +2236,9 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     // test flags, unless the project links it itself in .objects, so no library is defined twice.
     static const char *const libraries[] = {"arena", "random", "trace", "contract"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
-        if (smith_tests_links(tests, smith_text(".smith/lib/%s.c", libraries[i]))) continue;
-        objects[used++] =
-            (const char *)smith_tests_object(b, &copy, smith_library(b, libraries[i]), copy.flags, nullptr);
+        const char *source = smith_library(b, libraries[i]); // C or a .smith module
+        if (smith_tests_links(tests, source)) continue;
+        objects[used++] = (const char *)smith_tests_object(b, &copy, source, copy.flags, nullptr);
     }
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];

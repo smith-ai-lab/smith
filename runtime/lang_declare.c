@@ -9,6 +9,10 @@
 
 static void smith_lang_reset_declaration(SmithLang *lang);
 
+// runtime/lang_generic.c
+static bool smith_lang_generic_candidate(const SmithLang *lang, const SmithHost *host, const SmithToken *first);
+static void smith_lang_generic_finish(SmithLang *lang);
+
 // ---- The state a token changes in the stream (after a head), apart from writing it
 // ---------------------------------------
 
@@ -30,6 +34,7 @@ static void smith_lang_close_state(SmithLang *lang) {
     if (lang->brace_depth != 0) return;
     if (kind == SmithLangBrace_Function) {
         lang->in_function = false;
+        if (lang->recording) smith_lang_generic_finish(lang);
         smith_lang_end_declaration(lang);
     } else if (kind == SmithLangBrace_Aggregate || kind == SmithLangBrace_Enum) {
         lang->tail_declarator = true;
@@ -128,6 +133,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
     }
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
     if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
+    if (!forced && smith_lang_generic_candidate(lang, host, token)) return smith_lang_act(SmithLangAct_Slow);
     bool slow = false;
     bool wants = smith_lang_wants_static(lang, host, token, may_peek, &slow);
     if (slow) return smith_lang_act(SmithLangAct_Slow);
@@ -492,7 +498,9 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
         if (smith_lang_previous_is(lang, host, 1, ".") || smith_lang_previous_is(lang, host, 1, "->")) {
             return smith_lang_act(SmithLangAct_Keep);
         }
-        if (smith_lang_name_find(lang, token->text, token->length) != nullptr) {
+        const SmithLangName *known = smith_lang_name_find(lang, token->text, token->length);
+        if (known != nullptr && known->generic != 0) return smith_lang_act(SmithLangAct_Slow); // a call: not a rename
+        if (known != nullptr) {
             const char *prefixed = smith_lang_prefixed(lang, token->text, token->length);
             return smith_lang_rename_act(prefixed, lang->tmp_length);
         }

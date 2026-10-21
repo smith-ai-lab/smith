@@ -78,7 +78,9 @@ between the fields, and `.smith/compile_commands.json`, and the manifest has two
   here too, and build.c itself, with the flags smith compiles it with.
 - `test<TAB>task`: a task with `.test` (what `smith_tests` makes its task; smith's own `test-<name>` tasks set it too).
 - `program<TAB>path`: the output of a `smith_program`; `unit<TAB>source...`: the own sources of a program's objects (not
-  the runner `smith_tests` makes); `default<TAB>target`: a target of `smith_default`, aliases opened.
+  the runner `smith_tests` makes); `runner<TAB>path`: the program `smith_tests` makes, the tests' runner (also a
+  `program` line), which a debugger launches with `--test <name> --in-process`; `default<TAB>target`: a target of
+  `smith_default`, aliases opened.
 - the target `smith_needs` is the generated files those compiles read (their implicit and order-only inputs that a step
   makes: the tests' list header, a module's header), and `smith_tests` is the test tasks. `smith lint` and `smith prove`
   build `smith_needs`, `smith test` builds `smith_tests`; both exist in every manifest, empty for none.
@@ -91,7 +93,7 @@ How each verb uses it:
   says to name the files (`smith fmt -i <files>`). clang-format reads `.clang-format-ignore` itself when it is given files
   (a generated `parser.c`, the broken inputs of a test).
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
-  findings of different files do not interleave. `.smith` sources are left out (the token hook is the compiler's). It
+  findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
   lints the first compile of a source, so a program built in three variants is checked once, with the first's flags.
 - **prove** proves each program's C sources together, as the program links them (`unit<TAB>source...` in the info; the
   tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first
@@ -444,8 +446,9 @@ const char *cmake = smith_package(b, &(SmithPackage){
   `file://` copies a local file, for tests). It follows redirects, https only (a redirect to another scheme is an
   error), streams the body to the temporary file a block at a time, fails a server that sends nothing for 60 s with
   `ETIMEDOUT`, and reports statuses, redirect loops, short bodies and TLS failures as messages that name the URL.
-  smith.c and the build runtime include the client with the libraries it needs (`lib/arena.c`, `random.c`, `io.c`,
-  `http.c`; the runtime gets them from `.smith/lib/` and `.smith/internal/http.c`, and `smith_library` does not offer
+  smith.c and the build runtime include the client with the libraries it needs (`lib/arena.c`, `random`, `io.c`,
+  `http.c`; the runtime gets them from `.smith/lib/`, `.smith/internal/http.c` and, for random (a `.smith` module), its lowering
+  `.smith/bootstrap/lib/smith/random.c` (docs/smith-lang.md, "The bootstrap"), and `smith_library` does not offer
   http until a second project needs it), so `cc -std=gnu23 smith.c` is still the whole build; Network.framework is
   loaded with `dlopen` on the first download, so nothing else pays for it. SHA-256 is in smith, checked against the NIST
   test vectors in `tests/build.sh`. The network cases are tested in `tests/package.sh` (a real cache, a scripted
@@ -960,8 +963,9 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
-// together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
+// The path of a smith library's source, such as ".smith/lib/arena.c" (or, for a library written in .smith,
+// ".smith/lib/smith/text.smith", a module that smith_object compiles with a smith that has clang inside), which smith
+// writes on every `smith build` together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test", "text"; random and io use the arena,
 // and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them).

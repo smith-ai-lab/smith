@@ -185,6 +185,10 @@ static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const Smit
     if (binding != nullptr) {
         lang->in_attribute = smith_lang_sparse_in_attribute(lang, host);
         if (smith_lang_namespace(lang, host, token, binding, &resolved)) {
+            if (lang->namespace_done) { // a generic call, written with its arguments
+                lang->namespace_done = false;
+                return;
+            }
             smith_lang_emit(lang, host, resolved);
             return;
         }
@@ -263,6 +267,10 @@ static void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, cons
     SmithToken resolved;
     lang->in_attribute = binding != nullptr && smith_lang_sparse_in_attribute(lang, host);
     if (binding != nullptr && smith_lang_namespace(lang, host, token, binding, &resolved)) {
+        if (lang->namespace_done) { // a generic call, written with its arguments
+            lang->namespace_done = false;
+            return;
+        }
         smith_lang_emit(lang, host, resolved);
     } else {
         smith_lang_sparse_sized(lang, host, token);
@@ -280,7 +288,9 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
         return;
     }
     bool name = !token->foreign && token->kind == SmithTokenKind_Identifier && !smith_lang_sparse_member(lang, host);
-    if (name && smith_lang_name_find(lang, token->text, token->length) != nullptr) {
+    const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
+    if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
+    if (known != nullptr) {
         const char *prefixed = smith_lang_prefixed(lang, token->text, token->length);
         smith_lang_emit(lang, host, smith_lang_synth(SmithTokenKind_Identifier, prefixed, lang->tmp_length, token));
         return;

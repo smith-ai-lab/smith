@@ -845,6 +845,13 @@ static const unsigned char smith_build_untar[] = {
 
 // smith's libraries: each header and source is written into the project's .smith/ on every `smith build`, where build.c
 // finds the source with smith_library and the compiles find the header through -I .smith/include.
+//
+// The registry. A library is its header, include/smith/<name>.h, and its source, which is C (lib/<name>.c, written to
+// .smith/lib/<name>.c) or a .smith module (lib/smith/<name>.smith, written to .smith/lib/smith/<name>.smith, where the
+// module smith::<name> lives at its path). C or .smith, the C API is the header: a .smith module's header is generated
+// (`smith cc --smith-header`) and committed, because the stage0 has no hook, embeds the header as bytes and only a
+// smith with the hook compiles the module; `check` fails when regenerating it gives other bytes. Porting a library is
+// one change in each of two places below: its source's #embed path, and the `false` of its row in smith_libraries.
 static const unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
@@ -877,14 +884,14 @@ static const unsigned char smith_random_header[] = {
 #embed "include/smith/random.h"
 };
 static const unsigned char smith_random_source[] = {
-#embed "lib/random.c"
+#embed "lib/smith/random.smith"
 };
 
 static const unsigned char smith_text_header[] = {
 #embed "include/smith/text.h"
 };
 static const unsigned char smith_text_source[] = {
-#embed "lib/text.c"
+#embed "lib/smith/text.smith"
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
@@ -893,6 +900,12 @@ static const unsigned char smith_embedded_http_header[] = {
 };
 static const unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
+};
+// The runtime's package.c compiles in one translation unit with io, which needs the random library, and the stage0
+// knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
+// .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
+static const unsigned char smith_embedded_random_source[] = {
+#embed "bootstrap/lib/smith/random.c"
 };
 
 static const unsigned char smith_test_header[] = {
@@ -915,18 +928,21 @@ typedef struct {
     size_t header_size;
     const unsigned char *source;
     size_t source_size;
+    bool lang; // the source is a .smith module, not C
 } SmithLibrary;
 
+// One row per library, in order of name: SMITH_LIBRARY(name, lang) uses the arrays smith_<name>_header and _source.
+#define SMITH_LIBRARY(library, is_lang) \
+    {#library, \
+     smith_##library##_header, \
+     sizeof smith_##library##_header, \
+     smith_##library##_source, \
+     sizeof smith_##library##_source, \
+     is_lang}
+
 static const SmithLibrary smith_libraries[] = {
-    {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
-    {"contract", smith_contract_header, sizeof smith_contract_header, smith_contract_source,
-     sizeof smith_contract_source},
-    {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
-    {"json", smith_json_header, sizeof smith_json_header, smith_json_source, sizeof smith_json_source},
-    {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
-    {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
-    {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
-    {"trace", smith_trace_header, sizeof smith_trace_header, smith_trace_source, sizeof smith_trace_source},
+    SMITH_LIBRARY(arena, false), SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(random, true), SMITH_LIBRARY(test, false),     SMITH_LIBRARY(text, true), SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
@@ -1093,15 +1109,54 @@ static void smith_build_split(int count, char **args, char **ninja_argv, char **
     program_argv[*program_used] = nullptr;
 }
 
-// Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c.
+// A .smith library's committed header says it was generated from lib/smith/<name>.smith, and the header step of a build
+// generates it from .smith/lib/smith/<name>.smith: the first line differs. The header is written with the step's line,
+// so that both write the same bytes (the step then leaves the file alone and no importer is rebuilt).
+static void smith_write_library_header(const char *path, const SmithLibrary *library) {
+    static unsigned char bytes[1 << 16];
+    char from[PATH_MAX];
+    char to[PATH_MAX];
+    int written = snprintf(from, sizeof from, " from lib/smith/%s.smith.", library->name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof from);
+    written = snprintf(to, sizeof to, " from .smith/lib/smith/%s.smith.", library->name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof to);
+    const char *header = (const char *)library->header;
+    const char *line_end = memchr(header, '\n', library->header_size);
+    SMITH_ASSERT(line_end != nullptr);
+    const char *found = memmem(header, (size_t)(line_end - header), from, strlen(from));
+    SMITH_ASSERT(found != nullptr); // not a header generated from its module: run smith build headers
+    size_t before = (size_t)(found - header);
+    size_t after = before + strlen(from);
+    size_t size = library->header_size - strlen(from) + strlen(to);
+    SMITH_ASSERT(size <= sizeof bytes);
+    memcpy(bytes, header, before);
+    memcpy(bytes + before, to, strlen(to));
+    memcpy(bytes + before + strlen(to), header + after, library->header_size - after);
+    smith_write_if_changed(path, bytes, size);
+}
+
+// Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c, or for a .smith
+// module to .smith/lib/smith/<name>.smith (removing a <name>.c an older smith left, which smith_library would find
+// first).
 static void smith_build_write_libraries(void) {
     for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
         const SmithLibrary *library = &smith_libraries[i];
         char path[PATH_MAX];
         int written = snprintf(path, sizeof path, ".smith/include/smith/%s.h", library->name);
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
-        smith_write_if_changed(path, library->header, library->header_size);
-        written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+        if (library->lang) {
+            smith_write_library_header(path, library);
+        } else {
+            smith_write_if_changed(path, library->header, library->header_size);
+        }
+        if (library->lang) {
+            written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+            SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+            unlink(path);
+            written = snprintf(path, sizeof path, ".smith/lib/smith/%s.smith", library->name);
+        } else {
+            written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
+        }
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
         smith_write_if_changed(path, library->source, library->source_size);
     }
@@ -1112,8 +1167,11 @@ static void smith_build_prepare(const char *clang, bool in_process) {
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
+    smith_make_folder(".smith/lib/smith");
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/bootstrap");
+    smith_make_folder(".smith/bootstrap/lib");
+    smith_make_folder(".smith/bootstrap/lib/smith");
     static char manifest[smith_build_manifest_max];
     size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang, in_process);
     // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
@@ -1123,6 +1181,8 @@ static void smith_build_prepare(const char *clang, bool in_process) {
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
+                           sizeof smith_embedded_random_source);
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
     smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
@@ -1864,6 +1924,18 @@ static bool smith_only_options(int count, char **args) {
 // `smith docs`: the check of AGENTS.md, knowledge/ and the skills, with the types knowledge/index.md declares.
 #include "runtime/docs.c"
 
+// `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
+// with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
+// text and protocol code (docs/protocol.md; text is the module smith::text, linked from its lowering in bootstrap/),
+// and on the io included above.
+#ifdef SMITH_MCP
+#include "lib/json.c"
+#include "runtime/mcp.c"
+#include "runtime/protocol/dap.c"
+#include "runtime/protocol/mcp.c"
+#include "runtime/protocol/protocol.c"
+#endif
+
 // The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
 #include "runtime/verbs.c"
 
@@ -1880,6 +1952,7 @@ typedef enum {
     SmithVerb_Docs,          // smith docs: checks AGENTS.md, knowledge/ and skills
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
+    SmithVerb_Mcp,           // smith mcp: the debugger as an MCP server (the full smith)
     SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
     SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the fixed action on the project with none
     SmithVerb_Project, // the fixed action on the project; the arguments are the action's (the runner's, the program's)
@@ -1911,6 +1984,7 @@ static const SmithVerb smith_verbs[] = {
     {"prove", SmithVerb_ToolOrProject, smith_prove_project},
     {"dbg", SmithVerb_Tool, nullptr},
     {"dap", SmithVerb_Tool, nullptr},
+    {"mcp", SmithVerb_Mcp, nullptr},
 };
 
 static const SmithVerb *smith_find_verb(const char *name) {
@@ -1952,6 +2026,13 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_cache_main(argc - 2, argv + 2);
     case SmithVerb_Tool:
         return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
+    case SmithVerb_Mcp:
+#ifdef SMITH_MCP
+        return smith_mcp_main(argc - 2, argv + 2, self);
+#else
+        fprintf(stderr, "smith: mcp needs the full smith (clang inside); this one is the stage0 (docs/mcp.md)\n");
+        return smith_exit_missing;
+#endif
     case SmithVerb_Docs:
         return smith_docs_main(argc - 2, argv + 2);
     case SmithVerb_Symbolize:
@@ -1980,6 +2061,7 @@ static void smith_usage(FILE *out) {
           "                          clang-tidy\n"
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
+          "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"
           "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",
