@@ -206,6 +206,47 @@ const char *cmake = smith_package(b, &(SmithPackage){
   smith's own HTTP client can replace curl later without changing this. SHA-256 is in smith, checked against the NIST
   test vectors in `tests/build.sh`. macOS only for now.
 
+## The caches and `smith cache`
+
+smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), each keyed by hash, so anything removed
+from either is simply fetched or built again:
+
+- `packages/<hex>/`: what `smith_package` extracted (above).
+- `modules/`: clang's module cache for `smith_modules` (below). It is one cache for every project and worktree, not one
+  per project, so Apple's SDK and framework modules are built once per machine and a new clone or worktree starts warm.
+  clang keys a module file by the module, its path and the hash of the compile's flags, so two worktrees whose headers
+  differ (different paths) never share or overwrite one another's module files, and a sanitized compile never reuses a
+  plain one's. A module file is checked against its headers when it is used and rebuilt if one changed, so a warm cache
+  can only be stale in a way clang detects.
+
+**One rule for both: an entry unused for 31 days is removed, checked at most once a week.** For modules smith states it
+in every compile, as `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`, and clang applies it (named
+constants in `runtime/package.c`). For packages smith applies it:
+
+- Each `smith_package` (and `smith fetch`) touches `<hex>.used` beside the package folder: that is its last use.
+- The weekly check is due when `packages/prune.timestamp` is missing or older than a week; when it is not due, the cost
+  is one `stat`. When due, the build touches the timestamp first (so a build starting meanwhile skips the check), then
+  removes every package whose `<hex>.used` is older than 31 days. A package with no stamp (cached before pruning
+  existed) is stamped, not removed. A `.tmp-*` name (a fetch in progress) is removed only when it is itself older than
+  31 days. A stale stamp with no package is removed.
+- **Safe beside a build that uses a package:** a build touches the stamp before it looks for the folder, and the prune
+  renames a stale package out of the way (`.tmp-prune-*`) and reads the stamp again before it deletes anything. If the
+  build's touch is there, the package is renamed back and kept; if the rename came first, the build finds no folder and
+  fetches it again. So a build always gets a complete folder, and a package used in the last 31 days is never removed.
+- Tests fake the clock through file times (`touch -t`) in `tests/cache.sh`, with caches of their own in a temporary
+  `XDG_CACHE_HOME`.
+
+`smith cache` prints each cache's path, number of entries and size on disk; `smith cache -v` also lists each entry and
+its last use (a package's stamp; a module folder's newest file). `smith cache clean` removes both caches whole, and
+`smith cache clean modules` or `smith cache clean packages` one of them. Like `smith build`, `smith new` and `smith
+fetch`, `cache` is recognised only as the exact first argument.
+
+**A build holds the caches.** `smith build` takes a shared `flock` on `<cache>/smith/lock` and keeps the descriptor open
+through `exec`, so ninja and every compile inherit it and the lock lasts as long as the build's processes (the system
+drops it if smith is killed). `smith cache clean` takes the lock exclusively without waiting, and refuses with exit
+status 2 while any build, in any project or worktree, holds it. That costs one `open` and one `flock` per build.
+Showing the caches never takes the lock, and pruning does not need it: it is safe as above.
+
 ## Clang modules: `smith_modules`
 
 Clang modules parse a group of headers once, cache the result, and reuse it wherever the headers are included again. The
@@ -236,12 +277,11 @@ void build(SmithBuild *b) {
   them) the depfile lists exactly the headers a source imports, directly and through other headers, and a rebuild is
   what ninja already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
   *` makes a header's own includes visible to its users, as textual inclusion did.
-- **The flags:** `-fmodules -fmodules-cache-path=.smith/cache/modules` and one `-fmodule-map-file=<map>` per map. The
-  cache is clang's own (implicit modules), so clang does the locking when many compiles fill it at once. A sanitized
-  compile and a plain one hash differently, so each has its own folder inside the cache. The cache is outside `build/`,
-  so `smith build clean` or `rm -rf build` leaves it and the next clean build starts warm. That is right: a module file
-  is checked against its headers when it is used and rebuilt if one changed, so a warm cache can only be stale in a way
-  clang detects. `rm -rf .smith` removes it too, and is always safe. clang deletes module files unused for 31 days.
+- **The flags:** `-fmodules -fmodules-cache-path=<cache>/smith/modules -fmodules-prune-interval=604800
+  -fmodules-prune-after=2678400` and one `-fmodule-map-file=<map>` per map. `<cache>` is `$XDG_CACHE_HOME`, or
+  `~/.cache`, as for packages. The cache is clang's own (implicit modules), so clang does the locking when many compiles
+  fill it at once. A sanitized compile and a plain one hash differently, so each has its own folder inside the cache.
+  See "The caches" below for why it is shared and for the pruning flags.
 - **Rebuilds.** The depfile lists the module maps and the headers imported, so editing a header rebuilds the sources that
   import it; editing or adding a header in a folder rewrites its map, which rebuilds the sources that load it. A flag
   that changes a module's hash (a `-D`, the standard, a sanitizer) changes the command, so the objects rebuild and
@@ -622,8 +662,11 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
 // afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each header under
 // the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own headers
 // (.smith/include/smith/) are modules too. smith writes the module maps to .smith/modules/ and clang keeps its cache in
-// .smith/cache/modules/, which `smith build -t clean` and a project's clean leave alone and `rm -rf .smith` removes
-// safely. Every covered compile gets `-fmodules -fmodules-cache-path=.smith/cache/modules` and one
+// $XDG_CACHE_HOME/smith/modules (or ~/.cache/smith/modules), shared by every project and worktree and keyed by the
+// compile's flags and the header's path, so the SDK's modules are built once per machine; `smith cache` shows it and
+// `smith cache clean` empties it. Every covered compile gets `-fmodules -fmodules-cache-path=<that folder>`,
+// `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400` (a module unused for 31 days is removed, checked at
+// most once a week) and one
 // `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported, so
 // editing a header rebuilds exactly the sources that import it. compile_commands.json leaves these flags out: the
 // editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules.

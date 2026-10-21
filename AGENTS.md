@@ -35,7 +35,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs ninja.** It is recognised only
   as the exact first argument. The header and runtime are embedded in smith with `#embed`, so smith still builds with
   one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
-- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `.smith/cache/modules/`. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json has no module flags. `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
+- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json has no module flags. `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
@@ -75,6 +75,13 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
   a hash, fetched with `/usr/bin/curl` and extracted with `/usr/bin/tar`; the hash is the lock (no registry, no lock
   file). `-DOFFLINE` forbids fetching. macOS only for now.
+- **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
+  `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
+  modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages
+  (a `<hex>.used` stamp per package and `prune.timestamp`). Both are keyed by hash, so a removed entry is fetched or built
+  again. `smith cache` shows each cache's path, entries and size (`-v` lists the entries and their last use);
+  `smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
+  on `<cache>/smith/lock`). Tests: `tests/cache.sh`, with caches of their own. See [docs/build-c.md](docs/build-c.md).
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
   runs.
