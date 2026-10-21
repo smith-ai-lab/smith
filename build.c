@@ -197,13 +197,16 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 }
 
 // Routing tests with stub compilers (no clang or Xcode needed, and no real build is touched), then the `smith build`
-// tests and the `smith new` tests, which use real ninja, clang and git.
+// tests and the `smith new` tests, which use real ninja, clang and git. The runner's tests run twice, with its workers
+// and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
         .command =
             (const char *[]){
                 "sh", "-c",
-                "for t in run build new arena random test; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done",
+                // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                "for t in run build new arena random test; do env \"$0\" sh tests/$t.sh \"$1\" || exit 1; done; "
+                "env \"$0\" sh tests/test.sh \"$1\" isolate",
                 smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };

@@ -1346,12 +1346,14 @@ static SmithObject *smith_tests_object(SmithBuild *b, const SmithTests *tests, c
 
 // The options turned into the runner's, in the order the runner documents.
 static const char *const *smith_tests_arguments(SmithBuild *b, const char *runner) {
-    static const char *const names[][2] = {
-        {"TEST", "--test"}, {"SEED", "--seed"}, {"SEEDS", "--seeds"}, {"JOBS", "--jobs"}, {"SHRINK", "--shrink"}};
+    static const char *const names[][2] = {{"TEST", "--test"}, {"SEED", "--seed"},     {"SEEDS", "--seeds"},
+                                           {"JOBS", "--jobs"}, {"SHRINK", "--shrink"}, {"SHUFFLE", "--shuffle"}};
     static const char *const descriptions[] = {"run the tests whose name contains this",
                                                "run each property test on this one seed",
-                                               "keys per property test (100)", "tests running at once (the cores)",
-                                               "0 shows an unshrunk failure, 1 shrinks it"};
+                                               "keys per property test (100)",
+                                               "tests running at once (the cores)",
+                                               "0 shows an unshrunk failure, 1 shrinks it",
+                                               "run the tests in an order drawn from this seed"};
     const char *program = strchr(runner, '/') != nullptr ? runner : smith_text("./%s", runner);
     const char *const *arguments = smith_list(b, program, nullptr);
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
@@ -1360,6 +1362,8 @@ static const char *const *smith_tests_arguments(SmithBuild *b, const char *runne
     }
     if (smith_option(b, "FULL", "run the heavy checks at full size"))
         arguments = smith_cat(b, arguments, smith_list(b, "--full", nullptr), nullptr);
+    if (smith_option(b, "ISOLATE", "run each test in a process of its own, as before the workers"))
+        arguments = smith_cat(b, arguments, smith_list(b, "--isolate", nullptr), nullptr);
     return arguments;
 }
 

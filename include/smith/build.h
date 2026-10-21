@@ -216,9 +216,10 @@ typedef struct {
 //     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
 //     second time; the call fails and says which smith_library to add when one is missing.
 //   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
-//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink) and the boolean -DFULL (--full), each read with
-//     smith_option_value or smith_option, so a project that reads the same name gets the same value. .inputs are
-//     the task's inputs after the runner, so ninja builds them before the tests run and a change to one reruns them.
+//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink), -DSHUFFLE (--shuffle) and the booleans -DFULL (--full)
+//     and -DISOLATE (--isolate), each read with smith_option_value or smith_option, so a project that reads the same
+//     name gets the same value. .inputs are the task's inputs after the runner, so ninja builds them before the tests
+//     run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
