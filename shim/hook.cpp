@@ -17,6 +17,7 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/Sema.h"
@@ -1541,7 +1542,9 @@ class SmithHook final : public TokenHook, public NameSource {
             names->names.push_back(std::move(name));
         }
         snapshot = names;
-        if (mainName.empty() || SM.getBufferData(MainFile).empty()) return;
+        // A preamble is built from the start of the file, up to its first line that is no directive: a module's
+        // `module` line is the first, so what it parses is a stub of the file, whose names are no names of the file.
+        if (mainName.empty() || SM.getBufferData(MainFile).empty() || PP.getPreprocessorOpts().GeneratePreamble) return;
         if (reachedEnd) {
             smith::publishNames(mainName, names);
         } else {
