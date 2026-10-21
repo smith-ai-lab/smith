@@ -1,0 +1,2 @@
+src/main.smith:4:17: `text` is an import; reach what it holds with `text.name`
+src/main.smith:4:17: use of undeclared identifier 'text'

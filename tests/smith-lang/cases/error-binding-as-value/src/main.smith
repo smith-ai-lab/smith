@@ -1,0 +1,6 @@
+import lib.text;
+
+int main(void) {
+    int value = text;
+    return value;
+}

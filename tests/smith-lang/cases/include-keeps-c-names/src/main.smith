@@ -1,0 +1,6 @@
+import app.say;
+
+int main(void) {
+    say.hello("there");
+    return 0;
+}

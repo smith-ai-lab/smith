@@ -1,0 +1,67 @@
+module kit.things;
+import <stdio.h>;
+
+export typedef int (*Callback)(int value);
+export typedef union { u32 whole; u8 bytes[4]; } Word;
+export typedef struct Node {
+    struct Node *next;
+    i32 value;
+    u32 flag : 1;
+    u32 mode : 3;
+    struct { i16 x, y; } point;
+} Node;
+
+export constexpr usize capacity = 4;
+export const char *const names[] = {"zero", "one", "two"};
+static_assert(sizeof(Word) == 4, "a word is four bytes");
+
+[[nodiscard]] static inline int square(int value) {
+    return value * value;
+}
+
+int apply_twice(Callback callback, int value) {
+    return callback(callback(value));
+}
+
+export int run(Callback callback, int value) {
+    return apply_twice(callback, value);
+}
+
+export int sum(const Node *node) {
+    int total = 0;
+    for (; node != nullptr; node = node->next) {
+        total += node->value + node->point.x + (int)node->mode;
+    }
+    return total;
+}
+
+export Word make_word(u32 whole) {
+    Word word = {.whole = whole};
+    return word;
+}
+
+export int by_type(int value) {
+    return _Generic(value, int: square(value), default: 0);
+}
+
+export u32 pick(u32 index) {
+    static const u32 table[] = {10, 20, 30, 40};
+    typeof(index) clamped = index < capacity ? index : capacity - 1;
+    return table[clamped];
+}
+
+export int say(const char *text) {
+    return c.puts(text);
+}
+
+export typedef int Local;
+export Local twice_local(Local value) {
+    Local result = value * 2;
+    return result;
+}
+
+#define TRIPLE(value) ((value) * 3)
+
+export int triple(int value) {
+    return TRIPLE(value);
+}

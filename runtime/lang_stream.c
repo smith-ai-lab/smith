@@ -20,7 +20,7 @@ static void smith_lang_misuse(SmithLang *lang, const SmithHost *host, const Smit
 // introduces. Returns false when this identifier is neither.
 static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!lang->is_module || lang->in_function || lang->paren_depth != 0) return false;
-    SmithNameKind kind = SmithLangName_Value;
+    SmithLangNameKind kind = SmithLangName_Value;
     if (lang->brace_depth > 0 && lang->braces[lang->brace_depth - 1] == SmithLangBrace_Enum &&
         (lang->prev_char == '{' || lang->prev_char == ',')) {
         kind = SmithLangName_Constant;
@@ -45,6 +45,7 @@ static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, c
 
 static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
+    if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
     if (word != SmithLangWord_Other) {
         if (word == SmithLangWord_Typedef) lang->statement_typedef = true;
         if (word == SmithLangWord_Tag) {
@@ -78,9 +79,8 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
         return;
     }
     SmithLangContext context = smith_lang_context(lang, host, true);
-    const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     SmithLangLowered lowered =
-        smith_lang_lower(lang, host, token->text, token->length, token->location, &context, next);
+        smith_lang_lower(lang, host, token->text, token->length, token->location, &context, nullptr);
     if (lowered.replaced) {
         SmithToken renamed = smith_lang_synth(SmithTokenKind_Identifier, lowered.text, lowered.length, token);
         renamed.expand = lowered.expand;
@@ -193,8 +193,7 @@ static void smith_lang_start(SmithLang *lang, const SmithHost *host, const Smith
             smith_lang_import(lang, host, token);
             return;
         }
-        if (smith_lang_ident(token, "export") &&
-            host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None) {
+        if (smith_lang_ident(token, "export") && !smith_lang_is_own_word(lang, host, token)) {
             if (!lang->is_module) {
                 smith_lang_error(lang, host, token->location, "`export` needs a `module` line at the top of the file");
             }
@@ -306,9 +305,11 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     }
 }
 
+// One lowering per process at a time: a fresh one for each file.
 SmithLang *smith_lang_new(void) {
     SmithLang *lang = &smith_lang_instance;
-    if (lang->started) return lang;
+    memset(lang, 0, sizeof *lang);
+    smith_lang_word_buckets();
     lang->started = true;
     lang->pending = SIZE_MAX;
     lang->dump_enabled = getenv("SMITH_LANG_DUMP") != nullptr;

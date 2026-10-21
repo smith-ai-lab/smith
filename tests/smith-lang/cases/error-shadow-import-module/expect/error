@@ -1,0 +1,1 @@
+src/shadow.smith:5:5: `t` is the name of an import in this file; a declaration cannot reuse it

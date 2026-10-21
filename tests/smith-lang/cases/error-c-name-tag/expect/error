@@ -1,0 +1,1 @@
+src/uses/tag.smith:5:12: `struct stat` names a C tag; write `struct c.stat`

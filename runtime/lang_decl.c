@@ -6,6 +6,7 @@ typedef struct {
     bool after_member; // after . or ->: a field, never a name in scope
     bool after_tag;    // after struct, union or enum
     bool typeish;      // the tokens before end a type, so a name now is a declarator
+    bool lazy;         // typeish is not known yet: ask when it matters (it can take a lookup)
     char before;       // the first character of the token before, if it was a punctuator
 } SmithLangContext;
 
@@ -40,7 +41,7 @@ static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, si
     return nullptr;
 }
 
-static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, size_t length, SmithNameKind kind,
+static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, size_t length, SmithLangNameKind kind,
                                           bool exported) {
     if (lang->names_count >= smith_lang_names_max) {
         lang->broken = true;
@@ -91,14 +92,19 @@ static bool smith_lang_typeish(SmithLang *lang, const SmithHost *host) {
            SmithLookup_Type;
 }
 
-static SmithLangContext smith_lang_context(SmithLang *lang, const SmithHost *host, bool needs_type) {
+static SmithLangContext smith_lang_context(SmithLang *lang, const SmithHost *host, bool lazy) {
     SmithLangContext context = {
         .after_member = lang->prev_member,
         .after_tag = lang->prev_tag,
-        .typeish = needs_type && smith_lang_typeish(lang, host),
+        .typeish = !lazy && smith_lang_typeish(lang, host),
+        .lazy = lazy,
         .before = lang->prev_char,
     };
     return context;
+}
+
+static bool smith_lang_context_typeish(SmithLang *lang, const SmithHost *host, const SmithLangContext *context) {
+    return context->lazy ? smith_lang_typeish(lang, host) : context->typeish;
 }
 
 // Remembers what a token was, for the one after it.
@@ -129,7 +135,7 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
 // A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one.
 // Returns null when the name is kept as written (main).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                      uint32_t location, SmithNameKind kind, bool exported) {
+                                      uint32_t location, SmithLangNameKind kind, bool exported) {
     SmithLangBinding *taken = smith_lang_binding_find(lang, name, length);
     if (taken != nullptr) {
         smith_lang_error(lang, host, location,
@@ -143,6 +149,20 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
     if (known == nullptr) smith_lang_name_add(lang, name, length, kind, exported);
     if (known != nullptr && exported && !known->exported) known->exported = true;
     return smith_lang_prefixed(lang, name, length);
+}
+
+// Whether `module`, `import` or `export` is the file's own name for something, which the parser or a typedef says.
+static bool smith_lang_is_own_word(SmithLang *lang, const SmithHost *host, const SmithToken *word) {
+    uint8_t bit = smith_lang_ident(word, "module") ? 1 : smith_lang_ident(word, "import") ? 2 : 4;
+    return (lang->own_words & bit) != 0 ||
+           host->lookup(host->context, word->text, word->length, SmithLookup_Type).kind != SmithLookup_None;
+}
+
+// A typedef of one of those words (`typedef int import;`) makes it the file's own for good.
+static void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
+    if (smith_lang_ident(word, "module")) lang->own_words |= 1;
+    if (smith_lang_ident(word, "import")) lang->own_words |= 2;
+    if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
 
 // ---- Namespace accesses: rp.open and c.sinf -------------------------------------------------------------------------
@@ -208,11 +228,20 @@ static SmithLangLowered smith_lang_prefix_name(SmithLang *lang, const char *name
     return lowered;
 }
 
+// The token after the one being lowered: given by the caller when it has it, else read (and the lowering holds it).
+static const SmithToken *smith_lang_after(SmithLang *lang, const SmithHost *host, const SmithToken **next) {
+    if (*next == nullptr) *next = smith_lang_peek(lang, host, 0, false);
+    return *next;
+}
+
 static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                               const SmithLangContext *context, const SmithToken *next) {
+                                               const SmithLangContext *context, const SmithToken **next) {
     const SmithLangSized *sized = smith_lang_find_sized(name, length);
     if (sized == nullptr || lang->statement_typedef) return smith_lang_keep();
-    if (context->typeish && smith_lang_follows_declarator(next)) return smith_lang_keep();
+    if (smith_lang_follows_declarator(smith_lang_after(lang, host, next)) &&
+        smith_lang_context_typeish(lang, host, context)) {
+        return smith_lang_keep();
+    }
     if (host->lookup(host->context, name, (uint32_t)length, SmithLookup_Type).kind != SmithLookup_None) {
         return smith_lang_keep(); // the file has its own u32
     }
@@ -227,30 +256,37 @@ static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost 
     return lowered;
 }
 
-// The name after struct, union or enum. A tag the module has not seen yet is its own, unless a C header declared it.
+// The name after struct, union or enum. A tag the module defines or declares (`struct S {` or `struct S;`) is its own;
+// one it only uses is the module's if it was defined above, else a C header's (and in a module that header must say so
+// with `struct c.S`).
 static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                             uint32_t location) {
+                                             uint32_t location, const SmithToken **next) {
+    SmithLangLowered kept = smith_lang_keep();
+    kept.is_type = true;
+    if (!lang->is_module) return kept;
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known != nullptr) return smith_lang_prefix_name(lang, name, length, true);
-    SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Tag);
-    if (found.kind != SmithLookup_None) {
-        if (lang->is_module && found.from_import && !found.in_main_file) {
+    const SmithToken *after = smith_lang_after(lang, host, next);
+    bool defines = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":");
+    if (!lang->in_function && defines) {
+        const char *prefixed =
+            smith_lang_declare(lang, host, name, length, location, SmithLangName_Tag, lang->decl.exported);
+        return prefixed != nullptr ? smith_lang_prefix_name(lang, name, length, true) : kept;
+    }
+    if (lang->has_c) {
+        SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Tag);
+        if (found.kind != SmithLookup_None && found.from_import && !found.in_main_file) {
             smith_lang_error(lang, host, location, "`struct %.*s` names a C tag; write `struct c.%.*s`", (int)length,
                              name, (int)length, name);
         }
-        SmithLangLowered kept = smith_lang_keep();
-        kept.is_type = true;
-        return kept;
     }
-    if (!lang->is_module || lang->in_function) return smith_lang_keep();
-    const char *prefixed =
-        smith_lang_declare(lang, host, name, length, location, SmithLangName_Tag, lang->decl.exported);
-    if (prefixed == nullptr) return smith_lang_keep();
-    return smith_lang_prefix_name(lang, name, length, true);
+    return kept;
 }
 
-static bool smith_lang_is_member_name(const SmithLang *lang, const SmithLangContext *context, const SmithToken *next) {
+static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, const SmithLangContext *context,
+                                      const SmithToken **after) {
     if (lang->brace_depth == 0 || lang->braces[lang->brace_depth - 1] != SmithLangBrace_Aggregate) return false;
+    const SmithToken *next = smith_lang_after(lang, host, after);
     if (lang->paren_depth == 0) {
         return next->kind == SmithTokenKind_Punctuator && (smith_lang_punct(next, ";") || smith_lang_punct(next, ",") ||
                                                            smith_lang_punct(next, "[") || smith_lang_punct(next, ":"));
@@ -272,11 +308,11 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
 static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                          uint32_t location, const SmithLangContext *context, const SmithToken *next) {
     if (smith_lang_word(name, length) != SmithLangWord_Other || context->after_member) return smith_lang_keep();
-    if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location);
-    SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, next);
+    if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next);
+    SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);
     if (sized.replaced) return sized;
     if (!lang->is_module) return smith_lang_keep();
-    if (smith_lang_is_member_name(lang, context, next)) return smith_lang_keep();
+    if (smith_lang_is_member_name(lang, host, context, &next)) return smith_lang_keep();
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known != nullptr) {
         if (lang->decl.checking && !known->exported &&
@@ -287,10 +323,10 @@ static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host,
         return smith_lang_prefix_name(lang, name, length,
                                       known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag);
     }
-    bool declarator = context->typeish && smith_lang_follows_declarator(next);
-    bool is_type = false;
-    if (!declarator) smith_lang_check_c_name(lang, host, name, length, location, &is_type);
     SmithLangLowered kept = smith_lang_keep();
-    kept.is_type = is_type;
+    if (!lang->has_c) return kept;
+    bool declarator = smith_lang_follows_declarator(smith_lang_after(lang, host, &next)) &&
+                      smith_lang_context_typeish(lang, host, context);
+    if (!declarator) smith_lang_check_c_name(lang, host, name, length, location, &kept.is_type);
     return kept;
 }

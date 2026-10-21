@@ -1,0 +1,2 @@
+src/e/priv.smith:6:8: an exported declaration names `Hidden`, which is private; export it
+src/e/priv.smith:7:25: an exported declaration names `Alias`, which is private; export it

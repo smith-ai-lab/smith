@@ -97,9 +97,9 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
     bool declared = false;
     if (held->role == SmithLangRole_Plain && smith_lang_word(name, length) == SmithLangWord_Other &&
         smith_lang_declares_here(lang, held, next)) {
-        SmithNameKind kind = lang->decl.is_typedef         ? SmithLangName_Type
-                             : smith_lang_punct(next, "(") ? SmithLangName_Function
-                                                           : SmithLangName_Value;
+        SmithLangNameKind kind = lang->decl.is_typedef         ? SmithLangName_Type
+                                 : smith_lang_punct(next, "(") ? SmithLangName_Function
+                                                               : SmithLangName_Value;
         const char *prefixed = smith_lang_declare(lang, host, name, length, held->location, kind, lang->decl.exported);
         if (prefixed != nullptr) {
             SmithLangLowered lowered = {.replaced = true, .text = prefixed, .length = lang->tmp_length};
@@ -112,7 +112,7 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
         lang->decl.last_name = (uint32_t)index;
         if (kind == SmithLangName_Function) lang->decl.is_function = true;
     } else if (held->role == SmithLangRole_Plain) {
-        SmithLangContext context = {held->after_member, held->after_tag, held->typeish, held->before};
+        SmithLangContext context = {held->after_member, held->after_tag, held->typeish, false, held->before};
         SmithLangLowered lowered = smith_lang_lower(lang, host, name, length, held->location, &context, next);
         smith_lang_replace_held(lang, held, &lowered);
         is_type = lowered.is_type;
@@ -368,7 +368,7 @@ static bool smith_lang_enter_namespace(SmithLang *lang, const SmithHost *host, c
 }
 
 static void smith_lang_head_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    SmithLangContext context = smith_lang_context(lang, host, true);
+    SmithLangContext context = smith_lang_context(lang, host, false);
     if (smith_lang_word(token->text, token->length) != SmithLangWord_Other) {
         smith_lang_note_keyword(lang, token);
         smith_lang_hold(lang, token, SmithLangRole_Plain, &context);
@@ -398,5 +398,4 @@ static void smith_lang_head(SmithLang *lang, const SmithHost *host, const SmithT
     smith_lang_hold(lang, token, SmithLangRole_Plain, &context);
     smith_lang_track(lang, token, false);
     if (smith_lang_punct(token, "*") || smith_lang_punct(token, "(") || smith_lang_punct(token, ")")) return;
-    lang->typeish = lang->typeish && smith_lang_punct(token, "*");
 }

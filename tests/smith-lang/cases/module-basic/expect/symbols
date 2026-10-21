@@ -1,0 +1,8 @@
+D _shapes.area.pi
+S _shapes.area.calls
+T _main
+T _shapes.area.circle
+T _shapes.area.kind_of
+T _shapes.area.private_count
+T _shapes.area.rect
+T _shapes.area.triangle

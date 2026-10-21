@@ -82,7 +82,7 @@ class SmithHook final : public TokenHook {
     std::string mainName;
     unsigned diagnostic = 0;
     // Per call.
-    std::deque<Token> pool; // every token the lowering was given, by handle
+    std::vector<Token> pool; // every token the lowering was given, by handle
     std::vector<Token> out;
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
@@ -152,14 +152,24 @@ class SmithHook final : public TokenHook {
         if (const char *punctuator = tok::getPunctuatorSpelling(tok.getKind())) {
             out.kind = SmithTokenKind_Punctuator;
             out.text = punctuator;
-            out.length = std::strlen(punctuator);
+            out.length = punctuator[1] == 0 ? 1 : punctuator[2] == 0 ? 2 : 3; // spellings of 1 to 3 characters
             return out;
         }
         if (tok.isLiteral() || tok.is(tok::raw_identifier) || tok.getIdentifierInfo() != nullptr ||
             tok::getKeywordSpelling(tok.getKind()) != nullptr) {
-            std::string spelling = PP.getSpelling(tok);
-            out.text = keep(spelling);
-            out.length = spelling.size();
+            // Identifiers and keywords are their IdentifierInfo's name; a literal is read where it is written, unless
+            // it has line splices or trigraphs to clean.
+            if (const IdentifierInfo *info = tok.is(tok::raw_identifier) ? nullptr : tok.getIdentifierInfo()) {
+                out.text = info->getNameStart();
+                out.length = info->getLength();
+            } else if (tok.isLiteral() && tok.getLiteralData() != nullptr && !tok.needsCleaning()) {
+                out.text = tok.getLiteralData();
+                out.length = tok.getLength();
+            } else {
+                std::string spelling = PP.getSpelling(tok);
+                out.text = keep(spelling);
+                out.length = spelling.size();
+            }
             out.kind = tok.is(tok::numeric_constant) ? SmithTokenKind_Number
                        : tok.isOneOf(tok::char_constant, tok::wide_char_constant, tok::utf8_char_constant,
                                      tok::utf16_char_constant, tok::utf32_char_constant)

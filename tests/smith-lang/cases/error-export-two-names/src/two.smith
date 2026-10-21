@@ -1,0 +1,2 @@
+module two;
+export int a, b;

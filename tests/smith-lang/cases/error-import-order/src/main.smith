@@ -1,0 +1,4 @@
+int before;
+import lib.text;
+
+int main(void) { return before; }

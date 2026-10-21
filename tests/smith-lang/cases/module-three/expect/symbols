@@ -1,0 +1,6 @@
+D _game.replay.counter
+T _game.replay.checksum
+T _game.replay.open
+T _lib.text.length
+T _lib.text.make
+T _main

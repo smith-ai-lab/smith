@@ -72,6 +72,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   clang's file. So a smith rebuilt with the same LLVM rebuilds nothing, and a rebuilt LLVM or another clang rebuilds all.
 - **smith's own code is C23 (`-std=gnu23`), libc only, no malloc**: it allocates nothing itself. The LLVM linked into
   it is C++ and does, and `shim/clang.cpp`, a thin C interface to it, is the only C++ in smith.
+- **`.smith` files are C with modules, lowered to C as clang reads them** ([docs/smith-lang.md](docs/smith-lang.md), issue
+  #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 50 lines,
+  applied by `scripts/llvm.sh`), which offers a `TokenHook` each token after macro expansion and before the parser. The
+  language is smith's own C (`runtime/lang*.c`, which knows nothing of clang), and the clang side is `shim/hook.cpp`: the
+  hook, and the parser's name lookup as the lowering's questions. The `.smith` extension turns it on (`smith x.smith` is
+  `-x c x.smith`); plain C in a `.smith` file means what it means in a `.c` file (`tests/smith-lang-c.sh`). A stage0 has
+  no clang inside, so it cannot compile `.smith`; it can still write a module's header (`smith --smith-header`).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

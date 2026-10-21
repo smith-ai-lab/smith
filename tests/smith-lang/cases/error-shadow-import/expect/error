@@ -1,0 +1,1 @@
+src/main.smith:4:9: `text` is the name of an import in this file; a declaration cannot reuse it

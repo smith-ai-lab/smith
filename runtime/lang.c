@@ -47,7 +47,7 @@ typedef enum {
     SmithLangName_Value,
     SmithLangName_Function,
     SmithLangName_Constant,
-} SmithNameKind;
+} SmithLangNameKind;
 
 typedef enum {
     SmithLangState_Start,  // between declarations, at file scope
@@ -76,7 +76,7 @@ typedef struct {
 
 typedef struct {
     SmithLangText name;
-    SmithNameKind kind;
+    SmithLangNameKind kind;
     bool exported;
 } SmithLangName;
 
@@ -155,6 +155,7 @@ struct SmithLang {
     bool init_top;          // an initializer at file scope is being read
     bool tail_declarator;   // after an aggregate's `}` or a comma: names are declarators
     bool statement_typedef; // `typedef` seen in this statement
+    uint8_t own_words;      // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.
     bool prev_member;
     bool prev_tag;
@@ -207,95 +208,99 @@ static SmithLang smith_lang_instance;
 
 typedef struct {
     const char *text;
+    size_t length;
     SmithLangWord word;
 } SmithLangWordEntry;
 
+// An entry of the keyword table, with its length known at compile time.
+#define SMITH_LANG_WORD(text, word) {text, sizeof(text) - 1, word}
+
 static const SmithLangWordEntry smith_lang_words[] = {
-    {"_Alignas", SmithLangWord_Keyword},
-    {"_Alignof", SmithLangWord_Keyword},
-    {"_Atomic", SmithLangWord_Qualifier},
-    {"_BitInt", SmithLangWord_TypeKeyword},
-    {"_Bool", SmithLangWord_TypeKeyword},
-    {"_Complex", SmithLangWord_TypeKeyword},
-    {"_Decimal128", SmithLangWord_TypeKeyword},
-    {"_Decimal32", SmithLangWord_TypeKeyword},
-    {"_Decimal64", SmithLangWord_TypeKeyword},
-    {"_Float128", SmithLangWord_TypeKeyword},
-    {"_Float16", SmithLangWord_TypeKeyword},
-    {"_Float32", SmithLangWord_TypeKeyword},
-    {"_Float32x", SmithLangWord_TypeKeyword},
-    {"_Float64", SmithLangWord_TypeKeyword},
-    {"_Float64x", SmithLangWord_TypeKeyword},
-    {"_Generic", SmithLangWord_Keyword},
-    {"_Imaginary", SmithLangWord_TypeKeyword},
-    {"_Noreturn", SmithLangWord_Storage},
-    {"_Static_assert", SmithLangWord_Keyword},
-    {"_Thread_local", SmithLangWord_Storage},
-    {"__asm", SmithLangWord_Keyword},
-    {"__asm__", SmithLangWord_Keyword},
-    {"__attribute__", SmithLangWord_Keyword},
-    {"__auto_type", SmithLangWord_TypeKeyword},
-    {"__bf16", SmithLangWord_TypeKeyword},
-    {"__builtin_offsetof", SmithLangWord_Keyword},
-    {"__builtin_types_compatible_p", SmithLangWord_Keyword},
-    {"__builtin_va_arg", SmithLangWord_Keyword},
-    {"__const", SmithLangWord_Qualifier},
-    {"__extension__", SmithLangWord_Keyword},
-    {"__fp16", SmithLangWord_TypeKeyword},
-    {"__inline", SmithLangWord_Storage},
-    {"__inline__", SmithLangWord_Storage},
-    {"__int128", SmithLangWord_TypeKeyword},
-    {"__restrict", SmithLangWord_Qualifier},
-    {"__restrict__", SmithLangWord_Qualifier},
-    {"__typeof__", SmithLangWord_TypeKeyword},
-    {"__volatile__", SmithLangWord_Qualifier},
-    {"alignas", SmithLangWord_Keyword},
-    {"alignof", SmithLangWord_Keyword},
-    {"asm", SmithLangWord_Keyword},
-    {"auto", SmithLangWord_Storage},
-    {"bool", SmithLangWord_TypeKeyword},
-    {"break", SmithLangWord_Keyword},
-    {"case", SmithLangWord_Keyword},
-    {"char", SmithLangWord_TypeKeyword},
-    {"const", SmithLangWord_Qualifier},
-    {"constexpr", SmithLangWord_Storage},
-    {"continue", SmithLangWord_Keyword},
-    {"default", SmithLangWord_Keyword},
-    {"do", SmithLangWord_Keyword},
-    {"double", SmithLangWord_TypeKeyword},
-    {"else", SmithLangWord_Keyword},
-    {"enum", SmithLangWord_Tag},
-    {"extern", SmithLangWord_Storage},
-    {"false", SmithLangWord_Keyword},
-    {"float", SmithLangWord_TypeKeyword},
-    {"for", SmithLangWord_Keyword},
-    {"goto", SmithLangWord_Keyword},
-    {"if", SmithLangWord_Keyword},
-    {"inline", SmithLangWord_Storage},
-    {"int", SmithLangWord_TypeKeyword},
-    {"long", SmithLangWord_TypeKeyword},
-    {"noreturn", SmithLangWord_Storage},
-    {"nullptr", SmithLangWord_Keyword},
-    {"register", SmithLangWord_Storage},
-    {"restrict", SmithLangWord_Qualifier},
-    {"return", SmithLangWord_Keyword},
-    {"short", SmithLangWord_TypeKeyword},
-    {"signed", SmithLangWord_TypeKeyword},
-    {"sizeof", SmithLangWord_Keyword},
-    {"static", SmithLangWord_Storage},
-    {"static_assert", SmithLangWord_Keyword},
-    {"struct", SmithLangWord_Tag},
-    {"switch", SmithLangWord_Keyword},
-    {"thread_local", SmithLangWord_Storage},
-    {"true", SmithLangWord_Keyword},
-    {"typedef", SmithLangWord_Typedef},
-    {"typeof", SmithLangWord_TypeKeyword},
-    {"typeof_unqual", SmithLangWord_TypeKeyword},
-    {"union", SmithLangWord_Tag},
-    {"unsigned", SmithLangWord_TypeKeyword},
-    {"void", SmithLangWord_TypeKeyword},
-    {"volatile", SmithLangWord_Qualifier},
-    {"while", SmithLangWord_Keyword},
+    SMITH_LANG_WORD("_Alignas", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("_Alignof", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("_Atomic", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("_BitInt", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Bool", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Complex", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Decimal128", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Decimal32", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Decimal64", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float128", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float16", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float32", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float32x", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float64", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Float64x", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Generic", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("_Imaginary", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("_Noreturn", SmithLangWord_Storage),
+    SMITH_LANG_WORD("_Static_assert", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("_Thread_local", SmithLangWord_Storage),
+    SMITH_LANG_WORD("__asm", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__asm__", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__attribute__", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__auto_type", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("__bf16", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("__builtin_offsetof", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__builtin_types_compatible_p", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__builtin_va_arg", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__const", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("__extension__", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("__fp16", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("__inline", SmithLangWord_Storage),
+    SMITH_LANG_WORD("__inline__", SmithLangWord_Storage),
+    SMITH_LANG_WORD("__int128", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("__restrict", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("__restrict__", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("__typeof__", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("__volatile__", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("alignas", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("alignof", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("asm", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("auto", SmithLangWord_Storage),
+    SMITH_LANG_WORD("bool", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("break", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("case", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("char", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("const", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("constexpr", SmithLangWord_Storage),
+    SMITH_LANG_WORD("continue", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("default", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("do", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("double", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("else", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("enum", SmithLangWord_Tag),
+    SMITH_LANG_WORD("extern", SmithLangWord_Storage),
+    SMITH_LANG_WORD("false", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("float", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("for", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("goto", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("if", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("inline", SmithLangWord_Storage),
+    SMITH_LANG_WORD("int", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("long", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("noreturn", SmithLangWord_Storage),
+    SMITH_LANG_WORD("nullptr", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("register", SmithLangWord_Storage),
+    SMITH_LANG_WORD("restrict", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("return", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("short", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("signed", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("sizeof", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("static", SmithLangWord_Storage),
+    SMITH_LANG_WORD("static_assert", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("struct", SmithLangWord_Tag),
+    SMITH_LANG_WORD("switch", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("thread_local", SmithLangWord_Storage),
+    SMITH_LANG_WORD("true", SmithLangWord_Keyword),
+    SMITH_LANG_WORD("typedef", SmithLangWord_Typedef),
+    SMITH_LANG_WORD("typeof", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("typeof_unqual", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("union", SmithLangWord_Tag),
+    SMITH_LANG_WORD("unsigned", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("void", SmithLangWord_TypeKeyword),
+    SMITH_LANG_WORD("volatile", SmithLangWord_Qualifier),
+    SMITH_LANG_WORD("while", SmithLangWord_Keyword),
 };
 
 typedef struct {
@@ -322,38 +327,44 @@ static const SmithLangSized smith_lang_sized[] = {
 
 // ---- Small helpers ----------------------------------------------------------------------------------------------
 
-static bool smith_lang_equals(const char *text, size_t length, const char *literal) {
+[[gnu::always_inline]] static inline bool smith_lang_equals(const char *text, size_t length, const char *literal) {
     size_t expected = strlen(literal);
     return length == expected && memcmp(text, literal, expected) == 0;
 }
 
-static bool smith_lang_is(const SmithToken *token, SmithTokenKind kind, const char *literal) {
+[[gnu::always_inline]] static inline bool smith_lang_is(const SmithToken *token, SmithTokenKind kind,
+                                                        const char *literal) {
     return token->kind == kind && smith_lang_equals(token->text, token->length, literal);
 }
 
-static bool smith_lang_punct(const SmithToken *token, const char *literal) {
+[[gnu::always_inline]] static inline bool smith_lang_punct(const SmithToken *token, const char *literal) {
     return smith_lang_is(token, SmithTokenKind_Punctuator, literal);
 }
 
-static bool smith_lang_ident(const SmithToken *token, const char *literal) {
+[[gnu::always_inline]] static inline bool smith_lang_ident(const SmithToken *token, const char *literal) {
     return smith_lang_is(token, SmithTokenKind_Identifier, literal);
 }
 
+// The table is sorted, so the words that start with one character are together: [first, last) per character, made once.
+static uint8_t smith_lang_word_first[256];
+static uint8_t smith_lang_word_last[256];
+
+static void smith_lang_word_buckets(void) {
+    if (smith_lang_word_last[(uint8_t)'w'] != 0) return; // "while" is the last entry: the table is made
+    size_t count = sizeof smith_lang_words / sizeof smith_lang_words[0];
+    for (size_t i = 0; i < count; i++) { // the table
+        uint8_t c = (uint8_t)smith_lang_words[i].text[0];
+        if (smith_lang_word_last[c] == 0) smith_lang_word_first[c] = (uint8_t)i;
+        smith_lang_word_last[c] = (uint8_t)(i + 1);
+    }
+}
+
 static SmithLangWord smith_lang_word(const char *text, size_t length) {
-    size_t low = 0;
-    size_t high = sizeof smith_lang_words / sizeof smith_lang_words[0];
-    while (low < high) { // a binary search: bounded by log2 of the table
-        size_t middle = low + (high - low) / 2;
-        const char *entry = smith_lang_words[middle].text;
-        size_t entry_length = strlen(entry);
-        int order = memcmp(text, entry, length < entry_length ? length : entry_length);
-        if (order == 0) order = length < entry_length ? -1 : length > entry_length ? 1 : 0;
-        if (order == 0) return smith_lang_words[middle].word;
-        if (order < 0) {
-            high = middle;
-        } else {
-            low = middle + 1;
-        }
+    if (length == 0) return SmithLangWord_Other;
+    uint8_t c = (uint8_t)text[0];
+    for (size_t i = smith_lang_word_first[c]; i < smith_lang_word_last[c]; i++) { // the words that start with c
+        const SmithLangWordEntry *entry = &smith_lang_words[i];
+        if (entry->length == length && memcmp(text + 1, entry->text + 1, length - 1) == 0) return entry->word;
     }
     return SmithLangWord_Other;
 }

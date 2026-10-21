@@ -1,0 +1,21 @@
+import kit.things as k;
+import <stdio.h>;
+
+#define OPEN_SUM(first) k.sum(first)
+#define PICK(i) k.pick(i)
+
+static int increment(int value) {
+    return value + 1;
+}
+
+int main(void) {
+    k.Node last = {.next = nullptr, .value = 3, .mode = 2, .point = {.x = 1, .y = 2}};
+    k.Node first = {.next = &last, .value = 4, .mode = 1};
+    c.printf("%d %d\n", OPEN_SUM(&first), k.run(increment, 5));
+    c.printf("%u %u %zu %s\n", PICK(1), PICK(9), (usize)k.capacity, k.names[2]);
+    k.Word word = k.make_word(0x01020304);
+    c.printf("%u %u\n", word.bytes[0], (unsigned)sizeof(k.Word));
+    c.printf("%d %d %d\n", k.by_type(7), k.twice_local(21), k.triple(5));
+    k.say("said");
+    return 0;
+}

@@ -297,7 +297,7 @@ static bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const S
     bool shaped = smith_lang_punct(next, "<") || next->kind == SmithTokenKind_String ||
                   (next->kind == SmithTokenKind_Identifier && !smith_lang_is_word(next));
     if (!shaped) return false;
-    return host->lookup(host->context, keyword->text, keyword->length, SmithLookup_Type).kind == SmithLookup_None;
+    return !smith_lang_is_own_word(lang, host, keyword);
 }
 
 static void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
@@ -317,5 +317,5 @@ static bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, co
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     bool shaped = smith_lang_punct(next, ";") || (next->kind == SmithTokenKind_Identifier && !smith_lang_is_word(next));
     if (!shaped) return false;
-    return host->lookup(host->context, keyword->text, keyword->length, SmithLookup_Type).kind == SmithLookup_None;
+    return !smith_lang_is_own_word(lang, host, keyword);
 }

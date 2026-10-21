@@ -1,0 +1,5 @@
+module shadow;
+import lib.text as t;
+
+export int t_count(void) { return 0; }
+int t(void) { return 1; }

@@ -1,0 +1,8 @@
+import names.fields as f;
+#include <stdio.h>
+
+int main(void) {
+    f.Stats s = f.make(2, 3);
+    printf("%d %d\n", s.count, f.combine(&s));
+    return 0;
+}

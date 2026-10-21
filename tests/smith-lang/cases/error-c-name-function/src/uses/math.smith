@@ -1,0 +1,10 @@
+module uses.math;
+import <math.h>;
+
+export f32 root(f32 value) {
+    return sqrtf(value);
+}
+
+export f32 root_ok(f32 value) {
+    return c.sqrtf(value);
+}

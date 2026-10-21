@@ -1,0 +1,1 @@
+src/uses/math.smith:5:12: `sqrtf` is a C name; write `c.sqrtf`
