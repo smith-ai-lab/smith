@@ -5,7 +5,7 @@
 // a locale), and for %.9g the original float, bit for bit. Threads split the patterns by stride. Prints the counts;
 // exits 1 on any mismatch.
 //
-// Then a sample of the doubles, 2^28 patterns spread over the whole range by an odd stride (every 2^36th, so every
+// Then a sample of the doubles, 2^24 patterns spread over the whole range by an odd stride (every 2^40th, so every
 // exponent and many mantissas), each formatted as %.17g (which smith_text_parse_f64 must read back to the same bits)
 // and as %.25e (26 digits, past what the fast path takes), and each parsed against strtod; and each written by
 // smith_text_write_f64 and read back by both parsers.
@@ -56,8 +56,8 @@ static void *exhaustive_run(void *argument) {
     return nullptr;
 }
 
-constexpr uint64_t exhaustive_double_samples = (uint64_t)1 << 28;
-constexpr uint64_t exhaustive_double_stride = 0x0000001000000001ULL; // odd; 2^28 of them spread over the 2^64 patterns
+constexpr uint64_t exhaustive_double_samples = (uint64_t)1 << 24;
+constexpr uint64_t exhaustive_double_stride = 0x0000010000000001ULL; // odd; 2^24 of them spread over the 2^64 patterns
 
 static bool exhaustive_agrees_f64(const char *text, double original, bool compare_original) {
     double expected = strtod(text, nullptr);

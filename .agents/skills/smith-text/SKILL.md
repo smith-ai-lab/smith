@@ -59,7 +59,7 @@ There is no terminator and no failure: give room for `smith_text_number_capacity
 
 ## Replays must round-trip
 
-Whatever the writers produce, the parsers read back exactly: every u64, i64 and hex value, including 0, the maximum, the minimum and leading zeros, and every finite float written with 9 significant digits (`%.9g`), signs of zero included. `tests/text.sh` checks it with property tests on keys, and `smith build text-exhaustive` parses all 2^32 float patterns, in two formats each, against `strtof`, and 2^28 sampled double patterns against `strtod`, on all cores.
+Whatever the writers produce, the parsers read back exactly: every u64, i64 and hex value, including 0, the maximum, the minimum and leading zeros, and every finite float written with 9 significant digits (`%.9g`), signs of zero included. `tests/text.sh` checks it with property tests on keys, and `smith build text-exhaustive` parses all 2^32 float patterns, in two formats each, against `strtof`, and 2^24 sampled double patterns against `strtod`, on all cores.
 
 ## Get the library in build.c
 
