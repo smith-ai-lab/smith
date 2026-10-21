@@ -1,0 +1,2 @@
+src/num.smith:3:36: `short` is a C keyword; it cannot name a parameter
+src/num.smith:3:47: `long` is a C keyword; it cannot name a parameter

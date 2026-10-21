@@ -1,3 +1,1 @@
 src/num.smith:3:8: a type parameter is compile-time: write `constexpr type T`
-src/num.smith:4:5: expected identifier or '('
-src/num.smith:5:1: extraneous closing brace ('}')

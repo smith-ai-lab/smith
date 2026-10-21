@@ -334,9 +334,9 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
     }
     const char *problem = smith_lang_generic_problem(lang, terminator, name != nullptr);
     SmithLangGeneric *generic = &smith_lang_generics[lang->generics_count];
+    *generic = (SmithLangGeneric){0};
+    generic->first = smith_lang_gt.count;
     if (problem == nullptr) {
-        *generic = (SmithLangGeneric){0};
-        generic->first = smith_lang_gt.count;
         if (!smith_lang_generic_push_head(lang, generic) || !smith_lang_generic_parens(generic)) {
             problem = "a generic is a function with a parameter list after its name";
         } else {
@@ -347,6 +347,13 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
         smith_lang_error(lang, host, location, "%s", problem);
         if (smith_lang_gt.count > generic->first && generic->first >= smith_lang_gt.count - lang->head_count) {
             smith_lang_gt.count = generic->first;
+        }
+        if (smith_lang_punct(terminator, "{")) { // the body is read and dropped, so that it adds no error to this one
+            lang->recording_skip = true;
+            lang->recording_generic = (uint32_t)lang->generics_count;
+            lang->skip_mark = smith_lang_gt.count;
+            smith_lang_generic_enter_body(lang, host, terminator);
+            return;
         }
         smith_lang_generic_discard(lang);
         return;
@@ -424,6 +431,11 @@ static void smith_lang_generic_placeholder(SmithLang *lang, const SmithHost *hos
 static void smith_lang_generic_finish(SmithLang *lang) {
     const SmithHost *host = lang->host_now;
     lang->recording = false;
+    if (lang->recording_skip) { // a generic with an error in its head: nothing of it is kept
+        lang->recording_skip = false;
+        smith_lang_gt.count = lang->skip_mark;
+        return;
+    }
     SmithLangGeneric *generic = &smith_lang_generics[lang->recording_generic];
     generic->count = smith_lang_gt.count - generic->first;
     smith_lang_generic_placeholder(lang, host, generic);

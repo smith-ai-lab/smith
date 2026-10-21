@@ -265,6 +265,8 @@ struct SmithLang {
     uint32_t cap_frames;        // calls being read: their tokens are kept, not written
     bool recording;             // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic; // its index
+    bool recording_skip;        // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;         // where in smith_lang_gt the dropped body begins
     bool generic_next;          // the declaration about to begin is generic
     bool generics_loaded;       // the generics of the imports are read
     SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics

@@ -402,7 +402,8 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
             memcpy(names->renamed, token->text, token->length);
             names->renamed[token->length] = '_';
             names->renamed[token->length + 1] = 0;
-            token->text = names->renamed;
+            // kept for good: tokens read ahead are still held when the next one is renamed
+            token->text = smith_lang_str(smith_lang_store(raw->lang, names->renamed, token->length + 1));
             token->length += 1;
         }
     }

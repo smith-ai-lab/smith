@@ -1,0 +1,2 @@
+src/num.smith:13:16: use of undeclared identifier 'missing'
+src/num.smith:3:8: a type parameter is compile-time: write `constexpr type T`
