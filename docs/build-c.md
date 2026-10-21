@@ -206,6 +206,70 @@ const char *cmake = smith_package(b, &(SmithPackage){
   smith's own HTTP client can replace curl later without changing this. SHA-256 is in smith, checked against the NIST
   test vectors in `tests/build.sh`. macOS only for now.
 
+## Clang modules: `smith_modules`
+
+Clang modules parse a group of headers once, cache the result, and reuse it wherever the headers are included again. The
+source stays plain C: every `#include` of a header in a module becomes an import. Apple's SDK ships module maps for libc
+and every framework, so `#include <stdio.h>` and `#import <AppKit/AppKit.h>` already have modules; `smith_modules` adds
+the project's own headers and smith's.
+
+```c
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"src", "tests", nullptr}});
+    // ... every smith_object after this one is compiled with modules
+}
+```
+
+- **Off until build.c says so.** smith never changes a default. `smith new`'s template turns it on (`smith_modules(b,
+  &(SmithModules){})`, with no folders, which still covers system headers and smith's); `tests/new.sh` checks that.
+- **Which compiles.** Every `smith_object` after the call whose source ends in `.c` or `.m`: the flags are added before
+  the object's `.flags`, so a later `-fno-modules` wins. `.metal` and C++ sources never get them. Calling it after a
+  `smith_object`, or twice, is an error.
+- **`.folders`** lists header folders below the project (not `.`). Every `.h` under a folder, subfolders included, is a
+  module of its own, named from its path (`src/base/math.h` is `src_base_math`). The map for a folder is
+  `.smith/modules/<folder with / as _>.modulemap`. Folders may not overlap. smith's own headers
+  (`.smith/include/smith/*.h`) always get a map, `.smith/modules/smith.modulemap`, as modules `smith_arena`,
+  `smith_io`, and so on.
+- **One module per header, not one per folder.** clang's `umbrella` directory makes the whole folder a single module,
+  and the `-MD` depfile of every source then lists every header of that folder, so editing one header rebuilds every
+  source that includes any header there. With one module per header (build.c's `smith_glob` finds them, so nobody lists
+  them) the depfile lists exactly the headers a source imports, directly and through other headers, and a rebuild is
+  what ninja already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
+  *` makes a header's own includes visible to its users, as textual inclusion did.
+- **The flags:** `-fmodules -fmodules-cache-path=.smith/cache/modules` and one `-fmodule-map-file=<map>` per map. The
+  cache is clang's own (implicit modules), so clang does the locking when many compiles fill it at once. A sanitized
+  compile and a plain one hash differently, so each has its own folder inside the cache. The cache is outside `build/`,
+  so `smith build clean` or `rm -rf build` leaves it and the next clean build starts warm. That is right: a module file
+  is checked against its headers when it is used and rebuilt if one changed, so a warm cache can only be stale in a way
+  clang detects. `rm -rf .smith` removes it too, and is always safe. clang deletes module files unused for 31 days.
+- **Rebuilds.** The depfile lists the module maps and the headers imported, so editing a header rebuilds the sources that
+  import it; editing or adding a header in a folder rewrites its map, which rebuilds the sources that load it. A flag
+  that changes a module's hash (a `-D`, the standard, a sanitizer) changes the command, so the objects rebuild and
+  clang builds the module again under the new hash.
+- **compile_commands.json leaves the module flags out.** clangd with `--query-driver` cannot build the SDK's modules
+  (not even `#include <stdint.h>`: the SDK's map requires a feature that the extracted `-isystem` paths clear), so the
+  editor reads the plain C. `ninja -t compdb` shows the real commands. Without `--query-driver` clangd handles modules.
+- **Isolation, and `.textual`.** A header is compiled alone when it is first imported, so one that works only after
+  another include, or after a `#define` before it, fails there:
+
+  ```
+  While building module 'inc_needs_stddef' imported from bad.c:2:
+  inc/needs_stddef.h:2:1: error: unknown type name 'size_t'
+  ```
+
+  The fix is for the header to include what it uses. A header that stays textual (it is included several times with
+  different macros, or is not valid alone) is listed in `.textual`, spelled as `smith_glob` prints it
+  (`"src/legacy.h"`): it is then not a module and every `#include` of it is textual, as before. A name that no folder
+  holds is an error.
+- **Measured** on a busy machine: Objective-C that parses AppKit, Metal and
+  AVFoundation (game's `src/platform/macos.m`) compiles in 0.19 s instead of 0.67 s with a warm cache; filling the cache
+  the first time costs 2 to 4 s and about 70 MB per configuration. Unity builds with a few translation units gain little,
+  because the parse is not their critical path.
+- **Explicit modules** (smith builds each `.pcm` as a ninja step and passes `-fmodule-file=`) are not implemented.
+  They would make the module graph part of ninja's graph: no cache locking, exact rebuilds of the module files, a
+  reproducible build, and a depfile that needs no help. They cost build.c a model of the module dependencies (which
+  module imports which), which clang's scanner (`clang-scan-deps`) can supply.
+
 ## Tests: `smith_tests` and `<smith/test.h>`
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
@@ -554,6 +618,22 @@ void smith_program(SmithBuild *b, SmithProgram *program);
 // entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
 // smith_compile_commands, which writes the file; after it, it is an error.
 void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
+// Clang modules, off until build.c calls this, and then for every C and Objective-C source passed to smith_object
+// afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each header under
+// the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own headers
+// (.smith/include/smith/) are modules too. smith writes the module maps to .smith/modules/ and clang keeps its cache in
+// .smith/cache/modules/, which `smith build -t clean` and a project's clean leave alone and `rm -rf .smith` removes
+// safely. Every covered compile gets `-fmodules -fmodules-cache-path=.smith/cache/modules` and one
+// `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported, so
+// editing a header rebuilds exactly the sources that import it. compile_commands.json leaves these flags out: the
+// editor reads the plain C, since clangd with --query-driver cannot build the SDK's modules.
+// A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed
+// in .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
+typedef struct {
+    const char *const *folders; // header folders below the project, such as "src"; a folder covers its subfolders
+    const char *const *textual; // headers that stay textual
+} SmithModules;
+void smith_modules(SmithBuild *b, const SmithModules *modules);
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 typedef struct {
     const char *compiler;       // compiles and links the tests, by default "smith"

@@ -35,6 +35,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs ninja.** It is recognised only
   as the exact first argument. The header and runtime are embedded in smith with `#embed`, so smith still builds with
   one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
+- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `.smith/cache/modules/`. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json has no module flags. `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **smith's libraries are a modern standard library for C, holding only what is proven.**
