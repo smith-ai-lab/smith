@@ -1,3 +1,5 @@
+#define OPEN_SUM(first) k::sum(first)
+#define PICK(i) k::pick(i)
 static int increment(int value) {
 return value + 1;
 }

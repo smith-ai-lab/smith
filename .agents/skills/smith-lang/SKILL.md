@@ -41,7 +41,7 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 ## Two commands under the compiler
 
 - `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
-- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser: how to see what a rule does.
+- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written): how to see what a rule does.
 
 ## In the editor
 

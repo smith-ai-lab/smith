@@ -1,3 +1,5 @@
+#include <stddef.h>
+#include <stdio.h>
 int main(void) {
 printf("%zu %zu %zu %zu\n", sizeof(__UINT8_TYPE__), sizeof(__UINT16_TYPE__), sizeof(__UINT32_TYPE__), sizeof(__UINT64_TYPE__));
 printf("%zu %zu %zu %zu\n", sizeof(__INT8_TYPE__), sizeof(__INT16_TYPE__), sizeof(__INT32_TYPE__), sizeof(__INT64_TYPE__));

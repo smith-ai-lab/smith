@@ -108,6 +108,16 @@ A `.smith` file is lowered to C as the compiler reads it; there is no intermedia
 prints the lowering (without macros or the parser's help, so `c::EOF` shows as `EOF`); `SMITH_LANG_DUMP=<file>` writes
 what the compiler's own run lowered. The corpus (`tests/smith-lang/cases`) keeps both for every rule.
 
+`--smith-lower` keeps the file's preprocessor directives as written, each on a line of its own at its place between the
+tokens: `#include`, `#define`, `#undef`, `#pragma`, `#error`, `#warning`, `#line` and the conditionals (`#if`, `#ifdef`,
+`#ifndef`, `#elif`, `#else`, `#endif`), so the compiler that builds the lowered C decides them. It evaluates none, so every
+branch of a conditional is lowered, by the same plain path as the rest (a branch the build machine does not take needs no
+answer from a parser: sized types are the compiler's built-in types and `c::NAME` is `NAME`; `tests/smith-lang/cases/lowered-directives`).
+Left out: comments, and a chain that starts with `#if 0` (its text is not read; its `#else` stands alone and an `#elif B`
+becomes `#if B`). A `#define` whose body has `::` or a sized type is an error at that line, since it would reach the
+compiler as written ("make it a function"). The compiler's own run needs none of this (it has preprocessed them); a
+`#pragma` such as `STDC FP_CONTRACT` reaches the hook as an annotation token and goes to the parser as it is.
+
 ## The header
 
 Each module has a generated C header, `.smith/include/game/replay.h`, written by `smith cc --smith-header

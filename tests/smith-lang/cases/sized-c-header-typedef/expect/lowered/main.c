@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include "defs.h"
 __UINT32_TYPE__ twice(__UINT8_TYPE__ byte) { return 2u * byte; }
 int main(void) {
 printf("%u\n", twice(21));
