@@ -434,17 +434,21 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     bool in_process = config->llvm[0] != '\0';
     const char *pack = in_process ? build_resource_pack(b, config, folder) : "";
+    // The commit this smith is built from, which `smith --smith-version` prints (the Neovim plugin compares it with
+    // its own); a build outside a checkout has none.
+    const char *commit = smith_capture_or(b, (const char *[]){"git", "rev-parse", "HEAD", nullptr}, "");
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
-        .flags =
-            smith_cat(b, config->cflags,
-                      smith_when(b, in_process,
-                                 (const char *[]){"-DSMITH_IN_PROCESS",
-                                                  smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
-                      smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
-                      smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}), nullptr),
+        .flags = smith_cat(
+            b, config->cflags,
+            smith_when(b, commit[0] != '\0', (const char *[]){smith_fmt(b, "-DSMITH_COMMIT=\"%s\"", commit), nullptr}),
+            smith_when(b, in_process,
+                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id),
+                                        nullptr}),
+            smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
+            smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}), nullptr),
         .implicit_inputs = (const char *[]){"scripts/pack.h",
                                             "include/smith/build.h",
                                             "runtime/build_runtime.c",

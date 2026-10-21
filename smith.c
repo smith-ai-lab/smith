@@ -1852,10 +1852,16 @@ static void smith_usage(FILE *out) {
     exit(smith_exit_usage);
 }
 
+#ifndef SMITH_COMMIT
+#define SMITH_COMMIT ""
+#endif
+
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
-        puts("smith 0.0 (milestone 0: a routing passthrough)");
+        // The commit smith was built from (`smith build` passes it); a smith built with one cc command has none.
+        printf("smith 0.0 (milestone 0: a routing passthrough)%s%s\n", SMITH_COMMIT[0] != '\0' ? " commit " : "",
+               SMITH_COMMIT);
         return 0;
     }
     char self[PATH_MAX];

@@ -21,7 +21,7 @@ Where a command cannot take an argument, use the links that act as the verbs by 
 
 ## See what it does
 
-- `SMITH_VERBOSE=1` prints the command on stderr. `smith cc --smith-which <args>` (or `smith-cc --smith-which`) prints the compiler it would choose: `clang in-process <path>` or `clang <path>`. `smith --smith-version` prints the version.
+- `SMITH_VERBOSE=1` prints the command on stderr. `smith cc --smith-which <args>` (or `smith-cc --smith-which`) prints the compiler it would choose: `clang in-process <path>` or `clang <path>`. `smith --smith-version` prints the version and, after `commit`, the commit it was built from (a smith built with one `cc` command has none).
 - For `compile_commands.json` smith adds nothing: pass `-MJ fragments/<file>.json` as with clang, then merge: `{ echo '['; sed '$ s/,$//' fragments/*.json; echo ']'; } > compile_commands.json`. A `build.c` writes it with `smith_compile_commands`.
 
 ## Errors
