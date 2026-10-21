@@ -313,6 +313,37 @@ typedef struct {
                                                SmithProcess *process);
 // Completes when the process has exited, with op->exit_status or op->signal.
 void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
+// A process whose stdout and stderr are captured together (as `2>&1`, so the lines come in the order the process wrote
+// them) while it runs on the loop, so a program can run several at once and print each one's output whole when it ends.
+// The caller owns the struct and keeps it where it is until done.
+typedef struct SmithCapture {
+    SmithProcess process; // the process started; it leads a process group of its own, so kill(-process.id, ...) reaches
+                          // its children as well
+    bool done;            // set by smith_capture_poll: the process exited and its output was read to the end
+    SmithError error;     // valid once done: a read failed, or the wait did
+    int exit_status;      // 0 if killed
+    int signal;           // the signal that killed it, or 0
+    const char *output;   // stdout and stderr, NUL-terminated, in the arena given at the start
+    size_t output_size;
+    struct { // private to the library
+        SmithLoop *loop;
+        SmithArena *arena;
+        unsigned char *data;
+        size_t capacity;
+        int descriptor;
+        bool reading;
+        bool exited;
+        SmithOp read;
+        SmithOp wait;
+    } internal;
+} SmithCapture;
+// Starts argv[0] (found on PATH) with no stdin and returns at once; the error is that it could not start (a missing
+// program is ENOENT). The output is read in doubling blocks into the arena, so it may use up to twice its size.
+[[nodiscard]] SmithError smith_processes_capture_async(SmithProcesses *processes, SmithArena *arena,
+                                                       const char *const *argv, SmithCapture *capture);
+// Takes in what smith_io_run completed and submits the next read; true once the capture is done. Call it after each
+// smith_io_run for every capture still running.
+[[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
 // How many processes can run at once: the machine's logical cores. The fake has what SmithIoTest.cores says, or 1.
 [[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
 
