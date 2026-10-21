@@ -144,8 +144,8 @@ static bool smith_takes_value(const char *arg) {
 
 // An input the clang route handles, which makes a .metal input beside it a mixed command.
 static bool smith_has_other_input_extension(const char *arg) {
-    static const char *const extensions[] = {".c", ".h", ".m", ".mm", ".cc", ".cpp", ".cxx", ".C",
-                                             ".o", ".a", ".s", ".S",  ".i",  ".ii",  ".pcm", ".dylib"};
+    static const char *const extensions[] = {".c", ".h", ".m", ".mm", ".cc", ".cpp", ".cxx",   ".C",    ".o",
+                                             ".a", ".s", ".S", ".i",  ".ii", ".pcm", ".dylib", ".smith"};
     for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++) {
         if (smith_ends_with(arg, extensions[i])) return true;
     }
@@ -685,8 +685,62 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 }
 #endif
 
+constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
+
+// A .smith file is C to the compiler, so each is given with `-x c` and the language is reset after it: `x.smith y.c`
+// becomes
+// `-x c x.smith -x none y.c`. The compiler's hook (shim/hook.cpp), which the .smith extension turns on, does the rest.
+// Nothing is changed when the command names a language itself (-x), or is clang's own `-cc1` form, where the driver
+// has done this already. Returns the new argument count, or 0 when the command stays as it is.
+static int smith_rewrite_smith_inputs(int argc, char **argv, int first, char **out) {
+    bool found = false;
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (strcmp(argv[i], "-cc1") == 0 || strncmp(argv[i], "-x", 2) == 0) return 0;
+        if (argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc) {
+            i += 1;
+        } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
+            found = true;
+        }
+    }
+    if (!found) return 0;
+    size_t used = 0;
+    bool reset = false; // a .smith input was given, and the language is still C
+    for (int i = 0; i < first; i++)
+        out[used++] = argv[i];
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (used + 6 > smith_smith_args_max)
+            smith_die(smith_exit_usage, "too many arguments with .smith inputs", nullptr);
+        bool value = argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc;
+        bool smith_input = argv[i][0] != '-' && smith_ends_with(argv[i], ".smith");
+        if (value) {
+            out[used++] = argv[i];
+            out[used++] = argv[++i];
+        } else if (smith_input) {
+            out[used++] = (char *)"-x";
+            out[used++] = (char *)"c";
+            out[used++] = argv[i];
+            reset = true;
+        } else {
+            if (reset && argv[i][0] != '-' && argv[i][0] != '@') {
+                out[used++] = (char *)"-x";
+                out[used++] = (char *)"none";
+                reset = false;
+            }
+            out[used++] = argv[i];
+        }
+    }
+    out[used] = nullptr;
+    return (int)used;
+}
+
 static int smith_route_clang(int argc, char **argv, int first, bool which, const char *self) {
     SMITH_ASSERT(first >= 1 && argc >= first);
+    char *rewritten[smith_smith_args_max + 1];
+    int rewritten_count = smith_rewrite_smith_inputs(argc, argv, first, rewritten);
+    if (rewritten_count > 0) {
+        argc = rewritten_count;
+        argv = rewritten;
+    }
     bool plus = smith_ends_with(smith_base_name(argv[0]), "++");
     const char *tool = plus ? "clang++" : "clang";
 #ifdef SMITH_IN_PROCESS
@@ -835,6 +889,9 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/cache.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
+// The lowering of .smith files, and the header pass that needs no compiler.
+#include "runtime/lang.c"
+#include "runtime/lang_lex.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -1555,6 +1612,8 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "--smith-header") == 0) return smith_lang_main(argc - 2, argv + 2, true);
+    if (argc >= 2 && strcmp(argv[1], "--smith-lower") == 0) return smith_lang_main(argc - 2, argv + 2, false);
 
     switch (smith_classify(count, args)) {
     case SmithRoute_Mixed:
