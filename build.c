@@ -116,7 +116,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                              smith_fmt(b,
                                        "root=$(%s %s 2>&1 | sed -n 's/^smith: .* is in //p') && "
                                        "%s --quiet smith.c -- \"$@\" %s && "
-                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
+                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS -DSMITH_MCP "
                                        "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
                                        "%s --quiet runtime/commit.c -- \"$@\" %s && "
                                        "%s --quiet runtime/pack_data.c -- \"$@\" "
@@ -198,6 +198,12 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "runtime/cache.c",
                                                    "runtime/docs.c",
                                                    "runtime/symbolize.c",
+                                                   "runtime/mcp.c",
+                                                   "runtime/mcp_text.c",
+                                                   "runtime/mcp_dap.c",
+                                                   "runtime/mcp_show.c",
+                                                   "runtime/mcp_tools.c",
+                                                   "runtime/mcp_serve.c",
                                                    "runtime/executor.c",
                                                    "runtime/executor_manifest.c",
                                                    "runtime/executor_state.c",
@@ -589,6 +595,18 @@ static const char *const build_smith_inputs[] = {
     "runtime/untar.c",
     "runtime/cache.c",
     "runtime/symbolize.c",
+    "runtime/mcp.c",
+    "runtime/mcp_text.c",
+    "runtime/mcp_dap.c",
+    "runtime/mcp_show.c",
+    "runtime/mcp_tools.c",
+    "runtime/mcp_serve.c",
+    "runtime/protocol/protocol.h",
+    "runtime/protocol/protocol.c",
+    "runtime/protocol/dap.h",
+    "runtime/protocol/dap.c",
+    "runtime/protocol/mcp.h",
+    "runtime/protocol/mcp.c",
     "include/smith/arena.h",
     "lib/arena.c",
     "include/smith/io.h",
@@ -651,7 +669,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                                   smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
                       smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
                       smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
-                      smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}), nullptr),
+                      smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+                      smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, nullptr),
     };
     smith_object(b, &object);
