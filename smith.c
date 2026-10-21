@@ -356,6 +356,15 @@ static const unsigned char smith_build_runtime[] = {
 static const unsigned char smith_build_package[] = {
 #embed "runtime/package.c"
 };
+static const unsigned char smith_build_gzip[] = {
+#embed "runtime/gzip.c"
+};
+static const unsigned char smith_build_xz[] = {
+#embed "runtime/xz.c"
+};
+static const unsigned char smith_build_untar[] = {
+#embed "runtime/untar.c"
+};
 
 // smith's libraries: each header and source is written into the project's .smith/ on every `smith build`, where build.c
 // finds the source with smith_library and the compiles find the header through -I .smith/include.
@@ -581,6 +590,9 @@ static void smith_build_prepare(const char *clang) {
     smith_build_write_libraries();
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
+    smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
+    smith_write_if_changed(".smith/xz.c", smith_build_xz, sizeof smith_build_xz);
+    smith_write_if_changed(".smith/untar.c", smith_build_untar, sizeof smith_build_untar);
     smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }
 

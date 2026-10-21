@@ -2054,16 +2054,19 @@ expect "package: smith fetch needs a URL" 2 "$rc"
 capture "$smith" fetch "file://$pk/missing.tar.gz"
 expect_status "package: smith fetch of a missing file fails" fail
 
-# .tar.xz and .zip extract the same way, and the XDG default is ~/.cache.
-for kind in tar.xz zip; do
-    export XDG_CACHE_HOME=$pk/cache-$kind
-    capture "$smith" fetch "file://$pk/pkg.$kind"
-    hash_line=$out
-    hash=${hash_line#*\"}
-    hash=${hash%%\"*}
-    expect "package: .$kind has the hash shasum gives" "sha256:$(shasum -a 256 "$pk/pkg.$kind" | cut -d' ' -f1)" "$hash"
-    expect "package: .$kind extracts" "hello package" "$(cat "$pk/cache-$kind/smith/packages/${hash#sha256:}/hello.txt" 2>/dev/null)"
-done
+# .tar.xz extracts the same way, a zip is refused by name, and the XDG default is ~/.cache.
+export XDG_CACHE_HOME=$pk/cache-xz
+capture "$smith" fetch "file://$pk/pkg.tar.xz"
+hash_line=$out
+hash=${hash_line#*\"}
+hash=${hash%%\"*}
+expect "package: .tar.xz has the hash shasum gives" "sha256:$(shasum -a 256 "$pk/pkg.tar.xz" | cut -d' ' -f1)" "$hash"
+expect "package: .tar.xz extracts" "hello package" "$(cat "$pk/cache-xz/smith/packages/${hash#sha256:}/hello.txt" 2>/dev/null)"
+export XDG_CACHE_HOME=$pk/cache-zip
+capture "$smith" fetch "file://$pk/pkg.zip"
+expect_status "package: a .zip is refused" fail
+expect_contains "package: and the message names the format and the archive" "$err" "zip archives are not supported"
+expect "package: and nothing is left in the cache" 0 "$(ls "$pk/cache-zip/smith/packages" 2>/dev/null | grep -vc '^\.tmp\|prune.timestamp\|\.used')"
 unset XDG_CACHE_HOME
 mkdir "$pk/home"
 HOME=$pk/home capture "$smith" fetch "$tar_url"
