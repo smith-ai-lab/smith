@@ -9,10 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef enum {
     SmithTokenKind_Eof,
     SmithTokenKind_Identifier, // names and keywords alike: the lowering has its own keyword table
@@ -149,7 +145,3 @@ unsigned smith_lang_errors(const SmithLang *lang);
 const char *smith_lang_header(const SmithLang *lang, size_t *length);
 // The lowered text of the file, when SMITH_LANG_DUMP names a file to write it to.
 void smith_lang_finish(SmithLang *lang);
-
-#ifdef __cplusplus
-}
-#endif

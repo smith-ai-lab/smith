@@ -103,9 +103,9 @@ else
     echo "SKIP  the #11 corpus ($lang) does not exist yet; set SMITH_LANG_CASES to check against a copy"
 fi
 
-# smith's own C: plain C stays C, with the C23 and clang spellings smith uses.
+# smith's own C: plain C stays C (the expected outputs of the #11 corpus are generated and not always C), with the C23 and clang spellings smith uses.
 cd "$here" || exit 1
-find . \( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o -path ./.smith -o -path ./.cache -o -path ./.claude \) -prune \
+find . \( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o -path ./.smith -o -path ./.cache -o -path ./.claude -o -path './tests/smith-lang/cases/*/expect' \) -prune \
     -o \( -name '*.c' -o -name '*.h' \) -print | sort >"$work/c-files.txt"
 count=$(wc -l <"$work/c-files.txt" | tr -d ' ')
 capture xargs "$driver" <"$work/c-files.txt"
