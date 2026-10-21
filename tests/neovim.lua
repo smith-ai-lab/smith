@@ -189,6 +189,47 @@ function tests.lsp_attach_smith_alone()
   wait("the server to stop", function() return client:is_stopped() end, 15000)
 end
 
+-- A scratch folder with `files` ({ name = text }) in it, and the file type Neovim gives `name` there.
+local function filetype_of(folder, files, name)
+  for file, text in pairs(files) do
+    vim.fn.mkdir(vim.fs.dirname(folder .. "/" .. file), "p")
+    vim.fn.writefile(vim.split(text, "\n"), folder .. "/" .. file) end
+  vim.cmd("edit " .. vim.fn.fnameescape(folder .. "/" .. name))
+  return vim.bo.filetype
+end
+
+function tests.header_in_project()
+  local base = vim.fn.tempname()
+  equal("c", filetype_of(base .. "/a", { ["build.c"] = "", ["x.h"] = "", ["x.c"] = "" }, "x.h"), "a .h beside a .c")
+  equal("c", filetype_of(base .. "/b", { ["build.c"] = "", ["x.h"] = "", ["x.smith"] = "" }, "x.h"), "a .h beside a .smith")
+  equal("cpp", filetype_of(base .. "/c", { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "a .h beside a .cpp")
+  equal("objc", filetype_of(base .. "/d", { ["build.c"] = "", ["x.h"] = "", ["x.m"] = "" }, "x.h"), "a .h beside a .m")
+  equal("objcpp", filetype_of(base .. "/e", { ["build.c"] = "", ["x.h"] = "", ["x.mm"] = "" }, "x.h"), "a .h beside a .mm")
+  local only_c = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.smith\t-O2\ncompile\tb.c\t-g\ntest\tt\n" }
+  equal("c", filetype_of(base .. "/f", only_c, "lone.h"), "no sibling, the build compiles only .smith and .c")
+  -- found from a folder below the project root
+  vim.fn.mkdir(base .. "/f/include/deep", "p")
+  vim.fn.writefile({}, base .. "/f/include/deep/y.h")
+  vim.cmd("edit " .. vim.fn.fnameescape(base .. "/f/include/deep/y.h"))
+  equal("c", vim.bo.filetype, "a header below the project root")
+  local mixed = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.c\ncompile\tb.cpp\n" }
+  equal("cpp", filetype_of(base .. "/g", mixed, "lone.h"), "a C++ compile leaves Neovim's rule")
+  local objective = { ["build.c"] = "", ["lone.h"] = "", [".smith/build.info"] = "compile\ta.c\ncompile\tb.m\n" }
+  equal("objc", filetype_of(base .. "/h", objective, "lone.h"), "C and Objective-C compiles")
+  equal("cpp", filetype_of(base .. "/i", { ["build.c"] = "", ["lone.h"] = "" }, "lone.h"), "no build.info, no sibling")
+end
+
+function tests.header_outside()
+  local base = vim.fn.tempname()
+  equal("cpp", filetype_of(base, { ["x.h"] = "", ["x.c"] = "" }, "x.h"), "outside a smith project Neovim's rule stands")
+end
+
+-- Run with g:c_syntax_for_h set: the user's choice is Neovim's rule even beside a .cpp.
+function tests.header_user_choice()
+  local base = vim.fn.tempname()
+  equal("c", filetype_of(base, { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "g:c_syntax_for_h wins")
+end
+
 function tests.dap_registers()
   local dap = require("dap")
   check(dap.adapters.smith, "the smith adapter is registered")

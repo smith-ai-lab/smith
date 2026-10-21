@@ -26,6 +26,13 @@ changes a debug configuration of yours.
   the `a::b` paths of modules (`module` for each name in a path, `punctuation.delimiter` for `::`), `c::printf` as a
   call, `tx::Text` as a type, `constexpr type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
   inherited): `vim.wo.foldexpr = "v:lua.vim.treesitter.foldexpr()"` uses the folds; indents are for nvim-treesitter.
+- **A `.h` file gets its language from the project**, not Neovim's guess (which is `cpp` for every `.h`). Only in a smith
+  project (a folder at or above the file with `build.c`, `build.smith` or `.smith/`); elsewhere nothing changes. If you set
+  `g:c_syntax_for_h` or `g:ch_syntax_for_h`, that is Neovim's rule and it wins. Otherwise a source beside the header with the
+  same stem decides (`.c` or `.smith`: `c`; `.cpp`, `.cc`, `.cxx`: `cpp`; `.m`: `objc`; `.mm`: `objcpp`), then
+  the `compile` lines of `.smith/build.info` (every source C or `.smith`: `c`; C and `.m`: `objc`), and with a C++ source
+  among them, or no answer, Neovim's own detection. It costs a few `stat` calls and one small read per header opened.
+  A `.h` mapping you add with `vim.filetype.add` after the plugin loads replaces this.
 - **The parser** is compiled on first use (a few seconds, in the background, while the first `.smith` buffer opens) by
   `smith cc -shared` into `stdpath("data")/smith/parser/smith-<hash of parser.c>.so`, and again only when `parser.c`
   changes (`vim.pack.update`). Neovim 0.12 loads parsers itself, so nvim-treesitter is not required, and works if present.
@@ -85,5 +92,5 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
   file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
-  project files at all, the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
+  project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
   version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.
