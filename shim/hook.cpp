@@ -416,10 +416,6 @@ class SmithHook final : public TokenHook {
     }
 
     bool feed(Token &tok) {
-        if (stats.on && getenv("SMITH_HOOK_TRACE")) {
-            SmithToken view = lite(tok);
-            fprintf(stderr, "slow %.*s\n", (int)view.length, view.text);
-        }
         if (!smith_lang_holds(lang)) pool.clear(); // held tokens are re-emitted by handle
         out.clear();
         actions.clear();
