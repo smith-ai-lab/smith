@@ -40,6 +40,10 @@ extern char **environ;
 // else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
 // that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
 int smith_clang_main(const char *program, int argc, char **argv);
+#ifdef SMITH_PROVE
+// shim/prove.cpp: `smith prove`, on argv[0 .. argc), compiling with the clang that smith_clang_main runs as `program`.
+int smith_prove_main(const char *program, int argc, char **argv);
+#endif
 #endif
 
 #ifdef __APPLE__
@@ -560,6 +564,29 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, const
 #endif
     smith_run(program, argv + first - 1);
     return smith_exit_missing;
+}
+
+// smith prove: the prover (Alive2 and Z3) is linked into a smith built against an LLVM install that has one beside it
+// (build.c); any other smith says so.
+static int smith_prove(int argc, char **argv, const char *self) {
+#ifdef SMITH_PROVE
+    char folder[PATH_MAX];
+    char program[PATH_MAX];
+    smith_resource_folder(folder);
+    int written = snprintf(program, sizeof program, "%s/bin/clang", folder);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_resource_folder leaves room for it
+    smith_resource_ensure(folder, self);
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
+    return smith_prove_main(program, argc, argv);
+#else
+    (void)argc;
+    (void)argv;
+    (void)self;
+    smith_die(smith_exit_usage, "this smith has no prover; build it against an LLVM that has Alive2 and Z3 beside it",
+              "smith build -DLLVM=<such an install>");
+#endif
 }
 
 // smith build.
@@ -1214,6 +1241,7 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
     if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);

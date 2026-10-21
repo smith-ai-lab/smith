@@ -66,6 +66,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (Homebrew's clangd builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
+- **`smith prove` checks LLVM IR with Alive2 and Z3, linked into a smith built against an LLVM that has them beside it.** Contracts are
+  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. Alive2 needs LLVM built with RTTI and
+  exceptions, so `smith build llvm-prove` makes a second install (`~/.cache/smith/llvm/23.1.3-prove`, the shared one is
+  untouched), `smith build prove-libs` builds Z3 5.3.1 and Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) static
+  beside it, and `smith build -DLLVM=<that install>` links the prover; the compiler's output is byte-identical with and without
+  RTTI and exceptions (only the install path in debug info differs). Each function is proved in a process of its own. Skill:
+  smith-contract.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
   exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs, and a
   contract per function, so that callers use the contract instead of the body. Proofs are cached by content, and only
