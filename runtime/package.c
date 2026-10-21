@@ -1,6 +1,6 @@
 // Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, included by smith.c
 // (`smith fetch`) and by the build runtime (`smith_package`), and embedded in smith so the runtime finds it next to
-// itself in .smith/. It needs SMITH_ASSERT and `environ` from its includer. See docs/build-c.md.
+// itself in .smith/. It needs SMITH_ASSERT from its includer. See docs/build-c.md.
 //
 // The cache is $XDG_CACHE_HOME/smith/packages/<hex>/, or ~/.cache/smith/packages/<hex>/, keyed by the archive's hash. A
 // package is downloaded to a temporary file, verified, extracted into a temporary folder and only then renamed into
@@ -20,14 +20,12 @@
 #include <fcntl.h>
 #include <ftw.h>
 #include <limits.h>
-#include <spawn.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -62,7 +60,6 @@ constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
 constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the terminator
 constexpr size_t smith_package_error_size = 2048;
 constexpr size_t smith_package_read_size = 65536;
-constexpr int smith_package_wait_tries = 1000;
 
 // The one pruning rule of both caches, in seconds. clang gets them as -fmodules-prune-interval and
 // -fmodules-prune-after; smith applies them to packages itself.
@@ -234,20 +231,6 @@ static void smith_package_remove(const char *path) {
 #include "xz.c"
 
 #include "untar.c"
-
-// Runs a program as a child with the caller's stdout and stderr, and waits. The result is its exit status, 128 plus the
-// signal that killed it, or 127 when it cannot start.
-static int smith_package_spawn(const char *program, char *const *args) {
-    pid_t pid = 0;
-    if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) return 127;
-    int status = 0;
-    int waited = -1;
-    for (int i = 0; i < smith_package_wait_tries && waited < 0; i++)
-        waited = waitpid(pid, &status, 0);
-    if (waited < 0) return 127;
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    return 128 + WTERMSIG(status);
-}
 
 #ifdef __APPLE__
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
