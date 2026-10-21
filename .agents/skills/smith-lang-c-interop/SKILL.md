@@ -11,7 +11,9 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang-c-interop/
 
 `import <h>;` (or `import "h";`, looked for beside the file first) includes the header and binds `c`: `c::sqrtf(x)`, `c::EOF`, `c::WIFEXITED(s)`, `struct c::stat`. Macros work. `c::` names C only in a file that imports a header; otherwise `c` is any identifier.
 
-A name an imported header declared, used without `c::`, is an error in every `.smith` file, a module or not (a function, variable, type, tag or macro): `` `sqrtf` is a C name; write `c::sqrtf` ``, `` `struct stat` names a C tag; write `struct c::stat` ``, `` `EOF` is a C macro; write `c::EOF` ``. An import always puts the header's names under `c::`. Names from `#include`d headers stay bare, as in C, so plain C in a `.smith` file means what it means in a `.c` file. A file with no `module` line lowers nothing else: no prefix, nothing `static`. The sized types (`u32`) are typedefs only in the `.smith` file; the generated header says `uint32_t`, so a C file that includes it has no `u32`. A project's own `typedef uint32_t u32;` in a C header is fine in a `.smith` file that includes it.
+A name an imported header declared, used without `c::`, is an error in every `.smith` file, a module or not (a function, variable, type, tag or macro): `` `sqrtf` is a C name; write `c::sqrtf` ``, `` `struct stat` names a C tag; write `struct c::stat` ``, `` `EOF` is a C macro; write `c::EOF` ``. An import always puts the header's names under `c::`. Inside an attribute's arguments (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the attribute's own and needs no `c::`. Names from `#include`d headers stay bare, as in C, so plain C in a `.smith` file means what it means in a `.c` file. A file with no `module` line lowers nothing else: no prefix, nothing `static`. The sized types (`u32`) are typedefs only in the `.smith` file; the generated header says `uint32_t`, so a C file that includes it has no `u32`. A project's own `typedef uint32_t u32;` in a C header is fine in a `.smith` file that includes it.
+
+A C symbol that no header declares (macOS's `<unistd.h>` has no `environ`), or one a project's C file defines, is declared in the module with `extern` and no `export`: `extern char **environ;`, `extern u32 counter;`, `extern u32 triple(u32 x);`. It keeps its C name (no module prefix, no `__asm__` label), is private to the module and not in its header, and links to the C definition. A header's own variables work with `c::` (`c::optind`, `c::stdout`, `c::errno`). `export extern T name;` is different: the module's own symbol, defined in C by the prefixed name or its `[[smith::c_name]]`.
 
 ## smith into C and C++
 
@@ -24,8 +26,11 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 
 C and C++ include it (`-I .smith/include`, with the header in the compile's `.implicit_inputs` in build.c so a clean build writes it first) and call `game_replay_open`; no other change. An export with no body is defined in C or C++ against the header, by its C name (`uint64_t game_replay_checksum(...) { … }`, `extern "C"` in C++).
 
+- An export with `[[smith::c_name("Name")]]` is declared as `Name` in the header and its symbol is `Name` (no `__asm__` label), so existing C code that calls `Name`, or defines it for an export with no body, links unchanged. Other exports keep `game_replay_open` and the `::` symbol.
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
-- A header is written without macros or `#if` (only `#if 0` is honoured): keep an export out of a macro.
+- The header keeps what C needs of the source: the comments directly above an `export` (a doc comment), the comments inside an exported declaration and after its last token on its line, and the `#if`/`#ifdef`/`#elif`/`#else`/`#endif` lines around exports, verbatim. The header is never preprocessed, so the includer's `-D` flags choose the branch; the module is compiled with its own flags. A blank line between a comment and the `export` makes it no doc comment.
+- `export inline T f(...) { ... }` is `static inline game_replay_f` in the header with its body, and the module defines it the same way: no symbol, so C, C++ and `.smith` importers each compile it. Its body may use only the module's other exports, its imports and C, never a private name.
+- A header is written without macros (a `#define` of the module is not copied): keep a macro out of an export's signature.
 - Link C++ with `smith c++`.
 
 ## Debugging

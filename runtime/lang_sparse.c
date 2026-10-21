@@ -51,15 +51,30 @@ static bool smith_lang_sparse_member(SmithLang *lang, const SmithHost *host) {
     return smith_lang_previous_is(lang, host, 1, ".") || smith_lang_previous_is(lang, host, 1, "->");
 }
 
-// Inside [[ ]], where gnu::unused is no module path.
+// Inside [[ ]], where gnu::unused is no module path, or inside the arguments of __attribute__(( )).
 static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host) {
+    unsigned closed = 0;                        // parentheses closed on the way back
+    unsigned unmatched = 0;                     // parentheses open around the token
     for (unsigned back = 1; back < 8; back++) { // the host remembers eight
         SmithToken before;
         if (!smith_lang_previous(lang, host, back, &before)) return false;
-        if (smith_lang_punct(&before, "]") || smith_lang_punct(&before, ";") || smith_lang_punct(&before, "{")) {
+        if (smith_lang_punct(&before, "]") || smith_lang_punct(&before, ";") || smith_lang_punct(&before, "{") ||
+            smith_lang_punct(&before, "}")) {
             return false;
         }
         if (smith_lang_punct(&before, "[") && smith_lang_previous_is(lang, host, back + 1, "[")) return true;
+        if (smith_lang_punct(&before, ")")) closed += 1;
+        if (smith_lang_punct(&before, "(")) {
+            if (closed > 0) {
+                closed -= 1;
+            } else {
+                unmatched += 1;
+            }
+        }
+        if (before.kind == SmithTokenKind_Identifier && unmatched >= 2 &&
+            (smith_lang_ident(&before, "__attribute__") || smith_lang_ident(&before, "__attribute"))) {
+            return true;
+        }
     }
     return false;
 }

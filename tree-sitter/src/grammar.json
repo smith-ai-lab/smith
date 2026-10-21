@@ -10380,6 +10380,13 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "attribute_declaration"
+          }
+        },
+        {
           "type": "STRING",
           "value": "export"
         },
@@ -10698,6 +10705,11 @@
     [
       "type_parameter",
       "type_specifier"
+    ],
+    [
+      "_declaration_modifiers",
+      "attributed_statement",
+      "export_declaration"
     ]
   ],
   "precedences": [],

@@ -54,7 +54,7 @@ changes a debug configuration of yours.
 ## The grammar
 
 `tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
-([smith-lang.md](smith-lang.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (on a
+([smith-lang.md](smith-lang.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[smith::c_name]]` attributes before it, on a
 declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `type T` parameters,
 `if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types

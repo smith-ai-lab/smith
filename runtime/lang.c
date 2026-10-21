@@ -33,6 +33,9 @@ constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 constexpr size_t smith_lang_transitive_max = 32;
+constexpr size_t smith_lang_cond_depth_max = 64; // #if nested in a module the header pass reads
+constexpr size_t smith_lang_cond_lines_max = 32; // lines of one chain: #if, #elif..., #else
+constexpr size_t smith_lang_cnames_max = 1024;   // exports of imported modules that have a C name of their own
 
 typedef enum {
     SmithLangWord_Other,
@@ -82,7 +85,8 @@ typedef struct {
     SmithLangText name;
     SmithLangNameKind kind;
     bool exported;
-    uint32_t location; // of the declaration's name in the source, in the host's own measure
+    uint32_t location;    // of the declaration's name in the source, in the host's own measure
+    SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
 } SmithLangName;
 
 // A name the compiler sees, and how the source writes it (runtime/lang_names.c).
@@ -91,8 +95,26 @@ typedef struct {
     SmithLangText written;  // box::Box (Box in the module itself)
     SmithLangText module;   // geometry::box
     uint16_t prefix_length; // of lowered: what is left is the member
+    SmithLangText member;   // the member, when lowered is a chosen C name and not prefix + member (length 0: derived)
     bool direct;
 } SmithLangWritten;
+
+// An #if of the module, with its #elif and #else lines so far: kept until an export inside it needs them in the header.
+typedef struct {
+    const SmithTrivia *lines[smith_lang_cond_lines_max];
+    uint8_t count;
+    bool emitted;     // the lines so far are in the header, and so are the rest as they come
+    bool zero;        // `#if 0`, no branch of it live yet
+    bool transparent; // `#if 0 ... #else`: the live branch is plain text, and the header has no conditional for it
+    bool first_open;  // lines[0] is an #elif that stands for the #if of the chain (after `#if 0`)
+} SmithLangCond;
+
+// An export of an imported module that has a C name of its own: the name the prefix and the member would make, and the
+// name the module's header gives it.
+typedef struct {
+    SmithLangText fallback;
+    SmithLangText c_name;
+} SmithLangCName;
 
 typedef struct {
     SmithLangText name;
@@ -132,6 +154,8 @@ typedef struct {
     bool name_found;      // the current declarator has its name
     bool in_params;       // inside the parameter list of the declared function
     bool is_extern;       // `extern` appeared
+    bool is_inline;       // `inline` appeared
+    bool inline_header;   // an exported inline function: its body goes to the header too
     bool params_next;     // the next ( opens it
     bool last_tag_enum;   // the last struct, union or enum keyword was enum
     bool checking;        // names in this declaration are checked for private types
@@ -141,6 +165,9 @@ typedef struct {
     bool prev_tag;        // the token before was struct, union or enum
     bool static_inserted; // `static` was written before the first token, so a later one is dropped
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
+    SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    uint32_t c_name_location;
+    bool c_name_used; // a name this declaration introduces took it
 } SmithLangDecl;
 
 struct SmithLang {
@@ -150,8 +177,32 @@ struct SmithLang {
     bool finished;
     const char *main_file;
     size_t header_full_used;
-    size_t pending;      // the held identifier waiting for the token after it (SIZE_MAX: none)
-    bool pending_export; // `export` was read, and the declaration it applies to is next
+    size_t pending;               // the held identifier waiting for the token after it (SIZE_MAX: none)
+    bool pending_export;          // `export` was read, and the declaration it applies to is next
+    SmithLangText pending_c_name; // [[smith::c_name("...")]] was read: the export after it has that C name
+    uint32_t pending_c_name_location;
+    bool pending_c_name_line; // the attribute was the first token of its line
+    SmithLangCond conds[smith_lang_cond_depth_max];
+    uint32_t cond_depth;
+    uint32_t cond_overflow;          // conditionals open beyond the table
+    bool cond_reported;              // the error "nest more deeply" was given
+    const SmithHost *host_now;       // the host of the token being fed, for errors in the header's trivia
+    const SmithTrivia *trivia_first; // the first entry of the file
+    const SmithTrivia *trivia_last;  // the last entry applied
+    const SmithTrivia *doc_from;     // the comments of the gap before the token taken last (a doc comment, maybe)
+    const SmithTrivia *doc_to;
+    const SmithTrivia *doc_taken_from; // the same, for the token taken last, once the gap is closed
+    const SmithTrivia *doc_taken_to;
+    bool doc_pending; // an export is next and has a doc comment (doc_export_from .. doc_export_to)
+    const SmithTrivia *doc_export_from;
+    const SmithTrivia *doc_export_to;
+    bool export_tail;    // the header has the export's end, though export_active is off (a variable, a prototype)
+    bool tail_open;      // an export just ended in the header: a comment after it on its line follows it there
+    bool unnamed_c_name; // an export ended that took no name from its [[smith::c_name]]
+    uint32_t unnamed_c_name_location;
+    size_t c_name_count; // how many of the module's own names have a C name chosen
+    SmithLangCName cnames[smith_lang_cnames_max];
+    size_t cnames_count;
     uint32_t bracket_depth;
     char prev_name[64]; // the last token, if it was a plain name: it may be a type the parser knows
     size_t prev_name_length;
@@ -175,12 +226,14 @@ struct SmithLang {
     bool in_function;     // inside a function body: nothing declared here is the module's
     bool agg_pending;     // struct, union or enum seen, `{` not yet
     bool enum_pending;
-    bool init_top;          // an initializer at file scope is being read
-    bool tail_declarator;   // after an aggregate's `}` or a comma: names are declarators
-    uint32_t typedef_depth; // the brace depth the typedef statement began at
-    bool in_attribute;      // inside [[ ]]: gnu::unused is no module path
-    bool statement_typedef; // `typedef` seen in this statement
-    uint8_t own_words;      // module, import or export, typedef'd by this file: they are names, not keywords
+    bool init_top;             // an initializer at file scope is being read
+    bool tail_declarator;      // after an aggregate's `}` or a comma: names are declarators
+    uint32_t typedef_depth;    // the brace depth the typedef statement began at
+    bool in_attribute;         // inside [[ ]]: gnu::unused is no module path
+    uint32_t attribute_parens; // inside the parentheses of __attribute__(( )): format(printf, 1, 2)
+    bool attribute_next;       // __attribute__ was the last token: its parenthesis opens the arguments
+    bool statement_typedef;    // `typedef` seen in this statement
+    uint8_t own_words;         // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.
     bool prev_member;
     bool prev_tag;
@@ -443,6 +496,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // The output, the declarations and the rest, in the order they need each other (a comment between them keeps
 // clang-format from sorting the includes).
 #include "lang_out.c"
+
+// The comments and conditional directives a module's header keeps.
+#include "lang_trivia.c"
 
 // Names, bindings and the lowering of one identifier.
 #include "lang_decl.c"

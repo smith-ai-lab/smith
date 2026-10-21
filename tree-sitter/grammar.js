@@ -33,6 +33,7 @@ module.exports = grammar(C, {
     [$.module_declaration, $.type_specifier],
     [$.import_declaration, $.type_specifier],
     [$.type_parameter, $.type_specifier],
+    [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
   ]),
 
   rules: {
@@ -111,7 +112,9 @@ module.exports = grammar(C, {
 
     // export on a declaration, a function definition, a typedef or a tag: only where a module declares (file scope),
     // so a field or a variable called export stays one.
+    // [[smith::c_name("Name")]] export ...: attributes before `export` give the export its C name.
     export_declaration: $ => seq(
+      repeat($.attribute_declaration),
       'export',
       choice(
         $.function_definition,

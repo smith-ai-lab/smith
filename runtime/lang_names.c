@@ -55,7 +55,8 @@ static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const 
 // The name `lowered` is written `written`. `prefix_length` is how much of `lowered` is the module's prefix (the rest is
 // the member). A name the file binds itself (`direct`) wins over one reached through another module's imports.
 static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
-                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct) {
+                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct,
+                                   const char *member, size_t member_length) {
     SmithLangWritten *known = smith_lang_written_lookup(lang, lowered, lowered_length);
     if (known != nullptr) {
         if (direct && !known->direct) {
@@ -69,6 +70,7 @@ static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t 
     entry->lowered = smith_lang_store(lang, lowered, lowered_length);
     entry->written = smith_lang_store(lang, written, written_length);
     entry->prefix_length = (uint16_t)prefix_length;
+    entry->member = member != nullptr ? smith_lang_store(lang, member, member_length) : (SmithLangText){0, 0};
     entry->module = module;
     entry->direct = direct;
     uint32_t slot = smith_lang_written_slot(lowered, lowered_length);
@@ -77,6 +79,26 @@ static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t 
         slot = (slot + 1) & (smith_lang_written_slots - 1);
     }
     lang->written_slots[slot] = (uint32_t)lang->written_count;
+}
+
+// An import's export that has a C name of its own: `fallback` (prefix + member) is what `x::member` would make.
+static void smith_lang_cname_add(SmithLang *lang, const char *fallback, size_t fallback_length, const char *c_name,
+                                 size_t c_name_length) {
+    if (lang->cnames_count >= smith_lang_cnames_max) return;
+    SmithLangCName *entry = &lang->cnames[lang->cnames_count++];
+    entry->fallback = smith_lang_store(lang, fallback, fallback_length);
+    entry->c_name = smith_lang_store(lang, c_name, c_name_length);
+}
+
+// The C name an imported export has instead of `fallback`; null when it has none.
+static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const char *fallback, size_t length) {
+    for (size_t i = 0; i < lang->cnames_count; i++) { // the imports' exports that have a C name, few
+        const SmithLangCName *entry = &lang->cnames[i];
+        if (entry->fallback.length == length && memcmp(smith_lang_str(entry->fallback), fallback, length) == 0) {
+            return entry;
+        }
+    }
+    return nullptr;
 }
 
 // The exports a module's header lists (`// smith-names:`), written through `binding` (`box`), or, for a module reached
@@ -99,15 +121,27 @@ static void smith_lang_written_from_header(SmithLang *lang, const char *text, si
     size_t start = 0;
     size_t end = 0;
     while (smith_lang_header_word(text, length, "// smith-names:", &cursor, &start, &end)) { // each export
-        size_t member = end - start;
+        // `member`, or `member=CName` for an export whose C name was chosen with [[smith::c_name("CName")]]
+        const char *equals = memchr(text + start, '=', end - start);
+        size_t member = equals != nullptr ? (size_t)(equals - (text + start)) : end - start;
+        size_t c_name = equals != nullptr ? end - start - member - 1 : 0;
         char lowered[smith_lang_name_max];
         char written[smith_lang_name_max];
-        if (prefix_length + member + 1 > sizeof lowered || strlen(bound) + 2 + member + 1 > sizeof written) continue;
+        if (prefix_length + member + 1 > sizeof lowered || strlen(bound) + 2 + member + 1 > sizeof written ||
+            c_name + 1 > sizeof lowered) {
+            continue;
+        }
         memcpy(lowered, prefix, prefix_length);
         memcpy(lowered + prefix_length, text + start, member);
         int written_length = snprintf(written, sizeof written, "%s::%.*s", bound, (int)member, text + start);
-        smith_lang_written_add(lang, lowered, prefix_length + member, written, (size_t)written_length, prefix_length,
-                               module_text, direct);
+        if (c_name == 0) {
+            smith_lang_written_add(lang, lowered, prefix_length + member, written, (size_t)written_length,
+                                   prefix_length, module_text, direct, nullptr, 0);
+            continue;
+        }
+        smith_lang_cname_add(lang, lowered, prefix_length + member, equals + 1, c_name);
+        smith_lang_written_add(lang, equals + 1, c_name, written, (size_t)written_length, 0, module_text, direct,
+                               text + start, member);
     }
 }
 
@@ -163,7 +197,7 @@ static void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *b
         snprintf(written, sizeof written, "%s::%.*s", smith_lang_str(binding->name), (int)member_length, member);
     if (length <= 0 || (size_t)length >= sizeof written) return;
     smith_lang_written_add(lang, lang->tmp, lowered_length, written, (size_t)length, binding->prefix.length,
-                           binding->module, true);
+                           binding->module, true, nullptr, 0);
 }
 
 // ---- What the host can ask
@@ -177,8 +211,8 @@ static void smith_lang_written_view(const SmithLangWritten *entry, SmithWrittenN
     out->lowered_length = entry->lowered.length;
     out->written = smith_lang_str(entry->written);
     out->written_length = entry->written.length;
-    out->member = out->lowered + entry->prefix_length;
-    out->member_length = entry->lowered.length - entry->prefix_length;
+    out->member = entry->member.length > 0 ? smith_lang_str(entry->member) : out->lowered + entry->prefix_length;
+    out->member_length = entry->member.length > 0 ? entry->member.length : entry->lowered.length - entry->prefix_length;
     out->module = smith_lang_str(entry->module);
     out->module_length = entry->module.length;
     out->direct = entry->direct;

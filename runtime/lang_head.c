@@ -148,6 +148,7 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, cons
         }
         if (smith_lang_ident(token, "constexpr")) lang->decl.is_constexpr = true;
     }
+    if (smith_lang_ident(token, "inline")) lang->decl.is_inline = true;
 }
 
 static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
@@ -234,7 +235,7 @@ static SmithLangForm smith_lang_form(const SmithLang *lang) {
 }
 
 // extern T name __asm__("sym"); in the header for an exported variable defined with an initializer.
-static void smith_lang_header_variable(SmithLang *lang) {
+static void smith_lang_header_variable(SmithLang *lang, bool labeled) {
     SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
     SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "extern", 6, &first);
     if (!lang->decl.is_extern) smith_lang_emit_header(lang, keyword);
@@ -247,6 +248,10 @@ static void smith_lang_header_variable(SmithLang *lang) {
         smith_lang_emit_header(lang, token);
     }
     SmithToken last = smith_lang_last_of_head(lang);
+    if (!labeled) { // a chosen C name is the symbol: extern T name;
+        smith_lang_emit_header(lang, smith_lang_punct_after(";", &last));
+        return;
+    }
     char label[smith_lang_name_max * 2];
     int length = snprintf(label, sizeof label, "\"%s%s%s\"", smith_lang_symbol_underscore, lang->symbol,
                           smith_lang_scratch_str(lang->head[lang->decl.last_name].original));
@@ -263,6 +268,13 @@ static void smith_lang_header_variable(SmithLang *lang) {
 }
 
 static void smith_lang_end_declaration(SmithLang *lang) {
+    if (lang->decl.c_name.length > 0 && !lang->decl.c_name_used) { // reported by the next token fed (it has the host)
+        lang->unnamed_c_name = true;
+        lang->unnamed_c_name_location = lang->decl.c_name_location;
+    }
+    // A comment after the export's last token follows it in the header.
+    lang->tail_open = lang->export_active || lang->export_tail;
+    lang->export_tail = false;
     lang->export_active = false;
     lang->state = SmithLangState_Start;
     lang->decl = (SmithLangDecl){0};
@@ -297,7 +309,7 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
     }
     smith_lang_push_brace(lang, host, SmithLangBrace_Function, location);
     lang->in_function = true;
-    lang->export_active = false;
+    lang->export_active = lang->decl.inline_header; // an exported inline function's body is in the header too
     lang->decl.checking = false;
 }
 
@@ -337,6 +349,17 @@ static void smith_lang_after_head(SmithLang *lang, const SmithHost *host, const 
                           terminator->location);
 }
 
+// An exported inline function is defined in the header, as `static inline`, and so in the module: it has no symbol
+// (the includer's compiler inlines it, or makes its own copy), and its body goes to the header with the head.
+static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) {
+    lang->decl.inline_header = true;
+    SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
+    smith_lang_emit(lang, host, smith_lang_static_keyword(&first));
+    lang->head[0].line_start = false;
+    lang->head[0].space_before = true;
+    smith_lang_emit_head(lang, host, true, false);
+}
+
 // The head is complete: the terminator says what follows. Writes the head, then the terminator, and picks the state.
 static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
     SmithLangForm form = smith_lang_form(lang);
@@ -348,17 +371,21 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
     if (lang->decl.exported && lang->decl.declared > 1) {
         smith_lang_error(lang, host, lang->head[0].location, "an exported declaration declares one name; split it");
     }
+    // A chosen C name is the symbol too, as C writes it: no label, so C and C++ define and call it by that name.
+    bool has_c_name = lang->decl.c_name_used && lang->decl.c_name.length > 0;
     bool symbol = lang->decl.exported && form != SmithLangForm_Type && !lang->decl.is_constexpr && !is_main;
     bool private_static =
         lang->is_module && !lang->decl.exported && form != SmithLangForm_Type && !lang->decl.storage && !is_main;
     bool proto_written = false;
     SmithToken like = smith_lang_last_of_head(lang);
-    if (symbol && form == SmithLangForm_Function) {
+    if (symbol && form == SmithLangForm_Function && lang->decl.is_inline && smith_lang_punct(terminator, "{")) {
+        smith_lang_emit_inline_head(lang, host);
+    } else if (symbol && form == SmithLangForm_Function) {
         // With a body the head is written twice: the prototype that carries the symbol is a copy, and the definition
         // after it has the tokens of the source.
         lang->emit_synthetic = smith_lang_punct(terminator, "{");
         smith_lang_emit_head(lang, host, true, false);
-        smith_lang_emit_label(lang, host, &like, true);
+        if (!has_c_name) smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));
         lang->emit_synthetic = false;
         lang->export_active = false;
@@ -367,14 +394,16 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
             smith_lang_emit_head(lang, host, false, false);
             proto_written = false;
         } else {
+            lang->export_tail = true;
             smith_lang_end_declaration(lang);
             return;
         }
     } else if (symbol && form == SmithLangForm_Variable) {
-        smith_lang_header_variable(lang);
+        smith_lang_header_variable(lang, !has_c_name);
         lang->export_active = false;
+        lang->export_tail = true;
         smith_lang_emit_head(lang, host, false, false);
-        smith_lang_emit_label(lang, host, &like, false);
+        if (!has_c_name) smith_lang_emit_label(lang, host, &like, false);
     } else {
         smith_lang_emit_head(lang, host, true, private_static);
     }

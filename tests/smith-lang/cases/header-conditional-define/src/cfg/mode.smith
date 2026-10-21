@@ -1,0 +1,53 @@
+module cfg::mode;
+
+// Kept verbatim: the includer's flags choose the branch.
+#ifdef WIDE
+export typedef struct {
+    u64 value;
+} Cell;
+#else
+export typedef struct {
+    u32 value;
+} Cell;
+#endif
+
+#if defined(WIDE) && WIDE > 1
+export u32 width(void) {
+    return 128;
+}
+#elif defined(WIDE)
+export u32 width(void) {
+    return 64;
+}
+#else
+export u32 width(void) {
+    return 32;
+}
+#endif
+
+// A branch that holds no export is dropped from the header.
+#ifdef UNUSED
+static u32 hidden = 1;
+#endif
+
+#if 0
+export u32 never(void) {
+    return 0;
+}
+#else
+export u32 always(void) {
+    return 1;
+}
+#endif
+
+#ifdef OUTER
+#ifdef INNER
+export u32 nested(void) {
+    return 3;
+}
+#endif
+#endif
+
+export u32 plain(void) {
+    return 5;
+}
