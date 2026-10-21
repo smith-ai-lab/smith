@@ -12,6 +12,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 1. **Sized types** work in any `.smith` file: `u32`, `f64`, `usize` (load `smith-lang-sized-types`).
 2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header, whose names are then written `c::sqrtf` in a module or not (load `smith-lang-modules`, `smith-lang-c-interop`).
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
+4. **Generic functions** in a module: parameters marked `constexpr type T`, called as `arena::push(&a, Point)` or with `T` inferred, and `if constexpr` in their bodies (load `smith-lang-generics`).
 
 It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
 
@@ -49,7 +50,7 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 ## In the editor
 
-`smith lsp` (clangd) lowers `.smith` files too, so an editor or an agent gets diagnostics (the lowering's own included), hover, go-to-definition across modules, symbols and completion on them as on C. Positions are those of the `.smith` text; names in hover, symbols, completion, signature help and clang's messages are the names as written (`box::area` where the file imports the module, `area` in the module itself; `smith lsp` with `SMITH_LSP_RAW=1` shows the compiler's `geometry_box_area`), the same in `smith cc`'s diagnostics, and after `box::` completion offers the module's exports (`area`, inserted after the typed `box::`). The debugger shows the same names (`smith dbg` and `smith dap`): `geometry::box::area` in frames, `geometry::box::Box` as a type (see `smith-debug`). The file must be in `compile_commands.json` (`smith build` writes it) and the modules' headers built. See `smith-check` ("`.smith` files").
+`smith lsp` (clangd) lowers `.smith` files too, so an editor or an agent gets diagnostics (the lowering's own included), hover, go-to-definition across modules (and from a call to a generic to the generic), symbols and completion on them as on C. Positions are those of the `.smith` text; names in hover, symbols, completion, signature help and clang's messages are the names as written (`box::area` where the file imports the module, `area` in the module itself; `smith lsp` with `SMITH_LSP_RAW=1` shows the compiler's `geometry_box_area`), the same in `smith cc`'s diagnostics, and after `box::` completion offers the module's exports (`area`, inserted after the typed `box::`). The debugger shows the same names (`smith dbg` and `smith dap`): `geometry::box::area` in frames, `geometry::box::Box` as a type (see `smith-debug`). The file must be in `compile_commands.json` (`smith build` writes it) and the modules' headers built. See `smith-check` ("`.smith` files").
 
 ## Errors
 

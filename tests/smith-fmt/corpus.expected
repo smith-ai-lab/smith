@@ -791,6 +791,20 @@ int main(void) {
     c::printf("%d %zu %zu\n", p->x, after_point, a.used);
     return 0;
 }
+==> generic-static-assert/src/main.smith <==
+import sa;
+int main(void) {
+    return sa::twice(1) + (int)sa::twice(1.5);
+}
+==> generic-static-assert/src/sa.smith <==
+module sa;
+export T twice(constexpr type T, T v) {
+    if constexpr (is_integer(T)) {
+        return v * 2;
+    } else {
+        static_assert(false, "twice needs an integer");
+    }
+}
 ==> generic-two-keyword-params/src/num.smith <==
 module num;
 

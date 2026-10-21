@@ -131,6 +131,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
   modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
+- **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
+  Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
+  called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
+  generic's tokens (no clang patch), writes one weak, hidden instance per canonical list of types at the end of the file,
+  and chooses the branch of each `if constexpr` for it, so the parser only ever sees ordinary functions; an error in an
+  instance is reported at the generic's source with a note at the call. An instance's code is a copy of its generic's source
+  file under the same name, so the debugger shows `pick::larger<i32>` at the generic's own lines. Value parameters and
+  functions that return `type` are the next extension.
 - **`smith lsp` lowers `.smith` files too.** `smith_clangd_main` installs the same token hook, so a parse of a `.smith`
   file in clangd is lowered as a compile's is and positions are those of the source; no LLVM change. The lowering is
   C with static tables, so a hook holds it from its making to the end of its file and clangd's `.smith` parses take
