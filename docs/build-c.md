@@ -702,7 +702,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it), `--seed <n>`
   (each property test on that one seed), `--seeds <n>` (keys per property test, 100 by default), `--jobs <n>` (default:
   the cores), `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
-  time one shrink may take), `--shuffle <seed>`, `--isolate`, `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
+  time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort outside `SMITH_CHECK_ABORTS` or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
 - **Full size: `smith_test_full()`.** It is false by default and true when the run was given `--full`. A test with a heavy check
   picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either

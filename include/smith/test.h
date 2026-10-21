@@ -6,7 +6,8 @@
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
 // `void test_<name>(SmithKey key) {` by name, and the library's main runs them, in parallel, with failures printed with
 // both values and their types. `smith test` runs them; its arguments are the runner's options: --test <substring>,
-// --seed <n>, --seeds <n>, --jobs <n>, --shrink 0|1, --shuffle <seed>, --isolate and --full (docs/build-c.md).
+// --seed <n>, --seeds <n>, --jobs <n>, --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full
+// (docs/build-c.md).
 //
 // The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
 // process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
@@ -16,7 +17,10 @@
 // worker, so a worker is reused only after a clean pass with no death check. Which tests share a worker depends on
 // timing, unless there is one job. A test must not depend on another: --shuffle <seed> runs the tests in a shuffled
 // order to find one that does (with --jobs 1 the order, and so the failure, replays from the seed), and --isolate
-// gives every test a process of its own, which is also what to use under a debugger that cannot follow a fork.
+// gives every test a process of its own. Under a debugger that cannot follow a fork (lldb on macOS) use --in-process:
+// the tests run in the runner's own process, one after another, with no fork (`smith dbg build/tests -- --test name
+// --in-process`). It gives up the isolation: a crash, an abort outside a SMITH_CHECK_ABORTS or a hang ends the whole
+// run, state a test leaves reaches the tests after it, there is no timeout unless --timeout is given, and no shrinking.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
 // more than this header.
