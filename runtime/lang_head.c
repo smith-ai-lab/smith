@@ -284,6 +284,20 @@ static void smith_lang_push_brace(SmithLang *lang, const SmithHost *host, SmithL
     lang->braces[lang->brace_depth++] = kind;
 }
 
+// A function's `{`: its body needs the braces, the module's names and the imported ones.
+static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32_t location) {
+    if (host->previous != nullptr) {
+        if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
+        lang->imports_watched = true;
+        lang->body_sparse = true;
+        host->watch_mode(host->context, SmithWatch_Braces);
+    }
+    smith_lang_push_brace(lang, host, SmithLangBrace_Function, location);
+    lang->in_function = true;
+    lang->export_active = false;
+    lang->decl.checking = false;
+}
+
 // After the head is written: the terminator that ended it, and where the declaration goes from there.
 static void smith_lang_after_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator,
                                   SmithLangForm form, bool proto_written) {
@@ -313,16 +327,7 @@ static void smith_lang_after_head(SmithLang *lang, const SmithHost *host, const 
         return;
     }
     if (form == SmithLangForm_Function) {
-        if (host->previous != nullptr) { // the body needs the braces, the module's names and the imported ones
-            if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
-            lang->imports_watched = true;
-            lang->body_sparse = true;
-            host->watch_mode(host->context, SmithWatch_Braces);
-        }
-        smith_lang_push_brace(lang, host, SmithLangBrace_Function, terminator->location);
-        lang->in_function = true;
-        lang->export_active = false;
-        lang->decl.checking = false;
+        smith_lang_enter_body(lang, host, terminator->location);
         return;
     }
     smith_lang_push_brace(lang, host, lang->decl.last_tag_enum ? SmithLangBrace_Enum : SmithLangBrace_Aggregate,

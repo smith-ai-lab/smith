@@ -31,6 +31,8 @@ typedef struct {
     bool line_start;   // the first token on its line
     bool space_before; // whitespace before it
     bool foreign;      // given by `next`: not spelled in the file being lowered (a header the stream entered)
+    bool watched;      // the host watches the name (set by a sparse host; a host that offers every token sets none)
+    bool declared;     // the parser has a declaration with this name (a typedef of u32, say, makes it no sized type)
     bool expand;       // emitted: macro-expand it when it re-enters the stream (the X of `c.X`)
     uint32_t location; // the host's source location, kept by every token derived from this one
     uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
@@ -95,6 +97,9 @@ typedef struct {
     bool (*previous)(void *context, unsigned back, SmithToken *token);
     // The module declared a name: the host may rename its uses itself (the prefixed spelling is given).
     void (*rename)(void *context, const char *name, uint32_t length, const char *prefixed, uint32_t prefixed_length);
+    // Whether the file's text may declare `main` (it contains the word); false lets a declaration be decided at its
+    // first token.
+    bool maybe_main;
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).
@@ -103,6 +108,26 @@ typedef struct {
 } SmithHost;
 
 typedef struct SmithLang SmithLang;
+
+// What a host's fast path does with a token, decided by the lowering without any lookahead.
+typedef enum {
+    SmithLangAct_Slow,   // not decided: give the token to smith_lang_feed (nothing was changed)
+    SmithLangAct_Keep,   // goes on as it is
+    SmithLangAct_Rename, // goes on as `text`
+    SmithLangAct_Sized,  // becomes the sized type `text` (the compiler's own name for it)
+    SmithLangAct_Drop,   // is dropped (a second `static`)
+    SmithLangAct_Done,   // inside the lowering: already written out
+} SmithLangActKind;
+
+typedef struct {
+    SmithLangActKind kind;
+    bool insert_static; // a `static` goes before the token
+    uint32_t length;
+    const char *text;
+} SmithLangAct;
+
+// The fast path for a token: see SmithLangAct. Only a sparse host (one with `previous`) may call it.
+SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
 SmithLang *smith_lang_new(void);
 // Tells a sparse host the names to offer from the start: module, import, export and the sized types.

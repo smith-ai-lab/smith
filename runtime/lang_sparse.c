@@ -216,6 +216,23 @@ static bool smith_lang_body_c_name(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
+// A watched name that is not the module's own: a C name of an import, a binding (rp::open), a sized type, or kept.
+static void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (smith_lang_body_c_name(lang, host, token)) {
+        smith_lang_emit_kept(lang, host, token);
+        return;
+    }
+    SmithLangBinding *binding =
+        lang->bindings_count > 0 ? smith_lang_binding_find(lang, token->text, token->length) : nullptr;
+    SmithToken resolved;
+    lang->in_attribute = binding != nullptr && smith_lang_sparse_in_attribute(lang, host);
+    if (binding != nullptr && smith_lang_namespace(lang, host, token, binding, &resolved)) {
+        smith_lang_emit(lang, host, resolved);
+    } else {
+        smith_lang_sparse_sized(lang, host, token);
+    }
+}
+
 // A token of a function body, when the host offers only braces and the names it was told to watch.
 static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!token->foreign && token->kind == SmithTokenKind_Eof) {
@@ -232,19 +249,11 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
         smith_lang_emit(lang, host, smith_lang_synth(SmithTokenKind_Identifier, prefixed, lang->tmp_length, token));
         return;
     }
-    if (!name || smith_lang_body_c_name(lang, host, token)) {
+    if (!name) {
         smith_lang_emit_kept(lang, host, token);
         return;
     }
-    SmithLangBinding *binding =
-        lang->bindings_count > 0 ? smith_lang_binding_find(lang, token->text, token->length) : nullptr;
-    SmithToken resolved;
-    lang->in_attribute = binding != nullptr && smith_lang_sparse_in_attribute(lang, host);
-    if (binding != nullptr && smith_lang_namespace(lang, host, token, binding, &resolved)) {
-        smith_lang_emit(lang, host, resolved);
-    } else {
-        smith_lang_sparse_sized(lang, host, token);
-    }
+    smith_lang_sparse_ident(lang, host, token);
 }
 
 bool smith_lang_body_sparse(const SmithLang *lang) {
@@ -254,7 +263,15 @@ bool smith_lang_body_sparse(const SmithLang *lang) {
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open) {
     if (!lang->body_sparse || lang->broken) return false;
     if (!open) {
-        if (lang->brace_depth <= 1) return false; // the function's own
+        if (lang->brace_depth == 1 && lang->braces[0] == SmithLangBrace_Function) { // the function's own: it ends
+            lang->brace_depth = 0;
+            lang->in_function = false;
+            smith_lang_end_declaration(lang);
+            lang->body_sparse = false;
+            host->watch_mode(host->context, SmithWatch_All);
+            return true;
+        }
+        if (lang->brace_depth <= 1) return false;
         lang->brace_depth -= 1;
         return true;
     }

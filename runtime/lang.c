@@ -50,9 +50,10 @@ typedef enum {
 } SmithLangNameKind;
 
 typedef enum {
-    SmithLangState_Start,  // between declarations, at file scope
-    SmithLangState_Head,   // reading the head of a file-scope declaration (modules only)
-    SmithLangState_Stream, // anything else: a body, an initializer, what follows an aggregate
+    SmithLangState_Start,   // between declarations, at file scope
+    SmithLangState_Head,    // reading the head of a file-scope declaration (modules only), held until it is known
+    SmithLangState_Declare, // reading the head of a private declaration as it streams by (a sparse host)
+    SmithLangState_Stream,  // anything else: a body, an initializer, what follows an aggregate
 } SmithLangState;
 
 typedef enum {
@@ -111,17 +112,21 @@ typedef struct {
     bool is_typedef;
     bool storage; // static or extern
     bool is_constexpr;
-    bool aggregate;     // struct, union or enum appeared
-    bool saw_type;      // a type was named
-    bool is_function;   // a declarator is followed by (
-    bool name_found;    // the current declarator has its name
-    bool in_params;     // inside the parameter list of the declared function
-    bool is_extern;     // `extern` appeared
-    bool params_next;   // the next ( opens it
-    bool last_tag_enum; // the last struct, union or enum keyword was enum
-    bool checking;      // names in this declaration are checked for private types
-    uint32_t declared;  // how many names the head declares
-    uint32_t last_name; // the held token of the last one
+    bool aggregate;       // struct, union or enum appeared
+    bool saw_type;        // a type was named
+    bool is_function;     // a declarator is followed by (
+    bool name_found;      // the current declarator has its name
+    bool in_params;       // inside the parameter list of the declared function
+    bool is_extern;       // `extern` appeared
+    bool params_next;     // the next ( opens it
+    bool last_tag_enum;   // the last struct, union or enum keyword was enum
+    bool checking;        // names in this declaration are checked for private types
+    uint32_t declared;    // how many names the head declares
+    uint32_t last_name;   // the held token of the last one
+    bool prev_star;       // the token before was *
+    bool prev_tag;        // the token before was struct, union or enum
+    bool static_inserted; // `static` was written before the first token, so a later one is dropped
+    bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
 } SmithLangDecl;
 
 struct SmithLang {
@@ -421,6 +426,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // A file that is not a module, with the host offering few tokens.
 #include "lang_sparse.c"
+
+// A module's private declarations, read as they stream by.
+#include "lang_declare.c"
 
 // Bodies, the start and end of the file, and the entry points.
 #include "lang_stream.c"

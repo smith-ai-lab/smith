@@ -45,6 +45,8 @@ struct Action {
 class SmithHook final : public TokenHook {
   public:
     explicit SmithHook(Preprocessor &pp) : PP(pp), SM(pp.getSourceManager()), MainFile(SM.getMainFileID()) {
+        mainBegin = SM.getLocForStartOfFile(MainFile).getRawEncoding();
+        mainEnd = SM.getLocForEndOfFile(MainFile).getRawEncoding();
         lang = smith_lang_new();
         host.context = this;
         host.next = &SmithHook::nextToken;
@@ -65,6 +67,7 @@ class SmithHook final : public TokenHook {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
+        host.maybe_main = SM.getBufferData(MainFile).contains("main");
         diagnostic = PP.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
         smith_lang_watch_basics(&host);
@@ -84,17 +87,17 @@ class SmithHook final : public TokenHook {
     struct Stats {
         bool on = false;
         uint64_t offered = 0, outside = 0, kept = 0, in_place = 0, streams = 0, held = 0, fast = 0;
-        double nanoseconds = 0;
+        double nanoseconds = 0, slow_nanoseconds = 0;
     } stats;
 
     void report() {
         if (!stats.on) return;
         fprintf(stderr,
                 "hook: offered %llu (outside the file %llu), kept %llu, fast %llu, in place %llu, streams %llu, held "
-                "%llu; %.2f ms\n",
+                "%llu; %.2f ms (slow path %.2f)\n",
                 (unsigned long long)stats.offered, (unsigned long long)stats.outside, (unsigned long long)stats.kept,
                 (unsigned long long)stats.fast, (unsigned long long)stats.in_place, (unsigned long long)stats.streams,
-                (unsigned long long)stats.held, stats.nanoseconds / 1e6);
+                (unsigned long long)stats.held, stats.nanoseconds / 1e6, stats.slow_nanoseconds / 1e6);
     }
 
     bool transform(Preprocessor &, Token &tok) override {
@@ -113,20 +116,48 @@ class SmithHook final : public TokenHook {
             stats.outside += 1;
             return false;
         }
-        if (tok.is(tok::identifier) || tok.isOneOf(tok::l_brace, tok::r_brace)) {
+        if (tok.isNot(tok::eof) && sema != nullptr) {
             Fast fast = tryFast(tok);
             if (fast != Fast::No) {
                 stats.fast += 1;
-                return false;
+                return fast == Fast::Dropped;
             }
         }
-        return feed(tok);
+        if (!stats.on) return feed(tok);
+        auto begin = std::chrono::steady_clock::now();
+        bool consumed = feed(tok);
+        stats.slow_nanoseconds +=
+            std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - begin).count();
+        return consumed;
     }
 
-    // The cases that the lowering would answer the same way every time, answered here without it: the sparse path's
-    // common tokens. A sized type name that nothing contradicts becomes its type; in a module's function body a name of
-    // the module becomes its prefixed spelling, and the braces are counted.
-    enum class Fast { No, Kept, Replaced };
+    // The cases that the lowering answers without looking ahead, answered here without the machinery of a call: the
+    // token is changed where it is (a prefixed name, a sized type), or a `static` goes before it.
+    enum class Fast { No, Kept, Dropped };
+
+    // The lowering's view of a token that the fast path offers: its kind and spelling, and what is known of its name.
+    SmithToken lite(const Token &tok) {
+        SmithToken out{};
+        out.handle = smith_token_no_handle;
+        out.location = tok.getLocation().getRawEncoding();
+        out.text = "";
+        if (const IdentifierInfo *info = tok.getIdentifierInfo()) {
+            out.kind = SmithTokenKind_Identifier;
+            out.text = info->getNameStart();
+            out.length = info->getLength();
+            out.watched = info->isHookWatched();
+            out.declared = info->getFETokenInfo() != nullptr;
+        } else if (const char *punctuator = tok::getPunctuatorSpelling(tok.getKind())) {
+            out.kind = SmithTokenKind_Punctuator;
+            out.text = punctuator;
+            out.length = punctuator[1] == 0 ? 1 : punctuator[2] == 0 ? 2 : 3; // spellings of 1 to 3 characters
+        } else if (tok.isLiteral()) {
+            out.kind = SmithTokenKind_Number;
+        } else {
+            out.kind = SmithTokenKind_Punctuator; // an annotation
+        }
+        return out;
+    }
 
     // Whether a token before a name can end a type, so that the name may be a declarator (a question for the lowering).
     static bool mayEndType(tok::TokenKind kind) {
@@ -139,12 +170,12 @@ class SmithHook final : public TokenHook {
                kind == tok::kw__Float16;
     }
 
-    Fast tryFast(Token &tok) {
-        bool body = smith_lang_body_sparse(lang);
-        if (!body && smith_lang_is_module(lang)) return Fast::No;
+    // The tokens of a file that is not a module, or of a module's function body (the host offers the braces and the
+    // names it watches): a module's name becomes its prefixed spelling, a sized type name its type, and the braces are
+    // counted, with a few lookups and no call into the lowering.
+    Fast tryFastSparse(Token &tok, bool body) {
         if (tok.isNot(tok::identifier)) {
-            if (!body || !smith_lang_fast_brace(lang, &host, tok.is(tok::l_brace))) return Fast::No;
-            return Fast::Kept;
+            return body && smith_lang_fast_brace(lang, &host, tok.is(tok::l_brace)) ? Fast::Kept : Fast::No;
         }
         IdentifierInfo *info = tok.getIdentifierInfo();
         const IdentifierInfo *beforeInfo = nullptr;
@@ -152,20 +183,59 @@ class SmithHook final : public TokenHook {
         if (body) {
             auto renamed = renames.find(info);
             if (renamed != renames.end()) {
-                if (before == tok::period || before == tok::arrow) return Fast::Kept;
-                tok.setIdentifierInfo(renamed->second);
-                return Fast::Replaced;
+                if (before != tok::period && before != tok::arrow) tok.setIdentifierInfo(renamed->second);
+                return Fast::Kept;
             }
         }
         auto sized = sizedNames.find(info);
-        if (sized == sizedNames.end() || sema == nullptr) return Fast::No;
+        if (sized == sizedNames.end()) return Fast::No;
         if (before == tok::period || before == tok::arrow || before == tok::kw_struct || before == tok::kw_union ||
             before == tok::kw_enum) {
             return Fast::Kept;
         }
         if (mayEndType(before) || info->getFETokenInfo() != nullptr) return Fast::No;
         sizedToken(tok, sized->second);
-        return Fast::Replaced;
+        return Fast::Kept;
+    }
+
+    // The declarations of a module, as they stream by: the lowering decides each token without looking ahead, or says
+    // it must (Slow).
+    Fast tryFast(Token &tok) {
+        bool body = smith_lang_body_sparse(lang);
+        if (body || !smith_lang_is_module(lang)) return tryFastSparse(tok, body);
+        SmithToken view = lite(tok);
+        SmithLangAct act = smith_lang_fast(lang, &host, &view);
+        switch (act.kind) {
+        case SmithLangAct_Slow:
+        case SmithLangAct_Done:
+            return Fast::No;
+        case SmithLangAct_Drop:
+            return Fast::Dropped;
+        case SmithLangAct_Rename:
+            tok.setIdentifierInfo(PP.getIdentifierInfo(StringRef(act.text, act.length)));
+            break;
+        case SmithLangAct_Sized:
+            sizedToken(tok, sizedNames.find(tok.getIdentifierInfo())->second);
+            break;
+        case SmithLangAct_Keep:
+            break;
+        }
+        if (act.insert_static) putStaticBefore(tok);
+        return Fast::Kept;
+    }
+
+    // A `static` for the parser, then the token: the token goes back on the stream, as a reinjected one is not offered.
+    void putStaticBefore(Token &tok) {
+        Token keyword = tok;
+        IdentifierInfo *info = PP.getIdentifierInfo("static");
+        keyword.setIdentifierInfo(info);
+        keyword.setKind(info->getTokenID());
+        tok.clearFlag(Token::StartOfLine);
+        tok.setFlag(Token::LeadingSpace);
+        auto tokens = std::make_unique<Token[]>(1);
+        tokens[0] = tok;
+        PP.EnterTokenStream(std::move(tokens), 1, /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
+        tok = keyword;
     }
 
     // u32 and the others as the parser's own type: a type annotation, or the keyword of float and double.
@@ -187,6 +257,7 @@ class SmithHook final : public TokenHook {
     Preprocessor &PP;
     SourceManager &SM;
     FileID MainFile;
+    unsigned mainBegin, mainEnd; // the raw source locations of the main file's text, the end included
     Sema *sema = nullptr;
     SmithLang *lang;
     SmithHost host{};
@@ -221,7 +292,10 @@ class SmithHook final : public TokenHook {
 
     bool spelledInMain(SourceLocation loc) const {
         if (loc.isInvalid()) return false;
-        if (loc.isFileID()) return SM.getFileID(loc) == MainFile;
+        if (loc.isFileID()) {
+            unsigned raw = loc.getRawEncoding(); // the main file's locations are one range
+            return raw >= mainBegin && raw <= mainEnd;
+        }
         return SM.getFileID(SM.getSpellingLoc(loc)) == MainFile;
     }
 
@@ -318,6 +392,8 @@ class SmithHook final : public TokenHook {
             if (const IdentifierInfo *info = tok.is(tok::raw_identifier) ? nullptr : tok.getIdentifierInfo()) {
                 out.text = info->getNameStart();
                 out.length = info->getLength();
+                out.watched = info->isHookWatched();
+                out.declared = info->getFETokenInfo() != nullptr;
             } else if (tok.isLiteral() && tok.getLiteralData() != nullptr && !tok.needsCleaning()) {
                 out.text = tok.getLiteralData();
                 out.length = tok.getLength();
@@ -340,6 +416,10 @@ class SmithHook final : public TokenHook {
     }
 
     bool feed(Token &tok) {
+        if (stats.on && getenv("SMITH_HOOK_TRACE")) {
+            SmithToken view = lite(tok);
+            fprintf(stderr, "slow %.*s\n", (int)view.length, view.text);
+        }
         if (!smith_lang_holds(lang)) pool.clear(); // held tokens are re-emitted by handle
         out.clear();
         actions.clear();

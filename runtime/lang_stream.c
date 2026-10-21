@@ -33,14 +33,7 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
     if (word != SmithLangWord_Other) {
-        if (word == SmithLangWord_Typedef) {
-            lang->statement_typedef = true;
-            lang->typedef_depth = lang->brace_depth;
-        }
-        if (word == SmithLangWord_Tag) {
-            lang->agg_pending = true;
-            lang->enum_pending = smith_lang_ident(token, "enum");
-        }
+        smith_lang_word_state(lang, token, word);
         smith_lang_emit_kept(lang, host, token);
         smith_lang_track(lang, token, false);
         return;
@@ -79,54 +72,25 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
 }
 
 static void smith_lang_stream_open(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    SmithLangBrace kind = SmithLangBrace_Block;
-    if (lang->agg_pending) {
-        kind = lang->enum_pending ? SmithLangBrace_Enum : SmithLangBrace_Aggregate;
-    } else if (lang->brace_depth == 0) {
-        kind = lang->init_top ? SmithLangBrace_Init : SmithLangBrace_Function;
-        if (kind == SmithLangBrace_Function) lang->in_function = true;
-    }
-    lang->agg_pending = false;
-    smith_lang_push_brace(lang, host, kind, token->location);
+    smith_lang_open_state(lang, host, token);
     smith_lang_emit_kept(lang, host, token);
 }
 
 static void smith_lang_stream_close(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     smith_lang_emit_kept(lang, host, token);
-    if (lang->brace_depth == 0) return;
-    SmithLangBrace kind = lang->braces[--lang->brace_depth];
-    if (lang->brace_depth != 0) return;
-    if (kind == SmithLangBrace_Function) {
-        lang->in_function = false;
-        smith_lang_end_declaration(lang);
-    } else if (kind == SmithLangBrace_Aggregate || kind == SmithLangBrace_Enum) {
-        lang->tail_declarator = true;
-    }
+    smith_lang_close_state(lang);
 }
 
 static void smith_lang_stream_punctuator(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    char c = token->length > 0 ? token->text[0] : 0;
-    if (token->length == 1 && c == '{') {
+    char c = token->length == 1 ? token->text[0] : 0;
+    if (c == '{') {
         smith_lang_stream_open(lang, host, token);
-    } else if (token->length == 1 && c == '}') {
+    } else if (c == '}') {
         smith_lang_stream_close(lang, host, token);
     } else {
-        if (token->length == 1 && c == '(') lang->paren_depth += 1;
-        if (token->length == 1 && c == ')' && lang->paren_depth > 0) lang->paren_depth -= 1;
-        if (token->length == 1 && c == '=' && lang->brace_depth == 0) {
-            lang->init_top = true;
-            lang->tail_declarator = false;
-        }
-        if (token->length == 1 && c == ',' && lang->brace_depth == 0 && lang->paren_depth == 0 && !lang->init_top) {
-            lang->tail_declarator = true;
-        }
-        if (token->length == 1 && (c == '(' || c == ')' || c == '=')) lang->agg_pending = false;
+        smith_lang_punctuator_state(lang, c);
         smith_lang_emit_kept(lang, host, token);
-        if (token->length == 1 && c == ';' && lang->paren_depth == 0) {
-            lang->statement_typedef = false;
-            lang->agg_pending = false;
-            if (lang->brace_depth == 0) smith_lang_end_declaration(lang);
-        }
+        smith_lang_semicolon_state(lang, c);
     }
     smith_lang_track(lang, token, false);
 }
@@ -145,8 +109,7 @@ static void smith_lang_stream(SmithLang *lang, const SmithHost *host, const Smit
 // ---- The start of a declaration
 // ---------------------------------------------------------------------------------------------
 
-static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    lang->seen_declaration = true;
+static void smith_lang_reset_declaration(SmithLang *lang) {
     lang->decl = (SmithLangDecl){0};
     lang->decl.exported = lang->pending_export;
     lang->decl.checking = lang->pending_export;
@@ -160,6 +123,15 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     lang->init_top = false;
     lang->tail_declarator = false;
     lang->agg_pending = false;
+}
+
+static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->is_module && host->previous != nullptr && !lang->pending_export) { // a private one streams
+        smith_lang_declare_process(lang, host, token);
+        return;
+    }
+    lang->seen_declaration = true;
+    smith_lang_reset_declaration(lang);
     lang->state = lang->is_module ? SmithLangState_Head : SmithLangState_Stream;
     if (lang->state == SmithLangState_Head) {
         smith_lang_head(lang, host, token);
@@ -332,6 +304,9 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         break;
     case SmithLangState_Head:
         smith_lang_head(lang, host, token);
+        break;
+    case SmithLangState_Declare:
+        smith_lang_declare_process(lang, host, token);
         break;
     case SmithLangState_Stream:
         smith_lang_stream(lang, host, token);
