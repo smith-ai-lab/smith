@@ -1121,6 +1121,21 @@ FAIL order_b"
 fi
 cd "$work/main" || exit 1
 
+# Many jobs under a low descriptor limit: every job's worker holds two descriptors in the runner, which raises the limit.
+project "$work/many"
+{
+    echo '#include <smith/test.h>'
+    echo '#include <unistd.h>'
+    for number in $(seq 1 90); do
+        printf 'void test_many_%s(void) {\n    usleep(200000);\n}\n' "$number"
+    done
+} >tests/test_many.c
+capture "$smith" build -DSAN=0
+expect "many: the runner builds" 0 "$rc"
+capture sh -c "ulimit -S -n 100; build/tests $iso --jobs 90"
+expect_contains "many: 90 jobs under a limit of 100 descriptors all run" "$out" "90 passed, 0 failed"
+cd "$work/main" || exit 1
+
 # 9. Tools: clangd reads a test file without errors.
 cd "$work/main" || exit 1
 if [ -x /usr/bin/clangd ]; then

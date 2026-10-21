@@ -1702,6 +1702,16 @@ static SmithTestPlan smith_test_plan(const SmithTestOptions *options) {
     return plan;
 }
 
+// Each job holds two descriptors in the runner, and the soft limit can be as low as 256: raise it as far as the hard
+// limit allows, so a run of many jobs is not stopped by it.
+static void smith_test_raise_files(size_t jobs) {
+    struct rlimit limit;
+    rlim_t wanted = 2 * (rlim_t)jobs + 64;
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0 || limit.rlim_cur >= wanted) return;
+    limit.rlim_cur = wanted < limit.rlim_max ? wanted : limit.rlim_max;
+    setrlimit(RLIMIT_NOFILE, &limit);
+}
+
 int main(int argc, char **argv) {
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
     SmithTestOptions options = {
@@ -1721,6 +1731,7 @@ int main(int argc, char **argv) {
     }
     double start = smith_test_seconds();
     smith_test_full_run = options.full;
+    smith_test_raise_files(options.jobs);
     signal(SIGPIPE, SIG_IGN); // a worker that died while idle is a failed write, not the end of the runner
     smith_test_forks = smith_test_map(sizeof *smith_test_forks, MAP_SHARED);
     smith_test_memory = smith_test_map(smith_test_memory_capacity, MAP_PRIVATE);
