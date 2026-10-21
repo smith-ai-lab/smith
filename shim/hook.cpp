@@ -1080,6 +1080,12 @@ class SmithHook final : public TokenHook, public NameSource {
         return made;
     }
 
+    // Whether the token is an identifier that no macro is defined for.
+    bool namesNoMacro(const Token &token) {
+        const IdentifierInfo *info = token.getIdentifierInfo();
+        return token.is(tok::identifier) && info != nullptr && !info->hasMacroDefinition();
+    }
+
     static void emitToken(void *context, const SmithToken *token) {
         auto *self = static_cast<SmithHook *>(context);
         Token made;
@@ -1112,8 +1118,11 @@ class SmithHook final : public TokenHook, public NameSource {
         if (token->space_before) made.setFlag(Token::LeadingSpace);
         if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
         // Replayed (see there): what stands for a token of the source, where the source has it.
-        bool real = !token->synthetic && !(token->expand && !named) && made.isNot(tok::eof) &&
-                    made.getLocation().isFileID() && self->spelledInMain(made.getLocation());
+        // A `c::name` that is no macro stays a plain name in the main file, so that tools see the name the source has
+        // there; a macro is expanded from a stream of its own, which they do not.
+        bool expandsMacro = token->expand && !named && !self->namesNoMacro(made);
+        bool real = !token->synthetic && !expandsMacro && made.isNot(tok::eof) && made.getLocation().isFileID() &&
+                    self->spelledInMain(made.getLocation());
         self->out.push_back(made);
         self->outReinjected.push_back(!real);
         self->outSynthetic.push_back(token->copy && made.getLocation().isFileID() &&

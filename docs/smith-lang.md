@@ -272,7 +272,12 @@ from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md
   workspace symbols) and rewrites the names in their answers with the table of the file asked about; a message that is
   none of those passes as the bytes it came in. The cursor of a completion that came right after `x::` is given to the
   lowering as a token (`SmithToken.completion`), which takes the `x::` away and leaves the cursor, so that the parser
-  offers names there and the layer keeps the module's. `tests/lsp.sh` drives a real session.
+  offers names there and the layer keeps the module's. A `c::name` that is no macro (`c::printf`, `c::FILE`) stays a
+  plain name in the main file, at its place, in the parser's tokens that clangd's token buffer records (a name pushed
+  back as a reinjection is not recorded, and a hover, a definition or a reference at it found no node, so
+  go-to-definition fell back to the index by name and named every declaration of it, the SDK's and libc++'s `using`);
+  a macro (`c::EOF`) is expanded from a stream of its own and clangd finds it as a macro. `tests/lsp.sh` drives a real
+  session.
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
@@ -284,8 +289,8 @@ from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md
   works (the directives are copied), but `#define`s are not, and the header pass does not evaluate a condition.
 - A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
-- A hover shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's standard C types,
-  where the module says `i32`), and the `asm("_foo::f")` label of the symbol.
+- A hover in an importer shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's
+  standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`shim/lsp.cpp`).
 - A rename of an exported name edits what clangd knows of (the module, and the importers its index has seen); it does
   not edit the generated headers. Like any cross-file rename in clangd it misses an importer the index has not read yet.
 - A fix-it that a mistyped `x::name` offers puts in the member alone (`f`), so it makes `foo::f`.

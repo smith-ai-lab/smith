@@ -9,7 +9,8 @@
 //   (the lines of the hover joined with " | ") definition FILE L C [END]     "definition FILE:L:C -> FILE:L:C"; with
 //   END, asked again until the answer ends in END
 //                                 (the project's background index is built while the server runs)
-//   symbols FILE                  "symbol FILE: name" for each
+//   definitions FILE L C          "definitions FILE:L:C: N" and a "  place BASENAME:L:C" line for each of the N places
+//   symbols FILE                "symbol FILE: name" for each
 //   complete FILE L C             "complete FILE:L:C: label -> L:C-L:C text" (the item's edit) for the first 12 items
 //   references FILE L C           "reference FILE:L:C" for each place, the declaration included
 //   highlight FILE L C            "highlight L:C" for each range
@@ -331,6 +332,33 @@ static void lsp_command_definition(const char *file, const char *line, const cha
     printf("definition %s:%s:%s -> %s\n", file, line, column, where);
 }
 
+// Every place a definition reply names: "definitions FILE:L:C: N", then a "  place BASENAME:L:C" line for each.
+static void lsp_command_definitions(const char *file, const char *line, const char *column) {
+    char params[1024];
+    lsp_position_params(params, sizeof params, file, line, column, "");
+    lsp_request("textDocument/definition", params);
+    int count = 0;
+    char places[4096] = "";
+    const char *at = lsp_message;
+    for (int i = 0; i < 20; i++) {
+        const char *range = strstr(at, "\"range\":{"); // a Location is {"range":..., "uri":...}
+        const char *uri = range == nullptr ? nullptr : strstr(range, "\"uri\":\"file://");
+        const char *end = uri == nullptr ? nullptr : strchr(uri + 8, '"');
+        int found_line = 0;
+        int found_column = 0;
+        if (end == nullptr || !lsp_start_after(range, &found_line, &found_column)) break;
+        const char *base = end;
+        while (base > uri && base[-1] != '/')
+            base -= 1;
+        size_t used = strlen(places);
+        snprintf(places + used, sizeof places - used, "  place %.*s:%d:%d\n", (int)(end - base), base, found_line,
+                 found_column);
+        count += 1;
+        at = end;
+    }
+    printf("definitions %s:%s:%s: %d\n%s", file, line, column, count, places);
+}
+
 static void lsp_command_symbols(const char *file) {
     char params[1024];
     snprintf(params, sizeof params, "{\"textDocument\":{\"uri\":\"file://%s/%s\"}}", lsp_root, file);
@@ -505,6 +533,10 @@ static int lsp_run_command(int argc, char **argv, int at) {
         bool end = rest >= 4 && strchr(argv[at + 4], ':') != nullptr;
         lsp_command_definition(argv[at + 1], argv[at + 2], argv[at + 3], end ? argv[at + 4] : nullptr);
         return end ? 5 : 4;
+    }
+    if (strcmp(name, "definitions") == 0 && rest >= 3) {
+        lsp_command_definitions(argv[at + 1], argv[at + 2], argv[at + 3]);
+        return 4;
     }
     if (strcmp(name, "symbols") == 0 && rest >= 1) {
         lsp_command_symbols(argv[at + 1]);

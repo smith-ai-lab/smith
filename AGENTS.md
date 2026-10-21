@@ -137,7 +137,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   declaration in the module's `.smith`, and a layer between the editor and clangd (`shim/lsp.cpp`, in process, pipes on
   clangd's stdin and stdout; `SMITH_LSP_RAW=1` turns it off) rewrites hover, symbols, completion (`box::` offers the
   module's exports), signature help and hints. A module's header has a `// smith-names:` line of its exports, which depends
-  on them only, so an edit to a body does not rebuild importers (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+  on them only, so an edit to a body does not rebuild importers. A `c::name` that is no macro stays a plain token in the
+  main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
+  hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
+  writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
