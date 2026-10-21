@@ -19,14 +19,13 @@
 typedef struct {
     const char *cc;
     const char *const *cflags;
-    const char *binary;   // the smith this build makes
-    const char *real;     // the compiler `compare` checks smith against
-    const char *llvm_bin; // nullptr until a target needs the LLVM tools
+    const char *binary; // the smith this build makes
+    const char *real;   // the compiler `compare` checks smith against
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
     const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
-    const char *cxx;     // compiles shim/clang.cpp and the prover
+    const char *cxx;     // compiles the shims
     const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (scripts/prove-libs.sh), else ""
 } BuildConfig;
 
@@ -35,27 +34,29 @@ static const char *build_variable(SmithBuild *b, const char *name, const char *f
     return smith_option_value(b, name, smith_env(b, name, fallback), description);
 }
 
-// The LLVM tools are found only when a target that needs them runs, as make expanded LLVM_BIN only for those
-// targets, so a plain build never runs brew. The text is for sh, inside double quotes.
-static const char *build_llvm_tool(SmithBuild *b, const char *llvm_bin, const char *tool) {
-    if (llvm_bin != nullptr) return smith_fmt(b, "\"%s/%s\"", llvm_bin, tool);
-    return smith_fmt(b, "\"$(brew --prefix llvm 2>/dev/null || echo /opt/homebrew/opt/llvm)/bin/%s\"", tool);
+// Formatting and lint are smith's own: `smith fmt` and `smith lint` of the smith this build makes, which are
+// clang-format and clang-tidy of the LLVM linked into it (a stage0 runs Homebrew's, $SMITH_CLANG_FORMAT and
+// $SMITH_CLANG_TIDY). The text is for sh, inside double quotes.
+static const char *build_smith_tool(SmithBuild *b, const char *binary, const char *tool) {
+    return smith_fmt(b, "\"%s\" %s", binary, tool);
 }
 
-// The LLVM tools must be one major version, so every machine formats and lints alike. The version is the one clang-tidy
-// and clang-format are pinned to (brew pin llvm); it is also named in AGENTS.md.
-static SmithStep build_check_llvm(SmithBuild *b, const char *format, const char *tidy) {
+// The tools must be one major version, so every machine formats and lints alike. The version is the one smith links
+// (scripts/llvm.sh), or the one Homebrew's pinned tools are for a stage0; it is also named in AGENTS.md.
+static SmithStep build_check_llvm(SmithBuild *b, const char *binary) {
     SmithStep check_llvm = {
-        .command = (const char *[]){"sh", "-c",
-                                    smith_fmt(b,
-                                              "for tool in %s %s; do "
-                                              "major=$($tool --version 2>/dev/null | sed -n 's/.*version "
-                                              "\\([0-9][0-9]*\\)\\..*/\\1/p' | head -n 1); "
-                                              "if [ \"$major\" != 23 ]; then echo \"$tool: need LLVM 23, found "
-                                              "${major:-none}; install it with brew install llvm or set LLVM_BIN\"; "
-                                              "exit 1; fi; done",
-                                              format, tidy),
-                                    nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             smith_fmt(b,
+                                       "for tool in fmt lint; do "
+                                       "major=$(\"%s\" $tool --version 2>/dev/null | sed -n 's/.*version "
+                                       "\\([0-9][0-9]*\\)\\..*/\\1/p' | head -n 1); "
+                                       "if [ \"$major\" != 23 ]; then echo \"smith $tool: need LLVM 23, found "
+                                       "${major:-none}; build smith with LLVM (smith build llvm), or for a stage0 "
+                                       "brew install llvm\"; exit 1; fi; done",
+                                       binary),
+                             nullptr},
+        .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "check-llvm", &check_llvm);
     return check_llvm;
@@ -101,37 +102,40 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
     SmithStep check_tidy = {
         .command =
             smith_cat(b,
-                      (const char *[]){
-                          "sh", "-c",
-                          smith_fmt(b,
-                                    "%s --quiet smith.c -- \"$@\" %s && "
-                                    "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
-                                    "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' -DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
-                                    "%s --quiet scripts/pack.c -- \"$@\" %s && "
-                                    "%s --quiet build.c -- \"$@\" -I include %s && "
-                                    "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                    "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/http.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/http.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/text.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/text.c -- \"$@\" -I include %s && "
-                                    "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
-                                    "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                    "for f in build main; do %s --quiet "
-                                    "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                    "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                    tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                    sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                    tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                          "sh", nullptr},
+                      (const char *[]){"sh", "-c",
+                                       smith_fmt(b,
+                                                 "%s --quiet smith.c -- \"$@\" %s && "
+                                                 "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
+                                                 "-DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
+                                                 "%s --quiet runtime/pack_data.c -- \"$@\" "
+                                                 "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' %s && "
+                                                 "%s --quiet scripts/pack.c -- \"$@\" %s && "
+                                                 "%s --quiet scripts/defer_init.c -- \"$@\" %s && "
+                                                 "%s --quiet build.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                                 "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/io.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/http.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/http.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/random.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/untar.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/contract.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/text.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/text.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                                 "for f in build main; do %s --quiet "
+                                                 "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                                 "\"$@\" -std=gnu2y -I include %s || exit 1; done",
+                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
+                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
+                                                 tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
+                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                       "sh", nullptr},
                       cflags, nullptr),
         .inputs = llvm,
     };
@@ -140,17 +144,23 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
 
 // Formatting, lint, the routing tests and the comparison with the real compiler.
 static void build_checks(SmithBuild *b, const BuildConfig *config) {
-    const char *format = build_llvm_tool(b, config->llvm_bin, "clang-format");
-    const char *tidy = build_llvm_tool(b, config->llvm_bin, "clang-tidy");
-    SmithStep check_llvm = build_check_llvm(b, format, tidy);
+    const char *format = build_smith_tool(b, config->binary, "fmt");
+    const char *tidy = build_smith_tool(b, config->binary, "lint");
+    SmithStep check_llvm = build_check_llvm(b, config->binary);
     const char *const *sources = (const char *[]){"smith.c",
                                                   "shim/clang.cpp",
                                                   "shim/prove.cpp",
                                                   "shim/prove.hpp",
                                                   "shim/prove_alive.cpp",
+                                                  "shim/prove_bitwuzla.cpp",
                                                   "shim/prove_ir.cpp",
+                                                  "shim/format.cpp",
+                                                  "shim/tidy.cpp",
+                                                  "shim/clangd.cpp",
                                                   "scripts/pack.c",
                                                   "scripts/pack.h",
+                                                  "scripts/defer_init.c",
+                                                  "runtime/pack_data.c",
                                                   "build.c",
                                                   "tests/stub.c",
                                                   "runtime/build_runtime.c",
@@ -159,6 +169,12 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "runtime/xz.c",
                                                   "runtime/untar.c",
                                                   "runtime/cache.c",
+                                                  "runtime/executor.c",
+                                                  "runtime/executor_manifest.c",
+                                                  "runtime/executor_state.c",
+                                                  "runtime/executor_plan.c",
+                                                  "runtime/executor_run.c",
+                                                  "runtime/executor_tools.c",
                                                   "include/smith/build.h",
                                                   "include/smith/arena.h",
                                                   "lib/arena.c",
@@ -187,22 +203,30 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
     smith_alias(b, "check", (const char *[]){"check-format", "check-tidy", "test", "compare", nullptr});
 }
 
-// The libraries of the LLVM install that the in-process clang links: all of clang's and of LLVM's, then libclangmain.a,
-// which holds clang's main (scripts/llvm.sh). The linker's -dead_strip drops what the driver, the compiler and the
-// targets do not reach, so the list is not worked out by hand.
+// The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
+// which holds the mains of clang-format, clang-tidy and clangd and what they need patched (scripts/llvm.sh), and so is
+// found before libclangTidyMain.a's, then all of clang's and of LLVM's, clangd's other libraries (libclangd[A-Z]*
+// matches none of them) and libclangmain.a, which holds clang's main. The linker's -dead_strip drops what the driver,
+// the compiler and the targets do not reach, so the list is not worked out by hand.
 static const char *const *build_clang_libraries(SmithBuild *b, const char *llvm) {
     const char *const *found = smith_glob(b, (const char *[]){smith_fmt(b, "%s/lib/libclang[A-Z]*.a", llvm),
                                                               smith_fmt(b, "%s/lib/libLLVM*.a", llvm), nullptr});
-    return smith_cat(b, found, smith_list(b, smith_fmt(b, "%s/lib/libclangmain.a", llvm), nullptr), nullptr);
+    const char *const *first = smith_list(b, smith_fmt(b, "-Wl,-force_load,%s/lib/libsmithtools.a", llvm), nullptr);
+    const char *const *more =
+        smith_list(b, smith_fmt(b, "%s/lib/libclangdSupport.a", llvm),
+                   smith_fmt(b, "%s/lib/libclangdRemoteIndex.a", llvm), smith_fmt(b, "%s/lib/libclangmain.a", llvm),
+                   smith_fmt(b, "%s/lib/liblldMachO.a", llvm), smith_fmt(b, "%s/lib/liblldCommon.a", llvm), nullptr);
+    return smith_cat(b, first, found, more, nullptr);
 }
 
 // shim/clang.cpp, which gives smith.c clang's main. The LLVM headers are system headers, so the build's warnings stay
 // smith's own.
-static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    SmithObject shim = {
+static void build_shim(SmithBuild *b, const BuildConfig *config, const char *folder, const char *source,
+                       const char *name, SmithObject *shim) {
+    *shim = (SmithObject){
         .compiler = config->cxx,
-        .source = "shim/clang.cpp",
-        .output = smith_fmt(b, "%s/clang_shim.o", folder),
+        .source = source,
+        .output = smith_fmt(b, "%s/%s.o", folder, name),
         .flags =
             smith_cat(b,
                       (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
@@ -210,16 +234,15 @@ static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const ch
                                        "-isystem", smith_fmt(b, "%s/include", config->llvm), nullptr},
                       smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}), nullptr),
     };
-    smith_object(b, &shim);
-    return shim;
+    smith_object(b, shim);
 }
 
-// The prover (`smith prove`, docs/prove.md): shim/prove*.cpp, which need RTTI and exceptions for Alive2, and the
-// libraries they link before LLVM's: Alive2's (scripts/prove-libs.sh builds them beside an LLVM install made with RTTI
-// and exceptions, scripts/llvm-prove.sh) and Z3. Alive2's namespace smt is renamed, because Z3's own smt::context has
-// the same name and the linker would merge the two.
+// The prover (`smith prove`): shim/prove*.cpp, which need RTTI and exceptions for Alive2, and the libraries they link
+// before LLVM's: Alive2's (scripts/prove-libs.sh builds them beside an LLVM install made with RTTI and exceptions,
+// scripts/llvm-prove.sh) and Z3. Alive2's namespace smt is renamed, because Z3's own smt::context has the same name and
+// the linker would merge the two.
 typedef struct {
-    SmithObject objects[3];
+    SmithObject objects[4];
     const char *const *libraries;
 } BuildProver;
 
@@ -243,7 +266,7 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                              smith_fmt(b, "%s/include/alive2", config->prove), "-isystem",
                              smith_fmt(b, "%s/include", config->prove), nullptr),
                   smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}), nullptr);
-    const char *const names[] = {"prove", "prove_ir", "prove_alive"};
+    const char *const names[] = {"prove", "prove_ir", "prove_alive", "prove_bitwuzla"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         prover->objects[i] = (SmithObject){
             .compiler = config->cxx,
@@ -255,14 +278,24 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
         smith_object(b, &prover->objects[i]);
     }
     const char *const alive[] = {"llvm_util", "tools", "ir", "smt", "util"};
+    const char *const solver[] = {"bitwuzla", "bitwuzlabv", "bitwuzlabb", "bitwuzlals",
+                                  "bzlarng",  "bzlautil",   "cadical"};
     const char *const *libraries = smith_list(b, nullptr);
     for (size_t i = 0; i < sizeof alive / sizeof alive[0]; i++) {
         libraries =
             smith_cat(b, libraries,
                       smith_list(b, smith_fmt(b, "%s/lib/libalive2_%s.a", config->prove, alive[i]), nullptr), nullptr);
     }
+    for (size_t i = 0; i < sizeof solver / sizeof solver[0]; i++) {
+        libraries = smith_cat(
+            b, libraries, smith_list(b, smith_fmt(b, "%s/lib/lib%s.a", config->prove, solver[i]), nullptr), nullptr);
+    }
+    // GMP and MPFR are Bitwuzla's: Homebrew's static libraries.
     prover->libraries =
-        smith_cat(b, libraries, smith_list(b, smith_fmt(b, "%s/lib/libz3.a", config->prove), nullptr), nullptr);
+        smith_cat(b, libraries,
+                  smith_list(b, smith_fmt(b, "%s/lib/libz3.a", config->prove), "/opt/homebrew/opt/mpfr/lib/libmpfr.a",
+                             "/opt/homebrew/opt/gmp/lib/libgmp.a", nullptr),
+                  nullptr);
 }
 
 // What the driver looks up beside its program in the LLVM install, packed (scripts/pack.c) into the file smith.c
@@ -303,16 +336,42 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
     return pack;
 }
 
-// What smith.c embeds: a change to any of these recompiles it, though the depfile may not list them.
-static const char *const *build_smith_inputs(SmithBuild *b, const char *pack) {
-    return smith_list(b, "scripts/pack.h", pack, "include/smith/build.h", "runtime/build_runtime.c",
-                      "runtime/package.c", "runtime/gzip.c", "runtime/xz.c", "runtime/untar.c", "runtime/cache.c",
-                      "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
-                      "include/smith/random.h", "lib/random.c", "include/smith/contract.h", "lib/contract.c",
-                      "include/smith/text.h", "lib/text.c", "include/smith/http.h", "lib/http.c",
-                      "include/smith/test.h", "lib/test.c", "templates/new/build.c", "templates/new/main.c",
-                      "templates/new/gitignore", "templates/new/clang-format", "templates/new/clang-tidy",
-                      "templates/new/claude-settings.json", nullptr);
+// runtime/pack_data.c, which embeds the pack and which nothing includes, so that smith.c stays small for the editor.
+static void build_pack_data(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
+                            SmithObject *data) {
+    *data = (SmithObject){
+        .compiler = config->cc,
+        .source = "runtime/pack_data.c",
+        .output = smith_fmt(b, "%s/pack_data.o", folder),
+        .flags = smith_cat(b, config->cflags,
+                           (const char *[]){smith_fmt(b, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack), nullptr}, nullptr),
+        .implicit_inputs = (const char *[]){"scripts/pack.h", pack, nullptr},
+    };
+    smith_object(b, data);
+}
+
+// Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
+// and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
+typedef struct {
+    SmithObject objects[6];
+    BuildProver prove;
+} BuildShims;
+
+static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
+                        BuildShims *shims, const SmithObject **list) {
+    build_pack_data(b, config, folder, pack, &shims->objects[0]);
+    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd"};
+    for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
+        build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
+                   &shims->objects[i + 1]);
+    }
+    size_t count = 0;
+    for (size_t i = 0; i < sizeof shims->objects / sizeof shims->objects[0]; i++)
+        list[count++] = &shims->objects[i];
+    if (config->prove[0] == '\0') return;
+    build_prover(b, config, folder, &shims->prove);
+    for (size_t i = 0; i < 4; i++)
+        list[count++] = &shims->prove.objects[i];
 }
 
 // The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
@@ -331,30 +390,53 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .flags = smith_cat(
             b, config->cflags,
             smith_when(b, in_process,
-                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack),
-                                        smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
+                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id),
+                                        nullptr}),
             smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}), nullptr),
-        .implicit_inputs = build_smith_inputs(b, pack),
+        .implicit_inputs = (const char *[]){"scripts/pack.h",
+                                            "include/smith/build.h",
+                                            "runtime/build_runtime.c",
+                                            "runtime/package.c",
+                                            "runtime/gzip.c",
+                                            "runtime/xz.c",
+                                            "runtime/untar.c",
+                                            "runtime/cache.c",
+                                            "include/smith/arena.h",
+                                            "lib/arena.c",
+                                            "include/smith/io.h",
+                                            "lib/io.c",
+                                            "include/smith/random.h",
+                                            "lib/random.c",
+                                            "include/smith/contract.h",
+                                            "lib/contract.c",
+                                            "include/smith/text.h",
+                                            "lib/text.c",
+                                            "include/smith/http.h",
+                                            "lib/http.c",
+                                            "include/smith/test.h",
+                                            "lib/test.c",
+                                            "templates/new/build.c",
+                                            "templates/new/main.c",
+                                            "templates/new/gitignore",
+                                            "templates/new/clang-format",
+                                            "templates/new/clang-tidy",
+                                            "templates/new/claude-settings.json",
+                                            nullptr},
     };
     smith_object(b, &object);
-    SmithObject shim = in_process ? build_shim(b, config, folder) : (SmithObject){};
-    bool prover = in_process && config->prove[0] != '\0';
-    BuildProver prove = {};
-    if (prover) build_prover(b, config, folder, &prove);
-    const SmithObject *objects[6] = {&object};
-    size_t count = 1;
-    if (in_process) objects[count++] = &shim;
-    for (size_t i = 0; prover && i < 3; i++)
-        objects[count++] = &prove.objects[i];
+    BuildShims shims = {};
+    const SmithObject *objects[12] = {&object};
+    if (in_process) build_shims(b, config, folder, pack, &shims, objects + 1);
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
         .flags = smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", nullptr}),
         .objects = objects,
-        .libraries = in_process ? smith_cat(b, prove.libraries != nullptr ? prove.libraries : smith_list(b, nullptr),
-                                            build_clang_libraries(b, config->llvm),
-                                            (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
-                                : nullptr,
+        .libraries =
+            in_process ? smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
+                                   build_clang_libraries(b, config->llvm),
+                                   (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
+                       : nullptr,
     };
     smith_program(b, &program);
     SmithStep smith_plus = {
@@ -395,8 +477,8 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
     SmithStep test = {
         .command = (const char *[]){"sh", "-c",
                                     // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena contract io http package random text cache untar "
-                                    "resource prove test; do env "
+                                    "for t in run build new arena io http package random text cache untar resource "
+                                    "defer contract prove test; do env "
                                     "\"$0\" sh tests/$t.sh "
                                     "\"$1\" || exit 1; done; "
                                     "env \"$0\" sh tests/test.sh \"$1\" isolate",
@@ -486,7 +568,18 @@ static int build_prove_libs_run(SmithRun *run) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     const char *llvm = smith_fmt(b, "%s/smith/llvm/23.1.3-prove/install", cache);
     const char *const argv[] = {"sh", run->inputs[0], z3, alive2, cmake, python, llvm, run->outputs[0], nullptr};
-    return smith_run_program(run, argv, nullptr);
+    int status = smith_run_program(run, argv, nullptr);
+    if (status != 0) return status;
+    // Bitwuzla decides the queries (scripts/bitwuzla.sh): built with Meson, which fetches CaDiCaL and symfpu by the
+    // hashes and revisions its own wrap files pin.
+    const char *bitwuzla = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/bitwuzla/bitwuzla/archive/refs/tags/0.9.1.tar.gz",
+                           .hash = "sha256:42707f38900a20bb18108e426ba667560d1fd2ccce0d4f75aa60439b546488b4"});
+    const char *meson = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/mesonbuild/meson/releases/download/1.9.1/meson-1.9.1.tar.gz",
+                           .hash = "sha256:4e076606f2afff7881d195574bddcd8d89286f35a17b4977a216f535dc0c74ac"});
+    const char *const second[] = {"sh", "scripts/bitwuzla.sh", bitwuzla, meson, python, run->outputs[0], nullptr};
+    return smith_run_program(run, second, nullptr);
 }
 
 // `smith build llvm-prove` makes an LLVM 23.1.3 with RTTI and exceptions on (Alive2 needs them; scripts/llvm-prove.sh),
@@ -503,7 +596,7 @@ static void build_llvm_prove(SmithBuild *b) {
     SmithStep libs = {
         .run = build_prove_libs_run,
         .description = "building Z3 and Alive2 (static)",
-        .inputs = (const char *[]){"scripts/prove-libs.sh", nullptr},
+        .inputs = (const char *[]){"scripts/prove-libs.sh", "scripts/bitwuzla.sh", nullptr},
         .outputs = (const char *[]){"build/prove-libs.stamp", nullptr},
     };
     smith_step(b, &libs);
@@ -514,7 +607,7 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 (static, from source)",
-        .inputs = (const char *[]){"scripts/llvm.sh", nullptr},
+        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", nullptr},
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
@@ -530,6 +623,8 @@ static const char *build_llvm_install(SmithBuild *b) {
                        "the LLVM install smith links clang from; empty: a smith that runs an external clang");
     if (strcmp(b->os, "Darwin") != 0) return "";
     bool linkable = access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+                    access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
+                    access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
     return linkable ? llvm : "";
 }
@@ -540,6 +635,7 @@ static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
     if (llvm[0] == '\0') return "";
     const char *folder = smith_fmt(b, "%s/../prove", llvm);
     bool linkable = access(smith_fmt(b, "%s/lib/libz3.a", folder), R_OK) == 0 &&
+                    access(smith_fmt(b, "%s/lib/libbitwuzla.a", folder), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/libalive2_ir.a", folder), R_OK) == 0;
     return linkable ? folder : "";
 }
@@ -551,7 +647,6 @@ void build(SmithBuild *b) {
     BuildConfig config = {
         .cc = build_variable(b, "CC", "cc", "the compiler that builds smith"),
         .prefix = build_variable(b, "PREFIX", smith_fmt(b, "%s/.local", smith_env(b, "HOME", "")), "install here"),
-        .llvm_bin = build_variable(b, "LLVM_BIN", nullptr, "the bin folder of LLVM 23"),
         .werror = werror,
         .llvm = build_llvm_install(b),
     };

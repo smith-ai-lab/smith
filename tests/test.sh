@@ -1192,9 +1192,9 @@ cd "$work/main" || exit 1
 
 # 9. Tools: clangd reads a test file without errors.
 cd "$work/main" || exit 1
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
+if "$smith" lsp --version >/dev/null 2>&1; then
     capture "$smith" build
-    capture /opt/homebrew/opt/llvm/bin/clangd --check=tests/test_checks.c
+    capture "$smith" lsp --check=tests/test_checks.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi

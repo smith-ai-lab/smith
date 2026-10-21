@@ -17,6 +17,13 @@ smith is a drop-in replacement for clang, written in C. Its home is https://gith
 - On macOS smith picks the SDK through the environment, never a flag. Homebrew's clang (`$SMITH_CLANG`) reads a default config that forces `-isysroot` to the Command Line Tools SDK, which can differ from the Xcode SDK that `xcrun` and `metal` use. So, for each variable you have not set, smith sets `CLANG_NO_DEFAULT_CONFIG=1` and `SDKROOT` to `xcrun --show-sdk-path`. Your own `SDKROOT`, `-isysroot` or `--config` wins; set `CLANG_NO_DEFAULT_CONFIG` yourself to keep the default config.
 - Invoked as `smith++`, it uses clang++ (`$SMITH_CLANGXX`). It is the same program under another name. Only linking C++ needs it.
 
+## Format, lint and the editor
+
+`smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, linked into smith from the same LLVM as the compiler. Each is recognised only as the exact first argument, and the rest of the arguments go to the tool unchanged, so `smith fmt -i main.c`, `smith lint --quiet main.c -- <flags>` and `smith lsp --check=main.c` behave as the tools do alone: a project's `.clang-format` and `.clang-tidy` apply, and without them the tools' own defaults do. Their output is byte-identical to Homebrew's 23.1.3. A stage0 smith runs an external tool instead (Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`, `$SMITH_CLANGD`).
+
+- **Editor:** point the editor's clangd at the command `smith lsp`, with no `--query-driver` (with it clangd cannot build the SDK's modules). It reads the project's `compile_commands.json` (`smith build` writes it), and it uses the resource directory and the SDK that the compiler does. In VS Code's clangd extension: `"clangd.path": "smith", "clangd.arguments": ["lsp"]`. Neovim: `vim.lsp.config('clangd', { cmd = { 'smith', 'lsp' } })`. Helix: `[language-server.clangd]` with `command = "smith"` and `args = ["lsp"]`. Zed: `"lsp": {"clangd": {"binary": {"path": "smith", "arguments": ["lsp"]}}}`. Emacs eglot: `(add-to-list 'eglot-server-programs '((c-mode c++-mode objc-mode) . ("smith" "lsp")))`. `smith lsp --check=<file>` is the same server run on one file, for a check without an editor.
+- clangd keeps its index in `.cache/clangd` of the project. The index shards Homebrew's clangd wrote are compressed, and smith's LLVM has no zlib, so `smith lsp` logs "Error while reading shard" for them once and indexes again; delete `.cache/clangd` to start clean.
+
 ## Use it
 
 1. A project says `CC := smith` in its Makefile, and its shader rules use `$(CC)` too. smith must be on PATH. Write flags as you would for clang.

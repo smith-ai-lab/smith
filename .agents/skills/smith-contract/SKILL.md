@@ -57,7 +57,7 @@ Add `-I .smith/include` to the project's own compiles and put `contract` in the 
 
 ## Prove them: `smith prove <files> [-- <compile flags>]`
 
-Only a smith linked against the prover has it (`smith build llvm-prove`, `smith build prove-libs`, then `smith build -DLLVM=~/.cache/smith/llvm/23.1.3-prove/install`); any other says so and exits 2. It is recognised only as the exact first argument.
+Only a smith linked against the prover has it (`smith build llvm-prove`, `smith build prove-libs` (needs `brew install gmp mpfr`), then `smith build -DLLVM=~/.cache/smith/llvm/23.1.3-prove/install`); any other says so and exits 2. It is recognised only as the exact first argument.
 
 ```sh
 smith prove main.c util.c -- -I .smith/include -DDEBUG
@@ -68,6 +68,6 @@ smith prove --function=clamp --budget=5 -v clamp.c -- -I .smith/include
 - A function is proved when it carries a contract, or when no function of the program calls it and it calls a function with a `smith_ensures`. Each is proved in a process of its own, in at most 10 s (`--budget=`); one that runs out fails like a test that times out. `-v` lists the proved ones with their time.
 - What is proved: every `smith_ensures` and `smith_invariant`, every `assert`, every UBSan check, and that nothing else is undefined (an invalid access, a poison value used). `smith_requires` of the function is assumed.
 - **A call of a function with a `smith_ensures`** proves its `smith_requires` at the call and then assumes its `smith_ensures`; what the call may write comes from LLVM's inferred memory attributes, and a note says where that is not enough. **A call of any other function is inlined**, so its contracts and checks are proved where it is called. A pointer parameter is a valid object of its type (not null, all there, aligned for what the body does, writable if the body stores through it), and parameters of different struct types are different objects.
-- **Loops are unrolled**, so a bound must be constant. `smith_invariant` in an unrolled loop is proved on each pass. Many loads in many passes are slow: a loop of 64 passes over a board takes seconds.
+- **Loops are unrolled**, so a bound must be constant. `smith_invariant` in an unrolled loop is proved on each pass. Many loads in many passes cost time: a loop of 64 passes over a board takes seconds, and checkers' move generator with its contracts about 2 s.
 - A failure prints like a test failure: the contract and its line, the call it breaks, and a counterexample's values by their names in the source.
 - **Errors, never assumptions**, each naming the place and what would make it provable: recursion, a call through a function pointer, inline assembly, a function with neither a body nor a contract, an Objective-C message send, a loop with no constant bound, and a function with several returns whose `smith_ensures` is not before one.

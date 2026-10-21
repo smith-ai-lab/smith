@@ -12,16 +12,29 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   command are refused.
   - **The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
     smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
-    `libLTO.dylib`, which the system linker loads for `-flto`. On first use (about 1 s, then a `stat`) smith writes them
-    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`) and runs the driver as that
-    folder's `bin/clang`, a hard link to smith itself (the driver runs its program again with `-cc1` for any compile
-    that has more than one step). The key is the pack's contents and the compiler's identity.
+    `libLTO.dylib`, which the system `ld` loads for `-flto` (lld has LLVM inside and needs none). On first use (about 1 s, then a `stat`) smith writes them
+    to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`); the key is the pack's contents
+    and the identity of the compiler and linker. The programs the driver runs (`bin/clang`, `bin/clang++`, `bin/ld`,
+    hard links to smith itself; it runs `clang` again with `-cc1` for any compile with more than one step) are not in
+    it: they are in `$XDG_DATA_HOME/smith/programs/<LC_UUID of the running smith>/`, whose `lib` links to that
+    folder's, and the shim passes `-resource-dir` for it. So the installed smith, a dev build and another agent's
+    never share or remake each other's links, and a smith without lld has no `ld`. A programs folder idle for 31 days
+    is removed when a new one is made (using one touches it once a day); only the runtime folder lives forever.
   - **That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
     binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and
     an emptied `~/.cache` leave every built binary running. Old folders stay for the binaries built against them (about
     70 MB each); delete one by hand to reclaim it, and its binaries then fail at load, naming the missing library.
-  - **The system's tools stay the system's**, found on `PATH`: the linker `/usr/bin/ld` (until #9), `dsymutil` (Apple's;
-    its output is the same size as LLVM's in `compare`), `libtool`, `xcrun`.
+  - **The linker is lld, in smith's process.** The driver looks for `ld` in its own program's folder before `PATH`, so
+    that folder's `bin/ld` is a third hard link to smith; run as `ld`, smith calls `lld::macho::link` (`shim/lld.cpp`)
+    on the arguments the driver built, so nothing is added to the user's command and no system `ld` runs. lld signs
+    the output ad hoc on Apple Silicon, as `ld` does. The driver starts it as a process of its own (it has no hook to
+    link in its own process, as it has for `-cc1`): one more start of smith, which costs less than ld's own start (a hello-world link takes 33 ms against ld's 48). `SMITH_LINKER=/usr/bin/ld`
+    makes smith run that linker instead (a way out, and for comparison), and then the driver is left as Apple's `ld`
+    wants it. With lld the driver is told the linker's version (`-mlinker-version=1115.7.3`, which the user's own
+    flag overrides), so that it does not send messages to classes through `objc_msgSendClass$` stubs, which only
+    Apple's current `ld` writes; lld writes `objc_msgSend$` stubs per selector.
+  - **The system's other tools stay the system's**, found on `PATH`: `dsymutil` (Apple's; its output is the same size
+    as LLVM's in `compare`), `libtool`, `xcrun`.
   - **The SDK is chosen through the environment, never a flag.** Homebrew's clang reads a default config
     (`/opt/homebrew/etc/clang/*.cfg`) that forces `-isysroot` to the Command Line Tools SDK, and that wins over
     `SDKROOT`, though `xcrun` and `metal` use Xcode's. So on macOS smith sets, for each the caller has not set,
@@ -31,10 +44,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     for Apple's (measured here, 40 runs of an empty sanitized program). game's sanitized tests, run three times each
     after a clean build: 5.0, 5.5 and 5.8 s under Homebrew's clang, 2.9, 3.0 and 2.8 s under Apple's (a second round on
     a busier machine: 6.9 to 7.2 s against 4.5 to 4.8 s).
-- **clang-format, clang-tidy and clangd come from the same pinned upstream LLVM** on every platform, so formatting,
-  lint and the editor are the same everywhere. Use `/opt/homebrew/opt/llvm/bin/clangd` with no `--query-driver`: with
-  it clangd puts the SDK's include paths ahead of clang's own headers, and Apple's SDK module map refuses that order,
-  so it fails on modules. lldb stays Apple's, since Homebrew's llvm ships none.
+- **`smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, from the LLVM smith compiles
+  with** (linked into smith; the stage0 runs Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`,
+  `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
+  Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
+  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules. lldb stays Apple's, since
+  LLVM's would be a second install to keep in step.
 - **smith never changes a default, so adopting it is trivial and each step is optional.**
   1. **Use the smith command instead of clang.** For C, C++ and Objective-C it is a pure passthrough: smith never adds,
      removes or reorders flags, so the build cannot change.
@@ -60,10 +75,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
-- **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs ninja.** It is recognised only
-  as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
+- **`smith build` runs a project's `build.c`, which writes a ninja manifest, then runs that manifest itself, with no
+  ninja.** The executor (`runtime/executor*.c`, on `<smith/io.h>`) reads the subset of ninja's language that smith
+  writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
+  recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
   clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
-- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (Homebrew's clangd builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
+- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2 and Z3, linked into a smith built against an LLVM that has them beside it.** Contracts are
@@ -71,7 +88,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   exceptions, so `smith build llvm-prove` makes a second install (`~/.cache/smith/llvm/23.1.3-prove`, the shared one is
   untouched), `smith build prove-libs` builds Z3 5.3.1 and Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) static
   beside it, and `smith build -DLLVM=<that install>` links the prover; the compiler's output is byte-identical with and without
-  RTTI and exceptions (only the install path in debug info differs). Each function is proved in a process of its own. Skill:
+  RTTI and exceptions (only the install path in debug info differs). Each function is proved in a process of its own. Bitwuzla
+  0.9.1 (static, built by `smith build prove-libs` with Meson; it links Homebrew's GMP and MPFR) decides the queries on every
+  core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
+  with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
   smith-contract.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
   exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs, and a
@@ -95,10 +115,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - smith builds itself with its own `build.c`, so the installed smith must have `smith build`. `smith build` builds
   `build/<OS>-<arch>/smith` and the `smith++` link: with the LLVM install of `smith build llvm` (or `-DLLVM=`) it links
   clang in and compiles in its own process, else it builds the stage0, which runs an external clang. `smith build test`
-  runs the routing tests against stub compilers, then the `smith build` tests with real ninja and clang;
+  runs the routing tests against stub compilers, then the `smith build` tests with a real clang;
   `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
-- `smith build check` checks formatting and clang-tidy (the same configs as game, build.c included), then runs the
+- `smith build check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
+  same configs as game, build.c included), then runs the
   `test` and `compare` targets; it must pass before a change is done. `smith build format` rewrites the sources.
 - `smith build install` runs the tests, then copies smith and the `smith++` link to `$PREFIX/bin` (`-DPREFIX=`,
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
@@ -111,7 +132,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
   `~/.cache/smith/llvm/23.1.3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
-  install, which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+  install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
+  which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
@@ -131,8 +153,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
   on `<cache>/smith/lock`). Tests: `tests/cache.sh`, with caches of their own. See [docs/build-c.md](docs/build-c.md).
 - `SMITH_CLANG`, `SMITH_CLANGXX` (an external clang, instead of the one inside smith) and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
-  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
-  runs.
+  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA=<ninja>` makes `smith build` run its
+  manifest with that ninja instead of smith's own executor.
 
 ## How to work
 

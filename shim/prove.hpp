@@ -110,6 +110,14 @@ struct Prepared {
 };
 Prepared program_prepare(Program &program, const std::string &name);
 
+// ---- shim/prove_bitwuzla.cpp ----
+
+// Timeout: the deadline passed. Unknown: the solver could not read or decide the query.
+enum class Verdict { Unsat, Sat, Unknown, Timeout };
+
+// Asks Bitwuzla whether a query in SMT-LIB 2 is satisfiable, within `seconds`.
+Verdict bitwuzla_check(const std::string &query, double seconds);
+
 // ---- shim/prove_alive.cpp ----
 
 struct Finding {

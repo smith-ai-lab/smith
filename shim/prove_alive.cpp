@@ -30,10 +30,19 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <dirent.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <thread>
+#include <vector>
 
 namespace prove {
 namespace {
@@ -152,7 +161,9 @@ Shape shape_of(const llvm::DIType *type) {
     return Shape::Signed;
 }
 
-std::string render(const smt::Model &model, const IR::StateValue &value, unsigned bits, Shape shape) {
+std::string render(const smt::Model *model_or_none, const IR::StateValue &value, unsigned bits, Shape shape) {
+    if (model_or_none == nullptr) return "?";
+    const smt::Model &model = *model_or_none;
     smt::expr poison = model.eval(value.non_poison, true);
     if (poison.isFalse()) return "poison";
     smt::expr number = model.eval(value.value, true);
@@ -168,6 +179,71 @@ std::string render(const smt::Model &model, const IR::StateValue &value, unsigne
 
 } // namespace
 
+namespace {
+
+// A query as SMT-LIB 2 text. Alive2 writes the query of a check to a file when it is asked for benchmarks and told to
+// skip the solving, and that is the one way to print it that its classes allow.
+std::string smtlib_of(const smt::expr &query, const char *name) {
+    static std::string directory;
+    if (directory.empty()) {
+        const char *base = std::getenv("TMPDIR");
+        std::string pattern =
+            std::string(base != nullptr && *base != '\0' ? base : "/tmp") + "/smith-prove-query-XXXXXX";
+        std::vector<char> buffer(pattern.begin(), pattern.end());
+        buffer.push_back('\0');
+        directory = mkdtemp(buffer.data()) != nullptr ? buffer.data() : "/tmp";
+        std::atexit([] { rmdir(directory.c_str()); });
+    }
+    util::config::smt_benchmark_dir = directory;
+    util::config::skip_smt = true;
+    smt::Solver writer(true);
+    writer.add(query);
+    writer.check(name);
+    util::config::skip_smt = false;
+    util::config::smt_benchmark_dir = std::getenv("SMITH_PROVE_SMT") != nullptr ? std::getenv("SMITH_PROVE_SMT") : "";
+    std::string text;
+    if (DIR *folder = opendir(directory.c_str())) {
+        while (dirent *entry = readdir(folder)) {
+            if (entry->d_name[0] == '.') continue;
+            std::string path = directory + "/" + entry->d_name;
+            std::ifstream file(path);
+            std::ostringstream contents;
+            contents << file.rdbuf();
+            text = contents.str();
+            unlink(path.c_str());
+        }
+        closedir(folder);
+    }
+    if (const char *keep = std::getenv("SMITH_PROVE_KEEP")) {
+        static int counter = 0;
+        std::ofstream(std::string(keep) + "/q" + std::to_string(counter++) + "_" + name + ".smt2") << text;
+    }
+    return text;
+}
+
+// What a query came to: Bitwuzla's verdict, and Z3's model when there is one.
+struct Answer {
+    Verdict verdict = Verdict::Unknown;
+    smt::Result z3;
+    bool has_model = false;
+    smt::expr whole;
+
+    bool isSat() const {
+        return verdict == Verdict::Sat;
+    }
+    bool isUnsat() const {
+        return verdict == Verdict::Unsat;
+    }
+    const smt::Model *model() const {
+        return has_model ? &z3.getModel() : nullptr;
+    }
+    std::string reason() const {
+        return "it answered unknown";
+    }
+};
+
+} // namespace
+
 Outcome alive_prove(Prepared &prepared, const Options &options) {
     Outcome outcome;
     Clock::time_point start = Clock::now();
@@ -180,6 +256,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         // C has no poison to pass, and what a pointer argument points to holds values.
         util::config::disable_poison_input = false;
         util::config::disable_undef_input = true;
+        if (const char *directory = std::getenv("SMITH_PROVE_SMT")) util::config::smt_benchmark_dir = directory;
         llvm_util::init_llvm_utils(log, module.getDataLayout());
         llvm_util::reset_state();
         llvm::TargetLibraryInfoWrapperPass library(llvm::Triple(module.getTargetTriple()));
@@ -312,7 +389,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
 
         // The values to show for a point that fails, from the model.
         llvm::DominatorTree dominators(function);
-        auto describe = [&](const Point &point, const smt::Model &model) {
+        auto describe = [&](const Point &point, const smt::Model *model) {
             Finding finding;
             finding.point = &point;
             std::set<std::string> seen_names;
@@ -364,34 +441,69 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             if (name.str().find("#ub!") != std::string::npos) assumptions &= variable;
             if (name.str().find("#noreturn!") != std::string::npos) assumptions &= !variable;
         }
-        smt::Solver solver;
-        solver.add(axioms && assumptions);
-        auto check = [&](const smt::expr &formula, const char *name, smt::Result &result) {
-            if (seconds_since(start) >= options.budget_seconds) {
-                result = smt::Result();
-                return false;
-            }
-            smt::SolverPush push(solver);
-            solver.add(formula);
-            Clock::time_point query = Clock::now();
-            result = solver.check(name);
-            if (options.dump)
-                std::cerr << "query " << name << ": " << seconds_since(query) << " s, at " << seconds_since(start)
-                          << " s\n";
-            return true;
-        };
         // A failure needs a run that reaches the point with no undefined behaviour before it, and that run has to be
         // described in full. Most points hold anyway, and are shown to with only the path to them and what is assumed
         // on the way: dropping the rest of that description only adds runs, so a proof of the smaller query is a proof
-        // of the full one. Only a failure of the small query is asked again in full.
-        bool timed_out = false;
-        auto decide = [&](const smt::expr &small, const std::function<smt::expr()> &full, const char *name,
-                          smt::Result &result) {
-            if (!check(small, name, result)) return false;
-            if (!result.isSat()) return true;
-            return check(full(), name, result);
+        // of the full one. Only a failure of the small query is asked again in full. The queries do not depend on each
+        // other, so they are collected while the function is walked and then decided together, Bitwuzla on every core;
+        // Z3 is asked only for the values of a counterexample, which it shows as "?" if it does not find them quickly.
+        struct Job {
+            smt::expr whole;
+            std::string text;
+            Verdict verdict = Verdict::Unknown;
         };
-        auto describe_unlocated = [&](const IR::Instr &instruction, const smt::Model &model) {
+        auto prepare = [&](Job &job, const smt::expr &formula, const char *name) {
+            job.whole = axioms && assumptions && formula;
+            job.text.clear();
+            if (!job.whole.isValid())
+                job.verdict = Verdict::Unknown;
+            else if (job.whole.isFalse())
+                job.verdict = Verdict::Unsat;
+            else if (job.whole.isTrue())
+                job.verdict = Verdict::Sat;
+            else {
+                job.verdict = Verdict::Unknown;
+                job.text = smtlib_of(job.whole, name);
+            }
+        };
+        // Decides the jobs on several threads; false when the budget ran out first.
+        auto solve = [&](const std::vector<Job *> &jobs, const char *name) {
+            double left = options.budget_seconds - seconds_since(start);
+            if (left <= 0) return false;
+            std::atomic<size_t> next{0};
+            auto work = [&] {
+                for (size_t i = next++; i < jobs.size(); i = next++) {
+                    if (!jobs[i]->text.empty()) jobs[i]->verdict = bitwuzla_check(jobs[i]->text, left);
+                }
+            };
+            std::vector<std::thread> threads;
+            size_t count = std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()), jobs.size());
+            for (size_t i = 1; i < count; i++)
+                threads.emplace_back(work);
+            work();
+            for (std::thread &thread : threads)
+                thread.join();
+            for (Job *job : jobs) {
+                if (job->verdict == Verdict::Timeout) return false;
+                if (job->verdict != Verdict::Unknown || job->text.empty()) continue;
+                smt::Solver fallback(true); // a query Bitwuzla cannot read: Z3 decides it, if it can
+                fallback.add(job->whole);
+                smt::Result answer = fallback.check(name);
+                job->verdict = answer.isSat() ? Verdict::Sat : answer.isUnsat() ? Verdict::Unsat : Verdict::Unknown;
+            }
+            return true;
+        };
+        struct Task {
+            smt::expr small;
+            std::function<smt::expr()> full;
+            const char *name;
+            const Point *point;           // a proof point, else
+            const IR::Instr *instruction; // an instruction whose own conditions may fail
+            Job job;
+        };
+        std::vector<Task> tasks;
+        bool timed_out = false;
+        auto describe_unlocated = [&](const IR::Instr &instruction, const smt::Model *model) {
             Finding finding;
             std::ostringstream text;
             instruction.print(text);
@@ -441,7 +553,6 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         };
         std::vector<Assumed> assumed;
         for (IR::BasicBlock *block : transform.src.getBBs()) {
-            if (timed_out || outcome.status == Outcome::Error) break;
             if (block->getName() == "#init") continue;
             smt::expr path = state->getPath(*block);
             smt::expr facts = true;
@@ -470,7 +581,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 } else {
                     added = value->domain();
                 }
-                auto reached = [&]() -> smt::expr {
+                auto reached = [=, &entered]() -> smt::expr {
                     if (known) return path && (previous != nullptr ? previous->domain() : smt::expr(true));
                     return entered.count(block) != 0 ? entered.at(block) : smt::expr(false);
                 };
@@ -480,24 +591,12 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                         smt::expr broken = point->condition != nullptr
                                                ? !(point->seen.value == 1 && point->seen.non_poison)
                                                : smt::expr(true);
-                        smt::Result result;
-                        if (!decide(
-                                path && facts && broken, [&] { return path && facts && value->domain() && broken; },
-                                "point", result)) {
-                            timed_out = true;
-                            break;
-                        }
-                        if (result.isSat()) {
-                            outcome.findings.push_back(describe(info, result.getModel()));
-                        } else if (!result.isUnsat()) {
-                            if (seconds_since(start) >= options.budget_seconds)
-                                timed_out = true;
-                            else {
-                                outcome.status = Outcome::Error;
-                                outcome.error = "the solver gave up on a proof point: " + result.getReason();
-                            }
-                            break;
-                        }
+                        tasks.push_back({path && facts && broken,
+                                         [=] { return path && facts && value->domain() && broken; },
+                                         "point",
+                                         &info,
+                                         nullptr,
+                                         {}});
                     }
                 } else if (auto *assume = dynamic_cast<const IR::Assume *>(&instruction)) {
                     auto operands = assume->operands();
@@ -508,27 +607,12 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                         assumed.push_back({block, holds});
                     }
                 } else if (!added.isTrue()) {
-                    smt::Result result;
-                    if (options.dump) {
-                        std::cerr << "ub check of ";
-                        instruction.print(std::cerr);
-                        std::cerr << "\n";
-                    }
-                    if (!decide(path && facts && !added, [&] { return reached() && facts && !added; }, "ub", result)) {
-                        timed_out = true;
-                        break;
-                    }
-                    if (result.isSat()) {
-                        outcome.findings.push_back(describe_unlocated(instruction, result.getModel()));
-                    } else if (!result.isUnsat()) {
-                        if (seconds_since(start) >= options.budget_seconds)
-                            timed_out = true;
-                        else {
-                            outcome.status = Outcome::Error;
-                            outcome.error = "the solver gave up on undefined behaviour: " + result.getReason();
-                        }
-                        break;
-                    }
+                    tasks.push_back({path && facts && !added,
+                                     [=] { return reached() && facts && !added; },
+                                     "ub",
+                                     nullptr,
+                                     &instruction,
+                                     {}});
                 }
                 if (dynamic_cast<const IR::Load *>(&instruction) != nullptr &&
                     given_memory.count(instruction.getName()) != 0 && value->val.non_poison.isBool()) {
@@ -540,6 +624,42 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 previous = value;
                 known = true;
             }
+        }
+        std::vector<Job *> jobs;
+        for (Task &task : tasks) {
+            prepare(task.job, task.small, task.name);
+            jobs.push_back(&task.job);
+        }
+        timed_out = !solve(jobs, "queries");
+        if (options.dump) std::cerr << tasks.size() << " queries decided at " << seconds_since(start) << " s\n";
+        if (!timed_out) { // the small query failed: ask in full
+            std::vector<Job *> again;
+            for (Task &task : tasks) {
+                if (task.job.verdict != Verdict::Sat) continue;
+                prepare(task.job, task.full(), task.name);
+                again.push_back(&task.job);
+            }
+            timed_out = !solve(again, "full queries");
+            if (options.dump)
+                std::cerr << again.size() << " asked in full, decided at " << seconds_since(start) << " s\n";
+        }
+        for (Task &task : tasks) {
+            if (timed_out) break;
+            if (task.job.verdict == Verdict::Unsat) continue;
+            if (task.job.verdict != Verdict::Sat) {
+                outcome.status = Outcome::Error;
+                outcome.error = std::string("the solver gave up on ") +
+                                (task.point != nullptr ? "a proof point" : "undefined behaviour");
+                break;
+            }
+            // a counterexample: Z3 finds its values, if it does it quickly
+            smt::set_query_timeout("3000");
+            smt::Solver finder(true);
+            finder.add(task.job.whole);
+            smt::Result found = finder.check(task.name);
+            const smt::Model *model = found.isSat() ? &found.getModel() : nullptr;
+            outcome.findings.push_back(task.point != nullptr ? describe(*task.point, model)
+                                                             : describe_unlocated(*task.instruction, model));
         }
         if (timed_out)
             outcome.status = Outcome::Timeout;

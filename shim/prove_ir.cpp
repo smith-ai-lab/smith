@@ -222,7 +222,7 @@ const char *const clean_pipeline = "sroa<modify-cfg>,early-cse,simplifycfg,dce";
 // Loops of constant bounds are unrolled, whatever the cost model thinks.
 const char *const unroll_pipeline =
     "loop-simplify,lcssa,loop(indvars),loop-unroll<O3;full-unroll-max=1000000;no-partial;no-runtime;upperbound>,"
-    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine,dce";
+    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine,gvn,instcombine,simplifycfg,dse,dce";
 
 void set_option(const char *name, const char *value) {
     auto &options = cl::getRegisteredOptions();

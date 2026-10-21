@@ -123,7 +123,16 @@ prove --budget=2 "$cases/division.c"
 expect "budget: fails" 1 "$rc"
 expect_contains "budget: ... as a timeout" "$out" "timed out after"
 
-# 8. Nothing to prove, and the counts of a run.
+# 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
+# before the fixes (else-if, col > 1) fails with a counterexample.
+prove --function=get_valid_diagonals "$cases/diagonals.c"
+expect "checkers: the fixed get_valid_diagonals is proved in the budget" 0 "$rc"
+prove --function=get_valid_diagonals "$cases/diagonals_prefix.c"
+expect "checkers: the one before its fixes fails" 1 "$rc"
+expect_contains "checkers: ... on the legal moves it misses" "$out" "added_every_legal_step"
+expect_contains "checkers: ... with a counterexample" "$out" "counterexample: "
+
+# 9. Nothing to prove, and the counts of a run.
 printf 'int main(void) { return 0; }\n' >"$work/plain.c"
 prove "$work/plain.c"
 expect_contains "no contract: nothing is proved, and it says so" "$out" "no function with smith_requires"

@@ -643,7 +643,7 @@ command_file=$(ls .smith/command/* | head -n 1)
 touch -t 200001010000 "$command_file"
 touch marker
 build
-expect "newline: a second build changes nothing and keeps the file" "ninja: no work to do. 0" \
+expect "newline: a second build changes nothing and keeps the file" "smith: no work to do. 0" \
     "$(echo "$out" | tail -n 1) $(find "$command_file" -newer marker | wc -l | tr -d ' ')"
 sed 's/echo yes/echo YES/' build.c >build.tmp && mv build.tmp build.c
 build
@@ -2146,8 +2146,8 @@ build
 expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
 expect_contains "modules: the cache is the shared one" "$(ls "$XDG_CACHE_HOME/smith/modules")" "modules.timestamp"
 expect "modules: and nothing is cached under .smith" no "$([ -e .smith/cache ] && echo yes || echo no)"
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/x.c"
+if "$smith" lsp --version >/dev/null 2>&1; then
+    capture "$smith" lsp --check="$(pwd -P)/x.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in x.c" "" "$errors"
 fi
@@ -2313,12 +2313,359 @@ build -v
 expect "modules: smith's headers import alone and together" 0 "$rc"
 expect_contains "modules: the smith map is used" "$out" "-fmodule-map-file=.smith/modules/smith.modulemap"
 expect_contains "modules: the library map has io" "$(cat .smith/modules/smith.modulemap)" "module smith_io {"
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    # compile_commands.json carries the module flags, and Homebrew's clangd (no --query-driver) builds the modules.
+if "$smith" lsp --version >/dev/null 2>&1; then
+    # compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
     expect_contains "modules: compile_commands.json names the smith map" "$(cat compile_commands.json)" "smith.modulemap"
-    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/all_of_them.c"
+    capture "$smith" lsp --check="$(pwd -P)/all_of_them.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
+fi
+
+# 14. The executor (smith build runs the manifest itself). Manifests written by hand run through
+# `smith --smith-exec <manifest>`, which reads the same language and behaves as ninja did.
+exec_run() { capture "$smith" --smith-exec build.ninja "$@"; }
+
+# 14a. A failed job: the status, the outputs, the command and what it printed; the first failure stops the build.
+project
+cat >build.ninja <<'N'
+rule r
+  command = $cmd
+build bad: r
+  cmd = echo to-out; echo to-err >&2; exit 3
+build good: r
+  cmd = echo ran >> good.log; echo G > good
+build after: r bad
+  cmd = echo ran >> after.log; echo A > after
+default bad good after
+N
+exec_run -j1
+expect "failure: the build fails" 1 "$rc"
+expect_contains "failure: FAILED names the status and the output" "$out" "FAILED: [code=3] bad "
+expect_contains "failure: then the command" "$out" "echo to-out; echo to-err >&2; exit 3"
+expect_contains "failure: then what it printed, stdout and stderr in order" "$(printf '%s' "$out" | tr '\n' ' ')" "to-out to-err"
+expect_contains "failure: the build says why it stopped" "$err" "build stopped: subcommand failed."
+expect "failure: the first failure stops the others" "no no" "$([ -e good ] && echo yes || echo no) $([ -e after ] && echo yes || echo no)"
+rm -f good
+exec_run -j1 -k 0
+expect "keep going: the build still fails" 1 "$rc"
+expect "keep going: -k 0 builds what does not depend on the failure" "G" "$(cat good 2>/dev/null)"
+expect "keep going: and not what does" no "$([ -e after ] && echo yes || echo no)"
+expect_contains "keep going: it says it cannot go on" "$err" "cannot make progress due to previous errors."
+rm -f good
+exec_run -j1 -k 2
+expect "keep going: -k 2 stops after the second failure, there is only one" "G" "$(cat good 2>/dev/null)"
+exec_run -j
+expect_contains "options: -j needs a number" "$err" "needs a value"
+exec_run -jx
+expect_contains "options: -jx is not a number" "$err" "needs a number"
+exec_run --bogus
+expect_contains "options: an unknown flag is refused" "$err" "unknown option"
+
+# 14b. Depfiles: what the command read is kept, and the file is removed.
+project
+cat >build.ninja <<'N'
+rule cc
+  command = $cmd
+  depfile = $out.d
+  deps = gcc
+build obj: cc src
+  cmd = echo ran >> runs; cp src obj; echo "obj: src hdr hdr\\ one.h" > obj.d
+default obj
+N
+echo s >src
+echo h >hdr
+echo h >'hdr one.h'
+exec_run
+expect "depfile: the first build runs" 1 "$(lines runs)"
+expect "depfile: the depfile is removed once read" no "$([ -e obj.d ] && echo yes || echo no)"
+exec_run -t deps obj
+expect_contains "depfile: -t deps lists what it named" "$out" "    hdr one.h"
+expect_contains "depfile: and says it is valid" "$out" "(VALID)"
+exec_run
+expect_contains "depfile: an unchanged tree has no work" "$out" "no work to do"
+sleep 0.05
+touch hdr
+exec_run
+expect "depfile: a changed header reruns the step" 2 "$(lines runs)"
+sleep 0.05
+touch 'hdr one.h'
+exec_run
+expect "depfile: a header with a space in its name is read" 3 "$(lines runs)"
+exec_run
+expect "depfile: and settles" 3 "$(lines runs)"
+rm hdr
+exec_run
+expect "depfile: a header that is gone reruns the step once" 4 "$(lines runs)"
+cat >build.ninja <<'N'
+rule cc
+  command = $cmd
+  depfile = $out.d
+  deps = gcc
+build obj: cc src
+  cmd = echo ran >> runs; cp src obj; echo "wrong: src" > obj.d
+default obj
+N
+exec_run
+expect_status "depfile: a depfile that names another output fails the step" fail
+expect_contains "depfile: and says what it expected" "$out" "expected depfile 'obj.d' to mention 'obj', got 'wrong'"
+
+# 14c. restat: an output that did not change cleans what depended on it, and the time kept is the input's.
+project
+cat >build.ninja <<'N'
+rule step
+  command = $cmd
+build gen: step seed
+  cmd = echo gen >> gen.log; head -n 1 seed > gen.new; (cmp -s gen.new gen && rm gen.new) || mv gen.new gen
+  restat = 1
+build use: step gen
+  cmd = echo use >> use.log; cp gen use
+build last: step use
+  cmd = echo last >> last.log; cp use last
+default last
+N
+printf 'one\ntwo\n' >seed
+exec_run
+expect "restat: the first build runs the chain" "1 1 1" "$(lines gen.log) $(lines use.log) $(lines last.log)"
+sleep 0.05
+printf 'one\nthree\n' >seed
+exec_run
+expect "restat: an input change reruns the step, but not what the unchanged output feeds" "2 1 1" "$(lines gen.log) $(lines use.log) $(lines last.log)"
+exec_run
+expect_contains "restat: and the next build has nothing to do" "$out" "no work to do"
+printf 'uno\nthree\n' >seed
+exec_run
+expect "restat: a changed output reruns everything after it" "3 2 2" "$(lines gen.log) $(lines use.log) $(lines last.log)"
+exec_run -n
+expect_contains "dry run: a settled tree says so" "$out" "no work to do"
+touch seed
+exec_run -n
+expect_contains "dry run: lists the steps it would run, the dependents included" "$out" "[1/3] echo gen >> gen.log"
+expect "dry run: and runs nothing" 3 "$(lines gen.log)"
+exec_run
+expect "restat: an input touched after the output is checked again" "4 2 2" "$(lines gen.log) $(lines use.log) $(lines last.log)"
+exec_run
+expect_contains "restat: and then settles, the log has the input's time" "$out" "no work to do"
+
+# 14d. Jobs run at once and print whole; a pool serialises its jobs; a console job keeps stdin.
+project
+cat >build.ninja <<'N'
+pool one
+  depth = 1
+rule step
+  command = $cmd
+rule single
+  command = $cmd
+  pool = one
+build a: step
+  cmd = echo a1; sleep 0.5; echo a2; echo a3 >&2
+build b: step
+  cmd = echo b1; sleep 0.1; echo b2
+default a b
+N
+exec_run -j2
+flat=$(printf '%s' "$out" | tr '\n' ' ')
+expect_contains "parallel: a job's output is printed whole" "$flat" "a1 a2 a3"
+expect_contains "parallel: and so is the other's" "$flat" "b1 b2 "
+case $flat in *b1\ b2*a1\ a2*) expect "parallel: the one that ends first prints first" ok ok ;; *) expect "parallel: the one that ends first prints first" "b before a" "$flat" ;; esac
+expect "parallel: the progress line counts jobs as they end" "[1/2] [2/2]" "$(printf '%s' "$out" | grep -o '^\[[0-9]/[0-9]\]' | tr '\n' ' ' | sed 's/ $//')"
+cat >build.ninja <<'N'
+pool one
+  depth = 1
+rule step
+  command = $cmd
+rule single
+  command = $cmd
+  pool = one
+build a: single
+  cmd = echo start >> order; sleep 0.2; echo end >> order
+build b: single
+  cmd = echo start >> order; sleep 0.2; echo end >> order
+default a b
+N
+exec_run -j4
+expect "pool: a pool of depth 1 runs one job at a time" "start end start end" "$(tr '\n' ' ' <order | sed 's/ $//')"
+rm -f order a b
+sed -i.bak 's/  pool = one//' build.ninja
+exec_run -j4
+expect "pool: without it the two run together" "start start end end" "$(tr '\n' ' ' <order | sed 's/ $//')"
+cat >build.ninja <<'N'
+rule step
+  command = $cmd
+  pool = console
+build ask: step
+  cmd = read line; echo "got $$line" > answer; echo "terminal: $$line"
+default ask
+N
+out=$(printf 'hello\n' | "$smith" --smith-exec build.ninja 2>"$work/err")
+rc=$?
+expect "console: the job reads the build's own stdin" "0 got hello" "$rc $(cat answer 2>/dev/null)"
+expect_contains "console: and writes straight to its stdout" "$out" "terminal: hello"
+
+# 14e. Ctrl-C (SIGINT) stops the jobs, removes what they half wrote and exits with 130.
+project
+cat >build.ninja <<'N'
+rule step
+  command = $cmd
+build slow: step
+  cmd = echo partial > slow; echo started >> started; sleep 33
+build slow2: step
+  cmd = echo started >> started; sleep 33
+default slow slow2
+N
+"$smith" --smith-exec build.ninja >"$work/o" 2>"$work/e" &
+pid=$!
+for _ in $(seq 1 100); do
+    [ "$(lines started)" = 2 ] && break
+    sleep 0.05
+done
+t0=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+kill -INT "$pid"
+wait "$pid"
+rc=$?
+t1=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+expect "interrupt: the build exits with 130" 130 "$rc"
+expect_contains "interrupt: and says why" "$(cat "$work/e")" "interrupted by user"
+expect "interrupt: both jobs were stopped" 0 "$(pgrep -f 'sleep 33' | wc -l | tr -d ' ')"
+expect "interrupt: the half-written output is removed" no "$([ -e slow ] && echo yes || echo no)"
+expect "interrupt: and it was quick" yes "$(perl -e "print(($t1 - $t0) < 2 ? 'yes' : 'no')")"
+sed -i.bak 's/sleep 33/true/' build.ninja
+exec_run
+expect "interrupt: the next build runs both again" "0 2" "$rc $(lines started | awk '{print $1 - 2}')"
+
+# 14f. The tools, and the manifests the executor refuses.
+project
+cat >build.ninja <<'N'
+builddir = .smith
+rule step
+  command = $cmd
+rule cc
+  command = $cmd
+  depfile = $out.d
+  deps = gcc
+rule regen
+  command = $cmd
+  generator = 1
+build build.ninja: regen
+  cmd = true
+build dir/one.o: cc one.c
+  cmd = cp one.c dir/one.o; echo "dir/one.o: one.c" > dir/one.o.d
+build app: step dir/one.o
+  cmd = cp dir/one.o app
+build all: phony app
+default all
+N
+echo c >one.c
+exec_run
+expect "output folders: made before the command runs" "c" "$(cat dir/one.o 2>/dev/null)"
+exec_run -t targets
+expect_contains "tools: targets lists the roots" "$out" "all: phony"
+exec_run -t targets all
+expect_contains "tools: targets all lists every output with its rule" "$out" "dir/one.o: cc"
+exec_run -t commands app
+expect "tools: commands lists them in order" "cp one.c dir/one.o; echo \"dir/one.o: one.c\" > dir/one.o.d
+cp dir/one.o app" "$out"
+exec_run -t compdb cc
+expect_contains "tools: compdb prints the JSON compilation database" "$out" '"file": "one.c"'
+expect_contains "tools: compdb names the output" "$out" '"output": "dir/one.o"'
+expect_contains "tools: compdb names the directory" "$out" "\"directory\": \"$(pwd -P)\""
+exec_run -t clean
+expect_contains "tools: clean says how many it removed" "$out" "Cleaning... 2 files."
+expect "tools: clean removed the outputs" "no no" "$([ -e app ] && echo yes || echo no) $([ -e dir/one.o ] && echo yes || echo no)"
+expect "tools: and kept the manifest, a generator's output" yes "$([ -f build.ninja ] && echo yes)"
+exec_run
+exec_run -t clean dir/one.o
+expect "tools: clean of one target removes only what it needs" "yes no" "$([ -e app ] && echo yes || echo no) $([ -e dir/one.o ] && echo yes || echo no)"
+exec_run
+sed -i.bak '/^build app/,/^  cmd = cp dir/d' build.ninja
+sed -i.bak 's/^build all: phony app/build all: phony dir\/one.o/' build.ninja
+exec_run -t cleandead
+expect_contains "tools: cleandead removes what the manifest no longer makes" "$out" "Cleaning... 1 files."
+expect "tools: and only that" "no yes" "$([ -e app ] && echo yes || echo no) $([ -e dir/one.o ] && echo yes || echo no)"
+exec_run -t nothing
+expect_contains "tools: an unknown tool names the known ones" "$err" "unknown tool 'nothing'"
+
+for refusal in "cycle|build a: step b
+  cmd = true
+build b: step a
+  cmd = true
+default a|dependency cycle: a -> b -> a" "missing|build x: step nofile
+  cmd = true
+default x|'nofile', needed by 'x', missing and no known rule to make it" "twice|build x: step
+  cmd = true
+build x: step
+  cmd = true
+default x|multiple rules generate x" "rule|build x: nothing
+default x|unknown build rule" "target|build x: step
+  cmd = true
+default x|unknown target 'nothere'"; do
+    body=${refusal#*|}
+    name=${refusal%%|*}
+    expected=${body##*|}
+    manifest=${body%|*}
+    printf 'rule step\n  command = $cmd\n%s\n' "$manifest" >build.ninja
+    if [ "$name" = target ]; then exec_run nothere; else exec_run; fi
+    expect_contains "manifest: $name is refused with its reason" "$err" "$expected"
+    expect "manifest: ... and the build fails" 1 "$rc"
+done
+
+# 14g. What is kept between builds: a ninja tree is rebuilt once, a damaged log is never trusted.
+project
+cat >build.ninja <<'N'
+builddir = .smith
+rule step
+  command = $cmd
+build out: step in
+  cmd = echo ran >> runs; cp in out
+default out
+N
+echo in >in
+exec_run
+exec_run
+expect "state: the second build has nothing to do" 1 "$(lines runs)"
+expect_contains "state: the log has its header" "$(head -n 1 .smith/.smith_log)" "# smith log 1"
+expect "state: and a line for the output" 1 "$(grep -c ' out$' .smith/.smith_log)"
+printf '0 0 0 0123456789abcdef ou' >>.smith/.smith_log
+exec_run
+expect "state: a line cut short is not read" 1 "$(lines runs)"
+printf '# smith log 2\n' >.smith/.smith_log
+exec_run
+expect "state: a log of another version is not trusted" 2 "$(lines runs)"
+exec_run
+expect "state: and is written again" 2 "$(lines runs)"
+rm .smith/.smith_log
+exec_run
+expect "state: no log means every command runs" 3 "$(lines runs)"
+sed -i.bak 's/echo ran/echo ran again/' build.ninja
+exec_run
+expect "state: a changed command reruns the step" 4 "$(lines runs)"
+rm out
+exec_run
+expect "state: a deleted output is built again" 5 "$(lines runs)"
+sleep 0.05
+touch in
+exec_run
+expect "state: a newer input is built again" 6 "$(lines runs)"
+sleep 0.05
+touch out
+exec_run
+expect "state: an output newer than its input is left alone" 6 "$(lines runs)"
+if ninja --version >/dev/null 2>&1; then
+    # A tree that ninja built has its own log, which smith does not read: the first smith build runs everything.
+    project
+    cp "$copy_project/build.c" .
+    echo one >input
+    capture env SMITH_NINJA="$(command -v ninja)" "$smith" build
+    expect "ninja: SMITH_NINJA runs the manifest with ninja" "0 one" "$rc $(cat output)"
+    expect "ninja: and ninja's own log is written" yes "$([ -f .smith/.ninja_log ] && echo yes)"
+    expect "ninja: and smith's is not" no "$([ -f .smith/.smith_log ] && echo yes || echo no)"
+    echo two >input
+    build
+    expect "upgrade: the first smith build of a tree ninja built runs the command" "0 two" "$rc $(cat output)"
+    build
+    expect_contains "upgrade: then it has nothing to do" "$out" "no work to do"
+    echo three >input
+    capture env SMITH_NINJA="$(command -v ninja)" "$smith" build
+    expect "upgrade: ninja can take over again, and builds what changed" "0 three" "$rc $(cat output)"
 fi
 
 # 12. A smith built with one command.

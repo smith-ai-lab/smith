@@ -8,7 +8,7 @@ cc=${CC:-cc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
-for name in clang clang++ xcrun metal; do
+for name in clang clang++ xcrun metal clang-format clang-tidy clangd; do
     $cc -std=gnu23 -DNAME="\"$name\"" "$here/stub.c" -o "$work/bin/$name" || exit 1
 done
 ln -s "$smith" "$work/smith++"
@@ -78,6 +78,7 @@ expect "a .smith input goes to clang with its arguments untouched" "$(lines "cla
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/smith++" -c a.cpp
 expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
 
+in_process=no
 if [ "$(uname -s)" = Darwin ]; then
     capture env -u SMITH_CLANG "$smith" --smith-which -c a.c
     which_identity=$(printf '%s\n' "$out" | tail -n +2)
@@ -86,12 +87,12 @@ if [ "$(uname -s)" = Darwin ]; then
     "clang in-process "/*/bin/clang)
         # A smith with clang linked in compiles in its own process unless SMITH_CLANG names a clang to run instead.
         llvm_clang=${out#clang in-process }
-        # The program is in the folder smith writes clang's files to on first use, which --smith-which does not make.
+        # The program is in the folder smith makes for itself on first use (named for its LC_UUID), which --smith-which does not make.
         case $llvm_clang in
-        */smith/clang/llvm-*/bin/clang) found=yes ;;
+        */smith/programs/*/bin/clang) found=yes ;;
         *) found=$llvm_clang ;;
         esac
-        expect "in-process: the default is clang inside smith, run as the bin/clang of its own folder of clang's files" yes "$found"
+        expect "in-process: the default is clang inside smith, run as the bin/clang of a folder of its own" yes "$found"
         case $which_identity in
         "identity llvm-"*" "*) expect "in-process: --smith-which names the identity of the clang inside" yes yes ;;
         *) expect "in-process: --smith-which names the identity of the clang inside" "identity llvm-<version> <hash>" "$which_identity" ;;
@@ -101,7 +102,8 @@ if [ "$(uname -s)" = Darwin ]; then
         capture env SMITH_CLANG="$cl" "$smith" --smith-which -c a.c
         expect "in-process: SMITH_CLANG still runs an external clang" "clang $cl" "$out"
         capture env -u SMITH_CLANG SMITH_CLANGXX="$work/bin/clang++" "$smith" --smith-which -c a.c
-        expect "in-process: SMITH_CLANGXX does not affect smith" "clang in-process" "${out%% /*}" ;;
+        expect "in-process: SMITH_CLANGXX does not affect smith" "clang in-process" "${out%% /*}"
+        in_process=yes ;;
     *)
         if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then
             expect "on macOS the default is Homebrew's clang" "clang /opt/homebrew/opt/llvm/bin/clang" "$out"
@@ -135,6 +137,69 @@ if [ "$(uname -s)" = Darwin ]; then
         SMITH_CLANG="$cl" "$smith" -isysroot /mine/sdk -c a.c
     expect "macOS: the caller's -isysroot is forwarded untouched" \
         "$(lines 'env SDKROOT=/stub/sdk CLANG_NO_DEFAULT_CONFIG=1' "clang argv0=$cl" '[-isysroot]' '[/mine/sdk]' '[-c]' '[a.c]')" "$out"
+fi
+
+# fmt, lint and lsp are clang-format, clang-tidy and clangd with the arguments untouched, as the exact first argument.
+for tool in fmt:clang-format:SMITH_CLANG_FORMAT lint:clang-tidy:SMITH_CLANG_TIDY lsp:clangd:SMITH_CLANGD; do
+    command=${tool%%:*}
+    rest=${tool#*:}
+    program=${rest%%:*}
+    variable=${rest#*:}
+    stub=$work/bin/$program
+    capture env "$variable=$stub" "$smith" "$command" -i "a b.c" "" --style=file -DX="y z"
+    expect "$command: runs $program with every argument untouched" \
+        "$(lines "$program argv0=$stub" '[-i]' '[a b.c]' '[]' '[--style=file]' '[-DX=y z]')" "$out"
+    expect "$command: stderr passes through" "$program-stderr" "$err"
+    capture env STUB_EXIT=3 "$variable=$stub" "$smith" "$command" a.c
+    expect "$command: exit status is $program's" 3 "$rc"
+    capture env STUB_SIGNAL=15 "$variable=$stub" "$smith" "$command" a.c
+    expect "$command: death by signal is preserved (128 + 15)" 143 "$rc"
+    capture env "$variable=/nonexistent/$program" "$smith" "$command" a.c
+    expect "$command: a missing tool is reported" "smith: not an executable: /nonexistent/$program" "$err"
+    # Only as the exact first argument: after another argument it is a file name, for the compiler.
+    capture env SMITH_CLANG="$cl" "$variable=$stub" "$smith" -c "$command" a.c
+    expect "$command: after another argument it goes to clang" "$(lines "clang argv0=$cl" '[-c]' "[$command]" '[a.c]')" "$out"
+done
+if [ "$in_process" = yes ]; then
+    # The tools are inside smith: the same LLVM as the compiler, run on the arguments, in smith's process.
+    mkdir "$work/tools"
+    printf 'int   main( ){return  0;}\n' >"$work/tools/a.c"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt --version
+    case $out in
+    "clang-format version 23."*) expect "in-process: fmt is clang-format 23" yes yes ;;
+    *) expect "in-process: fmt is clang-format 23" "clang-format version 23." "$out" ;;
+    esac
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt --style=LLVM "$work/tools/a.c"
+    expect "in-process: fmt formats a file to stdout" "$(lines 'int main() { return 0; }')" "$out"
+    printf 'IndentWidth: 8\nUseTab: Never\nAllowShortFunctionsOnASingleLine: None\n' >"$work/tools/.clang-format"
+    printf 'int main() {\nreturn 0;\n}\n' >"$work/tools/b.c"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt "$work/tools/b.c"
+    expect "in-process: fmt reads the project's .clang-format" "$(lines 'int main() {' '        return 0;' '}')" "$out"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt -i "$work/tools/b.c"
+    expect "in-process: fmt -i rewrites the file" "$(lines 'int main() {' '        return 0;' '}')" "$(cat "$work/tools/b.c")"
+    capture env -u SMITH_CLANG_TIDY "$smith" lint --version
+    case $out in
+    *"LLVM version 23."*) expect "in-process: lint is clang-tidy 23" yes yes ;;
+    *) expect "in-process: lint is clang-tidy 23" "LLVM version 23." "$out" ;;
+    esac
+    capture env -u SMITH_CLANG_TIDY "$smith" lint --list-checks --checks='-*,readability-*'
+    case $out in
+    *"readability-identifier-naming"*) expect "in-process: lint lists clang-tidy's checks" yes yes ;;
+    *) expect "in-process: lint lists clang-tidy's checks" "readability-identifier-naming" "$out" ;;
+    esac
+    printf 'Checks: "-*,readability-uppercase-literal-suffix"\nWarningsAsErrors: "*"\n' >"$work/tools/.clang-tidy"
+    printf 'constexpr float x = 1.0f;\n' >"$work/tools/c.c"
+    capture env -u SMITH_CLANG_TIDY "$smith" lint --quiet "$work/tools/c.c" -- -std=gnu23
+    case $out in
+    *"floating point literal has suffix 'f'"*) expect "in-process: lint reads the project's .clang-tidy and reports" yes yes ;;
+    *) expect "in-process: lint reads the project's .clang-tidy and reports" "floating point literal has suffix" "$out" ;;
+    esac
+    expect "in-process: lint exits 1 on a finding that is an error" 1 "$rc"
+    capture env -u SMITH_CLANGD "$smith" lsp --version
+    case $out in
+    "clangd version 23."*) expect "in-process: lsp is clangd 23" yes yes ;;
+    *) expect "in-process: lsp is clangd 23" "clangd version 23." "$out" ;;
+    esac
 fi
 
 capture env SMITH_CLANG="$work/bin/selfclang" "$smith" a.c

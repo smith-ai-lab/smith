@@ -30,3 +30,9 @@ typedef struct {
     uint32_t stored;
     uint32_t continued; // 1: appends to the file of the record before
 } SmithPackFile;
+
+// The pack itself, in the program that carries it: runtime/pack_data.c holds it and nothing else includes it, so that
+// smith.c, which the editor opens, does not carry tens of MB of data.
+#include <stddef.h>
+extern const unsigned char smith_clang_resource[];
+extern const size_t smith_clang_resource_size;

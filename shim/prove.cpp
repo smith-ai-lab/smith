@@ -7,6 +7,7 @@
 // (shim/prove_alive.cpp). The results print like a test run.
 #include "prove.hpp"
 
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
@@ -19,7 +20,7 @@
 #include <unistd.h>
 #include <vector>
 
-extern "C" int smith_clang_main(const char *program, int argc, char **argv);
+extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
 
 namespace {
 
@@ -75,7 +76,7 @@ Arguments parse(int argc, char **argv) {
 }
 
 // Compiles one file to bitcode in `output` with the clang smith runs in process. Returns clang's exit status.
-int compile(const char *program, const std::string &file, const std::vector<std::string> &flags,
+int compile(const char *program, const char *resource, const std::string &file, const std::vector<std::string> &flags,
             const std::string &output) {
     std::vector<std::string> words = {"clang", "-std=gnu23"};
     words.insert(words.end(), flags.begin(), flags.end());
@@ -93,7 +94,7 @@ int compile(const char *program, const std::string &file, const std::vector<std:
     pid_t child = fork();
     if (child < 0) return 2;
     if (child == 0) {
-        int status = smith_clang_main(program, static_cast<int>(pointers.size()) - 1, pointers.data());
+        int status = smith_clang_main(program, static_cast<int>(pointers.size()) - 1, pointers.data(), false, resource);
         std::fflush(nullptr);
         _exit(status);
     }
@@ -172,7 +173,20 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
         if (!failure.fix.empty()) std::printf("      to prove it: %s\n", failure.fix.c_str());
         return 1;
     }
-    if (options.dump) prepared.function->print(llvm::errs());
+    if (options.dump) {
+        prepared.function->print(llvm::errs());
+        unsigned instructions = 0, loads = 0, stores = 0, blocks = 0;
+        for (const llvm::BasicBlock &block : *prepared.function) {
+            blocks++;
+            for (const llvm::Instruction &instruction : block) {
+                instructions++;
+                loads += llvm::isa<llvm::LoadInst>(instruction);
+                stores += llvm::isa<llvm::StoreInst>(instruction);
+            }
+        }
+        std::fprintf(stderr, "ir of %s: %u blocks, %u instructions, %u loads, %u stores\n", prepared.unit.name.c_str(),
+                     blocks, instructions, loads, stores);
+    }
     prove::Outcome outcome = prove::alive_prove(prepared, options);
     int status = 1;
     switch (outcome.status) {
@@ -239,7 +253,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 
 } // namespace
 
-extern "C" int smith_prove_main(const char *program, int argc, char **argv) {
+extern "C" int smith_prove_main(const char *program, const char *resource, int argc, char **argv) {
     Clock::time_point start = Clock::now();
     std::setvbuf(stdout, nullptr, _IOLBF, 0); // each result as soon as it is known
     Arguments arguments = parse(argc, argv);
@@ -257,7 +271,7 @@ extern "C" int smith_prove_main(const char *program, int argc, char **argv) {
     int status = 0;
     for (size_t i = 0; i < arguments.files.size() && status == 0; i++) {
         std::string output = std::string(directory.data()) + "/" + std::to_string(i) + ".bc";
-        status = compile(program, arguments.files[i], arguments.flags, output);
+        status = compile(program, resource, arguments.files[i], arguments.flags, output);
         bitcode.push_back(output);
     }
     prove::Program loaded;

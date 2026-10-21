@@ -10,7 +10,8 @@ it. `.content_hash` is declared but not implemented. The
 
 - `build.c` describes the build. It is a C program, so loops, functions and `if` are the language, not a macro system.
 - `smith build` compiles `build.c` with one fixed command of its own, runs it, and the program writes `build.ninja`.
-- smith then runs ninja on that file. ninja does the scheduling, the rebuild decisions and the parallelism.
+- smith then runs that file itself, with its own executor ([The executor](#the-executor)): the scheduling, the rebuild
+  decisions and the parallelism. No ninja is needed; `SMITH_NINJA=<ninja>` runs the same file with ninja instead.
 - It replaces the Makefile. It is step 2 of the three steps in [CLAUDE.md](../CLAUDE.md): it only describes the build, so
   it changes nothing the build does.
 
@@ -35,26 +36,28 @@ it. `.content_hash` is declared but not implemented. The
 
 The driver, in order:
 1. `build.c` must be in the current folder.
-2. Find ninja: `$SMITH_NINJA`, else the first `ninja` on PATH.
-3. Split the arguments. Those that start with `-D` go to the build program, and everything else goes to ninja. `-f` and
-   `-C` are refused, because `smith build` names the manifest itself.
+2. With `$SMITH_NINJA` set, find that ninja (the fallback, below). Otherwise nothing is looked for: the executor is
+   part of smith.
+3. Split the arguments. Those that start with `-D` go to the build program, and everything else is the executor's:
+   `-j`, `-k`, `-n`, `-v`, `--quiet`, `-t <tool>` and the targets. `-f` and `-C` are refused, because `smith build`
+   names the manifest itself.
 4. Write `.smith/include/smith/build.h`, `.smith/runtime.c`, `.smith/bootstrap/build.ninja` and `.smith/.gitignore`.
    Each is written only when its bytes changed, so its mtime changes only then.
-5. Run `ninja --quiet -f .smith/bootstrap/build.ninja`. It compiles `build.c` into `.smith/program`, and
-   rebuilds the program when `build.c`, a header it includes, or smith's runtime changed (a depfile).
+5. Run the bootstrap manifest, `.smith/bootstrap/build.ninja`, with the executor (quietly). It compiles `build.c`
+   into `.smith/program`, and rebuilds the program when `build.c`, a header it includes, or smith's runtime changed (a
+   depfile).
 6. Run the program with the `-D` arguments. `build()` calls the `smith_*` functions, and the program writes
    `.smith/build.ninja` only when its bytes changed.
-7. `execv` ninja on `.smith/build.ninja` with the other arguments, so ninja's exit status and signals are
-   `smith build`'s.
+7. Run `.smith/build.ninja` with the executor and the other arguments; its exit status is `smith build`'s: 0, 1 for
+   a failed build, 2 for a bad command line, and 128 plus the signal for an interrupt.
 
 The header and the runtime are embedded in smith with C23 `#embed`, so `smith build` needs nothing installed beside it.
 The compile command is `<compiler> -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include`, where the compiler is smith itself
 (it compiles in its own process, or runs `$SMITH_CLANG`) or, for a stage0 smith, the external clang it would pick.
 Bootstrapping still works with one `cc` command: that builds the stage0.
 
-smith's own files all go in `.smith/`: the manifests, ninja's logs (`builddir`), the build program, stamps and task
-outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, because ninja recompacts its log and
-drops the entries that the current manifest does not have.
+smith's own files all go in `.smith/`: the manifests, the logs (`builddir`), the build program, stamps and task
+outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, so its logs are separate.
 
 ### A change of compiler rebuilds everything
 
@@ -79,17 +82,18 @@ compiler replaced, `COMPILER` switched, smith routing to another `SMITH_CLANG`, 
 rebuilds), smith switched to an external clang and back, and a stand-in smith whose identity line changes.
 
 They are not in `build/`, because a project's `clean` task usually runs `rm -rf build`, and that would delete the logs
-while ninja is still running from them. Ninja then exits 1 with "Error writing to build log" (measured). smith writes
-`.smith/.gitignore` containing `*`, so git ignores the folder with no change to the project, as pytest, ruff and mypy
-do for their caches. smith does not create `build/`.
+while the build is still running from them (ninja then exited 1 with "Error writing to build log", measured; the
+executor would lose what it just recorded). smith writes `.smith/.gitignore` containing `*`, so git ignores the folder
+with no change to the project, as pytest, ruff and mypy do for their caches. smith does not create `build/`.
 
-An unchanged manifest keeps its mtime, so a `smith build` with nothing to do does not make ninja rebuild.
+An unchanged manifest keeps its mtime, so a `smith build` with nothing to do does not rebuild the manifest's own
+edge.
 
-Built in, as ninja's own tools passed through:
-- `smith build -t clean` removes what ninja built.
-- `smith build -t compdb` writes `compile_commands.json`.
-- `smith build -t targets` lists the targets.
-- `-j`, `-n` and `-v` work as in ninja.
+Built in, the tools of ninja's that this build uses (the full list and what is dropped is in [The executor](#the-executor)):
+- `smith build -t clean` removes what the build made, the manifest's own edge aside.
+- `smith build -t compdb` prints the compile commands as JSON (`compile_commands.json` is written by `build.c`).
+- `smith build -t targets`, `-t commands`, `-t deps` and `-t cleandead`.
+- `-j`, `-k`, `-n` and `-v` work as in ninja.
 - A project's own `clean` task is just a task.
 
 Generator rules:
@@ -122,7 +126,7 @@ Generator rules:
   an error. A `smith_defer` callback reads the options this way.
 - `smith_capture_or` starts the program with its stderr on `/dev/null` and returns the fallback when it cannot start,
   exits non-zero or is killed. Output over 1 MiB is still an error.
-- `deps = gcc` is emitted whenever `.depfile` is set, so ninja folds the `.d` file into `.ninja_deps` and deletes it.
+- `deps = gcc` is emitted whenever `.depfile` is set, so the executor folds the `.d` file into `.smith/.smith_deps` and deletes it.
 - `.always` adds an input on one shared phony target that has no inputs (`build smith_always: phony`).
 - A step with no outputs gets a stamp output, `.smith/stamp/<hash>`, and `&& touch <stamp>` ends its command. The
   stamp is touched only when the command succeeds, so the step reruns only when its inputs change (case `nofileout`).
@@ -145,7 +149,7 @@ Generator rules:
   the program runs, so one pass is enough: an entry that `more` adds is reached later in the same pass. Callbacks run
   from this loop, never from inside each other.
 - When the table is not empty, the manifest gains a regeneration rule and edge. Their inputs are every entry's needs,
-  pending or not, so a need that changes during the ninja run regenerates the manifest:
+  pending or not, so a need that changes during the build regenerates the manifest:
   ```
   rule smith_regenerate
     command = .smith/program --regenerate .smith/build.ninja <the -D arguments of this call>
@@ -153,21 +157,146 @@ Generator rules:
     generator = 1
   build .smith/build.ninja: smith_regenerate <every need> | .smith/program
   ```
-  `generator = 1` keeps the manifest through `ninja -t clean` and keeps a changed command from forcing a regeneration.
-- The program's arguments are `[--regenerate] <manifest> [-D...]`; the driver passes no `--regenerate`, ninja does.
+  `generator = 1` keeps the manifest through `-t clean` and keeps a changed command from forcing a regeneration.
+- The program's arguments are `[--regenerate] <manifest> [-D...]`; the driver passes no `--regenerate`, the executor does.
   Without it the manifest is written only when its bytes changed. With it the manifest is always written, even with the
-  same bytes, so its mtime moves past the needs and ninja reloads once and settles (ninja decides regeneration by
+  same bytes, so its mtime moves past the needs and the executor reads it again once and settles (it decides regeneration by
   mtime only).
 - `smith_default` may be missing only while some entry is pending, because the pending `more` will set it. Then the
   manifest has `build smith_nothing: phony` and `default smith_nothing`. With nothing pending, a missing default is
   still the error.
-- Measured with ninja 1.13.2. A fresh tree: the run before ninja writes stage 1 (the steps that make the needs, plus the
-  regeneration edge); ninja builds the needs, regenerates, reloads, then builds what was asked, so a stage 2 target
-  can be named on the command line. Needs present but stale: `more` runs with the old contents, ninja rebuilds the
+- Measured with ninja 1.13.2, and the executor does the same. A fresh tree: the run before the executor writes stage 1 (the steps that make the needs, plus the
+  regeneration edge); the executor builds the needs, regenerates, reloads, then builds what was asked, so a stage 2 target
+  can be named on the command line. Needs present but stale: `more` runs with the old contents, the executor rebuilds the
   needs and regenerates before it builds any target, so stale steps never run. No-op: the needs are older than the
-  manifest and ninja prints `no work to do`.
+  manifest and the executor prints `no work to do`.
 - `smith_lines` reads the file into the arena on every `smith build` (limit 16 MiB). A file a step makes is read inside
   `more`; read in `build()` it is the error `cannot read <path>; if a step makes it, read it inside smith_defer`.
+
+## The executor
+
+`smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
+it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
+`smith.c` includes after `lib/io.c`, so `cc -std=gnu23 smith.c -o smith` still builds all of smith. It uses
+`<smith/io.h>` (so it is macOS only until io has another backend): the manifest and the graph live in `io.arena`, the
+files are read and written through `io.files`, and one kqueue loop waits for every job's process and pipe.
+
+### Who runs the graph
+
+smith parses the `.smith/build.ninja` that build.c's program wrote; the program does not run the graph.
+- **Reuse.** The manifest is already the contract between the program and the runner: the program stays a small
+  generator that exits, the runner is one binary for every project, and `SMITH_NINJA` can still run the same file. The
+  bootstrap (compiling `build.c` into `.smith/program`) is a manifest too, so one runner does both; a program that ran
+  its own graph could not compile itself.
+- **Simplicity.** The program runs `build()` on every `smith build` (globs, options and captures are read fresh), so
+  it cannot also be a long-lived scheduler: when a `smith_defer` need changes mid-build, the build has to run the program
+  again and read its new manifest. That is one loop with a file between the two; with the graph in the program, it would
+  be `build()` run twice in one process, whose arena and tables are file-level statics.
+- **Speed.** Reading the manifest costs 4 ms for game's 886 KB (1,378 edges); the no-op build is dominated by running
+  `build()` (about 100 ms in game), which a program-side executor would not avoid. The executor is compiled with smith, at
+  the flags smith is built with, and not at `-O0 -g` as every project's build program is.
+
+### What is kept between builds
+
+Two files in the manifest's `builddir` (`.smith/`), text, appended to as jobs end and compacted when more than two
+thirds of the lines are dead:
+- `.smith/.smith_log`: `# smith log 1`, then one line per output and run, `<start ms> <end ms> <mtime ns> <hash> <path>`.
+  The hash is FNV-1a 64 of the command. The mtime is the time the command started, on the file system's clock (ninja's own rule:
+  an input modified after that, even while the command ran, makes the output out of date); a restat step that changed
+  an output records that output's time if it is later. This is `.ninja_log`'s job (a changed command reruns the step). The durations are kept
+  for whoever wants them; the jobs start in ninja's order, the longest chain of commands after them first.
+- `.smith/.smith_deps`: `# smith deps 1`, then per output `<mtime ns> <count> <path>` and `<count>` lines, one path
+  each: what the depfile named. This is `.ninja_deps`'s job. The depfile itself is removed once read.
+
+A line cut short by a crash is not read, and a file of another version is as good as none. **An upgrade from a tree that
+ninja built is correct:** the executor never reads `.ninja_log` or `.ninja_deps`, so every output has no log line and the
+first build runs every command. After that nothing differs. The other way works too: with `SMITH_NINJA` set, ninja
+finds its own logs, which are older than the files smith made since, so it reruns at most what its log says changed; a
+tree is never left wrong, at worst built twice.
+
+### Keep writing `build.ninja`
+
+Yes. It is the executor's input, so it is not a fallback format that can be dropped; what stays optional is ninja. Keep
+`SMITH_NINJA=<ninja>` for one release cycle: it costs 20 lines in `smith.c`, and it lets anyone check the executor
+against ninja on the same file (`tests/build.sh` and the generated-graph test do). Remove it, and the "ninja language"
+claims in `docs/build-c.md`, when the manifest's last producer other than smith is gone.
+
+### Parallelism, and a job that is not a process
+
+`-j` is ninja's default, the cores plus 2 (3 for two cores, 2 for one), and at most 128. Each running job has a slot
+with a `SmithJob`, a `SmithJobKind` (`start`, `poll`, `stop`: three functions) and 256 MiB of address space for its
+output, reset when it ends. The loop is: start ready jobs while there are slots and the pools allow, wait on the io
+loop (50 ms at most, so a signal is seen), poll every running job, finish those that ended. A job that runs in this
+process later (a compile with clang inside smith, #1) is another `SmithJobKind`: `start` queues it on a thread or a
+worker, `poll` looks at its done flag (a user event on the kqueue wakes the loop), `stop` cancels it; the planner,
+the pools, the progress line and the log do not change. Threads against worker processes for #1 is not decided here.
+
+### What ninja does, and what smith does with it
+
+| ninja | smith |
+|---|---|
+| rebuild when an output is missing, older than an input, or its command changed | kept: the same rules, including ninja's for `restat` outputs and for `generator` edges |
+| depfiles (`deps = gcc`) | kept: read when the command ends, kept in `.smith_deps`, removed; a missing depfile is no dependencies; one that does not name the first output fails the step |
+| `restat` | kept: an unchanged output cleans the edges that depended on it only, and the time kept is the newest input's |
+| `generator`, manifest regeneration and reload | kept: the manifest's own edge is built first, and the manifest is read again when that ran (8 times at most) |
+| order-only and implicit inputs, multiple outputs, `phony`, `default` | kept |
+| pools, `console` | kept; a console job gets the terminal and the build's stdin, and the progress line and other output wait until it ends |
+| `-j N`, `-k N`, `-n`, `-v`, `--quiet` | kept; the first failure stops starting jobs, `-k N` stops at the N-th, `-k 0` never |
+| the progress line | kept: `[finished/total] description` (the command with `-v`), overwritten in place on a terminal and one line per job on a pipe; the total falls when a restat step cleans edges |
+| each job's output printed whole | kept: stdout and stderr in one pipe, printed when the job ends; a job whose output outgrows its 256 MiB is cut, with a note |
+| a failing job's command and output | kept: `FAILED: [code=N] <outputs>`, the command, the output; `N` is 128 plus the signal for a killed job |
+| Ctrl-C | kept: SIGINT, SIGTERM and SIGHUP stop starting jobs, send the signal to every job's process group (escalating to SIGKILL after 5 s), remove the half-written outputs (as ninja does: those that changed, and everything a depfile step wrote), and exit 128 plus the signal (130 for Ctrl-C) |
+| `-t clean [-g] [-r rule] [targets]`, `-t compdb [rules]`, `-t targets [all\|rule R]`, `-t commands <targets>`, `-t deps [targets]`, `-t cleandead` | kept, with ninja's output; `cleandead` leaves a file that the manifest still names |
+| `.ninja_log` / `.ninja_deps` (binary deps log) | replaced by `.smith_log` / `.smith_deps` (text), above |
+| the default job count | the same: cores + 2 |
+| `-d explain` | kept: says on stderr why each edge is dirty |
+| `-l`, `-w`, other `-d` modes | read and ignored |
+| `-t graph`, `browse`, `query`, `inputs`, `rules`, `recompact`, `restat`, `msvc`, `multi-inputs`, `-f`, `-C` | dropped: no project here uses them (`-f` and `-C` were already refused) |
+| `include`, `subninja`, `rspfile`, `deps = msvc`, `dyndep`, `$in_newline`, one rule's variable naming another's | dropped: smith writes none of them. `SMITH_NINJA` runs a manifest that has them |
+| `NINJA_STATUS`, colour | dropped |
+| output capture limit | new: 256 MiB per running job, at most 128 jobs |
+| a console job's stdin | changed for the better: ninja's console jobs keep it too, and so does smith's (checkers' `smith build run` reads it) |
+
+`smith --smith-exec <manifest> [flags and targets]` runs any manifest the executor reads, in the current folder, with no
+`build.c`; the tests use it.
+
+### Measured
+
+On macOS with Homebrew's clang 23.1.3, the same smith run both ways, in two trees of each project at one commit (one
+tree cannot serve both: each way sees the other's outputs as built behind its back, and rebuilds), the runs interleaved
+because other builds ran on the machine too, which makes the long ones noisy. The executor is the second number.
+
+| | ninja | executor |
+|---|---|---|
+| no-op, game (30 runs, median) | 109 ms | 110 ms |
+| no-op, learner | 63 ms | 62 ms |
+| no-op, smith | 15 ms | 11 ms |
+| no-op, checkers | 15 ms | 12 ms |
+| clean build of the default target, smith (3 runs, median) | 672 ms | 662 ms |
+| clean, checkers | 109 ms | 107 ms |
+| clean, learner | 11.57 s | 11.72 s |
+| clean, game (5 runs, fastest, machine busy) | 5.32 s | 5.46 s |
+| `check test` from clean, learner (4 runs, fastest, machine busy) | 35.17 s | 35.13 s |
+| 1,000 jobs of `true && touch`, `-j8` (median) | 655 ms | 670 ms |
+
+game's no-op is about 100 ms of `build()` and 5 ms of executor (ninja: 8 ms); the others are the same shape. A job costs
+the scheduler about 0.65 ms, the process it starts, under ninja and the executor alike. Jobs start in ninja's order (the
+longest chain of commands after them first): ordering by the logged durations was tried and was faster in game's clean
+build and slower in learner's `check test`, each by under 10 %, so it was dropped. Touching one header gave the same
+jobs under both (game's `math.h`: 172 for the default target and 309 for `check`; learner: 7 and 3; smith: 3). Built
+twice from clean in one folder, game (548 files), learner (243) and checkers differ only in their linked binaries
+(the linker's UUID and the object files' times, 48 bytes each, as between two ninja builds) and learner's metallibs (not
+reproducible); every object and generated file is the same.
+
+### How it was checked
+
+- `tests/build.sh` has 89 checks of the executor (a failed job, `-k`, depfiles, restat, pools, parallel output, Ctrl-C,
+  the tools, malformed manifests, the logs and the upgrade from ninja); `tests/io.c` has the process capture.
+- `python3 tests/ninja_compare.py <smith>` compares the executor with ninja on random manifests (plain, restat, depfile
+  and multi-output steps, implicit and order-only inputs, aliases, defaults), each edited at random between builds (a
+  source changed or only touched, an output deleted or touched, a header a depfile named, a depfile's list, a command, a
+  single target asked for) and built with both: the commands run and the files made must be the same in every build. It
+  needs ninja, so it is run by hand when the executor changes, not by `smith build test`.
 
 ## Two layers
 
@@ -221,7 +350,7 @@ const char *cmake = smith_package(b, &(SmithPackage){
   killed fetch leaves only `.tmp-*` names, which nothing reads.
 - **Errors:** a wrong hash names the URL, the expected hash and the actual one. `-DOFFLINE` makes a package missing from
   the cache an error that names its URL, with no fetch. build.c runs on every `smith build`, so a package is fetched
-  when build.c asks for it, before ninja runs.
+  when build.c asks for it, before the executor runs.
 - **`smith fetch <url>`** downloads the archive, prints `.hash = "sha256:...",` to paste into build.c, and leaves the
   package in the cache.
 - **Download** is smith's own HTTPS client (`lib/http.c` over `io.net`, Network.framework with the system's trust;
@@ -328,7 +457,7 @@ its last use (a package's stamp; a module folder's newest file). `smith cache cl
 fetch`, `cache` is recognised only as the exact first argument.
 
 **A build holds the caches.** `smith build` takes a shared `flock` on `<cache>/smith/lock` and keeps the descriptor open
-through `exec`, so ninja and every compile inherit it and the lock lasts as long as the build's processes (the system
+in smith, which every job inherits, so the lock lasts as long as the build's processes (the system
 drops it if smith is killed). `smith cache clean` takes the lock exclusively without waiting, and refuses with exit
 status 2 while any build, in any project or worktree, holds it. That costs one `open` and one `flock` per build.
 Showing the caches never takes the lock, and pruning does not need it: it is safe as above.
@@ -361,7 +490,7 @@ void build(SmithBuild *b) {
   and the `-MD` depfile of every source then lists every header of that folder, so editing one header rebuilds every
   source that includes any header there. With one module per header (build.c's `smith_glob` finds them, so nobody lists
   them) the depfile lists exactly the headers a source imports, directly and through other headers, and a rebuild is
-  what ninja already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
+  what the build already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
   *` makes a header's own includes visible to its users, as textual inclusion did.
 - **The flags:** `-fmodules -fmodules-cache-path=<cache>/smith/modules -fmodules-prune-interval=604800
   -fmodules-prune-after=2678400` and one `-fmodule-map-file=<map>` per map. `<cache>` is `$XDG_CACHE_HOME`, or
@@ -372,10 +501,10 @@ void build(SmithBuild *b) {
   import it; editing or adding a header in a folder rewrites its map, which rebuilds the sources that load it. A flag
   that changes a module's hash (a `-D`, the standard, a sanitizer) changes the command, so the objects rebuild and
   clang builds the module again under the new hash.
-- **compile_commands.json keeps the module flags**, so the editor sees what the build does. Use Homebrew's clangd with no
+- **compile_commands.json keeps the module flags**, so the editor sees what the build does. Use `smith lsp` (clangd) with no
   `--query-driver`: with it, clangd cannot build the SDK's modules (not even `#include <stdint.h>`: the SDK's map
   requires a feature that the extracted `-isystem` paths clear). Measured on game's `src/platform/macos.m` with its real
-  module flags: Homebrew's clangd without `--query-driver` reports 0 errors, with it 1 (`module
+  module flags: clangd without `--query-driver` reports 0 errors, with it 1 (`module
   '_c_standard_library_obsolete' requires feature 'found_incompatible_headers__check_search_paths'`).
 - **Isolation, and `.textual`.** A header is compiled alone when it is first imported, so one that works only after
   another include, or after a `#define` before it, fails there:
@@ -393,8 +522,8 @@ void build(SmithBuild *b) {
   AVFoundation (game's `src/platform/macos.m`) compiles in 0.19 s instead of 0.67 s with a warm cache; filling the cache
   the first time costs 2 to 4 s and about 70 MB per configuration. Unity builds with a few translation units gain little,
   because the parse is not their critical path.
-- **Explicit modules** (smith builds each `.pcm` as a ninja step and passes `-fmodule-file=`) are not implemented.
-  They would make the module graph part of ninja's graph: no cache locking, exact rebuilds of the module files, a
+- **Explicit modules** (smith builds each `.pcm` as a step and passes `-fmodule-file=`) are not implemented.
+  They would make the module graph part of the build graph: no cache locking, exact rebuilds of the module files, a
   reproducible build, and a depfile that needs no help. They cost build.c a model of the module dependencies (which
   module imports which), which clang's scanner (`clang-scan-deps`) can supply.
 
@@ -491,7 +620,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and checks the same properties either way, so `smith build test` stays fast and `smith build test -DFULL` is the
   slow pass. It replaces a second task such as game's `test-slow`: that becomes `smith build test -DFULL`.
 - **`.inputs`: files the tests read when they run**, such as compiled shaders, baked meshes and fixtures. They are the
-  test task's inputs after the runner, so ninja builds them first and a change to one reruns the tests. The tests read
+  test task's inputs after the runner, so they are built first and a change to one reruns the tests. The tests read
   them by their path, relative to the project's root, where `smith build` runs them.
 - **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
   replays exactly.
@@ -530,7 +659,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - **`.objects` must include smith's arena and random.** The test library uses both, and they are compiled once, by the
   project, with its flags: `smith_tests` fails and says which `smith_library` to add when one is missing.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
-  flags (Homebrew's `clangd --check` on a test file reports no errors).
+  flags (`smith lsp --check` on a test file reports no errors).
 
 ## The API
 
@@ -662,16 +791,16 @@ const char *smith_replace_extension(SmithBuild *b, const char *path, const char 
 // `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
 // may call any function here, smith_defer included. The program calls `more` itself while it runs, for each call whose
 // needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
-// regeneration edge on every call's needs, so ninja builds the needs, runs the program again with them in place, and
-// reloads. A pending `more` may be the one that calls smith_default.
+// regeneration edge on every call's needs, so the executor builds the needs, runs the program again with them in place,
+// and reloads. A pending `more` may be the one that calls smith_default.
 void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuild *b));
 // One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
 // is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
 // missing file or one over 16 MiB is an error.
 const char *const *smith_lines(SmithBuild *b, const char *path);
 
-// Steps written as C functions. A step or task with .run (and no .command) calls it when ninja runs the step. The
-// step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
+// Steps written as C functions. A step or task with .run (and no .command) calls it when the executor runs the step.
+// The step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
 // <path>... --arg <word>...`, where <function> is the function's address minus the address of a fixed function in the
 // program, in hex (the program is each .run edge's implicit input, so the offset is valid for the run that uses it).
 // With --run the program does not call build() or any smith_defer callback: it makes a SmithBuild (os, arch, root,
@@ -757,7 +886,7 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
 // most once a week) and one
 // `-fmodule-map-file=` per map, before the .flags; the -MD depfile then lists the maps and the headers imported, so
 // editing a header rebuilds exactly the sources that import it. compile_commands.json keeps these flags, so the
-// editor sees exactly what the build does (Homebrew's clangd, without --query-driver, builds the modules).
+// editor sees exactly what the build does (`smith lsp`, without --query-driver, builds the modules).
 // A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed
 // in .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
 typedef struct {
@@ -794,7 +923,7 @@ typedef struct {
 //   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
 //     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink) and the boolean -DFULL (--full), each read with
 //     smith_option_value or smith_option, so a project that reads the same name gets the same value. .inputs are
-//     the task's inputs after the runner, so ninja builds them before the tests run and a change to one reruns them.
+//     the task's inputs after the runner, so they are built before the tests run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
@@ -823,19 +952,19 @@ Rules:
 ### C functions as steps (`.run`)
 
 A recipe that is a program, such as game's `check-symbols` or `check-libc`, is a C function in build.c. It reads build
-outputs (objects, programs), so it runs during the build, after they exist; ninja calls it as a step.
+outputs (objects, programs), so it runs during the build, after they exist; the executor runs it as a step.
 
 - **The generator rule.** The edge's command is
   `.smith/program --run <function> [--input <path>]... [--output <path>]... [--arg <word>]...`, followed by the stamp's
   `&& touch` for a step with no outputs. `<function>` is the function's address minus the address of a fixed function in
-  the runtime, in hex. Both are in the same executable, and ninja reruns every `.run` step whenever that executable
+  the runtime, in hex. Both are in the same executable, and the executor reruns every `.run` step whenever that executable
   changes (it is each `.run` edge's implicit input, so editing build.c reruns every `.run` step: conservative and
   correct, not minimal), so the offset is valid for the run that uses it. Words are quoted as in any command. A task
   has no `--output`. Because the command carries the step's whole data, a change in `.inputs` or `.args` reruns the
   step.
 - **No replay.** `--run` does not call `build()` or any `smith_defer` callback. It makes a `SmithBuild` (os, arch,
   root, cpus, a fresh arena) and a `SmithRun` from the words, checks with `dladdr` that the address is a function of
-  the executable itself (`SMITH_ASSERT`; a failure is a bug), calls the function and exits with its result, so ninja
+  the executable itself (`SMITH_ASSERT`; a failure is a bug), calls the function and exits with its result, so the executor
   fails the step and nothing after it runs. An earlier design replayed `build()` for every `.run` step, which cost 79
   ms per C step in game (`build()` ran brew, git twice and xcrun each time) and let a function depend on state `build()`
   happened to set, or see a different build if `git status` changed in between.
@@ -866,13 +995,13 @@ outputs (objects, programs), so it runs during the build, after they exist; ninj
 - **A failed `.run` step names itself.** The command also carries `--description <text>` (the step's `.description`, or
   its first output, or a task's name) and, for a step with a `.depfile`, `--depfile <path>`. When the function returns
   non-zero, after it has printed, the program prints `smith: <description>: failed (status N)` to stderr as its last
-  line. ninja itself prints the description as the progress line (`[1/1] <description>`), then on failure `FAILED:
+  line. the executor itself prints the description as the progress line (`[1/1] <description>`), then on failure `FAILED:
   [code=N] <outputs>`, the command (`.smith/program --run ...`) and the step's output, in a smart terminal, `TERM=dumb`
   and a pipe alike (a smart terminal overwrites the progress line); it does not repeat the description, so the line
   smith adds is the one that says which check failed and with what status.
 - **What a `.run` step read.** `smith_run_depend(run, path)` records a path; when the function returns, the program
   writes the step's `.depfile` as `<first output>: <paths>` (a space escaped as `\ `, `#` as `\#`, `$` as `$$`), always,
-  even with no paths, so ninja never reads a stale one. A path recorded by a step with no `.depfile` is an error, and
+  even with no paths, so a stale one is never read. A path recorded by a step with no `.depfile` is an error, and
   so is a `.depfile` on a `.run` task (it has no output to name). The step then reruns when a recorded file changes,
   for files the function learned at run time (named inside one of its inputs).
 - **`.stamp`.** A step whose result is only that it passed names its stamp: `.stamp` is the step's one output (`$out`,
@@ -880,7 +1009,7 @@ outputs (objects, programs), so it runs during the build, after they exist; ninj
   it as its target (`-MT`), so a syntax check needs no `sh -c '"$@" && touch "$0"'`. `.stamp` with `.outputs` is an
   error (a returned step holds `.outputs = {stamp}`, which is accepted), and so is `.stamp` on a task. A failing step
   leaves no stamp.
-- `.pool = "console"` gives the step the terminal. ninja allows one console step at a time.
+- `.pool = "console"` gives the step the terminal. the executor allows one console step at a time, and it keeps the build's own stdin.
 - The calls that read the outside world are read again on every `smith build`, because the program reruns each time.
 - `smith_glob` takes a list of patterns, so one pattern is a list of one: `smith_glob(b, (const char *[]){"src/*.c",
   nullptr})`. The result is the union, sorted by `strcmp` with each name once, like make's `$(sort $(wildcard a b c))`.
@@ -910,7 +1039,7 @@ Dropped from the proposals of the case agents:
 game's Makefile was ported to a `build.c` of about 1,000 lines. The port worked around these gaps, and each is now in
 the API:
 - **Multi-line command words.** The Makefile's recipes are shell scripts, and the port joined their lines with a
-  heuristic. A word may now hold newlines; smith moves such a command into `.smith/command/<hash>` for ninja.
+  heuristic. A word may now hold newlines; smith moves such a command into `.smith/command/<hash>`.
 - **`smith_write`.** The unity files and the test list are computed by `build.c`, and the Makefile wrote them with a
   temporary file and `cmp`. The mtime now moves only when the content does, with no `.always` step that prints on every
   no-op build.
@@ -972,7 +1101,7 @@ void build(SmithBuild *b) {
 
 - `smith build` builds `checkers` and `compile_commands.json`; `smith build run` builds what is needed, then runs the
   game on the terminal every time; `smith build clean` removes what the Makefile's `clean` removed. `smith build -t
-  clean`, ninja's tool, removes the same three files, because each is a declared output.
+  clean` removes the same three files, because each is a declared output.
 - Compared in one scratch folder, make against `smith build`: the machine code is identical, and `checkers.json` and
   `compile_commands.json` are identical once the temporary object's name is set aside. clang compiles and links in one
   step through a randomly named temporary object, so the binary's UUID, its debug map (that object's name and mtime) and
@@ -1047,19 +1176,19 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
   new manifest is newer than `list`, ninja sees nothing to do, and `output` never appears. Verified, even with a
   different command string. The fix, verified: set the stage 1 manifest's mtime to 1970 after writing it, or call `more`
   only when its needs already exist.
-- **`ninja -n` on a fresh tree shows only stage 1.** A dry run cannot reload the manifest. ninja's `-t` tools and `-n`
-  see whichever manifest is on disk.
+- **`-n` on a fresh tree shows only stage 1.** A dry run cannot reload the manifest. The `-t` tools and `-n`
+  see whichever manifest is on disk (the executor and ninja alike).
 - **A generated `#embed` or `#include` file must be an implicit input**, not left to the depfile. LLVM 23 clang with
   `-MMD -MF` and a missing `#embed` file exits 0, writes a 512-byte object and no `.d` file. Without `-MMD` it is a
   fatal error, and Apple clang 21 fails correctly. With only the depfile, a clean build "succeeded" with 2 edges and
   bake never ran.
-- **`smith build -t cleandead` only knows files in ninja's log.** If `.ninja_log` is deleted, old outputs stay. Its
-  message count did not match its dry run once, so check the files, not the count. A file that smith used to build and
-  the project now keeps as a hand-written source at the same path would be deleted. smith never runs it by itself.
-- The generator edge needs `generator = 1`, so that `ninja -t clean` keeps the manifest.
+- **`smith build -t cleandead` only knows files in the log** (`.smith/.smith_log`). If it is deleted, old outputs stay.
+  A file that smith used to build and the project now keeps as a hand-written source at the same path stays, since the
+  manifest names it (ninja's tool deleted such a file). smith never runs it by itself.
+- The generator edge needs `generator = 1`, so that `-t clean` keeps the manifest.
 - A task named `test` next to a folder named `test` still ran in ninja 1.13.2, but this is not established to be safe.
   So a task is an edge with output `.smith/task/test` plus `build test: phony .smith/task/test`.
-- A value read with `smith_env` ends up in `build.ninja` and `.ninja_log`. That matters if it is a secret.
+- A value read with `smith_env` ends up in `build.ninja` and `.smith/.smith_log`. That matters if it is a secret.
 
 ## Bootstrapping
 
@@ -1091,5 +1220,5 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
 - **`content_hash` versus `restat`.** `restat` cuts off what comes after a step that already ran. `content_hash` would
   stop the step itself, with hash edges generated by smith (case `digest`). Neither covers files found through a
   depfile.
-- **An executor of our own, later.** Study samurai, a C reimplementation of ninja, without vendoring it: it uses malloc.
-  Differential tests against ninja would show where the two differ.
+- **Compiles in the executor's own process (#1).** Today a compile is a process like any job; [The
+  executor](#the-executor) says how a job can later run in this process.
