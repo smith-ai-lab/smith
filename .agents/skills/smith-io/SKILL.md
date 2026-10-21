@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
 | `io.files` | the file system: any path the program is given, absolute or relative |
 | `io.clock` | monotonic and wall time |
 | `io.processes` | spawn, wait, run and capture |
-| `io.args` | `count` and `values` |
+| `io.args` | `count`, `values` and the environment (`smith_args_env`) |
 
 The network comes in the next version as `io.net`. There are no options until a program needs one.
 
@@ -79,6 +79,8 @@ if (text.error.code != 0) {
 
 For simple code: `smith_files_read(files, arena, path)`, `smith_files_write(files, path, data, size)`, `smith_console_print(console, text)`, `smith_console_print_error`, `smith_console_read_line(console, arena)`, `smith_clock_now(clock)` (monotonic ns), `smith_clock_wall(clock)`, `smith_clock_sleep(clock, ns)`, `smith_processes_run(processes, arena, argv)` (stdout, stderr, exit status and signal in a `SmithProcessResult`; a missing program is `ENOENT`).
 
+`smith_console_printf(console, format, ...)` and `smith_console_eprintf` format into a 4 KiB buffer and print (`EMSGSIZE` past it). They are not `[[nodiscard]]`: a report of a hundred lines has nowhere to say that stdout closed.
+
 Reading lines to the end of input is a loop with a bound and an end check, which the fake console makes testable:
 
 ```c
@@ -88,6 +90,29 @@ for (size_t turn = 0; turn < turn_max; turn++) {
     ...
 }
 ```
+
+## Folders, appends, maps, the environment
+
+These block and run at once (they do not queue behind pending asynchronous file operations), on the real io and the fake alike:
+
+| Call | Does |
+| --- | --- |
+| `smith_files_info(files, path)` | `folder`, `writable`, `size`; `ENOENT` if nothing is there |
+| `smith_files_list(files, arena, folder)` | entries (`name`, `folder`, `size`) sorted by name, without `.` and `..` |
+| `smith_files_make_folder(files, path)` | like `mkdir -p`; a folder that is there is success |
+| `smith_files_append(files, path, data, size)` | adds to the end, creating the file |
+| `smith_files_create(files, path, data, size)` | creates, and only if there is none: `EEXIST` otherwise, which is how a program makes a unique name |
+| `smith_files_write_atomic(files, path, data, size)` | writes `<path>.tmp` and renames it over the path, so nobody sees half a file |
+| `smith_files_remove(files, path)` | deletes a file (a folder is `EPERM`) |
+| `smith_files_map(files, path)` | maps the file: nothing is read until the memory is touched, so a 150 MB asset costs only the pages used. Private and writable (writes never reach the file), for the life of the program; an empty file is `EINVAL`. The fake gives a copy |
+| `smith_files_resolve(files, arena, path)` | the absolute path with links, `.` and `..` resolved; it must exist |
+| `smith_args_env(&io.args, "NAME")` | the variable's value, or `nullptr`; the real io asks the process each time |
+| `smith_processes_cores(&io.processes)` | how many processes can run at once |
+| `smith_io_carve(&io, capacity)` | a second `SmithArena` out of `io.arena`'s address space (aligned, nothing touched), for arenas with different lifetimes, such as one reset every frame |
+
+Reading a large file with `smith_files_read` copies it into the arena; mapping it does not. Choose the map for assets read in place, the read for text.
+
+A program that runs several copies of itself spawns `args.values[0]` with `smith_processes_spawn`, waits with `smith_processes_wait_async` on all of them in one loop, and gets their results from files they wrote with `smith_files_write_atomic`, in a folder named from `io.key` under `$TMPDIR`; each copy builds what it needs again, since nothing is shared.
 
 ## Asynchronous calls
 
@@ -115,7 +140,7 @@ smith_io_test_add_file(&io, "config.txt", "volume=3\n");
 smith_io_test_add_program(&io, "git", "main\n", 0);
 ```
 
-It is the same `SmithIo`, so code under test cannot tell it from the real one: files are in memory (writes land there too), the console reads the scripted `.input` then reports the end, output is captured (`smith_io_test_output(&io)`, `smith_io_test_errors(&io)`), the clock moves only when `smith_clock_advance(&io.clock, ns)` says so (and `smith_clock_sleep` of a non-zero time is `EDEADLK`, since nothing can wake it), the key comes from `.seed`, programs are scripted, and its memory is your buffer (a quarter holds file contents). `smith_io_run` on it never waits: it completes what is ready now. Errors have the same codes and messages as the real io.
+It is the same `SmithIo`, so code under test cannot tell it from the real one: files are in memory (writes land there too), the console reads the scripted `.input` then reports the end, output is captured (`smith_io_test_output(&io)`, `smith_io_test_errors(&io)`), the clock moves only when `smith_clock_advance(&io.clock, ns)` says so (and `smith_clock_sleep` of a non-zero time is `EDEADLK`, since nothing can wake it), the key comes from `.seed`, programs are scripted, and its memory is your buffer (a quarter holds file contents). `SmithIoTest.environment` (`"NAME=value"` entries) and `.cores` give it an environment and a core count; folders exist as soon as a file is under them, or `smith_files_make_folder` made them (a write into a folder that was never made still succeeds, where the real io says `ENOENT`). `smith_io_run` on it never waits: it completes what is ready now. Errors have the same codes and messages as the real io.
 
 Write the function once against capabilities, call it with `&io.files` from main and with the fake's in a test, and compare. The scripted console drives a line loop to completion including the end of input, which is the bug a program that spins on EOF has.
 

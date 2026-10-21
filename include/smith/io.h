@@ -149,6 +149,8 @@ typedef struct {
 typedef struct {
     size_t count;
     const char *const *values; // values[count] is nullptr
+    const char *const
+        *environment; // the fake's "NAME=value" entries, then nullptr; the real io's is nullptr (see below)
 } SmithArgs;
 
 typedef struct {
@@ -169,6 +171,12 @@ typedef struct {
 // decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
 // failure to reserve memory, stops the program with a message.
 [[nodiscard]] SmithIo smith_io_make(int argc, char **argv);
+
+// A second arena of capacity bytes out of the address space of io.arena, for a program that wants arenas with different
+// lifetimes (one reset every frame, one for the run). It takes the next capacity bytes after what io.arena has used,
+// aligned to smith_arena_align_max, and touches none of them: the pages cost memory only when the new arena is used, so
+// a program can carve hundreds of MiB at start. What io.arena pushes after the carve lands past it.
+[[nodiscard]] SmithArena smith_io_carve(SmithIo *io, size_t capacity);
 
 // Releases the reservation and the event loop. A program need not call it: the process ends.
 void smith_io_close(SmithIo *io);
@@ -191,11 +199,67 @@ size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
 void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, const char *path);
 void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, size_t size);
 
+// The calls below run at once and only block: they do not queue behind asynchronous file operations still pending.
+
+// Adds size bytes to the end of the file, creating it if it is not there.
+[[nodiscard]] SmithError smith_files_append(SmithFiles *files, const char *path, const void *data, size_t size);
+// Creates the file with size bytes, and only if there is none: EEXIST if the path is taken. A program makes a unique
+// name by trying another when it gets EEXIST.
+[[nodiscard]] SmithError smith_files_create(SmithFiles *files, const char *path, const void *data, size_t size);
+// Creates or replaces the file so that nobody sees it half written: the bytes go to "<path>.tmp" and are renamed over
+// the path. A failure leaves the old file as it was.
+[[nodiscard]] SmithError smith_files_write_atomic(SmithFiles *files, const char *path, const void *data, size_t size);
+// Deletes a file (not a folder: EPERM).
+[[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
+// Makes the folder and the ones above it that are missing; one that is there already is success.
+[[nodiscard]] SmithError smith_files_make_folder(SmithFiles *files, const char *path);
+
+typedef struct {
+    SmithError error; // ENOENT if there is nothing at the path
+    bool folder;
+    bool writable; // the program may write here: to a file, or make files in a folder
+    size_t size;   // bytes of a file; 0 for a folder
+} SmithFileInfo;
+// What is at the path (symbolic links followed).
+[[nodiscard]] SmithFileInfo smith_files_info(SmithFiles *files, const char *path);
+
+typedef struct {
+    const char *name; // the name alone, not the path
+    bool folder;
+    size_t size; // bytes of a file; 0 for a folder
+} SmithFileEntry;
+
+typedef struct {
+    SmithError error;
+    const SmithFileEntry *entries; // in the arena, sorted by name, without "." and ".."
+    size_t count;
+} SmithFileList;
+// What is in a folder.
+[[nodiscard]] SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena, const char *folder);
+
+typedef struct {
+    SmithError error;
+    void *data; // page-aligned (aligned to smith_arena_align_max in the fake)
+    size_t size;
+} SmithMapped;
+// Maps the file into the address space instead of reading it: nothing is copied or read until the memory is touched,
+// so a large file costs only the pages used. The mapping is private: writes change the memory and never the file. It
+// lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
+[[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path);
+
+// The absolute path with symbolic links, "." and ".." resolved, in the arena. The path must exist. The fake's root is
+// "/", so a relative path "a/b" there is "/a/b".
+[[nodiscard]] SmithRead smith_files_resolve(SmithFiles *files, SmithArena *arena, const char *path);
+
 // --- console ---
 
 // Writes the text to stdout or stderr, all of it or an error.
 [[nodiscard]] SmithError smith_console_print(SmithConsole *console, const char *text);
 [[nodiscard]] SmithError smith_console_print_error(SmithConsole *console, const char *text);
+// printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
+// Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
+SmithError smith_console_printf(SmithConsole *console, const char *format, ...) __attribute__((format(printf, 2, 3)));
+SmithError smith_console_eprintf(SmithConsole *console, const char *format, ...) __attribute__((format(printf, 2, 3)));
 // The next line of stdin without its newline, in the arena. At the end of the input end is true; a last line with no
 // newline is still returned first.
 [[nodiscard]] SmithRead smith_console_read_line(SmithConsole *console, SmithArena *arena);
@@ -240,11 +304,16 @@ typedef struct {
                                                SmithProcess *process);
 // Completes when the process has exited, with op->exit_status or op->signal.
 void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
+// How many processes can run at once: the machine's logical cores. The fake has what SmithIoTest.cores says, or 1.
+[[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
 
 // --- arguments ---
 
 // The argument i (0 is the program), or nullptr past the end.
 [[nodiscard]] const char *smith_args_get(const SmithArgs *args, size_t i);
+// The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
+// process's environment each time, so a setenv after smith_io_make shows.
+[[nodiscard]] const char *smith_args_env(const SmithArgs *args, const char *name);
 
 // --- the fake io, for tests ---
 
@@ -255,10 +324,12 @@ typedef struct {
     const char *input;       // what stdin holds; nullptr is empty. The console reads it, then reports the end
     const char *const *argv; // the arguments, nullptr-terminated; nullptr for none
     size_t argc;
+    const char *const *environment; // "NAME=value" entries, nullptr-terminated; nullptr for none
+    size_t cores;                   // smith_processes_cores; 0 means 1
 } SmithIoTest;
 
 // Same type as the real one. Files, programs and the console's output are inside the arena: the fake holds up to 64
-// files and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
+// files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
 [[nodiscard]] SmithIo smith_io_make_test(SmithIoTest test);
 // Adds an in-memory file (the text is copied), replacing one of the same path.
 [[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path, const char *text);

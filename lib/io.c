@@ -1,9 +1,12 @@
 #include <smith/io.h>
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <spawn.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,14 +30,19 @@ constexpr size_t smith_io_fake_files_max = 64;
 constexpr size_t smith_io_fake_programs_max = 16;
 constexpr size_t smith_io_fake_capture = (size_t)64 << 10;
 constexpr size_t smith_io_events_max = 16;
+constexpr size_t smith_io_entries_max = (size_t)1 << 20; // entries of one folder
+constexpr size_t smith_io_print_max = 4096;              // what smith_console_printf formats
 constexpr size_t smith_io_chunk = 4096;
-constexpr int smith_io_file_mode = 0b110100100; // rw-r--r--, before the umask
+constexpr int smith_io_folder_mode = 0b111111111; // rwxrwxrwx, before the umask
+constexpr int smith_io_file_mode = 0b110100100;   // rw-r--r--, before the umask
 constexpr uint64_t smith_io_nanoseconds = 1'000'000'000;
 
 typedef struct {
     const char *path;
-    unsigned char *data;
+    unsigned char *data; // capacity bytes: the size bytes of the file and then zeros (a NUL at least)
     size_t size;
+    size_t capacity;
+    bool folder; // a folder made by smith_files_make_folder; the folders of a file's path need no entry
 } SmithFakeFile;
 
 typedef struct {
@@ -58,6 +66,7 @@ typedef struct {
     size_t errors_size;
     uint64_t monotonic;
     int64_t wall;
+    size_t cores;
 } SmithFake;
 
 struct SmithLoop {
@@ -166,6 +175,7 @@ static SmithError smith_fake_capture(SmithFake *fake, bool errors, const char *t
 static SmithError smith_fake_read_file(SmithFake *fake, SmithArena *arena, const char *path, SmithRead *result) {
     SmithFakeFile *file = smith_fake_find(fake, path);
     if (file == nullptr) return smith_error_make(ENOENT, "open", path);
+    if (file->folder) return smith_error_make(EISDIR, "read", path);
     unsigned char *copy = smith_arena_push(arena, file->size + 1, 1);
     if (file->size > 0) memcpy(copy, file->data, file->size);
     result->data = (const char *)copy;
@@ -173,18 +183,155 @@ static SmithError smith_fake_read_file(SmithFake *fake, SmithArena *arena, const
     return (SmithError){};
 }
 
-static SmithError smith_fake_write_file(SmithFake *fake, const char *path, const void *data, size_t size) {
+// The entry for a path, made if it is not there. nullptr when the fake holds as many files as it can.
+static SmithFakeFile *smith_fake_entry(SmithFake *fake, const char *path) {
     SmithFakeFile *file = smith_fake_find(fake, path);
-    if (file == nullptr) {
-        if (fake->file_count == smith_io_fake_files_max) return smith_error_make(ENOSPC, "create", path);
-        file = &fake->files[fake->file_count++];
-        char *name = smith_arena_push(&fake->storage, strlen(path) + 1, 1);
-        memcpy(name, path, strlen(path));
-        file->path = name;
-    }
+    if (file != nullptr) return file;
+    if (fake->file_count == smith_io_fake_files_max) return nullptr;
+    file = &fake->files[fake->file_count++];
+    *file = (SmithFakeFile){};
+    char *name = smith_arena_push(&fake->storage, strlen(path) + 1, 1);
+    memcpy(name, path, strlen(path));
+    file->path = name;
+    return file;
+}
+
+static SmithError smith_fake_write_file(SmithFake *fake, const char *path, const void *data, size_t size) {
+    SmithFakeFile *file = smith_fake_entry(fake, path);
+    if (file == nullptr) return smith_error_make(ENOSPC, "create", path);
     file->data = smith_arena_push(&fake->storage, size + 1, 1);
     if (size > 0) memcpy(file->data, data, size);
     file->size = size;
+    file->capacity = size + 1;
+    file->folder = false;
+    return (SmithError){};
+}
+
+static SmithError smith_fake_append_file(SmithFake *fake, const char *path, const void *data, size_t size) {
+    SmithFakeFile *file = smith_fake_entry(fake, path);
+    if (file == nullptr) return smith_error_make(ENOSPC, "create", path);
+    if (file->folder) return smith_error_make(EISDIR, "open", path);
+    if (file->data == nullptr || file->size + size + 1 > file->capacity) { // grows by doubling
+        size_t wanted = file->capacity * 2 > file->size + size + 1 ? file->capacity * 2 : file->size + size + 1;
+        unsigned char *bigger = smith_arena_push(&fake->storage, wanted, 1);
+        if (file->size > 0) memcpy(bigger, file->data, file->size);
+        file->data = bigger;
+        file->capacity = wanted;
+    }
+    if (size > 0) memcpy(file->data + file->size, data, size);
+    file->size += size;
+    file->data[file->size] = 0;
+    return (SmithError){};
+}
+
+// The length of a folder's path without trailing slashes; "." and "" are the fake's root, of length 0.
+static size_t smith_fake_folder_length(const char *path) {
+    size_t length = strlen(path);
+    while (length > 1 && path[length - 1] == '/')
+        length -= 1;
+    if (length == 0 || (length == 1 && path[0] == '.')) return 0;
+    return length;
+}
+
+// Whether a folder is at the path: made by smith_files_make_folder, or holding a file or folder of the fake.
+static bool smith_fake_folder_exists(const SmithFake *fake, const char *path) {
+    size_t length = smith_fake_folder_length(path);
+    if (length == 0) return true;
+    for (size_t i = 0; i < fake->file_count; i++) {
+        const char *other = fake->files[i].path;
+        size_t other_length = strlen(other);
+        if (fake->files[i].folder && other_length == length && strncmp(other, path, length) == 0) return true;
+        if (other_length > length && strncmp(other, path, length) == 0 && other[length] == '/') return true;
+    }
+    return false;
+}
+
+static SmithFileInfo smith_fake_info(const SmithFake *fake, const char *path) {
+    SmithFileInfo info = {.writable = true};
+    for (size_t i = 0; i < fake->file_count; i++) {
+        if (strcmp(fake->files[i].path, path) == 0 && !fake->files[i].folder) {
+            info.size = fake->files[i].size;
+            return info;
+        }
+    }
+    if (smith_fake_folder_exists(fake, path)) {
+        info.folder = true;
+        return info;
+    }
+    info.writable = false;
+    info.error = smith_error_make(ENOENT, "stat", path);
+    return info;
+}
+
+static SmithError smith_fake_make_folder(SmithFake *fake, const char *path) {
+    SmithFileInfo info = smith_fake_info(fake, path);
+    if (info.error.code == 0) return info.folder ? (SmithError){} : smith_error_make(EEXIST, "mkdir", path);
+    SmithFakeFile *file = smith_fake_entry(fake, path);
+    if (file == nullptr) return smith_error_make(ENOSPC, "mkdir", path);
+    file->folder = true;
+    return (SmithError){};
+}
+
+static SmithError smith_fake_remove(SmithFake *fake, const char *path) {
+    for (size_t i = 0; i < fake->file_count; i++) {
+        if (strcmp(fake->files[i].path, path) != 0) continue;
+        if (fake->files[i].folder) return smith_error_make(EPERM, "remove", path);
+        for (size_t j = i + 1; j < fake->file_count; j++)
+            fake->files[j - 1] = fake->files[j];
+        fake->file_count -= 1;
+        return (SmithError){};
+    }
+    return smith_error_make(smith_fake_folder_exists(fake, path) ? EPERM : ENOENT, "remove", path);
+}
+
+static int smith_entry_compare(const void *a, const void *b) {
+    return strcmp(((const SmithFileEntry *)a)->name, ((const SmithFileEntry *)b)->name);
+}
+
+// Adds what a path inside the listed folder shows there: its first name, a folder if the path goes on or is a folder.
+static void smith_fake_list_add(SmithArena *arena, SmithFileList *list, SmithFileEntry *entries,
+                                const SmithFakeFile *file, const char *rest) {
+    const char *slash = strchr(rest, '/');
+    size_t name_length = slash != nullptr ? (size_t)(slash - rest) : strlen(rest);
+    if (name_length == 0) return;
+    size_t at = 0;
+    for (; at < list->count; at++) {
+        if (strncmp(entries[at].name, rest, name_length) == 0 && entries[at].name[name_length] == 0) break;
+    }
+    if (at == list->count) {
+        char *name = smith_arena_push(arena, name_length + 1, 1);
+        memcpy(name, rest, name_length);
+        entries[list->count++].name = name;
+    }
+    entries[at].folder = entries[at].folder || slash != nullptr || file->folder;
+    entries[at].size = entries[at].folder ? 0 : file->size;
+}
+
+static SmithFileList smith_fake_list(SmithFake *fake, SmithArena *arena, const char *folder) {
+    SmithFileList list = {};
+    if (!smith_fake_folder_exists(fake, folder)) {
+        list.error = smith_error_make(ENOENT, "open", folder);
+        return list;
+    }
+    size_t length = smith_fake_folder_length(folder);
+    SmithFileEntry *entries = SMITH_ARENA_PUSH_ARRAY(arena, SmithFileEntry, smith_io_fake_files_max + 1);
+    for (size_t i = 0; i < fake->file_count; i++) {
+        const SmithFakeFile *file = &fake->files[i];
+        if (length > 0 && !(strncmp(file->path, folder, length) == 0 && file->path[length] == '/')) continue;
+        smith_fake_list_add(arena, &list, entries, file, file->path + (length > 0 ? length + 1 : 0));
+    }
+    qsort(entries, list.count, sizeof *entries, smith_entry_compare);
+    list.entries = entries;
+    return list;
+}
+
+static SmithError smith_fake_map(SmithFake *fake, const char *path, SmithMapped *mapped) {
+    SmithFakeFile *file = smith_fake_find(fake, path);
+    if (file == nullptr || file->folder) return smith_error_make(ENOENT, "open", path);
+    if (file->size == 0) return smith_error_make(EINVAL, "map", path);
+    mapped->data = smith_arena_push(&fake->storage, file->size, smith_arena_align_max);
+    memcpy(mapped->data, file->data, file->size);
+    mapped->size = file->size;
     return (SmithError){};
 }
 
@@ -220,6 +367,134 @@ static SmithError smith_real_write_file(const char *path, const void *data, size
     if (close(descriptor) != 0 && code == 0) code = errno;
     return smith_error_make(code, "write", path);
 }
+
+// Opens path with the flags (writing, and what makes or keeps the file), writes all of data and closes.
+static SmithError smith_real_put(const char *path, int flags, const void *data, size_t size) {
+    int descriptor = open(path, flags, smith_io_file_mode);
+    if (descriptor < 0) return smith_error_make(errno, "open", path);
+    int code = smith_write_all(descriptor, data, size);
+    if (close(descriptor) != 0 && code == 0) code = errno;
+    return smith_error_make(code, "write", path);
+}
+
+// Writes "<path>.tmp" and renames it over the path, so the path holds the old file or the whole new one.
+static SmithError smith_real_write_atomic(const char *path, const void *data, size_t size) {
+    char temporary[PATH_MAX];
+    int length = snprintf(temporary, sizeof temporary, "%s.tmp", path);
+    if (length < 0 || (size_t)length >= sizeof temporary) return smith_error_make(ENAMETOOLONG, "write", path);
+    SmithError error = smith_real_put(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, data, size);
+    if (error.code == 0 && rename(temporary, path) != 0) error = smith_error_make(errno, "rename", path);
+    if (error.code != 0) unlink(temporary);
+    return error;
+}
+
+// <sys/stat.h> writes S_ISDIR's masks as octal literals, which C2y deprecates; the warning is about the SDK's macros.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-octal-literals"
+
+// mkdir -p: each folder of the path in turn; a folder that is there is fine, a file in the way is EEXIST.
+static SmithError smith_real_make_folder(const char *path) {
+    char partial[PATH_MAX];
+    size_t length = strlen(path);
+    if (length == 0 || length >= sizeof partial)
+        return smith_error_make(length == 0 ? ENOENT : ENAMETOOLONG, "mkdir", path);
+    memcpy(partial, path, length + 1);
+    for (size_t i = 1; i <= length; i++) {
+        if (partial[i] != '/' && partial[i] != 0) continue;
+        char kept = partial[i];
+        partial[i] = 0;
+        struct stat info = {};
+        if (mkdir(partial, smith_io_folder_mode) != 0) {
+            int code = errno;
+            if (code != EEXIST || stat(partial, &info) != 0 || !S_ISDIR(info.st_mode)) {
+                return smith_error_make(code, "mkdir", path);
+            }
+        }
+        partial[i] = kept;
+    }
+    return (SmithError){};
+}
+
+static SmithFileInfo smith_real_info(const char *path) {
+    SmithFileInfo info = {};
+    struct stat status = {};
+    if (stat(path, &status) != 0) {
+        info.error = smith_error_make(errno, "stat", path);
+        return info;
+    }
+    info.folder = S_ISDIR(status.st_mode);
+    info.size = info.folder ? 0 : (size_t)status.st_size;
+    info.writable = access(path, W_OK) == 0;
+    return info;
+}
+
+// Grows the entries array by doubling, the old block staying behind in the arena.
+static SmithFileEntry *smith_real_entries_grow(SmithArena *arena, SmithFileEntry *entries, size_t count,
+                                               size_t *capacity) {
+    size_t wanted = *capacity == 0 ? 64 : *capacity * 2;
+    SmithFileEntry *bigger = SMITH_ARENA_PUSH_ARRAY(arena, SmithFileEntry, wanted);
+    if (count > 0) memcpy(bigger, entries, count * sizeof *entries);
+    *capacity = wanted;
+    return bigger;
+}
+
+static SmithFileList smith_real_list(SmithArena *arena, const char *folder) {
+    SmithFileList list = {};
+    DIR *directory = opendir(folder);
+    if (directory == nullptr) {
+        list.error = smith_error_make(errno, "open", folder);
+        return list;
+    }
+    SmithFileEntry *entries = nullptr;
+    size_t capacity = 0;
+    for (size_t i = 0; i < smith_io_entries_max; i++) { // each round reads an entry or ends
+        struct dirent *item = readdir(directory);
+        if (item == nullptr) break;
+        if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0) continue;
+        if (list.count == capacity) entries = smith_real_entries_grow(arena, entries, list.count, &capacity);
+        struct stat status = {};
+        bool known = fstatat(dirfd(directory), item->d_name, &status, 0) == 0;
+        size_t length = strlen(item->d_name);
+        char *name = smith_arena_push(arena, length + 1, 1);
+        memcpy(name, item->d_name, length);
+        entries[list.count++] = (SmithFileEntry){
+            .name = name,
+            .folder = known && S_ISDIR(status.st_mode),
+            .size = known && !S_ISDIR(status.st_mode) ? (size_t)status.st_size : 0,
+        };
+    }
+    closedir(directory);
+    if (list.count > 1) qsort(entries, list.count, sizeof *entries, smith_entry_compare);
+    list.entries = entries;
+    return list;
+}
+
+static SmithMapped smith_real_map(const char *path) {
+    SmithMapped mapped = {};
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) {
+        mapped.error = smith_error_make(errno, "open", path);
+        return mapped;
+    }
+    struct stat info = {};
+    if (fstat(descriptor, &info) != 0) {
+        mapped.error = smith_error_make(errno, "stat", path);
+    } else if (info.st_size <= 0) {
+        mapped.error = smith_error_make(EINVAL, "map", path);
+    } else {
+        void *bytes = mmap(nullptr, (size_t)info.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, descriptor, 0);
+        if (bytes == MAP_FAILED) {
+            mapped.error = smith_error_make(errno, "map", path);
+        } else {
+            mapped.data = bytes;
+            mapped.size = (size_t)info.st_size;
+        }
+    }
+    close(descriptor);
+    return mapped;
+}
+
+#pragma clang diagnostic pop
 
 // ---------------------------------------------------------------- the console's input
 
@@ -523,6 +798,85 @@ SmithError smith_files_write(SmithFiles *files, const char *path, const void *da
     return op.error;
 }
 
+SmithError smith_files_append(SmithFiles *files, const char *path, const void *data, size_t size) {
+    assert(files != nullptr && path != nullptr && (data != nullptr || size == 0));
+    if (files->loop->fake != nullptr) return smith_fake_append_file(files->loop->fake, path, data, size);
+    return smith_real_put(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, data, size);
+}
+
+SmithError smith_files_create(SmithFiles *files, const char *path, const void *data, size_t size) {
+    assert(files != nullptr && path != nullptr && (data != nullptr || size == 0));
+    if (files->loop->fake != nullptr) {
+        if (smith_fake_find(files->loop->fake, path) != nullptr) return smith_error_make(EEXIST, "open", path);
+        return smith_fake_write_file(files->loop->fake, path, data, size);
+    }
+    return smith_real_put(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, data, size);
+}
+
+SmithError smith_files_write_atomic(SmithFiles *files, const char *path, const void *data, size_t size) {
+    assert(files != nullptr && path != nullptr && (data != nullptr || size == 0));
+    if (files->loop->fake != nullptr) return smith_fake_write_file(files->loop->fake, path, data, size);
+    return smith_real_write_atomic(path, data, size);
+}
+
+SmithError smith_files_remove(SmithFiles *files, const char *path) {
+    assert(files != nullptr && path != nullptr);
+    if (files->loop->fake != nullptr) return smith_fake_remove(files->loop->fake, path);
+    return unlink(path) == 0 ? (SmithError){} : smith_error_make(errno, "remove", path);
+}
+
+SmithError smith_files_make_folder(SmithFiles *files, const char *path) {
+    assert(files != nullptr && path != nullptr);
+    if (files->loop->fake != nullptr) return smith_fake_make_folder(files->loop->fake, path);
+    return smith_real_make_folder(path);
+}
+
+SmithFileInfo smith_files_info(SmithFiles *files, const char *path) {
+    assert(files != nullptr && path != nullptr);
+    if (files->loop->fake != nullptr) return smith_fake_info(files->loop->fake, path);
+    return smith_real_info(path);
+}
+
+SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena, const char *folder) {
+    assert(files != nullptr && arena != nullptr && folder != nullptr);
+    if (files->loop->fake != nullptr) return smith_fake_list(files->loop->fake, arena, folder);
+    return smith_real_list(arena, folder);
+}
+
+SmithMapped smith_files_map(SmithFiles *files, const char *path) {
+    assert(files != nullptr && path != nullptr);
+    SmithMapped mapped = {};
+    if (files->loop->fake != nullptr) {
+        mapped.error = smith_fake_map(files->loop->fake, path, &mapped);
+        return mapped;
+    }
+    return smith_real_map(path);
+}
+
+SmithRead smith_files_resolve(SmithFiles *files, SmithArena *arena, const char *path) {
+    assert(files != nullptr && arena != nullptr && path != nullptr);
+    SmithRead result = {};
+    char resolved[PATH_MAX];
+    if (files->loop->fake != nullptr) {
+        SmithFileInfo info = smith_fake_info(files->loop->fake, path);
+        result.error = info.error;
+        int length = snprintf(resolved, sizeof resolved, "%s%s", path[0] == '/' ? "" : "/",
+                              smith_fake_folder_length(path) == 0 ? "" : path);
+        if (result.error.code == 0 && (length < 0 || (size_t)length >= sizeof resolved)) {
+            result.error = smith_error_make(ENAMETOOLONG, "resolve", path);
+        }
+    } else if (realpath(path, resolved) == nullptr) {
+        result.error = smith_error_make(errno, "resolve", path);
+    }
+    if (result.error.code != 0) return result;
+    size_t length = strlen(resolved);
+    char *copy = smith_arena_push(arena, length + 1, 1);
+    memcpy(copy, resolved, length);
+    result.data = copy;
+    result.size = length;
+    return result;
+}
+
 // ---------------------------------------------------------------- console
 
 static SmithError smith_console_write(SmithConsole *console, bool errors, const char *text) {
@@ -538,6 +892,33 @@ SmithError smith_console_print(SmithConsole *console, const char *text) {
 
 SmithError smith_console_print_error(SmithConsole *console, const char *text) {
     return smith_console_write(console, true, text);
+}
+
+__attribute__((format(printf, 3, 0))) static SmithError smith_console_format(SmithConsole *console, bool errors,
+                                                                             const char *format, va_list arguments) {
+    char text[smith_io_print_max];
+    int length = vsnprintf(text, sizeof text, format, arguments);
+    if (length < 0) return smith_error_make(EINVAL, "format for", errors ? "stderr" : "stdout");
+    if ((size_t)length >= sizeof text) return smith_error_make(EMSGSIZE, "print", errors ? "stderr" : "stdout");
+    return smith_console_write(console, errors, text);
+}
+
+SmithError smith_console_printf(SmithConsole *console, const char *format, ...) {
+    assert(console != nullptr && format != nullptr);
+    va_list arguments;
+    va_start(arguments, format);
+    SmithError error = smith_console_format(console, false, format, arguments);
+    va_end(arguments);
+    return error;
+}
+
+SmithError smith_console_eprintf(SmithConsole *console, const char *format, ...) {
+    assert(console != nullptr && format != nullptr);
+    va_list arguments;
+    va_start(arguments, format);
+    SmithError error = smith_console_format(console, true, format, arguments);
+    va_end(arguments);
+    return error;
 }
 
 void smith_console_read_async(SmithConsole *console, SmithOp *op, SmithArena *arena, size_t max) {
@@ -681,6 +1062,13 @@ void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithPro
     smith_loop_submit(processes->loop, op);
 }
 
+size_t smith_processes_cores(const SmithProcesses *processes) {
+    assert(processes != nullptr);
+    if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
+    long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    return cores > 0 ? (size_t)cores : 1;
+}
+
 // One captured stream of a running process: its pipe, its op, and what it has read.
 typedef struct {
     int descriptor;
@@ -786,6 +1174,17 @@ const char *smith_args_get(const SmithArgs *args, size_t i) {
     return i < args->count ? args->values[i] : nullptr;
 }
 
+const char *smith_args_env(const SmithArgs *args, const char *name) {
+    assert(args != nullptr && name != nullptr && name[0] != 0);
+    size_t length = strlen(name);
+    if (args->environment == nullptr) return getenv(name); // the real io asks the process, which setenv may change
+    for (size_t i = 0; i < smith_io_entries_max && args->environment[i] != nullptr; i++) {
+        const char *entry = args->environment[i];
+        if (strncmp(entry, name, length) == 0 && entry[length] == '=') return entry + length + 1;
+    }
+    return nullptr;
+}
+
 // ---------------------------------------------------------------- making io
 
 static SmithLoop *smith_loop_make(SmithArena *arena, bool fake) {
@@ -805,13 +1204,14 @@ static SmithLoop *smith_loop_make(SmithArena *arena, bool fake) {
     return loop;
 }
 
-static void smith_io_link(SmithIo *io, size_t argc, const char *const *argv) {
+static void smith_io_link(SmithIo *io, size_t argc, const char *const *argv, const char *const *environment) {
     io->console.loop = io->loop;
     io->files.loop = io->loop;
     io->clock.loop = io->loop;
     io->processes.loop = io->loop;
     io->args.count = argc;
     io->args.values = argv;
+    io->args.environment = environment;
 }
 
 // $SMITH_SEED replays a run; otherwise the seed is 64 bits of the system's entropy.
@@ -841,8 +1241,23 @@ SmithIo smith_io_make(int argc, char **argv) {
     io.loop->memory_size = smith_io_reservation;
     io.seed = smith_io_seed();
     io.key = smith_key_make(io.seed);
-    smith_io_link(&io, (size_t)argc, (const char *const *)argv);
+    smith_io_link(&io, (size_t)argc, (const char *const *)argv, nullptr);
     return io;
+}
+
+SmithArena smith_io_carve(SmithIo *io, size_t capacity) {
+    assert(io != nullptr && capacity > 0);
+    SmithArena *arena = &io->arena;
+    size_t start = (arena->used + smith_arena_align_max - 1) & ~(smith_arena_align_max - 1);
+    if (start > arena->capacity || capacity > arena->capacity - start) {
+        fprintf(stderr, "smith: arena out of capacity: carve of %zu bytes with %zu of %zu bytes used\n", capacity,
+                arena->used, arena->capacity);
+        fflush(stderr);
+        abort();
+    }
+    arena->used = start + capacity;
+    if (arena->touched < arena->used) arena->touched = arena->used; // under AddressSanitizer: poison starts after it
+    return smith_arena_make(arena->memory + start, capacity);
 }
 
 void smith_io_close(SmithIo *io) {
@@ -873,7 +1288,14 @@ SmithIo smith_io_make_test(SmithIoTest test) {
         assert(test.argv != nullptr);
         values[i] = test.argv[i];
     }
-    smith_io_link(&io, test.argc, values);
+    size_t entries = 0;
+    for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
+    }
+    const char **variables = SMITH_ARENA_PUSH_ARRAY(&io.arena, const char *, entries + 1);
+    for (size_t i = 0; i < entries; i++)
+        variables[i] = test.environment[i];
+    fake->cores = test.cores > 0 ? test.cores : 1;
+    smith_io_link(&io, test.argc, values, variables);
     return io;
 }
 

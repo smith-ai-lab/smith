@@ -3,6 +3,7 @@
 //   lines   reads stdin to the end with smith_console_read_line and prints "N lines, last=..."
 //   seed    prints the seed and the first draw of the key
 //   memory  prints how much of the arena's reservation counts as resident before and after it is touched
+
 #include <smith/io.h>
 
 #include <assert.h>
@@ -336,6 +337,214 @@ static void test_fake_rest(TestMemory *memory) {
     assert(smith_processes_run(&io.processes, &io.arena, absent).error.code == ENOENT);
 }
 
+// ---------------------------------------------------------------- folders, appends, maps: one function, real and fake
+
+// Everything a program does with a folder of files. It is given files and an arena only, so it cannot tell the disk
+// from the fake; `root` is a folder that does not exist yet.
+static void check_tree(SmithFiles *files, SmithArena *arena, const char *root) {
+    char path[256];
+    snprintf(path, sizeof path, "%s/a/b", root);
+    assert(smith_files_info(files, root).error.code == ENOENT);
+    assert(smith_files_make_folder(files, path).code == 0); // with the folders above it
+    assert(smith_files_make_folder(files, path).code == 0); // and again: it is there
+    SmithFileInfo folder = smith_files_info(files, path);
+    assert(folder.error.code == 0 && folder.folder && folder.writable && folder.size == 0);
+
+    snprintf(path, sizeof path, "%s/a/one.txt", root);
+    assert(smith_files_create(files, path, "first", 5).code == 0);
+    SmithError taken = smith_files_create(files, path, "second", 6);
+    assert(taken.code == EEXIST && test_contains(taken.message, "one.txt"));
+    SmithRead kept = smith_files_read(files, arena, path);
+    assert(kept.error.code == 0 && strcmp(kept.data, "first") == 0); // the second create changed nothing
+    SmithFileInfo file = smith_files_info(files, path);
+    assert(file.error.code == 0 && !file.folder && file.writable && file.size == 5);
+
+    snprintf(path, sizeof path, "%s/log", root);
+    assert(smith_files_append(files, path, "one\n", 4).code == 0); // creates
+    assert(smith_files_append(files, path, "two\n", 4).code == 0);
+    assert(smith_files_append(files, path, "", 0).code == 0);
+    SmithRead log = smith_files_read(files, arena, path);
+    assert(log.error.code == 0 && log.size == 8 && strcmp(log.data, "one\ntwo\n") == 0);
+
+    SmithFileList list = smith_files_list(files, arena, root); // sorted, files and folders
+    assert(list.error.code == 0 && list.count == 2);
+    assert(strcmp(list.entries[0].name, "a") == 0 && list.entries[0].folder && list.entries[0].size == 0);
+    assert(strcmp(list.entries[1].name, "log") == 0 && !list.entries[1].folder && list.entries[1].size == 8);
+    snprintf(path, sizeof path, "%s/a", root);
+    list = smith_files_list(files, arena, path);
+    assert(list.error.code == 0 && list.count == 2);
+    assert(strcmp(list.entries[0].name, "b") == 0 && list.entries[0].folder);
+    assert(strcmp(list.entries[1].name, "one.txt") == 0 && !list.entries[1].folder && list.entries[1].size == 5);
+    snprintf(path, sizeof path, "%s/a/b", root);
+    list = smith_files_list(files, arena, path);
+    assert(list.error.code == 0 && list.count == 0); // an empty folder
+    snprintf(path, sizeof path, "%s/nothing", root);
+    assert(smith_files_list(files, arena, path).error.code == ENOENT);
+
+    snprintf(path, sizeof path, "%s/a/one.txt", root);
+    assert(smith_files_write_atomic(files, path, "replaced!", 9).code == 0);
+    SmithRead replaced = smith_files_read(files, arena, path);
+    assert(replaced.error.code == 0 && strcmp(replaced.data, "replaced!") == 0);
+    snprintf(path, sizeof path, "%s/a/one.txt.tmp", root);
+    assert(smith_files_info(files, path).error.code == ENOENT); // the temporary file is gone
+}
+
+// The same: maps, resolved paths and removals, in the tree check_tree made.
+static void check_map_and_remove(SmithFiles *files, SmithArena *arena, const char *root) {
+    char path[256];
+    snprintf(path, sizeof path, "%s/a/one.txt", root);
+    SmithMapped mapped = smith_files_map(files, path);
+    assert(mapped.error.code == 0 && mapped.size == 9 && memcmp(mapped.data, "replaced!", 9) == 0);
+    assert((uintptr_t)mapped.data % 64 == 0);
+    memcpy(mapped.data, "REPLACED?", 9); // private: the file keeps what it had
+    SmithRead unchanged = smith_files_read(files, arena, path);
+    assert(strcmp(unchanged.data, "replaced!") == 0);
+    snprintf(path, sizeof path, "%s/empty", root);
+    assert(smith_files_write(files, path, "", 0).code == 0);
+    assert(smith_files_map(files, path).error.code == EINVAL);
+    snprintf(path, sizeof path, "%s/nothing", root);
+    assert(smith_files_map(files, path).error.code == ENOENT);
+
+    snprintf(path, sizeof path, "%s/a/one.txt", root);
+    SmithRead resolved = smith_files_resolve(files, arena, path);
+    assert(resolved.error.code == 0 && resolved.data[0] == '/' && resolved.size == strlen(resolved.data));
+    assert(strcmp(resolved.data + resolved.size - strlen("/a/one.txt"), "/a/one.txt") == 0);
+    snprintf(path, sizeof path, "%s/nothing", root);
+    assert(smith_files_resolve(files, arena, path).error.code == ENOENT);
+
+    snprintf(path, sizeof path, "%s/a/one.txt", root);
+    assert(smith_files_remove(files, path).code == 0);
+    assert(smith_files_remove(files, path).code == ENOENT);
+    assert(smith_files_info(files, path).error.code == ENOENT);
+    snprintf(path, sizeof path, "%s/a", root);
+    assert(smith_files_remove(files, path).code == EPERM); // a folder is not removed
+}
+
+static void test_real_tree(SmithIo *io) {
+    char tree[64];
+    snprintf(tree, sizeof tree, "tree-real-%d", getpid()); // each run in its own folder
+    check_tree(&io->files, &io->arena, tree);
+    check_map_and_remove(&io->files, &io->arena, tree);
+    SmithFileInfo here = smith_files_info(&io->files, ".");
+    assert(here.error.code == 0 && here.folder && here.writable);
+    SmithFileInfo etc = smith_files_info(&io->files, "/etc/hosts");
+    assert(etc.error.code == 0 && !etc.folder && etc.size > 0);
+    SmithFileInfo root = smith_files_info(&io->files, "/usr");
+    assert(root.error.code == 0 && root.folder && !root.writable);
+    assert(smith_files_create(&io->files, "/usr/smith-io-test", "x", 1).code != 0);
+    char blocked[96];
+    snprintf(blocked, sizeof blocked, "%s/log/x", tree);
+    assert(smith_files_make_folder(&io->files, blocked).code == EEXIST); // a file is in the way
+}
+
+static void test_real_map_big(SmithIo *io) {
+    constexpr size_t size = (size_t)64 << 20;
+    unsigned char *data = SMITH_ARENA_PUSH_ARRAY(&io->arena, unsigned char, size);
+    for (size_t i = 0; i < size; i += 4096)
+        data[i] = (unsigned char)(i / 4096);
+    assert(smith_files_write(&io->files, "map.bin", data, size).code == 0);
+    size_t before = test_resident();
+    SmithMapped mapped = smith_files_map(&io->files, "map.bin");
+    size_t mapping = test_resident() - before;
+    assert(mapped.error.code == 0 && mapped.size == size);
+    unsigned char *bytes = mapped.data;
+    assert(bytes[(size_t)4096 * 7] == 7 && bytes[size - 4096] == (unsigned char)((size - 4096) / 4096));
+    size_t after = test_resident() - before;
+    assert(mapping < ((size_t)1 << 20) && after < ((size_t)2 << 20)); // pages are read when touched, not before
+}
+
+static void test_fake_tree(TestMemory *memory) {
+    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
+    SmithIo io = smith_io_make_test(config);
+    check_tree(&io.files, &io.arena, "tree-fake");
+    check_map_and_remove(&io.files, &io.arena, "tree-fake");
+    // The fake's root is "." and "/": relative paths and absolute ones are all in it.
+    assert(smith_io_test_add_file(&io, "top.txt", "t").code == 0);
+    SmithFileList list = smith_files_list(&io.files, &io.arena, ".");
+    assert(list.error.code == 0 && list.count == 2); // top.txt and tree-fake
+    assert(strcmp(list.entries[0].name, "top.txt") == 0 && strcmp(list.entries[1].name, "tree-fake") == 0);
+    assert(smith_files_info(&io.files, "tree-fake").folder && smith_files_info(&io.files, ".").folder);
+    SmithRead resolved = smith_files_resolve(&io.files, &io.arena, "top.txt");
+    assert(resolved.error.code == 0 && strcmp(resolved.data, "/top.txt") == 0);
+}
+
+// Appending many times: the fake grows the file by doubling, not by copying it each time.
+static void test_fake_append_many(TestMemory *memory) {
+    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
+    SmithIo io = smith_io_make_test(config);
+    for (size_t i = 0; i < 2000; i++)
+        assert(smith_files_append(&io.files, "log.txt", "0123456789\n", 11).code == 0);
+    SmithRead log = smith_files_read(&io.files, &io.arena, "log.txt");
+    assert(log.error.code == 0 && log.size == 22000);
+}
+
+static void test_environment_and_cores(TestMemory *memory) {
+    setenv("SMITH_IO_TEST_VARIABLE", "from the process", 1);
+    SmithIo real = smith_io_make(0, nullptr);
+    const char *value = smith_args_env(&real.args, "SMITH_IO_TEST_VARIABLE");
+    assert(value != nullptr && strcmp(value, "from the process") == 0);
+    setenv("SMITH_IO_TEST_VARIABLE", "changed after", 1);
+    assert(strcmp(smith_args_env(&real.args, "SMITH_IO_TEST_VARIABLE"), "changed after") == 0);
+    setenv("SMITH_IO_TEST_EMPTY", "", 1);
+    assert(strcmp(smith_args_env(&real.args, "SMITH_IO_TEST_EMPTY"), "") == 0);
+    unsetenv("SMITH_IO_TEST_VARIABLE");
+    assert(smith_args_env(&real.args, "SMITH_IO_TEST_VARIABLE") == nullptr);
+    assert(smith_processes_cores(&real.processes) >= 1);
+    smith_io_close(&real);
+
+    const char *const environment[] = {"HOME=/home/test", "EMPTY=", "A=B=C", nullptr};
+    SmithIoTest config = {
+        .memory = memory->bytes, .capacity = sizeof memory->bytes, .environment = environment, .cores = 12};
+    SmithIo fake = smith_io_make_test(config);
+    assert(strcmp(smith_args_env(&fake.args, "HOME"), "/home/test") == 0);
+    assert(strcmp(smith_args_env(&fake.args, "EMPTY"), "") == 0);
+    assert(strcmp(smith_args_env(&fake.args, "A"), "B=C") == 0);
+    assert(smith_args_env(&fake.args, "HOM") == nullptr && smith_args_env(&fake.args, "PATH") == nullptr);
+    assert(smith_processes_cores(&fake.processes) == 12);
+    SmithIoTest bare = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
+    SmithIo plain = smith_io_make_test(bare);
+    assert(smith_args_env(&plain.args, "HOME") == nullptr); // the fake never asks the process
+    assert(smith_processes_cores(&plain.processes) == 1);
+}
+
+static void test_fake_printf(TestMemory *memory) {
+    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
+    SmithIo io = smith_io_make_test(config);
+    assert(smith_console_printf(&io.console, "%s %d %.2f\n", "wins", 7, 0.5).code == 0);
+    assert(smith_console_eprintf(&io.console, "warning %u\n", 3u).code == 0);
+    assert(strcmp(smith_io_test_output(&io), "wins 7 0.50\n") == 0);
+    assert(strcmp(smith_io_test_errors(&io), "warning 3\n") == 0);
+    char big[5000];
+    memset(big, 'x', sizeof big - 1);
+    big[sizeof big - 1] = 0;
+    SmithError long_text = smith_console_printf(&io.console, "%s", big); // longer than the buffer: nothing is printed
+    assert(long_text.code == EMSGSIZE && strcmp(smith_io_test_output(&io), "wins 7 0.50\n") == 0);
+}
+
+// Carved arenas: separate, aligned, and not committed until used.
+static void test_carve(void) {
+    SmithIo io = smith_io_make(0, nullptr);
+    size_t before = test_resident();
+    constexpr size_t big = (size_t)1 << 30;
+    SmithArena first = smith_io_carve(&io, big);
+    SmithArena second = smith_io_carve(&io, big);
+    assert(first.capacity == big && second.capacity == big && first.used == 0);
+    assert((uintptr_t)first.memory % smith_arena_align_max == 0 &&
+           (uintptr_t)second.memory % smith_arena_align_max == 0);
+    assert(second.memory >= first.memory + big && io.arena.used >= 2 * big);
+    assert(test_resident() - before < (size_t)16 << 20); // 2 GiB carved, nothing committed
+    unsigned char *a = SMITH_ARENA_PUSH_ARRAY(&first, unsigned char, 100000);
+    unsigned char *b = SMITH_ARENA_PUSH_ARRAY(&second, unsigned char, 100000);
+    unsigned char *c = SMITH_ARENA_PUSH_ARRAY(&io.arena, unsigned char, 100000); // lands after both
+    memset(a, 1, 100000);
+    memset(b, 2, 100000);
+    memset(c, 3, 100000);
+    assert(a[99999] == 1 && b[0] == 2 && c[0] == 3 && c >= second.memory + big);
+    smith_arena_reset(&first); // resetting one leaves the others
+    assert(b[99999] == 2 && c[99999] == 3);
+    smith_io_close(&io);
+}
+
 // ---------------------------------------------------------------- programs run by the script
 
 static int program_lines(void) {
@@ -375,6 +584,8 @@ int main(int argc, char **argv) {
     test_real_wait_several(&io);
     test_real_clock(&io);
     test_real_console_pipe(&io);
+    test_real_tree(&io);
+    test_real_map_big(&io);
     static TestMemory same_memory;
     SmithIoTest config = {.memory = same_memory.bytes, .capacity = sizeof same_memory.bytes};
     SmithIo fake = smith_io_make_test(config);
@@ -382,6 +593,11 @@ int main(int argc, char **argv) {
     test_fake_console(&fake_memory);
     test_fake_clock(&fake_memory);
     test_fake_rest(&fake_memory);
+    test_fake_tree(&fake_memory);
+    test_fake_append_many(&fake_memory);
+    test_environment_and_cores(&fake_memory);
+    test_fake_printf(&fake_memory);
+    test_carve();
     test_seed();
     smith_io_close(&io);
     puts("io: all checks passed");
