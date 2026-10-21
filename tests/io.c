@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <mach/mach.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -843,6 +844,252 @@ static void test_real_net_errors(SmithIo *io) {
     close(server.listener);
 }
 
+// --- children with pipes
+
+// Runs the loop until the op is done.
+static void test_child_until(SmithIo *io, SmithOp *op) {
+    for (size_t round = 0; round < test_rounds_max && !op->done; round++)
+        (void)smith_io_run(io, smith_io_forever);
+    assert(op->done);
+}
+
+// Reads from the child until total bytes have arrived (or the end), into buffer.
+static size_t test_child_read(SmithIo *io, SmithChild *child, char *buffer, size_t capacity, size_t total) {
+    size_t got = 0;
+    SmithOp read = {};
+    for (size_t round = 0; round < test_rounds_max && got < total; round++) {
+        smith_child_read_async(child, &read, buffer + got, capacity - got);
+        test_child_until(io, &read);
+        assert(read.error.code == 0);
+        if (read.end) break;
+        got += read.size;
+    }
+    return got;
+}
+
+static void test_child_wait(SmithIo *io, SmithChild *child, SmithOp *wait) {
+    smith_processes_wait_async(&io->processes, wait, child->process);
+    test_child_until(io, wait);
+}
+
+// cat echoes what is written; closing its stdin ends it.
+static void test_real_child_cat(SmithIo *io) {
+    const char *const argv[] = {"/bin/cat", nullptr};
+    SmithChild child = {};
+    assert(smith_processes_start_piped(&io->processes, argv, &child).code == 0);
+    assert(child.process.id > 0 && getpgid(child.process.id) == child.process.id);
+    SmithOp write = {};
+    smith_child_write_async(&child, &write, "hello\n", 6);
+    test_child_until(io, &write);
+    assert(write.error.code == 0 && write.size == 6);
+    char buffer[64];
+    assert(test_child_read(io, &child, buffer, sizeof buffer, 6) == 6 && memcmp(buffer, "hello\n", 6) == 0);
+    smith_child_close_input(&child);
+    assert(test_child_read(io, &child, buffer, sizeof buffer, 1) == 0); // the end
+    SmithOp wait = {};
+    test_child_wait(io, &child, &wait);
+    assert(wait.exit_status == 0 && wait.signal == 0);
+    smith_child_close(&child);
+
+    const char *const nothing[] = {"/no/such/program", nullptr};
+    assert(smith_processes_start_piped(&io->processes, nothing, &child).code == ENOENT);
+}
+
+// A child that has exited: its output can still be read, and a write is EPIPE, not a signal that kills the program.
+static void test_real_child_early_exit(SmithIo *io) {
+    const char *const argv[] = {"/bin/sh", "-c", "echo bye; exit 3", nullptr};
+    SmithChild child = {};
+    assert(smith_processes_start_piped(&io->processes, argv, &child).code == 0);
+    SmithOp wait = {};
+    test_child_wait(io, &child, &wait);
+    assert(wait.exit_status == 3);
+    for (size_t i = 0; i < 3; i++) { // every write, not only the first
+        SmithOp write = {};
+        smith_child_write_async(&child, &write, "late\n", 5);
+        test_child_until(io, &write);
+        assert(write.error.code == EPIPE && write.size == 0);
+    }
+    char buffer[16];
+    assert(test_child_read(io, &child, buffer, sizeof buffer, 4) == 4 && memcmp(buffer, "bye\n", 4) == 0);
+    smith_child_close(&child);
+}
+
+// Megabytes through cat, written and read on one loop: the pipes hold 64 KiB, so a program that wrote it all before it
+// read would deadlock; with both pending at once it cannot. The bytes come back whole and in order.
+static void test_real_child_large(SmithIo *io) {
+    constexpr size_t total = (size_t)4 << 20;
+    constexpr size_t block = (size_t)64 << 10;
+    unsigned char *input = smith_arena_push(&io->arena, total, 1);
+    for (size_t i = 0; i < total; i++)
+        input[i] = (unsigned char)(i * 131 + (i >> 8));
+    unsigned char *output = smith_arena_push(&io->arena, total + 1, 1);
+    const char *const argv[] = {"/bin/cat", nullptr};
+    SmithChild child = {};
+    assert(smith_processes_start_piped(&io->processes, argv, &child).code == 0);
+    SmithOp write = {};
+    SmithOp read = {};
+    smith_child_write_async(&child, &write, input, total);
+    smith_child_read_async(&child, &read, output, block);
+    size_t got = 0;
+    bool closed = false;
+    for (size_t round = 0; round < test_rounds_max && !(closed && read.done && read.end); round++) {
+        if (write.done && !closed) {
+            assert(write.error.code == 0 && write.size == total);
+            smith_child_close_input(&child);
+            closed = true;
+        }
+        if (read.done && !read.end) {
+            assert(read.error.code == 0);
+            got += read.size;
+            smith_child_read_async(&child, &read, output + got, total + 1 - got < block ? total + 1 - got : block);
+        }
+        if (!(closed && read.done && read.end)) (void)smith_io_run(io, smith_io_forever);
+    }
+    assert(closed && got == total && memcmp(input, output, total) == 0);
+    SmithOp wait = {};
+    test_child_wait(io, &child, &wait);
+    assert(wait.exit_status == 0);
+    smith_child_close(&child);
+}
+
+// Two children on one loop, each answering to its own writes.
+static void test_real_child_two(SmithIo *io) {
+    const char *const argv[] = {"/bin/cat", nullptr};
+    SmithChild children[2] = {};
+    SmithOp writes[2] = {};
+    char buffers[2][16] = {};
+    for (size_t i = 0; i < 2; i++)
+        assert(smith_processes_start_piped(&io->processes, argv, &children[i]).code == 0);
+    assert(children[0].process.id != children[1].process.id);
+    smith_child_write_async(&children[0], &writes[0], "first\n", 6);
+    smith_child_write_async(&children[1], &writes[1], "second\n", 7);
+    assert(test_child_read(io, &children[1], buffers[1], sizeof buffers[1], 7) == 7);
+    assert(test_child_read(io, &children[0], buffers[0], sizeof buffers[0], 6) == 6);
+    assert(memcmp(buffers[0], "first\n", 6) == 0 && memcmp(buffers[1], "second\n", 7) == 0);
+    assert(writes[0].done && writes[1].done);
+    for (size_t i = 0; i < 2; i++) {
+        smith_child_close_input(&children[i]);
+        SmithOp wait = {};
+        test_child_wait(io, &children[i], &wait);
+        assert(wait.exit_status == 0);
+        smith_child_close(&children[i]);
+    }
+}
+
+// A child's stderr is the program's own, so a flood there never blocks it (here the program's stderr is /dev/null).
+static void test_real_child_stderr(SmithIo *io) {
+    int saved = dup(STDERR_FILENO);
+    int null = open("/dev/null", O_WRONLY);
+    dup2(null, STDERR_FILENO);
+    const char *const argv[] = {"/bin/sh", "-c", "head -c 2000000 /dev/zero >&2; echo ok", nullptr};
+    SmithChild child = {};
+    SmithError error = smith_processes_start_piped(&io->processes, argv, &child);
+    dup2(saved, STDERR_FILENO);
+    close(saved);
+    close(null);
+    assert(error.code == 0);
+    char buffer[8];
+    assert(test_child_read(io, &child, buffer, sizeof buffer, 3) == 3 && memcmp(buffer, "ok\n", 3) == 0);
+    SmithOp wait = {};
+    test_child_wait(io, &child, &wait);
+    assert(wait.exit_status == 0);
+    smith_child_close(&child);
+}
+
+// Killing reaches the whole group: the shell and the sleep it waits for.
+static void test_real_child_kill(SmithIo *io) {
+    const char *const argv[] = {"/bin/sh", "-c", "sleep 30 & wait", nullptr};
+    SmithChild child = {};
+    assert(smith_processes_start_piped(&io->processes, argv, &child).code == 0);
+    SmithOp wait = {};
+    SmithOp read = {};
+    char buffer[8];
+    smith_processes_wait_async(&io->processes, &wait, child.process);
+    smith_child_read_async(&child, &read, buffer, sizeof buffer);
+    (void)smith_io_run(io, 20 * test_millisecond);
+    assert(!wait.done && !read.done);
+    assert(smith_child_kill(&child, SIGTERM).code == 0);
+    test_child_until(io, &wait);
+    assert(wait.signal == SIGTERM && wait.exit_status == 0);
+    test_child_until(io, &read); // the sleep died with its group, so the pipe is closed
+    assert(read.end);
+    smith_child_close(&child);
+}
+
+static void test_real_children(SmithIo *io) {
+    test_real_child_cat(io);
+    test_real_child_early_exit(io);
+    test_real_child_large(io);
+    test_real_child_two(io);
+    test_real_child_stderr(io);
+    test_real_child_kill(io);
+}
+
+// The scripted child: chunks of output, a read that waits, writes kept, an exit when stdin closes, EPIPE after an exit,
+// kill, two children of one program, and a program with no script.
+static void test_fake_children(TestMemory *memory) {
+    SmithIo io =
+        smith_io_make_test((SmithIoTest){.memory = memory->bytes, .capacity = sizeof memory->bytes, .seed = 3});
+    SmithChildScript dap = {.program = "smith-dap",
+                            .output = "Content-Length: 2\r\n\r\n{}",
+                            .chunk = 8,
+                            .exit_on = SmithChildExit_InputClosed,
+                            .status = 7};
+    assert(smith_io_test_add_child(&io, dap).code == 0);
+    assert(smith_io_test_add_child(&io, (SmithChildScript){.program = "smith-dap", .output = "second"}).code == 0);
+    SmithChildScript quick = {.program = "true", .output = "bye\n", .exit_on = SmithChildExit_Start};
+    assert(smith_io_test_add_child(&io, quick).code == 0);
+    const char *const dap_argv[] = {"smith-dap", nullptr};
+    const char *const unknown[] = {"nope", nullptr};
+    const char *const quick_argv[] = {"true", nullptr};
+    SmithChild first = {};
+    SmithChild second = {};
+    SmithChild dead = {};
+    assert(smith_processes_start_piped(&io.processes, unknown, &first).code == ENOENT);
+    assert(smith_processes_start_piped(&io.processes, dap_argv, &first).code == 0);
+    assert(smith_processes_start_piped(&io.processes, dap_argv, &second).code == 0);
+    assert(smith_processes_start_piped(&io.processes, dap_argv, &dead).code == ENOENT); // both scripts are in use
+    assert(smith_processes_start_piped(&io.processes, quick_argv, &dead).code == 0);
+    assert(first.process.id != second.process.id);
+    const char *const pieces[] = {"Content-", "Length: ", "2\r\n\r\n{}"};
+    SmithOp read = {};
+    char buffer[32];
+    for (size_t i = 0; i < 3; i++) { // in pieces of 8
+        smith_child_read_async(&first, &read, buffer, sizeof buffer);
+        assert(smith_io_run(&io, 0) == 1 && read.done && read.error.code == 0);
+        assert(read.size == strlen(pieces[i]) && memcmp(buffer, pieces[i], read.size) == 0);
+    }
+    smith_child_read_async(&first, &read, buffer, sizeof buffer);
+    assert(smith_io_run(&io, 0) == 0 && !read.done); // nothing more, and not over
+    SmithOp write = {};
+    smith_child_write_async(&first, &write, "request", 7);
+    assert(smith_io_run(&io, 0) == 1 && write.done && write.error.code == 0 && write.size == 7);
+    assert(strcmp(smith_io_test_child_input(&io, 0), "request") == 0);
+    SmithOp wait = {};
+    smith_processes_wait_async(&io.processes, &wait, first.process);
+    assert(smith_io_run(&io, 0) == 0 && !wait.done); // alive
+    smith_child_close_input(&first);
+    assert(smith_io_run(&io, 0) == 2 && read.done && read.end && wait.done);
+    assert(wait.exit_status == 7 && wait.signal == 0);
+    smith_child_write_async(&first, &write, "late", 4);
+    assert(smith_io_run(&io, 0) == 1 && write.error.code == EPIPE);
+    smith_child_close(&first);
+
+    smith_child_write_async(&dead, &write, "x", 1); // exited at start
+    assert(smith_io_run(&io, 0) == 1 && write.error.code == EPIPE);
+    assert(test_child_read(&io, &dead, buffer, sizeof buffer, 4) == 4 && memcmp(buffer, "bye\n", 4) == 0);
+    assert(test_child_read(&io, &dead, buffer, sizeof buffer, 1) == 0);
+
+    assert(test_child_read(&io, &second, buffer, sizeof buffer, 6) == 6 && memcmp(buffer, "second", 6) == 0);
+    smith_processes_wait_async(&io.processes, &wait, second.process);
+    smith_child_read_async(&second, &read, buffer, sizeof buffer);
+    assert(smith_io_run(&io, 0) == 0);
+    assert(smith_child_kill(&second, SIGKILL).code == 0);
+    assert(smith_io_run(&io, 0) == 2 && wait.signal == SIGKILL && wait.exit_status == 0 && read.end);
+    assert(smith_child_kill(&second, SIGKILL).code == ESRCH);
+    assert(smith_io_test_child_input(&io, 3) == nullptr);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "lines") == 0) return program_lines();
     if (argc > 1 && strcmp(argv[1], "seed") == 0) return program_seed();
@@ -860,6 +1107,7 @@ int main(int argc, char **argv) {
     test_real_wait_several(&io);
     test_real_capture(&io);
     test_real_terminal(&io);
+    test_real_children(&io);
     test_real_clock(&io);
     test_real_console_pipe(&io);
     test_real_tree(&io);
@@ -879,6 +1127,7 @@ int main(int argc, char **argv) {
     test_environment_and_cores(&fake_memory);
     test_fake_printf(&fake_memory);
     test_fake_net(&fake_memory);
+    test_fake_children(&fake_memory);
     test_seed();
     smith_io_close(&io);
     puts("io: all checks passed");

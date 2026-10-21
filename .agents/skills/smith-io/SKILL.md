@@ -119,6 +119,29 @@ A program that runs several copies of itself spawns `args.values[0]` with `smith
 
 `smith_processes_spawn_terminal` starts a program that talks to the person at the terminal: it keeps this process's stdin, stdout and stderr and stays in this process group, so a Ctrl-C reaches it. (`smith_processes_spawn` gives the program `/dev/null` for stdin.) Wait for it with `smith_processes_wait_async`.
 
+## A child you talk to over pipes
+
+For a program that drives another (a server holding debugger children that speak DAP), `smith_processes_start_piped(&io.processes, argv, &child)` starts `argv[0]` (found on `PATH`; a missing program is `ENOENT`) with a pipe for its stdin and a pipe for its stdout, and returns at once. The child leads a process group of its own. Its stderr is the program's own, not a pipe: a child that logs there can never block on a full pipe nobody reads. The pipes carry raw bytes; framing (lines, `Content-Length:`) is the caller's. Keep the `SmithChild` where it is until `smith_child_close`.
+
+- `smith_child_write_async(&child, &op, data, size)` completes when all the bytes are in the pipe, or fails: `EPIPE` when the child closed its stdin or exited (`op.size` is what was taken first). SIGPIPE cannot kill the program. A write bigger than the pipe (64 KiB) completes as the child reads, so write and read together on one loop and nothing deadlocks. `data` stays yours until done.
+- `smith_child_read_async(&child, &op, buffer, capacity)` completes with whatever has arrived (`op.data`, `op.size`, at least one byte, not NUL-terminated), or `op.end` when the child closed its stdout.
+- `smith_child_close_input(&child)` closes its stdin, so it sees the end of input (`cat` exits). `smith_child_kill(&child, signal)` signals the whole group (`ESRCH` if there is none). `smith_processes_wait_async(&io.processes, &op, child.process)` waits for the exit. `smith_child_close(&child)` closes the pipes still open, once, after the last op is done and the child has exited.
+- One write, one read and one wait may be pending on a child at once; several children, the program's own stdin (`smith_console_read_async`), timers and exits all wait in the same `smith_io_run`.
+
+```c
+const char *const argv[] = {"smith", "dap", nullptr};
+SmithChild child = {};
+SmithError error = smith_processes_start_piped(&io.processes, argv, &child);
+SmithOp write = {}, read = {}, wait = {};
+char buffer[4096];
+smith_child_write_async(&child, &write, request, request_size);
+smith_child_read_async(&child, &read, buffer, sizeof buffer);
+smith_processes_wait_async(&io.processes, &wait, child.process);
+// loop on smith_io_run; resubmit read when read.done and !read.end; finish when wait.done
+```
+
+In the fake, script the child first: `smith_io_test_add_child(&io, (SmithChildScript){.program = "smith", .output = "Content-Length: 2\r\n\r\n{}", .chunk = 8, .exit_on = SmithChildExit_InputClosed, .status = 0})`. The first unused script of the program is the child started. It writes its output from the start (in pieces of `chunk` bytes if set); a read with nothing left waits, and ends once the child has exited. `exit_on` says when it exits: `SmithChildExit_Never` (only a kill ends it, with that signal), `_Start` (at once, like `true`: a write is `EPIPE`), `_InputClosed` (like `cat`) or `_OutputRead`. What the program wrote to its stdin is `smith_io_test_child_input(&io, n)` for the n-th script added (8 KiB kept). Up to 16 children.
+
 ## Asynchronous calls
 
 To wait on several things in one loop, submit operations in `SmithOp`s you own and run the loop:
@@ -131,7 +154,7 @@ for (size_t round = 0; round < round_max && !(timer.done && wait.done); round++)
     (void)smith_io_run(&io, smith_io_forever);   // or a timeout in ns; 0 only polls
 ```
 
-`smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async` and `smith_processes_wait_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
+`smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async`, `smith_processes_wait_async`, `smith_child_write_async` and `smith_child_read_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
 
 macOS has no asynchronous file IO, so file operations run synchronously, in submission order, inside `smith_io_run`. Pipes, timers and process exits wait on kqueue; network connections are Network.framework's, whose callbacks run on a dispatch queue and push the finished op onto a lock-free list that wakes the same kqueue (`EVFILT_USER`), so they complete in `smith_io_run` like the rest. Every blocking call is an op run to completion on this same loop.
 
