@@ -59,3 +59,10 @@ constexpr size_t smith_text_number_capacity = 20;
 size_t smith_text_write_u64(char *out, uint64_t value);
 size_t smith_text_write_i64(char *out, int64_t value);
 size_t smith_text_write_hex(char *out, uint64_t value); // 16 digits, so every hash lines up
+
+// A double in the fewest digits, at most 17, that smith_text_parse_f64 reads back as the same bits, signs of zero
+// included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
+// exponent (no plus), always valid JSON. Room for smith_text_f64_capacity characters; no terminator. The value must be
+// finite (asserted): infinity and nan have no text.
+constexpr size_t smith_text_f64_capacity = 32;
+size_t smith_text_write_f64(char *out, double value);

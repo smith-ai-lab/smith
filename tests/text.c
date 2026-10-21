@@ -808,3 +808,89 @@ void test_text_f64_sweep_of_every_pattern(void) {
         SMITH_CHECK_SAME_BITS(back, d);
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Writing doubles
+
+static void test_text_check_f64_text(const char *expected, double value) {
+    char out[smith_text_f64_capacity + 1];
+    size_t length = smith_text_write_f64(out, value);
+    out[length] = '\0';
+    smith_test_note("value %.17g", value);
+    SMITH_CHECK(strcmp(out, expected), ==, 0);
+}
+
+void test_text_f64_write_known_values(void) {
+    test_text_check_f64_text("0", 0.0);
+    test_text_check_f64_text("-0", -0.0);
+    test_text_check_f64_text("1", 1.0);
+    test_text_check_f64_text("-1", -1.0);
+    test_text_check_f64_text("0.1", 0.1);
+    test_text_check_f64_text("0.5", 0.5);
+    test_text_check_f64_text("123.456", 123.456);
+    test_text_check_f64_text("100", 100.0);
+    test_text_check_f64_text("1e22", 1e22);
+    test_text_check_f64_text("10000000000000000", 1e16);
+    test_text_check_f64_text("1e17", 1e17);
+    test_text_check_f64_text("0.00001", 1e-5);
+    test_text_check_f64_text("1e-6", 1e-6);
+    test_text_check_f64_text("3.141592653589793", 0x1.921fb54442d18p+1);
+    test_text_check_f64_text("0.30000000000000004", 0.1 + 0.2);
+    test_text_check_f64_text("5e-324", 0x1p-1074);
+    test_text_check_f64_text("1.7976931348623157e308", DBL_MAX);
+    test_text_check_f64_text("2.2250738585072014e-308", DBL_MIN);
+    test_text_check_f64_text("9007199254740992", 0x1p53);
+}
+
+// Every double written reads back as the same bits, in the fewest digits: one digit fewer, correctly rounded, would
+// read back as another double (strtod and snprintf are the witnesses).
+void test_text_f64_write_is_shortest_and_round_trips(SmithKey key) {
+    uint64_t bits = smith_key_bits(key, 0);
+    if (smith_bernoulli_sample(smith_key_derive(key, 1), (SmithBernoulli){.probability = 0.5})) { // short decimals too
+        int64_t thousandths = test_text_uniform(smith_key_derive(key, 2), -100000, 100000);
+        bits = __builtin_bit_cast(uint64_t, (double)thousandths / 1000.0);
+    }
+    double d = __builtin_bit_cast(double, bits);
+    if (d != d || d > DBL_MAX || d < -DBL_MAX) return;
+    char out[smith_text_f64_capacity + 1];
+    size_t length = smith_text_write_f64(out, d);
+    SMITH_CHECK(length, <=, smith_text_f64_capacity);
+    out[length] = '\0';
+    smith_test_note("text %s", out);
+    double back = 0;
+    SMITH_CHECK(smith_text_parse_f64(test_text(out), &back));
+    SMITH_CHECK_SAME_BITS(back, d);
+    SMITH_CHECK_SAME_BITS(strtod(out, nullptr), d);
+    int digits = 0;
+    bool started = false;
+    int trailing_zeros = 0;
+    for (size_t i = 0; i < length && out[i] != 'e'; i++) {
+        if (out[i] < '0' || out[i] > '9') continue;
+        if (out[i] != '0') started = true;
+        if (!started) continue;
+        digits += 1;
+        trailing_zeros = out[i] == '0' ? trailing_zeros + 1 : 0;
+    }
+    if (strchr(out, '.') == nullptr) digits -= trailing_zeros; // 1500 has two digits
+    if (digits > 1) {
+        char shorter[64];
+        snprintf(shorter, sizeof shorter, "%.*e", digits - 2, d); // digits - 1 significant digits
+        SMITH_CHECK(strtod(shorter, nullptr) != d);
+    }
+}
+
+void test_text_f64_write_edges_round_trip(void) {
+    for (uint64_t field = 0; field < 2047; field++) {
+        for (uint64_t kind = 0; kind < 4; kind++) {
+            uint64_t fraction = kind == 3 ? 0xfffffffffffffULL : kind;
+            for (uint64_t sign = 0; sign < 2; sign++) {
+                double d = __builtin_bit_cast(double, (sign << 63) | (field << 52) | fraction);
+                char out[smith_text_f64_capacity];
+                size_t length = smith_text_write_f64(out, d);
+                double back = 0;
+                SMITH_CHECK(smith_text_parse_f64((SmithText){out, length}, &back));
+                SMITH_CHECK_SAME_BITS(back, d);
+            }
+        }
+    }
+}

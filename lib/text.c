@@ -525,3 +525,161 @@ size_t smith_text_write_hex(char *out, uint64_t value) {
     }
     return 16;
 }
+
+// A double, as the fewest digits (at most 17) that read back as the same double. With the value m * 2^e, the p-digit
+// decimal nearest it is q * 10^s: q = round(m * 2^e / 10^s), ties to even, found with the big integers above. The
+// number of digits is the least p that parses back to the same bits (more digits only come nearer, so a binary search
+// over 1..17 finds it), and the exponent of the first digit decides between positional and scientific text.
+
+constexpr uint32_t smith_text_f64_digits_max = 17;
+constexpr int64_t smith_text_f64_positional_max = 16;
+constexpr int64_t smith_text_f64_positional_min = -5;
+
+// q = floor(numerator / denominator), which has at most 63 bits; the remainder is left in numerator.
+static uint64_t smith_text_big_divide(SmithTextBig *numerator, const SmithTextBig *denominator) {
+    int64_t shift = (int64_t)smith_text_big_bits(numerator) - (int64_t)smith_text_big_bits(denominator);
+    if (shift < 0) return 0;
+    assert(shift < 63);
+    SmithTextBig step = *denominator;
+    smith_text_big_shift_left(&step, (uint64_t)shift);
+    uint64_t q = 0;
+    for (int64_t bit = shift; bit >= 0; bit--) {
+        if (smith_text_big_at_least(numerator, &step)) {
+            smith_text_big_subtract(numerator, &step);
+            q |= (uint64_t)1 << bit;
+        }
+        smith_text_big_shift_right_one(&step);
+    }
+    return q;
+}
+
+// The quotient of m * 2^e / 10^s, rounded to the nearest integer, ties to even.
+static uint64_t smith_text_f64_scaled(uint64_t m, int64_t e, int64_t s, bool round) {
+    SmithTextBig numerator = {.limb = {(uint32_t)m, (uint32_t)(m >> 32)}, .count = (m >> 32) != 0 ? 2U : 1U};
+    SmithTextBig denominator = {.limb = {1}, .count = 1};
+    if (e >= 0)
+        smith_text_big_shift_left(&numerator, (uint64_t)e);
+    else
+        smith_text_big_shift_left(&denominator, (uint64_t)(0 - e));
+    if (s >= 0)
+        smith_text_big_mul_pow10(&denominator, (uint64_t)s);
+    else
+        smith_text_big_mul_pow10(&numerator, (uint64_t)(0 - s));
+    uint64_t q = smith_text_big_divide(&numerator, &denominator);
+    if (!round) return q;
+    smith_text_big_shift_left(&numerator, 1); // twice the remainder against the divisor
+    bool above = smith_text_big_at_least(&numerator, &denominator);
+    bool equal = above && smith_text_big_at_least(&denominator, &numerator);
+    if (above && (!equal || (q & 1) != 0)) q += 1;
+    return q;
+}
+
+static uint64_t smith_text_pow10_u64(uint32_t power) {
+    uint64_t result = 1;
+    for (uint32_t i = 0; i < power; i++) {
+        result *= 10;
+    }
+    return result;
+}
+
+// The p-digit decimal nearest m * 2^e, as q * 10^s, given the decimal exponent of the first digit.
+static uint64_t smith_text_f64_round_to(uint64_t m, int64_t e, int64_t first, uint32_t p, int64_t *s) {
+    *s = first - (int64_t)p + 1;
+    uint64_t q = smith_text_f64_scaled(m, e, *s, true);
+    if (q == smith_text_pow10_u64(p)) { // 9.99 rounded up to 10.0
+        q = smith_text_pow10_u64(p - 1);
+        *s += 1;
+    }
+    return q;
+}
+
+// The decimal exponent of the first digit of m * 2^e: floor(log10), from the binary exponent and then corrected.
+static int64_t smith_text_f64_first_exponent(uint64_t m, int64_t e) {
+    int64_t binary = e + (int64_t)(64 - (uint32_t)__builtin_clzll(m)) - 1;
+    int64_t first = (binary * 78913) >> 18; // binary * log10(2), floor, within one
+    for (int attempt = 0; attempt < 4; attempt++) {
+        uint64_t q = smith_text_f64_scaled(m, e, first, false);
+        if (q == 0)
+            first -= 1;
+        else if (q >= 10)
+            first += 1;
+        else
+            return first;
+    }
+    assert(false);
+    return first;
+}
+
+static bool smith_text_f64_reads_back(uint64_t q, int64_t s, uint64_t bits) {
+    char text[smith_text_number_capacity * 2];
+    size_t length = smith_text_write_u64(text, q);
+    text[length++] = 'e';
+    length += smith_text_write_i64(text + length, s);
+    double back = 0;
+    return smith_text_parse_f64((SmithText){text, length}, &back) && __builtin_bit_cast(uint64_t, back) == bits;
+}
+
+// Writes the digits q (p of them, the first one of exponent `first`) as positional or scientific text.
+static size_t smith_text_f64_format(char *out, uint64_t q, uint32_t p, int64_t first) {
+    char digits[smith_text_number_capacity];
+    size_t count = smith_text_write_u64(digits, q);
+    assert(count == p);
+    (void)p; // only the assertion reads it
+    size_t used = 0;
+    if (first >= smith_text_f64_positional_min && first <= smith_text_f64_positional_max) {
+        if (first < 0) {
+            out[used++] = '0';
+            out[used++] = '.';
+            for (int64_t i = 0; i < -first - 1; i++) {
+                out[used++] = '0';
+            }
+        }
+        for (size_t i = 0; i < count; i++) {
+            if (first >= 0 && (int64_t)i == first + 1) out[used++] = '.';
+            out[used++] = digits[i];
+        }
+        for (int64_t i = (int64_t)count; i < first + 1; i++) { // an integer with zeros after its digits
+            out[used++] = '0';
+        }
+        return used;
+    }
+    out[used++] = digits[0];
+    if (count > 1) out[used++] = '.';
+    for (size_t i = 1; i < count; i++) {
+        out[used++] = digits[i];
+    }
+    out[used++] = 'e';
+    return used + smith_text_write_i64(out + used, first);
+}
+
+size_t smith_text_write_f64(char *out, double value) {
+    assert(out != nullptr);
+    uint64_t bits = __builtin_bit_cast(uint64_t, value);
+    uint64_t field = (bits >> 52) & 0x7ff;
+    assert(field != 0x7ff); // infinity and nan have no text
+    size_t used = 0;
+    if ((bits >> 63) != 0) out[used++] = '-';
+    uint64_t fraction = bits & 0xfffffffffffffULL;
+    if (field == 0 && fraction == 0) {
+        out[used++] = '0';
+        return used;
+    }
+    uint64_t m = field == 0 ? fraction : fraction | ((uint64_t)1 << 52);
+    int64_t e = field == 0 ? -1074 : (int64_t)field - 1075;
+    uint64_t positive = bits & ~((uint64_t)1 << 63);
+    int64_t first = smith_text_f64_first_exponent(m, e);
+    uint32_t low = 1;
+    uint32_t high = smith_text_f64_digits_max;
+    while (low < high) {
+        uint32_t middle = (low + high) / 2;
+        int64_t s = 0;
+        uint64_t q = smith_text_f64_round_to(m, e, first, middle, &s);
+        if (smith_text_f64_reads_back(q, s, positive))
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    int64_t s = 0;
+    uint64_t q = smith_text_f64_round_to(m, e, first, low, &s);
+    return used + smith_text_f64_format(out + used, q, low, s + (int64_t)low - 1);
+}
