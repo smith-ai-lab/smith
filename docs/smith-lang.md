@@ -39,6 +39,8 @@ u32 helper(void) { … }                              // private
   - A C name used with no `c::` is an error in every `.smith` file, a module or not: a function, a variable, a type,
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
+    Inside an attribute (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the
+    attribute's own, not a use of a C name: `printf` there needs no `c::`.
 - **Sized types**, in any `.smith` file: `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize` (`size_t`), `isize` (`ptrdiff_t`),
   `f16` (`_Float16`), `f32`, `f64`. They are typedefs of the standard types (`typedef __INT32_TYPE__ i32;`), so the same
   types (`%llu`, `_Generic` and a C header's `uint64_t` agree) and a diagnostic names them as written:

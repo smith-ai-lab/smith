@@ -20,6 +20,9 @@ typedef struct {
     size_t header_length;
 } SmithLangLowered;
 
+// runtime/lang_sparse.c
+static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host);
+
 // runtime/lang_names.c
 static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
                                    size_t written_length, size_t prefix_length, SmithLangText module, bool direct);
@@ -114,8 +117,28 @@ static bool smith_lang_context_typeish(SmithLang *lang, const SmithHost *host, c
     return context->lazy ? smith_lang_typeish(lang, host) : context->typeish;
 }
 
+// Whether the tokens being read are an attribute's: `[[gnu::format(printf, 1, 2)]]` or `__attribute__((format(...)))`.
+// What stands there is the attribute's own argument (a format kind, a name), never a use of a C name or a module.
+static bool smith_lang_in_attribute(const SmithLang *lang) {
+    return lang->in_attribute || lang->attribute_parens > 0;
+}
+
+// The parentheses of `__attribute__((`, followed through the tokens that are tracked.
+static void smith_lang_track_attribute(SmithLang *lang, const SmithToken *token) {
+    if (token->kind == SmithTokenKind_Identifier) {
+        lang->attribute_next = smith_lang_ident(token, "__attribute__") || smith_lang_ident(token, "__attribute");
+        return;
+    }
+    bool open = smith_lang_punct(token, "(");
+    if (open && lang->attribute_parens > 0) lang->attribute_parens += 1;
+    if (open && lang->attribute_parens == 0 && lang->attribute_next) lang->attribute_parens = 1;
+    if (smith_lang_punct(token, ")") && lang->attribute_parens > 0) lang->attribute_parens -= 1;
+    lang->attribute_next = false;
+}
+
 // Remembers what a token was, for the one after it.
 static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
+    smith_lang_track_attribute(lang, token);
     lang->prev_member = false;
     lang->prev_tag = false;
     lang->prev_char = token->kind == SmithTokenKind_Punctuator && token->length > 0 ? token->text[0] : 0;
@@ -195,7 +218,7 @@ static void smith_lang_allow(SmithLang *lang, uint32_t location) {
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
 static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                  const SmithLangBinding *binding, SmithToken *result) {
-    if (lang->in_attribute) return false;
+    if (smith_lang_in_attribute(lang)) return false;
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(colons, "::")) return false;
     const SmithToken *member = smith_lang_peek(lang, host, 1, true);
@@ -333,6 +356,9 @@ static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, co
 static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                     uint32_t location, bool *is_type) {
     if (length >= 2 && name[0] == '_' && name[1] == '_') return;
+    if (smith_lang_in_attribute(lang) || (host->previous != nullptr && smith_lang_sparse_in_attribute(lang, host))) {
+        return; // [[gnu::format(printf, 1, 2)]]: printf is the attribute's word for a kind of format
+    }
     SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Value);
     *is_type = found.kind == SmithLookup_Type;
     if (found.kind == SmithLookup_None || !found.from_import || found.in_main_file) return;

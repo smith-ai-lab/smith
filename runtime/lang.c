@@ -179,6 +179,8 @@ struct SmithLang {
     bool tail_declarator;   // after an aggregate's `}` or a comma: names are declarators
     uint32_t typedef_depth; // the brace depth the typedef statement began at
     bool in_attribute;      // inside [[ ]]: gnu::unused is no module path
+    uint32_t attribute_parens; // inside the parentheses of __attribute__(( )): format(printf, 1, 2)
+    bool attribute_next;       // __attribute__ was the last token: its parenthesis opens the arguments
     bool statement_typedef; // `typedef` seen in this statement
     uint8_t own_words;      // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.
