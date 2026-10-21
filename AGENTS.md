@@ -141,6 +141,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
   hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
   writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+- **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`; no LLVM change). clang-tidy builds each file's
+  command with the driver, not `createInvocation`, so `shim/tidy.cpp` carries `ArgumentsAdjusters.cpp` whole with
+  `smith_lang_command` called in `getStripPluginsAdjuster` (the last adjuster; same rule as `smith cc`), and installs the
+  token hook. A check reports from an engine of its own, so the hook puts the same consumer in front of it
+  (`smith::presentThrough`): names, notes and fix-its as written, a prototype's lowering copy moved to the definition's
+  name, a finding in a generated or in-memory interface dropped (the module's own file is linted as itself).
+  `readability-identifier-naming` judges the written name: a wrapper module, registered after clang-tidy's, replaces that
+  one check with `SmithNaming` (it holds the final real check, whose private decisions it reaches by an explicit
+  instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
+  because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
+  it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
+  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
@@ -223,6 +235,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
   symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar.sh`
   (hostile and damaged archives, and the readers under ASan and UBSan). See [docs/build-c.md](docs/build-c.md).
+- **The protocol code of `smith mcp` is generated, never written by hand** (issue #22): `smith build protocol` runs `scripts/protocol.c` on DAP's and MCP's JSON
+  Schemas, each a package pinned by hash in build.c, and writes `runtime/protocol/{dap,mcp}.[ch]` and their tests `tests/protocol/test_protocol_*.c` on
+  `<smith/json.h>`. The output is committed (a fresh clone and the stage0 need no network); `smith check` runs `check-protocol`, which fails when a
+  committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol.sh` builds and runs the tests under
+  the sanitizers. See [docs/protocol.md](docs/protocol.md).
 - **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
   `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
   modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages

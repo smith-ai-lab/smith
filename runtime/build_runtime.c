@@ -996,6 +996,14 @@ const char *smith_fmt(SmithBuild *b, const char *format, ...) {
 
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     SMITH_ASSERT(b != nullptr);
+    // nullptr ends the arguments, so a nullptr in first place cannot be told from an empty list, and the lists after it
+    // would be dropped without a word (a list that starts from an unset `selected`): it is an error, not an empty list.
+    if (first == nullptr) {
+        smith_context = nullptr;
+        smith_fail(
+            "smith_cat: the first list is nullptr, and nullptr ends the arguments, so the lists after it would be "
+            "dropped; an empty list is (const char *[]){nullptr}");
+    }
     static const char *const *lists[smith_cat_lists_max];
     size_t lists_count = 0;
     va_list args;
@@ -1334,8 +1342,16 @@ static void smith_require_text(const char *call, const char *field, const char *
 // `smith cc` and `smith c++`.
 static void smith_require_program(const char *call, const char *field, const char *value) {
     smith_require_text(call, field, value);
-    if (strcmp(value, "smith") == 0) {
-        smith_fail("%s: .%s is \"smith\", which is not a compiler; use \"smith-cc\" or \"smith-c++\"", call, field);
+    // "smith" or a path that ends in /smith (CC=$HOME/.local/bin/smith in the environment, or -DCC=): the program run
+    // would be `smith -std=gnu23 ...`, which is not a smith command, so it is refused here, before anything runs.
+    const char *slash = strrchr(value, '/');
+    const char *base = slash == nullptr ? value : slash + 1;
+    if (strcmp(base, "smith") == 0) {
+        size_t folder = (size_t)(base - value);
+        smith_fail(
+            "%s: .%s is \"%s\", which is not a compiler (smith is a set of verbs); use \"%.*ssmith-cc\" for C or "
+            "\"%.*ssmith-c++\" for C++, the links that act as `smith cc` and `smith c++`",
+            call, field, value, (int)folder, value, (int)folder, value);
     }
 }
 
@@ -1812,9 +1828,15 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 constexpr size_t smith_tests_max = 65536;
 
 // The name in a line that defines a test, `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` with
-// <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. *length is the name's length, test_ not counted.
-static const char *smith_tests_match(const char *line, size_t *length, bool *property) {
+// <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...`
+// (a private one is `static`, which nothing can call), and its key may be written `c::SmithKey`. *length is the name's
+// length, test_ not counted.
+static const char *smith_tests_match(const char *line, bool module, size_t *length, bool *property) {
     const char *prefix = "void test_";
+    if (module) {
+        if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
+        line += strlen("export ");
+    }
     if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
     const char *name = line + strlen(prefix);
     size_t size = strspn(name, "abcdefghijklmnopqrstuvwxyz0123456789_");
@@ -1823,39 +1845,89 @@ static const char *smith_tests_match(const char *line, size_t *length, bool *pro
     *length = size;
     *property = false;
     if (strcmp(rest, "(void) {") == 0) return name;
-    if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) != 0) return nullptr;
-    const char *key = rest + strlen("(SmithKey ");
-    size_t key_size = strspn(key, "abcdefghijklmnopqrstuvwxyz_");
-    if (key_size == 0 || strcmp(key + key_size, ") {") != 0) return nullptr;
+    if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) == 0) {
+        rest += strlen("(SmithKey ");
+    } else if (strncmp(rest, "(c::SmithKey ", strlen("(c::SmithKey ")) == 0) {
+        rest += strlen("(c::SmithKey ");
+    } else {
+        return nullptr;
+    }
+    size_t key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
+    if (key_size == 0 || strcmp(rest + key_size, ") {") != 0) return nullptr;
     *property = true;
     return name;
 }
 
+// The module a `.smith` file's line declares, `module a::b;`, as written ("a::b"), or nullptr.
+static const char *smith_tests_module_line(const char *line) {
+    const char *prefix = "module ";
+    if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
+    const char *name = line + strlen(prefix);
+    size_t size = strspn(name, "abcdefghijklmnopqrstuvwxyz0123456789_:");
+    if (size == 0 || strcmp(name + size, ";") != 0) return nullptr;
+    return smith_text("%.*s", (int)size, name);
+}
+
 typedef struct {
-    const char *name; // with the test_ prefix
+    const char *name;   // what the runner shows and --test selects: the written name without test_, `a::b::x`
+    const char *symbol; // the C name: test_x, and a_b_test_x in a module
+    const char *label;  // a module's export has the symbol `a::b::test_x` (an asm label), else nullptr
     const char *file;
     bool property;
 } SmithTestFound;
+
+// a::b and test_x give a_b_test_x, as the lowering names an export.
+static const char *smith_tests_symbol(const char *module, const char *test) {
+    if (module == nullptr) return test;
+    char *flat = smith_alloc(strlen(module) + 1);
+    size_t used = 0;
+    for (size_t i = 0; module[i] != '\0'; i++) { // bounded by the module's name
+        if (module[i] == ':' && module[i + 1] == ':') {
+            flat[used++] = '_';
+            i += 1;
+        } else {
+            flat[used++] = module[i];
+        }
+    }
+    flat[used] = '\0';
+    return smith_text("%s_%s", flat, test);
+}
+
+static bool smith_tests_is_smith(const char *path) {
+    size_t length = strlen(path);
+    return length > strlen(".smith") && strcmp(path + length - strlen(".smith"), ".smith") == 0;
+}
 
 // Every test in the files, in file order and line order. A name defined twice is an error that names both files.
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
     for (size_t i = 0; run->inputs[i] != nullptr; i++) { // bounded by smith_copy_list
         const char *const *lines = smith_lines(run->b, run->inputs[i]);
+        bool in_smith = smith_tests_is_smith(run->inputs[i]);
+        const char *module = nullptr;
         for (size_t j = 0; lines[j] != nullptr; j++) { // bounded by smith_split_lines
+            if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             size_t length = 0;
             bool property = false;
-            const char *name = smith_tests_match(lines[j], &length, &property);
+            const char *name = smith_tests_match(lines[j], module != nullptr, &length, &property);
             if (name == nullptr) continue;
-            const char *full = smith_text("test_%.*s", (int)length, name);
+            const char *test = smith_text("test_%.*s", (int)length, name);
+            const char *symbol = smith_tests_symbol(module, test);
+            const char *written = module != nullptr ? smith_text("%s::%s", module, test) : test;
             for (size_t k = 0; k < *count; k++) {
-                if (strcmp(found[k].name, full) != 0) continue;
-                fprintf(stderr, "smith: smith_tests: %s is defined in %s and in %s\n", full, found[k].file,
+                if (strcmp(found[k].symbol, symbol) != 0) continue;
+                fprintf(stderr, "smith: smith_tests: %s is defined in %s and in %s\n", written, found[k].file,
                         run->inputs[i]);
                 return false;
             }
             if (*count >= smith_tests_max) smith_too_many("tests", smith_tests_max);
-            found[(*count)++] = (SmithTestFound){full, run->inputs[i], property};
+            found[(*count)++] = (SmithTestFound){
+                .name = module != nullptr ? smith_text("%s::%.*s", module, (int)length, name) : test + strlen("test_"),
+                .symbol = symbol,
+                .label = module != nullptr ? written : nullptr,
+                .file = run->inputs[i],
+                .property = property,
+            };
         }
     }
     return true;
@@ -1872,10 +1944,10 @@ static int smith_tests_scan(SmithRun *run) {
     const char **rows = smith_new_list(count);
     for (size_t i = 0; i < count; i++) {
         const char *argument = found[i].property ? "SmithKey key" : "void";
-        prototypes[i] = smith_text("void %s(%s);\n", found[i].name, argument);
-        rows[i] =
-            smith_text("    {\"%s\", %s, %s},\n", found[i].name + strlen("test_"),
-                       found[i].property ? "nullptr" : found[i].name, found[i].property ? found[i].name : "nullptr");
+        const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
+        prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
+        rows[i] = smith_text("    {\"%s\", %s, %s},\n", found[i].name, found[i].property ? "nullptr" : found[i].symbol,
+                             found[i].property ? found[i].symbol : "nullptr");
     }
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
                                     "#include <smith/random.h>\n\n%s",

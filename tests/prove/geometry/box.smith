@@ -1,0 +1,26 @@
+// A module in .smith with contracts: smith prove names its functions as written, geometry::box::clamp.
+module geometry::box;
+import <smith/contract.h>;
+
+export i32 clamp(i32 x, i32 low, i32 high) {
+    c::smith_requires(low <= high);
+    i32 result = x < low ? low : x > high ? high : x;
+    c::smith_ensures(low <= result && result <= high);
+    return result;
+}
+
+export i32 clamp_wrong(i32 x, i32 low, i32 high) {
+    c::smith_requires(low <= high);
+    i32 result = x < low ? low : x > high ? high : x;
+    c::smith_ensures(result < high);
+    return result;
+}
+
+export i32 add_unchecked(i32 a, i32 b) {
+    c::smith_requires(a >= 0);
+    return a + b;
+}
+
+export i32 caller(i32 x) {
+    return clamp(x, 10, 5);
+}

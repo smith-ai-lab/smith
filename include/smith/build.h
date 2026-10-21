@@ -107,7 +107,9 @@ const char *smith_package(SmithBuild *b, const SmithPackage *package);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
-// joins lists; the last argument is nullptr
+// joins lists; the last argument is nullptr. That nullptr ends the arguments, so no list may be nullptr (a nullptr
+// list cannot be told from the end): a nullptr first list is a build.c error, and one after the first would silently
+// drop the lists behind it. An empty list is (const char *[]){nullptr}.
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...);
 // format applied to each item ("out/%s")
 const char *const *smith_map(SmithBuild *b, const char *const *items, const char *format);
