@@ -156,6 +156,15 @@ for function in relies_on_the_body clobbered_local clobbered_parameter; do
     case $out in *poison* | *"undefined behaviour"*) expect "memory: $function names no poison" "none" "$out" ;; esac
 done
 
+# 7c2. A const pointer is not written by a call, and a callee with many blocks is used through its contract.
+for function in add_if_set turn_after spread spread_then_check; do
+    prove --function=$function "$cases/readonly.c"
+    expect "readonly: $function is proved" 0 "$rc"
+done
+prove --function=grows_by_one "$cases/readonly.c"
+expect "readonly: a claim stronger than the contract fails" 1 "$rc"
+expect_contains "readonly: ... with its line" "$out" "readonly.c:43: smith_ensures(now == old + 1) may be false"
+
 # 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
 for function in apply_move count_of bump_count is_step; do
     prove --function=$function "$cases/by_value.c"
