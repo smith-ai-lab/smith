@@ -12,16 +12,22 @@ cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r2}
 mkdir -p "$cache" "$(dirname "$stamp")"
 # --- step: the token hook (patches/clang-token-hook.patch; issue #11) ---------------------------------------------------
 # A token transformer on the Preprocessor, for .smith files; off unless smith installs it. The package is read-only to
-# everyone else (other installs are built from it), so the patch goes into a copy, once: a copy that has it is left alone.
+# everyone else (other installs are built from it), so the patch goes into a copy, once. The copy keeps the patch it has
+# in .hooked: a new revision of the patch takes the old one out and puts the new one in, so only the files they touch
+# change and the rebuild is incremental. An empty .hooked (from before it held the patch) means a fresh copy.
 # Remove this step, and the file, to build plain LLVM.
 patch=$(cd "$(dirname "$0")/.." && pwd)/patches/clang-token-hook.patch
-if [ ! -f "$cache/src/.hooked" ]; then
+if [ ! -s "$cache/src/.hooked" ]; then
     rm -rf "$cache/src"
     mkdir -p "$cache/src"
     cp -R "$src/." "$cache/src/"
     chmod -R u+w "$cache/src"
     patch -p1 -s -d "$cache/src" <"$patch"
-    : >"$cache/src/.hooked"
+    cp "$patch" "$cache/src/.hooked"
+elif ! cmp -s "$patch" "$cache/src/.hooked"; then
+    patch -R -p1 -s -d "$cache/src" <"$cache/src/.hooked"
+    patch -p1 -s -d "$cache/src" <"$patch"
+    cp "$patch" "$cache/src/.hooked"
 fi
 src=$cache/src
 # --- end of the token hook step -----------------------------------------------------------------------------------------
