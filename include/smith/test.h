@@ -62,8 +62,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <smith/arena.h>
-#include <smith/random.h>
+#include "arena.h"
+#include "random.h"
 
 // A test. The generated tests_list.c holds one row per test in the build's test files: `plain` for
 // `test_<name>(void)`, `property` for `test_<name>(SmithKey key)`.
