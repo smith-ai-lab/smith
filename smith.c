@@ -720,6 +720,8 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 }
 #endif
 
+#include "runtime/lang.h"
+
 constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
 
 // The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith
@@ -744,69 +746,14 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
     setenv("SMITH_LANG_INPUTS", inputs, 1);
 }
 
-// Whether the command names a C standard, or has an input that is not C (a C++ file refuses a C standard): `.smith`
-// is smith's own language and compiles as C2y, the standard `smith new` uses, unless the caller chose one.
-static bool smith_smith_standard_given(int argc, char **argv, int first) {
-    static const char *const other[] = {".cpp", ".cc", ".cxx", ".C", ".mm", ".c++", ".cppm"};
-    for (int i = first; i < argc; i++) { // bounded by argc
-        if (strncmp(argv[i], "-std=", 5) == 0 || strncmp(argv[i], "--std=", 6) == 0 || strcmp(argv[i], "-std") == 0 ||
-            strcmp(argv[i], "--std") == 0) {
-            return true;
-        }
-        if (argv[i][0] == '-') continue;
-        for (size_t k = 0; k < sizeof other / sizeof other[0]; k++) { // bounded by the table
-            if (smith_ends_with(argv[i], other[k])) return true;
-        }
-    }
-    return false;
-}
-
-// A .smith file is C to the compiler, so each is given with `-x c` and the language is reset after it: `x.smith y.c`
-// becomes
-// `-x c x.smith -x none y.c`. The compiler's hook (shim/hook.cpp), which the .smith extension turns on, does the rest.
-// Nothing is changed when the command names a language itself (-x), or is clang's own `-cc1` form, where the driver
-// has done this already. Returns the new argument count, or 0 when the command stays as it is.
+// Rewrites the command for the .smith inputs it names (the rule is smith_lang_command, runtime/lang_command.c, which
+// `smith lsp` applies to every command clangd compiles with), and tells the hook the .smith files of the command.
+// Returns the new argument count, or 0 when the command stays as it is.
 static int smith_rewrite_smith_inputs(int argc, char **argv, int first, char **out) {
-    bool found = false;
-    for (int i = first; i < argc; i++) { // bounded by argc
-        if (strcmp(argv[i], "-cc1") == 0 || strncmp(argv[i], "-x", 2) == 0) return 0;
-        if (argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc) {
-            i += 1;
-        } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
-            found = true;
-        }
-    }
-    if (!found) return 0;
-    smith_set_smith_inputs(argc, argv, first);
-    size_t used = 0;
-    bool reset = false; // a .smith input was given, and the language is still C
-    for (int i = 0; i < first; i++)
-        out[used++] = argv[i];
-    if (!smith_smith_standard_given(argc, argv, first)) out[used++] = (char *)"-std=gnu2y";
-    for (int i = first; i < argc; i++) { // bounded by argc
-        if (used + 7 > smith_smith_args_max)
-            smith_die(smith_exit_usage, "too many arguments with .smith inputs", nullptr);
-        bool value = argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc;
-        bool smith_input = argv[i][0] != '-' && smith_ends_with(argv[i], ".smith");
-        if (value) {
-            out[used++] = argv[i];
-            out[used++] = argv[++i];
-        } else if (smith_input) {
-            out[used++] = (char *)"-x";
-            out[used++] = (char *)"c";
-            out[used++] = argv[i];
-            reset = true;
-        } else {
-            if (reset && argv[i][0] != '-' && argv[i][0] != '@') {
-                out[used++] = (char *)"-x";
-                out[used++] = (char *)"none";
-                reset = false;
-            }
-            out[used++] = argv[i];
-        }
-    }
-    out[used] = nullptr;
-    return (int)used;
+    int count = smith_lang_command(argc, argv, first, out, smith_smith_args_max);
+    if (count < 0) smith_die(smith_exit_usage, "too many arguments with .smith inputs", nullptr);
+    if (count > 0) smith_set_smith_inputs(argc, argv, first);
+    return count;
 }
 
 static int smith_route_clang(int argc, char **argv, int first, bool which, bool plus, const char *self) {
@@ -993,6 +940,8 @@ static const SmithLibrary smith_libraries[] = {
 // The lowering of .smith files, and the header pass that needs no compiler.
 #include "runtime/lang.c"
 #include "runtime/lang_lex.c"
+// The rule for the command of a .smith file, shared with `smith lsp`.
+#include "runtime/lang_command.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
