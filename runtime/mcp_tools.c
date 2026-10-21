@@ -204,19 +204,47 @@ constexpr size_t smith_mcp_launch_breakpoints_max = 16;
 static const char *const smith_mcp_runners[] = {"build/tests", "build/debug/tests", "build/sanitize/tests",
                                                 "build/test/tests"};
 
-// The test runner of the project: the `runner` argument, else the first of the usual places that is there.
+// The runner `.smith/build.info` of the project names (`runner<TAB>path`, relative to the folder) that is a file, or
+// nullptr when there is no build.info or it names none.
+static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char *folder) {
+    const char *info_path = smith_mcp_absolute(&server->scratch, folder, ".smith/build.info");
+    if (smith_files_info(&server->io->files, info_path).error.code != 0) return nullptr;
+    SmithRead read = smith_files_read(&server->io->files, &server->scratch, info_path);
+    if (read.error.code != 0 || read.data == nullptr) return nullptr;
+    const char *cursor = read.data;
+    const char *end = read.data + read.size;
+    while (cursor < end) { // bounded by the file
+        const char *newline = memchr(cursor, '\n', (size_t)(end - cursor));
+        const char *stop = newline != nullptr ? newline : end;
+        if ((size_t)(stop - cursor) > sizeof "runner\t" - 1 && memcmp(cursor, "runner\t", sizeof "runner\t" - 1) == 0) {
+            const char *path = smith_mcp_cstring(
+                &server->scratch, (SmithText){.begin = cursor + sizeof "runner\t" - 1,
+                                              .length = (size_t)(stop - cursor) - (sizeof "runner\t" - 1)});
+            const char *absolute = smith_mcp_absolute(&server->scratch, folder, path);
+            SmithFileInfo info = smith_files_info(&server->io->files, absolute);
+            if (info.error.code == 0 && !info.folder) return absolute;
+        }
+        cursor = stop + 1;
+    }
+    return nullptr;
+}
+
+// The test runner of the project: the `runner` argument, else the one `.smith/build.info` names, else (a project
+// built before it said) the first of the usual places that is there.
 static const char *smith_mcp_runner(SmithMcpServer *server, const SmithJsonValue *arguments, const char *folder,
                                     SmithMcpText *out) {
     const char *named = smith_mcp_argument_string(&server->scratch, arguments, "runner");
     if (named != nullptr) return smith_mcp_absolute(&server->scratch, folder, named);
+    const char *built = smith_mcp_runner_of_build(server, folder);
+    if (built != nullptr) return built;
     for (size_t i = 0; i < sizeof smith_mcp_runners / sizeof smith_mcp_runners[0]; i++) {
         const char *path = smith_mcp_absolute(&server->scratch, folder, smith_mcp_runners[i]);
         SmithFileInfo info = smith_files_info(&server->io->files, path);
         if (info.error.code == 0 && !info.folder) return path;
     }
     smith_mcp_text_add(out,
-                       "launch: no test runner found in build/tests, build/debug/tests, build/sanitize/tests or "
-                       "build/test/tests under %s;\n"
+                       "launch: no test runner found in .smith/build.info, build/tests, build/debug/tests, "
+                       "build/sanitize/tests or build/test/tests under %s;\n"
                        "build the tests, or name the runner's path in `runner`\n",
                        folder);
     return nullptr;

@@ -1975,7 +1975,10 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
         fprintf(out, "test\t%s\n", tests[i]);
     for (size_t i = 0; i < smith_program_count; i++) {
         fprintf(out, "program\t%s\n", smith_programs[i]);
-        if (smith_program_is_tests[i]) continue; // a runner is the tests' own, which `smith prove` leaves out
+        if (smith_program_is_tests[i]) { // a runner is the tests' own, which `smith prove` leaves out
+            fprintf(out, "runner\t%s\n", smith_programs[i]);
+            continue;
+        }
         fputs("unit", out);
         for (size_t j = 0; smith_program_sources[i][j] != nullptr; j++) {
             if (smith_is_own_source(smith_program_sources[i][j])) fprintf(out, "\t%s", smith_program_sources[i][j]);

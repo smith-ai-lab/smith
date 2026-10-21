@@ -100,6 +100,8 @@ typedef struct {
     size_t unit_count;
     const char *defaults[smith_verbs_lines_max];
     size_t default_count;
+    const char *runners[smith_verbs_lines_max]; // the programs smith_tests made (a build.info without them has none)
+    size_t runner_count;
     size_t test_count;
 } SmithInfo;
 
@@ -107,7 +109,8 @@ static SmithInfo smith_info;
 static char smith_info_text[smith_verbs_info_max + 1];
 
 // Reads .smith/build.info, which build.c's run wrote: `compile<TAB>source<TAB>flag...`, `test<TAB>task`,
-// `program<TAB>path`, `default<TAB>target` (runtime/build_runtime.c). Each line is cut at its end in place.
+// `program<TAB>path`, `runner<TAB>path`, `default<TAB>target` (runtime/build_runtime.c). Each line is cut at its end in
+// place.
 static const SmithInfo *smith_info_read(const char *verb) {
     FILE *file = fopen(".smith/build.info", "rb");
     if (file == nullptr) smith_die(smith_exit_usage, verb, "the build left no .smith/build.info; is there a build.c?");
@@ -135,6 +138,8 @@ static const SmithInfo *smith_info_read(const char *verb) {
                 smith_info.units[smith_info.unit_count++] = tab;
             } else if (strcmp(line, "program") == 0 && smith_info.program_count < smith_verbs_lines_max) {
                 smith_info.programs[smith_info.program_count++] = tab;
+            } else if (strcmp(line, "runner") == 0 && smith_info.runner_count < smith_verbs_lines_max) {
+                smith_info.runners[smith_info.runner_count++] = tab;
             } else if (strcmp(line, "default") == 0 && smith_info.default_count < smith_verbs_lines_max) {
                 smith_info.defaults[smith_info.default_count++] = tab;
             }

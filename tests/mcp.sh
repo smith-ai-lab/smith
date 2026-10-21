@@ -345,6 +345,7 @@ if env PATH="$work/bin:$PATH" CC=smith-cc CXX=smith-c++ smith build >"$work/proj
         call 5 continue '{}'
         call 6 launch '{"test":"twice_doubles","runner":"build/nonesuch"}'
     } >in.jsonl
+    runner_line=$(grep "^runner$(printf '\t')" .smith/build.info)
     "$smith" mcp <in.jsonl >out.jsonl 2>err.txt
     expect_equal "a test session: nothing on stderr" "" "$(cat err.txt)"
     expect_equal "launch by the name of a test stops in the test" \
@@ -362,6 +363,17 @@ doubled = 42 (int)" "$(reply out.jsonl 2)"
     expect_contains "the test passes" "$(reply out.jsonl 5)" "1 passed, 0 failed"
     expect_contains "the program ends with code 0" "$(reply out.jsonl 5)" "exited: the program exited with code 0"
     expect_contains "a runner that is not there" "$(reply out.jsonl 6)" "build/nonesuch is not a file"
+    expect_equal "build.info names the runner" "runner$(printf '\t')build/tests" "$runner_line"
+    # The runner is the one build.info names, wherever it is: moved, with the line changed, no guess finds it.
+    mv build/tests build/runner-elsewhere
+    sed "s|^runner$(printf '\t').*|runner$(printf '\t')build/runner-elsewhere|" .smith/build.info >build.info.new &&
+        mv build.info.new .smith/build.info
+    {
+        call 1 launch '{"test":"twice_doubles","breakpoints":[{"file":"tests/test_a.c","line":5}]}'
+    } >in2.jsonl
+    "$smith" mcp <in2.jsonl >out2.jsonl 2>err2.txt
+    expect_contains "the runner build.info names is launched" "$(reply out2.jsonl 1)" \
+        "DIR/project/build/runner-elsewhere --test twice_doubles --in-process"
 else
     total=$((total + 1))
     failures=$((failures + 1))
