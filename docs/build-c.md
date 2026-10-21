@@ -613,7 +613,7 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
-// build.c asks. An unknown name is an error that lists the known names ("arena", "io", "random", "test"; random and io use the arena,
+// build.c asks. An unknown name is an error that lists the known names ("arena", "io", "random", "test", "text"; random and io use the arena,
 // and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test").
 const char *smith_library(SmithBuild *b, const char *name);
 

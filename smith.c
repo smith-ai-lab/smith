@@ -428,6 +428,13 @@ static const unsigned char smith_random_source[] = {
 #embed "lib/random.c"
 };
 
+static const unsigned char smith_text_header[] = {
+#embed "include/smith/text.h"
+};
+static const unsigned char smith_text_source[] = {
+#embed "lib/text.c"
+};
+
 static const unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
 };
@@ -448,6 +455,7 @@ static const SmithLibrary smith_libraries[] = {
     {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
+    {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
 };
 
 // Packages, shared with the build runtime: the cache, the download and SHA-256.

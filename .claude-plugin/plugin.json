@@ -8,5 +8,5 @@
   "homepage": "https://github.com/adam-r-kowalski/smith",
   "repository": "https://github.com/adam-r-kowalski/smith",
   "keywords": ["c", "compiler", "build", "clang"],
-  "skills": ["./.agents/skills/smith/", "./.agents/skills/smith-build/", "./.agents/skills/smith-arena/", "./.agents/skills/smith-random/", "./.agents/skills/smith-io/", "./.agents/skills/smith-test/"]
+  "skills": ["./.agents/skills/smith/", "./.agents/skills/smith-build/", "./.agents/skills/smith-arena/", "./.agents/skills/smith-random/", "./.agents/skills/smith-io/", "./.agents/skills/smith-test/", "./.agents/skills/smith-text/"]
 }
