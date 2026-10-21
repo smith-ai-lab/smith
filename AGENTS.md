@@ -177,7 +177,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
   and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
   (`scripts/prove-libs.sh`, `scripts/bitwuzla.sh`). Only the stage0 has no prover. Each function is proved in a process of
-  its own. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
+  its own, which ends at its budget (SIGALRM) and when its parent dies. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
   with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
   smith-contract.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
