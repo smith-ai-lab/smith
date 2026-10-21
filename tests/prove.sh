@@ -1,6 +1,5 @@
 #!/bin/sh
-# Tests of `smith prove`, with the prover linked in (a smith built against the LLVM of `smith build llvm-prove`, with the
-# libraries of `smith build prove-libs`; any other smith says it has none and the tests are skipped). Usage:
+# Tests of `smith prove`, with the prover linked in (every full smith has it; the stage0 says it has none and the tests are skipped). Usage:
 # sh tests/prove.sh path/to/smith
 # The programs are tests/prove/*.c: the issue's clamp, a caller that breaks it, undefined behaviour, a column one past a row,
 # and one program for each construct that is an error, never an assumption.
