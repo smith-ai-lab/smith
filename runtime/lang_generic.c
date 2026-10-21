@@ -522,8 +522,8 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
         const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
         used = smith_lang_append(out, capacity, used, " %c", smith_lang_kind_letter(token));
         if (token->param != 0) used = smith_lang_append(out, capacity, used, "P%u", token->param);
-        if ((token->flags & SmithLangGenFlag_Expand) != 0) used = smith_lang_append(out, capacity, used, "x");
-        if ((token->flags & SmithLangGenFlag_Space) != 0) used = smith_lang_append(out, capacity, used, "w");
+        if ((token->flags & smith_lang_gen_flag_expand) != 0) used = smith_lang_append(out, capacity, used, "x");
+        if ((token->flags & smith_lang_gen_flag_space) != 0) used = smith_lang_append(out, capacity, used, "w");
         size_t line = smith_lang_lines_known() ? smith_lang_line_of(token->location) : 0;
         size_t column = smith_lang_lines_known() ? smith_lang_column_of(token->location) : 0;
         used = smith_lang_append(out, capacity, used, "@%zu:%zu=", line, column);
@@ -613,9 +613,9 @@ static bool smith_lang_generic_read_token(const char *word, size_t length, Smith
         if (word[at] == 'P' && at + 1 < length) {
             out->param = (uint8_t)(word[++at] - '0');
         } else if (word[at] == 'x') {
-            out->flags |= SmithLangGenFlag_Expand;
+            out->flags |= smith_lang_gen_flag_expand;
         } else if (word[at] == 'w') {
-            out->flags |= SmithLangGenFlag_Space;
+            out->flags |= smith_lang_gen_flag_space;
         } else {
             return false;
         }
@@ -875,7 +875,11 @@ static SmithLangText smith_lang_instance_cname(SmithLang *lang, const SmithLangG
     for (size_t i = 0; spellings[i] != 0 && (size_t)used + 8 < sizeof name; i++) { // the types
         char c = spellings[i];
         bool word = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-        name[used++] = word ? c : c == '*' ? 'P' : c == ' ' ? '_' : c == '\x1f' ? '_' : 'x';
+        char mapped = 'x';
+        if (word) mapped = c;
+        if (c == '*') mapped = 'P';
+        if (c == ' ' || c == '\x1f') mapped = '_';
+        name[used++] = mapped;
     }
     name[used] = 0;
     char unique[smith_lang_name_max];
@@ -1440,28 +1444,25 @@ static void smith_lang_generic_instances(SmithLang *lang, const SmithHost *host)
 // ---- Reading a call
 // ---------------------------------------------------------------------------------------------------------
 
-static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token);
+// A call is read by the feed loop, not by a function that calls the lowering again (the lowering does not recurse): the
+// call pushes a frame, and each token the loop then lowers is shown to `smith_lang_generic_advance`, which counts the
+// brackets and, at the `)` that closes the call, finishes it. A call in the arguments of another is a frame above it.
 
-// Takes the tokens of a call from its `(` to the matching `)`, each lowered as it is taken (what is written goes to
-// the pool). False when the file ends first.
-static bool smith_lang_generic_read_args(SmithLang *lang, const SmithHost *host, uint32_t location) {
-    int depth = 0;
-    for (size_t guard = 0; guard < smith_lang_gt_max; guard++) { // bounded by the pool
-        SmithToken token = smith_lang_take(lang, host);
-        if (token.kind == SmithTokenKind_Eof) {
-            smith_lang_error(lang, host, location, "this call is never closed with `)`");
-            smith_lang_process(lang, host, &token);
-            return false;
-        }
-        bool open =
-            token.kind == SmithTokenKind_Punctuator && token.length == 1 && strchr("([{", token.text[0]) != nullptr;
-        bool close =
-            token.kind == SmithTokenKind_Punctuator && token.length == 1 && strchr(")]}", token.text[0]) != nullptr;
-        smith_lang_process(lang, host, &token);
-        depth += open ? 1 : close ? -1 : 0;
-        if (depth <= 0) return true;
+static bool smith_lang_generic_push_frame(SmithLang *lang, const SmithHost *host, bool record, uint32_t generic_index,
+                                          uint32_t location, uint32_t member_location) {
+    if (lang->call_top >= smith_lang_call_frames_max) {
+        smith_lang_error(lang, host, location, "calls to generic functions are nested too deeply");
+        return false;
     }
-    return false;
+    SmithLangCallFrame *frame = &lang->calls[lang->call_top++];
+    *frame = (SmithLangCallFrame){.record = record,
+                                  .skip = true,
+                                  .generic_index = generic_index,
+                                  .location = location,
+                                  .member_location = member_location,
+                                  .count = smith_lang_gt.count,
+                                  .text = smith_lang_gt.text_used};
+    return true;
 }
 
 // Pushes a token of the lowering's own into the pool (a group's start or end).
@@ -1475,12 +1476,17 @@ static void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, co
 }
 
 // After a call: the tokens before the next one are those of an expression that ended.
-static void smith_lang_generic_call_done(SmithLang *lang) {
+static void smith_lang_generic_call_state(SmithLang *lang) {
     lang->prev_char = ')';
     lang->prev_member = false;
     lang->prev_tag = false;
     lang->typeish = false;
     lang->prev_name_length = 0;
+}
+
+// The same, for a call the caller writes at once: it returns on this flag.
+static void smith_lang_generic_call_done(SmithLang *lang) {
+    smith_lang_generic_call_state(lang);
     lang->namespace_done = true;
 }
 
@@ -1491,10 +1497,9 @@ static bool smith_lang_generic_record_call(SmithLang *lang, const SmithHost *hos
     char text[smith_lang_name_max];
     int length = snprintf(text, sizeof text, "%.*s::%.*s", (int)module_length, module, (int)member_length, member);
     smith_lang_gen_mark(lang, SmithLangGen_CallBegin, text, (size_t)length, location);
-    bool good = smith_lang_generic_read_args(lang, host, location);
-    smith_lang_gen_mark(lang, SmithLangGen_CallEnd, "", 0, location);
-    smith_lang_generic_call_done(lang);
-    return good;
+    if (!smith_lang_generic_push_frame(lang, host, true, 0, location, location)) return false;
+    lang->namespace_done = true; // the call, with its arguments, is written
+    return true;
 }
 
 // Moves the tokens [from, top) of the pool down to `to`: a call nested in the arguments of another is written where its
@@ -1513,31 +1518,65 @@ static void smith_lang_gt_slide(uint32_t to_count, uint32_t to_text, uint32_t fr
 // A call to a generic, outside any generic: read whole, then written as the call of its instance.
 static bool smith_lang_generic_direct_call(SmithLang *lang, const SmithHost *host, uint32_t generic_index,
                                            uint32_t location, uint32_t member_location) {
-    uint32_t frame_count = smith_lang_gt.count;
-    uint32_t frame_text = smith_lang_gt.text_used;
+    if (!smith_lang_generic_push_frame(lang, host, false, generic_index, location, member_location)) return false;
     lang->cap_frames += 1;
-    bool good = smith_lang_generic_read_args(lang, host, location);
-    lang->cap_frames -= 1;
-    if (!good) {
-        smith_lang_gt.count = frame_count;
-        smith_lang_gt.text_used = frame_text;
-        return true;
+    lang->namespace_done = true;
+    return true;
+}
+
+// The call of `frame` has its `)`: it is written.
+static void smith_lang_generic_finish_call(SmithLang *lang, const SmithHost *host, const SmithLangCallFrame *frame) {
+    if (frame->record) {
+        smith_lang_gen_mark(lang, SmithLangGen_CallEnd, "", 0, frame->location);
+        smith_lang_generic_call_state(lang);
+        return;
     }
+    lang->cap_frames -= 1;
     uint32_t top_count = smith_lang_gt.count;
     uint32_t top_text = smith_lang_gt.text_used;
     SmithLangReplay *replay = &smith_lang_replay;
-    *replay = (SmithLangReplay){.instance = nullptr, .instance_id = 0, .generic = nullptr, .location = location};
-    if (smith_lang_call_finish(lang, host, replay, generic_index, frame_count, top_count, location, member_location)) {
+    *replay = (SmithLangReplay){.instance = nullptr, .instance_id = 0, .generic = nullptr, .location = frame->location};
+    if (smith_lang_call_finish(lang, host, replay, frame->generic_index, frame->count, top_count, frame->location,
+                               frame->member_location)) {
         smith_lang_replay_run(lang, host, replay);
     }
     if (lang->cap_frames > 0) {
-        smith_lang_gt_slide(frame_count, frame_text, top_count, top_text); // inside another call: where this one was
+        smith_lang_gt_slide(frame->count, frame->text, top_count, top_text); // inside another call: where this one was
     } else {
-        smith_lang_gt.count = frame_count;
-        smith_lang_gt.text_used = frame_text;
+        smith_lang_gt.count = frame->count;
+        smith_lang_gt.text_used = frame->text;
     }
-    smith_lang_generic_call_done(lang);
-    return true;
+    smith_lang_generic_call_state(lang);
+}
+
+// Called by the feed loop after each token it has lowered: the token counts toward the innermost call being read.
+static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->call_top == 0) return;
+    SmithLangCallFrame *frame = &lang->calls[lang->call_top - 1];
+    if (frame->skip) { // the token the call began at
+        frame->skip = false;
+        return;
+    }
+    bool punct = token->kind == SmithTokenKind_Punctuator && token->length == 1;
+    if (punct && strchr("([{", token->text[0]) != nullptr) frame->depth += 1;
+    if (punct && strchr(")]}", token->text[0]) != nullptr) frame->depth -= 1;
+    if (frame->depth > 0) return;
+    SmithLangCallFrame done = *frame;
+    lang->call_top -= 1;
+    smith_lang_generic_finish_call(lang, host, &done);
+}
+
+// The file ends inside a call: it is reported, and nothing of the calls being read is kept.
+static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host) {
+    if (lang->call_top == 0) return;
+    smith_lang_error(lang, host, lang->calls[lang->call_top - 1].location, "this call is never closed with `)`");
+    while (lang->call_top > 0) {
+        const SmithLangCallFrame *frame = &lang->calls[--lang->call_top];
+        if (frame->record) continue;
+        smith_lang_gt.count = frame->count;
+        smith_lang_gt.text_used = frame->text;
+        lang->cap_frames -= 1;
+    }
 }
 
 // The call that `name` begins, when it is to a generic (or, in a generic's body, to anything of a module). Returns

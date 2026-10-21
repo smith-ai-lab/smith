@@ -29,6 +29,10 @@ static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, c
     return true;
 }
 
+// runtime/lang_generic.c
+static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token);
+static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host);
+
 static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
@@ -538,9 +542,13 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
     }
     lang->queue[0] = *token;
     lang->queue_count = 1;
-    for (size_t guard = 0; lang->queue_count > 0 && guard < smith_lang_batch_max; guard++) { // bounded by the batch
+    for (size_t guard = 0;
+         (lang->queue_count > 0 || lang->call_top > 0) && guard < smith_lang_batch_max + smith_lang_gt_max;
+         guard++) { // bounded by the batch and by a call's arguments
         SmithToken next = smith_lang_take(lang, host);
+        if (next.kind == SmithTokenKind_Eof) smith_lang_generic_unclosed(lang, host);
         smith_lang_process(lang, host, &next);
+        smith_lang_generic_advance(lang, host, &next);
     }
     if (lang->broken && !lang->broken_reported) { // a table filled: say so, once, since the rest is passed through
         lang->broken_reported = true;

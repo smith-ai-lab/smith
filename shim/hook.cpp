@@ -1092,7 +1092,7 @@ class SmithHook final : public TokenHook, public NameSource {
             std::vector<std::pair<unsigned, SourceLocation>> &list = origins[file.getHashValue()];
             for (auto &[token, offset, origin] : spots.tokens) {
                 list.emplace_back(offset, origin);
-                token->setLocation(start.getLocWithOffset(offset));
+                token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
             }
             instanceFiles[file.getHashValue()] = id;
         }

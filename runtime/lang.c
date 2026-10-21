@@ -21,6 +21,7 @@ constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
 constexpr size_t smith_lang_queue_max = 256;
 constexpr size_t smith_lang_batch_max = 4096;
+constexpr size_t smith_lang_call_frames_max = 16; // generic calls inside generic calls' arguments
 constexpr size_t smith_lang_braces_max = 256;
 constexpr size_t smith_lang_bindings_max = 128;
 constexpr size_t smith_lang_imports_max = 128;
@@ -86,6 +87,18 @@ typedef enum {
     SmithLangRole_Declared, // the name a declaration introduces
     SmithLangRole_Done,     // lowered already (a namespace access, a sized type)
 } SmithLangRole;
+
+// A call to a generic being read (runtime/lang_generic.c): where it began in the pool, and the brackets seen so far.
+typedef struct {
+    bool record; // in a generic's body: kept whole between marks, not understood yet
+    bool skip;   // the next token shown to it is the one the call began at
+    uint32_t generic_index;
+    uint32_t location;
+    uint32_t member_location;
+    uint32_t count; // smith_lang_gt.count and text_used when it began
+    uint32_t text;
+    int depth;
+} SmithLangCallFrame;
 
 typedef struct {
     uint32_t offset;
@@ -261,8 +274,10 @@ struct SmithLang {
     // Generics (runtime/lang_generic.c).
     size_t generics_count;
     size_t instances_count;
-    size_t instances_emitted;   // the instances before this one have their code written
-    uint32_t cap_frames;        // calls being read: their tokens are kept, not written
+    size_t instances_emitted;                             // the instances before this one have their code written
+    uint32_t cap_frames;                                  // calls being read: their tokens are kept, not written
+    SmithLangCallFrame calls[smith_lang_call_frames_max]; // the calls being read, the innermost last
+    size_t call_top;
     bool recording;             // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic; // its index
     bool recording_skip;        // its head had an error: the body is read to its end and dropped

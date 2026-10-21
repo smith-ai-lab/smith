@@ -46,12 +46,10 @@ static SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,
 static SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,   0, 0,
                                       smith_lang_it_max,    smith_lang_it_text_max};
 
-enum {
-    SmithLangGenFlag_LineStart = 1,
-    SmithLangGenFlag_Space = 2,
-    SmithLangGenFlag_Expand = 4,
-    SmithLangGenFlag_Name = 8
-};
+constexpr unsigned smith_lang_gen_flag_line_start = 1U;
+constexpr unsigned smith_lang_gen_flag_space = 2U;
+constexpr unsigned smith_lang_gen_flag_expand = 4U;
+constexpr unsigned smith_lang_gen_flag_name = 8U;
 
 // Adds a token, with its text; the index it got, or UINT32_MAX when the pool is full.
 static uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token, const char *text, size_t length) {
@@ -72,9 +70,10 @@ static const char *smith_lang_pool_text(const SmithLangPool *pool, const SmithLa
 static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
     SmithLangGenToken kept = {0};
     kept.kind = (uint8_t)token->kind;
-    kept.flags = (uint8_t)((token->line_start ? SmithLangGenFlag_LineStart : 0) |
-                           (token->space_before ? SmithLangGenFlag_Space : 0) |
-                           (token->expand ? SmithLangGenFlag_Expand : 0) | (token->name ? SmithLangGenFlag_Name : 0));
+    kept.flags =
+        (uint8_t)((token->line_start ? smith_lang_gen_flag_line_start : 0) |
+                  (token->space_before ? smith_lang_gen_flag_space : 0) |
+                  (token->expand ? smith_lang_gen_flag_expand : 0) | (token->name ? smith_lang_gen_flag_name : 0));
     kept.location = token->location;
     return kept;
 }
@@ -86,9 +85,9 @@ static SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLang
     token.handle = smith_token_no_handle;
     token.text = smith_lang_pool_text(pool, kept);
     token.length = kept->length;
-    token.line_start = (kept->flags & SmithLangGenFlag_LineStart) != 0;
-    token.space_before = (kept->flags & SmithLangGenFlag_Space) != 0;
-    token.expand = (kept->flags & SmithLangGenFlag_Expand) != 0;
+    token.line_start = (kept->flags & smith_lang_gen_flag_line_start) != 0;
+    token.space_before = (kept->flags & smith_lang_gen_flag_space) != 0;
+    token.expand = (kept->flags & smith_lang_gen_flag_expand) != 0;
     token.location = kept->location;
     return token;
 }
