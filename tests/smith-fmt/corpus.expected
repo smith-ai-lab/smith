@@ -1,0 +1,639 @@
+==> error-c-name-function/src/uses/math.smith <==
+module uses::math;
+import <math.h>;
+
+export f32 root(f32 value) {
+    return sqrtf(value);
+}
+
+export f32 root_ok(f32 value) {
+    return c::sqrtf(value);
+}
+==> error-c-name-macro/src/uses/macro.smith <==
+module uses::macro;
+import <stdio.h>;
+
+export int end_bad(void) {
+    return EOF;
+}
+
+export int end_ok(void) {
+    return c::EOF;
+}
+==> error-c-name-tag/src/uses/tag.smith <==
+module uses::tag;
+import <sys/stat.h>;
+
+export int size_bad(void) {
+    struct stat info;
+    return (int)sizeof info;
+}
+
+export int size_ok(void) {
+    struct c::stat info;
+    return (int)sizeof info;
+}
+==> error-export-no-module/src/main.smith <==
+export int helper(void) {
+    return 1;
+}
+
+int main(void) {
+    return helper();
+}
+==> error-export-private-type/src/e/priv.smith <==
+module e::priv;
+
+typedef struct {
+    int x;
+} Hidden;
+typedef Hidden Alias;
+
+export Hidden make(void);
+export typedef struct {
+    Alias inner;
+} Wrapper;
+==> error-export-static/src/s.smith <==
+module s;
+
+export static int hidden(void) {
+    return 1;
+}
+==> error-export-two-names/src/two.smith <==
+module two;
+export int a, b;
+==> error-import-cycle/src/cycle/a.smith <==
+module cycle::a;
+import cycle::b;
+
+export int from_a(void) {
+    return 1;
+}
+==> error-import-cycle/src/cycle/b.smith <==
+module cycle::b;
+import cycle::a;
+
+export int from_b(void) {
+    return 2;
+}
+==> error-import-eof/src/lib/text.smith <==
+module lib::text;
+
+export typedef struct {
+    const char *data;
+    usize length;
+} Text;
+
+export Text make(const char *data) {
+    usize length = 0;
+    while (data[length] != 0)
+        length += 1;
+    return (Text){data, length};
+}
+
+export usize length(Text text) {
+    return text.length;
+}
+==> error-import-eof/src/main.smith <==
+import lib::text
+==> error-import-order/src/lib/text.smith <==
+module lib::text;
+
+export typedef struct {
+    const char *data;
+    usize length;
+} Text;
+
+export Text make(const char *data) {
+    usize length = 0;
+    while (data[length] != 0)
+        length += 1;
+    return (Text){data, length};
+}
+
+export usize length(Text text) {
+    return text.length;
+}
+==> error-import-order/src/main.smith <==
+int before;
+import lib::text;
+
+int main(void) {
+    return before;
+}
+==> error-import-self/src/me.smith <==
+module me;
+import me;
+==> error-module-first/src/late.smith <==
+int before;
+module late;
+==> error-module-missing/src/main.smith <==
+import no::such::module;
+
+int main(void) {
+    return 0;
+}
+==> error-module-name/src/wrong.smith <==
+module right::name;
+
+export int f(void) {
+    return 1;
+}
+==> error-module-syntax/src/syntax.smith <==
+module;
+int x;
+==> import-c-header/src/main.smith <==
+import <math.h>;
+import <sys/wait.h>;
+import <stdio.h>;
+import "local.h";
+
+int main(void) {
+    f32 root = c::sqrtf(81.0f);
+    int status = 256 * 3;
+    c::printf("%.1f %d %d eof=%d %d\n", (double)root, c::WIFEXITED(status), c::WEXITSTATUS(status), c::EOF,
+              c::local_value());
+    return 0;
+}
+==> import-smith-module/src/lib/text.smith <==
+module lib::text;
+
+export typedef struct {
+    const char *data;
+    usize length;
+} Text;
+
+export Text make(const char *data) {
+    usize length = 0;
+    while (data[length] != 0)
+        length += 1;
+    return (Text){data, length};
+}
+
+export usize length(Text text) {
+    return text.length;
+}
+==> import-smith-module/src/lib/util.smith <==
+module lib::util;
+
+export int twice(int value) {
+    return value * 2;
+}
+==> import-smith-module/src/main.smith <==
+import lib::text;
+import lib::util as u;
+#include <stdio.h>
+
+int main(void) {
+    text::Text t = text::make("hello");
+    printf("%zu %d\n", text::length(t), u::twice(21));
+    return 0;
+}
+==> include-keeps-c-names/src/app/say.smith <==
+module app::say;
+#include <stdio.h>
+
+export void hello(const char *name) {
+    printf("hi %s\n", name);
+}
+==> include-keeps-c-names/src/main.smith <==
+import app::say;
+
+int main(void) {
+    say::hello("there");
+    return 0;
+}
+==> module-basic/src/main.smith <==
+import shapes::area as area;
+#include <stdio.h>
+
+int main(void) {
+    area::Rect r = {3.0, 4.0};
+    struct area::Circle c = {2.0};
+    printf("%.1f %.1f %.1f\n", area::rect(r), area::circle(c), area::triangle(r));
+    printf("%u %u %d %d %d\n", area::calls, area::private_count(), area::Square, area::Round, area::Other);
+    printf("%d %u\n", area::kind_of(4) == area::Square, area::sides);
+    return 0;
+}
+==> module-basic/src/shapes/area.smith <==
+module shapes::area;
+
+export typedef struct {
+    f64 width;
+    f64 height;
+} Rect;
+export struct Circle {
+    f64 radius;
+};
+export enum Kind { Square, Round = 5, Other };
+export constexpr u32 sides = 4;
+export u32 calls = 0;
+export f64 pi = 3.0;
+
+u32 private_calls = 0;
+
+static_assert(sizeof(Rect) == 16);
+
+f64 half(f64 value) {
+    private_calls += 1;
+    return value / 2;
+}
+
+export f64 rect(Rect shape) {
+    calls += 1;
+    return shape.width * shape.height;
+}
+
+export f64 circle(struct Circle shape) {
+    calls += 1;
+    return pi * shape.radius * shape.radius;
+}
+
+export f64 triangle(Rect shape) {
+    return half(rect(shape));
+}
+
+export u32 private_count(void) {
+    return private_calls;
+}
+
+export enum Kind kind_of(u32 side_count) {
+    return side_count == sides ? Square : Other;
+}
+==> module-c-caller/src/mix/sum.smith <==
+module mix::sum;
+
+export i64 add(i64 a, i64 b) {
+    return a + b;
+}
+export i64 total = 100;
+==> module-c-features/src/kit/things.smith <==
+module kit::things;
+import <stdio.h>;
+
+export typedef int (*Callback)(int value);
+export typedef union {
+    u32 whole;
+    u8 bytes[4];
+} Word;
+export typedef struct Node {
+    struct Node *next;
+    i32 value;
+    u32 flag : 1;
+    u32 mode : 3;
+    struct {
+        i16 x, y;
+    } point;
+} Node;
+
+export constexpr usize capacity = 4;
+export const char *const names[] = {"zero", "one", "two"};
+static_assert(sizeof(Word) == 4, "a word is four bytes");
+
+[[nodiscard]] static inline int square(int value) {
+    return value * value;
+}
+
+int apply_twice(Callback callback, int value) {
+    return callback(callback(value));
+}
+
+export int run(Callback callback, int value) {
+    return apply_twice(callback, value);
+}
+
+export int sum(const Node *node) {
+    int total = 0;
+    for (; node != nullptr; node = node->next) {
+        total += node->value + node->point.x + (int)node->mode;
+    }
+    return total;
+}
+
+export Word make_word(u32 whole) {
+    Word word = {.whole = whole};
+    return word;
+}
+
+export int by_type(int value) {
+    return _Generic(value, int: square(value), default: 0);
+}
+
+export u32 pick(u32 index) {
+    static const u32 table[] = {10, 20, 30, 40};
+    typeof(index) clamped = index < capacity ? index : capacity - 1;
+    return table[clamped];
+}
+
+export int say(const char *text) {
+    return c::puts(text);
+}
+
+export typedef int Local;
+export Local twice_local(Local value) {
+    Local result = value * 2;
+    return result;
+}
+
+#define TRIPLE(value) ((value) * 3)
+
+export int triple(int value) {
+    return TRIPLE(value);
+}
+==> module-c-features/src/main.smith <==
+import kit::things as k;
+import <stdio.h>;
+
+#define OPEN_SUM(first) k::sum(first)
+#define PICK(i) k::pick(i)
+
+static int increment(int value) {
+    return value + 1;
+}
+
+int main(void) {
+    k::Node last = {.next = nullptr, .value = 3, .mode = 2, .point = {.x = 1, .y = 2}};
+    k::Node first = {.next = &last, .value = 4, .mode = 1};
+    c::printf("%d %d\n", OPEN_SUM(&first), k::run(increment, 5));
+    c::printf("%u %u %zu %s\n", PICK(1), PICK(9), (usize)k::capacity, k::names[2]);
+    k::Word word = k::make_word(0x01020304);
+    c::printf("%u %u\n", word.bytes[0], (unsigned)sizeof(k::Word));
+    c::printf("%d %d %d\n", k::by_type(7), k::twice_local(21), k::triple(5));
+    k::say("said");
+    return 0;
+}
+==> module-cpp-callers/src/geo/vec.smith <==
+module geo::vec;
+
+export typedef struct {
+    f64 x;
+    f64 y;
+} Vec;
+export constexpr u32 dimensions = 2;
+export f64 length_squared(Vec v) {
+    return v.x * v.x + v.y * v.y;
+}
+export f64 dot(Vec a, Vec b);
+export u32 counter = 5;
+==> module-export-extern/src/cfg/limits.smith <==
+module cfg::limits;
+
+export extern u32 max_users;
+export u32 users_allowed(void) {
+    return max_users * 2;
+}
+==> module-export-extern/src/main.smith <==
+import cfg::limits as limits;
+#include <stdio.h>
+
+int main(void) {
+    printf("%u %u\n", limits::max_users, limits::users_allowed());
+    return 0;
+}
+==> module-header-conditionals/src/cond/gate.smith <==
+module cond::gate;
+
+#if 0
+export int never_there(void);
+export int also_never(void) { return -1; }
+#endif
+
+export int always_there(void) {
+    return 7;
+}
+==> module-header-conditionals/src/main.smith <==
+import cond::gate;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d\n", gate::always_there());
+    return 0;
+}
+==> module-main/src/main.smith <==
+module main;
+#include <stdio.h>
+
+int main(void) {
+    printf("main stays main\n");
+    return 0;
+}
+==> module-names/src/main.smith <==
+import names::fields as f;
+#include <stdio.h>
+
+int main(void) {
+    f::Stats s = f::make(2, 3);
+    printf("%d %d\n", s.count, f::combine(&s));
+    return 0;
+}
+==> module-names/src/names/fields.smith <==
+module names::fields;
+
+export typedef struct {
+    int count;
+    int total;
+} Stats;
+
+int count = 10;
+
+int total(void) {
+    return 5;
+}
+
+export int combine(Stats *stats) {
+    int local = stats->count + stats->total;
+    return local + count + total();
+}
+
+export Stats make(int count, int total) {
+    Stats stats = {.count = count, .total = total};
+    return stats;
+}
+==> module-shadow-names/src/lib/gnu.smith <==
+module lib::gnu;
+
+export int answer(void) {
+    return 42;
+}
+==> module-shadow-names/src/lib/text.smith <==
+module lib::text;
+
+export typedef struct {
+    const char *data;
+    usize length;
+} Text;
+
+export Text make(const char *data) {
+    usize length = 0;
+    while (data[length] != 0)
+        length += 1;
+    return (Text){data, length};
+}
+
+export usize length(Text text) {
+    return text.length;
+}
+==> module-shadow-names/src/main.smith <==
+import lib::text;
+import lib::gnu;
+import <stdio.h>;
+
+int main(void) {
+    text::Text text = text::make("shadow");
+    int c = 2;
+    [[gnu::unused]] int unused_one = gnu::answer();
+    int gnu = unused_one;
+    c::printf("%zu %d %d\n", text::length(text), c, gnu);
+    return 0;
+}
+==> module-three/src/game/replay.smith <==
+module game::replay;
+import lib::text as tx;
+
+export typedef struct {
+    u64 frames;
+    tx::Text name;
+} Replay;
+export constexpr u32 version = 3;
+export u32 counter = 7;
+
+export typedef struct Handle {
+    i32 fd;
+} Handle;
+export enum Mode { Fast, Slow };
+
+u32 helper(void) {
+    return version + counter;
+}
+
+export Replay open(Handle *handle, const char *path) {
+    Replay replay = {0};
+    replay.frames = helper() + (u64)handle->fd;
+    replay.name = tx::make(path);
+    counter += 1;
+    return replay;
+}
+
+export u64 checksum(const u8 *data, usize size);
+==> module-three/src/lib/text.smith <==
+module lib::text;
+import <string.h>;
+
+export typedef struct {
+    const char *data;
+    usize length;
+} Text;
+
+export Text make(const char *data) {
+    return (Text){data, c::strlen(data)};
+}
+
+export usize length(Text text) {
+    return text.length;
+}
+
+usize unused_helper(void) {
+    return 0;
+}
+==> module-three/src/main.smith <==
+import game::replay as rp;
+import lib::text;
+import <stdio.h>;
+import <math.h>;
+
+int main(void) {
+    rp::Handle handle = {.fd = 5};
+    rp::Replay replay = rp::open(&handle, "last.replay");
+    f32 root = c::sqrtf(16.0f);
+    c::printf("frames=%llu name=%s length=%zu version=%u mode=%d root=%.1f eof=%d\n", (unsigned long long)replay.frames,
+              replay.name.data, text::length(replay.name), (unsigned)rp::version, rp::Slow, (double)root, c::EOF);
+    c::printf("counter=%u\n", rp::counter);
+    u8 bytes[3] = {1, 2, 3};
+    c::printf("checksum=%llu\n", (unsigned long long)rp::checksum(bytes, 3));
+    return 0;
+}
+==> plain-hello/src/main.smith <==
+#include <stdio.h>
+
+int main(void) {
+    printf("hello\n");
+    return 0;
+}
+==> plain-names/src/main.smith <==
+#include <stdio.h>
+
+struct Point {
+    int x;
+    int y;
+};
+typedef int import;
+import global_value = 7;
+
+int main(void) {
+    struct Point c = {1, 2};
+    import value = c.x + c.y;
+    int module = value;
+    int export_count = module;
+    printf("%d %d %d\n", value, export_count, global_value);
+    return 0;
+}
+==> plain-sized-shadow/src/main.smith <==
+#include <stdio.h>
+
+typedef unsigned u32;
+
+int main(void) {
+    u32 a = 3;
+    int u8 = 4;
+    int f32 = 5;
+    printf("%u %d %d\n", a, u8 + 1, f32 + 1);
+    return 0;
+}
+==> reflect-questions/src/main.smith <==
+// Nothing here uses the questions: the test asks the parser about these types at the end of the file (see `ask`), the
+// way reflection will, and compares its answers with expect/ask.
+typedef struct {
+    u8 tag;
+    u64 value;
+    f32 weight;
+} Packet;
+
+struct Header {
+    u16 id;
+    u16 flags;
+    char name[6];
+};
+
+union Number {
+    u32 whole;
+    f32 real;
+};
+
+typedef Packet Alias;
+typedef struct Opaque Hidden;
+
+int main(void) {
+    return 0;
+}
+==> sized-types/src/main.smith <==
+#include <stddef.h>
+#include <stdio.h>
+
+int main(void) {
+    printf("%zu %zu %zu %zu\n", sizeof(u8), sizeof(u16), sizeof(u32), sizeof(u64));
+    printf("%zu %zu %zu %zu\n", sizeof(i8), sizeof(i16), sizeof(i32), sizeof(i64));
+    printf("%zu %zu\n", sizeof(usize), sizeof(isize));
+    printf("%zu %zu %zu\n", sizeof(f16), sizeof(f32), sizeof(f64));
+    i8 minus = -1;
+    u8 wrap = (u8)minus;
+    printf("%d %u\n", minus, wrap);
+    f32 half = 0.5f;
+    f64 wide = half;
+    printf("%.2f %.2f\n", (double)half, wide);
+    static_assert(_Generic((u64)0, unsigned long long: 1, unsigned long: 1, default: 0), "u64 is an unsigned type");
+    static_assert(_Generic((usize)0, size_t: 1, default: 0), "usize is size_t");
+    static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
+    bool flag = true;
+    printf("%d\n", flag);
+    return 0;
+}

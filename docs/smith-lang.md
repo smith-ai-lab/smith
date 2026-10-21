@@ -79,6 +79,16 @@ cycle, naming it, before any compile starts. What an importer depends on is its 
 read. So an edit to a module's body recompiles that module alone, and an edit to its exports recompiles its importers.
 The rule that a module `a::b` lives in a file whose path ends in `a/b.smith` is checked once, when build.c runs.
 
+## Formatting
+
+`smith fmt` formats a `.smith` file as C (clang-format 23 with `patches/clang-format-smith.patch`, about 100 lines): C's keywords
+only (so a C name such as `throw` is a name, not C++'s keyword), `::` one token, and `module ...;` and `import ...;` lines at
+file scope kept whole, `import <sys/wait.h>;` included. Inside a function body, `import` and `module` are names, so
+`import value = c.x + c.y;` is an indented declaration of a type named `import`. Every C file formats the same as `.c` and as
+`.smith` (`tests/smith-fmt.sh`). `smith fmt` with no arguments formats the project's `.smith` files when its build.c lists them
+(`smith new` globs `**/*.smith`). clangd, which uses the same library, formats `.smith` files the same way; understanding the
+rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
+
 ## How it works
 
 - **The hook** is one patch to smith's clang (`patches/clang-token-hook.patch`, about 100 lines, applied by

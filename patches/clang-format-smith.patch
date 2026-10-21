@@ -1,0 +1,107 @@
+diff -ru a/clang/lib/Format/Format.cpp b/clang/lib/Format/Format.cpp
+--- a/clang/lib/Format/Format.cpp	2026-10-21 09:50:14
++++ b/clang/lib/Format/Format.cpp	2026-10-21 09:53:43
+@@ -4528,7 +4528,9 @@
+     if (FileName.consume_back(Suffix))
+       break;
+ 
+-  if (FileName.ends_with(".c"))
++  // smith (issue #25): a .smith file is C with `::` paths and module/import
++  // lines, so it is formatted as C (UnwrappedLineParser knows the extension).
++  if (FileName.ends_with(".c") || FileName.ends_with(".smith"))
+     return FormatStyle::LK_C;
+   if (FileName.ends_with(".java"))
+     return FormatStyle::LK_Java;
+diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator.cpp
+--- a/clang/lib/Format/TokenAnnotator.cpp	2026-10-21 09:52:01
++++ b/clang/lib/Format/TokenAnnotator.cpp	2026-10-21 09:53:43
+@@ -2027,7 +2027,11 @@
+         (!Style.isVerilog() && Info &&
+          Info->getPPKeywordID() == tok::pp_import && CurrentToken->Next &&
+          CurrentToken->Next->isOneOf(tok::string_literal, tok::identifier,
+-                                     tok::kw_static))) {
++                                     tok::kw_static) &&
++         // C has no import statement but smith's (issue #25), which the
++         // parser marked: `import value = 1;` is a declaration of a type
++         // named import.
++         (Style.Language != FormatStyle::LK_C || Line.IsModuleOrImportDecl))) {
+       next();
+       parseIncludeDirective();
+       return LT_ImportStatement;
+diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/UnwrappedLineParser.cpp
+--- a/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-21 09:50:14
++++ b/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-21 09:53:43
+@@ -17,6 +17,7 @@
+ #include "FormatTokenSource.h"
+ #include "Macros.h"
+ #include "TokenAnnotator.h"
++#include "clang/Basic/SourceManager.h"
+ #include "clang/Basic/TokenKinds.h"
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/StringRef.h"
+@@ -151,6 +152,15 @@
+   unsigned OldLineLevel;
+ };
+ 
++// Whether the tokens come from a .smith file: C, plus `module` and `import`
++// lines at file scope (issue #25).
++static bool isSmithFile(const SourceManager &SourceMgr,
++                        ArrayRef<FormatToken *> Tokens) {
++  return !Tokens.empty() &&
++         SourceMgr.getFilename(Tokens.front()->Tok.getLocation())
++             .ends_with(".smith");
++}
++
+ UnwrappedLineParser::UnwrappedLineParser(
+     SourceManager &SourceMgr, const FormatStyle &Style,
+     const AdditionalKeywords &Keywords, unsigned FirstStartColumn,
+@@ -159,6 +169,7 @@
+     IdentifierTable &IdentTable)
+     : Line(new UnwrappedLine), AtEndOfPPLine(false), CurrentLines(&Lines),
+       Style(Style), IsCpp(Style.isCpp()),
++      IsSmith(isSmithFile(SourceMgr, Tokens)),
+       LangOpts(getFormattingLangOpts(Style)), Keywords(Keywords),
+       CommentPragmasRegex(Style.CommentPragmas), Tokens(nullptr),
+       Callback(Callback), AllTokens(Tokens), PPBranchLevel(-1),
+@@ -1354,8 +1365,12 @@
+   assert(IsCpp);
+   assert(FormatTok->is(Keywords.kw_module));
+ 
+-  if (Style.Language == FormatStyle::LK_C ||
+-      Style.Standard < FormatStyle::LS_Cpp20) {
++  if (IsSmith) {
++    // Only at file scope: elsewhere `import` and `module` are names.
++    if (DeclarationScopeStack.size() != 1)
++      return false;
++  } else if (Style.Language == FormatStyle::LK_C ||
++             Style.Standard < FormatStyle::LS_Cpp20) {
+     return false;
+   }
+ 
+@@ -1377,8 +1392,12 @@
+   assert(IsCpp);
+   assert(FormatTok->is(Keywords.kw_import) && "'import' expected");
+ 
+-  if (Style.Language == FormatStyle::LK_C ||
+-      Style.Standard < FormatStyle::LS_Cpp20) {
++  if (IsSmith) {
++    // Only at file scope: elsewhere `import` and `module` are names.
++    if (DeclarationScopeStack.size() != 1)
++      return false;
++  } else if (Style.Language == FormatStyle::LK_C ||
++             Style.Standard < FormatStyle::LS_Cpp20) {
+     return false;
+   }
+ 
+diff -ru a/clang/lib/Format/UnwrappedLineParser.h b/clang/lib/Format/UnwrappedLineParser.h
+--- a/clang/lib/Format/UnwrappedLineParser.h	2026-10-21 09:50:14
++++ b/clang/lib/Format/UnwrappedLineParser.h	2026-10-21 09:53:43
+@@ -333,6 +333,8 @@
+ 
+   const FormatStyle &Style;
+   bool IsCpp;
++  // The file is a .smith file (C with modules, issue #25).
++  bool IsSmith;
+   LangOptions LangOpts;
+   const AdditionalKeywords &Keywords;
+ 

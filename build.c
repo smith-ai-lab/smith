@@ -593,7 +593,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
                                     // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
                                     "for t in run build new docs arena io http package random text json cache untar "
                                     "resource dap tree_sitter neovim "
-                                    "defer contract prove smith-lang smith-lang-c test; do env "
+                                    "defer contract prove smith-lang smith-lang-c smith-fmt test; do env "
                                     "\"$0\" sh tests/$t.sh "
                                     "\"$1\" || exit 1; done; "
                                     "env \"$0\" sh tests/test.sh \"$1\" isolate",

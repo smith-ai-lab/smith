@@ -45,7 +45,6 @@ changes a debug configuration of yours.
 
 ## What waits
 
-- Formatting `.smith` (`smith fmt`): issue #25.
 - `smith lsp` for `.smith` files, so the language server attaches to them: issue #26.
 - `smith dap` and `smith dbg` for `.smith` programs (names in backtraces, `b game::replay::open`): issue #27.
 - Upstream registrations (Neovim's file types, nvim-treesitter, nvim-lspconfig), later, as contributions.

@@ -10,27 +10,47 @@ src=$1 cmake=$2 python=$3 stamp=$4 ninja=$5
 # into another folder (an experiment next to the shared install).
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r2}
 mkdir -p "$cache" "$(dirname "$stamp")"
-# --- step: the token hook (patches/clang-token-hook.patch; issue #11) ---------------------------------------------------
-# A token transformer on the Preprocessor, for .smith files; off unless smith installs it. The package is read-only to
-# everyone else (other installs are built from it), so the patch goes into a copy, once. The copy keeps the patch it has
-# in .hooked: a new revision of the patch takes the old one out and puts the new one in, so only the files they touch
-# change and the rebuild is incremental. An empty .hooked (from before it held the patch) means a fresh copy.
-# Remove this step, and the file, to build plain LLVM.
-patch=$(cd "$(dirname "$0")/.." && pwd)/patches/clang-token-hook.patch
-if [ ! -s "$cache/src/.hooked" ]; then
+# --- step: the patches (patches/*.patch): the token hook (issue #11) and clang-format for .smith (issue #25) -------------
+# patches/clang-token-hook.patch is a token transformer on the Preprocessor, for .smith files; off unless smith installs
+# it. patches/clang-format-smith.patch teaches clang-format that a .smith file is C with `::` paths and module/import
+# lines. The package is read-only to everyone else (other installs are built from it), so the patches go into a copy,
+# once. The copy keeps the patches it has in .patches/, one file each: a patch that changed (or is gone) is taken out
+# with the ones applied after it, and the new revisions and new patches are put in, so only the files they touch change
+# and the rebuild is incremental. A patch must apply to the sources as the patches before it left them, and to them
+# alone. A .hooked file (one patch, from before there were two) is the hook patch already applied; an empty one means a
+# fresh copy. Remove this step, and the patches, to build plain LLVM.
+patches=$(cd "$(dirname "$0")/.." && pwd)/patches
+applied=$cache/src/.patches
+if [ -s "$cache/src/.hooked" ]; then
+    mkdir -p "$applied"
+    mv "$cache/src/.hooked" "$applied/clang-token-hook.patch"
+elif [ ! -d "$applied" ]; then
     rm -rf "$cache/src"
     mkdir -p "$cache/src"
     cp -R "$src/." "$cache/src/"
     chmod -R u+w "$cache/src"
-    patch -p1 -s -d "$cache/src" <"$patch"
-    cp "$patch" "$cache/src/.hooked"
-elif ! cmp -s "$patch" "$cache/src/.hooked"; then
-    patch -R -p1 -s -d "$cache/src" <"$cache/src/.hooked"
-    patch -p1 -s -d "$cache/src" <"$patch"
-    cp "$patch" "$cache/src/.hooked"
+    mkdir -p "$applied"
 fi
+# Take out, last first, everything from the first applied patch that differs from patches/ on.
+stale=
+for name in $(ls "$applied"); do
+    if [ -z "$stale" ] && ! cmp -s "$patches/$name" "$applied/$name"; then stale=yes; fi
+    if [ -n "$stale" ]; then echo "$name"; fi
+done | sort -r >"$cache/src/.unapply"
+while read -r name; do
+    patch -R -p1 -s -d "$cache/src" <"$applied/$name"
+    rm "$applied/$name"
+done <"$cache/src/.unapply"
+rm -f "$cache/src/.unapply"
+for patch in "$patches"/*.patch; do
+    name=$(basename "$patch")
+    if [ ! -f "$applied/$name" ]; then
+        patch -p1 -s -d "$cache/src" <"$patch"
+        cp "$patch" "$applied/$name"
+    fi
+done
 src=$cache/src
-# --- end of the token hook step -----------------------------------------------------------------------------------------
+# --- end of the patches step -----------------------------------------------------------------------------------------
 # The host compiler that builds LLVM is Apple's; the clang it makes finds the SDK at run time.
 sdk=$(xcrun --show-sdk-path)
 host=/usr/bin

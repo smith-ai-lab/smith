@@ -49,6 +49,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
   clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
+  - **`.smith` is C to clang-format** (issue #25; `patches/clang-format-smith.patch`, about 100 lines): C's keywords
+    only, `::` one token, and `module ...;` and `import ...;` lines at file scope kept whole (`import <sys/wait.h>;`).
+    Inside a function `import` and `module` are names, as in C. clangd formats `.smith` the same way (same library).
 - **`smith dbg` and `smith dap` are lldb and lldb-dap, from the same LLVM** (linked in; the stage0 runs `$SMITH_LLDB`
   and `$SMITH_LLDB_DAP`), with the system's debugserver (Apple signs it), no Python and no curses
   ([docs/debugging.md](docs/debugging.md); the skill is smith-debug). They add about 17 MB to smith and, because the
@@ -123,7 +126,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
   the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
-  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the token hook (#11); the compiler's
+  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25); the compiler's
   output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
   and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
