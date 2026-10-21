@@ -425,6 +425,14 @@ static const char *smith_sym_name(const char *label, char arguments[smith_sym_ar
     return index < argument_count && arguments[index][0] != '\0' ? arguments[index] : label;
 }
 
+// `name = value`, or just the value when the name is the value (an argument written as the literal 999).
+static void smith_sym_named(char *out, size_t capacity, const char *name, const char *value) {
+    if (strcmp(name, value) == 0 || name[0] == '\0')
+        snprintf(out, capacity, "%s", value);
+    else
+        snprintf(out, capacity, "%s = %s", name, value);
+}
+
 // What was wrong, under the source line, aligned with its text: two values of one type on one line (`count = 3,
 // expected = 4   (u64)`), else a line each.
 static void smith_sym_print_values(FILE *out, const char *indent, const SmithSymTrace *trace, const char *source) {
@@ -441,16 +449,21 @@ static void smith_sym_print_values(FILE *out, const char *indent, const SmithSym
     bool pair = trace->detail_count == 2 && labels[0] != nullptr && labels[1] != nullptr &&
                 strcmp(labels[0], "a") == 0 && strcmp(labels[1], "b") == 0 && strcmp(types[0], types[1]) == 0;
     if (pair) {
-        fprintf(out, "%s%s = %s, %s = %s   %s\n", indent, smith_sym_name("a", arguments, argument_count), values[0],
-                smith_sym_name("b", arguments, argument_count), values[1], types[0]);
+        char first[300];
+        char second[300];
+        smith_sym_named(first, sizeof first, smith_sym_name("a", arguments, argument_count), values[0]);
+        smith_sym_named(second, sizeof second, smith_sym_name("b", arguments, argument_count), values[1]);
+        fprintf(out, "%s%s, %s   %s\n", indent, first, second, types[0]);
         return;
     }
     for (size_t i = 0; i < trace->detail_count; i++) {
-        if (labels[i] == nullptr)
+        char named[300];
+        if (labels[i] == nullptr) {
             fprintf(out, "%s%s\n", indent, trace->details[i]);
-        else
-            fprintf(out, "%s%s = %s   %s\n", indent, smith_sym_name(labels[i], arguments, argument_count), values[i],
-                    types[i]);
+            continue;
+        }
+        smith_sym_named(named, sizeof named, smith_sym_name(labels[i], arguments, argument_count), values[i]);
+        fprintf(out, "%s%s   %s\n", indent, named, types[i]);
     }
 }
 
