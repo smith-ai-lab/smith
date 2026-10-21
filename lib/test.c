@@ -1760,7 +1760,8 @@ int main(int argc, char **argv) {
     if (!smith_test_parse_options(argc, argv, &options)) {
         fprintf(stderr,
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
-                "[--timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] [--shuffle <seed>] [--isolate] [--full] [--list] [--verbose] "
+                "[--timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] [--shuffle <seed>] [--isolate] "
+                "[--full] [--list] [--verbose] "
                 "[--stats]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;
