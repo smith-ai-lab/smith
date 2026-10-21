@@ -27,6 +27,12 @@ static_assert(FLT_EVAL_METHOD == 0, "float arithmetic must happen in float");
 #define SMITH_RANDOM_OPAQUE(variable) __asm__("" : "+X"(variable))
 #endif
 
+// A value passed through an empty asm is opaque to the optimizer, which then cannot fold it into immediates: the Philox
+// constants stay in registers (left alone the key schedule becomes ten immediates, three instructions each, where an
+// add of a register is one), and the polynomial coefficients are loaded (rebuilt from immediates they cost four
+// instructions each). This only changes how the same bits are computed.
+#define SMITH_RANDOM_REGISTER(variable) __asm__("" : "+r"(variable))
+
 static inline double smith_random_mul_double(double a, double b) {
     double product = a * b;
     SMITH_RANDOM_OPAQUE(product);
@@ -42,6 +48,7 @@ static inline float smith_random_mul_float(float a, float b) {
 // The polynomial c[0] + c[1] x + ... + c[count - 1] x^(count - 1) by Horner's rule: one rounded product and one rounded
 // sum per step.
 static double smith_random_horner_double(const double *c, size_t count, double x) {
+    SMITH_RANDOM_REGISTER(c); // the coefficients are loaded, not rebuilt from immediates (4 instructions each)
     double sum = c[count - 1];
     for (size_t i = count - 1; i > 0; i--)
         sum = smith_random_mul_double(sum, x) + c[i - 1];
@@ -49,6 +56,7 @@ static double smith_random_horner_double(const double *c, size_t count, double x
 }
 
 static float smith_random_horner_float(const float *c, size_t count, float x) {
+    SMITH_RANDOM_REGISTER(c); // the coefficients are loaded, not rebuilt from immediates (4 instructions each)
     float sum = c[count - 1];
     for (size_t i = count - 1; i > 0; i--)
         sum = smith_random_mul_float(sum, x) + c[i - 1];
@@ -69,26 +77,66 @@ typedef struct {
     uint32_t word[4];
 } SmithRandomBlock;
 
-static SmithRandomBlock smith_random_philox(SmithRandomBlock counter, uint32_t key_0, uint32_t key_1) {
-    for (int round = 0; round < smith_random_rounds; round++) {
-        uint64_t product_0 = (uint64_t)smith_random_multiplier_0 * counter.word[0];
-        uint64_t product_1 = (uint64_t)smith_random_multiplier_1 * counter.word[2];
-        SmithRandomBlock next = {{(uint32_t)(product_1 >> 32) ^ counter.word[1] ^ key_0, (uint32_t)product_1,
-                                  (uint32_t)(product_0 >> 32) ^ counter.word[3] ^ key_1, (uint32_t)product_0}};
-        counter = next;
-        key_0 += smith_random_increment_0;
-        key_1 += smith_random_increment_1;
+// One Philox round on the counter words c[0..3] with the round key k0, k1.
+#define SMITH_RANDOM_ROUND(c0, c1, c2, c3, k0, k1, m0, m1) \
+    do { \
+        uint64_t product_0 = (uint64_t)(m0) * (c0); \
+        uint64_t product_1 = (uint64_t)(m1) * (c2); \
+        (c0) = (uint32_t)((uint64_t)((c1) ^ (k0)) ^ (product_1 >> 32)); \
+        (c1) = (uint32_t)product_1; \
+        (c2) = (uint32_t)((uint64_t)((c3) ^ (k1)) ^ (product_0 >> 32)); \
+        (c3) = (uint32_t)product_0; \
+    } while (0)
+
+// Philox4x32-10 for a counter and a key. The first nine rounds are the same for every caller; the tenth is done by the
+// caller, which usually needs only two of the four words (the rest of that round is then skipped).
+typedef struct {
+    uint32_t word[4];
+    uint32_t key_0, key_1;
+} SmithRandomRounds;
+
+static inline SmithRandomRounds smith_random_nine_rounds(SmithRandomBlock counter, uint32_t key_0, uint32_t key_1) {
+    uint32_t multiplier_0 = smith_random_multiplier_0;
+    uint32_t multiplier_1 = smith_random_multiplier_1;
+    uint32_t increment_0 = smith_random_increment_0;
+    uint32_t increment_1 = smith_random_increment_1;
+    SMITH_RANDOM_REGISTER(multiplier_0);
+    SMITH_RANDOM_REGISTER(multiplier_1);
+    SMITH_RANDOM_REGISTER(increment_0);
+    SMITH_RANDOM_REGISTER(increment_1);
+    uint32_t c0 = counter.word[0];
+    uint32_t c1 = counter.word[1];
+    uint32_t c2 = counter.word[2];
+    uint32_t c3 = counter.word[3];
+    for (int round = 0; round < smith_random_rounds - 1; round++) {
+        SMITH_RANDOM_ROUND(c0, c1, c2, c3, key_0, key_1, multiplier_0, multiplier_1);
+        key_0 += increment_0;
+        key_1 += increment_1;
     }
-    return counter;
+    return (SmithRandomRounds){{c0, c1, c2, c3}, key_0, key_1};
 }
 
-static SmithRandomBlock smith_random_block(SmithKey key, uint64_t index, uint32_t domain) {
-    SmithRandomBlock counter = {{(uint32_t)index, (uint32_t)(index >> 32), domain, 0}};
-    return smith_random_philox(counter, (uint32_t)key.bits, (uint32_t)(key.bits >> 32));
+// The whole block, with all ten rounds: the library draws through the two halves below, and the tests check this one
+// against Random123's known answers.
+[[maybe_unused]] static SmithRandomBlock smith_random_philox(SmithRandomBlock counter, uint32_t key_0, uint32_t key_1) {
+    SmithRandomRounds r = smith_random_nine_rounds(counter, key_0, key_1);
+    SMITH_RANDOM_ROUND(r.word[0], r.word[1], r.word[2], r.word[3], r.key_0, r.key_1, smith_random_multiplier_0,
+                       smith_random_multiplier_1);
+    return (SmithRandomBlock){{r.word[0], r.word[1], r.word[2], r.word[3]}};
 }
 
-static uint64_t smith_random_pair(uint32_t low, uint32_t high) {
-    return (uint64_t)low | (uint64_t)high << 32;
+// Output words 0 and 1 as one 64-bit value, which the tenth round makes from the second product alone.
+static uint64_t smith_random_philox_low(SmithRandomBlock counter, uint32_t key_0, uint32_t key_1) {
+    SmithRandomRounds r = smith_random_nine_rounds(counter, key_0, key_1);
+    uint64_t product_1 = (uint64_t)smith_random_multiplier_1 * r.word[2];
+    return (uint64_t)((uint32_t)(product_1 >> 32) ^ r.word[1] ^ r.key_0) | (product_1 << 32);
+}
+
+// Output words 2 and 3 as one 64-bit value, from the first product alone.
+static uint64_t smith_random_philox_high(SmithRandomBlock counter, uint32_t key_0, uint32_t key_1) {
+    SmithRandomRounds r = smith_random_nine_rounds(counter, key_0, key_1);
+    uint64_t product_0 = (uint64_t)smith_random_multiplier_0 * r.word[0];
+    return (uint64_t)((uint32_t)(product_0 >> 32) ^ r.word[3] ^ r.key_1) | (product_0 << 32);
 }
 
 SmithKey smith_key_make(uint64_t seed) {
@@ -97,8 +145,8 @@ SmithKey smith_key_make(uint64_t seed) {
 
 // Counter word 2 separates derive's domain (1) from bits' domain (0).
 SmithKey smith_key_derive(SmithKey key, uint64_t i) {
-    SmithRandomBlock out = smith_random_block(key, i, 1);
-    return (SmithKey){.bits = smith_random_pair(out.word[0], out.word[1])};
+    SmithRandomBlock counter = {{(uint32_t)i, (uint32_t)(i >> 32), 1, 0}};
+    return (SmithKey){.bits = smith_random_philox_low(counter, (uint32_t)key.bits, (uint32_t)(key.bits >> 32))};
 }
 
 SmithRandomHook smith_random_hook = nullptr;
@@ -106,9 +154,12 @@ SmithRandomHook smith_random_hook = nullptr;
 // Every distribution draws through here, so the runner's hook sees every word. smith_key_derive is not hooked: keys
 // stay the same, and only words change.
 uint64_t smith_key_bits(SmithKey key, uint64_t n) {
-    SmithRandomBlock out = smith_random_block(key, n >> 1, 0);
+    uint64_t block = n >> 1;
+    SmithRandomBlock counter = {{(uint32_t)block, (uint32_t)(block >> 32), 0, 0}};
+    uint32_t key_0 = (uint32_t)key.bits;
+    uint32_t key_1 = (uint32_t)(key.bits >> 32);
     uint64_t word =
-        (n & 1) == 0 ? smith_random_pair(out.word[0], out.word[1]) : smith_random_pair(out.word[2], out.word[3]);
+        (n & 1) == 0 ? smith_random_philox_low(counter, key_0, key_1) : smith_random_philox_high(counter, key_0, key_1);
     return smith_random_hook != nullptr ? smith_random_hook(key, n, word) : word;
 }
 
@@ -168,8 +219,9 @@ static double smith_log_double_finish(double f, int32_t k, uint32_t hx) {
     double w = smith_random_mul_double(z, z);
     uint32_t mixed =
         (hx - 0x6147a) | (0x6b851 - hx); // positive as a signed value: the range where log(1+f) = f - hfsq + ...
-    const double even[] = {smith_log_double_lg2, smith_log_double_lg4, smith_log_double_lg6};
-    const double odd[] = {smith_log_double_lg1, smith_log_double_lg3, smith_log_double_lg5, smith_log_double_lg7};
+    static const double even[] = {smith_log_double_lg2, smith_log_double_lg4, smith_log_double_lg6};
+    static const double odd[] = {smith_log_double_lg1, smith_log_double_lg3, smith_log_double_lg5,
+                                 smith_log_double_lg7};
     double t1 = smith_random_mul_double(w, smith_random_horner_double(even, 3, w));
     double t2 = smith_random_mul_double(z, smith_random_horner_double(odd, 4, w));
     double r = t2 + t1;
