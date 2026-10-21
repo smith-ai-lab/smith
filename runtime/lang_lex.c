@@ -13,6 +13,8 @@ typedef struct {
     size_t position;
     bool line_start;
     bool space;
+    bool skipping;       // inside an `#if 0`
+    unsigned skip_depth; // conditionals opened inside it
     SmithLang *lang;
 } SmithLangRaw;
 
@@ -59,6 +61,32 @@ static void smith_raw_skip(SmithLangRaw *raw) {
     }
 }
 
+// `#if 0` hides its text; the other conditionals are not evaluated, so every branch is read.
+static void smith_raw_conditional(SmithLangRaw *raw, const char *name, size_t length, const char *rest, size_t size) {
+    bool opens = smith_lang_equals(name, length, "if") || smith_lang_equals(name, length, "ifdef") ||
+                 smith_lang_equals(name, length, "ifndef");
+    if (opens && raw->skipping) {
+        raw->skip_depth += 1;
+    } else if (opens && smith_lang_equals(name, length, "if")) {
+        size_t first = 0;
+        while (first < size && (rest[first] == ' ' || rest[first] == '\t'))
+            first += 1;
+        size_t last = size;
+        while (last > first && (rest[last - 1] == ' ' || rest[last - 1] == '\t' || rest[last - 1] == '\r'))
+            last -= 1;
+        if (last - first == 1 && rest[first] == '0') raw->skipping = true;
+    } else if ((smith_lang_equals(name, length, "else") || smith_lang_equals(name, length, "elif")) && raw->skipping &&
+               raw->skip_depth == 0) {
+        raw->skipping = false;
+    } else if (smith_lang_equals(name, length, "endif") && raw->skipping) {
+        if (raw->skip_depth == 0) {
+            raw->skipping = false;
+        } else {
+            raw->skip_depth -= 1;
+        }
+    }
+}
+
 // A directive line: `#include` is noted for the header, anything else is skipped.
 static void smith_raw_directive(SmithLangRaw *raw) {
     const char *s = smith_lang_source;
@@ -68,12 +96,13 @@ static void smith_raw_directive(SmithLangRaw *raw) {
     size_t end = start;
     while (end < raw->length && s[end] >= 'a' && s[end] <= 'z')
         end += 1;
-    bool include = smith_lang_equals(s + start, end - start, "include");
+    bool include = smith_lang_equals(s + start, end - start, "include") && !raw->skipping;
     size_t line_end = end;
     for (size_t guard = 0; line_end < raw->length && guard < raw->length; guard++) { // to the end of the logical line
         if (s[line_end] == '\n' && s[line_end - 1] != '\\') break;
         line_end += 1;
     }
+    smith_raw_conditional(raw, s + start, end - start, s + end, line_end - end);
     if (include) {
         size_t open = end;
         while (open < line_end && (s[open] == ' ' || s[open] == '\t'))
@@ -135,6 +164,11 @@ static void smith_raw_next(void *context, SmithToken *token, bool unexpanded) {
         smith_raw_skip(raw);
         if (raw->position < raw->length && s[raw->position] == '#' && raw->line_start) {
             smith_raw_directive(raw);
+            continue;
+        }
+        if (raw->skipping && raw->position < raw->length) { // the text of an #if 0: to the end of the line
+            while (raw->position < raw->length && s[raw->position] != '\n')
+                raw->position += 1;
             continue;
         }
         break;

@@ -73,7 +73,16 @@ expect "mixed .metal and C inputs are refused" "smith: .metal and other inputs n
 expect "mixed inputs: status 2 and nothing ran" "2 " "$rc $out"
 
 capture env SMITH_CLANG="$cl" "$smith" -c a.smith -o out.o
-expect "a .smith input goes to clang with its arguments untouched" "$(lines "clang argv0=$cl" '[-c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
+expect "a .smith input is compiled as C, and nothing else changes" "$(lines "clang argv0=$cl" '[-c]' '[-x]' '[c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
+
+capture env SMITH_CLANG="$cl" "$smith" -c -I x.smith a.smith b.c c.smith -o out.o
+expect "the language is C for the .smith inputs only, and an option's value is no input" "$(lines "clang argv0=$cl" '[-c]' '[-I]' '[x.smith]' '[-x]' '[c]' '[a.smith]' '[-x]' '[none]' '[b.c]' '[-x]' '[c]' '[c.smith]' '[-o]' '[out.o]')" "$out"
+
+capture env SMITH_CLANG="$cl" "$smith" -x c++ -c a.smith
+expect "a language named by the caller is left alone" "$(lines "clang argv0=$cl" '[-x]' '[c++]' '[-c]' '[a.smith]')" "$out"
+
+capture env SMITH_CLANG="$cl" "$smith" a.smith b.metal
+expect "a .smith input and a .metal input are refused" "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command" "$err"
 
 capture env SMITH_CLANGXX="$work/bin/clang++" "$work/smith++" -c a.cpp
 expect "smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"

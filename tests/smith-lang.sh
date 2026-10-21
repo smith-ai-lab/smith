@@ -5,8 +5,8 @@
 #   UPDATE=1 sh tests/smith-lang.sh path/to/smith         write what each case produced as its expectation (read the diff)
 #
 # A case is a folder:
-#   src/             the sources; module a.b is src/a/b.smith; src/main.smith, if there, is linked with the other
-#                    .smith files and any .c or .cpp beside them, and run
+#   src/             the sources; module a.b is src/a/b.smith; src/main.smith (or main.c, main.cpp), if there, is linked with
+#                    the other .smith files and any .c or .cpp beside them (C++ as C++20), and run
 #   expect/stdout    what the program prints
 #   expect/error     the errors the build must report, as `file:line:column: message`, one per line (the build must fail)
 #   expect/lowered/  the C each file is lowered to (a.b.c), by `smith --smith-lower`: the lowering of the text as written,
@@ -17,6 +17,7 @@
 # Everything runs in the case's own folder, so paths in messages are relative to it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
+smith_plus=$(dirname "$smith")/smith++ # the same smith, linking C++
 shift
 here=$(cd "$(dirname "$0")" && pwd)
 corpus=$here/smith-lang/cases
@@ -71,14 +72,22 @@ build_case() { # out
         "$smith" --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
         objects="$objects $out/obj/$module.o"
     done
+    linker=$smith
     for file in $(cd src && find . -name '*.c' -o -name '*.cpp' | sed 's|^\./||' | LC_ALL=C sort); do
         object="$out/obj/$(echo "$file" | tr / .).o"
-        "$smith" $flags -c "src/$file" -o "$object" 2>>"$out/stderr" || status=1
+        case $file in
+        *.cpp)
+            "$smith_plus" -std=c++20 -g0 -fno-color-diagnostics -I "$out/include" -c "src/$file" -o "$object" 2>>"$out/stderr" ||
+                status=1
+            linker=$smith_plus
+            ;;
+        *) "$smith" $flags -c "src/$file" -o "$object" 2>>"$out/stderr" || status=1 ;;
+        esac
         objects="$objects $object"
     done
     : >"$out/stdout"
-    if [ $status = 0 ] && [ -f src/main.smith ]; then
-        if "$smith" $objects -o "$out/program" 2>>"$out/stderr"; then
+    if [ $status = 0 ] && { [ -f src/main.smith ] || [ -f src/main.c ] || [ -f src/main.cpp ]; }; then
+        if "$linker" $objects -o "$out/program" 2>>"$out/stderr"; then
             "$out/program" >"$out/stdout" 2>>"$out/stderr" || echo "(exit $?)" >>"$out/stdout"
         else
             status=1

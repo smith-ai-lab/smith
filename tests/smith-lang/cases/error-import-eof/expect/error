@@ -1,0 +1,1 @@
+src/main.smith:1:1: `import lib.text` must end with a semicolon

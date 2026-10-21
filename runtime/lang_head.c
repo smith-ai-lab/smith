@@ -128,7 +128,7 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
 // ---- Taking a token into the head
 // ----------------------------------------------------------------------------------------
 
-static void smith_lang_note_keyword(SmithLang *lang, const SmithToken *token) {
+static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Typedef) lang->decl.is_typedef = true;
     if (word == SmithLangWord_TypeKeyword) lang->decl.saw_type = true;
@@ -138,6 +138,11 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithToken *token) {
     }
     if (word == SmithLangWord_Storage) {
         if (smith_lang_ident(token, "static") || smith_lang_ident(token, "extern")) lang->decl.storage = true;
+        if (smith_lang_ident(token, "extern")) lang->decl.is_extern = true;
+        if (smith_lang_ident(token, "static") && lang->decl.exported) {
+            smith_lang_error(lang, host, token->location,
+                             "an exported declaration cannot be `static`: export is what makes it public");
+        }
         if (smith_lang_ident(token, "constexpr")) lang->decl.is_constexpr = true;
     }
 }
@@ -227,10 +232,10 @@ static SmithLangForm smith_lang_form(const SmithLang *lang) {
 static void smith_lang_header_variable(SmithLang *lang) {
     SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
     SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "extern", 6, &first);
-    smith_lang_emit_header(lang, keyword);
+    if (!lang->decl.is_extern) smith_lang_emit_header(lang, keyword);
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
         SmithToken token = smith_lang_held_token(lang, &lang->head[i]);
-        if (i == 0) {
+        if (i == 0 && !lang->decl.is_extern) {
             token.line_start = false;
             token.space_before = true;
         }
@@ -370,7 +375,7 @@ static bool smith_lang_enter_namespace(SmithLang *lang, const SmithHost *host, c
 static void smith_lang_head_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangContext context = smith_lang_context(lang, host, false);
     if (smith_lang_word(token->text, token->length) != SmithLangWord_Other) {
-        smith_lang_note_keyword(lang, token);
+        smith_lang_note_keyword(lang, host, token);
         smith_lang_hold(lang, token, SmithLangRole_Plain, &context);
         smith_lang_track(lang, token, false);
         return;

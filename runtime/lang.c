@@ -116,6 +116,7 @@ typedef struct {
     bool is_function;   // a declarator is followed by (
     bool name_found;    // the current declarator has its name
     bool in_params;     // inside the parameter list of the declared function
+    bool is_extern;     // `extern` appeared
     bool params_next;   // the next ( opens it
     bool last_tag_enum; // the last struct, union or enum keyword was enum
     bool checking;      // names in this declaration are checked for private types

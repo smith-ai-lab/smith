@@ -1,0 +1,4 @@
+module mix.sum;
+
+export i64 add(i64 a, i64 b) { return a + b; }
+export i64 total = 100;
