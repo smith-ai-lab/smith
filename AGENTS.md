@@ -105,7 +105,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   name lookup as the lowering's questions. Modules use `::` (`module a::b;`, `x::name`, `c::printf`), never dots. The
   `.smith` extension turns it on (`smith cc x.smith` is `-x c x.smith`); plain C in a `.smith` file means what it means
   in a `.c` file (`tests/smith-lang-c.sh`). A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
-  input; it can still write a module's header (`smith --smith-header`).
+  input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
+  (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
+  modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

@@ -1771,10 +1771,17 @@ static bool smith_is_project_verb(const char *name) {
 }
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
-// their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it.
+// their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
+// and --smith-header and --smith-lower are the .smith helpers.
 static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
     SMITH_ASSERT(at >= 0 && at < argc);
     int first = at + 1;
+    // The .smith helpers that need no compiler run: --smith-header writes a module's header, --smith-lower prints a
+    // file's lowering (docs/smith-lang.md).
+    if (first < argc && strcmp(argv[first], "--smith-header") == 0)
+        return smith_lang_main(argc - first - 1, argv + first + 1, true);
+    if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
+        return smith_lang_main(argc - first - 1, argv + first + 1, false);
     bool which = first < argc && strcmp(argv[first], "--smith-which") == 0;
     if (which) first++;
     int count = argc - first;
@@ -1970,8 +1977,6 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
-    if (strcmp(argv[1], "--smith-header") == 0) return smith_lang_main(argc - 2, argv + 2, true);
-    if (strcmp(argv[1], "--smith-lower") == 0) return smith_lang_main(argc - 2, argv + 2, false);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
     return smith_dispatch(verb, argc, argv, self);

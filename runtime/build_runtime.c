@@ -1347,6 +1347,265 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
     return nullptr;
 }
 
+// A .smith compile finds the modules' headers there.
+static const char *const *smith_lang_flags(SmithBuild *b, bool lang) {
+    return lang ? smith_list(b, "-I", ".smith/include", nullptr) : smith_list(b, nullptr);
+}
+
+// .smith sources (docs/smith-lang.md). A module's generated header is a step of its own, made from the module's tokens
+// alone (`smith-cc --smith-header`), so every header can be written before any compile, and every compile of a .smith
+// source waits for all of them (an order-only input: the stamp of the check below) and gets `-I .smith/include`. What
+// an importer depends on is its depfile: it lists the headers the compile read, and a header is rewritten only when
+// its bytes change (restat), so an edit to a module's body recompiles that module alone, and an edit to its exports
+// recompiles its importers. The check reads each header's `// smith-module:` and `// smith-imports:` lines and fails
+// on an import cycle, naming it, before any compile starts.
+
+constexpr size_t smith_lang_modules_max = 4096;
+constexpr size_t smith_lang_name_max = 256;
+constexpr char smith_lang_stamp[] = ".smith/imports.stamp";
+
+static const char *smith_lang_module_sources[smith_lang_modules_max];
+static const char *smith_lang_module_names[smith_lang_modules_max];
+static const char *smith_lang_module_headers[smith_lang_modules_max];
+static size_t smith_lang_module_count;
+static bool smith_lang_sources_used; // some compile is of a .smith source
+
+static bool smith_ends_with(const char *text, const char *suffix) {
+    size_t length = strlen(text);
+    size_t tail = strlen(suffix);
+    return length >= tail && strcmp(text + length - tail, suffix) == 0;
+}
+
+static bool smith_lang_word_byte(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Past the whitespace and comments at text[at].
+static size_t smith_lang_skip(const char *text, size_t length, size_t at) {
+    for (size_t guard = 0; at < length && guard < length; guard++) { // each pass moves on
+        if (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r') {
+            at += 1;
+        } else if (text[at] == '/' && at + 1 < length && text[at + 1] == '/') {
+            while (at < length && text[at] != '\n')
+                at += 1;
+        } else if (text[at] == '/' && at + 1 < length && text[at + 1] == '*') {
+            at += 2;
+            while (at + 1 < length && !(text[at] == '*' && text[at + 1] == '/'))
+                at += 1;
+            at = at + 2 < length ? at + 2 : length;
+        } else {
+            break;
+        }
+    }
+    return at;
+}
+
+// The word at text[*at], appended to name; false when there is none or the name is full.
+static bool smith_lang_take_word(const char *text, size_t length, size_t *at, char *name, size_t *used) {
+    size_t start = *at;
+    while (*at < length && smith_lang_word_byte(text[*at]))
+        *at += 1;
+    if (*at == start || *used + (*at - start) + 2 >= smith_lang_name_max) return false;
+    memcpy(name + *used, text + start, *at - start);
+    *used += *at - start;
+    return true;
+}
+
+// The name in the `module a::b;` line that starts a .smith file ("a::b"), or nullptr when the file is not a module (or
+// cannot be read, or its line is malformed: the compile says so, in its own words).
+static const char *smith_lang_module_of(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return nullptr;
+    static char text[8192];
+    size_t length = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    size_t at = smith_lang_skip(text, length, 0);
+    if (at + 6 >= length || memcmp(text + at, "module", 6) != 0 || smith_lang_word_byte(text[at + 6])) return nullptr;
+    at = smith_lang_skip(text, length, at + 6);
+    char name[smith_lang_name_max];
+    size_t used = 0;
+    if (!smith_lang_take_word(text, length, &at, name, &used)) return nullptr;
+    for (size_t guard = 0; guard < smith_lang_name_max; guard++) { // one `::` and word per pass
+        at = smith_lang_skip(text, length, at);
+        if (at + 1 >= length || text[at] != ':' || text[at + 1] != ':') break;
+        at = smith_lang_skip(text, length, at + 2);
+        name[used++] = ':';
+        name[used++] = ':';
+        if (!smith_lang_take_word(text, length, &at, name, &used)) return nullptr;
+    }
+    if (at >= length || text[at] != ';') return nullptr;
+    name[used] = '\0';
+    return smith_copy_string(name);
+}
+
+// "a::b" as "a/b".
+static const char *smith_lang_slashed(const char *name) {
+    char *copy = smith_alloc(strlen(name) + 1);
+    size_t used = 0;
+    for (size_t i = 0; name[i] != '\0'; i++) { // bounded by the name
+        if (name[i] == ':' && name[i + 1] == ':') {
+            copy[used++] = '/';
+            i += 1;
+        } else {
+            copy[used++] = name[i];
+        }
+    }
+    copy[used] = '\0';
+    return copy;
+}
+
+// The module `source` declares, registered with its header's path in *header; nullptr for a file that is no module. The
+// module's path rule is checked here, once: module a::b lives in a file whose path ends in a/b.smith.
+static const char *smith_lang_register(const char *source, const char **header) {
+    const char *name = smith_lang_module_of(source);
+    if (name == nullptr) return nullptr;
+    const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
+    bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
+    if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
+    *header = smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+    for (size_t i = 0; i < smith_lang_module_count; i++) {
+        if (strcmp(smith_lang_module_names[i], name) != 0) continue;
+        if (strcmp(smith_lang_module_sources[i], source) != 0)
+            smith_fail("smith_object: %s and %s both declare module %s", smith_lang_module_sources[i], source, name);
+        return name; // the same module compiled again, with other flags
+    }
+    if (smith_lang_module_count >= smith_lang_modules_max) smith_too_many("modules", smith_lang_modules_max);
+    smith_lang_module_sources[smith_lang_module_count] = source;
+    smith_lang_module_names[smith_lang_module_count] = name;
+    smith_lang_module_headers[smith_lang_module_count++] = *header;
+    return name;
+}
+
+// The text after `prefix` in the first lines of a generated header, or nullptr.
+static const char *smith_lang_header_line(const char *const *lines, const char *prefix) {
+    for (size_t i = 0; lines[i] != nullptr && i < 8; i++) {
+        if (strncmp(lines[i], prefix, strlen(prefix)) == 0) return lines[i] + strlen(prefix);
+    }
+    return nullptr;
+}
+
+typedef struct {
+    const char *name;
+    const char *const *imports; // names; the ones that are no module of this build are not edges
+} SmithLangNode;
+
+static int smith_lang_node_index(const SmithLangNode *nodes, size_t count, const char *name) {
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(nodes[i].name, name) == 0) return (int)i;
+    }
+    return -1;
+}
+
+// The words of text (separated by spaces) as a list.
+static const char *const *smith_lang_words(const char *text) {
+    size_t count = 0;
+    for (const char *c = text; *c != '\0'; c++)
+        count += *c != ' ' && (c == text || c[-1] == ' ');
+    const char **words = smith_new_list(count);
+    size_t used = 0;
+    for (const char *c = text; *c != '\0' && used < count;) { // bounded by the words
+        while (*c == ' ')
+            c += 1;
+        size_t length = strcspn(c, " ");
+        words[used++] = smith_text("%.*s", (int)length, c);
+        c += length;
+    }
+    words[used] = nullptr;
+    return words;
+}
+
+// Depth-first from `start` along the imports: `path` is the chain of modules being visited (state 1) and `edge` the
+// next import to try of each (state 2 is done). Returns the length of a cycle found, which is path[*from ..], or 0.
+static size_t smith_lang_walk(const SmithLangNode *nodes, size_t count, int start, int *state, int *path, size_t *edge,
+                              size_t *from) {
+    size_t depth = 0;
+    path[0] = start;
+    edge[0] = 0;
+    state[start] = 1;
+    for (size_t guard = 0; guard < count * (count + 2) + 2; guard++) { // each pass takes an edge or leaves a module
+        const char *import = nodes[path[depth]].imports[edge[depth]];
+        if (import == nullptr) {
+            state[path[depth]] = 2;
+            if (depth == 0) return 0;
+            depth -= 1;
+            continue;
+        }
+        edge[depth] += 1;
+        int target = smith_lang_node_index(nodes, count, import);
+        if (target < 0 || state[target] == 2) continue;
+        if (state[target] == 1) {
+            for (size_t i = 0; i <= depth; i++) {
+                if (path[i] == target) *from = i;
+            }
+            return depth - *from + 1;
+        }
+        depth += 1;
+        path[depth] = target;
+        edge[depth] = 0;
+        state[target] = 1;
+    }
+    return 0;
+}
+
+// The check step: fails, naming the cycle, when the imports in the headers have one.
+static int smith_lang_check(SmithRun *run) {
+    size_t count = smith_count(run->inputs);
+    SmithLangNode *nodes = smith_alloc((count + 1) * sizeof *nodes);
+    for (size_t i = 0; i < count; i++) {
+        const char *const *lines = smith_lines(run->b, run->inputs[i]);
+        const char *name = smith_lang_header_line(lines, "// smith-module: ");
+        const char *imports = smith_lang_header_line(lines, "// smith-imports:");
+        if (name == nullptr || imports == nullptr) {
+            fprintf(stderr, "smith: %s is not a header smith wrote (it has no smith-module line)\n", run->inputs[i]);
+            return 1;
+        }
+        nodes[i] = (SmithLangNode){.name = name, .imports = smith_lang_words(imports)};
+    }
+    int *state = smith_alloc((count + 1) * sizeof *state);
+    int *path = smith_alloc((count + 1) * sizeof *path);
+    size_t *edge = smith_alloc((count + 1) * sizeof *edge);
+    for (size_t i = 0; i < count; i++) {
+        size_t from = 0;
+        if (state[i] != 0) continue;
+        size_t length = smith_lang_walk(nodes, count, (int)i, state, path, edge, &from);
+        if (length == 0) continue;
+        fputs("smith: import cycle: ", stderr);
+        for (size_t k = 0; k < length; k++)
+            fprintf(stderr, "%s -> ", nodes[path[from + k]].name);
+        fprintf(stderr, "%s\n", nodes[path[from]].name);
+        return 1;
+    }
+    return 0;
+}
+
+// Declares the check once every smith_object is in: the compiles of .smith sources wait for it.
+static void smith_lang_finish(SmithBuild *b) {
+    if (!smith_lang_sources_used) return;
+    const char **headers = smith_new_list(smith_lang_module_count);
+    for (size_t i = 0; i < smith_lang_module_count; i++)
+        headers[i] = smith_lang_module_headers[i];
+    headers[smith_lang_module_count] = nullptr;
+    SmithStep check = {
+        .run = smith_lang_check,
+        .inputs = (const char *const *)headers,
+        .stamp = smith_lang_stamp,
+        .description = "check the imports of the modules",
+    };
+    smith_step(b, &check);
+}
+
+// The header step of a module, and the flags and ordering its compile gets.
+static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
+    SmithStep step = {
+        .command = smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
+        .inputs = smith_one(object->source),
+        .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
+        .outputs = smith_one(header),
+        .restat = true, // the header is written only when its bytes change
+    };
+    smith_step(b, &step);
+}
+
 void smith_object(SmithBuild *b, SmithObject *object) {
     SMITH_ASSERT(b != nullptr && object != nullptr);
     smith_require_program("smith_object", "compiler", object->compiler);
@@ -1361,10 +1620,18 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *depfile = smith_replace_extension(b, copy.output, ".d");
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
     const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
+    bool lang = smith_ends_with(copy.source, ".smith");
+    if (lang) {
+        const char *header = nullptr;
+        if (smith_lang_register(copy.source, &header) != nullptr) smith_lang_header_step(b, &copy, header);
+        smith_lang_sources_used = true;
+    }
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), copy.flags, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, lang),
+                             copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
+        .order_only_inputs = lang ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         .outputs = smith_one(copy.output),
         .depfile = depfile,
     };
@@ -1487,8 +1754,9 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
-                                             smith_copy_list(flags), tail, nullptr);
+    const char *const *arguments =
+        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
+                  smith_lang_flags(b, smith_ends_with(copy, ".smith")), smith_copy_list(flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
@@ -2388,6 +2656,7 @@ int main(int argc, char **argv) {
     build(&b);
     smith_context = nullptr;
     smith_run_defers(&b);
+    smith_lang_finish(&b);
     // A -D that only a pending smith_defer callback reads is not known yet; stage 2 checks it.
     if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");

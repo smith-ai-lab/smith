@@ -9,7 +9,7 @@
 #                    the other .smith files and any .c or .cpp beside them (C++ as C++20), and run
 #   expect/stdout    what the program prints
 #   expect/error     the errors the build must report, as `file:line:column: message`, one per line (the build must fail)
-#   expect/lowered/  the C each file is lowered to (a.b.c), by `smith --smith-lower`: the lowering of the text as written,
+#   expect/lowered/  the C each file is lowered to (a.b.c), by `smith cc --smith-lower`: the lowering of the text as written,
 #                    with no macros and no parser (the build's own run is checked by the program, the symbols and the headers)
 #   expect/header/   the generated header of each module (a.b.h)
 #   expect/symbols   the symbols the objects define (nm -g), sorted
@@ -62,7 +62,7 @@ build_case() { # out
     sources=$(cd src && find . -name '*.smith' | sed 's|^\./||' | LC_ALL=C sort)
     for file in $sources; do # the headers first, as the build will: no compile waits on another
         mkdir -p "$out/include/$(dirname "$file")"
-        "$smith" --smith-header "src/$file" -o "$out/include/${file%.smith}.h" 2>>"$out/stderr"
+        "$smith" cc --smith-header "src/$file" -o "$out/include/${file%.smith}.h" 2>>"$out/stderr"
         module=$(echo "${file%.smith}" | tr / .)
         [ -f "$out/include/${file%.smith}.h" ] && cp "$out/include/${file%.smith}.h" "$out/header/$module.h"
     done
@@ -71,7 +71,7 @@ build_case() { # out
     for file in $sources; do
         module=$(echo "${file%.smith}" | tr / .)
         SMITH_LANG_ASK=$ask "$smith" cc $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
-        "$smith" --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
+        "$smith" cc --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
         objects="$objects $out/obj/$module.o"
     done
     linker=cc # the verb that links: C++ needs smith c++

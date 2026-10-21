@@ -1,5 +1,5 @@
-// The lowering without a compiler: a plain lexer over one file, for `smith --smith-header` (the module's generated
-// C header, written without compiling the module, so that importers need only the headers) and `smith --smith-lower`
+// The lowering without a compiler: a plain lexer over one file, for `smith cc --smith-header` (the module's generated
+// C header, written without compiling the module, so that importers need only the headers) and `smith cc --smith-lower`
 // (the lowered text, for reading). It has no macros and no parser: `#include` lines are noted for the header, other
 // directives are skipped, and the questions about names are answered with "unknown". Included by runtime/lang.c.
 
@@ -258,6 +258,25 @@ static bool smith_raw_read_source(const char *path, size_t *length) {
     return true;
 }
 
+// Writes the header unless the file already holds these bytes, so that an unchanged header keeps its time and nothing
+// that depends on it is rebuilt. Returns the exit status.
+static int smith_lang_write_header(const char *path, const char *bytes, size_t length) {
+    FILE *old = fopen(path, "rb");
+    if (old != nullptr) {
+        static char current[sizeof smith_lang_header_full];
+        size_t got = fread(current, 1, sizeof current, old);
+        bool same = got == length && feof(old) && !ferror(old) && memcmp(current, bytes, length) == 0;
+        fclose(old);
+        if (same) return 0;
+    }
+    FILE *file = fopen(path, "wb");
+    if (file == nullptr || fwrite(bytes, 1, length, file) != length || fclose(file) != 0) {
+        fprintf(stderr, "smith: cannot write %s\n", path);
+        return 1;
+    }
+    return 0;
+}
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true};
@@ -294,7 +313,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     }
     if (lang->errors > 0) return 1;
     if (header_path != nullptr && lang->is_module) {
-        smith_lang_write_file(header_path, smith_lang_header_full, lang->header_full_used);
+        return smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
     } else if (header_path != nullptr) {
         fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
         return 1;
@@ -302,8 +321,10 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     return 0;
 }
 
-// smith --smith-header file.smith [-o header.h] and smith --smith-lower file.smith
+// smith cc --smith-header file.smith [-o header.h] and smith cc --smith-lower file.smith
 static int smith_lang_main(int count, char **args, bool header) {
+    const char *usage =
+        header ? "usage: smith cc --smith-header file.smith [-o header.h]" : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;
     const char *output = nullptr;
     for (int i = 0; i < count; i++) { // bounded by the arguments
@@ -312,10 +333,10 @@ static int smith_lang_main(int count, char **args, bool header) {
         } else if (file == nullptr) {
             file = args[i];
         } else {
-            smith_die(smith_exit_usage, "usage: smith --smith-header file.smith [-o header.h]", nullptr);
+            smith_die(smith_exit_usage, usage, nullptr);
         }
     }
-    if (file == nullptr) smith_die(smith_exit_usage, "usage: smith --smith-header file.smith [-o header.h]", nullptr);
+    if (file == nullptr) smith_die(smith_exit_usage, usage, nullptr);
     if (header && output == nullptr) {
         char fallback[PATH_MAX];
         snprintf(fallback, sizeof fallback, "%s.h", file);
