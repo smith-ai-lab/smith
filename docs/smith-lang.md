@@ -140,6 +140,11 @@ hook when a parse ends (`shim/names.h`) and a layer between the editor and clang
 offered, each as its member, and the edit replaces only what comes after the `::` (`box::` + `area`). The layer also
 leaves out of references and renames the generated headers (`.smith/include/*.h`), which are no place to go to or edit.
 
+The debugger shows them as well (issue #27): lldb's frames, `bt` and types say `geometry::box::area` and
+`geometry::box::Box`, with the whole module name (the same in every object, so the types of two objects are one type),
+from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md for what lldb then accepts (a cast to
+`geometry::box::Box` does; `b box::area` does not, `b geometry::box::area` does).
+
 ## How it works
 
 - **The hook** is one patch to smith's clang (`patches/clang-token-hook.patch`, about 100 lines, applied by

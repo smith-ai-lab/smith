@@ -100,6 +100,74 @@ expect_contains "dap lists the frame in add" "$log" '"name":"add'
 expect_contains "dap lists the fields of the struct" "$log" '"name":"x"'
 expect_contains "dap reports the process ended" "$log" '"event":"terminated"'
 
+# .smith names as written (issue #27): the debugger shows `geometry::box::area` and `geometry::box::Box`, never the C
+# spelling `geometry_box_area`. A module's functions and variables are named so at the top; its types are `Box` in the
+# namespaces `geometry` and `box`, so that an expression can name them. Skipped for a smith without the token hook.
+if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    mkdir "$work/lang" "$work/lang/geometry"
+    cd "$work/lang" || exit 1
+    cat >geometry/box.smith <<'EOF'
+module geometry::box;
+export typedef struct { f32 w; f32 h; } Box;
+export f32 area(Box b) {
+  f32 r = b.w * b.h;
+  return r;
+}
+EOF
+    cat >main.smith <<'EOF'
+module main;
+import geometry::box;
+int main(void) {
+  box::Box b = {2, 3};
+  f32 a = box::area(b);
+  return (int)a - 6;
+}
+EOF
+    mkdir include
+    if "$smith" cc --smith-header geometry/box.smith -o include/box.h &&
+        "$smith" cc -g -O0 -I include -c geometry/box.smith -o box.o &&
+        "$smith" cc -g -O0 -I include -c main.smith -o main.o &&
+        "$smith" cc -g box.o main.o -o lang; then
+        out=$("$smith" dbg -b -o 'b geometry::box::area' -o run -o bt -o 'frame variable' -o 'print b.w' \
+            -o 'print (geometry::box::Box)b' -o 'type lookup geometry::box::Box' -o finish lang 2>&1)
+        expect_contains "dbg stops in the module's function" "$out" "stop reason = breakpoint 1.1"
+        expect_contains "dbg's frame has the name as written" "$out" "frame #0: "
+        expect_contains "dbg's frame is geometry::box::area" "$out" "lang\`geometry::box::area(b=(w = 2, h = 3)) at box.smith"
+        expect_contains "dbg's backtrace goes through main.smith" "$out" "main at main.smith:5"
+        expect_contains "dbg prints a parameter's type as written" "$out" "(geometry::box::Box) b = (w = 2, h = 3)"
+        expect_contains "dbg reads a field" "$out" "(f32) 2"
+        expect_contains "dbg casts to a type as written" "$out" "(geometry::box::Box)  (w = 2, h = 3)"
+        expect_contains "dbg looks the type up by its name as written" "$out" "f32 w;"
+        expect_contains "dbg's finish returns the value" "$out" "Return value: (f32) \$0 = 6"
+        out=$("$smith" dbg -b -o 'b main.smith:5' -o run -o 'frame variable b' lang 2>&1)
+        expect_contains "dbg's other compile unit agrees on the type" "$out" "(geometry::box::Box) b = (w = 2, h = 3)"
+        case $out in
+        *geometry_box*) total=$((total + 1)); failures=$((failures + 1)); echo "FAIL  the C spelling shows in dbg" ;;
+        *) total=$((total + 1)); echo "ok    the C spelling does not show in dbg" ;;
+        esac
+        "$work/dap_client" "$smith" "$work/lang/lang" "$work/lang/geometry/box.smith" 5 r 0 >"$work/dap-lang.log" 2>&1
+        status=$?
+        log=$(cat "$work/dap-lang.log")
+        total=$((total + 1))
+        if [ "$status" -eq 0 ]; then
+            echo "ok    dap: a .smith session"
+        else
+            failures=$((failures + 1))
+            echo "FAIL  dap .smith session (status $status)"
+            printf '%s\n' "$log" | cut -c1-300 | tail -n 30
+        fi
+        expect_contains "dap's frame has the name as written" "$log" '"name":"geometry::box::area'
+        expect_contains "dap's variable has the type as written" "$log" '"type":"geometry::box::Box"'
+    else
+        total=$((total + 1))
+        failures=$((failures + 1))
+        echo "FAIL  the .smith program does not build"
+    fi
+    cd "$work/src" || exit 1
+else
+    echo "skipped: this smith has no token hook, so no .smith names"
+fi
+
 echo
 echo "$total debugger checks, $failures failed"
 [ "$failures" -eq 0 ]

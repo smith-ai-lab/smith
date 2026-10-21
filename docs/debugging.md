@@ -61,9 +61,36 @@ templates of LLVM) were exported, and dyld binds each of them at every start aga
 instructions to start, against 52 million). The flag takes the 4 ms of that off the smith without lldb too. `smith dbg
 --version` took 27 to 29 ms on the busy machine.
 
+## `.smith` names in the debugger
+
+The debugger shows a `.smith` declaration with its whole module name, the same in every object (issue #27): `bt` says
+`geometry::box::area(b=(w = 2, h = 3))`, `frame variable` says `(geometry::box::Box) b = ...`, and the DAP adapter's
+stack frames and variables say the same. clang takes the name of a debug entry from `CGDebugInfo`; a patch
+(`patches/clang-debug-name.patch`, about 60 lines, applied by `scripts/llvm.sh`) asks a process-wide hook,
+`clang::CodeGen::DebugNameHook`, which `shim/hook.cpp` answers from the lowering's table of names
+(`smith_lang_written_find`), for each function, variable, typedef and tag at file scope. A name the lowering did not
+make, and every declaration of a `.c` file, gets `null` and keeps clang's: the objects of smith's own `.c` files are the
+same bytes with and without the patch. What the hook returns, and what lldb does with it:
+
+- **A function or variable is named `geometry::box::area` at the top level** (`DW_AT_name`; `DW_AT_linkage_name` stays
+  the symbol, `_geometry::box::area`). lldb shows a C function by its `DW_AT_name` only, so a namespace would leave the
+  frame as `area`. `b geometry::box::area` stops; `b box::area` and `b area` do not (lldb finds a partly qualified name
+  by the basename in its index, which for this entry is the whole name); `br set -r box::area` does.
+- **A type is `Box` in the namespaces `geometry` and `box`** (`DW_TAG_namespace` entries under the compile unit), so
+  that lldb prints `(geometry::box::Box)` and its expression parser, which is C++'s, reads `geometry::box::Box` in a
+  cast: `p (geometry::box::Box)b`, `type lookup geometry::box::Box`. Every object that uses the type names it the same.
+  `p b.w` and `p b` work.
+- **Calling a function from the expression prompt does not work**: `p geometry::box::area(b)` is not a function of
+  that namespace, and the name `geometry::box::area` is not a C++ name. The C spelling does not work either (it is no
+  longer in the debug info).
+
+Compiling a `.smith` file with debug info in one command (`smith cc -g a.smith b.smith -o prog`) leaves lldb with no
+objects to read, as it does for C files (`dsymutil` is not run); compile each to a `.o` and link, as `smith build` does.
+
 ## Tests
 
 `tests/dap.sh` runs `smith dbg -b` on a small program and `tests/dap_client.c`, a DAP client that writes the requests as
 JSON and reads the replies, through `initialize`, `launch`, `setBreakpoints`, `configurationDone`, `stopped`,
 `stackTrace`, `scopes`, `variables`, `continue` and `terminated`. A smith without lldb, or an account that may not debug,
-skips them.
+skips them. The same script builds a two-module `.smith` program and checks the names as written in `smith dbg` and in
+the DAP session (frames, variable types, a cast, `type lookup`, the other object's view of the type).

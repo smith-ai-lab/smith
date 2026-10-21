@@ -109,7 +109,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
   before the parser; plain C in a `.smith` file costs the compiler under 1%. The language is smith's own C
   (`runtime/lang*.c`, which knows nothing of clang), and the clang side is `shim/hook.cpp`: the hook, and the parser's
-  name lookup as the lowering's questions. Modules use `::` (`module a::b;`, `x::name`, `c::printf`), never dots. The
+  name lookup as the lowering's questions. A second patch (`patches/clang-debug-name.patch`, about 60 lines, a process-wide
+  hook in `CGDebugInfo`) lets the debugger show a module's names as written: `geometry::box::area` for a function or variable
+  (its `DW_AT_name`), `Box` in namespaces `geometry::box` for a type; plain C debug info is byte-identical
+  ([docs/debugging.md](docs/debugging.md)). Modules use `::` (`module a::b;`, `x::name`, `c::printf`), never dots. The
   `.smith` extension turns it on (`smith cc x.smith` is `-x c -std=gnu2y x.smith`: `.smith` is smith's own language and
   compiles as C2y, the standard `smith new` uses, so `auto`, `::` and `_Countof` work, unless the caller names a
   `-std=`, which wins); plain C in a `.smith` file means what it means in a `.c` file (`tests/smith-lang-c.sh`).
@@ -148,7 +151,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
   the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
-  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25); the compiler's
+  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27); the compiler's
   output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
   and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
