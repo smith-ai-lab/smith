@@ -2820,6 +2820,145 @@ expect "identity: a smith linked against another LLVM rebuilds the object" 2 "$(
 build
 expect_contains "identity: and then settles" "$out" "no work to do"
 
+# 15. .smith modules: smith_object writes each module's header first, then compiles with -I .smith/include (docs/smith-lang.md).
+# A project of three modules and a C file that includes a module's header.
+lang_project() { # copies the corpus case module-three and writes its build.c
+    project
+    mkdir bin
+    ln -f "$smith" bin/smith-cc 2>/dev/null || cp "$smith" bin/smith-cc
+    cp -R "$here/smith-lang/cases/module-three/src" src
+    cat >build.c <<'C'
+#include <smith/build.h>
+
+#include <stddef.h>
+#include <string.h>
+
+static SmithObject objects[64];
+static const SmithObject *pointers[65];
+
+void build(SmithBuild *b) {
+    const char *const flags[] = {"-std=gnu23", "-g0", "-Wno-unused-function", nullptr};
+    const char *const *sources = smith_glob(b, (const char *[]){"src/**/*.smith", "src/*.c", nullptr});
+    size_t count = 0;
+    for (; sources[count] != nullptr; count++) {
+        objects[count] = (SmithObject){
+            .compiler = "bin/smith-cc",
+            .source = sources[count],
+            .output = smith_fmt(b, "build/%s.o", sources[count]),
+            .flags = flags,
+        };
+        if (strcmp(sources[count], "src/checksum.c") == 0) { // C reads the header of a module
+            objects[count].flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr);
+            objects[count].implicit_inputs = smith_list(b, ".smith/include/game/replay.h", nullptr);
+        }
+        smith_object(b, &objects[count]);
+        pointers[count] = &objects[count];
+    }
+    SmithProgram app = {.linker = "bin/smith-cc", .output = "build/app", .objects = pointers};
+    smith_program(b, &app);
+    smith_compile_commands(b, "compile_commands.json");
+    smith_default(b, app.step.outputs);
+}
+C
+}
+
+# What a -v build ran: the objects it compiled, as a sorted list of the sources.
+lang_compiled() {
+    printf '%s\n%s\n' "$out" "$err" | sed -n 's/.* -c \(src\/[^ ]*\) -o .*/\1/p' | sort | tr '\n' ' '
+}
+
+lang_project
+if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    expected_output=$(printf 'frames=15 name=last.replay length=11 version=3 mode=1 root=4.0 eof=-1\ncounter=8\nchecksum=1026')
+    build
+    expect "modules: a project of three modules and a C file builds" 0 "$rc"
+    expect "modules: and runs" "$expected_output" "$(./build/app 2>&1)"
+    expect "modules: each module has its header in .smith/include" "yes yes" \
+        "$([ -f .smith/include/lib/text.h ] && echo yes) $([ -f .smith/include/game/replay.h ] && echo yes)"
+    expect_contains "modules: a header lists the modules it imports" "$(cat .smith/include/game/replay.h)" \
+        "// smith-imports: lib::text"
+    expect_contains "modules: compile_commands.json lists a .smith source with -I .smith/include" "$(cat compile_commands.json)" \
+        '"file": "src/game/replay.smith"'
+    expect_contains "modules: with its flags" "$(tr -d ' \n' <compile_commands.json)" \
+        '"arguments":["bin/smith-cc","-I",".smith/include","-std=gnu23"'
+    build
+    expect_contains "modules: the second build does nothing" "$out" "no work to do"
+
+    stat -f %m .smith/include/lib/text.h >header_time
+    sleep 1
+    printf '\nusize other_helper(void) {\n    return 5;\n}\n' >>src/lib/text.smith
+    build -v
+    expect "modules: an edit to a module's body recompiles that module alone" "src/lib/text.smith " "$(lang_compiled)"
+    expect "modules: and leaves its header's time alone" "$(cat header_time)" "$(stat -f %m .smith/include/lib/text.h)"
+    expect "modules: and the program still runs" "$expected_output" "$(./build/app 2>&1)"
+
+    sleep 1
+    printf '\nexport usize extra(void) {\n    return 2;\n}\n' >>src/game/replay.smith
+    build -v
+    expect "modules: an edit to a module's exports recompiles it and its importers, and the C file that includes the header" \
+        "src/checksum.c src/game/replay.smith src/main.smith " "$(lang_compiled)"
+    expect "modules: and the program still runs after an export is added" "$expected_output" "$(./build/app 2>&1)"
+    build
+    expect_contains "modules: then it settles" "$out" "no work to do"
+
+    sleep 1
+    printf '\n// a comment\n' >>src/main.smith
+    build -v
+    expect "modules: an edit to an importer's body recompiles it alone" "src/main.smith " "$(lang_compiled)"
+
+    expect_contains "modules: the header steps are in the manifest" "$(cat .smith/build.ninja)" \
+        "bin/smith-cc --smith-header src/lib/text.smith -o .smith/include/lib/text.h"
+
+    # An import cycle is found from the headers, before any compile starts, and named.
+    lang_project
+    rm -rf src
+    mkdir -p src
+    cp -R "$here/smith-lang/cases/error-import-cycle/src/cycle" src/cycle
+    build
+    expect_status "modules: an import cycle fails the build" fail
+    expect_contains "modules: and names the cycle" "$out$err" "import cycle: cycle::a -> cycle::b -> cycle::a"
+    expect "modules: before any compile runs" "" "$(ls build/src/cycle 2>/dev/null)"
+
+    # A module whose name does not match its path is found once, when build.c runs.
+    lang_project
+    printf 'module right::name;\n\nexport int f(void) { return 1; }\n' >src/wrong.smith
+    build
+    expect_status "modules: a module that does not match its path fails the build" fail
+    expect_contains "modules: and says where it must be" "$err" \
+        "src/wrong.smith declares module right::name, so its path must end in right/name.smith"
+
+    # A plain .smith file (no module line) compiles with the same flags and needs no header.
+    lang_project
+    rm -rf src
+    mkdir -p src
+    cp "$here/smith-lang/cases/sized-types/src/main.smith" src/main.smith
+    build
+    expect "modules: a plain .smith file builds, with no header" "0 no" "$rc $([ -e .smith/include/main.h ] && echo yes || echo no)"
+else
+    # A smith without the token hook (a stage0) still writes headers; the compile says what is missing.
+    build
+    expect_status "modules: without the token hook the build fails" fail
+    expect_contains "modules: with a clear message" "$out$err" "token hook"
+    expect "modules: after the headers were written" "lib/text.h" "$(cd .smith/include && ls lib/text.h)"
+fi
+
+# The helpers are under the compiler; the top level is only verbs.
+lang_project
+capture "$smith" cc --smith-header src/lib/text.smith -o header.h
+expect "modules: smith cc --smith-header writes a header" "0 // smith-module: lib::text" "$rc $(sed -n 2p header.h)"
+capture "$smith" cc --smith-header src/lib/text.smith -o header.h
+cp header.h header.copy
+touch -t 200001010000 header.h
+capture "$smith" cc --smith-header src/lib/text.smith -o header.h
+expect "modules: an unchanged header is not written again" "200001010000" "$(stat -f %Sm -t %Y%m%d%H%M header.h)"
+capture "$smith" --smith-header src/lib/text.smith -o header.h
+expect_status "modules: the top-level --smith-header is gone" fail
+expect_contains "modules: with the way to run it" "$err" "smith cc --smith-header"
+capture "$smith" --smith-lower src/lib/text.smith
+expect_status "modules: the top-level --smith-lower is gone" fail
+capture "$smith" cc --smith-lower src/lib/text.smith
+expect_contains "modules: smith cc --smith-lower prints the lowering" "$out" "lib_text_make"
+
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build

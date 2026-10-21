@@ -1,6 +1,6 @@
 ---
 name: smith-lang
-description: "The .smith language: C with modules, a superset of C by opt-in steps. Load when a file ends in .smith, when a build or message mentions .smith, `module`, `import` or `export` in C source, `smith --smith-header`, `--smith-lower`, the token hook, or 'needs a smith whose clang has the token hook'."
+description: "The .smith language: C with modules, a superset of C by opt-in steps. Load when a file ends in .smith, when a build or message mentions .smith, `module`, `import` or `export` in C source, `smith cc --smith-header`, `--smith-lower`, the token hook, or 'needs a smith whose clang has the token hook'."
 ---
 
 # `.smith` files
@@ -19,10 +19,14 @@ It is C23 (`::` must lex as one token), compiled with `smith cc x.smith` (the ex
 
 A smith whose clang has the token hook (patches/clang-token-hook.patch, applied by `smith build llvm`). A smith without it refuses a `.smith` input: `.smith files need a smith whose clang has the token hook`. `smith cc --smith-which x.smith` says `token-hook yes` or `no`. A stage0 (one `cc` command, no clang inside) has none, but can still write a module's header.
 
-## Two commands beside the compiler
+## Building them
 
-- `smith --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first).
-- `smith --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser: how to see what a rule does.
+`smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
+
+## Two commands under the compiler
+
+- `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
+- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser: how to see what a rule does.
 
 ## Errors
 

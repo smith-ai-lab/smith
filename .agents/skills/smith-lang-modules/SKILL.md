@@ -36,6 +36,7 @@ Selective imports, re-exports, a module over several files, `smith interface`.
 - `import cycle: a -> b -> a`; a module imports itself;
 - `module a::b` in a file whose path does not end in `a/b.smith`; the `module` line must be first;
 - `export` in a file with no `module` line; `export static`; two names in one export;
-- `imports come before any declaration`; `cannot find module`: its header is not in `.smith/include` (write it with `smith --smith-header`, and pass `-I .smith/include`).
+- `imports come before any declaration`; `cannot find module`: its header is not in `.smith/include`: pass the module's source to `smith_object` in build.c and `smith build` writes the header (by hand: `smith cc --smith-header`, with `-I .smith/include`).
+- `smith: import cycle: a::x -> a::y -> a::x` (from `smith build`, before any compile); `smith_object: src/x.smith declares module a::b, so its path must end in a/b.smith` (build.c, once).
 
 For C names inside a module, load `smith-lang-c-interop`.

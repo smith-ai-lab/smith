@@ -22,7 +22,7 @@ typedef struct { uint64_t frames; lib_text_Text name; } game_replay_Replay;
 game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::open");
 ```
 
-C and C++ include it (`-I .smith/include`) and call `game_replay_open`; no other change. An export with no body is defined in C or C++ against the header, by its C name (`uint64_t game_replay_checksum(...) { … }`, `extern "C"` in C++).
+C and C++ include it (`-I .smith/include`, with the header in the compile's `.implicit_inputs` in build.c so a clean build writes it first) and call `game_replay_open`; no other change. An export with no body is defined in C or C++ against the header, by its C name (`uint64_t game_replay_checksum(...) { … }`, `extern "C"` in C++).
 
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
 - A header is written without macros or `#if` (only `#if 0` is honoured): keep an export out of a macro.

@@ -48,14 +48,14 @@ u32 helper(void) { … }                              // private
 
 ## Lowering
 
-A `.smith` file is lowered to C as the compiler reads it; there is no intermediate file. `smith --smith-lower x.smith`
+A `.smith` file is lowered to C as the compiler reads it; there is no intermediate file. `smith cc --smith-lower x.smith`
 prints the lowering (without macros or the parser's help, so `c::EOF` shows as `EOF`); `SMITH_LANG_DUMP=<file>` writes
 what the compiler's own run lowered. The corpus (`tests/smith-lang/cases`) keeps both for every rule.
 
 ## The header
 
-Each module has a generated C header, `.smith/include/game/replay.h`, written by `smith --smith-header
-src/game/replay.smith -o …` from the tokens alone: the module is not compiled, so every header can be written first and
+Each module has a generated C header, `.smith/include/game/replay.h`, written by `smith cc --smith-header
+src/game/replay.smith -o …` (only when its bytes change) from the tokens alone: the module is not compiled, so every header can be written first and
 then every compile can run in parallel.
 
 ```c
@@ -68,6 +68,16 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
 which is how an import cycle is found. Importers include it (they need `-I .smith/include`); C and C++ callers include it
 too; an export with no body is defined against it, in C, by its C name.
+
+## `smith build`
+
+`smith_object` takes a `.smith` source like any other (docs/build-c.md, "`.smith` sources"). For each module it adds a
+step that writes the module's header (`smith-cc --smith-header src/a/b.smith -o .smith/include/a/b.h`, restat: the file
+is written only when its bytes change); every `.smith` compile gets `-I .smith/include` and waits for all the headers
+and for one check, which reads each header's `// smith-module:` and `// smith-imports:` lines and fails on an import
+cycle, naming it, before any compile starts. What an importer depends on is its depfile, which lists the headers it
+read. So an edit to a module's body recompiles that module alone, and an edit to its exports recompiles its importers.
+The rule that a module `a::b` lives in a file whose path ends in `a/b.smith` is checked once, when build.c runs.
 
 ## How it works
 
@@ -93,7 +103,7 @@ too; an export with no body is defined against it, in C, by its C name.
   (`SMITH_LANG_ASK=Packet,struct Header` prints what the parser answers at the end of the file).
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
   clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with
-  the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `--smith-header`) reads every
+  the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `smith cc --smith-header`) reads every
   declaration that way. A private declaration of a module is decided as it streams by, which is what keeps the hook
   cheap: `static` goes before the first token (from what that token is, and `main` from a look at the file's text), the
   name after a type is the one declared, and an aggregate's body, an initializer and the declarators after an aggregate
@@ -115,6 +125,6 @@ too; an export with no body is defined against it, in C, by its C name.
 - `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
   location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);
   the parser, the code and the debug info are unaffected. `SMITH_LANG_DUMP` shows the macro arguments of a call after
-  the call, and `smith --smith-lower` is the lowering of the text as written.
+  the call, and `smith cc --smith-lower` is the lowering of the text as written.
 - On macOS a backtrace names an export `_game::replay::open`, since the label is used as written (the underscore is the
   Mach-O prefix of a C symbol); `b game::replay::open` finds it.

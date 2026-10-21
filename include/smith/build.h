@@ -200,6 +200,10 @@ typedef struct {
     SmithStep step;                    // set by smith_program: the step it emitted
 } SmithProgram;
 
+// A source that ends in .smith is a module or a plain .smith file (docs/smith-lang.md): a module also gets a step that
+// writes its header, .smith/include/a/b.h, through `<compiler> --smith-header`, and every .smith compile gets
+// `-I .smith/include` and waits for all the headers and for a check that fails on an import cycle. The module a::b must
+// be in a file whose path ends in a/b.smith.
 void smith_object(SmithBuild *b, SmithObject *object);
 void smith_program(SmithBuild *b, SmithProgram *program);
 // Records a compile_commands.json entry for source with no step: {directory: the root, file: source, arguments:
