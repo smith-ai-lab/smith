@@ -1,12 +1,45 @@
 {
   "name": "smith",
-  "description": "Skills for smith, the drop-in C compiler driver: using smith as the compiler, and running, writing and editing a project's build.c with smith build.",
+  "description": "smith, a C toolchain in one binary: the compiler, build.c, tests, proofs, formatting, lint and code intelligence (smith lsp), and smith's C libraries.",
   "author": {
     "name": "Adam Kowalski",
     "url": "https://github.com/adam-r-kowalski"
   },
   "homepage": "https://github.com/adam-r-kowalski/smith",
   "repository": "https://github.com/adam-r-kowalski/smith",
-  "keywords": ["c", "compiler", "build", "clang"],
-  "skills": ["./.agents/skills/smith/", "./.agents/skills/smith-build/", "./.agents/skills/smith-arena/", "./.agents/skills/smith-contract/", "./.agents/skills/smith-random/", "./.agents/skills/smith-io/", "./.agents/skills/smith-test/", "./.agents/skills/smith-text/"]
+  "keywords": [
+    "c",
+    "compiler",
+    "build",
+    "clang",
+    "lsp",
+    "proofs"
+  ],
+  "skills": [
+    "./.agents/skills/smith/",
+    "./.agents/skills/smith-build/",
+    "./.agents/skills/smith-arena/",
+    "./.agents/skills/smith-contract/",
+    "./.agents/skills/smith-random/",
+    "./.agents/skills/smith-io/",
+    "./.agents/skills/smith-test/",
+    "./.agents/skills/smith-text/"
+  ],
+  "lspServers": {
+    "smith": {
+      "command": "smith",
+      "args": [
+        "lsp"
+      ],
+      "extensionToLanguage": {
+        ".c": "c",
+        ".h": "c",
+        ".m": "objective-c",
+        ".mm": "objective-cpp",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".hpp": "cpp"
+      }
+    }
+  }
 }
