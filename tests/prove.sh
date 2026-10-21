@@ -152,6 +152,30 @@ prove --function=no_contract "$cases/static_harness.c"
 expect "--function of a function with no contract: fails" 1 "$rc"
 expect_contains "... says there is nothing to prove" "$out" "so there is nothing to prove"
 
+# 11. A module written in .smith is compiled as `smith cc` compiles it, and its functions are named as written
+# (geometry::box::clamp, never geometry_box_clamp), in the report, in -v and in --function.
+if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
+    box=$cases/geometry/box.smith
+    prove -v --function=geometry::box::clamp "$box"
+    expect "smith module: a contract in a .smith function is proved" 0 "$rc"
+    expect_contains "smith module: ... named as written, with its line" "$out" "ok    geometry::box::clamp  ("
+    expect_contains "smith module: ... with its line" "$out" "geometry/box.smith:5)"
+    prove --function=geometry::box::clamp_wrong "$box"
+    expect "smith module: a contract that is false fails" 1 "$rc"
+    expect_contains "smith module: ... named as written" "$out" "FAIL  geometry::box::clamp_wrong"
+    expect_contains "smith module: ... at the .smith line" "$out" "geometry/box.smith:15: smith_ensures(result < high) may be false"
+    expect_contains "smith module: ... with the values" "$out" "counterexample: high = "
+    prove --function=geometry::box::add_unchecked "$box"
+    expect_contains "smith module: undefined behaviour is at the .smith line" "$out" "geometry/box.smith:21: undefined behaviour: signed integer addition overflow"
+    prove --function=geometry::box::caller "$box"
+    expect_contains "smith module: a caller that breaks a contract names the callee as written" "$out" "the call of geometry::box::clamp may break smith_requires(low <= high)"
+    expect_contains "smith module: ... and the values by their written names" "$out" "geometry::box::clamp.low = 10 geometry::box::clamp.high = 5"
+    prove "$box"
+    expect_contains "smith module: all of them" "$out" "1 proved, 3 failed"
+else
+    echo "skipped: this smith's clang has no token hook, so no .smith proofs"
+fi
+
 echo
 echo "$total prove checks, $failures failed"
 [ "$failures" -eq 0 ]

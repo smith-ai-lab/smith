@@ -653,6 +653,15 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
   another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
   error that names both files; a file with no tests is fine.
+  - **Tests in `.smith` files** (name the files in `.sources`, `tests/**/*_test.smith`): in a file with no `module` line
+    the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
+    `export void test_<name>(void) {` or `export void test_<name>(SmithKey key) {` (`c::SmithKey` is the same type for a
+    file that imports `<smith/test.h>`); an `export` is needed, since a private function is `static` and nothing can call
+    it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
+    `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
+    as written: `geometry::box_test::area` (the written `geometry::box_test::test_area`, `test_` of the last part dropped as
+    for a C test); `--test` also takes the written form, `--test geometry::box_test::test_area` (or `test_area` for a C
+    test). Two tests with the same C name are an error that names both files.
 - **`SMITH_CHECK(condition)`**, **`SMITH_CHECK(a, op, b)`**, **`SMITH_CHECK_NEAR(a, b, tolerance)`** and
   **`SMITH_CHECK_ABORTS(expression)`** are the checks. A comparison evaluates each argument once and converts `b` to
   `a`'s type as an assignment would, so `-Wconversion` flags a lossy comparison (`SMITH_CHECK(int_value, ==, 3.5)` is a
@@ -699,7 +708,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   process per test (and per `SMITH_CHECK_ABORTS`), exactly. `--stats` prints how many forks the run made. Results are
   printed in table order, in either mode. Output is captured and
   shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options are the runner's arguments, which `smith test` gives it
-  (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it), `--seed <n>`
+  (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it; a name written with `test_`, as in the source, selects the same test), `--seed <n>`
   (each property test on that one seed), `--seeds <n>` (keys per property test, 100 by default), `--jobs <n>` (default:
   the cores), `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
   time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort outside `SMITH_CHECK_ABORTS` or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
@@ -775,9 +784,11 @@ smith_tests(b, &tests);                              // tests.step is the task "
 
     The failing frame is the first that is not smith's own machinery (a function whose name starts with `smith_test_`,
     `smith_check`, `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_failure`, `smith_contract_` or
-    `smith_trace_`, or `smith.test.` and `smith.contract.` once `.smith` exists) and not in a system library, so libc's
+    `smith_trace_`, or `smith::test::`, `smith::contract::` and `smith::trace::` for the libraries as modules, and the older
+    `smith.test.` and `smith.contract.`) and not in a system library, so libc's
     abort path (`__pthread_kill`, `abort`, `__assert_rtn`) is skipped with no annotation. Inlined frames are listed as the
-    debug info has them, innermost first. The chain ends at the first frame of the runner or at `main`. The source line
+    debug info has them, innermost first. A `.smith` function is shown as written (`geometry::box::area`; the debug names
+    of issue #27), a module's test as `geometry::box_test::test_area_fails`. The chain ends at the first frame of the runner or at `main`. The source line
     is read from the file; if the file is newer than the program a note says the line may have changed. A stack with no
     debug info reports the site the program gave (an old macro's file and line) or says to build with `-g`. A crash is
     `FAIL name: killed by SIGSEGV` and then `crashed at file:line`; an `assert` is `aborted at file:line` with libc's
@@ -1070,7 +1081,9 @@ typedef struct {
 //     of the tests, and tests_list.c, the table the runner reads. A test is a line that is exactly
 //     `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` (<name> in [a-z0-9_], <key> in [a-z_]), the
 //     pattern ^void (test_[a-z0-9_]+)\((void|SmithKey [a-z_]+)\) \{$. A name defined twice is an error that names
-//     both files.
+//     both files. In a `.smith` file a module's test is `export void test_<name>(void) {` (or with a key), found after
+//     the file's `module a::b;` line; it is shown and selected as `a::b::<name>`, has the C name a_b_test_<name> and is
+//     declared with the asm label of the export, a::b::test_<name>.
 //   each test file, through smith_object:
 //     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MMD -MF <d> -c <file> -o <object>
 //     so a test_ function the scan missed, because it is formatted another way, is a compile error.

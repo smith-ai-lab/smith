@@ -1848,6 +1848,15 @@ static bool smith_test_parse(const char *text, uint64_t *value) {
 static bool smith_test_parse_value(SmithTestOptions *options, const char *flag, const char *value) {
     uint64_t number = 0;
     if (strcmp(flag, "--test") == 0) {
+        // The name as written, `test_area` or `geometry::box_test::test_area`, selects what the shown name does.
+        const char *last = strrchr(value, ':');
+        const char *tail = last != nullptr ? last + 1 : value;
+        static char written[512];
+        if (strncmp(tail, "test_", strlen("test_")) == 0 && tail[strlen("test_")] != '\0' &&
+            strlen(value) < sizeof written) {
+            snprintf(written, sizeof written, "%.*s%s", (int)(tail - value), value, tail + strlen("test_"));
+            value = written;
+        }
         options->filter = value;
         return true;
     }

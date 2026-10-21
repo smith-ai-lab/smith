@@ -155,6 +155,17 @@ cycle, naming it, before any compile starts. What an importer depends on is its 
 read. So an edit to a module's body recompiles that module alone, and an edit to its exports recompiles its importers.
 The rule that a module `a::b` lives in a file whose path ends in `a/b.smith` is checked once, when build.c runs.
 
+## Tests and proofs
+
+`smith_tests` finds tests in `.smith` files (`export void test_x(void) {` in a module, `void test_x(void) {` in a file with
+no `module` line), and the runner and its reports name them as written: `geometry::box_test::area`, and a failure shows the
+`.smith` line, its source and `geometry::box_test::test_area_fails` in the chain (docs/build-c.md, "Tests"). `smith prove`
+compiles a `.smith` file as `smith cc` does and names its functions, calls and counterexample values as written
+(`geometry::box::clamp`). Frames of a library written as the modules `smith::test`, `smith::contract` and `smith::trace`
+are machinery in a report, as `smith_test_*` is. A module named `smith::test` itself writes its header to
+`.smith/include/smith/test.h`, the path of the C library's header, so the library cannot become that module until the header
+path is settled.
+
 ## Formatting
 
 `smith fmt` formats a `.smith` file as C (clang-format 23 with `patches/clang-format-smith.patch`, about 100 lines): C's keywords
