@@ -1973,7 +1973,7 @@ static const char smith_commit[] = "";
 // `smith version`: the version line, and after `commit` the commit when there is one.
 static int smith_version_main() {
     bool known = smith_commit[0] != '\0';
-    printf("smith 0.0 (milestone 0: a routing passthrough)%s%s\n", known ? " commit " : "", smith_commit);
+    printf("smith 0.0%s%s\n", known ? " commit " : "", smith_commit);
     return 0;
 }
 
