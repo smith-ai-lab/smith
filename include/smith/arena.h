@@ -24,7 +24,8 @@ typedef struct {
     unsigned char *memory;
     size_t capacity;
     size_t used;
-    size_t scopes; // scopes begun and not yet ended
+    size_t scopes;  // scopes begun and not yet ended
+    size_t touched; // AddressSanitizer builds: the poison high-water mark, see lib/arena.c; otherwise unused
 } SmithArena;
 
 // A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is

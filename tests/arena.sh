@@ -67,6 +67,20 @@ capture "$work/asan" oob
 expect_contains "asan: a write past a push is caught" "$err" "AddressSanitizer"
 expect_contains "asan: it is a poisoned-region error" "$err" "use-after-poison"
 
+# 3a. The poison is lazy: a 64 GiB arena under ASan has a small resident footprint after make and a push, an overflow
+# just past the push (or within the 64 KiB window past it) is still caught, and a push read after a reset is caught.
+capture "$work/asan" big
+expect "lazy: a 64 GiB arena under ASan makes little memory resident" 0 "$rc"
+expect_contains "lazy: ... the growth is printed" "$out" "resident growth"
+capture "$work/plain" big
+expect "lazy: the same without ASan" 0 "$rc"
+capture "$work/asan" bigoob
+expect_contains "lazy: a write one byte past a push in a 64 GiB arena is caught" "$err" "AddressSanitizer"
+capture "$work/asan" bigfar
+expect_contains "lazy: a write 60,000 bytes past a push is caught (inside the window)" "$err" "AddressSanitizer"
+capture "$work/asan" stale
+expect_contains "lazy: a read of a push after a reset is caught" "$err" "use-after-poison"
+
 # 3b. The wrong pointer type is a compile error with the macro.
 cat >"$work/wrong.c" <<'C'
 #include <smith/arena.h>
@@ -158,7 +172,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "unknown: the build fails with status 2" 2 "$rc"
-expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: arena, random, test'
+expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: arena, io, random, test'
 
 echo
 echo "$total arena checks, $failures failed"

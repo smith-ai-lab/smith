@@ -39,8 +39,7 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
   check bounds at run time; contracts will prove them.
 - **smith's libraries are a modern standard library for C, holding only what is proven.**
   - **Joining:** a library joins when two projects need the same thing (game's trigonometry and random's logarithm make
-    `<smith/math.h>`), never on speculation. So there are no vectors, tensors, platform layer or async IO until a second
-    project needs one.
+    `<smith/math.h>`), never on speculation. So there are no vectors or tensors until a second project needs one.
   - **What one looks like:**
     - It does one thing and is named for it, so there is no "base" or "utils".
     - It uses standard types: `<stdint.h>`, `size_t`, `float` and `double`, with no aliases.
@@ -48,8 +47,8 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
       expression text.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
-  - **Platform code:** code that touches the OS stays in each project's platform layer, written against that platform's
-    best API.
+  - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
+    console, files, clock, processes, later the network), each platform behind it on its best API (kqueue on macOS).
 
 ## Commands
 
