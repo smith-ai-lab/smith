@@ -48,8 +48,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   with** (linked into smith; the stage0 runs Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`,
   `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
-  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules. lldb stays Apple's, since
-  LLVM's would be a second install to keep in step.
+  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
+- **`smith dbg` and `smith dap` are lldb and lldb-dap, from the same LLVM** (linked in; the stage0 runs `$SMITH_LLDB`
+  and `$SMITH_LLDB_DAP`), with the system's debugserver (Apple signs it), no Python and no curses
+  ([docs/debugging.md](docs/debugging.md); the skill is smith-debug). They add about 17 MB to smith and, because the
+  frameworks lldb needs load with it, about 9 ms to the start of every smith process.
 - **smith never changes a default, so adopting it is trivial and each step is optional.**
   1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
      C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot

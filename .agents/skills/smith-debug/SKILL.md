@@ -1,0 +1,37 @@
+---
+name: smith-debug
+description: "Debugging a C, Objective-C or C++ program with smith: smith dbg (lldb) at a terminal, smith dap (lldb-dap, the Debug Adapter Protocol) for editors such as VS Code, Neovim, Helix and Emacs. Load for debugging, breakpoints, stepping, a backtrace, stopping at a line, lldb, lldb-dap, DAP, launch.json, debugserver, 'Not allowed to attach to process', get-task-allow, Developer Tools permission."
+---
+
+# Debug with smith
+
+This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+
+`smith dbg` is lldb's own command line and `smith dap` is `lldb-dap`'s own main, both from the LLVM linked into smith (23.1.3), with the arguments unchanged. A stage0 smith runs an external one instead (`$SMITH_LLDB`, `$SMITH_LLDB_DAP`). Build the program with `-g -O0` (`smith new` projects have a debug build). Details: [docs/debugging.md](../../../docs/debugging.md).
+
+## smith dbg: a person at a terminal
+
+- Interactive: `smith dbg build/debug/app -- arg1 arg2`; then `b main.c:42`, `run`, `bt`, `frame variable`, `p expr`, `n`, `s`, `c`, `q`.
+- Batch, which is how to script it and what an agent runs: `smith dbg -b -o 'b file.c:42' -o run -o 'frame variable' -o bt -o kill build/debug/app -- args`. `-b` exits after the last `-o`; add `-o kill` when the program would otherwise run on.
+- Set a breakpoint after the prologue (a line of the body, not the function's first line), or arguments read as garbage.
+- A program that forks (smith's test runner `--jobs`, servers): the breakpoint hits in the child, which the debugger does not follow on macOS and which dies with SIGTRAP. Stop in the parent, or run the program with its option for one process (smith's test runner: `--isolate`, and break in the parent).
+- No Python scripting, no `gui` (curses): the `script` command is absent. Everything else is lldb's.
+
+## smith dap: an editor
+
+`smith dap` speaks DAP on stdin and stdout. An editor starts it as the debug adapter; the editor sends `launch` with `program`, `args`, `cwd`, then `setBreakpoints`.
+- **VS Code:** the LLDB DAP extension (`llvm-vs-code-extensions.lldb-dap`); set `"lldb-dap.executable-path"` to a wrapper (`#!/bin/sh` / `exec smith dap "$@"`), since the setting is one path. `launch.json`: `{"type": "lldb-dap", "request": "launch", "name": "debug", "program": "${workspaceFolder}/build/debug/app"}`.
+- **Neovim (nvim-dap):** `dap.adapters.smith = { type = 'executable', command = 'smith', args = { 'dap' } }`, and a `dap.configurations.c` entry with `type = 'smith'`, `request = 'launch'`, `program`.
+- **Helix:** in `languages.toml`, `[language.debugger]` with `name = "lldb-dap"`, `transport = "stdio"`, `command = "smith"`, `args = ["dap"]`, and a template with `request = "launch"`.
+- **Emacs (dape):** a `dape-configs` entry with `command "smith"`, `command-args ("dap")`, `:request "launch"`, `:program`.
+Only the protocol was exercised by a script (`tests/dap_client.c`); the editors' own settings above were not run.
+
+## macOS: signing and permissions
+
+- Debugging needs the system's debugserver, which Apple signs; smith finds it (Xcode's, else the Command Line Tools') and sets `LLDB_DEBUGSERVER_PATH`; set it yourself to choose another.
+- The account needs Developer mode on: `DevToolsSecurity -status`; `sudo DevToolsSecurity -enable` and membership in the `_developer` group (`dseditgroup -o edit -a $USER -t user _developer`). The first debug asks to let "Developer Tools Access" take control of another process: allow it, once.
+- A smith-built program is ad-hoc signed by the linker and debuggable as it is. A hardened-runtime or notarized one fails with "Not allowed to attach to process": re-sign it for debugging, `codesign -s - -f --options runtime --entitlements get-task-allow.plist app`, with `com.apple.security.get-task-allow` true in the plist.
+
+## Agents
+
+Agent tools (breakpoints, variables, stacks as MCP tools) will be `smith mcp` (issue #22), which will hold them. Until then an agent runs `smith dbg -b`.
