@@ -1,0 +1,1 @@
+src/main.smith:4:3: `printf` is a C name; write `c::printf`

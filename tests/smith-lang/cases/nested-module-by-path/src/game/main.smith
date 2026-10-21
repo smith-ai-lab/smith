@@ -1,0 +1,9 @@
+module game::main;
+import <stdio.h>;
+import game::util;
+import lib::text;
+
+i32 main() {
+    c::printf("%zu %zu\n", util::twice("abc"), text::length("hello"));
+    return 0;
+}

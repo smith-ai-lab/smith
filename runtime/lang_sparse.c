@@ -124,6 +124,9 @@ static bool smith_lang_sparse_word(SmithLang *lang, const SmithHost *host, const
     }
     if (import && smith_lang_is_import(lang, host, token)) {
         smith_lang_import(lang, host, token);
+        if (lang->has_c && !lang->is_module && !lang->imports_watched) { // the first token after the imports is read
+            host->watch_mode(host->context, SmithWatch_All);
+        }
         return true;
     }
     if (!module && !import && !smith_lang_is_own_word(lang, host, token)) {
@@ -133,7 +136,20 @@ static bool smith_lang_sparse_word(SmithLang *lang, const SmithHost *host, const
     return false;
 }
 
+static bool smith_lang_body_c_name(SmithLang *lang, const SmithHost *host, const SmithToken *token);
+
+// A file with no `module` line still puts an import's names under `c::`: once its imports are done (the first token
+// that is not one), the names the imported headers declared are watched, and the host offers only those from then on.
+static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!lang->has_c || lang->is_module || lang->imports_watched || host->watch_imports == nullptr) return;
+    if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "import")) return;
+    host->watch_imports(host->context);
+    lang->imports_watched = true;
+    host->watch_mode(host->context, SmithWatch_Names);
+}
+
 static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!token->foreign) smith_lang_sparse_imports_done(lang, host, token);
     if (token->foreign) {
         smith_lang_emit_kept(lang, host, token);
         return;
@@ -157,6 +173,11 @@ static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const Smit
             smith_lang_emit(lang, host, resolved);
             return;
         }
+    }
+    if (!lang->is_module && lang->imports_watched && !smith_lang_sparse_member(lang, host) &&
+        smith_lang_body_c_name(lang, host, token)) {
+        smith_lang_emit_kept(lang, host, token);
+        return;
     }
     smith_lang_sparse_sized(lang, host, token);
 }

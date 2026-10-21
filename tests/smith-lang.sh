@@ -15,6 +15,11 @@
 #   expect/symbols   the symbols the objects define (nm -g), sorted
 #   flags            extra compiler flags, if any
 #   ask              types to ask the parser about at the end of each file (SMITH_LANG_ASK), and expect/ask its answers
+#   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch folder),
+#                    run in src/ as a user would, with no flag of the harness's, so that smith's own defaults (the C2y
+#                    standard, finding a module's source) are what is tested; the program, if the command made
+#                    @OUT@/program, is run, and expect/stderr, if there, is the whole of the diagnostics
+#   nostd            the case's compiles are given no -std (smith's default for a .smith file applies)
 # Everything runs in the case's own folder, so paths in messages are relative to it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -55,7 +60,9 @@ check() { # name, expected file, actual file
 # Every compile of the case, into $out. Sets $objects and $status.
 build_case() { # out
     out=$1
-    flags="-std=gnu23 -g0 -fno-color-diagnostics -Wno-unused-function -I $out/include"
+    standard=-std=gnu23
+    [ -f nostd ] && standard=
+    flags="$standard -g0 -fno-color-diagnostics -Wno-unused-function -I $out/include"
     [ -f flags ] && flags="$flags $(cat flags)"
     status=0
     objects=""
@@ -97,13 +104,27 @@ build_case() { # out
     fi
 }
 
+# The case is a single command, as a user would type it.
+build_cmd_case() { # out
+    out=$1
+    status=0
+    objects=""
+    arguments=$(sed "s|@OUT@|$out|g" cmd)
+    # shellcheck disable=SC2086
+    (cd src && "$smith" cc -fno-color-diagnostics $arguments) 2>>"$out/stderr" || status=1
+    : >"$out/stdout"
+    if [ $status = 0 ] && [ -x "$out/program" ]; then
+        "$out/program" >"$out/stdout" 2>>"$out/stderr" || echo "(exit $?)" >>"$out/stdout"
+    fi
+}
+
 run_case() { # name
     name=$1
     out=$work/$name
     mkdir -p "$out/include" "$out/lowered" "$out/header" "$out/obj"
     : >"$out/stderr"
     cd "$corpus/$name" || return
-    build_case "$out"
+    if [ -f cmd ]; then build_cmd_case "$out"; else build_case "$out"; fi
     # The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts).
     sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' "$out/stderr" | LC_ALL=C sort -u >"$out/error"
     wants_error=false
@@ -120,6 +141,9 @@ run_case() { # name
     else
         total=$((total + 1))
         echo "ok    $name: it builds"
+    fi
+    if [ -f expect/stderr ] || { [ "${UPDATE:-}" = 1 ] && [ -f cmd ] && [ -s "$out/stderr" ]; }; then
+        check "$name: the diagnostics" expect/stderr "$out/stderr"
     fi
     if [ -f expect/stdout ] || { [ "${UPDATE:-}" = 1 ] && [ -s "$out/stdout" ]; }; then
         check "$name: the output" expect/stdout "$out/stdout"

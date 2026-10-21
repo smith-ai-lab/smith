@@ -10,10 +10,17 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang/SKILL.md` 
 A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant, and compiles to the same code. A file opts into more, one step at a time; none is needed for the one before:
 
 1. **Sized types** work in any `.smith` file: `u32`, `f64`, `usize` (load `smith-lang-sized-types`).
-2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header (load `smith-lang-modules`, `smith-lang-c-interop`).
+2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header, whose names are then written `c::sqrtf` in a module or not (load `smith-lang-modules`, `smith-lang-c-interop`).
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
 
-It is C23 (`::` must lex as one token), compiled with `smith cc x.smith` (the extension makes it `-x c`) like any C file, with the same flags.
+It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
+
+```
+smith cc main.smith foo.smith -o prog   # main.smith: `module main; import foo; ...`, foo.smith: `module foo; export ...`
+smith cc -c main.smith                  # compiles alone: foo.smith is found by the path its name implies
+```
+
+`import foo` with no `foo.h` on the include path reads `foo.smith` (among the command's `.smith` files, else beside the importing file under its module root: `a::b` is `a/b.smith`) and makes its interface in memory; nothing is written, and linking is as in C (every source on the command line). `smith build` writes the headers and uses them.
 
 ## What it needs
 
@@ -38,4 +45,4 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 ## Errors
 
-Every error points at the `.smith` text. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.
+Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it. A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.

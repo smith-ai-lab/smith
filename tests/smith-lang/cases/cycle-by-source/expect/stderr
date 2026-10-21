@@ -1,0 +1,8 @@
+a.smith:2:8: error: import cycle: a -> b -> a
+    2 | import b;
+      |        ^
+1 error generated.
+b.smith:2:8: error: import cycle: b -> a -> b
+    2 | import a;
+      |        ^
+1 error generated.

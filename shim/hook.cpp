@@ -32,7 +32,9 @@ extern "C" {
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -78,6 +80,46 @@ struct Lowering {
     }
 };
 
+// Keeps the diagnostics at some locations out of what is shown: the uses of a module that could not be imported, which
+// the import has already reported. A note that belongs to one that is kept out goes too.
+class Suppressing final : public DiagnosticConsumer {
+  public:
+    Suppressing(std::unique_ptr<DiagnosticConsumer> owned, DiagnosticConsumer *inner, const std::set<unsigned> &at)
+        : owned(std::move(owned)), inner(inner), at(at) {
+        NumWarnings = inner->getNumWarnings();
+        NumErrors = inner->getNumErrors();
+    }
+    void BeginSourceFile(const LangOptions &options, const Preprocessor *pp) override {
+        inner->BeginSourceFile(options, pp);
+    }
+    void EndSourceFile() override {
+        inner->EndSourceFile();
+    }
+    void clear() override {
+        DiagnosticConsumer::clear();
+        inner->clear();
+    }
+    bool IncludeInDiagnosticCounts() const override {
+        return inner->IncludeInDiagnosticCounts();
+    }
+    void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level == DiagnosticsEngine::Note) {
+            if (dropNotes) return;
+        } else {
+            dropNotes = info.getLocation().isValid() && at.count(info.getLocation().getRawEncoding()) != 0;
+            if (dropNotes) return;
+        }
+        DiagnosticConsumer::HandleDiagnostic(level, info);
+        inner->HandleDiagnostic(level, info);
+    }
+
+  private:
+    std::unique_ptr<DiagnosticConsumer> owned;
+    DiagnosticConsumer *inner;
+    const std::set<unsigned> &at;
+    bool dropNotes = false;
+};
+
 class SmithHook final : public TokenHook {
   public:
     bool holding = false; // this hook has the lowering
@@ -101,6 +143,8 @@ class SmithHook final : public TokenHook {
         host.type_info = &SmithHook::typeInfo;
         host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
+        host.read_problem = &SmithHook::readProblem;
+        host.suppress = &SmithHook::suppressUse;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
         }
@@ -116,8 +160,10 @@ class SmithHook final : public TokenHook {
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
         smith_lang_watch_basics(&host);
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
-        for (unsigned i = 0; i < 13; i++)
-            sizedNames[PP.getIdentifierInfo(sizedTable[i].name)] = i;
+        for (unsigned i = 0; i < 13; i++) {
+            sizedInfos[i] = PP.getIdentifierInfo(sizedTable[i].name);
+            sizedNames[sizedInfos[i]] = i;
+        }
     }
 
     void semaCreated(Sema &s) override {
@@ -166,7 +212,80 @@ class SmithHook final : public TokenHook {
         return consumed;
     }
 
+    // A sized type name starts a short look at what follows it: a C keyword there is the program's name for something
+    // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
+    // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
+        if (!spelledInMain(tok.getLocation()) || tok.is(tok::eof)) {
+            if (afterSized > 0) endLook();
+            return offerLowered(tok);
+        }
+        if (afterSized > 0 && !look(tok)) return false;
+        bool sized = tok.is(tok::identifier) && sizedNames.find(tok.getIdentifierInfo()) != sizedNames.end();
+        if (sized) {
+            const IdentifierInfo *beforeInfo = nullptr;
+            tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);
+            sized = before != tok::period && before != tok::arrow && before != tok::kw_struct &&
+                    before != tok::kw_union && before != tok::kw_enum;
+        }
+        bool consumed = offerLowered(tok);
+        if (sized) startLook();
+        return consumed;
+    }
+
+    unsigned afterSized = 0; // tokens left to look at
+    unsigned char mode = 0;  // the mode the lowering asked for (Preprocessor::HookWatched, HookBraces or HookAll)
+
+    void startLook() {
+        afterSized = 8;
+        PP.setHookMode(Preprocessor::HookAll);
+    }
+
+    void endLook() {
+        afterSized = 0;
+        PP.setHookMode(mode);
+    }
+
+    // The token that the lowering's mode would have offered.
+    bool wouldOffer(const Token &tok) const {
+        return mode == Preprocessor::HookAll || tok.is(tok::eof) ||
+               (tok.is(tok::identifier) && tok.getIdentifierInfo()->isHookWatched()) ||
+               (mode == Preprocessor::HookBraces && tok.isOneOf(tok::l_brace, tok::r_brace));
+    }
+
+    // The token after a sized type name. False when the hook was not to be offered it.
+    bool look(Token &tok) {
+        bool offered = wouldOffer(tok);
+        if (afterSized > 1 &&
+            tok.isOneOf(tok::star, tok::kw_const, tok::kw_volatile, tok::kw_restrict, tok::kw__Atomic)) {
+            afterSized -= 1;
+            return offered;
+        }
+        endLook();
+        keywordName(tok);
+        return offered;
+    }
+
+    // A keyword used as a name: reported at the name, then it is an identifier (the keyword with a `_`), so that clang
+    // reads the declaration it begins as one and has no cascade of errors to add.
+    void keywordName(Token &tok) {
+        const IdentifierInfo *info = tok.getIdentifierInfo();
+        if (info == nullptr || tok.is(tok::identifier) || !tok.getLocation().isFileID()) return;
+        StringRef word = info->getName();
+        if (!smith_lang_misused_keyword(word.data(), word.size())) return;
+        StringRef text = SM.getBufferData(MainFile);
+        unsigned start = SM.getFileOffset(tok.getLocation());
+        const char *noun = smith_lang_keyword_name_use(text.data(), text.size(), start, start + word.size());
+        if (noun == nullptr) return;
+        char message[512];
+        if (smith_lang_keyword_message(message, sizeof message, word.data(), word.size(), noun) == 0) return;
+        PP.getDiagnostics().Report(tok.getLocation(), diagnostic) << StringRef(message);
+        IdentifierInfo *name = PP.getIdentifierInfo((word + "_").str());
+        tok.setIdentifierInfo(name);
+        tok.setKind(tok::identifier);
+    }
+
+    bool offerLowered(Token &tok) {
         if (!spelledInMain(tok.getLocation())) {
             if (tok.is(tok::eof)) return feed(tok);
             stats.outside += 1;
@@ -202,7 +321,7 @@ class SmithHook final : public TokenHook {
             out.text = info->getNameStart();
             out.length = info->getLength();
             out.watched = info->isHookWatched();
-            out.declared = info->getFETokenInfo() != nullptr;
+            out.declared = declaredByProgram(info);
         } else if (const char *punctuator = tok::getPunctuatorSpelling(tok.getKind())) {
             out.kind = SmithTokenKind_Punctuator;
             out.text = punctuator;
@@ -249,8 +368,9 @@ class SmithHook final : public TokenHook {
             before == tok::kw_enum) {
             return Fast::Kept;
         }
-        if (mayEndType(before) || info->getFETokenInfo() != nullptr) return Fast::No;
-        sizedToken(tok, sized->second);
+        if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
+        if (mayEndType(before)) return Fast::No;
+        ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;
     }
 
@@ -276,7 +396,7 @@ class SmithHook final : public TokenHook {
             break;
         }
         case SmithLangAct_Sized:
-            sizedToken(tok, sizedNames.find(tok.getIdentifierInfo())->second);
+            ensureSized(sizedNames.find(tok.getIdentifierInfo())->second, tok.getLocation());
             break;
         case SmithLangAct_Keep:
             break;
@@ -299,19 +419,41 @@ class SmithHook final : public TokenHook {
         tok = keyword;
     }
 
-    // u32 and the others as the parser's own type: a type annotation, or the keyword of float and double.
-    void sizedToken(Token &tok, unsigned index) {
+    // Whether the parser has a declaration of the name that is the program's: not the typedef of a sized type that this
+    // hook made, which the lowering must see as no declaration at all (the name is still the sized type).
+    bool declaredByProgram(const IdentifierInfo *info) {
+        if (info->getFETokenInfo() == nullptr) return false;
+        if (sema == nullptr || !info->isHookWatched()) return true;
+        auto sized = sizedNames.find(info);
+        if (sized == sizedNames.end() || sizedDecls[sized->second] == nullptr) return true;
+        auto top = sema->IdResolver.begin(info);
+        return top == sema->IdResolver.end() || *top != sizedDecls[sized->second];
+    }
+
+    // u32 and the others are typedefs (`typedef __UINT32_TYPE__ u32;`), made at the first use of the name in a file
+    // that declares nothing of that name, so that a diagnostic says `u32` (aka `unsigned int`). The tokens stay as
+    // written: there is no macro to expand, and the typedef is implicit, so it is in no header.
+    void ensureSized(unsigned index, SourceLocation at) {
+        if (sizedDecls[index] != nullptr || sema == nullptr) return;
+        IdentifierInfo *name = sizedInfos[index];
+        if (name->getFETokenInfo() != nullptr) return; // the file or a header has its own
+        QualType type = sizedQualType(index);
+        if (type.isNull()) return;
+        ASTContext &ast = sema->getASTContext();
+        auto *decl = TypedefDecl::Create(ast, ast.getTranslationUnitDecl(), at, at, name,
+                                         ast.getTrivialTypeSourceInfo(type, at));
+        decl->setImplicit();
+        ast.getTranslationUnitDecl()->addDecl(decl);
+        sema->PushOnScopeChains(decl, sema->TUScope, /*AddToContext=*/false);
+        sizedDecls[index] = decl;
+    }
+
+    QualType sizedQualType(unsigned index) {
         const SizedName &entry = sizedTable[index];
-        if (entry.keyword != nullptr) {
-            IdentifierInfo *keyword = PP.getIdentifierInfo(entry.keyword);
-            tok.setIdentifierInfo(keyword);
-            tok.setKind(keyword->getTokenID());
-            return;
-        }
-        if (sizedTypes[index].isNull()) sizedTypes[index] = sizedType(entry.macro);
-        tok.setKind(tok::annot_typename);
-        tok.setAnnotationEndLoc(tok.getLocation());
-        tok.setAnnotationValue(ParsedType::make(sizedTypes[index]).getAsOpaquePtr());
+        ASTContext &ast = sema->getASTContext();
+        if (entry.macro != nullptr) return sizedType(entry.macro);
+        StringRef keyword(entry.keyword);
+        return keyword == "float" ? ast.FloatTy : keyword == "double" ? ast.DoubleTy : ast.Float16Ty;
     }
 
   private:
@@ -346,7 +488,8 @@ class SmithHook final : public TokenHook {
         {"f16", nullptr, "_Float16"},        {"f32", nullptr, "float"},
         {"f64", nullptr, "double"}};
     llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
-    QualType sizedTypes[13];
+    IdentifierInfo *sizedInfos[13];
+    NamedDecl *sizedDecls[13] = {};                                   // the typedefs this hook made
     llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> renames; // a module's names, to their prefixed spelling
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
@@ -369,12 +512,11 @@ class SmithHook final : public TokenHook {
         return false;
     }
 
-    // A macro of an imported header used where the source names it with no `c::` is an error in a module.
+    // A macro of an imported header used where the source names it with no `c::` is an error, in a module or not.
     void macroUsed(const MacroDefinition &definition, SourceRange range) {
         SourceLocation at = range.getBegin();
         const MacroInfo *macro = definition.getMacroInfo();
-        if (!smith_lang_is_module(lang) || !at.isFileID() || SM.getFileID(at) != MainFile || macro == nullptr ||
-            macro->isBuiltinMacro()) {
+        if (!at.isFileID() || SM.getFileID(at) != MainFile || macro == nullptr || macro->isBuiltinMacro()) {
             return;
         }
         if (!importOwned(SM.getFileID(macro->getDefinitionLoc())) ||
@@ -454,7 +596,7 @@ class SmithHook final : public TokenHook {
                 out.text = info->getNameStart();
                 out.length = info->getLength();
                 out.watched = info->isHookWatched();
-                out.declared = info->getFETokenInfo() != nullptr;
+                out.declared = declaredByProgram(info);
             } else if (tok.isLiteral() && tok.getLiteralData() != nullptr && !tok.needsCleaning()) {
                 out.text = tok.getLiteralData();
                 out.length = tok.getLength();
@@ -540,21 +682,13 @@ class SmithHook final : public TokenHook {
     }
 
     // One token out for the one in (maybe with some read ahead and dropped): the token is changed where it is, with no
-    // stream to push back. A sized type name becomes the parser's own type annotation, so no macro need expand.
+    // stream to push back. A sized type name is left as written (a typedef), so no macro need expand.
     bool replaceInPlace(Token &tok, const Token &made) {
         if (!made.is(tok::identifier) || made.isExpandDisabled()) { // a keyword, or a name that needs no expansion
             tok = made;
             return true;
         }
-        if (sema == nullptr) return false;
-        QualType type = sizedType(made.getIdentifierInfo()->getName());
-        if (type.isNull()) return false; // a macro of the program's (c::X): expand it from a stream
-        Token annotation = made;
-        annotation.setKind(tok::annot_typename);
-        annotation.setAnnotationEndLoc(made.getLocation());
-        annotation.setAnnotationValue(ParsedType::make(type).getAsOpaquePtr());
-        tok = annotation;
-        return true;
+        return false; // a macro of the program's (c::X), or a sized name with no Sema: expand it from a stream
     }
 
     // Puts the output back, last piece first, since each is pushed on top of the lexer stack.
@@ -630,12 +764,28 @@ class SmithHook final : public TokenHook {
             made = self->makeToken(token);
         }
         made.setLocation(SourceLocation::getFromRawEncoding(token->location));
+        bool named = false; // made the sized type's own name
+        if (token->expand && token->handle == smith_token_no_handle && self->sema != nullptr) {
+            // A sized type name the lowering made into the compiler's name for the type (__UINT32_TYPE__): it stays the
+            // name as written, a typedef, so that no macro expands and a diagnostic names the type as the program did.
+            for (unsigned i = 0; i < 13; i++) {
+                const SizedName &entry = sizedTable[i];
+                if (token->length == strlen(entry.macro ? entry.macro : entry.keyword) &&
+                    memcmp(token->text, entry.macro ? entry.macro : entry.keyword, token->length) == 0) {
+                    self->ensureSized(i, made.getLocation());
+                    made.setIdentifierInfo(self->sizedInfos[i]);
+                    made.setKind(tok::identifier);
+                    named = true;
+                    break;
+                }
+            }
+        }
         made.clearFlag(Token::StartOfLine);
         made.clearFlag(Token::LeadingSpace);
         made.clearFlag(Token::DisableExpand);
         if (token->line_start) made.setFlag(Token::StartOfLine);
         if (token->space_before) made.setFlag(Token::LeadingSpace);
-        if (!token->expand && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
+        if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
         self->out.push_back(made);
     }
 
@@ -646,7 +796,9 @@ class SmithHook final : public TokenHook {
         action.include = true;
         action.angled = angled;
         action.header = header;
-        if (!angled) { // a quoted header is found beside the file that imports it, as #include "h" would
+        if (!angled && self->includePathOf(header, action.header)) {
+            // A module read from its source: its interface is the text of that file, as far as this compile goes.
+        } else if (!angled) { // a quoted header is found beside the file that imports it, as #include "h" would
             llvm::SmallString<256> beside(llvm::sys::path::parent_path(self->mainName));
             llvm::sys::path::append(beside, header);
             if (llvm::sys::fs::exists(beside)) action.header = std::string(beside);
@@ -728,9 +880,11 @@ class SmithHook final : public TokenHook {
     }
 
     static void watchMode(void *context, SmithWatch mode) {
-        static_cast<SmithHook *>(context)->PP.setHookMode(mode == SmithWatch_All      ? Preprocessor::HookAll
-                                                          : mode == SmithWatch_Braces ? Preprocessor::HookBraces
-                                                                                      : Preprocessor::HookWatched);
+        auto *self = static_cast<SmithHook *>(context);
+        self->mode = mode == SmithWatch_All      ? Preprocessor::HookAll
+                     : mode == SmithWatch_Braces ? Preprocessor::HookBraces
+                                                 : Preprocessor::HookWatched;
+        if (self->afterSized == 0) self->PP.setHookMode(self->mode); // else the look ends with it
     }
 
     // The token `back` places before the one offered, from the Preprocessor's record of the parser's tokens.
@@ -775,6 +929,9 @@ class SmithHook final : public TokenHook {
         SmithLookup answer{};
         NamedDecl *decl = self->findDecl(name, length, space);
         if (decl == nullptr) return answer;
+        for (NamedDecl *own : self->sizedDecls) { // a sized type's typedef is made by the hook, not the program
+            if (own == decl) return answer;
+        }
         answer.kind = space == SmithLookup_Tag ? SmithLookup_Tag
                       : isa<TypeDecl>(decl)    ? SmithLookup_Type
                                                : SmithLookup_Value;
@@ -784,21 +941,227 @@ class SmithHook final : public TokenHook {
         return answer;
     }
 
+    // A module's header on the include path (smith build writes it there), read through the file manager's file system,
+    // so that a relative -I means what it means to the tool that set the working directory: clangd serves many
+    // projects from one process.
+    bool headerOnPath(const std::string &relative) {
+        for (DirectoryLookup &directory : PP.getHeaderSearchInfo().search_dir_range()) {
+            if (!directory.isNormalDir()) continue;
+            std::string path = directory.getName().str() + "/" + relative;
+            auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
+            if (!buffer) continue;
+            headerFile = std::move(*buffer);
+            return true;
+        }
+        return false;
+    }
+
     static bool readHeader(void *context, const char *relative, const char **text, uint32_t *length) {
         auto *self = static_cast<SmithHook *>(context);
-        for (DirectoryLookup &directory : self->PP.getHeaderSearchInfo().search_dir_range()) {
-            if (!directory.isNormalDir()) continue;
-            // Through the file manager's file system, so that a relative -I means what it means to the tool that set
-            // the working directory: clangd serves many projects from one process.
-            std::string path = directory.getName().str() + "/" + relative;
-            auto buffer = self->PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
-            if (!buffer) continue;
-            self->headerFile = std::move(*buffer);
+        self->problem.clear();
+        if (self->headerOnPath(relative)) {
             *text = self->headerFile->getBufferStart();
             *length = self->headerFile->getBufferSize();
             return true;
         }
-        return false;
+        StringRef name(relative);
+        if (!name.consume_back(".h")) return false;
+        Interface *found = self->interfaceOf(name.str());
+        if (found == nullptr || !found->ok) return false;
+        *text = found->text.c_str();
+        *length = found->text.size();
+        return true;
+    }
+
+    static const char *readProblem(void *context) {
+        auto *self = static_cast<SmithHook *>(context);
+        return self->problem.empty() ? nullptr : self->problem.c_str();
+    }
+
+    // ---- A module found by its source
+    //
+    // When `import a::b` finds no a/b.h on the include path, the module's source is looked for: among the .smith files
+    // of the command (SMITH_LANG_INPUTS, which smith cc sets), then at a/b.smith under the root of the importing file's
+    // module. Its interface, what `smith cc --smith-header` would write, is made in memory and served as the header;
+    // nothing is written. The text is given to the file manager as the contents of the source file, so the include that
+    // follows reads it, and the depfile names the source.
+    struct Interface {
+        bool done = false;
+        bool ok = false;
+        bool inProgress = false;
+        std::string source;  // the path found
+        std::string include; // the absolute path to include it by
+        std::string text;
+    };
+    std::map<std::string, Interface> interfaces; // by module path (a/b)
+    std::vector<std::string> roots; // where a module's path starts: the main file's, and those of the modules found
+    bool rootsMade = false;
+    std::string problem;
+    std::set<unsigned> suppressed;
+    bool filtering = false;
+
+    static std::string moduleFromPath(std::string path) {
+        for (size_t at; (at = path.find('/')) != std::string::npos;)
+            path.replace(at, 1, "::");
+        return path;
+    }
+
+    static std::string modulePath(std::string name) {
+        for (size_t at; (at = name.find("::")) != std::string::npos;)
+            name.replace(at, 2, "/");
+        return name;
+    }
+
+    // The folder a module path is relative to: for module a::b in x/a/b.smith, x; for a file with no module line, its
+    // folder.
+    std::string rootOf(const std::string &file, const std::string &module) {
+        std::string tail = module + ".smith";
+        if (StringRef(file).ends_with(tail)) {
+            StringRef root = StringRef(file).drop_back(tail.size());
+            return root.rtrim('/').str();
+        }
+        return llvm::sys::path::parent_path(file).str();
+    }
+
+    void addRoot(const std::string &root) {
+        for (const std::string &known : roots) {
+            if (known == root) return;
+        }
+        roots.push_back(root);
+    }
+
+    void makeRoots() {
+        if (rootsMade) return;
+        rootsMade = true;
+        if (const char *module = smith_lang_module_name(lang)) {
+            addRoot(rootOf(mainName, modulePath(module)));
+        } else {
+            addRoot(llvm::sys::path::parent_path(mainName).str());
+        }
+    }
+
+    std::vector<std::string> candidates(const std::string &module) {
+        std::vector<std::string> list;
+        std::string tail = module + ".smith";
+        if (const char *inputs = getenv("SMITH_LANG_INPUTS")) {
+            StringRef rest(inputs);
+            while (!rest.empty()) {
+                auto [one, more] = rest.split('\n');
+                rest = more;
+                if (one != mainName && (one == tail || one.ends_with("/" + tail))) list.push_back(one.str());
+            }
+        }
+        makeRoots();
+        for (const std::string &root : roots)
+            list.push_back(root.empty() ? tail : root + "/" + tail);
+        return list;
+    }
+
+    std::string absolute(const std::string &path) {
+        llvm::SmallString<256> full(path);
+        PP.getFileManager().makeAbsolutePath(full);
+        return std::string(full);
+    }
+
+    // The interface of the module at a/b, found by its source, or null (with `problem` set to why).
+    Interface *interfaceOf(const std::string &module) {
+        Interface &entry = interfaces[module];
+        if (entry.inProgress) return nullptr;
+        if (entry.done) {
+            if (!entry.ok && problem.empty()) problem = entry.text;
+            return &entry;
+        }
+        entry.done = true;
+        std::string name = moduleFromPath(module);
+        std::string tried;
+        std::unique_ptr<llvm::MemoryBuffer> source;
+        for (const std::string &path : candidates(module)) {
+            auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
+            if (!buffer) {
+                tried += (tried.empty() ? "`" : ", `") + path + "`";
+                continue;
+            }
+            entry.source = path;
+            source = std::move(*buffer);
+            break;
+        }
+        if (!source) {
+            entry.text = "cannot find module `" + name + "`: no `" + module + ".h` in the include paths, no `" +
+                         module + ".smith` among the input files, and nothing at the path the name implies (" + tried +
+                         ")";
+            problem = entry.text;
+            return &entry;
+        }
+        entry.inProgress = true;
+        make(entry, name, *source);
+        entry.inProgress = false;
+        return &entry;
+    }
+
+    void make(Interface &entry, const std::string &name, const llvm::MemoryBuffer &source) {
+        std::string out(smith_lang_interface_capacity(), '\0');
+        char error[512];
+        size_t used = 0;
+        if (!smith_lang_interface(entry.source.c_str(), source.getBufferStart(), source.getBufferSize(), out.data(),
+                                  out.size(), &used, error, sizeof error)) {
+            entry.text = "module `" + name + "` cannot be imported: " + entry.source + ":" + error;
+            problem = entry.text;
+            return;
+        }
+        out.resize(used);
+        entry.include = absolute(entry.source);
+        entry.text = out;
+        entry.ok = true;
+        addRoot(rootOf(entry.source, modulePath(name)));
+        nestedImports(entry);
+        if (entry.include != absolute(mainName)) { // never the contents of the file being compiled
+            if (auto file = PP.getFileManager().getFileRef(entry.include)) {
+                SM.overrideFileContents(*file, llvm::MemoryBuffer::getMemBufferCopy(entry.text, entry.include));
+            }
+        }
+    }
+
+    // What the interface includes of other modules is the source of those, when they too are found by their source.
+    void nestedImports(Interface &entry) {
+        size_t at = entry.text.find("// smith-imports:");
+        if (at == std::string::npos) return;
+        StringRef line = StringRef(entry.text).drop_front(at + 17).take_until([](char c) { return c == '\n'; });
+        SmallVector<StringRef, 8> words;
+        line.split(words, ' ', -1, false);
+        for (StringRef word : words) {
+            std::string path = modulePath(word.str());
+            if (headerOnPath(path + ".h")) continue;
+            Interface *nested = interfaceOf(path);
+            if (nested == nullptr || !nested->ok) continue;
+            std::string from = "#include \"" + path + ".h\"";
+            size_t where = entry.text.find(from);
+            if (where != std::string::npos)
+                entry.text.replace(where, from.size(), "#include \"" + nested->include + "\"");
+        }
+        problem.clear();
+    }
+
+    // The path to include a module by, when its interface came from its source.
+    bool includePathOf(const char *header, std::string &path) {
+        StringRef name(header);
+        if (!name.consume_back(".h")) return false;
+        auto found = interfaces.find(name.str());
+        if (found == interfaces.end() || !found->second.ok || headerOnPath(header)) return false;
+        path = found->second.include;
+        return true;
+    }
+
+    // The uses of a module that could not be imported are kept out of the diagnostics.
+    static void suppressUse(void *context, uint32_t location) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->suppressed.insert(location);
+        if (self->filtering) return;
+        self->filtering = true;
+        DiagnosticsEngine &diagnostics = self->PP.getDiagnostics();
+        DiagnosticConsumer *inner = diagnostics.getClient();
+        if (inner == nullptr) return;
+        std::unique_ptr<DiagnosticConsumer> owned = diagnostics.takeClient();
+        diagnostics.setClient(new Suppressing(std::move(owned), inner, self->suppressed), /*ShouldOwnClient=*/true);
     }
 };
 

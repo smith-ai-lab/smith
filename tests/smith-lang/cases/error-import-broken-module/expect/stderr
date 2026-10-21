@@ -1,0 +1,4 @@
+main.smith:2:8: error: module `broken` cannot be imported: broken.smith:4:34: `char` is a C keyword; it cannot name a field
+    2 | import broken;
+      |        ^
+1 error generated.

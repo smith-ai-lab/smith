@@ -722,6 +722,45 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 
 constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
 
+// The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith
+// among them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited
+// by the compiles the driver runs.
+static void smith_set_smith_inputs(int argc, char **argv, int first) {
+    static char inputs[smith_smith_args_max];
+    size_t used = 0;
+    inputs[0] = 0;
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc) {
+            i += 1;
+        } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
+            size_t length = strlen(argv[i]);
+            if (used + length + 2 > sizeof inputs) break; // a command with that many keeps the rest to the path search
+            memcpy(inputs + used, argv[i], length);
+            inputs[used + length] = '\n';
+            used += length + 1;
+            inputs[used] = 0;
+        }
+    }
+    setenv("SMITH_LANG_INPUTS", inputs, 1);
+}
+
+// Whether the command names a C standard, or has an input that is not C (a C++ file refuses a C standard): `.smith`
+// is smith's own language and compiles as C2y, the standard `smith new` uses, unless the caller chose one.
+static bool smith_smith_standard_given(int argc, char **argv, int first) {
+    static const char *const other[] = {".cpp", ".cc", ".cxx", ".C", ".mm", ".c++", ".cppm"};
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (strncmp(argv[i], "-std=", 5) == 0 || strncmp(argv[i], "--std=", 6) == 0 || strcmp(argv[i], "-std") == 0 ||
+            strcmp(argv[i], "--std") == 0) {
+            return true;
+        }
+        if (argv[i][0] == '-') continue;
+        for (size_t k = 0; k < sizeof other / sizeof other[0]; k++) { // bounded by the table
+            if (smith_ends_with(argv[i], other[k])) return true;
+        }
+    }
+    return false;
+}
+
 // A .smith file is C to the compiler, so each is given with `-x c` and the language is reset after it: `x.smith y.c`
 // becomes
 // `-x c x.smith -x none y.c`. The compiler's hook (shim/hook.cpp), which the .smith extension turns on, does the rest.
@@ -738,12 +777,14 @@ static int smith_rewrite_smith_inputs(int argc, char **argv, int first, char **o
         }
     }
     if (!found) return 0;
+    smith_set_smith_inputs(argc, argv, first);
     size_t used = 0;
     bool reset = false; // a .smith input was given, and the language is still C
     for (int i = 0; i < first; i++)
         out[used++] = argv[i];
+    if (!smith_smith_standard_given(argc, argv, first)) out[used++] = (char *)"-std=gnu2y";
     for (int i = first; i < argc; i++) { // bounded by argc
-        if (used + 6 > smith_smith_args_max)
+        if (used + 7 > smith_smith_args_max)
             smith_die(smith_exit_usage, "too many arguments with .smith inputs", nullptr);
         bool value = argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc;
         bool smith_input = argv[i][0] != '-' && smith_ends_with(argv[i], ".smith");

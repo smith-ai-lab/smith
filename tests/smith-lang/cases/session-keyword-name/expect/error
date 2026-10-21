@@ -1,0 +1,2 @@
+foo.smith:3:12: `double` is a C keyword; it cannot name a function
+main.smith:2:8: module `foo` cannot be imported: foo.smith:3:12: `double` is a C keyword; it cannot name a function

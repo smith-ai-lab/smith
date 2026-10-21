@@ -237,6 +237,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_add_binding(lang, host, bind, bind_length, name.location, &name, false)) return;
     if (lang->is_module && strcmp(name.colons, lang->module) == 0) {
         smith_lang_error(lang, host, name.location, "module `%s` imports itself", name.colons);
+        smith_lang_binding_find(lang, bind, bind_length)->missing = true;
         return;
     }
     char header[smith_lang_name_max];
@@ -244,16 +245,24 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     const char *text = nullptr;
     uint32_t length = 0;
     if (host->read_header != nullptr && !host->read_header(host->context, header, &text, &length)) {
-        smith_lang_error(
-            lang, host, name.location,
-            "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
-            name.colons, header);
+        SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
+        if (failed != nullptr) failed->missing = true;
+        const char *problem = host->read_problem != nullptr ? host->read_problem(host->context) : nullptr;
+        if (problem != nullptr) {
+            smith_lang_error(lang, host, name.location, "%s", problem);
+        } else {
+            smith_lang_error(
+                lang, host, name.location,
+                "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
+                name.colons, header);
+        }
         return;
     }
     char chain[smith_lang_message_max];
     if (lang->is_module && host->read_header != nullptr &&
         smith_lang_find_cycle(lang, host, name.colons, chain, sizeof chain)) {
         smith_lang_error(lang, host, name.location, "import cycle: %s", chain);
+        smith_lang_binding_find(lang, bind, bind_length)->missing = true;
         return;
     }
     if (lang->imports_count < smith_lang_imports_max) {

@@ -1,0 +1,4 @@
+module units;
+
+export constexpr u32 centimeters_per_meter = 100;
+export u32 to_centimeters(u32 meters) { return meters * centimeters_per_meter; }

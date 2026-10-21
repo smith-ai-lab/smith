@@ -194,6 +194,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
     }
     smith_lang_take(lang, host);
     SmithToken taken = smith_lang_take(lang, host);
+    if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);
     if (binding->is_c) {
         smith_lang_allow(lang, taken.location);
         *result = smith_lang_made(name, taken.text, taken.length, true);
@@ -262,6 +263,17 @@ static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost 
     return lowered;
 }
 
+// A tag that an imported header declared, used without `c::` (in every file, a module or not).
+static void smith_lang_check_c_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                   uint32_t location) {
+    if (!lang->has_c) return;
+    SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Tag);
+    if (found.kind != SmithLookup_None && found.from_import && !found.in_main_file) {
+        smith_lang_error(lang, host, location, "`struct %.*s` names a C tag; write `struct c::%.*s`", (int)length, name,
+                         (int)length, name);
+    }
+}
+
 // The name after struct, union or enum. A tag the module defines or declares (`struct S {` or `struct S;`) is its own;
 // one it only uses is the module's if it was defined above, else a C header's (and in a module that header must say so
 // with `struct c.S`).
@@ -269,7 +281,10 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
                                              uint32_t location, const SmithToken **next) {
     SmithLangLowered kept = smith_lang_keep();
     kept.is_type = true;
-    if (!lang->is_module) return kept;
+    if (!lang->is_module) { // a file with no `module` line has no tags of its own to lower, only a C tag to refuse
+        smith_lang_check_c_tag(lang, host, name, length, location);
+        return kept;
+    }
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known != nullptr) return smith_lang_prefix_name(lang, name, length, true);
     const SmithToken *after = smith_lang_after(lang, host, next);
@@ -279,13 +294,7 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
             smith_lang_declare(lang, host, name, length, location, SmithLangName_Tag, lang->decl.exported);
         return prefixed != nullptr ? smith_lang_prefix_name(lang, name, length, true) : kept;
     }
-    if (lang->has_c) {
-        SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Tag);
-        if (found.kind != SmithLookup_None && found.from_import && !found.in_main_file) {
-            smith_lang_error(lang, host, location, "`struct %.*s` names a C tag; write `struct c::%.*s`", (int)length,
-                             name, (int)length, name);
-        }
-    }
+    smith_lang_check_c_tag(lang, host, name, length, location);
     return kept;
 }
 
@@ -317,9 +326,8 @@ static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host,
     if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next);
     SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);
     if (sized.replaced) return sized;
-    if (!lang->is_module) return smith_lang_keep();
     if (smith_lang_is_member_name(lang, host, context, &next)) return smith_lang_keep();
-    SmithLangName *known = smith_lang_name_find(lang, name, length);
+    SmithLangName *known = lang->is_module ? smith_lang_name_find(lang, name, length) : nullptr;
     if (known != nullptr) {
         if (lang->decl.checking && !known->exported &&
             (known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag)) {

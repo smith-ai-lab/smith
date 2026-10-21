@@ -85,10 +85,16 @@ compile_forms() {
     # A .smith input needs a smith whose clang has the token hook; any other refuses it, and does not compile it as C.
     if env SMITH_CLANG="$cl" "$prog" $v --smith-which -c a.smith >/dev/null 2>&1; then
         capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith -o out.o
-        expect "[$form] a .smith input is compiled as C, and nothing else changes" "$(lines "clang argv0=$cl" '[-c]' '[-x]' '[c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
+        expect "[$form] a .smith input is compiled as C, and nothing else changes" "$(lines "clang argv0=$cl" '[-std=gnu2y]' '[-c]' '[-x]' '[c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
 
         capture env SMITH_CLANG="$cl" "$prog" $v -c -I x.smith a.smith b.c c.smith -o out.o
-        expect "[$form] the language is C for the .smith inputs only, and an option's value is no input" "$(lines "clang argv0=$cl" '[-c]' '[-I]' '[x.smith]' '[-x]' '[c]' '[a.smith]' '[-x]' '[none]' '[b.c]' '[-x]' '[c]' '[c.smith]' '[-o]' '[out.o]')" "$out"
+        expect "[$form] the language is C for the .smith inputs only, and an option's value is no input" "$(lines "clang argv0=$cl" '[-std=gnu2y]' '[-c]' '[-I]' '[x.smith]' '[-x]' '[c]' '[a.smith]' '[-x]' '[none]' '[b.c]' '[-x]' '[c]' '[c.smith]' '[-o]' '[out.o]')" "$out"
+
+        capture env SMITH_CLANG="$cl" "$prog" $v -std=c23 -c a.smith
+        expect "[$form] a .smith input is C2y unless the caller names a standard" "$(lines "clang argv0=$cl" '[-std=c23]' '[-c]' '[-x]' '[c]' '[a.smith]')" "$out"
+
+        capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith b.cpp
+        expect "[$form] no C standard is added beside a C++ input" "$(lines "clang argv0=$cl" '[-c]' '[-x]' '[c]' '[a.smith]' '[-x]' '[none]' '[b.cpp]')" "$out"
 
         capture env SMITH_CLANG="$cl" "$prog" $v -x c++ -c a.smith
         expect "[$form] a language named by the caller is left alone" "$(lines "clang argv0=$cl" '[-x]' '[c++]' '[-c]' '[a.smith]')" "$out"

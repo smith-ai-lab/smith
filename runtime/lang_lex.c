@@ -16,6 +16,8 @@ typedef struct {
     bool skipping;       // inside an `#if 0`
     unsigned skip_depth; // conditionals opened inside it
     SmithLang *lang;
+    char *capture; // else of printing the first error, it is kept here as `line:column: message`
+    size_t capture_capacity;
 } SmithLangRaw;
 
 static bool smith_raw_is_name_start(char c) {
@@ -237,6 +239,10 @@ static void smith_raw_error(void *context, uint32_t location, const char *messag
             column += 1;
         }
     }
+    if (raw->capture != nullptr) {
+        if (raw->capture[0] == 0) snprintf(raw->capture, raw->capture_capacity, "%u:%zu: %s", line, column, message);
+        return;
+    }
     fprintf(stderr, "%s:%u:%zu: error: %s\n", raw->file, line, column, message);
 }
 
@@ -277,6 +283,123 @@ static int smith_lang_write_header(const char *path, const char *bytes, size_t l
     return 0;
 }
 
+// The keyword-as-name check of a file read without a compiler (the compiler's host does the same by itself): a keyword
+// that follows a sized type name (and `*` or a qualifier after it) is reported at the name and fed as an identifier
+// instead, so that nothing after it is read wrongly.
+typedef struct {
+    unsigned after_sized; // tokens left to look at: the previous ones were a sized type name, `*` and qualifiers
+    SmithToken before;    // the token before
+    char renamed[128];
+    unsigned errors;
+} SmithRawNames;
+
+static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken *token) {
+    bool after_member = smith_lang_punct(&names->before, ".") || smith_lang_punct(&names->before, "->") ||
+                        (names->before.kind == SmithTokenKind_Identifier &&
+                         smith_lang_word(names->before.text, names->before.length) == SmithLangWord_Tag);
+    if (token->kind != SmithTokenKind_Identifier) {
+        names->after_sized = smith_lang_punct(token, "*") && names->after_sized > 1 ? names->after_sized - 1 : 0;
+        names->before = *token;
+        return;
+    }
+    SmithLangWord word = smith_lang_word(token->text, token->length);
+    if (names->after_sized > 0 && smith_lang_misused_keyword(token->text, token->length)) {
+        size_t start = (size_t)token->location;
+        const char *noun = smith_lang_keyword_name_use(smith_lang_source, raw->length, start, start + token->length);
+        if (noun != nullptr && token->length + 2 < sizeof names->renamed) {
+            char message[smith_lang_message_max];
+            if (smith_lang_keyword_message(message, sizeof message, token->text, token->length, noun) > 0) {
+                smith_raw_error(raw, token->location, message);
+            }
+            names->errors += 1;
+            memcpy(names->renamed, token->text, token->length);
+            names->renamed[token->length] = '_';
+            names->renamed[token->length + 1] = 0;
+            token->text = names->renamed;
+            token->length += 1;
+        }
+    }
+    names->after_sized = names->after_sized > 1 && word == SmithLangWord_Qualifier ? names->after_sized - 1 : 0;
+    if (smith_lang_find_sized(token->text, token->length) != nullptr && !after_member) names->after_sized = 8;
+    names->before = *token;
+}
+
+// ---- A module's interface, in memory
+// ----------------------------------------------------------------------------------------
+
+// The lowering is one set of tables for the whole process, and an importer's lowering is in the middle of its own when
+// it asks for another module's interface, so the tables are kept aside and put back.
+static SmithLang smith_lang_saved_instance;
+static char smith_lang_saved_chars[smith_lang_chars_max];
+static char smith_lang_saved_scratch[smith_lang_scratch_max];
+static char smith_lang_saved_header_body[smith_lang_header_max];
+static char smith_lang_saved_header_full[smith_lang_header_max + 4096];
+
+size_t smith_lang_interface_capacity(void) {
+    return sizeof smith_lang_header_full;
+}
+
+static void smith_lang_keep_aside(bool save) {
+    if (save) {
+        memcpy(&smith_lang_saved_instance, &smith_lang_instance, sizeof smith_lang_instance);
+        memcpy(smith_lang_saved_chars, smith_lang_chars, sizeof smith_lang_chars);
+        memcpy(smith_lang_saved_scratch, smith_lang_scratch, sizeof smith_lang_scratch);
+        memcpy(smith_lang_saved_header_body, smith_lang_header_body, sizeof smith_lang_header_body);
+        memcpy(smith_lang_saved_header_full, smith_lang_header_full, sizeof smith_lang_header_full);
+    } else {
+        memcpy(&smith_lang_instance, &smith_lang_saved_instance, sizeof smith_lang_instance);
+        memcpy(smith_lang_chars, smith_lang_saved_chars, sizeof smith_lang_chars);
+        memcpy(smith_lang_scratch, smith_lang_saved_scratch, sizeof smith_lang_scratch);
+        memcpy(smith_lang_header_body, smith_lang_saved_header_body, sizeof smith_lang_header_body);
+        memcpy(smith_lang_header_full, smith_lang_saved_header_full, sizeof smith_lang_header_full);
+    }
+}
+
+bool smith_lang_interface(const char *file, const char *text, size_t length, char *out, size_t capacity, size_t *used,
+                          char *error, size_t error_capacity) {
+    if (length > smith_lang_source_max || capacity < sizeof smith_lang_header_full || error_capacity == 0) {
+        return false;
+    }
+    error[0] = 0;
+    smith_lang_keep_aside(true);
+    memcpy(smith_lang_source, text, length);
+    smith_lang_source[length] = 0;
+    SmithLangRaw raw = {
+        .file = file, .length = length, .line_start = true, .capture = error, .capture_capacity = error_capacity};
+    SmithLang *lang = smith_lang_new();
+    raw.lang = lang;
+    lang->dump_enabled = false;
+    SmithHost host = {
+        .context = &raw,
+        .next = smith_raw_next,
+        .emit = smith_raw_emit,
+        .include = smith_raw_include,
+        .error = smith_raw_error,
+        .lookup = smith_raw_lookup,
+        .main_file = file,
+    };
+    SmithRawNames names = {0};
+    for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
+        SmithToken token;
+        smith_raw_next(&raw, &token, false);
+        smith_raw_names(&raw, &names, &token);
+        smith_lang_feed(lang, &host, &token);
+        if (token.kind == SmithTokenKind_Eof) break;
+    }
+    lang->finished =
+        true; // not smith_lang_finish: what it writes (SMITH_LANG_DUMP, SMITH_LANG_HEADER) is the importer's
+    if (lang->is_module) smith_lang_assemble_header(lang, file);
+    bool good = lang->errors == 0 && names.errors == 0 && lang->is_module;
+    if (good) {
+        memcpy(out, smith_lang_header_full, lang->header_full_used);
+        *used = lang->header_full_used;
+    } else if (error[0] == 0) {
+        snprintf(error, error_capacity, "1:1: not a module (it has no `module` line), so it has no interface");
+    }
+    smith_lang_keep_aside(false);
+    return good;
+}
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true};
@@ -296,6 +419,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .read_header = nullptr,
         .main_file = path,
     };
+    SmithRawNames names = {0};
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
         smith_raw_next(&raw, &token, false);
@@ -303,6 +427,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
             return 1;
         }
+        smith_raw_names(&raw, &names, &token);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
@@ -311,7 +436,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
         fputc('\n', stdout);
     }
-    if (lang->errors > 0) return 1;
+    if (lang->errors > 0 || names.errors > 0) return 1;
     if (header_path != nullptr && lang->is_module) {
         return smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
     } else if (header_path != nullptr) {

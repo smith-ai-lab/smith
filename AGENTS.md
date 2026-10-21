@@ -108,8 +108,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   before the parser; plain C in a `.smith` file costs the compiler under 1%. The language is smith's own C
   (`runtime/lang*.c`, which knows nothing of clang), and the clang side is `shim/hook.cpp`: the hook, and the parser's
   name lookup as the lowering's questions. Modules use `::` (`module a::b;`, `x::name`, `c::printf`), never dots. The
-  `.smith` extension turns it on (`smith cc x.smith` is `-x c x.smith`); plain C in a `.smith` file means what it means
-  in a `.c` file (`tests/smith-lang-c.sh`). A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
+  `.smith` extension turns it on (`smith cc x.smith` is `-x c -std=gnu2y x.smith`: `.smith` is smith's own language and
+  compiles as C2y, the standard `smith new` uses, so `auto`, `::` and `_Countof` work, unless the caller names a
+  `-std=`, which wins); plain C in a `.smith` file means what it means in a `.c` file (`tests/smith-lang-c.sh`).
+  `smith cc main.smith foo.smith` just works: an `import foo` that finds no `foo.h` on the include path reads the
+  module's source (among the command's `.smith` files, else at the path its name implies under the importing module's
+  root) and makes its interface in memory, writing nothing; `smith build` still writes the headers and they win. The
+  sized types (`u32`, `f64`, ...) are typedefs, made when a file first uses one it does not declare itself, so a
+  diagnostic reads `'i32' (aka 'int')`; a generated C header still says the standard C types. The lowering reports a C
+  keyword used as a name (`i32 double(i32 x)`) itself, at the name. A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
   modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).

@@ -1,0 +1,2 @@
+a.smith:2:8: import cycle: a -> b -> a
+b.smith:2:8: import cycle: b -> a -> b

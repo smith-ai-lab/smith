@@ -1,0 +1,5 @@
+module shapes;
+import units;
+
+export typedef struct { u32 width_m; u32 height_m; } Rect;
+export u32 area_cm2(Rect r) { return units::to_centimeters(r.width_m) * units::to_centimeters(r.height_m); }

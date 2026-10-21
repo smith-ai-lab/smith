@@ -1,0 +1,11 @@
+typedef i32 int;
+struct Pair {
+    f32 float;
+    u8 *char;
+};
+i32 count(i32 double, u8 long) {
+    i32 return = 3;
+    return 0;
+}
+static i32 sizeof(i32 x);
+i32 const volatile *restrict while = 0;
