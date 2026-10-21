@@ -329,6 +329,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.lookup = &SmithHook::lookupName;
         host.type_info = &SmithHook::typeInfo;
         host.type_query = &SmithHook::typeQuery;
+        host.expr_type = &SmithHook::exprType;
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
@@ -1017,14 +1018,18 @@ class SmithHook final : public TokenHook, public NameSource {
         unsigned parent;
         SourceLocation call;
         std::string description;
+        SourceLocation definition; // the generic's name in its module's source
     };
     std::map<unsigned, InstanceInfo> instances;       // by id
     llvm::DenseMap<unsigned, unsigned> instanceFiles; // the buffer of an instance's tokens, to its id
+    std::map<unsigned, FileID> instanceSources;       // and to the file it is a copy of
     std::map<std::string, FileID> placedFiles;
 
-    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description) {
+    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description,
+                              uint32_t definition) {
         auto *self = static_cast<SmithHook *>(context);
-        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description};
+        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description,
+                               SourceLocation::getFromRawEncoding(definition)};
     }
 
     // The file of a module's source, as the text the module has (a module found by its source is given to the file
@@ -1073,31 +1078,35 @@ class SmithHook final : public TokenHook, public NameSource {
         return !notes.empty();
     }
 
-    // Gives the tokens of each instance a buffer of its own.
+    // Gives the tokens of each instance a buffer of its own, a copy of its generic's source file under the same name: a
+    // token is at the offset it has in the source, so the debugger shows the generic's file, line and column (and the
+    // checksum of the file), and a diagnostic is at the place in the source. The tokens that are no source's (the call
+    // the instance is for, the instance's name) stand at the generic's name.
     void relocateInstances() {
-        struct Spots {
-            std::string text;
-            std::vector<std::tuple<Token *, unsigned, SourceLocation>> tokens;
-        };
-        std::map<unsigned, Spots> byInstance;
+        std::map<unsigned, std::vector<Token *>> byInstance;
         for (Action &action : actions) {
             for (size_t i = 0; i < action.tokens.size() && i < action.instance.size(); i++) {
-                if (action.instance[i] == 0) continue;
-                Spots &spots = byInstance[action.instance[i]];
-                spots.tokens.emplace_back(&action.tokens[i], spots.text.size(), action.tokens[i].getLocation());
-                spots.text += action.text[i] + " ";
+                if (action.instance[i] != 0) byInstance[action.instance[i]].push_back(&action.tokens[i]);
             }
         }
-        for (auto &[id, spots] : byInstance) {
-            FileID file =
-                SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(spots.text, "<smith-instance>"), SrcMgr::C_User);
+        for (auto &[id, tokens] : byInstance) {
+            SourceLocation definition = instances[id].definition;
+            FileID source = definition.isValid() && definition.isFileID() ? SM.getFileID(definition) : FileID();
+            if (source.isInvalid()) continue; // the generic's file is not known: the tokens stay where they were
+            StringRef data = SM.getBufferData(source);
+            FileID file = SM.createFileID(
+                llvm::MemoryBuffer::getMemBuffer(data, SM.getBufferName(SM.getLocForStartOfFile(source)), false),
+                SrcMgr::C_User);
             SourceLocation start = SM.getLocForStartOfFile(file);
-            std::vector<std::pair<unsigned, SourceLocation>> &list = origins[file.getHashValue()];
-            for (auto &[token, offset, origin] : spots.tokens) {
-                list.emplace_back(offset, origin);
-                token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
+            unsigned fallback = SM.getFileOffset(definition);
+            for (Token *token : tokens) {
+                SourceLocation origin = token->getLocation();
+                bool inSource = origin.isFileID() && SM.getFileID(origin) == source;
+                token->setLocation(
+                    start.getLocWithOffset(static_cast<int>(inSource ? SM.getFileOffset(origin) : fallback)));
             }
             instanceFiles[file.getHashValue()] = id;
+            instanceSources[file.getHashValue()] = source;
         }
     }
 
@@ -1128,6 +1137,12 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // Where the token at a location of a relocated copy was copied from; invalid for any other location.
     SourceLocation originOf(SourceLocation at) override {
+        if (at.isFileID() && !instanceSources.empty()) { // a copy of a generic's source: the same place in the source
+            auto copy = instanceSources.find(SM.getFileID(at).getHashValue());
+            if (copy != instanceSources.end()) {
+                return SM.getLocForStartOfFile(copy->second).getLocWithOffset(static_cast<int>(SM.getFileOffset(at)));
+            }
+        }
         if (!at.isFileID() || origins.empty()) return SourceLocation();
         auto found = origins.find(SM.getFileID(at).getHashValue());
         if (found == origins.end()) return SourceLocation();
@@ -1568,6 +1583,206 @@ class SmithHook final : public TokenHook, public NameSource {
         return true;
     }
 
+    // ---- The type of an expression
+    //
+    // `test::check_equal(a, b)` leaves T to be told from its arguments. The arguments are the lowered tokens of a name,
+    // a field chain, `*e`, `&e`, `e[i]`, a call, a cast or a literal: what a person writes to name a value. Anything
+    // else (arithmetic, a conditional) is not typed, and the call must say its type. The scope is the parser's, so a
+    // local declared by an earlier statement is found.
+    std::string typeWhy;
+
+    static size_t closingOf(const std::vector<std::string> &tokens, size_t open, size_t end) {
+        int depth = 0;
+        for (size_t at = open; at < end; at++) {
+            const std::string &token = tokens[at];
+            if (token == "(" || token == "[" || token == "{") depth += 1;
+            if (token == ")" || token == "]" || token == "}") depth -= 1;
+            if (depth == 0) return at;
+        }
+        return end;
+    }
+
+    QualType literalType(const std::string &token) {
+        ASTContext &ast = sema->getASTContext();
+        if (token[0] == '"') return ast.getPointerType(ast.CharTy);
+        if (token[0] == '\'') return ast.IntTy;
+        if (token == "true" || token == "false") return ast.BoolTy;
+        bool hex = token.size() > 1 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X');
+        bool real = !hex && token.find_first_of(".eE") != std::string::npos;
+        char last = static_cast<char>(std::tolower(static_cast<unsigned char>(token.back())));
+        if (real) return last == 'f' ? ast.FloatTy : ast.DoubleTy;
+        bool isUnsigned = token.find_first_of("uU") != std::string::npos;
+        size_t longs =
+            static_cast<size_t>(std::count_if(token.begin(), token.end(), [](char c) { return c == 'l' || c == 'L'; }));
+        if (longs >= 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
+        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
+        return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
+    }
+
+    // The type of the name (a variable, a parameter, a function): null with typeWhy when it is not found.
+    QualType nameType(const std::string &name) {
+        auto *decl = dyn_cast_or_null<ValueDecl>(findDecl(name.data(), name.size(), SmithLookup_Value));
+        if (decl == nullptr) {
+            typeWhy = "`" + name + "` is not a name the compiler knows here";
+            return QualType();
+        }
+        return decl->getType();
+    }
+
+    QualType memberType(QualType base, bool arrow, const std::string &name) {
+        if (arrow) {
+            if (!base->isPointerType()) {
+                typeWhy = "`->` needs a pointer";
+                return QualType();
+            }
+            base = base->getPointeeType();
+        }
+        const RecordDecl *record = base->getAsRecordDecl();
+        if (record == nullptr) {
+            typeWhy = "`." + name + "` needs a struct or union";
+            return QualType();
+        }
+        for (const FieldDecl *field : record->fields()) {
+            if (field->getName() == name) return field->getType();
+        }
+        typeWhy = "no field `" + name + "`";
+        return QualType();
+    }
+
+    QualType elementType(QualType type) {
+        if (type->isPointerType()) return type->getPointeeType();
+        if (const auto *array = sema->getASTContext().getAsArrayType(type)) return array->getElementType();
+        typeWhy = "that is not a pointer or an array";
+        return QualType();
+    }
+
+    QualType resultOfCall(QualType callee) {
+        if (callee->isPointerType()) callee = callee->getPointeeType();
+        if (const auto *function = callee->getAs<FunctionType>()) return function->getReturnType();
+        typeWhy = "that is not a function";
+        return QualType();
+    }
+
+    // The primary expression at the start of [begin, end): its type, and where it ends in `next`.
+    QualType primaryType(const std::vector<std::string> &t, size_t begin, size_t end, size_t *next) {
+        const std::string &token = t[begin];
+        *next = begin + 1;
+        bool word = std::isalpha(static_cast<unsigned char>(token[0])) || token[0] == '_';
+        if (!word) {
+            if (std::isdigit(static_cast<unsigned char>(token[0])) || token[0] == '"' || token[0] == '\'')
+                return literalType(token);
+            typeWhy = "`" + token + "` does not begin a name or a literal";
+            return QualType();
+        }
+        if (token == "true" || token == "false") return literalType(token);
+        QualType type = nameType(token);
+        if (type.isNull() || begin + 1 >= end || t[begin + 1] != "(") return type;
+        size_t close = closingOf(t, begin + 1, end);
+        *next = close + 1;
+        return resultOfCall(type);
+    }
+
+    // One step after a primary expression: `.f`, `->f`, `[i]` or a call.
+    QualType postfixType(const std::vector<std::string> &t, size_t *at, size_t end, QualType type) {
+        const std::string &token = t[*at];
+        if ((token == "." || token == "->") && *at + 1 < end) {
+            QualType member = memberType(type, token == "->", t[*at + 1]);
+            *at += 2;
+            return member;
+        }
+        if (token == "[" || token == "(") {
+            *at = closingOf(t, *at, end) + 1;
+            return token == "[" ? elementType(type) : resultOfCall(type);
+        }
+        typeWhy = "`" + token + "` is not understood in this expression";
+        return QualType();
+    }
+
+    QualType prefixType(const std::string &op, QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (op == "*") return elementType(type);
+        if (op == "&") return ast.getPointerType(type);
+        if (op == "!") return ast.IntTy;
+        return type; // - + ~
+    }
+
+    // The type of the expression the tokens spell, unqualified, with arrays and functions as pointers.
+    QualType expressionType(std::vector<std::string> t) {
+        size_t begin = 0;
+        size_t end = t.size();
+        for (size_t guard = 0;
+             guard < end && end - begin >= 2 && t[begin] == "(" && closingOf(t, begin, end) == end - 1; guard++) {
+            begin += 1; // the parentheses around it all
+            end -= 1;
+        }
+        if (begin >= end) {
+            typeWhy = "the expression is empty";
+            return QualType();
+        }
+        if (t[begin] == "(") { // a cast: its type is the type
+            size_t close = closingOf(t, begin, end);
+            std::string spelling;
+            for (size_t at = begin + 1; at < close; at++)
+                spelling += (at > begin + 1 ? " " : "") + t[at];
+            QualType cast = close + 1 < end ? readType(spelling) : QualType();
+            if (!cast.isNull()) return finishType(cast);
+        }
+        std::vector<std::string> prefix;
+        while (begin < end && (t[begin] == "*" || t[begin] == "&" || t[begin] == "-" || t[begin] == "+" ||
+                               t[begin] == "!" || t[begin] == "~")) {
+            prefix.push_back(t[begin++]);
+        }
+        if (begin >= end) {
+            typeWhy = "an operator has no operand";
+            return QualType();
+        }
+        size_t at = 0;
+        QualType type = primaryType(t, begin, end, &at);
+        for (size_t guard = 0; !type.isNull() && at < end && guard < end; guard++)
+            type = postfixType(t, &at, end, type);
+        for (size_t i = prefix.size(); !type.isNull() && i > 0; i--)
+            type = prefixType(prefix[i - 1], type);
+        return type.isNull() ? type : finishType(type);
+    }
+
+    QualType finishType(QualType type) {
+        ASTContext &ast = sema->getASTContext();
+        if (type->isArrayType()) return ast.getPointerType(elementType(type));
+        if (type->isFunctionType()) return ast.getPointerType(type);
+        return type.getUnqualifiedType();
+    }
+
+    static bool exprType(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        *out = SmithExprType{};
+        if (self->sema == nullptr) return false;
+        self->typeWhy.clear();
+        std::vector<std::string> parts;
+        std::string current;
+        for (uint32_t at = 0; at < length; at++) {
+            if (tokens[at] == '\x1f') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += tokens[at];
+            }
+        }
+        if (!current.empty()) parts.push_back(current);
+        QualType type = parts.empty() ? QualType() : self->expressionType(parts);
+        for (uint32_t i = 0; !type.isNull() && i < derefs; i++)
+            type = self->elementType(type);
+        if (!type.isNull()) type = self->finishType(type);
+        if (type.isNull()) {
+            self->queryText = self->typeWhy.empty() ? "that expression's type is not understood" : self->typeWhy;
+            out->why = self->queryText.c_str();
+            return false;
+        }
+        const PrintingPolicy &policy = self->sema->getASTContext().getPrintingPolicy();
+        snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
+        snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
+        return true;
+    }
+
     static bool fieldOf(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
                         const char **field_name, const char **field_type) {
         auto *self = static_cast<SmithHook *>(context);
@@ -1935,6 +2150,28 @@ class SmithHook final : public TokenHook, public NameSource {
             copyName(found, name);
             names->index[name.lowered] = names->names.size();
             names->names.push_back(std::move(name));
+        }
+        for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
+            SmithCallSite found;
+            if (!smith_lang_call_site_at(lang, i, &found)) break;
+            smith::CallSite site;
+            SourceLocation at = SourceLocation::getFromRawEncoding(found.location);
+            if (!at.isFileID()) continue;
+            site.line = SM.getSpellingLineNumber(at) - 1;
+            site.column = SM.getSpellingColumnNumber(at) - 1;
+            site.length = found.length;
+            site.hover = found.hover;
+            if (found.definition_location != UINT32_MAX) {
+                SourceLocation def = SourceLocation::getFromRawEncoding(found.definition_location);
+                site.file = mainName;
+                site.definition_line = SM.getSpellingLineNumber(def) - 1;
+                site.definition_column = SM.getSpellingColumnNumber(def) - 1;
+            } else {
+                site.file = absolute(found.file);
+                site.definition_line = found.line > 0 ? found.line - 1 : 0;
+                site.definition_column = found.column > 0 ? found.column - 1 : 0;
+            }
+            names->calls.push_back(std::move(site));
         }
         snapshot = names;
         // A preamble is built from the start of the file, up to its first line that is no directive: a module's

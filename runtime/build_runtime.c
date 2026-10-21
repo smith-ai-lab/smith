@@ -374,7 +374,6 @@ static const SmithEntry *smith_find_output(const char *const *outputs, const cha
 void smith_step(SmithBuild *b, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_name_step(step);
-    if (step->test) smith_fail(".test is for a task: `smith test` runs tasks; use smith_task");
     smith_check_step(step);
     SmithStep copy = smith_copy_step(step);
     bool stamp = smith_count(copy.outputs) == 0 || copy.stamp != nullptr;
@@ -1396,9 +1395,17 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
     return nullptr;
 }
 
-// A .smith compile finds the modules' headers there.
-static const char *const *smith_lang_flags(SmithBuild *b, bool lang) {
-    return lang ? smith_list(b, "-I", ".smith/include", nullptr) : smith_list(b, nullptr);
+// A .smith compile finds the modules' headers there. smith's own library modules (.smith/lib/smith/<name>.smith) also
+// find the headers of their siblings by a quoted include (`#include "arena.h"`, which their generated header says too:
+// the header sits beside arena.h), as `-iquote .smith/include/smith`.
+static bool smith_ends_with(const char *text, const char *suffix);
+
+static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
+    if (!smith_ends_with(source, ".smith")) return smith_list(b, nullptr);
+    if (strncmp(source, ".smith/lib/smith/", strlen(".smith/lib/smith/")) == 0) {
+        return smith_list(b, "-I", ".smith/include", "-iquote", ".smith/include/smith", nullptr);
+    }
+    return smith_list(b, "-I", ".smith/include", nullptr);
 }
 
 // .smith sources (docs/smith-lang.md). A module's generated header is a step of its own, made from the module's tokens
@@ -1676,8 +1683,8 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         smith_lang_sources_used = true;
     }
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, lang),
-                             copy.flags, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
+                             smith_lang_flags(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = lang ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
@@ -1819,9 +1826,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments =
-        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
-                  smith_lang_flags(b, smith_ends_with(copy, ".smith")), smith_copy_list(flags), tail, nullptr);
+    const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
+                                             smith_lang_flags(b, copy), smith_copy_list(flags), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
@@ -1919,8 +1925,11 @@ static const char *const *smith_needed_files(SmithBuild *b) {
 static const char *const *smith_test_tasks(SmithBuild *b) {
     const char *const *tasks = smith_list(b, nullptr);
     for (size_t i = 0; i < smith_entry_count; i++) {
-        if (smith_entries[i].kind == SmithEntryKind_Task && smith_entries[i].step.test)
+        if (!smith_entries[i].step.test) continue;
+        if (smith_entries[i].kind == SmithEntryKind_Task)
             tasks = smith_cat(b, tasks, smith_one(smith_entries[i].name), nullptr);
+        else if (smith_entries[i].kind == SmithEntryKind_Step) // a step is built, so it is incremental
+            tasks = smith_cat(b, tasks, smith_entries[i].step.outputs, nullptr);
     }
     return tasks;
 }
@@ -2229,9 +2238,9 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     // test flags, unless the project links it itself in .objects, so no library is defined twice.
     static const char *const libraries[] = {"arena", "random", "trace", "contract"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
-        if (smith_tests_links(tests, smith_text(".smith/lib/%s.c", libraries[i]))) continue;
-        objects[used++] =
-            (const char *)smith_tests_object(b, &copy, smith_library(b, libraries[i]), copy.flags, nullptr);
+        const char *source = smith_library(b, libraries[i]); // C or a .smith module
+        if (smith_tests_links(tests, source)) continue;
+        objects[used++] = (const char *)smith_tests_object(b, &copy, source, copy.flags, nullptr);
     }
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];

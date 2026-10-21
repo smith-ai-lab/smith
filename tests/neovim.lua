@@ -85,6 +85,10 @@ function tests.highlights()
     "    return tx::make(c::strlen(path));",
     "}",
     "T max(constexpr type T, T a, T b);",
+    "export int kind(constexpr type T, T v) {",
+    "    if constexpr (is_integer(T) && sizeof(T) == 8) { return 1; }",
+    "    return tx::make(v);",
+    "}",
   }, "\n"))
   check(has(found["keyword.import"], "module"), "module is a keyword.import: " .. vim.inspect(found))
   check(has(found["keyword.import"], "import"), "import is a keyword.import")
@@ -97,6 +101,9 @@ function tests.highlights()
   check(has(found["punctuation.delimiter"], "::"), "'::' is punctuation.delimiter")
   check(has(found["function.call"], "make") and has(found["function.call"], "strlen"), "called paths are function.call")
   check(has(found["keyword.type"], "type"), "the type parameter keyword")
+  check(has(found["keyword.modifier"], "constexpr"), "constexpr in a parameter list is a keyword.modifier")
+  check(has(found["keyword.conditional"], "constexpr"), "if constexpr: constexpr is a keyword.conditional")
+  check(has(found["function.builtin"], "is_integer"), "the type questions of if constexpr are function.builtin")
   check(has(found["type"], "Text"), "a type from a module is a type")
   -- C's own captures come through `inherits: c`.
   check(has(found["keyword.return"], "return"), "return is highlighted by the inherited C query: " .. vim.inspect(found))

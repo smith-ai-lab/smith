@@ -2352,18 +2352,28 @@ C
     expect_contains "verbs: ... and says alias" "$err" "alias '$verb' is named after a verb"
 done
 project
+printf 'x\n' >in.txt
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    SmithStep step = {.command = (const char *[]){"true", nullptr}, .outputs = (const char *[]){"o", nullptr}, .test = true};
+    SmithStep step = {.command = (const char *[]){"sh", "-c", "echo ran >> runs; cp in.txt $0", "build/checked", nullptr},
+                      .inputs = (const char *[]){"in.txt", nullptr}, .outputs = (const char *[]){"build/checked", nullptr},
+                      .test = true};
     smith_step(b, &step);
-    smith_default(b, step.outputs);
+    smith_default(b, smith_list(b, nullptr));
 }
 C
-build
-expect_status "verbs: .test on a step is refused" 2
-expect_contains "verbs: ... it is for tasks" "$err" ".test is for a task"
+build smith_tests
+expect "verbs: .test on a step: smith_tests builds it" 0 "$rc"
+expect "verbs: ... it ran once" 1 "$(lines runs)"
+expect "verbs: ... smith_tests names its output" yes "$(grep -q '^build smith_tests: phony build/checked$' .smith/build.ninja && echo yes || echo no)"
+build smith_tests
+expect "verbs: ... a second run is incremental (a task would rerun)" 1 "$(lines runs)"
+sleep 0.05
+echo y >in.txt
+build smith_tests
+expect "verbs: ... and an edited input reruns it" 2 "$(lines runs)"
 
 project
 mkdir tests
