@@ -1,3 +1,4 @@
+#include <stdio.h>
 typedef unsigned u32;
 int main(void) {
 __UINT32_TYPE__ a = 3;

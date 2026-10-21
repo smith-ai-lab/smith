@@ -493,6 +493,9 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     bool offerLowered(Token &tok) {
+        // A pragma's annotation (`#pragma STDC FP_CONTRACT OFF`) is not a token of the program and has no spelling to
+        // lower: it goes to the parser as it is.
+        if (tok.isAnnotation() && tok.isNot(tok::annot_typename)) return false;
         if (!spelledInMain(tok.getLocation())) {
             if (tok.is(tok::eof)) return feed(tok);
             stats.outside += 1;

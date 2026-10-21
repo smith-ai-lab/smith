@@ -197,6 +197,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
       expression text.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
+  - **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
+    or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
+    `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
+    bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text` is the first (issue #39).
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
@@ -219,7 +224,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
   smith's included. The way back needs only a C23 compiler and a clang for build.c, and is also the first build of a
   fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc` builds
-  and installs the stage0 (set `SMITH_CLANG=/usr/bin/clang` if Homebrew's llvm is absent). To get the full smith, run
+  and installs the stage0 (set `SMITH_CLANG=/usr/bin/clang` if Homebrew's llvm is absent). The `.smith` sources smith's own build compiles are built from their
+  committed lowering in `bootstrap/` (`smith build bootstrap` writes it, `check-bootstrap` in `check` keeps it current), so that first build
+  needs no knowledge of `.smith` and the protocol generator builds with the stage0. To get the full smith, run
   `build/stage0 build llvm` (about 9 minutes once) and then `build/stage0 build install -DCC=cc`, which links clang in.
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside

@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <sys/stat.h>
 __INT32_TYPE__ main() {
 struct stat info;
 printf("hello smith %d\n", EOF + (int)sizeof info - (int)sizeof info);

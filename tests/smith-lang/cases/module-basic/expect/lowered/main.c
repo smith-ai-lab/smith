@@ -1,3 +1,4 @@
+#include <stdio.h>
 int main(void) {
 shapes_area_Rect r = {3.0, 4.0};
 struct shapes_area_Circle c = {2.0};

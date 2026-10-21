@@ -1,0 +1,1 @@
+-I @REPO@/include main.smith @REPO@/lib/smith/text.smith -o @OUT@/program

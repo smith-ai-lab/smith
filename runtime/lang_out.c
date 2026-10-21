@@ -108,8 +108,27 @@ static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
     if (lang->recording && token->kind == SmithTokenKind_Identifier) smith_lang_capture_mark(lang, index);
 }
 
+// runtime/lang_lex.c: the next directive that `smith cc --smith-lower` keeps and that comes before `before`
+static bool smith_raw_take_directive(uint32_t before, const char **text, size_t *length);
+
+// Writes the directives before `before` (a place in the source) each on a line of its own, as written. Only the plain
+// lexer offers any; a compiler's run has preprocessed them.
+static void smith_lang_dump_directives(SmithLang *lang, uint32_t before) {
+    const char *text = nullptr;
+    size_t length = 0;
+    for (size_t guard = 0; guard < smith_lang_dump_max && smith_raw_take_directive(before, &text, &length); guard++) {
+        if (lang->dump_used + length + 2 > smith_lang_dump_max) return;
+        if (lang->dump_used > 0 && smith_lang_dump[lang->dump_used - 1] != '\n') {
+            smith_lang_dump[lang->dump_used++] = '\n';
+        }
+        memcpy(smith_lang_dump + lang->dump_used, text, length);
+        lang->dump_used += length;
+    }
+}
+
 static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
     if (!lang->dump_enabled || token->kind == SmithTokenKind_Eof) return;
+    smith_lang_dump_directives(lang, token->location);
     smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, token->text, token->length,
                    token->line_start, token->space_before);
 }

@@ -91,7 +91,7 @@ How each verb uses it:
   says to name the files (`smith fmt -i <files>`). clang-format reads `.clang-format-ignore` itself when it is given files
   (a generated `parser.c`, the broken inputs of a test).
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
-  findings of different files do not interleave. `.smith` sources are left out (the token hook is the compiler's). It
+  findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
   lints the first compile of a source, so a program built in three variants is checked once, with the first's flags.
 - **prove** proves each program's C sources together, as the program links them (`unit<TAB>source...` in the info; the
   tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first
@@ -960,8 +960,9 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/arena.c", which smith writes on every `smith build`
-// together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
+// The path of a smith library's source, such as ".smith/lib/arena.c" (or, for a library written in .smith,
+// ".smith/lib/smith/text.smith", a module that smith_object compiles with a smith that has clang inside), which smith
+// writes on every `smith build` together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test", "text"; random and io use the arena,
 // and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them).

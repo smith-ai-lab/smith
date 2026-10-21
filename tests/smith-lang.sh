@@ -18,7 +18,7 @@
 #   expect/symbols   the symbols the objects define (nm -g), sorted
 #   flags            extra compiler flags, if any
 #   ask              types to ask the parser about at the end of each file (SMITH_LANG_ASK), and expect/ask its answers
-#   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch folder),
+#   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch folder, @REPO@ smith's own),
 #                    run in src/ as a user would, with no flag of the harness's, so that smith's own defaults (the C2y
 #                    standard, finding a module's source) are what is tested; the program, if the command made
 #                    @OUT@/program, is run, and expect/stderr, if there, is the whole of the diagnostics
@@ -112,7 +112,7 @@ build_cmd_case() { # out
     out=$1
     status=0
     objects=""
-    arguments=$(sed "s|@OUT@|$out|g" cmd)
+    arguments=$(sed "s|@OUT@|$out|g; s|@REPO@|$here/..|g" cmd)
     # shellcheck disable=SC2086
     (cd src && "$smith" cc -fno-color-diagnostics $arguments) 2>>"$out/stderr" || status=1
     : >"$out/stdout"
