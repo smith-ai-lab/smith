@@ -81,8 +81,8 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test",
-// "text"; random and io use the arena (io uses random too), so a project that compiles one compiles them all;
-// smith_tests compiles "test").
+// "text", "trace"; random and io use the arena (io uses random too), so a project that compiles one compiles them all;
+// smith_tests compiles "test" and "trace"; "contract" needs "trace").
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no

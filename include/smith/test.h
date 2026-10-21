@@ -30,8 +30,26 @@
 // for it (`smith build test -DFULL`, the runner's --full). The test picks its size from it and checks the same
 // properties either way; the default run keeps `smith build test` fast, and -DFULL is the slow pass.
 //
-// The checks are macros because only a macro can capture an expression's text, its file and its line, and evaluate an
-// expression where the check can catch its end.
+// The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
+// call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
+// into files, lines and source text, so a check needs no macro to capture its text or its place. `smith build test`
+// prints the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
+//
+//   smith_check(condition)                 fails the test when the condition is false
+//   smith_check_equal_<type>(a, b)         a == b; both values print with their type. <type> is bool, char, i8 i16 i32
+//                                          i64, u8 u16 u32 u64, f32, f64 or ptr (as <math.h> names sinf and sin)
+//   smith_check_near_f32(a, b, tolerance)  |a - b| <= tolerance; a NaN fails; equal infinities pass. Also _f64
+//   smith_check_same_bits_f32(a, b)        a and b have the same bits: -0 is not 0, and a NaN is itself. Also _f64
+//   SMITH_CHECK_ABORTS(statement)          see below
+//
+// The SMITH_CHECK macros that follow are the old spelling. They keep working, and print what they always printed (the
+// check's file, line, source text and values) when the runner is run by hand, but they are deprecated: new tests call
+// the functions. (No compiler warning marks them, since they are used about 3,500 times under -Werror.)
+//
+// SMITH_CHECK_ABORTS stays a macro, because it is control flow, not text. The statement must run under a sigsetjmp that
+// is still on the stack when the statement aborts, and C has no closure to hand it to a function: the function form
+// would need a body function and a context struct at every use, more noise than the macro hides. (`.smith`, which has
+// closures, can make it a function.) It no longer needs to capture the text: the report reads the line from the stack.
 //
 //   SMITH_CHECK(condition)            a bool, or anything that converts to one
 //   SMITH_CHECK(a, op, b)             op is ==, !=, <, <=, > or >=; each argument is evaluated once, and both values
@@ -64,6 +82,7 @@
 
 #include "arena.h"
 #include "random.h"
+#include "trace.h"
 
 // A test. The generated tests_list.c holds one row per test in the build's test files: `plain` for
 // `test_<name>(void)`, `property` for `test_<name>(SmithKey key)`.
@@ -88,6 +107,27 @@ extern const size_t smith_test_count;
 
 // Whether this run asked for the heavy checks at full size (-DFULL, the runner's --full). False by default.
 [[nodiscard]] bool smith_test_full(void);
+
+// The plain-function checks. A failed one ends the test, like the macros.
+void smith_check(bool condition);
+
+void smith_check_equal_bool(bool a, bool b);
+void smith_check_equal_char(char a, char b);
+void smith_check_equal_i8(int8_t a, int8_t b);
+void smith_check_equal_i16(int16_t a, int16_t b);
+void smith_check_equal_i32(int32_t a, int32_t b);
+void smith_check_equal_i64(int64_t a, int64_t b);
+void smith_check_equal_u8(uint8_t a, uint8_t b);
+void smith_check_equal_u16(uint16_t a, uint16_t b);
+void smith_check_equal_u32(uint32_t a, uint32_t b);
+void smith_check_equal_u64(uint64_t a, uint64_t b);
+void smith_check_equal_f32(float a, float b);
+void smith_check_equal_f64(double a, double b);
+void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
+void smith_check_near_f32(float a, float b, float tolerance);
+void smith_check_near_f64(double a, double b, double tolerance);
+void smith_check_same_bits_f32(float a, float b);
+void smith_check_same_bits_f64(double a, double b);
 
 #define SMITH_CHECK(...) \
     SMITH_TEST_SELECT(__VA_ARGS__, SMITH_TEST_COMPARE, SMITH_TEST_TWO_ARGUMENTS, SMITH_TEST_CONDITION, ~)(__VA_ARGS__)

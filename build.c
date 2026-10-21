@@ -128,13 +128,14 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm,
                                                  "%s --quiet tests/text.c -- \"$@\" -I include %s && "
                                                  "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
                                                  "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                                 "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
                                                  "for f in build main; do %s --quiet "
                                                  "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
                                                  "\"$@\" -std=gnu2y -I include %s || exit 1; done",
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
                                                  sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                                  tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
-                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                                 sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                                        "sh", nullptr},
                       cflags, nullptr),
         .inputs = llvm,
@@ -157,6 +158,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "shim/format.cpp",
                                                   "shim/tidy.cpp",
                                                   "shim/clangd.cpp",
+                                                  "shim/symbolize.cpp",
                                                   "scripts/pack.c",
                                                   "scripts/pack.h",
                                                   "scripts/defer_init.c",
@@ -169,6 +171,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "runtime/xz.c",
                                                   "runtime/untar.c",
                                                   "runtime/cache.c",
+                                                  "runtime/symbolize.c",
                                                   "runtime/executor.c",
                                                   "runtime/executor_manifest.c",
                                                   "runtime/executor_state.c",
@@ -197,6 +200,10 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "tests/text.c",
                                                   "tests/text_exhaustive.c",
                                                   "lib/test.c",
+                                                  "include/smith/trace.h",
+                                                  "lib/trace.c",
+                                                  "include/smith/trace.h",
+                                                  "lib/trace.c",
                                                   nullptr};
     build_format(b, format, check_llvm.outputs, sources);
     build_tidy(b, tidy, check_llvm.outputs, config->cflags);
@@ -353,14 +360,14 @@ static void build_pack_data(SmithBuild *b, const BuildConfig *config, const char
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[6];
+    SmithObject objects[7];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd"};
+    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd", "symbolize"};
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
                    &shims->objects[i + 1]);
@@ -401,6 +408,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                                             "runtime/xz.c",
                                             "runtime/untar.c",
                                             "runtime/cache.c",
+                                            "runtime/symbolize.c",
                                             "include/smith/arena.h",
                                             "lib/arena.c",
                                             "include/smith/io.h",
@@ -425,7 +433,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     };
     smith_object(b, &object);
     BuildShims shims = {};
-    const SmithObject *objects[12] = {&object};
+    const SmithObject *objects[13] = {&object};
     if (in_process) build_shims(b, config, folder, pack, &shims, objects + 1);
     SmithProgram program = {
         .linker = config->cc,
