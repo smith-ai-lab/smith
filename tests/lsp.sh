@@ -84,6 +84,30 @@ export typedef struct { f32 width; f32 height; } Box;
 export f32 area(Box b) {
     return b.width * b.height;
 }
+
+f32 twice(f32 x) {
+    return x * 2.0f;
+}
+
+export f32 perimeter(Box b) {
+    return twice(b.width + b.height);
+}
+EOF
+cat >typo.smith <<'EOF'
+module typo;
+import geometry::box;
+
+f32 g(box::Box b) {
+    return box::aera(b);
+}
+EOF
+cat >qualified.smith <<'EOF'
+module qualified;
+import geometry::box;
+
+f32 g(box::Box b) {
+    return box::;
+}
 EOF
 cat >main.smith <<'EOF'
 module main;
@@ -147,44 +171,82 @@ fi
 client() { "$work/lsp_client" "$(command -v smith)" "$root" "$@" 2>&1; }
 
 # Diagnostics: the three .smith files open together (their lowerings take turns), with nothing wrong in two of them and
-# the lowering's own error and clang's in the third, at the lines and columns of the text as written.
+# the lowering's own error and clang's in the third, at the lines and columns of the text as written, and naming things
+# as they are written: `box::missing`, never the compiler's `geometry_box_missing`.
 log=$(client open main.smith geometry/box.smith bad.smith)
 expect_line "open: the clean module has no diagnostics" "$log" "diagnostics main.smith"
 expect "open: and nothing else is reported for it" 0 "$(printf '%s\n' "$log" | grep -c '^diag main.smith')"
 expect "open: the other module has none" 0 "$(printf '%s\n' "$log" | grep -c '^diag geometry/box.smith')"
 expect_line "open: the lowering's error is at the name" "$log" 'diag bad.smith:7:5: `printf` is a C name; write `c::printf`'
-expect_line "open: an unknown member of a module is clang's, at the member" "$log" \
-    "diag bad.smith:8:10: Use of undeclared identifier 'geometry_box_missing'"
-expect_line "open: a field that is not there" "$log" "diag bad.smith:9:14: No member named 'nothing' in 'geometry_box_Box'"
+expect_line "open: an unknown member of a module is clang's, at the member, named as written" "$log" \
+    "diag bad.smith:8:10: Use of undeclared identifier 'box::missing'"
+expect_line "open: a field that is not there, in a type named as written" "$log" \
+    "diag bad.smith:9:14: No member named 'nothing' in 'box::Box'"
 expect "open: and nothing more in it" 3 "$(printf '%s\n' "$log" | grep -c '^diag bad.smith')"
+
+# A name close to a real one: "did you mean" says it as written, and the note is at the declaration in the module's
+# .smith, not in the header that `smith build` wrote for it (.smith/include/geometry/box.h).
+log=$(client open typo.smith geometry/box.smith)
+expect_line "typo: the suggestion and its note are as written, the note is in the module" "$log" \
+    "diag typo.smith:5:17: Use of undeclared identifier 'box::aera'; did you mean 'box::area'? (fix available) |  | geometry/box.smith:5:12: | note: 'box::area' declared here"
 
 # An edit in the editor moves the diagnostic with the text.
 log=$(client open main.smith -- replace main.smith 'box::area(b)' 'box::aria(b)')
-total=$((total + 1))
-if printf '%s\n' "$log" | grep -Fq "diag main.smith:7:18: Use of undeclared identifier 'geometry_box_aria'"; then
-    echo "ok    replace: the new error is at the changed name"
-else
-    failures=$((failures + 1))
-    echo "FAIL  replace: the new error is at the changed name"
-    printf '%s\n' "$log" | cut -c1-200 | sed 's/^/  actual: /'
-fi
+expect_line "replace: the new error is at the changed name, as written" "$log" \
+    "diag main.smith:7:18: Use of undeclared identifier 'box::aria'; did you mean 'box::area'? (fix available) |  | geometry/box.smith:5:12: | note: 'box::area' declared here"
 
-# Hover, go-to-definition across modules (the answer is the .smith file, not the generated header), symbols.
-log=$(client open main.smith -- hover main.smith 7 18 -- definition main.smith 7 18 geometry/box.smith:5:12 -- \
-    definition main.smith 6 10 geometry/box.smith:3:50 -- symbols main.smith)
-case $log in *"hover main.smith:7:18: function geometry_box_area"*"float"*) hover=yes ;; *) hover=no ;; esac
-expect "hover: the function's signature" yes "$hover"
+# Hover, go-to-definition across modules (the answer is the .smith file, not the generated header), symbols: the names
+# as the file writes them, `box::area` where it is imported and `area` in the module itself.
+log=$(client open main.smith geometry/box.smith -- hover main.smith 7 18 -- hover main.smith 6 10 -- \
+    definition main.smith 7 18 geometry/box.smith:5:12 -- definition main.smith 6 10 geometry/box.smith:3:50 -- \
+    symbols main.smith -- hover geometry/box.smith 5 12 -- hover geometry/box.smith 3 50 -- symbols geometry/box.smith)
+expect_line "hover: a call, the function as written" "$log" \
+    'hover main.smith:7:18: function box::area |  | provided by "geometry/box.h" |  | → float |  | Parameters: |  | - box::Box b |  | float box::area(box::Box b) asm("_geometry::box::area")'
+expect_line "hover: a type, as written" "$log" \
+    'hover main.smith:6:10: type-alias box::Box |  | provided by "geometry/box.h" |  | Type: struct box::Box |  | typedef struct box::Box box::Box'
 expect_line "definition: the function is in the other module's .smith, at its name" "$log" \
     "definition main.smith:7:18 -> geometry/box.smith:5:12"
 expect_line "definition: so is the type" "$log" "definition main.smith:6:10 -> geometry/box.smith:3:50"
 expect_line "symbols: main" "$log" "symbol main.smith: main"
-log=$(client open geometry/box.smith -- symbols geometry/box.smith)
-expect_line "symbols: a module's function, by its C name" "$log" "symbol geometry/box.smith: geometry_box_area"
+expect_line "hover at the definition: the function's name, in the module itself" "$log" \
+    "hover geometry/box.smith:5:12: function area |  | → f32 (aka float) |  | Parameters: |  | - Box b |  | f32 area(Box b)"
+expect_line "hover at the definition: and the type's" "$log" \
+    "hover geometry/box.smith:3:50: type-alias Box |  | Type: struct Box |  | typedef struct Box Box"
+expect "symbols: a module's names, as written, each once" \
+    "symbol geometry/box.smith: (anonymous struct) symbol geometry/box.smith: width symbol geometry/box.smith: height symbol geometry/box.smith: Box symbol geometry/box.smith: area symbol geometry/box.smith: twice symbol geometry/box.smith: perimeter" \
+    "$(printf '%s\n' "$log" | grep '^symbol geometry/box.smith' | tr '\n' ' ' | sed 's/ $//')"
 
-# Completion of a name being typed: the C names the lowering gives.
-log=$(client open complete.smith -- complete complete.smith 5 20)
-case $log in *"complete complete.smith:5:20: "*"geometry_box_area"*) completes=yes ;; *) completes=no ;; esac
-expect "complete: a module's function by its prefix" yes "$completes"
+# The other requests at a definition: references, highlights and rename find the name once, at its place (the copy of the
+# head that carries the symbol is no second declaration), and never go to the generated header.
+log=$(client open main.smith geometry/box.smith -- references geometry/box.smith 5 12 -- highlight geometry/box.smith 5 12 -- \
+    rename geometry/box.smith 9 5 thrice -- rename geometry/box.smith 3 50 Square)
+expect "references: the definition and the call, nothing in .smith/include" \
+    "reference geometry/box.smith:5:12 reference main.smith:7:18" \
+    "$(printf '%s\n' "$log" | sed -n '/^references geometry\/box.smith:5:12/,/^highlights/p' | grep '^reference ' | tr '\n' ' ' | sed 's/ $//')"
+expect "highlight: the name once" "highlight 5:12" "$(printf '%s\n' "$log" | grep '^highlight ' | tr '\n' ' ' | sed 's/ $//')"
+expect_line "rename: a private function, at its definition" "$log" \
+    "rename geometry/box.smith:9:5: geometry/box.smith:9:5 -> thrice"
+expect_line "rename: and at its use" "$log" "rename geometry/box.smith:9:5: geometry/box.smith:14:12 -> thrice"
+expect "rename: an edit is never in a generated header" 0 "$(printf '%s\n' "$log" | grep -c '^rename .*\.smith/include')"
+
+# Completion of a name being typed. Anywhere it is offered as it is written, and inserted so (`box::area`, which the
+# editor replaces the typed `geometry_box_ar` with).
+log=$(client open complete.smith geometry/box.smith -- complete complete.smith 5 20)
+expect_line "complete: a module's function by its prefix, as written, with its edit" "$log" \
+    "complete complete.smith:5:20:  box::area(box::Box b) -> 5:5-5:20 box::area"
+
+# After `box::` the module's exports are offered, as their members, and the text the editor has typed stays: the edit
+# replaces only what comes after the `::`.
+log=$(client open qualified.smith geometry/box.smith -- complete qualified.smith 5 17 -- \
+    replace qualified.smith 'box::;' 'box::pe;' -- complete qualified.smith 5 19)
+expect_line "complete after box::: a function, inserted as foo::f would be written" "$log" \
+    "complete qualified.smith:5:17:  area(Box b) -> 5:17-5:17 area"
+expect_line "complete after box::: another" "$log" "complete qualified.smith:5:17:  perimeter(Box b) -> 5:17-5:17 perimeter"
+expect "complete after box::: and nothing else (no private function, no type, no C name)" 2 \
+    "$(printf '%s\n' "$log" | grep -c '^complete qualified.smith:5:17: ')"
+expect "complete after box::pe: what was typed narrows it, and the edit covers it" \
+    "complete qualified.smith:5:19:  perimeter(Box b) -> 5:17-5:19 perimeter" \
+    "$(printf '%s\n' "$log" | grep '^complete qualified.smith:5:19: ')"
 
 # Plain C in a .c file of the same project is C: its error at its place, hover as ever.
 log=$(client open util.c cbad.c -- hover util.c 3 5)
@@ -242,6 +304,20 @@ module foo;
 export i32 f(i32 x) {
     return x * 2;
 }
+
+export typedef struct { i32 a; i32 b; } Pair;
+
+export i32 sum(Pair p) {
+    return p.a + p.b;
+}
+EOF
+cat >modules/qualified.smith <<'EOF'
+module qualified;
+import foo;
+
+i32 g(void) {
+    return foo::;
+}
 EOF
 modules=$(cd modules && pwd -P)
 expect "modules: the same two files build and run with smith cc" 20 \
@@ -250,15 +326,37 @@ log=$(client_in "$modules" open main.smith foo.smith)
 expect "modules: both files open" 2 "$(printf '%s\n' "$log" | grep -c '^diagnostics ')"
 expect "modules: with no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
 log=$(client_in "$modules" open main.smith foo.smith -- replace main.smith 'foo::f' 'foo::zzzzzz')
-expect_line "modules: a typo in a call is one error, at the name" "$log" \
-    "diag main.smith:6:18: Use of undeclared identifier 'foo_zzzzzz'"
+expect_line "modules: a typo in a call is one error, at the name, as written" "$log" \
+    "diag main.smith:6:18: Use of undeclared identifier 'foo::zzzzzz'"
 expect "modules: and the only one" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+# A name close to a real one: the suggestion is as written, and the note is at the declaration in foo.smith (the module
+# is read from its source, so there is no header; its interface keeps the module's lines and columns).
+log=$(client_in "$modules" open main.smith foo.smith -- replace main.smith 'foo::f' 'foo::g')
+expect_line "modules: a name close to a real one, the note in the module's source" "$log" \
+    "diag main.smith:6:18: Use of undeclared identifier 'foo::g'; did you mean 'foo::f'? (fix available) |  | $modules/foo.smith:3:12: | note: 'foo::f' declared here"
 log=$(client_in "$modules" open main.smith foo.smith -- hover main.smith 6 18 -- \
-    definition main.smith 6 18 foo.smith:3:12)
-case $log in *"hover main.smith:6:18: function foo_f"*) hover=yes ;; *) hover=no ;; esac
-expect "modules: hover on a call into the other module" yes "$hover"
+    definition main.smith 6 18 foo.smith:3:12 -- hover foo.smith 3 12 -- hover foo.smith 7 41 -- symbols foo.smith -- \
+    references foo.smith 3 12 -- highlight foo.smith 3 12)
+expect_line "modules: hover on a call into the other module, as written" "$log" \
+    'hover main.smith:6:18: function foo::f |  | provided by "foo.smith" |  | → int32_t (aka int) |  | Parameters: |  | - int32_t x (aka int) |  | int32_t foo::f(int32_t x) asm("_foo::f")'
 expect_line "modules: go-to-definition lands in the other module's source" "$log" \
     "definition main.smith:6:18 -> foo.smith:3:12"
+expect_line "modules: hover at the function's definition" "$log" \
+    "hover foo.smith:3:12: function f |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) |  | i32 f(i32 x)"
+expect_line "modules: hover at the type's definition" "$log" \
+    "hover foo.smith:7:41: type-alias Pair |  | Type: struct Pair |  | typedef struct Pair Pair"
+expect "modules: symbols, as written, each once" \
+    "symbol foo.smith: f symbol foo.smith: (anonymous struct) symbol foo.smith: a symbol foo.smith: b symbol foo.smith: Pair symbol foo.smith: sum" \
+    "$(printf '%s\n' "$log" | grep '^symbol ' | tr '\n' ' ' | sed 's/ $//')"
+expect "modules: references of the function: its definition and its call" \
+    "reference foo.smith:3:12 reference main.smith:6:18" \
+    "$(printf '%s\n' "$log" | grep '^reference ' | tr '\n' ' ' | sed 's/ $//')"
+expect "modules: highlights of it: the name once" "highlight 3:12" "$(printf '%s\n' "$log" | grep '^highlight ' | tr '\n' ' ' | sed 's/ $//')"
+log=$(client_in "$modules" open qualified.smith foo.smith -- complete qualified.smith 5 17)
+expect_line "modules: foo:: offers the module's function, inserted as written" "$log" \
+    "complete qualified.smith:5:17:  f(int32_t x) -> 5:17-5:17 f"
+expect_line "modules: and another" "$log" "complete qualified.smith:5:17:  sum(Pair p) -> 5:17-5:17 sum"
+expect "modules: and nothing else" 2 "$(printf '%s\n' "$log" | grep -c '^complete ')"
 
 # A compile database that does not say what a .smith file is: written by hand without `-x c`, or naming only a .c file
 # (the .smith files then get a command borrowed from it).
@@ -277,7 +375,7 @@ for dir in handwritten borrowed; do
         replace main.smith 'foo::f' 'foo::zzzzzz')
     expect_line "$dir: the call is found in the other module" "$log" "definition main.smith:6:18 -> foo.smith:3:12"
     expect_line "$dir: a typo is one error, at the name" "$log" \
-        "diag main.smith:6:18: Use of undeclared identifier 'foo_zzzzzz'"
+        "diag main.smith:6:18: Use of undeclared identifier 'foo::zzzzzz'"
     expect "$dir: and the only one" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
 done
 

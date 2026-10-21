@@ -10,7 +10,10 @@
 //   END, asked again until the answer ends in END
 //                                 (the project's background index is built while the server runs)
 //   symbols FILE                  "symbol FILE: name" for each
-//   complete FILE L C             "complete FILE:L:C: label" for the first 12 items
+//   complete FILE L C             "complete FILE:L:C: label -> L:C-L:C text" (the item's edit) for the first 12 items
+//   references FILE L C           "reference FILE:L:C" for each place, the declaration included
+//   highlight FILE L C            "highlight L:C" for each range
+//   rename FILE L C NAME          "rename FILE:L:C: FILE:L:C -> NAME" for each edit, or the server's refusal
 // The files are sent as language "c": a .smith file is C to the editor's protocol, and the server knows the rest.
 // Exits 0 when the server answered every request, 1 otherwise.
 #include <poll.h>
@@ -352,8 +355,110 @@ static void lsp_command_complete(const char *file, const char *line, const char 
         if (at == nullptr) return;
         char label[256];
         at = lsp_unescape(at + strlen("\"label\":\""), label, sizeof label);
-        printf("complete %s:%s:%s: %s\n", file, line, column, label);
+        // The edit the item makes, if it is this item's (before the next label): "-> L:C-L:C text".
+        const char *next = strstr(at, "\"label\":\"");
+        const char *edit = strstr(at, "\"textEdit\":{\"newText\":\"");
+        char shown[640];
+        snprintf(shown, sizeof shown, "%s", label);
+        if (edit != nullptr && (next == nullptr || edit < next)) {
+            char text[256];
+            const char *after = lsp_unescape(edit + strlen("\"textEdit\":{\"newText\":\""), text, sizeof text);
+            const char *end = strstr(after, "\"end\":{\"character\":");
+            const char *start = strstr(after, "\"start\":{\"character\":");
+            if (end != nullptr && start != nullptr) {
+                long end_column = strtol(end + strlen("\"end\":{\"character\":"), nullptr, 10) + 1;
+                long start_column = strtol(start + strlen("\"start\":{\"character\":"), nullptr, 10) + 1;
+                long end_line = strtol(strstr(end, "\"line\":") + strlen("\"line\":"), nullptr, 10) + 1;
+                long start_line = strtol(strstr(start, "\"line\":") + strlen("\"line\":"), nullptr, 10) + 1;
+                snprintf(shown, sizeof shown, "%s -> %ld:%ld-%ld:%ld %s", label, start_line, start_column, end_line,
+                         end_column, text);
+            }
+        }
+        printf("complete %s:%s:%s: %s\n", file, line, column, shown);
     }
+}
+
+// Every location of a references reply as "reference FILE:L:C", in the order the server gave them.
+static void lsp_command_references(const char *file, const char *line, const char *column) {
+    char params[1024];
+    lsp_position_params(params, sizeof params, file, line, column, ",\"context\":{\"includeDeclaration\":true}");
+    lsp_request("textDocument/references", params);
+    const char *at = lsp_message;
+    printf("references %s:%s:%s\n", file, line, column);
+    for (int i = 0; i < 100; i++) { // a location each
+        const char *range = strstr(at, "\"range\":{");
+        if (range == nullptr) return;
+        const char *uri = strstr(range, "\"uri\":\"file://");
+        int row = 0;
+        int col = 0;
+        if (uri == nullptr || !lsp_start_after(range, &row, &col)) return;
+        uri += strlen("\"uri\":\"file://") + strlen(lsp_root) + 1;
+        const char *end = strchr(uri, '"');
+        if (end == nullptr) return;
+        printf("reference %.*s:%d:%d\n", (int)(end - uri), uri, row, col);
+        at = end;
+    }
+}
+
+// The ranges of a documentHighlight reply as "highlight L:C".
+static void lsp_command_highlight(const char *file, const char *line, const char *column) {
+    char params[1024];
+    lsp_position_params(params, sizeof params, file, line, column, "");
+    lsp_request("textDocument/documentHighlight", params);
+    const char *at = lsp_message;
+    printf("highlights %s:%s:%s\n", file, line, column);
+    for (int i = 0; i < 100; i++) { // a range each
+        const char *range = strstr(at, "\"range\":{");
+        int row = 0;
+        int col = 0;
+        if (range == nullptr || !lsp_start_after(range, &row, &col)) return;
+        printf("highlight %d:%d\n", row, col);
+        at = range + 1;
+    }
+}
+
+// What a rename to `name` would write: "rename FILE:L:C: text" for each edit, or the server's refusal.
+static void lsp_command_rename(const char *file, const char *line, const char *column, const char *name) {
+    char params[1024];
+    char extra[256];
+    snprintf(extra, sizeof extra, ",\"newName\":\"%s\"", name);
+    lsp_position_params(params, sizeof params, file, line, column, extra);
+    lsp_request("textDocument/rename", params);
+    const char *error = strstr(lsp_message, "\"error\":");
+    if (error != nullptr) {
+        char text[512] = "";
+        const char *message = strstr(error, "\"message\":\"");
+        if (message != nullptr) lsp_unescape(message + strlen("\"message\":\""), text, sizeof text);
+        printf("rename %s:%s:%s: refused: %s\n", file, line, column, text);
+        return;
+    }
+    const char *at = lsp_message;
+    int edits = 0;
+    for (int i = 0; i < 100; i++) { // an edit each
+        const char *text = strstr(at, "\"newText\":\"");
+        if (text == nullptr) break;
+        char replacement[256];
+        const char *end = lsp_unescape(text + strlen("\"newText\":\""), replacement, sizeof replacement);
+        const char *range = strstr(end, "\"range\":{"); // a text edit has its text first, then its range
+        int row = 0;
+        int col = 0;
+        if (range == nullptr || !lsp_start_after(range, &row, &col)) break;
+        // The file the edit is in: the last uri before it.
+        const char *uri = nullptr;
+        for (const char *found = strstr(lsp_message, "\"file://"); found != nullptr && found < text;
+             found = strstr(found + 1, "\"file://")) {
+            uri = found;
+        }
+        char where[256] = "";
+        if (uri != nullptr) {
+            uri += strlen("\"file://") + strlen(lsp_root) + 1;
+            snprintf(where, sizeof where, "%.*s", (int)strcspn(uri, "\""), uri);
+        }
+        printf("rename %s:%s:%s: %s:%d:%d -> %s\n", file, line, column, where, row, col, replacement);
+        edits++;
+        at = range + 1;
+    }
+    if (edits == 0) printf("rename %s:%s:%s: (nothing)\n", file, line, column);
 }
 
 static void lsp_start(const char *smith) {
@@ -404,6 +509,18 @@ static int lsp_run_command(int argc, char **argv, int at) {
     if (strcmp(name, "symbols") == 0 && rest >= 1) {
         lsp_command_symbols(argv[at + 1]);
         return 2;
+    }
+    if (strcmp(name, "references") == 0 && rest >= 3) {
+        lsp_command_references(argv[at + 1], argv[at + 2], argv[at + 3]);
+        return 4;
+    }
+    if (strcmp(name, "highlight") == 0 && rest >= 3) {
+        lsp_command_highlight(argv[at + 1], argv[at + 2], argv[at + 3]);
+        return 4;
+    }
+    if (strcmp(name, "rename") == 0 && rest >= 4) {
+        lsp_command_rename(argv[at + 1], argv[at + 2], argv[at + 3], argv[at + 4]);
+        return 5;
     }
     if (strcmp(name, "complete") == 0 && rest >= 3) {
         lsp_command_complete(argv[at + 1], argv[at + 2], argv[at + 3]);

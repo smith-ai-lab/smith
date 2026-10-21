@@ -301,7 +301,7 @@ static SmithLangAct smith_lang_head_step(SmithLang *lang, const SmithHost *host,
         if (!begun) return start;
         insert_static = start.insert_static;
         if (insert_static && may_peek) {
-            smith_lang_emit_code(lang, host, smith_lang_synth(SmithTokenKind_Identifier, "static", 6, token));
+            smith_lang_emit_code(lang, host, smith_lang_static_keyword(token));
             token->line_start = false;
             token->space_before = true;
             insert_static = false;
@@ -317,7 +317,7 @@ static SmithLangAct smith_lang_head_step(SmithLang *lang, const SmithHost *host,
         lang->decl.static_inserted = wants;
         insert_static = wants;
         if (insert_static && may_peek) {
-            smith_lang_emit_code(lang, host, smith_lang_synth(SmithTokenKind_Identifier, "static", 6, token));
+            smith_lang_emit_code(lang, host, smith_lang_static_keyword(token));
             token->line_start = false;
             token->space_before = true;
             insert_static = false;

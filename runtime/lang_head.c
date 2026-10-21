@@ -14,6 +14,7 @@ static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHe
     token.line_start = held->line_start;
     token.space_before = held->space_before;
     token.expand = held->expand;
+    token.name = held->role == SmithLangRole_Declared;
     token.location = held->location;
     token.handle = held->handle;
     token.text = smith_lang_scratch_str(held->text);
@@ -181,6 +182,7 @@ static SmithToken smith_lang_punct_after(const char *text, const SmithToken *lik
     SmithToken made = smith_lang_synth(SmithTokenKind_Punctuator, text, strlen(text), like);
     made.line_start = false;
     made.space_before = false;
+    made.synthetic = true;
     return made;
 }
 
@@ -193,10 +195,12 @@ static void smith_lang_emit_label(SmithLang *lang, const SmithHost *host, const 
     SmithToken asm_token = smith_lang_synth(SmithTokenKind_Identifier, "__asm__", 7, like);
     asm_token.line_start = false;
     asm_token.space_before = true;
+    asm_token.synthetic = true;
     SmithToken open = smith_lang_punct_after("(", like);
     SmithToken string = smith_lang_synth(SmithTokenKind_String, label, (size_t)length, like);
     string.line_start = false;
     string.space_before = false;
+    string.synthetic = true;
     SmithToken close = smith_lang_punct_after(")", like);
     SmithToken pieces[4] = {asm_token, open, string, close};
     for (size_t i = 0; i < 4; i++) { // the four pieces
@@ -216,8 +220,7 @@ static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool he
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
         if (i == 0 && with_static) {
             SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
-            SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "static", 6, &first);
-            smith_lang_emit_code(lang, host, keyword);
+            smith_lang_emit_code(lang, host, smith_lang_static_keyword(&first));
             lang->head[0].line_start = false;
             lang->head[0].space_before = true;
         }
@@ -351,9 +354,13 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
     bool proto_written = false;
     SmithToken like = smith_lang_last_of_head(lang);
     if (symbol && form == SmithLangForm_Function) {
+        // With a body the head is written twice: the prototype that carries the symbol is a copy, and the definition
+        // after it has the tokens of the source.
+        lang->emit_synthetic = smith_lang_punct(terminator, "{");
         smith_lang_emit_head(lang, host, true, false);
         smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));
+        lang->emit_synthetic = false;
         lang->export_active = false;
         proto_written = true;
         if (smith_lang_punct(terminator, "{")) {

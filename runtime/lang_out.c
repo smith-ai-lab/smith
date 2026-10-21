@@ -28,10 +28,41 @@ static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
                    token->line_start, token->space_before);
 }
 
+// runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset
+static size_t smith_lang_line_of(uint32_t offset);
+static size_t smith_lang_column_of(uint32_t offset);
+
+// Writes a token of the header body on the line the source has it on, a space after the token before where the source
+// had one, and a name where the source has it on its line (spaces before it, as far as the text before allows), so
+// that a diagnostic that points into the interface read in memory is at the declaration in the module, line and column.
+static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, const char *text, size_t length) {
+    size_t line = smith_lang_line_of(token->location);
+    size_t newlines = line > lang->aligned_line ? line - lang->aligned_line : 0;
+    size_t base = newlines > 0 ? 1 : lang->aligned_column;
+    size_t gap = newlines == 0 && lang->header_used > 0 && token->space_before ? 1 : 0;
+    if (token->name) {
+        size_t wanted = smith_lang_column_of(token->location);
+        if (wanted > base + gap) gap = wanted - base;
+    }
+    if (lang->header_used + newlines + gap + length + 2 > smith_lang_header_max) return;
+    for (size_t i = 0; i < newlines; i++)
+        smith_lang_header_body[lang->header_used++] = '\n';
+    for (size_t i = 0; i < gap; i++)
+        smith_lang_header_body[lang->header_used++] = ' ';
+    memcpy(smith_lang_header_body + lang->header_used, text, length);
+    lang->header_used += length;
+    lang->aligned_line += newlines;
+    lang->aligned_column = base + gap + length;
+}
+
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
     if (!lang->is_module || !lang->export_active || token->kind == SmithTokenKind_Eof) return;
     const char *text = token->header_text != nullptr ? token->header_text : token->text;
     size_t length = token->header_text != nullptr ? token->header_length : token->length;
+    if (lang->aligned) {
+        smith_lang_put_aligned(lang, token, text, length);
+        return;
+    }
     smith_lang_put(smith_lang_header_body, smith_lang_header_max, &lang->header_used, text, length, token->line_start,
                    token->space_before);
 }
@@ -49,6 +80,8 @@ static void smith_lang_apply_carry(SmithLang *lang, SmithToken *token) {
 
 // A token the lowering made or changed: to the parser, the dump and, inside an exported declaration, the header.
 static void smith_lang_emit(SmithLang *lang, const SmithHost *host, SmithToken token) {
+    token.synthetic = token.synthetic || lang->emit_synthetic;
+    token.copy = token.copy || lang->emit_synthetic;
     smith_lang_apply_carry(lang, &token);
     smith_lang_flush_kept(lang, host);
     smith_lang_dump_token(lang, &token);
@@ -59,6 +92,8 @@ static void smith_lang_emit(SmithLang *lang, const SmithHost *host, SmithToken t
 }
 
 static void smith_lang_emit_code(SmithLang *lang, const SmithHost *host, SmithToken token) {
+    token.synthetic = token.synthetic || lang->emit_synthetic;
+    token.copy = token.copy || lang->emit_synthetic;
     smith_lang_apply_carry(lang, &token);
     smith_lang_flush_kept(lang, host);
     smith_lang_dump_token(lang, &token);
@@ -104,6 +139,13 @@ static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t
     made.text = text;
     made.length = (uint32_t)length;
     return made;
+}
+
+// The `static` the lowering writes before a private declaration: it has no token of its own in the source.
+static SmithToken smith_lang_static_keyword(const SmithToken *like) {
+    SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "static", 6, like);
+    keyword.synthetic = true;
+    return keyword;
 }
 
 // ---- Lookahead ----------------------------------------------------------------------------------------------------

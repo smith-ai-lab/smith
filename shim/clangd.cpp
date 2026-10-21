@@ -31,6 +31,8 @@ extern "C" {
 // lowering.
 #ifdef SMITH_HOOK
 extern "C" void smith_hook_install();
+// shim/lsp.cpp: runs clangd's main with the editor's messages and clangd's behind a layer that rewrites names.
+extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **));
 #endif
 
 namespace clang::clangd {
@@ -140,6 +142,10 @@ extern "C" int smith_clangd_main(int argc, char **argv) {
     smith_tool_start("__smith_lsp", argv[0]);
 #ifdef SMITH_HOOK
     smith_hook_install();
-#endif
+    // The editor talks to clangd through the layer of shim/lsp.cpp, which shows the names as the source writes them.
+    return smith_lsp_run(argc, argv,
+                         [](int count, char **arguments) { return clang::clangd::clangdMain(count, arguments); });
+#else
     return clang::clangd::clangdMain(argc, argv);
+#endif
 }

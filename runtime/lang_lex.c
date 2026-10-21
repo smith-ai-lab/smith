@@ -355,20 +355,54 @@ static void smith_lang_keep_aside(bool save) {
     }
 }
 
-bool smith_lang_interface(const char *file, const char *text, size_t length, char *out, size_t capacity, size_t *used,
-                          char *error, size_t error_capacity) {
-    if (length > smith_lang_source_max || capacity < sizeof smith_lang_header_full || error_capacity == 0) {
-        return false;
+// The lines of the source being lowered, by where each starts, for a header that keeps them.
+constexpr size_t smith_lang_lines_max = (size_t)1 << 20;
+static uint32_t smith_lang_line_starts[smith_lang_lines_max];
+static size_t smith_lang_line_count;
+
+static void smith_lang_index_lines(size_t length) {
+    smith_lang_line_count = 0;
+    smith_lang_line_starts[smith_lang_line_count++] = 0;
+    for (size_t i = 0; i < length && smith_lang_line_count < smith_lang_lines_max; i++) { // bounded by the source
+        if (smith_lang_source[i] == '\n') smith_lang_line_starts[smith_lang_line_count++] = (uint32_t)i + 1;
     }
-    error[0] = 0;
+}
+
+// The line (from 1) of the source at a byte offset.
+static size_t smith_lang_line_of(uint32_t offset) {
+    size_t low = 0;
+    size_t high = smith_lang_line_count;
+    for (size_t step = 0; high - low > 1 && step < 64; step++) { // halves the lines
+        size_t middle = (low + high) / 2;
+        if (smith_lang_line_starts[middle] <= offset) {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    return low + 1;
+}
+
+static size_t smith_lang_column_of(uint32_t offset) {
+    return offset - smith_lang_line_starts[smith_lang_line_of(offset) - 1] + 1;
+}
+
+// Lowers the module's source with the plain lexer. The tables are the run's when it returns, and smith_lang_keep_aside
+// has put the caller's away: the caller reads what it wants and then puts them back.
+static SmithLang *smith_lang_run_interface(const char *file, const char *text, size_t length, char *error,
+                                           size_t error_capacity, bool aligned, bool *clean) {
     smith_lang_keep_aside(true);
     memcpy(smith_lang_source, text, length);
     smith_lang_source[length] = 0;
+    smith_lang_index_lines(length);
     SmithLangRaw raw = {
         .file = file, .length = length, .line_start = true, .capture = error, .capture_capacity = error_capacity};
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
     lang->dump_enabled = false;
+    lang->aligned = aligned;
+    lang->aligned_line = 2; // the first line is `#pragma once`
+    lang->aligned_column = 1;
     SmithHost host = {
         .context = &raw,
         .next = smith_raw_next,
@@ -388,16 +422,46 @@ bool smith_lang_interface(const char *file, const char *text, size_t length, cha
     }
     lang->finished =
         true; // not smith_lang_finish: what it writes (SMITH_LANG_DUMP, SMITH_LANG_HEADER) is the importer's
-    if (lang->is_module) smith_lang_assemble_header(lang, file);
-    bool good = lang->errors == 0 && names.errors == 0 && lang->is_module;
+    *clean = lang->errors == 0 && names.errors == 0 && lang->is_module;
+    return lang;
+}
+
+bool smith_lang_interface(const char *file, const char *text, size_t length, SmithInterface *result, char *error,
+                          size_t error_capacity) {
+    if (length > smith_lang_source_max || result->text_capacity < sizeof smith_lang_header_full ||
+        error_capacity == 0) {
+        return false;
+    }
+    error[0] = 0;
+    bool good = false;
+    SmithLang *lang = smith_lang_run_interface(file, text, length, error, error_capacity, true, &good);
+    if (lang->is_module) smith_lang_assemble_aligned(lang);
     if (good) {
-        memcpy(out, smith_lang_header_full, lang->header_full_used);
-        *used = lang->header_full_used;
+        memcpy(result->text, smith_lang_header_full, lang->header_full_used);
+        result->text_used = lang->header_full_used;
+        result->includes_used = smith_lang_assemble_includes(lang, result->includes, result->includes_capacity);
+        result->meta_used = smith_lang_assemble_meta(lang, result->meta, result->meta_capacity);
     } else if (error[0] == 0) {
         snprintf(error, error_capacity, "1:1: not a module (it has no `module` line), so it has no interface");
     }
     smith_lang_keep_aside(false);
     return good;
+}
+
+size_t smith_lang_declarations(const char *file, const char *text, size_t length, char *out, size_t capacity) {
+    if (length > smith_lang_source_max || capacity == 0) return 0;
+    char error[512] = "";
+    bool clean = false;
+    SmithLang *lang = smith_lang_run_interface(file, text, length, error, sizeof error, false, &clean);
+    size_t used = 0;
+    for (size_t i = 0; lang->is_module && i < lang->names_count; i++) { // the exports, in the order declared
+        const SmithLangName *name = &lang->names[i];
+        if (!name->exported) continue;
+        used = smith_lang_append(out, capacity, used, "%s %zu %zu\n", smith_lang_str(name->name),
+                                 smith_lang_line_of(name->location), smith_lang_column_of(name->location));
+    }
+    smith_lang_keep_aside(false);
+    return used;
 }
 
 // Feeds a file to the lowering with no compiler. Returns the exit status.
