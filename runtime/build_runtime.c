@@ -1024,6 +1024,7 @@ constexpr size_t smith_objects_max = 65536;
 typedef struct {
     const SmithObject *address; // the caller's struct, so a copy that was never registered is found out
     SmithObject object;         // the arena copy; .step is the emitted step
+    const char *const *editor;  // the compile as the editor reads it: .step.command without the module flags
     bool listed;                // false for an object declared again with the same output: one entry in the file
 } SmithObjectRow;
 
@@ -1042,6 +1043,152 @@ static size_t smith_command_row_count;
 // The flags `smith build` compiles build.c with; smith.c's bootstrap manifest holds the same words (a test compares).
 static const char *const smith_build_c_words[] = {"smith", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
                                                   "-I",    ".smith/include", "-c", "build.c", nullptr};
+
+// Clang modules (smith_modules): a module map per header folder, one module per header, and the flags that use them.
+
+constexpr char smith_modules_cache[] = ".smith/cache/modules";
+constexpr char smith_modules_library_folder[] = ".smith/include/smith";
+
+static const char *const *smith_modules_flags; // nullptr while modules are off
+static const char *smith_modules_names[smith_entries_max];
+static size_t smith_modules_name_count;
+static bool smith_modules_textual_used[smith_entries_max];
+
+static bool smith_modules_is_word_byte(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// "src/base/arena.h" gives src_base_arena; ".smith/include/smith/arena.h" gives smith_arena.
+static const char *smith_modules_name(const char *path) {
+    const char *skip = ".smith/include/";
+    if (strncmp(path, skip, strlen(skip)) == 0) path += strlen(skip);
+    size_t length = strlen(path);
+    if (length > 2 && strcmp(path + length - 2, ".h") == 0) length -= 2;
+    char *name = smith_alloc(length + 2);
+    size_t used = 0;
+    if (length > 0 && path[0] >= '0' && path[0] <= '9') name[used++] = '_';
+    for (size_t i = 0; i < length; i++)
+        name[used++] = smith_modules_is_word_byte(path[i]) ? path[i] : '_';
+    name[used] = '\0';
+    return name;
+}
+
+static void smith_modules_claim(const char *name, const char *path) {
+    for (size_t i = 0; i < smith_modules_name_count; i++) {
+        if (strcmp(smith_modules_names[i], name) == 0)
+            smith_fail("smith_modules: %s and an earlier header are both the module '%s'; rename one", path, name);
+    }
+    if (smith_modules_name_count >= smith_entries_max) smith_too_many("modules", smith_entries_max);
+    smith_modules_names[smith_modules_name_count++] = name;
+}
+
+static bool smith_modules_is_textual(const char *path, const char *const *textual) {
+    for (size_t i = 0; textual[i] != nullptr; i++) {
+        if (strcmp(textual[i], path) != 0) continue;
+        smith_modules_textual_used[i] = true;
+        return true;
+    }
+    return false;
+}
+
+// A folder as written in the project: no "./" in front, no "/" behind, relative, with no '..' or quote in it.
+static const char *smith_modules_folder(const char *folder) {
+    while (strncmp(folder, "./", 2) == 0)
+        folder += 2;
+    size_t length = strlen(folder);
+    while (length > 0 && folder[length - 1] == '/')
+        length--;
+    const char *copy = smith_text("%.*s", (int)length, folder);
+    if (length == 0 || strcmp(copy, ".") == 0 || copy[0] == '/' || strstr(copy, "..") != nullptr ||
+        strpbrk(copy, "\"\\\n") != nullptr)
+        smith_fail("smith_modules: the folder '%s' must be a relative folder below the project, not '.'", folder);
+    return copy;
+}
+
+// The module map of one folder: `module <name> { header "<absolute path>" export * }` for each header under it, and
+// the headers marked textual together in one module that makes them known without importing them.
+static const char *smith_modules_map(SmithBuild *b, const char *folder, const char *const *textual) {
+    const char *const *headers = smith_glob(b, smith_list(b, smith_text("%s/**/*.h", folder), nullptr));
+    size_t count = smith_count(headers);
+    if (count == 0) smith_fail("smith_modules: the folder '%s' holds no .h file", folder);
+    const char **lines = smith_new_list(count + 2);
+    const char **plain = smith_new_list(count);
+    size_t used = 0;
+    size_t plain_count = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strpbrk(headers[i], "\"\\\n") != nullptr) smith_fail("smith_modules: odd characters in %s", headers[i]);
+        if (smith_modules_is_textual(headers[i], textual)) {
+            plain[plain_count++] = smith_text("  textual header \"%s/%s\"\n", b->root, headers[i]);
+            continue;
+        }
+        const char *name = smith_modules_name(headers[i]);
+        smith_modules_claim(name, headers[i]);
+        lines[used++] = smith_text("module %s { header \"%s/%s\" export * }\n", name, b->root, headers[i]);
+    }
+    plain[plain_count] = nullptr;
+    if (plain_count > 0) {
+        const char *name = smith_text("%s_textual", smith_modules_name(folder));
+        smith_modules_claim(name, folder);
+        lines[used++] = smith_text("module %s {\n%s}\n", name, smith_join(b, plain, ""));
+    }
+    lines[used] = nullptr;
+    return smith_join(b, lines, "");
+}
+
+// Writes .smith/modules/<name>.modulemap and returns the flag that loads it.
+static const char *smith_modules_write(SmithBuild *b, const char *folder, const char *const *textual) {
+    const char *text = smith_modules_map(b, folder, textual);
+    const char *path = smith_text(".smith/modules/%s.modulemap", smith_modules_name(folder));
+    smith_write_if_different(path, text, strlen(text));
+    return smith_text("-fmodule-map-file=%s", path);
+}
+
+static void smith_modules_check_overlap(const char *const *folders, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = 0; j < i; j++) {
+            const char *left = smith_modules_folder(folders[j]);
+            const char *right = smith_modules_folder(folders[i]);
+            size_t n = strlen(left) < strlen(right) ? strlen(left) : strlen(right);
+            bool prefix = strncmp(left, right, n) == 0 && (left[n] == '/' || left[n] == '\0') &&
+                          (right[n] == '/' || right[n] == '\0');
+            if (prefix)
+                smith_fail("smith_modules: '%s' and '%s' overlap; list a folder once, it covers its subfolders", left,
+                           right);
+        }
+    }
+}
+
+void smith_modules(SmithBuild *b, const SmithModules *modules) {
+    SMITH_ASSERT(b != nullptr && modules != nullptr);
+    smith_context = nullptr;
+    if (smith_modules_flags != nullptr) smith_fail("smith_modules is called twice");
+    if (smith_object_row_count > 0) smith_fail("smith_modules is called after smith_object; call it first");
+    const char *const *folders = smith_copy_list(modules->folders);
+    const char *const *textual = smith_copy_list(modules->textual);
+    size_t count = smith_count(folders);
+    if (smith_count(textual) > smith_entries_max) smith_too_many("textual headers", smith_entries_max);
+    smith_modules_check_overlap(folders, count);
+    const char **flags = smith_new_list(count + 3);
+    flags[0] = "-fmodules";
+    flags[1] = smith_text("-fmodules-cache-path=%s", smith_modules_cache);
+    for (size_t i = 0; i < count; i++)
+        flags[2 + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
+    flags[2 + count] = smith_modules_write(b, smith_modules_library_folder, textual);
+    for (size_t i = 0; textual[i] != nullptr; i++) {
+        if (!smith_modules_textual_used[i])
+            smith_fail("smith_modules: the textual header '%s' is not under any of the folders (spell it as a glob "
+                       "finds it, such as src/a.h)",
+                       textual[i]);
+    }
+    smith_modules_flags = (const char *const *)flags;
+}
+
+// Only C and Objective-C sources take the flags; .metal and C++ never do.
+static const char *const *smith_modules_for(SmithBuild *b, const char *source) {
+    size_t length = strlen(source);
+    bool covered = length > 2 && (strcmp(source + length - 2, ".c") == 0 || strcmp(source + length - 2, ".m") == 0);
+    return covered && smith_modules_flags != nullptr ? smith_modules_flags : smith_list(b, nullptr);
+}
 
 static void smith_require_text(const char *call, const char *field, const char *value) {
     smith_context = nullptr;
@@ -1070,8 +1217,9 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *depfile = smith_replace_extension(b, copy.output, ".d");
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
     const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
+    const char *const *editor = smith_cat(b, smith_one(copy.compiler), copy.flags, tail, nullptr);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), copy.flags, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = copy.implicit_inputs,
         .outputs = smith_one(copy.output),
@@ -1082,7 +1230,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         listed = listed && strcmp(smith_object_rows[i].object.output, copy.output) != 0;
     smith_step(b, &copy.step);
     if (smith_object_row_count >= smith_objects_max) smith_too_many("objects", smith_objects_max);
-    smith_object_rows[smith_object_row_count++] = (SmithObjectRow){object, copy, listed};
+    smith_object_rows[smith_object_row_count++] = (SmithObjectRow){object, copy, editor, listed};
     *object = copy;
 }
 
@@ -1205,7 +1353,7 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b) {
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed) continue;
-        smith_json_entry(out, b->root, object->source, object->output, object->step.command);
+        smith_json_entry(out, b->root, object->source, object->output, smith_object_rows[i].editor);
         fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {

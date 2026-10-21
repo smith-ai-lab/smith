@@ -117,6 +117,10 @@ for mode in debug release fast; do
     expect "new hello: the $mode program exists" yes "$(exists build/$mode/hello)"
     expect "new hello: the $mode program runs and prints its line" "hello from hello" "$(build/$mode/hello | tail -n 1)"
 done
+expect "new hello: build.c turns modules on" yes "$(grep -q 'smith_modules(b' build.c && echo yes || echo no)"
+expect "new hello: the builds compile with modules" 3 "$(grep -c 'fmodules-cache-path=.smith/cache/modules' .smith/build.ninja)"
+expect "new hello: the module cache is under .smith" yes "$(exists .smith/cache/modules/modules.timestamp)"
+expect "new hello: compile_commands.json has no module flags" no "$(has "$(cat compile_commands.json)" "fmodule")"
 expect "new hello: compile_commands has main.c" yes "$(grep -q '"main.c"' compile_commands.json && echo yes || echo no)"
 expect "new hello: compile_commands has build.c" yes "$(grep -q '"build.c"' compile_commands.json && echo yes || echo no)"
 debug_command=$(awk '/"file"/ { n++ } n == 1' compile_commands.json)
