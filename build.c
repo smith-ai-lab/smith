@@ -585,23 +585,89 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
     smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
 }
 
-// Routing tests with stub compilers (no clang or Xcode needed, and no real build is touched), then the `smith build`
-// tests and the `smith new` tests, which use real ninja, clang and git. The runner's tests run twice, with its workers
-// and with --isolate.
-static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
-    SmithStep test = {
-        .command = (const char *[]){"sh", "-c",
-                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new docs arena io http package random text json cache untar "
-                                    "resource dap lsp tree_sitter neovim "
-                                    "defer contract prove smith-lang smith-lang-c smith-fmt test; do env "
-                                    "\"$0\" sh tests/$t.sh "
-                                    "\"$1\" || exit 1; done; "
-                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
-        .inputs = (const char *[]){binary, nullptr},
-    };
-    smith_task(b, "test", &test);
+// One task per test script of tests/, `test-<task>`, and `test` an alias of them all, so the executor runs them side by
+// side. The scripts are independent: each works in a folder of its own (mktemp) and with caches of its own
+// (XDG_CACHE_HOME, and XDG_DATA_HOME where it starts compilers), and the one folder they may share, where a smith
+// writes the clang files and its programs on first use, is written by rename. `run` is the routing tests with stub
+// compilers (no clang or Xcode needed); the others use real ninja, clang and git. A script that takes long is several
+// rows, one per shard (tests/test.sh takes "isolate" and a list of its parts). Add a script by adding a row, in order.
+// `prove` is phase 2: a proof runs Bitwuzla on every core (about 14 s of CPU for a 2 s proof), so with every other
+// script running it took more than its 10 s budget; it starts when the short scripts are done, and the long ones (phase
+// 1) run on beside it.
+typedef struct {
+    const char *task;
+    const char *script;
+    const char *mode;  // the script's second argument, or nullptr
+    const char *shard; // its third (a list of parts of the script), or nullptr
+    int phase; // 0 starts at once; 1 is one of the long tasks; 2 waits for every task of phase 0 (see build_test)
+} BuildTestScript;
+
+// clang-format off
+static const BuildTestScript build_test_scripts[] = {
+    {"arena", "arena", nullptr, nullptr, 0},
+    {"build", "build", nullptr, nullptr, 1},
+    {"cache", "cache", nullptr, nullptr, 0},
+    {"contract", "contract", nullptr, nullptr, 0},
+    {"dap", "dap", nullptr, nullptr, 0},
+    {"defer", "defer", nullptr, nullptr, 0},
+    {"docs", "docs", nullptr, nullptr, 0},
+    {"http", "http", nullptr, nullptr, 0},
+    {"io", "io", nullptr, nullptr, 0},
+    {"json", "json", nullptr, nullptr, 0},
+    {"lsp", "lsp", nullptr, nullptr, 0},
+    {"neovim", "neovim", nullptr, nullptr, 0},
+    {"new", "new", nullptr, nullptr, 0},
+    {"package", "package", nullptr, nullptr, 0},
+    {"prove", "prove", nullptr, nullptr, 2},
+    {"random", "random", nullptr, nullptr, 0},
+    {"resource", "resource", nullptr, nullptr, 0},
+    {"run", "run", nullptr, nullptr, 0},
+    {"smith-fmt", "smith-fmt", nullptr, nullptr, 0},
+    {"smith-lang", "smith-lang", nullptr, nullptr, 0},
+    {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
+    {"test", "test", nullptr, nullptr, 1},
+    {"isolate-main", "test", "isolate", "main", 1},
+    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags", 1},
+    {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
+    {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
+    {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
+    {"text", "text", nullptr, nullptr, 0},
+    {"tree_sitter", "tree_sitter", nullptr, nullptr, 0},
+    {"untar", "untar", nullptr, nullptr, 1},
+};
+// clang-format on
+
+constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof build_test_scripts[0];
+
+// The task of every script, and the alias `test` of them; returns the list, which the install waits for.
+static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
+    const char *names[build_test_script_count + 1];
+    const char *early[build_test_script_count + 1];
+    size_t early_count = 0;
+    for (size_t i = 0; i < build_test_script_count; i++) {
+        names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
+        if (build_test_scripts[i].phase == 0) early[early_count++] = names[i];
+    }
+    early[early_count] = nullptr;
+    for (size_t i = 0; i < build_test_script_count; i++) {
+        const BuildTestScript *row = &build_test_scripts[i];
+        const char *mode = row->mode != nullptr ? row->mode : "";
+        SmithStep step = {
+            .command = smith_cat(b,
+                                 smith_list(b, "env", smith_fmt(b, "CC=%s", config->cc), "sh",
+                                            smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
+                                 smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)),
+                                 smith_when(b, row->shard != nullptr, smith_list(b, row->shard, nullptr)), nullptr),
+            .description =
+                smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
+            .inputs = (const char *[]){binary, nullptr},
+            .order_only_inputs = row->phase == 2 ? smith_cat(b, early, nullptr) : smith_list(b, nullptr),
+        };
+        smith_task(b, names[i], &step);
+    }
+    names[build_test_script_count] = nullptr;
+    const char *const *tasks = smith_cat(b, names, nullptr);
+    smith_alias(b, "test", tasks);
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command = (const char *[]){"sh", "-c", "env CC=\"$0\" sh tests/text.sh \"$1\" exhaustive", config->cc, binary,
@@ -609,7 +675,7 @@ static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);
-    return test;
+    return tasks;
 }
 
 // Runs a table of invocations through a real compiler and through smith, and compares stdout, stderr, exit status and
@@ -820,10 +886,10 @@ void build(SmithBuild *b) {
     SmithStep smith = build_programs(b, &config, folder);
     build_other_objects(b, &config, folder);
     config.binary = smith.outputs[0];
-    SmithStep test = build_test(b, &config, config.binary);
+    const char *const *tested = build_test(b, &config, config.binary);
     build_compare(b, &config, config.binary);
     build_checks(b, &config);
-    build_install(b, &config, config.binary, test.outputs);
+    build_install(b, &config, config.binary, tested);
     build_llvm(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);

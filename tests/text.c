@@ -488,7 +488,7 @@ void test_text_f32_round_trips_nine_digits(SmithKey key) {
 // A sweep of the whole range of float patterns, formatted and parsed back. tests/text.sh's `exhaustive` mode does all
 // 2^32.
 void test_text_f32_sweep_of_every_pattern(void) {
-    uint64_t stride = smith_test_full() ? 1021 : 4093; // prime, so the sweep touches every exponent and mantissa
+    uint64_t stride = smith_test_full() ? 1021 : 16381; // prime, so the sweep touches every exponent and mantissa
     char text[64];
     for (uint64_t pattern = 0; pattern <= UINT32_MAX; pattern += stride) {
         float f = __builtin_bit_cast(float, (uint32_t)pattern);
@@ -881,6 +881,10 @@ void test_text_f64_write_is_shortest_and_round_trips(SmithKey key) {
 
 void test_text_f64_write_edges_round_trip(void) {
     for (uint64_t field = 0; field < 2047; field++) {
+        // Under the sanitizers every exponent takes seconds, so the quick run takes every 13th and the edges (zero and
+        // subnormals, around 1.0, the largest); --full takes them all.
+        bool edge = field <= 1 || (field >= 1022 && field <= 1024) || field >= 2045;
+        if (!smith_test_full() && !edge && field % 13 != 0) continue;
         for (uint64_t kind = 0; kind < 4; kind++) {
             uint64_t fraction = kind == 3 ? 0xfffffffffffffULL : kind;
             for (uint64_t sign = 0; sign < 2; sign++) {

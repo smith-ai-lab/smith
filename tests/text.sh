@@ -99,7 +99,7 @@ done
 capture smith build -DMODE=fast
 capture ./build/tests --full --test f32_sweep
 summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
-expect "full: the sweep of the float patterns, four times denser" "1 passed, 0 failed" "$summary"
+expect "full: the sweep of the float patterns, sixteen times denser" "1 passed, 0 failed" "$summary"
 
 # The library alone: it compiles in C23 and C2y, and with the checks off, using no library function of libc.
 for std in gnu23 gnu2y; do

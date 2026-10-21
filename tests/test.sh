@@ -1,15 +1,26 @@
 #!/bin/sh
 # Tests of <smith/test.h>, smith_tests and the runner, with real clang, ninja and clangd.
-# Usage: sh tests/test.sh path/to/smith [isolate]
+# Usage: sh tests/test.sh path/to/smith [isolate] [parts]
 # The runner's workers are the default; with "isolate" every runner is run with --isolate (`smith test --isolate`), the
 # process per test, and every check must give the same result.
+# parts is a comma-separated list of the parts to run (default all): the file is in parts that each work in projects of
+# their own, so that build.c can run them as tasks side by side (main, shrink_int, shrink_list, shrink_normal, alongside,
+# budget, misc, workers, reports, flags).
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 iso=
 if [ "${2:-}" = isolate ]; then
     iso=--isolate
+    shift
 fi
+parts=${2:-all}
+part() { # name...: whether this run includes any of the parts
+    for name in "$@"; do
+        case ",$parts," in *,all,* | *",$name,"*) return 0 ;; esac
+    done
+    return 1
+}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -111,6 +122,7 @@ line_of() { # file, text: the line number of the first line holding the text
     grep -n -F "$2" "$1" | head -n 1 | cut -d: -f1
 }
 
+if part main; then
 # 1. The checks: a project with passing and failing tests.
 project "$work/main"
 cat >tests/test_checks.c <<'C'
@@ -533,7 +545,11 @@ capture build/tests $iso --test prop_fails --seed "$seed" --shrink 0
 third=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
 expect "properties: --seed reproduces it too" "$first" "$third"
 
-# 4b. Shrinking.
+fi
+
+# 4b. Shrinking, in three parts (each runs the same test file in a project of its own).
+if part shrink_int shrink_list shrink_normal; then
+project "$work/shrink"
 cat >tests/test_shrink.c <<'C'
 #include <smith/test.h>
 
@@ -564,7 +580,9 @@ void test_shrink_moves(SmithKey key) {
 C
 capture "$smith" build
 expect "shrink: the runner builds" 0 "$rc"
+fi
 
+if part shrink_int; then
 line=$(line_of tests/test_shrink.c 'SMITH_CHECK(x, <, 500);')
 capture build/tests $iso --test shrink_int --shrink-seconds 3600
 seed=$(printf '%s' "$out" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
@@ -586,23 +604,36 @@ expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
 
 capture "$smith" test $iso --test shrink_int --seed "$seed"
 expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
+fi
 
-first=$(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain)
+if part shrink_list; then
+# The same command twice, side by side: it takes a minute under --isolate.
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-first") &
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-second") &
+wait
+first=$(cat "$work/shrink-first")
 expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
 expect_contains "shrink: ... of 91" "$first" "    item = 91   (long long)"
-second=$(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain)
+second=$(cat "$work/shrink-second")
 expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
+fi
 
+if part shrink_normal; then
 capture build/tests $iso --test shrink_normal --shrink-seconds 3600 --seeds 5000
 z=$(printf '%s' "$out" | sed -n 's/^    z *= \([0-9.e+-]*\) .*/\1/p')
 expect_contains "shrink: a normal with z < 3 shrinks" "$out" "FAIL shrink_normal with seed"
 expect "shrink: ... to the z nearest 3 from above" yes "$(awk -v z="$z" 'BEGIN { print (z >= 3 && z < 3.0000001) ? "yes" : "no" }')"
+fi
 
+if part shrink_int; then
 line=$(grep -n -F 'SMITH_CHECK(x, <, 500);' tests/test_shrink.c | sed -n 2p | cut -d: -f1)
 capture build/tests $iso --test shrink_moves --shrink-seconds 3600
 expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
 expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
 
+fi
+
+if part alongside; then
 # Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes more
 # than 64 KiB, waits a second and writes more, still passes with --timeout 2.
 project "$work/alongside"
@@ -635,8 +666,9 @@ capture build/tests $iso --timeout 2 --jobs 2
 expect_contains "alongside: the shrinking test fails and is shrunk" "$out" "FAIL a_shrinks_slowly with seed"
 expect_lacks "alongside: ... and the other test is not a failure" "$out" "FAIL b_writes_a_lot"
 expect_contains "alongside: ... it passes" "$out" "1 passed, 1 failed"
-cd "$work/main" || exit 1
+fi
 
+if part budget; then
 # The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds.
 project "$work/budget"
 cat >tests/test_budget.c <<'C'
@@ -659,8 +691,9 @@ elapsed=$(($(date +%s) - start))
 runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
 expect "budget: it shrinks, and stops within 1000 runs" yes "$([ -n "$runs" ] && [ "$runs" -le 1000 ] && echo yes)"
 expect "budget: ... and within about 10 seconds" yes "$([ "$elapsed" -le 14 ] && echo yes)"
-cd "$work/main" || exit 1
+fi
 
+if part misc; then
 # 5. SIGSEGV without the sanitizers is named.
 project "$work/plain"
 cat >tests/test_crash.c <<'C'
@@ -885,6 +918,9 @@ capture "$smith" test $iso --test reads_input
 expect "inputs: touching the generator reruns the tests, which see the new file" 1 "$rc"
 expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
 
+fi
+
+if part workers; then
 # 8c. Workers: tests run one after another in a pool of long-lived processes, and --isolate gives each its own. --stats
 # prints the forks the run made, which tells the two apart. A group is chosen with --test <prefix> and runs on one worker
 # (--jobs 1); its tests run in the order written.
@@ -1173,7 +1209,6 @@ FAIL order_b"
     capture "$smith" test --test order_ --jobs 1 --shuffle "${found:-1}"
     expect_contains "shuffle: --shuffle reaches the runner" "$out$err" "FAIL order_b"
 fi
-cd "$work/main" || exit 1
 
 # Many jobs under a low descriptor limit: every job's worker holds two descriptors in the runner, which raises the limit.
 project "$work/many"
@@ -1188,9 +1223,10 @@ capture "$smith" build -DSAN=0
 expect "many: the runner builds" 0 "$rc"
 capture sh -c "ulimit -S -n 100; build/tests $iso --jobs 90"
 expect_contains "many: 90 jobs under a limit of 100 descriptors all run" "$out" "90 passed, 0 failed"
-cd "$work/main" || exit 1
+fi
 
 # 9. Tools: clangd reads a test file without errors.
+if part main; then
 cd "$work/main" || exit 1
 if "$smith" lsp --version >/dev/null 2>&1; then
     capture "$smith" build
@@ -1198,7 +1234,9 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
+fi
 
+if part reports; then
 # 10. Failure reports: a failure is a stack of addresses, and smith turns it into the failing line and the call chain.
 # The plain-function checks print no file and line themselves, so the runner on its own prints the raw trace; smith
 # symbolize (and smith test, which pipes the runner through it) reads the source.
@@ -1468,7 +1506,6 @@ C
     expect_contains "contract: ... and the call chain, with the caller" "$out$err" "tests/test_contracts.c:$caller"
     expect_contains "contract: SMITH_CHECK_ABORTS passes on a failed contract, and the true one passes" "$out$err" "2 passed, 1 failed"
     expect_lacks "contract: ... with no smith_failure frame in the chain" "$out$err" "smith_failure"
-    cd "$work/main" || exit 1
 fi
 
 # A sanitizer's report is symbolized by smith, through the llvm-symbolizer protocol, and AddressSanitizer's own stack is
@@ -1509,8 +1546,9 @@ C
     capture "$smith" test $iso --test signed_overflow
     expect_contains "ubsan: the report names the line" "$out$err" "tests/test_overflow.c:$line"
 fi
-cd "$work/main" || exit 1
+fi
 
+if part flags; then
 # 11. The libraries compile clean under the flags `smith new` writes, in both C standards, and under the extra
 # warnings game and learner add, since every project compiles them with its own flags.
 flags=$(awk '/build_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/templates/new/build.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
@@ -1523,6 +1561,8 @@ for standard in gnu2y gnu23; do
         [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
     done
 done
+
+fi
 
 echo
 echo "$total test checks, $failures failed"

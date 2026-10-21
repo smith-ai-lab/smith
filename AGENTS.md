@@ -166,7 +166,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `build/<OS>-<arch>/smith` and the `smith-cc` and `smith-c++` links: with the LLVM install of `smith build llvm` (or
   `-DLLVM=`) it links clang in and compiles in its own process, else it builds the stage0, which runs an external
   clang. `smith test` runs the routing tests against stub compilers (each through `smith cc` and through `smith-cc`),
-  then the `smith build` tests with a real clang;
+  then the `smith build` tests with a real clang; each `tests/*.sh` is a task of its own (`test-<name>`) and `test` their alias,
+  so they run side by side (skill smith-development);
   `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
 - `smith check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
