@@ -12,7 +12,7 @@ it. `.content_hash` is declared but not implemented. The
 - `smith build` compiles `build.c` with one fixed command of its own, runs it, and the program writes `build.ninja`.
 - smith then runs that file itself, with its own executor ([The executor](#the-executor)): the scheduling, the rebuild
   decisions and the parallelism. No ninja is needed; `SMITH_NINJA=<ninja>` runs the same file with ninja instead.
-- It replaces the Makefile. It is step 2 of the three steps in [CLAUDE.md](../CLAUDE.md): it only describes the build, so
+- It replaces the Makefile. It is step 2 of the three steps in [AGENTS.md](../AGENTS.md): it only describes the build, so
   it changes nothing the build does.
 
 ## Principles
