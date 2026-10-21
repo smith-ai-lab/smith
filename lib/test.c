@@ -9,6 +9,7 @@
 // next.
 // `--isolate` keeps the process-per-test runner: a child for each test, and for each SMITH_CHECK_ABORTS.
 #include "../include/smith/test.h"
+#include "../include/smith/trace.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -67,6 +68,11 @@ typedef struct {
     bool death_check; // a SMITH_CHECK_ABORTS has run in this test (cleared by the runner before each test)
     char note[smith_test_note_capacity];
     char detail[smith_test_detail_capacity]; // the failed check's values, as lines
+    // The stack of the failure (smith_trace_capture), for the report smith builds from it.
+    const char *heading; // "check failed", "crashed", "aborted": a literal of the program
+    uintptr_t frames[smith_trace_frames_max];
+    size_t frame_count;
+    bool frames_exact; // frames[0] is the instruction a signal stopped at
 } SmithTestShared;
 
 static SmithTestShared smith_test_fallback;
@@ -96,6 +102,9 @@ static void smith_test_reset(void) {
     smith_test_shared->note[0] = '\0';
     smith_test_shared->detail[0] = '\0';
     smith_test_shared->aborting = false;
+    smith_test_shared->heading = nullptr;
+    smith_test_shared->frame_count = 0;
+    smith_test_shared->frames_exact = false;
 }
 
 SmithArena smith_test_arena(size_t capacity) {
@@ -361,6 +370,7 @@ constexpr int smith_test_abort_signaled = 3; // it raised SIGABRT or SIGTRAP, wh
 constexpr int smith_test_abort_failed = 4;   // a check inside it failed
 static volatile sig_atomic_t smith_test_abort_state = smith_test_abort_idle;
 static volatile sig_atomic_t smith_test_abort_signal;
+static volatile sig_atomic_t smith_test_death_child; // this process is the child of a SMITH_CHECK_ABORTS (--isolate)
 
 // Ends the test with a failed check. In a worker the test unwinds to the worker's loop, unless the worker is to be
 // retired (its state cannot be trusted: a sanitizer reported), and then it exits as a process-per-test child does.
@@ -368,6 +378,11 @@ static volatile sig_atomic_t smith_test_abort_signal;
     fflush(nullptr);
     smith_test_shared->file = file;
     smith_test_shared->line = line;
+    if (smith_test_shared->frame_count == 0) { // a failure that brought its own stack (smith_failure) keeps it
+        smith_test_shared->heading = "check failed";
+        smith_test_shared->frame_count = smith_trace_capture(smith_test_shared->frames, smith_trace_frames_max);
+        smith_test_shared->frames_exact = false;
+    }
     if (smith_test_worker && !retire) {
         if (smith_test_abort_state == smith_test_abort_running) {
             smith_test_abort_state = smith_test_abort_failed;
@@ -383,14 +398,14 @@ static volatile sig_atomic_t smith_test_abort_signal;
 }
 
 void smith_test_fail_condition(const char *file, int line) {
-    assert(file != nullptr && line > 0);
+    assert((file != nullptr) == (line > 0));
     snprintf(smith_test_shared->detail, smith_test_detail_capacity, "the condition is false\n");
     smith_test_end(file, line);
 }
 
 void smith_test_fail_compare(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
                              const char *file, int line) {
-    assert(a_text != nullptr && b_text != nullptr && file != nullptr && line > 0);
+    assert(a_text != nullptr && b_text != nullptr && (file != nullptr) == (line > 0));
     SmithTestLine lines[2] = {{.text = a_text, .value = a}, {.text = b_text, .value = b}};
     smith_test_write_values(lines, 2);
     smith_test_end(file, line);
@@ -398,7 +413,7 @@ void smith_test_fail_compare(const char *a_text, const char *b_text, SmithTestVa
 
 void smith_test_fail_same_bits(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
                                const char *file, int line) {
-    assert(a_text != nullptr && b_text != nullptr && file != nullptr && line > 0);
+    assert(a_text != nullptr && b_text != nullptr && (file != nullptr) == (line > 0));
     SmithTestLine lines[2] = {{.text = a_text, .value = a, .bits = true}, {.text = b_text, .value = b, .bits = true}};
     smith_test_write_values(lines, 2);
     smith_test_end(file, line);
@@ -407,13 +422,104 @@ void smith_test_fail_same_bits(const char *a_text, const char *b_text, SmithTest
 void smith_test_fail_near(const char *a_text, const char *b_text, const char *tolerance_text,
                           const SmithTestValue values[4], const char *file, int line) {
     assert(a_text != nullptr && b_text != nullptr && tolerance_text != nullptr && values != nullptr);
-    assert(file != nullptr && line > 0);
+    assert((file != nullptr) == (line > 0));
     SmithTestLine lines[4] = {{.text = a_text, .value = values[0]},
                               {.text = b_text, .value = values[1]},
                               {.text = tolerance_text, .value = values[2]},
                               {.text = "distance", .value = values[3]}};
     smith_test_write_values(lines, 4);
     smith_test_end(file, line);
+}
+
+// Plain-function checks. Each takes values and no text: where it failed is the caller's line in the stack, which smith
+// reads from the source file. The values print as "a" and "b", with the short name of their type.
+
+static void smith_test_check_condition(bool condition) {
+    if (!condition) smith_test_fail_condition(nullptr, 0);
+}
+
+void smith_check(bool condition) {
+    smith_test_check_condition(condition);
+}
+
+// A contract or a library's check (smith_failure) failed in a test: the test fails with the stack it brought. Under a
+// SMITH_CHECK_ABORTS it is the stop the check expects, as an assert's is: the program aborts (in a worker the handler
+// jumps back to the check; in a child of --isolate the abort ends the child).
+static void smith_test_on_failure(SmithFailureKind kind, const uintptr_t *frames, size_t count) {
+    assert(frames != nullptr || count == 0);
+    if (smith_test_abort_state == smith_test_abort_running || smith_test_death_child) {
+        fflush(nullptr);
+        abort();
+    }
+    smith_test_shared->heading = smith_failure_heading(kind);
+    smith_test_shared->frame_count = count < smith_trace_frames_max ? count : smith_trace_frames_max;
+    memcpy(smith_test_shared->frames, frames, smith_test_shared->frame_count * sizeof frames[0]);
+    smith_test_shared->frames_exact = false;
+    snprintf(smith_test_shared->detail, smith_test_detail_capacity, "%s\n", smith_failure_heading(kind));
+    smith_test_end(nullptr, 0);
+}
+
+static SmithTestValue smith_test_typed(SmithTestValue value, const char *type) {
+    value.type = type;
+    return value;
+}
+
+static void smith_test_check_compare(SmithTestValue a, const char *op, SmithTestValue b) {
+    if (smith_test_compare(a, op, b)) return;
+    smith_test_fail_compare("a", "b", a, b, nullptr, 0);
+}
+
+// NOLINTBEGIN(bugprone-macro-parentheses): a type name cannot be parenthesized
+#define SMITH_TEST_DEFINE_EQUAL(suffix, Type, make) \
+    void smith_check_equal_##suffix(Type a, Type b) { \
+        smith_test_check_compare(smith_test_typed(make(a), #suffix), "==", smith_test_typed(make(b), #suffix)); \
+    }
+// NOLINTEND(bugprone-macro-parentheses)
+
+SMITH_TEST_DEFINE_EQUAL(bool, bool, smith_test_value_bool)
+SMITH_TEST_DEFINE_EQUAL(char, char, smith_test_value_char)
+SMITH_TEST_DEFINE_EQUAL(i8, int8_t, smith_test_value_signed_char)
+SMITH_TEST_DEFINE_EQUAL(i16, int16_t, smith_test_value_short)
+SMITH_TEST_DEFINE_EQUAL(i32, int32_t, smith_test_value_int)
+SMITH_TEST_DEFINE_EQUAL(i64, int64_t, smith_test_value_long_long)
+SMITH_TEST_DEFINE_EQUAL(u8, uint8_t, smith_test_value_unsigned_char)
+SMITH_TEST_DEFINE_EQUAL(u16, uint16_t, smith_test_value_unsigned_short)
+SMITH_TEST_DEFINE_EQUAL(u32, uint32_t, smith_test_value_unsigned_int)
+SMITH_TEST_DEFINE_EQUAL(u64, uint64_t, smith_test_value_unsigned_long_long)
+SMITH_TEST_DEFINE_EQUAL(f32, float, smith_test_value_float)
+SMITH_TEST_DEFINE_EQUAL(f64, double, smith_test_value_double)
+SMITH_TEST_DEFINE_EQUAL(ptr, const volatile void *, smith_test_value_pointer)
+
+void smith_check_near_f32(float a, float b, float tolerance) {
+    float distance = smith_test_distance_float(a, b);
+    if (smith_test_within((double)distance, (double)tolerance)) return;
+    SmithTestValue values[4] = {smith_test_typed(smith_test_value_float(a), "f32"),
+                                smith_test_typed(smith_test_value_float(b), "f32"),
+                                smith_test_typed(smith_test_value_float(tolerance), "f32"),
+                                smith_test_typed(smith_test_value_float(distance), "f32")};
+    smith_test_fail_near("a", "b", "tolerance", values, nullptr, 0);
+}
+
+void smith_check_near_f64(double a, double b, double tolerance) {
+    double distance = smith_test_distance_double(a, b);
+    if (smith_test_within(distance, tolerance)) return;
+    SmithTestValue values[4] = {smith_test_typed(smith_test_value_double(a), "f64"),
+                                smith_test_typed(smith_test_value_double(b), "f64"),
+                                smith_test_typed(smith_test_value_double(tolerance), "f64"),
+                                smith_test_typed(smith_test_value_double(distance), "f64")};
+    smith_test_fail_near("a", "b", "tolerance", values, nullptr, 0);
+}
+
+void smith_check_same_bits_f32(float a, float b) {
+    SmithTestValue value_a = smith_test_typed(smith_test_value_float(a), "f32");
+    SmithTestValue value_b = smith_test_typed(smith_test_value_float(b), "f32");
+    if (!smith_test_same_bits(value_a, value_b)) smith_test_fail_same_bits("a", "b", value_a, value_b, nullptr, 0);
+}
+
+void smith_check_same_bits_f64(double a, double b) {
+    SmithTestValue value_a = smith_test_typed(smith_test_value_double(a), "f64");
+    SmithTestValue value_b = smith_test_typed(smith_test_value_double(b), "f64");
+    if (!smith_test_same_bits(value_a, value_b)) smith_test_fail_same_bits("a", "b", value_a, value_b, nullptr, 0);
 }
 
 // SMITH_CHECK_ABORTS.
@@ -445,6 +551,7 @@ static bool smith_test_abort_fork(void) {
         abort();
     }
     if (child == 0) {
+        smith_test_death_child = 1;
         close(ends[0]);
         dup2(ends[1], STDOUT_FILENO);
         dup2(ends[1], STDERR_FILENO);
@@ -689,6 +796,7 @@ typedef struct {
     bool verbose;
     bool color;
     bool isolate;       // a process for each test, as before the workers
+    bool trace;         // print a failure's stack as a trace block, for smith to turn into the report
     bool stats;         // print the forks the run made
     bool shuffle_given; // run the tests in an order drawn from shuffle_seed
     uint64_t shuffle_seed;
@@ -730,6 +838,10 @@ typedef struct {
     int line;
     char note[smith_test_note_capacity];
     char detail[smith_test_detail_capacity];
+    const char *heading; // of the stack: see SmithTestShared
+    uintptr_t frames[smith_trace_frames_max];
+    size_t frame_count;
+    bool frames_exact;
     SmithTestOutput output;
     unsigned shrink_runs; // the runs shrinking took, 0 when it did not run
     bool shrink_changed;  // it found a smaller failure
@@ -772,7 +884,8 @@ static void *smith_test_map(size_t bytes, int flags) {
 // test or a crashing test. AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers, whose report ends in
 // abort(). While a worker runs a SMITH_CHECK_ABORTS, SIGABRT and SIGTRAP are what the check expects: they jump back to
 // it.
-static void smith_test_on_signal(int signal_number) {
+static void smith_test_on_signal(int signal_number, siginfo_t *info, void *context) {
+    (void)info;
     if (smith_test_abort_state == smith_test_abort_running) {
         if (signal_number == SIGABRT || signal_number == SIGTRAP) {
             smith_test_abort_signal = signal_number;
@@ -781,6 +894,10 @@ static void smith_test_on_signal(int signal_number) {
         }
         smith_test_capture_forward();
     }
+    smith_test_shared->heading = signal_number == SIGABRT || signal_number == SIGTRAP ? "aborted" : "crashed";
+    smith_test_shared->frame_count =
+        smith_trace_capture_signal(smith_test_shared->frames, smith_trace_frames_max, context);
+    smith_test_shared->frames_exact = true;
     _exit(smith_test_signal_status + signal_number);
 }
 
@@ -788,7 +905,7 @@ static void smith_test_catch_signals(void) {
     static unsigned char stack[smith_test_alternate_stack];
     stack_t alternate = {.ss_sp = stack, .ss_size = sizeof stack};
     sigaltstack(&alternate, nullptr);
-    struct sigaction action = {.sa_handler = smith_test_on_signal, .sa_flags = SA_ONSTACK};
+    struct sigaction action = {.sa_sigaction = smith_test_on_signal, .sa_flags = SA_ONSTACK | SA_SIGINFO};
     sigemptyset(&action.sa_mask);
     const int signals[] = {SIGTRAP, SIGABRT,
                            SIGILL,
@@ -813,9 +930,11 @@ static void smith_test_run_key(const SmithTest *test, const SmithTestOptions *op
 static uint64_t smith_test_hook(SmithKey key, uint64_t n, uint64_t bits);
 static bool smith_test_hooking; // the next process forked installs the hook
 
-// Runs the test: once, or a property test on its one key or on all of them.
-static void smith_test_execute(const SmithTest *test, const SmithTestOptions *options,
-                               const SmithTestCommand *command) {
+// Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
+// frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
+[[gnu::noinline]] static void smith_test_execute(const SmithTest *test, const SmithTestOptions *options,
+                                                 const SmithTestCommand *command) {
+    smith_trace_stop = (uintptr_t)__builtin_frame_address(0);
     if (test->plain != nullptr) {
         smith_test_reset();
         alarm(options->timeout);
@@ -827,6 +946,7 @@ static void smith_test_execute(const SmithTest *test, const SmithTestOptions *op
         for (uint64_t i = 0; i < options->seed_count; i++)
             smith_test_run_key(test, options, smith_key_bits(root, i));
     }
+    smith_trace_stop = 0;
 }
 
 // In a forked process, before its first test: all output goes down the pipe.
@@ -834,6 +954,7 @@ static void smith_test_setup(const SmithTestOptions *options, SmithTestShared *s
     smith_test_shared = shared;
     smith_test_timeout_seconds = options->timeout;
     smith_test_catch_signals();
+    smith_failure_hook = smith_test_on_failure;
     if (smith_test_hooking) smith_random_hook = smith_test_hook;
     if (dup2(output, STDOUT_FILENO) < 0 || dup2(output, STDERR_FILENO) < 0) _exit(smith_test_usage_status);
     close(output);
@@ -1098,9 +1219,15 @@ static void smith_test_finish(size_t slot, SmithTestRun *run, const SmithTestRep
     run->line = shared->line;
     memcpy(run->note, shared->note, sizeof run->note);
     memcpy(run->detail, shared->detail, sizeof run->detail);
+    run->heading = shared->heading;
+    run->frame_count = shared->frame_count;
+    run->frames_exact = shared->frames_exact;
+    memcpy(run->frames, shared->frames, sizeof run->frames);
     if (reply == nullptr && shared->aborting && shared->line > 0 && run->outcome.end != SmithTestEnd_Flood &&
-        run->outcome.end != SmithTestEnd_Timeout)
+        run->outcome.end != SmithTestEnd_Timeout) {
         smith_test_judge_death_check(run, status);
+        run->frame_count = 0; // the stack is of the crash inside the expression; the check is where the report goes
+    }
     if (reply != nullptr && smith_test_retire(slot, run, shared)) smith_test_discard(worker);
     run->finished = true;
 }
@@ -1218,7 +1345,42 @@ static void smith_test_print_check(const SmithTestRun *run) {
     printf("  %s:%d\n", run->file, run->line);
     char source[256];
     if (smith_test_source_line(run->file, run->line, source, sizeof source)) printf("      %s\n", source);
+}
+
+// The values of the failed check, under where it failed.
+static void smith_test_print_detail(const SmithTestRun *run) {
     smith_test_print_indented(run->detail, strlen(run->detail), "    ");
+}
+
+// The failure's stack as a trace block, for smith to turn into the failing line and the call chain (smith symbolize).
+// The block is written to the descriptor, so what stdio holds is flushed first. A failure that knows its file and line
+// (the old macros) puts them in the block as its site, which the report falls back on when the stack has no debug info.
+static void smith_test_print_trace(const SmithTestRun *run, bool with_detail) {
+    char site[512] = "";
+    if (run->line > 0 && run->file != nullptr) snprintf(site, sizeof site, "%s:%d", run->file, run->line);
+    const char *heading = run->heading != nullptr ? run->heading : "check failed";
+    fflush(stdout);
+    smith_trace_write(STDOUT_FILENO, "  ", heading, site[0] != '\0' ? site : nullptr,
+                      with_detail ? run->detail : nullptr, run->frames, run->frame_count, run->frames_exact, true);
+}
+
+// Where it failed: the check's file and line and the line as written, or (for a plain-function check, a crash, or
+// when smith is to read the stack) the trace block. True when the block carries the check's values, which smith prints
+// under the source line, so they are not printed again.
+static bool smith_test_print_where(const SmithTestOptions *options, const SmithTestRun *run) {
+    bool check = run->outcome.end == SmithTestEnd_Check;
+    bool crash = run->outcome.end == SmithTestEnd_Signal;
+    bool stack = run->frame_count > 0 || (check && run->line > 0);
+    if (check && run->line > 0 && !(options->trace && stack)) {
+        smith_test_print_check(run);
+        return false;
+    }
+    if (!(check || crash) || !stack) return false;
+    if (crash && !options->trace) return false; // the reason after FAIL says it; the stack is for smith to read
+    if (crash && smith_test_has_report(run->output.text, run->output.kept))
+        return false; // the sanitizer's report is the stack
+    smith_test_print_trace(run, check && options->trace);
+    return check && options->trace;
 }
 
 static void smith_test_print_failure(const SmithTest *test, const SmithTestOptions *options, const SmithTestRun *run) {
@@ -1228,7 +1390,8 @@ static void smith_test_print_failure(const SmithTest *test, const SmithTestOptio
     if (run->shrink_runs > 0 && !run->shrink_changed) printf(", no smaller case in %u runs", run->shrink_runs);
     smith_test_print_reason(run);
     putchar('\n');
-    smith_test_print_check(run);
+    bool detailed = smith_test_print_where(options, run);
+    if (run->outcome.end == SmithTestEnd_Check && !detailed) smith_test_print_detail(run);
     if (run->shrink_leaked)
         printf("    the shrunk case did not reproduce in a fresh process, so state leaked between the shrinking "
                "attempts; this is the failure as it was\n");
@@ -1237,7 +1400,7 @@ static void smith_test_print_failure(const SmithTest *test, const SmithTestOptio
     if (run->output.total > run->output.kept)
         printf("    ... and %zu more bytes\n", run->output.total - run->output.kept);
     if (test->property != nullptr)
-        printf("    rerun: smith build test -DTEST=%s -DSEED=%llu\n", test->name, (unsigned long long)run->seed);
+        printf("    rerun: smith test --test %s --seed %llu\n", test->name, (unsigned long long)run->seed);
 }
 
 static void smith_test_report(const SmithTest *test, const SmithTestOptions *options, const SmithTestRun *run) {
@@ -1365,8 +1528,14 @@ static SmithTestShrink smith_test_shrinking;
 static bool smith_test_same_failure(const SmithTestRun *failure, const SmithTestRun *run) {
     if (run->outcome.end != failure->outcome.end || run->outcome.number != failure->outcome.number) return false;
     if (run->outcome.end != SmithTestEnd_Check) return true;
-    return run->line == failure->line && run->file != nullptr && failure->file != nullptr &&
-           strcmp(run->file, failure->file) == 0;
+    if (run->file == nullptr || failure->file == nullptr) { // a plain function check: the same stack is the same check
+        // The last frame is in smith_test_execute, whose call to a property test is at one place for all keys and at
+        // another for one key, so it is not compared.
+        size_t compared = run->frame_count > 0 ? run->frame_count - 1 : 0;
+        return run->frame_count == failure->frame_count && compared > 0 &&
+               memcmp(run->frames, failure->frames, compared * sizeof run->frames[0]) == 0;
+    }
+    return run->line == failure->line && strcmp(run->file, failure->file) == 0;
 }
 
 static bool smith_test_budget(const SmithTestShrink *shrink) {
@@ -1447,6 +1616,10 @@ static void smith_test_shrink_finish(const SmithTestShrink *shrink, bool changed
     run->line = shrink->best->line;
     memcpy(run->note, shrink->best->note, sizeof run->note);
     memcpy(run->detail, shrink->best->detail, sizeof run->detail);
+    run->heading = shrink->best->heading;
+    run->frame_count = shrink->best->frame_count;
+    run->frames_exact = shrink->best->frames_exact;
+    memcpy(run->frames, shrink->best->frames, sizeof run->frames);
     run->output = shrink->best->output;
 }
 
@@ -1686,6 +1859,10 @@ static bool smith_test_parse_options(int argc, char **argv, SmithTestOptions *op
             options->isolate = true;
         } else if (strcmp(flag, "--stats") == 0) {
             options->stats = true;
+        } else if (strcmp(flag, "--trace") == 0) {
+            options->trace = true;
+        } else if (strcmp(flag, "--color") == 0) {
+            options->color = true;
         } else if (i + 1 >= argc || !smith_test_parse_value(options, flag, argv[i + 1])) {
             return false;
         } else {
@@ -1762,7 +1939,7 @@ int main(int argc, char **argv) {
                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
                 "[--timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] [--shuffle <seed>] [--isolate] "
                 "[--full] [--list] [--verbose] "
-                "[--stats]\n",
+                "[--stats] [--trace] [--color]\n",
                 argv[0], (unsigned long long)smith_test_seeds_max, smith_test_jobs_max);
         return smith_test_usage_status;
     }

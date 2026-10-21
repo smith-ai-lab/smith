@@ -1,4 +1,4 @@
-// @NAME@. `smith build run` builds and runs it.
+// @NAME@. `smith run` builds and runs it.
 #include <assert.h>
 #include <inttypes.h>
 #include <stdint.h>

@@ -1,16 +1,14 @@
 #!/bin/sh
 # Tests of <smith/test.h>, smith_tests and the runner, with real clang, ninja and clangd.
 # Usage: sh tests/test.sh path/to/smith [isolate]
-# The runner's workers are the default; with "isolate" every runner is run with --isolate (-DISOLATE for the task), the
+# The runner's workers are the default; with "isolate" every runner is run with --isolate (`smith test --isolate`), the
 # process per test, and every check must give the same result.
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 iso=
-isod=
 if [ "${2:-}" = isolate ]; then
     iso=--isolate
-    isod=-DISOLATE
 fi
 repo=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -67,7 +65,7 @@ expect_lacks() { # name, text, needle
     esac
 }
 
-mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith++"
+mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
 
 # A project: the build.c of a project with smith_tests, with the sanitizers on unless -DSAN=0, and its test files.
@@ -83,9 +81,9 @@ void build(SmithBuild *b) {
     bool sanitize = strcmp(smith_option_value(b, "SAN", "1", "0 builds without the sanitizers"), "1") == 0;
     const char *const *flags = smith_cat(b, smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr),
                                          smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", "-fno-sanitize-recover=all", nullptr)), nullptr);
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
-    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
+    SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
     smith_object(b, &random);
     SmithTests tests = {
         .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
@@ -485,7 +483,7 @@ expect_contains "options: ... and prints the usage" "$err" "usage:"
 capture build/tests $iso --test nothing_like_this
 expect "options: no matching test exits 1" "1 no test matches \"nothing_like_this\"" "$rc $out"
 
-# 4. Running: -DTEST filters, --seeds counts, --jobs 1 gives the same results.
+# 4. Running: --test filters, --seeds counts, --jobs 1 gives the same results.
 cat >tests/test_properties.c <<'C'
 #include <smith/test.h>
 
@@ -507,14 +505,14 @@ capture build/tests $iso --test prop_ok --seeds 7 --verbose
 expect_contains "seeds: --seeds sets the count" "$out" "PASS prop_ok (7 seeds)"
 capture build/tests $iso --test prop_ok --seed 5 --verbose
 expect_contains "seeds: --seed runs one seed" "$out" "PASS prop_ok (seed 5)"
-capture "$smith" build test $isod -DTEST=prop_ok -DSEEDS=3
-expect "task: smith build test runs the runner" 0 "$rc"
-capture "$smith" build test $isod -DTEST=prop_ok -DSEEDS=x
+capture "$smith" test $iso --test prop_ok --seeds 3
+expect "task: smith test runs the runner" 0 "$rc"
+capture "$smith" test $iso --test prop_ok --seeds x
 expect "task: a bad option reaches the runner's usage, and fails the task" yes "$([ "$rc" -ne 0 ] && echo yes)"
 expect_contains "task: ... which says so" "$err$out" "usage:"
-capture "$smith" build test $isod -DTEST=ok_after -DJOBS=1
-expect "task: -DTEST filters, and a passing run exits 0" 0 "$rc"
-capture "$smith" build test $isod -DTEST=stops
+capture "$smith" test $iso --test ok_after --jobs 1
+expect "task: --test filters, and a passing run exits 0" 0 "$rc"
+capture "$smith" test $iso --test stops
 expect_contains "task: a failing test is printed" "$out$err" "FAIL stops"
 expect "task: ... and the task fails" 1 "$rc"
 all=$(build/tests $iso --test abort 2>&1 | plain)
@@ -524,13 +522,15 @@ expect "jobs: --jobs 1 gives the same results" "$all" "$one"
 capture build/tests $iso --test prop_fails --shrink 0
 seed=$(printf '%s' "$out" | sed -n 's/^FAIL prop_fails with seed \([0-9]*\).*/\1/p')
 expect "properties: a failure names its seed" yes "$([ -n "$seed" ] && echo yes)"
-expect_contains "properties: ... and a rerun line" "$out" "    rerun: smith build test -DTEST=prop_fails -DSEED=$seed"
-first=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p')
-capture "$smith" build test $isod -DTEST=prop_fails -DSEED="$seed" -DSHRINK=0
-second=$(printf '%s%s' "$out" "$err" | sed -n '/^FAIL prop_fails/,/rerun/p')
+expect_contains "properties: ... and a rerun line" "$out" "    rerun: smith test --test prop_fails --seed $seed"
+# The task prints the failing line from the stack; the runner on its own prints it as the macro gave it. The seed, the value
+# and the rerun line are the same either way.
+first=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
+capture "$smith" test $iso --test prop_fails --seed "$seed" --shrink 0
+second=$(printf '%s%s' "$out" "$err" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
 expect "properties: the rerun line reproduces the failure" "$first" "$second"
 capture build/tests $iso --test prop_fails --seed "$seed" --shrink 0
-third=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p')
+third=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
 expect "properties: --seed reproduces it too" "$first" "$third"
 
 # 4b. Shrinking.
@@ -573,7 +573,7 @@ expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_in
       SMITH_CHECK(x, <, 500);
     x = 500   (long long)
     500       (long long)
-    rerun: smith build test -DTEST=shrink_int -DSEED=$seed
+    rerun: smith test --test shrink_int --seed $seed
 
 0 passed, 1 failed" "$(printf '%s' "$out" | plain | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/')"
 runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
@@ -584,7 +584,7 @@ unshrunk=$(printf '%s' "$out" | sed -n 's/^    x = \([0-9]*\) .*/\1/p')
 expect "shrink: --shrink 0 shows the unshrunk failure" yes "$([ "$unshrunk" -gt 500 ] && echo yes)"
 expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
 
-capture "$smith" build test $isod -DTEST=shrink_int -DSEED="$seed"
+capture "$smith" test $iso --test shrink_int --seed "$seed"
 expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
 
 first=$(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain)
@@ -759,7 +759,7 @@ cat >build.c <<'C'
 
 void build(SmithBuild *b) {
     const char *const *flags = smith_list(b, "-std=gnu23", "-I", ".smith/include", nullptr);
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithTests tests = {
         .sources = smith_list(b, "tests/test_x.c", nullptr),
@@ -828,9 +828,9 @@ cat >build.c <<'C'
 
 void build(SmithBuild *b) {
     const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
-    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
+    SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
     smith_object(b, &random);
     SmithStep data = {
         .command = smith_list(b, "sh", "gen.sh", "$out", nullptr),
@@ -857,9 +857,9 @@ run_extras() { # runner arguments
 expect_contains "full: a test sees false by default" "$(run_extras --test size)" "1 passed, 0 failed"
 capture build/tests $iso --test size --full
 expect_contains "full: ... and true with --full" "$out" "note: count 1000"
-capture "$smith" build test $isod -DTEST=size -DFULL
-expect_contains "full: -DFULL reaches the runner" "$out$err" "note: count 1000"
-capture "$smith" build test $isod -DTEST=size
+capture "$smith" test $iso --test size --full
+expect_contains "full: --full reaches the runner" "$out$err" "note: count 1000"
+capture "$smith" test $iso --test size
 expect_contains "full: ... and without it the test sees false" "$out$err" "1 passed, 0 failed"
 capture build/tests $iso --test bits_equal
 expect_contains "bits: equal bits pass, even a NaN and -0" "$out" "1 passed, 0 failed"
@@ -877,11 +877,11 @@ expect_contains "bits: ... and the first NaN's bits show" "$out" "nan [0x7ff8000
 expect_contains "bits: ... and the second's" "$out" "nan [0x7ff8000000000002]"
 capture build/tests $iso --test bits_float
 expect_contains "bits: floats fail by their last bit, in hex" "$out" "[0x1.000002p+0]"
-capture "$smith" build test $isod -DTEST=reads_input
+capture "$smith" test $iso --test reads_input
 expect "inputs: the generated file is built before the tests, and read" 0 "$rc"
 expect "inputs: ... by ninja" yes "$([ -f build/data.txt ] && echo yes)"
 echo two >gen.sh.new && printf 'echo two >"$1"\n' >gen.sh && rm gen.sh.new
-capture "$smith" build test $isod -DTEST=reads_input
+capture "$smith" test $iso --test reads_input
 expect "inputs: touching the generator reruns the tests, which see the new file" 1 "$rc"
 expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
 
@@ -1128,7 +1128,7 @@ if [ -n "$iso" ]; then
 else
     expect_contains "leaky: a shrunk case that fails only on leaked state is not reported as shrunk" "$out" "the shrunk case did not reproduce in a fresh process, so state leaked between the shrinking attempts"
     expect_lacks "leaky: ... the failure is shown as it was" "$out" "shrunk in"
-    expect_contains "leaky: ... and still names the seed" "$out" "rerun: smith build test -DTEST=shrink_leaky -DSEED=${seed:-1}"
+    expect_contains "leaky: ... and still names the seed" "$out" "rerun: smith test --test shrink_leaky --seed ${seed:-1}"
 fi
 
 capture build/tests $iso --test dirty_ --jobs 1 --stats
@@ -1170,8 +1170,8 @@ else
     expect "shuffle: the same seed gives the same results" "$first" "$second"
     expect_contains "shuffle: ... reported in table order" "$first" "PASS order_a
 FAIL order_b"
-    capture "$smith" build test -DTEST=order_ -DJOBS=1 -DSHUFFLE="${found:-1}"
-    expect_contains "shuffle: -DSHUFFLE reaches the runner" "$out$err" "FAIL order_b"
+    capture "$smith" test --test order_ --jobs 1 --shuffle "${found:-1}"
+    expect_contains "shuffle: --shuffle reaches the runner" "$out$err" "FAIL order_b"
 fi
 cd "$work/main" || exit 1
 
@@ -1199,14 +1199,326 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
 
-# 10. The libraries compile clean under the flags `smith new` writes, in both C standards, and under the extra
+# 10. Failure reports: a failure is a stack of addresses, and smith turns it into the failing line and the call chain.
+# The plain-function checks print no file and line themselves, so the runner on its own prints the raw trace; smith
+# symbolize (and smith test, which pipes the runner through it) reads the source.
+project "$work/reports"
+cat >tests/test_reports.c <<'C'
+#include <smith/test.h>
+
+#include <assert.h>
+
+[[gnu::always_inline]] static inline void check_positive(int value) {
+    smith_check(value > 0);
+}
+
+void test_passes(void) {
+    smith_check(true);
+    smith_check_equal_u64(4, 4);
+    smith_check_equal_f64(0.5, 0.5);
+    smith_check_near_f32(1.0F, 1.0001F, 0.001F);
+    smith_check_same_bits_f64(-0.0, -0.0);
+}
+
+void test_check_fails(void) {
+    int moves = 0;
+    smith_check(moves > 0);
+}
+
+void test_equal_fails(void) {
+    uint64_t count = 3;
+    uint64_t expected = 4;
+    smith_check_equal_u64(count, expected);
+}
+
+void test_near_fails(void) {
+    smith_check_near_f64(1.0, 1.5, 0.1);
+}
+
+void test_same_bits_fails(void) {
+    smith_check_same_bits_f32(0.0F, -0.0F);
+}
+
+void test_assert_fails(void) {
+    int moves = 1;
+    assert(moves == 2);
+}
+
+void test_segfault(void) {
+    volatile int *nothing = nullptr;
+    *nothing = 7;
+}
+
+void test_inlined(void) {
+    check_positive(-1);
+}
+
+void test_macro_fails(void) {
+    SMITH_CHECK(2 + 2, ==, 5);
+}
+
+void test_prop_function(SmithKey key) {
+    int64_t x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+    smith_test_note("x = %lld", (long long)x);
+    smith_check(x < 500);
+}
+C
+capture "$smith" build -DSAN=0
+expect "reports: the runner builds" 0 "$rc"
+capture build/tests $iso --test passes --verbose
+expect_contains "reports: the plain-function checks pass" "$out" "PASS passes"
+
+# Without smith in the pipe, a failure prints the trace and the values, and a macro keeps its old report.
+capture build/tests $iso --test check_fails
+expect_contains "raw: a failed smith_check prints a trace block" "$out" "  smith-trace begin check failed"
+expect_contains "raw: ... with frames" "$out" "  smith-trace frame 0x"
+expect_contains "raw: ... and the image's UUID" "$out" "  smith-trace image "
+capture build/tests $iso --test equal_fails
+expect_contains "raw: a failed check_equal shows a" "$out" "    a = 3   (u64)"
+expect_contains "raw: ... and b" "$out" "    b = 4   (u64)"
+line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
+expect "raw: a macro keeps the report it had" "FAIL macro_fails
+  tests/test_reports.c:$line
+      SMITH_CHECK(2 + 2, ==, 5);
+    2 + 2 = 4   (int)
+    5           (int)
+
+0 passed, 1 failed" "$(build/tests $iso --test macro_fails 2>&1 | plain)"
+capture build/tests $iso --test prop_function --shrink-seconds 3600
+expect_contains "raw: a property test's failed function check shrinks" "$out" "shrunk in"
+expect_contains "raw: ... to the smallest case" "$out" "    note: x = 500"
+capture build/tests $iso --test near_fails
+expect_contains "raw: a failed check_near shows the distance" "$out" "    distance  = 0.5 [0x1p-1]"
+capture build/tests $iso --test same_bits_fails
+expect_contains "raw: a failed check_same_bits shows the bits" "$out" "    a = 0 [0x0p+0]"
+expect "reports: --list sees the new tests" yes "$(build/tests --list | grep -q segfault && echo yes)"
+
+if "$smith" symbolize --available; then
+    sym() { # test name: the report smith test prints
+        capture "$smith" test $iso -DSAN=0 --test "$1"
+        printf '%s\n%s\n' "$out" "$err"
+    }
+    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    report=$(sym check_fails)
+    expect_contains "report: a failed smith_check names the line" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: ... shows the source line" "$report" "$line |     smith_check(moves > 0);"
+    expect_contains "report: ... and the call chain" "$report" "  called from"
+    expect_contains "report: ... whose first frame is the test" "$report" "tests/test_reports.c:$line"
+    expect_contains "report: ... and whose last is the runner" "$report" "smith_test_execute"
+    expect_lacks "report: ... without smith's own check machinery" "$report" "smith_check "
+    expect_lacks "report: ... or the raw trace" "$report" "smith-trace"
+
+    line=$(line_of tests/test_reports.c 'smith_check_equal_u64(count, expected);')
+    report=$(sym equal_fails)
+    expect_contains "report: a failed check_equal names the line" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: ... and prints both values under the source line, named by their text" "$report" "$line |     smith_check_equal_u64(count, expected);
+            count = 3, expected = 4   (u64)
+  called from"
+
+    line=$(line_of tests/test_reports.c 'assert(moves == 2);')
+    report=$(sym assert_fails)
+    expect_contains "report: an assert names the line" "$report" "  aborted at tests/test_reports.c:$line"
+    expect_contains "report: ... shows it" "$report" "$line |     assert(moves == 2);"
+    expect_contains "report: ... and keeps assert's own message" "$report" "Assertion failed: (moves == 2)"
+    expect_lacks "report: ... without libc's abort path" "$report" "pthread_kill"
+
+    line=$(line_of tests/test_reports.c '*nothing = 7;')
+    report=$(sym segfault)
+    expect_contains "report: a segfault names the line" "$report" "FAIL segfault: killed by SIGSEGV
+  crashed at tests/test_reports.c:$line"
+    expect_contains "report: ... shows it" "$report" "$line |     *nothing = 7;"
+
+    line=$(line_of tests/test_reports.c 'smith_check(value > 0);')
+    caller=$(line_of tests/test_reports.c 'check_positive(-1);')
+    report=$(sym inlined)
+    expect_contains "report: an inlined check names the inlined line" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: ... and the chain has the inlined function" "$report" "check_positive"
+    expect_contains "report: ... and the function it was inlined into" "$report" "tests/test_reports.c:$caller"
+
+    line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
+    report=$(sym macro_fails)
+    expect_contains "report: a macro's failure has the same report" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: ... and its values" "$report" "    2 + 2 = 4   (int)"
+
+    # Objective-C frames and methods.
+    project "$work/objc"
+    sed -e 's|tests/test_\*.c|tests/test_*.m|' -e 's|\.link_flags = .*|.link_flags = smith_list(b, "-framework", "Foundation", nullptr),|' build.c >build.c.new && mv build.c.new build.c
+    cat >tests/test_objc.m <<'M'
+#import <Foundation/Foundation.h>
+
+#include <smith/test.h>
+
+@interface Probe : NSObject
+- (void)requirePositive:(int)value;
+@end
+
+@implementation Probe
+- (void)requirePositive:(int)value {
+    smith_check(value > 0);
+}
+@end
+
+void test_objc_fails(void) {
+    Probe *probe = [[Probe alloc] init];
+    [probe requirePositive:-1];
+}
+M
+    line=$(line_of tests/test_objc.m 'smith_check(value > 0);')
+    capture "$smith" test $iso -DSAN=0
+    expect_contains "objc: a check inside a method names the line" "$out$err" "  check failed at tests/test_objc.m:$line"
+    expect_contains "objc: ... and the method is in the chain" "$out$err" "-[Probe requirePositive:]"
+    expect_contains "objc: ... called from the test" "$out$err" "test_objc_fails"
+
+    cd "$work/reports" || exit 1
+    # The Apple linker, in place of lld: the same debug map.
+    rm -f build/tests
+    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    capture env SMITH_LINKER=/usr/bin/ld "$smith" test $iso -DSAN=0 --test check_fails
+    expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.c:$line"
+    rm -f build/tests
+
+    # A trace saved from a run is symbolized later, given the program.
+    capture "$smith" build -DSAN=0
+    capture sh -c "build/tests $iso --test check_fails --trace >'$work/trace.txt' 2>&1"
+    saved=$("$smith" symbolize "$work/trace.txt")
+    expect_contains "symbolize: a saved trace becomes a report" "$saved" "  check failed at tests/test_reports.c:$line"
+    expect_contains "symbolize: ... from standard input too" "$("$smith" symbolize <"$work/trace.txt")" "called from"
+    cp build/tests "$work/moved_tests"
+    mv build/tests build/tests_gone
+    capture "$smith" symbolize "$work/trace.txt"
+    expect_contains "symbolize: a program that is gone is said so" "$out" "note: cannot read"
+    capture "$smith" symbolize --binary "$work/moved_tests" "$work/trace.txt"
+    expect_contains "symbolize: --binary names it, and its UUID is checked" "$out" "  check failed at tests/test_reports.c:$line"
+    mv build/tests_gone build/tests
+
+    # A source file newer than the program may have changed since: the report says so.
+    sleep 1
+    touch tests/test_reports.c
+    capture sh -c "build/tests $iso --test check_fails --trace 2>&1 | '$smith' symbolize"
+    expect_contains "newer: a source newer than the program is noted" "$out" "note: tests/test_reports.c is newer than the program, so line $line may have changed"
+
+    # A trace of another program: the UUID differs, and no line is made up.
+    printf '\n' >>tests/test_reports.c
+    printf 'void test_extra(void) {\n    smith_check(true);\n}\n' >>tests/test_reports.c
+    capture "$smith" build -DSAN=0
+    capture "$smith" symbolize "$work/trace.txt"
+    expect_contains "symbolize: a program that is not the one that ran is noted" "$out" "is not the program that ran"
+    expect_lacks "symbolize: ... and no line is claimed" "$out" "check failed at tests/"
+
+    # smith as llvm-symbolizer: the sanitizers' protocol.
+    address=$(nm build/tests | awk '$3 == "_test_check_fails" {print $1}')
+    ln -s "$smith" "$work/llvm-symbolizer"
+    capture sh -c "printf 'CODE \"%s:arm64\" 0x%s\n' '$PWD/build/tests' '$address' | '$work/llvm-symbolizer' --demangle --inlines"
+    expect_contains "protocol: a CODE request names the function" "$out" "test_check_fails"
+    expect_contains "protocol: ... and the file, line and column" "$out" "tests/test_reports.c:"
+    capture sh -c "printf '\"%s\" 0x1\n' '/nonexistent' | '$work/llvm-symbolizer'"
+    expect "protocol: an unknown module gives ?? and an empty line" "??
+??:0:0
+" "$out
+"
+fi
+
+# A failed contract is a failure like a failed check: smith_failure gives it the same report, and a SMITH_CHECK_ABORTS
+# still passes on it, as it does on an assert.
+if "$smith" symbolize --available; then
+    project "$work/contracts"
+    {
+        sed -e '/^    SmithTests tests = {/,$d' build.c
+        cat <<'C'
+    SmithObject contract = {.compiler = "smith-cc", .source = smith_library(b, "contract"), .output = "build/smith/contract.o", .flags = flags};
+    smith_object(b, &contract);
+    SmithTests tests = {
+        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+        .objects = (const SmithObject *[]){&arena, &random, &contract, nullptr},
+        .flags = flags,
+        .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
+    };
+    smith_tests(b, &tests);
+    smith_default(b, smith_list(b, "build/tests", nullptr));
+}
+C
+    } >build.c.new && mv build.c.new build.c
+    cat >tests/test_contracts.c <<'C'
+#include <smith/contract.h>
+#include <smith/test.h>
+
+static int halve(int value) {
+    smith_requires(value % 2 == 0);
+    return value / 2;
+}
+
+void test_requires_fails(void) {
+    int odd = 7;
+    (void)halve(odd);
+}
+
+void test_requires_aborts(void) {
+    SMITH_CHECK_ABORTS((void)halve(5));
+}
+
+void test_requires_holds(void) {
+    smith_check_equal_i32(halve(8), 4);
+}
+C
+    capture "$smith" test $iso -DSAN=0
+    line=$(line_of tests/test_contracts.c 'smith_requires(value % 2 == 0);')
+    expect_contains "contract: a failed smith_requires names its line" "$out$err" "  requires failed at tests/test_contracts.c:$line"
+    expect_contains "contract: ... shows the source" "$out$err" "$line |     smith_requires(value % 2 == 0);"
+    caller=$(line_of tests/test_contracts.c '(void)halve(odd);')
+    expect_contains "contract: ... and the call chain, with the caller" "$out$err" "tests/test_contracts.c:$caller"
+    expect_contains "contract: SMITH_CHECK_ABORTS passes on a failed contract, and the true one passes" "$out$err" "2 passed, 1 failed"
+    expect_lacks "contract: ... with no smith_failure frame in the chain" "$out$err" "smith_failure"
+    cd "$work/main" || exit 1
+fi
+
+# A sanitizer's report is symbolized by smith, through the llvm-symbolizer protocol, and AddressSanitizer's own stack is
+# what the failure shows.
+if "$smith" symbolize --available; then
+    project "$work/sanitized"
+    cat >tests/test_overflow.c <<'C'
+#include <smith/test.h>
+
+#include <stdlib.h>
+
+static int read_past(const int *values, int count) {
+    return values[count];
+}
+
+void test_overflow(void) {
+    int *values = malloc(4 * sizeof(int));
+    for (int i = 0; i < 4; i++)
+        values[i] = i;
+    volatile int sum = read_past(values, 4);
+    (void)sum;
+    free(values);
+}
+
+void test_signed_overflow(void) {
+    volatile int big = 2147483647;
+    volatile int more = big + 1;
+    (void)more;
+}
+C
+    line=$(line_of tests/test_overflow.c 'return values[count];')
+    capture "$smith" test $iso --test overflow
+    expect_contains "asan: the report's innermost user frame is named" "$out$err" "in read_past "
+    expect_contains "asan: ... with its line" "$out$err" "tests/test_overflow.c:$line"
+    expect_contains "asan: ... and the caller's" "$out$err" "in test_overflow "
+    expect_lacks "asan: ... with no module offsets, which atos gives without a dSYM" "$out$err" "tests:arm64+0x"
+    line=$(line_of tests/test_overflow.c 'volatile int more = big + 1;')
+    capture "$smith" test $iso --test signed_overflow
+    expect_contains "ubsan: the report names the line" "$out$err" "tests/test_overflow.c:$line"
+fi
+cd "$work/main" || exit 1
+
+# 11. The libraries compile clean under the flags `smith new` writes, in both C standards, and under the extra
 # warnings game and learner add, since every project compiles them with its own flags.
 flags=$(awk '/build_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/templates/new/build.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
 flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 -Wmissing-variable-declarations -Wcomma -Wunreachable-code"
 for standard in gnu2y gnu23; do
-    for library in test random arena; do
+    for library in test random arena trace; do
         # shellcheck disable=SC2086
-        capture /opt/homebrew/opt/llvm/bin/clang -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
+        capture "$smith" cc -std=$standard $flags -I "$repo/include" -c "$repo/lib/$library.c" -o "$work/$library.o"
         expect "flags: lib/$library.c compiles clean under $standard with the template's warnings" 0 "$rc"
         [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
     done

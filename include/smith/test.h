@@ -5,8 +5,8 @@
 //
 // There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
 // `void test_<name>(SmithKey key) {` by name, and the library's main runs them, in parallel, with failures printed with
-// both values and their types. `smith build test` runs them; the options are -DTEST=<substring>, -DSEED=<n>,
-// -DSEEDS=<n>, -DJOBS=<n>, -DSHRINK=0|1, -DSHUFFLE=<seed>, -DISOLATE and -DFULL (docs/build-c.md).
+// both values and their types. `smith test` runs them; its arguments are the runner's options: --test <substring>,
+// --seed <n>, --seeds <n>, --jobs <n>, --shrink 0|1, --shuffle <seed>, --isolate and --full (docs/build-c.md).
 //
 // The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
 // process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
@@ -14,8 +14,8 @@
 // check unwinds out of arbitrary code and can leave state half-done), a test that ran a SMITH_CHECK_ABORTS (a death
 // check stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
 // worker, so a worker is reused only after a clean pass with no death check. Which tests share a worker depends on
-// timing, unless there is one job. A test must not depend on another: -DSHUFFLE=<seed> runs the tests in a shuffled
-// order to find one that does (with -DJOBS=1 the order, and so the failure, replays from the seed), and -DISOLATE=1
+// timing, unless there is one job. A test must not depend on another: --shuffle <seed> runs the tests in a shuffled
+// order to find one that does (with --jobs 1 the order, and so the failure, replays from the seed), and --isolate
 // gives every test a process of its own, which is also what to use under a debugger that cannot follow a fork.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
@@ -27,11 +27,29 @@
 // ("timed out after 2.0 s"). The runner clears the timer when a test ends.
 //
 // A test whose heavy checks have a full size reads smith_test_full(): false by default, true when the run was asked
-// for it (`smith build test -DFULL`, the runner's --full). The test picks its size from it and checks the same
-// properties either way; the default run keeps `smith build test` fast, and -DFULL is the slow pass.
+// for it (`smith test --full`). The test picks its size from it and checks the same
+// properties either way; the default run keeps `smith test` fast, and --full is the slow pass.
 //
-// The checks are macros because only a macro can capture an expression's text, its file and its line, and evaluate an
-// expression where the check can catch its end.
+// The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
+// call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
+// into files, lines and source text, so a check needs no macro to capture its text or its place. `smith test`
+// prints the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
+//
+//   smith_check(condition)                 fails the test when the condition is false
+//   smith_check_equal_<type>(a, b)         a == b; both values print with their type. <type> is bool, char, i8 i16 i32
+//                                          i64, u8 u16 u32 u64, f32, f64 or ptr (as <math.h> names sinf and sin)
+//   smith_check_near_f32(a, b, tolerance)  |a - b| <= tolerance; a NaN fails; equal infinities pass. Also _f64
+//   smith_check_same_bits_f32(a, b)        a and b have the same bits: -0 is not 0, and a NaN is itself. Also _f64
+//   SMITH_CHECK_ABORTS(statement)          see below
+//
+// The SMITH_CHECK macros that follow are the old spelling. They keep working, and print what they always printed (the
+// check's file, line, source text and values) when the runner is run by hand, but they are deprecated: new tests call
+// the functions. (No compiler warning marks them, since they are used about 3,500 times under -Werror.)
+//
+// SMITH_CHECK_ABORTS stays a macro, because it is control flow, not text. The statement must run under a sigsetjmp that
+// is still on the stack when the statement aborts, and C has no closure to hand it to a function: the function form
+// would need a body function and a context struct at every use, more noise than the macro hides. (`.smith`, which has
+// closures, can make it a function.) It no longer needs to capture the text: the report reads the line from the stack.
 //
 //   SMITH_CHECK(condition)            a bool, or anything that converts to one
 //   SMITH_CHECK(a, op, b)             op is ==, !=, <, <=, > or >=; each argument is evaluated once, and both values
@@ -64,6 +82,7 @@
 
 #include "arena.h"
 #include "random.h"
+#include "trace.h"
 
 // A test. The generated tests_list.c holds one row per test in the build's test files: `plain` for
 // `test_<name>(void)`, `property` for `test_<name>(SmithKey key)`.
@@ -86,8 +105,29 @@ extern const size_t smith_test_count;
 // key, so a test never frees. Running out stops the test with a message.
 [[nodiscard]] SmithArena smith_test_arena(size_t capacity);
 
-// Whether this run asked for the heavy checks at full size (-DFULL, the runner's --full). False by default.
+// Whether this run asked for the heavy checks at full size (--full). False by default.
 [[nodiscard]] bool smith_test_full(void);
+
+// The plain-function checks. A failed one ends the test, like the macros.
+void smith_check(bool condition);
+
+void smith_check_equal_bool(bool a, bool b);
+void smith_check_equal_char(char a, char b);
+void smith_check_equal_i8(int8_t a, int8_t b);
+void smith_check_equal_i16(int16_t a, int16_t b);
+void smith_check_equal_i32(int32_t a, int32_t b);
+void smith_check_equal_i64(int64_t a, int64_t b);
+void smith_check_equal_u8(uint8_t a, uint8_t b);
+void smith_check_equal_u16(uint16_t a, uint16_t b);
+void smith_check_equal_u32(uint32_t a, uint32_t b);
+void smith_check_equal_u64(uint64_t a, uint64_t b);
+void smith_check_equal_f32(float a, float b);
+void smith_check_equal_f64(double a, double b);
+void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
+void smith_check_near_f32(float a, float b, float tolerance);
+void smith_check_near_f64(double a, double b, double tolerance);
+void smith_check_same_bits_f32(float a, float b);
+void smith_check_same_bits_f64(double a, double b);
 
 #define SMITH_CHECK(...) \
     SMITH_TEST_SELECT(__VA_ARGS__, SMITH_TEST_COMPARE, SMITH_TEST_TWO_ARGUMENTS, SMITH_TEST_CONDITION, ~)(__VA_ARGS__)

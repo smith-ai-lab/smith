@@ -1,15 +1,16 @@
 // smith: a drop-in compiler driver.
 //
-// Milestone 0 is a pure passthrough. It picks a backend by the kind of input, then runs that compiler on the arguments,
-// untouched:
+// smith's top level is verbs (smith_verbs, below). `smith cc <args>` and `smith c++ <args>`, and the links `smith-cc`
+// and `smith-c++` that act as them by their name, are a pure passthrough: they pick a backend by the kind of input,
+// then run that compiler on the arguments, untouched:
 //   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set, which smith
 //     replaces itself with;
 //   - anything else goes to upstream LLVM's clang. A smith built with SMITH_IN_PROCESS has clang linked in
 //     (shim/clang.cpp) and runs clang's own main on the arguments, in its own process, unless $SMITH_CLANG names an
 //     external clang to run instead. The stage0, built by one `cc` command, has no clang in it: it replaces itself with
 //     an external one, $SMITH_CLANG if set, else Homebrew's llvm (/opt/homebrew/opt/llvm/bin/clang), else the first
-//     clang on PATH that is not smith itself. Invoked as `smith++` it uses clang++ ($SMITH_CLANGXX). On macOS it also
-//     picks the SDK through the environment, never a flag: see smith_sdk_environment.
+//     clang on PATH that is not smith itself. `smith c++`, and the link `smith-c++`, use clang++ ($SMITH_CLANGXX). On
+//     macOS it also picks the SDK through the environment, never a flag: see smith_sdk_environment.
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
@@ -61,6 +62,15 @@ int smith_lld_main(int argc, char **argv);
 int smith_format_main(int argc, char **argv);
 int smith_tidy_main(int argc, char **argv);
 int smith_clangd_main(int argc, char **argv);
+#ifdef SMITH_LLDB
+constexpr bool smith_has_lldb = true;
+// shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
+// smith built against an LLVM install without lldb (scripts/llvm.sh, the lldb step) runs an external lldb instead.
+int smith_lldb_main(int argc, char **argv);
+int smith_lldb_dap_main(int argc, char **argv);
+#else
+constexpr bool smith_has_lldb = false;
+#endif
 #endif
 
 #ifdef __APPLE__
@@ -587,7 +597,7 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary - 32);
     smith_remove_tree(temporary);
     smith_make_folders(temporary, true);
-    static const char *const names[] = {"clang", "clang++", "ld"};
+    static const char *const names[] = {"clang", "clang++", "ld", "lldb-argdumper"};
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/bin", temporary);
     if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
@@ -646,6 +656,27 @@ static bool smith_has_linker_override(void) {
     return override != nullptr && *override != '\0';
 }
 
+// smith run as `lldb-argdumper` (a fourth link in the programs folder): lldb runs it through the shell to expand the
+// arguments of a program it starts, and reads back {"arguments": [...]}, as LLVM's lldb-argdumper prints it.
+static int smith_argdumper(int argc, char **argv) {
+    fputs("{\"arguments\":[", stdout);
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) putchar(',');
+        putchar('"');
+        for (const char *c = argv[i]; *c != '\0'; c++) {
+            if (*c == '"' || *c == '\\') putchar('\\');
+            if ((unsigned char)*c < 0x20) {
+                printf("\\u%04x", (unsigned)*c);
+            } else {
+                putchar(*c);
+            }
+        }
+        putchar('"');
+    }
+    fputs("]}", stdout);
+    return 0;
+}
+
 static int smith_route_linker(int argc, char **argv) {
     const char *override = getenv("SMITH_LINKER");
     if (smith_has_linker_override()) {
@@ -685,9 +716,8 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 }
 #endif
 
-static int smith_route_clang(int argc, char **argv, int first, bool which, const char *self) {
+static int smith_route_clang(int argc, char **argv, int first, bool which, bool plus, const char *self) {
     SMITH_ASSERT(first >= 1 && argc >= first);
-    bool plus = smith_ends_with(smith_base_name(argv[0]), "++");
     const char *tool = plus ? "clang++" : "clang";
 #ifdef SMITH_IN_PROCESS
     if (smith_runs_in_process(plus ? "SMITH_CLANGXX" : "SMITH_CLANG")) {
@@ -708,8 +738,8 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, const
     return smith_exit_missing;
 }
 
-// smith prove: the prover (Alive2 and Z3) is linked into a smith built against an LLVM install that has one beside it
-// (build.c); any other smith says so.
+// smith prove: the prover (Alive2, Bitwuzla and Z3) is linked into every full smith, which `smith build llvm` makes
+// possible (build.c); only the stage0 says it has none.
 static int smith_prove(int argc, char **argv, const char *self) {
 #if defined(SMITH_PROVE) && defined(SMITH_IN_PROCESS)
     char folder[PATH_MAX];
@@ -730,8 +760,8 @@ static int smith_prove(int argc, char **argv, const char *self) {
     (void)argc;
     (void)argv;
     (void)self;
-    smith_die(smith_exit_usage, "this smith has no prover; build it against an LLVM that has Alive2 and Z3 beside it",
-              "smith build -DLLVM=<such an install>");
+    smith_die(smith_exit_usage, "this smith is the stage0, which has no prover; the full smith has it",
+              "smith build llvm, then smith build");
 #endif
 }
 
@@ -818,6 +848,13 @@ static const unsigned char smith_test_source[] = {
 #embed "lib/test.c"
 };
 
+static const unsigned char smith_trace_header[] = {
+#embed "include/smith/trace.h"
+};
+static const unsigned char smith_trace_source[] = {
+#embed "lib/trace.c"
+};
+
 typedef struct {
     const char *name;
     const unsigned char *header;
@@ -835,8 +872,11 @@ static const SmithLibrary smith_libraries[] = {
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
     {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
+    {"trace", smith_trace_header, sizeof smith_trace_header, smith_trace_source, sizeof smith_trace_source},
 };
 
+// `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
+#include "runtime/symbolize.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
@@ -913,10 +953,14 @@ static void smith_quote_word(char *out, size_t capacity, const char *word) {
     out[used] = '\0';
 }
 
-// The manifest that compiles build.c into .smith/program with the clang `smith` would pick.
-static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang) {
-    char quoted[PATH_MAX * 2];
-    smith_quote_word(quoted, sizeof quoted, clang);
+// The manifest that compiles build.c into .smith/program with the clang `smith` would pick. When that is smith itself
+// (in_process) the program is `<smith> cc`, since smith's top level is verbs.
+static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang, bool in_process) {
+    char word[PATH_MAX * 2];
+    char quoted[PATH_MAX * 2 + 4];
+    smith_quote_word(word, sizeof word, clang);
+    int made = snprintf(quoted, sizeof quoted, "%s%s", word, in_process ? " cc" : "");
+    SMITH_ASSERT(made > 0 && (size_t)made < sizeof quoted);
     int written =
         snprintf(out, capacity,
                  "# Written by smith build. It compiles build.c into .smith/program.\n"
@@ -1004,7 +1048,7 @@ static void smith_build_write_libraries(void) {
     }
 }
 
-static void smith_build_prepare(const char *clang) {
+static void smith_build_prepare(const char *clang, bool in_process) {
     smith_make_folder(".smith");
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
@@ -1012,7 +1056,7 @@ static void smith_build_prepare(const char *clang) {
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/bootstrap");
     static char manifest[smith_build_manifest_max];
-    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang);
+    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang, in_process);
     // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);
@@ -1028,16 +1072,18 @@ static void smith_build_prepare(const char *clang) {
     smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
 }
 
-// What compiles and links build.c: an external clang, found as for any compile, or smith itself when clang is in it.
-static void smith_build_compiler(const char *self, char *out) {
+// What compiles and links build.c: an external clang, found as for any compile, or smith itself when clang is in it
+// (then true, and the commands are `smith cc ...`).
+static bool smith_build_compiler(const char *self, char *out) {
 #ifdef SMITH_IN_PROCESS
     if (smith_runs_in_process("SMITH_CLANG")) {
         int written = snprintf(out, PATH_MAX, "%s", self);
         SMITH_ASSERT(written > 0 && written < PATH_MAX); // self came from a PATH_MAX buffer
-        return;
+        return true;
     }
 #endif
     smith_find_clang("clang", "SMITH_CLANG", self, out);
+    return false;
 }
 
 // The flags of ninja that `smith build` takes, for the executor: -j, -k, -n, -v, --quiet and -t. -l, -d and -w are read
@@ -1122,10 +1168,26 @@ static int smith_build_with_ninja(char *ninja, char **ninja_argv, char **program
     return smith_exit_missing;
 }
 
-static int smith_build_main(int count, char **args, const char *self) {
+static bool smith_is_project_verb(const char *name);
+
+// `smith build run` is `smith run`: a project verb is a verb, so it has one way to be run. Anything after -t is the
+// tool's own arguments.
+static void smith_build_refuse_verbs(int count, char **args) {
+    for (int i = 0; i < count; i++) { // bounded by count, which smith_build_main limits
+        if (strcmp(args[i], "-t") == 0) return;
+        if (args[i][0] == '-' || !smith_is_project_verb(args[i])) continue;
+        fprintf(stderr, "smith: %s is a verb, not a target of smith build; run `smith %s`\n", args[i], args[i]);
+        exit(smith_exit_usage);
+    }
+}
+
+// verb is nullptr for `smith build`, and the project verb that runs this build (smith_project_main) otherwise.
+static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
+    if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
     smith_cache_hold();
+    setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
     const char *forced = getenv("SMITH_NINJA");
     bool use_ninja = forced != nullptr && *forced != '\0';
     char ninja[PATH_MAX] = "";
@@ -1143,13 +1205,14 @@ static int smith_build_main(int count, char **args, const char *self) {
     smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
     SmithExecOptions options =
         smith_build_options((int)(ninja_used - smith_build_ninja_prefix), ninja_argv + smith_build_ninja_prefix);
+    options.verb = verb;
 
     char clang[PATH_MAX];
-    smith_build_compiler(self, clang);
+    bool in_process = smith_build_compiler(self, clang);
 #ifdef __APPLE__
     smith_sdk_environment(self); // the compiles inherit it, as do the programs build.c runs
 #endif
-    smith_build_prepare(clang);
+    smith_build_prepare(clang, in_process);
     if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
     SmithIo io = smith_io_make(0, nullptr);
     SmithExecOptions bootstrap = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
@@ -1474,14 +1537,15 @@ static int smith_new_main(int count, char **args, const char *self) {
     }
     printf("\nNext:\n");
     if (count == 1) printf("  cd %s\n", name);
-    printf("  smith build run\n");
+    printf("  smith run\n");
     return 0;
 }
 
-// `smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, with the arguments unchanged, so
-// a project's .clang-format and .clang-tidy apply as they do to the tools alone. They are recognised only as the exact
-// first argument. A smith with clang inside runs the tool's own main in this process, from the same LLVM as the
-// compiler; the stage0, and a caller who sets the tool's variable, run an external tool instead.
+// `smith fmt`, `smith lint`, `smith lsp`, `smith dbg` and `smith dap` are clang-format, clang-tidy, clangd, lldb and
+// lldb-dap, with the arguments unchanged, so a project's .clang-format and .clang-tidy apply as they do to the tools
+// alone. They are recognised only as the exact first argument. A smith with clang inside runs the tool's own main in
+// this process, from the same LLVM as the compiler; the stage0, and a caller who sets the tool's variable, run an
+// external tool instead.
 typedef struct {
     const char *command;  // smith's name for it
     const char *tool;     // the LLVM program
@@ -1492,6 +1556,8 @@ static const SmithTool smith_tools[] = {
     {"fmt", "clang-format", "SMITH_CLANG_FORMAT"},
     {"lint", "clang-tidy", "SMITH_CLANG_TIDY"},
     {"lsp", "clangd", "SMITH_CLANGD"},
+    {"dbg", "lldb", "SMITH_LLDB"},
+    {"dap", "lldb-dap", "SMITH_LLDB_DAP"},
 };
 
 static const SmithTool *smith_find_tool(const char *command) {
@@ -1500,6 +1566,32 @@ static const SmithTool *smith_find_tool(const char *command) {
     }
     return nullptr;
 }
+
+#ifdef __APPLE__
+// lldb starts the system's debugserver (LLDB_USE_SYSTEM_DEBUGSERVER): the one of the developer directory, else Xcode's,
+// else the Command Line Tools'. The caller's LLDB_DEBUGSERVER_PATH wins. It is the one Apple signs with the debugger
+// entitlements, which a debugserver made here could not have.
+static void smith_debugserver_environment(void) {
+    if (getenv("LLDB_DEBUGSERVER_PATH") != nullptr) return;
+    static const char tail[] = "LLDB.framework/Resources/debugserver";
+    const char *developer = getenv("DEVELOPER_DIR");
+    char path[PATH_MAX];
+    for (int i = 0; i < 3; i++) {
+        int written = 0;
+        if (i == 0 && developer != nullptr)
+            written = snprintf(path, sizeof path, "%s/../SharedFrameworks/%s", developer, tail);
+        if (i == 1) written = snprintf(path, sizeof path, "/Applications/Xcode.app/Contents/SharedFrameworks/%s", tail);
+        if (i == 2)
+            written =
+                snprintf(path, sizeof path, "/Library/Developer/CommandLineTools/Library/PrivateFrameworks/%s", tail);
+        SMITH_ASSERT(written >= 0 && (size_t)written < sizeof path);
+        if (written > 0 && access(path, X_OK) == 0) {
+            setenv("LLDB_DEBUGSERVER_PATH", path, 0);
+            return;
+        }
+    }
+}
+#endif
 
 #ifdef SMITH_IN_PROCESS
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -1512,9 +1604,19 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_programs_folder leaves room for it
     smith_resource_ensure(folder, programs, self);
     argv[0] = program; // the tool is told its own path in that folder, as the clang is
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) {
+        char argdumper[PATH_MAX];
+        written = snprintf(argdumper, sizeof argdumper, "%s/bin/lldb-argdumper", programs);
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof argdumper);
+        setenv("LLDB_ARGDUMPER_PATH", argdumper, 0); // lldb expands a program's arguments through it
+    }
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv);
     if (strcmp(tool->command, "fmt") == 0) return smith_format_main(argc, argv);
     if (strcmp(tool->command, "lint") == 0) return smith_tidy_main(argc, argv);
+#ifdef SMITH_LLDB
+    if (strcmp(tool->command, "dbg") == 0) return smith_lldb_main(argc, argv);
+    if (strcmp(tool->command, "dap") == 0) return smith_lldb_dap_main(argc, argv);
+#endif
     return smith_clangd_main(argc, argv);
 }
 #endif
@@ -1525,10 +1627,13 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
 #ifdef __APPLE__
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
 #endif
 #ifdef SMITH_IN_PROCESS
     const char *override = getenv(tool->override);
-    if (override == nullptr || *override == '\0') return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+    bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
+    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb))
+        return smith_tool_in_process(tool, argc - 1, argv + 1, self);
 #endif
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);
@@ -1537,33 +1642,72 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     return smith_exit_missing;
 }
 
-int main(int argc, char **argv) {
-    SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
-    if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
-        puts("smith 0.0 (milestone 0: a routing passthrough)");
-        return 0;
+// smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
+// kinds, a case in smith_dispatch. A verb whose row says Project, ProjectBare or ToolOrProject runs the target of its
+// name from the project's build.c (smith_project_main), and `smith build <name>` is refused for it.
+typedef enum {
+    SmithVerb_Cc,    // the compiler for C, Objective-C and Metal, with clang's arguments
+    SmithVerb_Cxx,   // the same for C++
+    SmithVerb_Build, // the project's build.c
+    SmithVerb_New,
+    SmithVerb_Fetch,
+    SmithVerb_Cache,
+    SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
+    SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
+    SmithVerb_ToolOrProject, // the tool (or smith_prove) with arguments, the project's target of the name with none
+    SmithVerb_Project,       // the project's target of the name; the arguments are the target's (smith_args)
+    SmithVerb_ProjectBare,   // the same, with no arguments
+    SmithVerb_Later,         // not available yet: says so and names the issue
+} SmithVerbKind;
+
+typedef struct {
+    const char *name;
+    SmithVerbKind kind;
+    const char *later; // for SmithVerb_Later, what it waits for
+} SmithVerb;
+
+static const SmithVerb smith_verbs[] = {
+    {"cc", SmithVerb_Cc, nullptr},
+    {"c++", SmithVerb_Cxx, nullptr},
+    {"build", SmithVerb_Build, nullptr},
+    {"new", SmithVerb_New, nullptr},
+    {"fetch", SmithVerb_Fetch, nullptr},
+    {"cache", SmithVerb_Cache, nullptr},
+    {"symbolize", SmithVerb_Symbolize, nullptr},
+    {"fmt", SmithVerb_ToolOrProject, nullptr},
+    {"lint", SmithVerb_ToolOrProject, nullptr},
+    {"lsp", SmithVerb_Tool, nullptr},
+    {"run", SmithVerb_Project, nullptr},
+    {"test", SmithVerb_Project, nullptr},
+    {"check", SmithVerb_ProjectBare, nullptr},
+    {"prove", SmithVerb_ToolOrProject, nullptr},
+    {"dbg", SmithVerb_Tool, nullptr},
+    {"dap", SmithVerb_Tool, nullptr},
+};
+
+static const SmithVerb *smith_find_verb(const char *name) {
+    for (size_t i = 0; i < sizeof smith_verbs / sizeof smith_verbs[0]; i++) {
+        if (strcmp(name, smith_verbs[i].name) == 0) return &smith_verbs[i];
     }
-    bool which = argc >= 2 && strcmp(argv[1], "--smith-which") == 0;
-    int first = which ? 2 : 1;
+    return nullptr;
+}
+
+// A name the project's build.c defines a target for, so `smith build <name>` is refused in favour of the verb.
+static bool smith_is_project_verb(const char *name) {
+    const SmithVerb *verb = smith_find_verb(name);
+    return verb != nullptr && (verb->kind == SmithVerb_Project || verb->kind == SmithVerb_ProjectBare ||
+                               verb->kind == SmithVerb_ToolOrProject || verb->kind == SmithVerb_Later);
+}
+
+// The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
+// their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it.
+static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
+    SMITH_ASSERT(at >= 0 && at < argc);
+    int first = at + 1;
+    bool which = first < argc && strcmp(argv[first], "--smith-which") == 0;
+    if (which) first++;
     int count = argc - first;
     char **args = argv + first;
-
-    char self[PATH_MAX];
-    if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
-
-#ifdef SMITH_IN_PROCESS
-    if (strcmp(smith_base_name(argv[0]), "ld") == 0) return smith_route_linker(argc, argv);
-#endif
-    if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
-    if (argc >= 2 && strcmp(argv[1], "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
-    const SmithTool *tool = argc >= 2 ? smith_find_tool(argv[1]) : nullptr;
-    if (tool != nullptr) return smith_tool_main(tool, argc, argv, self);
-    if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
-    if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
-    if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
-    if (argc >= 2 && strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
-    if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
-
     switch (smith_classify(count, args)) {
     case SmithRoute_Mixed:
         smith_die(
@@ -1573,7 +1717,174 @@ int main(int argc, char **argv) {
     case SmithRoute_Metal:
         return smith_route_metal(count, args, which, self);
     case SmithRoute_Clang:
-        return smith_route_clang(argc, argv, first, which, self);
+        return smith_route_clang(argc, argv, first, which, plus, self);
     }
     return smith_exit_missing;
+}
+
+// The project verbs: run, test and check, and fmt and lint with no arguments. Each builds the target of its name, which
+// the project's build.c defines, and runs it (docs/build-c.md). Arguments that start with -D are the build's options,
+// as for `smith build`; the rest are the verb's own: the program's for run, the test runner's for test. They reach
+// build.c as one option, -DSMITH_ARGS (each argument after a ";", see smith_encode_argument), which smith_args reads;
+// `--` ends the -D options, so that a program can take one.
+constexpr size_t smith_verb_args_max = 16384;
+
+// Appends ";" and the argument to the text of -DSMITH_ARGS, with "%", ";" and newline as %25, %3B and %0A, so that no
+// character of an argument is a separator or a newline (build.c's regeneration rule holds every -D option as a command
+// word, and a command word holds none). smith_args in the runtime decodes it. Returns the new length.
+static size_t smith_encode_argument(char *out, size_t capacity, size_t used, const char *arg) {
+    SMITH_ASSERT(used < capacity);
+    if (used + 2 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
+    out[used++] = ';';
+    for (const char *c = arg; *c != '\0'; c++) { // bounded by the argument
+        const char *piece = *c == '%' ? "%25" : *c == ';' ? "%3B" : *c == '\n' ? "%0A" : nullptr;
+        size_t length = piece != nullptr ? 3 : 1;
+        if (used + length + 1 > capacity) smith_die(smith_exit_usage, "the arguments are too long", arg);
+        if (piece != nullptr)
+            memcpy(out + used, piece, length);
+        else
+            out[used] = *c;
+        used += length;
+    }
+    out[used] = '\0';
+    return used;
+}
+
+static int smith_project_main(const SmithVerb *verb, int count, char **args, const char *self) {
+    SMITH_ASSERT(count >= 0 && verb != nullptr);
+    if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
+    static char *build_args[smith_build_args_max + 2];
+    static char joined[smith_verb_args_max] = "-DSMITH_ARGS=";
+    constexpr size_t prefix = sizeof "-DSMITH_ARGS=" - 1;
+    size_t used = 0;
+    size_t joined_used = prefix;
+    bool options_end = false;
+    for (int i = 0; i < count; i++) { // bounded by count, which is checked above
+        const char *arg = args[i];
+        if (!options_end && strcmp(arg, "--") == 0) {
+            options_end = true;
+        } else if (!options_end && strncmp(arg, "-D", 2) == 0) {
+            build_args[used++] = args[i];
+        } else {
+            if (verb->kind == SmithVerb_ProjectBare) {
+                smith_die(smith_exit_usage, "takes no arguments but -D options", verb->name);
+            }
+            joined_used = smith_encode_argument(joined, sizeof joined, joined_used, arg);
+        }
+    }
+    joined[joined_used] = '\0';
+    if (joined_used > prefix) build_args[used++] = joined;
+    build_args[used++] = (char *)verb->name;
+    return smith_build_main((int)used, build_args, self, verb->name);
+}
+
+// The hook for a verb that has not arrived: prove (issue #8) says so until their row changes kind.
+static int smith_later_main(const SmithVerb *verb) {
+    fprintf(stderr, "smith: %s is not available yet (%s)\n", verb->name, verb->later);
+    return smith_exit_usage;
+}
+
+// Whether every argument is a -D option of the build, which neither clang-format nor clang-tidy has (none is true).
+static bool smith_only_options(int count, char **args) {
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strncmp(args[i], "-D", 2) != 0) return false;
+    }
+    return true;
+}
+
+static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
+    switch (verb->kind) {
+    case SmithVerb_Cc:
+        return smith_compile_main(argc, argv, 1, false, self);
+    case SmithVerb_Cxx:
+        return smith_compile_main(argc, argv, 1, true, self);
+    case SmithVerb_Build:
+        return smith_build_main(argc - 2, argv + 2, self, nullptr);
+    case SmithVerb_New:
+        return smith_new_main(argc - 2, argv + 2, self);
+    case SmithVerb_Fetch:
+        return smith_fetch_main(argc - 2, argv + 2);
+    case SmithVerb_Cache:
+        return smith_cache_main(argc - 2, argv + 2);
+    case SmithVerb_Tool:
+        return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
+    case SmithVerb_Symbolize:
+        return smith_symbolize_main(argc - 2, argv + 2);
+    case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
+        if (!smith_only_options(argc - 2, argv + 2)) {
+            if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
+            return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
+        }
+        return smith_project_main(verb, argc - 2, argv + 2, self);
+    case SmithVerb_Project:
+    case SmithVerb_ProjectBare:
+        return smith_project_main(verb, argc - 2, argv + 2, self);
+    case SmithVerb_Later:
+        return smith_later_main(verb);
+    }
+    return smith_exit_missing;
+}
+
+static void smith_usage(FILE *out) {
+    fputs("usage: smith <command> [<arguments>]\n"
+          "  cc, c++                 compile and link as clang does (the links smith-cc and smith-c++ do the same)\n"
+          "  build [<target>]        build the project from its build.c\n"
+          "  run, test, check        run the project's program, its tests, or all its checks\n"
+          "  fmt, lint               with no arguments, format or lint the project; with arguments, clang-format and\n"
+          "                          clang-tidy\n"
+          "  lsp                     clangd\n"
+          "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
+          "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n",
+          out);
+}
+
+// `smith foo.c -o foo` has no meaning: the top level is only verbs. The compiler is `smith cc`.
+[[noreturn]] static void smith_bare_arguments(int argc, char **argv) {
+    char line[4096];
+    size_t used = 0;
+    line[0] = '\0';
+    for (int i = 1; i < argc; i++) { // bounded by argc
+        int written = snprintf(line + used, sizeof line - used, " %s", argv[i]);
+        if (written < 0 || (size_t)written >= sizeof line - used) break; // a hint, so a long command is cut short
+        used += (size_t)written;
+    }
+    fprintf(stderr, "smith: %s is not a smith command; to compile, run `smith cc%s`\n", argv[1], line);
+    exit(smith_exit_usage);
+}
+
+int main(int argc, char **argv) {
+    SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
+    if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
+        puts("smith 0.0 (milestone 0: a routing passthrough)");
+        return 0;
+    }
+    char self[PATH_MAX];
+    if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
+
+    const char *name = smith_base_name(argv[0]);
+#ifdef SMITH_IN_PROCESS
+    if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
+    if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
+#endif
+    // The links act as the verbs by their name, for what needs one program path: CC=smith-cc, CMake,
+    // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs
+    // again with -cc1.
+    if (strcmp(name, "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
+    if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0)
+        return smith_compile_main(argc, argv, 0, false, self);
+    if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
+        return smith_compile_main(argc, argv, 0, true, self);
+    if (argc < 2) {
+        smith_usage(stderr);
+        return smith_exit_usage;
+    }
+    if (strcmp(argv[1], "--help") == 0) {
+        smith_usage(stdout);
+        return 0;
+    }
+    if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
+    if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
+    const SmithVerb *verb = smith_find_verb(argv[1]);
+    if (verb == nullptr) smith_bare_arguments(argc, argv);
+    return smith_dispatch(verb, argc, argv, self);
 }

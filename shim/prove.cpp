@@ -10,6 +10,9 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -253,7 +256,18 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 
 } // namespace
 
+// Z3's static initializers, which scripts/prove-libs.sh moved out of the section dyld runs at load (there are ten
+// thousand, and every smith process would pay for them) into __DATA,__smith_prove. `smith prove` is the one command
+// that needs them.
+static void run_deferred_initializers() {
+    unsigned long size = 0;
+    auto *table = reinterpret_cast<void (**)()>(getsectiondata(&_mh_execute_header, "__DATA", "__smith_prove", &size));
+    for (size_t i = 0; table != nullptr && i < size / sizeof(void (*)()); i++)
+        table[i]();
+}
+
 extern "C" int smith_prove_main(const char *program, const char *resource, int argc, char **argv) {
+    run_deferred_initializers();
     Clock::time_point start = Clock::now();
     std::setvbuf(stdout, nullptr, _IOLBF, 0); // each result as soon as it is known
     Arguments arguments = parse(argc, argv);

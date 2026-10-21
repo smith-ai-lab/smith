@@ -534,12 +534,48 @@ const char *smith_option_value(SmithBuild *b, const char *name, const char *fall
     return declared->value;
 }
 
+// The arguments `smith run` and `smith test` were given, which smith passes as the one option SMITH_ARGS: each argument
+// after a ";", with "%", ";" and newline as %25, %3B and %0A (smith_encode_argument in smith.c). A list, empty for
+// none.
+const char *const *smith_args(SmithBuild *b) {
+    SMITH_ASSERT(b != nullptr);
+    const char *text = smith_option_value(b, "SMITH_ARGS", "", "the arguments of smith run and smith test");
+    size_t count = 0;
+    for (const char *c = text; *c != '\0'; c++)
+        count += *c == ';' ? 1 : 0;
+    const char **list = smith_new_list(count);
+    for (size_t i = 0; i < count; i++) {
+        text++; // the ";"
+        size_t length = strcspn(text, ";");
+        char *argument = smith_alloc(length + 1);
+        size_t used = 0;
+        for (size_t k = 0; k < length; k++) {
+            if (text[k] == '%' && k + 2 < length) {
+                argument[used++] = (char)strtol(smith_text("%.2s", text + k + 1), nullptr, 16);
+                k += 2;
+            } else {
+                argument[used++] = text[k];
+            }
+        }
+        argument[used] = '\0';
+        list[i] = argument;
+        text += length;
+    }
+    return list;
+}
+
 static void smith_check_given(void) {
     for (size_t i = 0; i < smith_given_count; i++) {
         bool known = false;
         for (size_t j = 0; j < smith_declared_count; j++)
             known = known || strcmp(smith_declared[j].name, smith_given[i].name) == 0;
         if (known) continue;
+        if (strcmp(smith_given[i].name, "SMITH_ARGS") == 0) {
+            fputs("smith: build.c: this verb was given arguments, but build.c does not read them; "
+                  "smith_args(b) gives them to a task\n",
+                  stderr);
+            exit(smith_exit_usage);
+        }
         fprintf(stderr, "smith: build.c: unknown option -D%s\n", smith_given[i].name);
         fputs(smith_declared_count > 0 ? "declared options:\n" : "build.c declares no options\n", stderr);
         for (size_t j = 0; j < smith_declared_count; j++) {
@@ -1134,8 +1170,8 @@ static SmithCommandRow smith_command_rows[smith_objects_max];
 static size_t smith_command_row_count;
 
 // The flags `smith build` compiles build.c with; smith.c's bootstrap manifest holds the same words (a test compares).
-static const char *const smith_build_c_words[] = {"smith", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
-                                                  "-I",    ".smith/include", "-c", "build.c", nullptr};
+static const char *const smith_build_c_words[] = {"smith-cc", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
+                                                  "-I",       ".smith/include", "-c", "build.c", nullptr};
 
 // Clang modules (smith_modules): a module map per header folder, one module per header, and the flags that use them.
 
@@ -1294,6 +1330,15 @@ static void smith_require_text(const char *call, const char *field, const char *
     if (value == nullptr || *value == '\0') smith_fail("%s: .%s is required", call, field);
 }
 
+// The program that compiles or links: smith is a set of verbs, so it is smith-cc or smith-c++, the links that act as
+// `smith cc` and `smith c++`.
+static void smith_require_program(const char *call, const char *field, const char *value) {
+    smith_require_text(call, field, value);
+    if (strcmp(value, "smith") == 0) {
+        smith_fail("%s: .%s is \"smith\", which is not a compiler; use \"smith-cc\" or \"smith-c++\"", call, field);
+    }
+}
+
 static SmithObjectRow *smith_find_row(const SmithObject *address, const char *output) {
     for (size_t i = 0; i < smith_object_row_count; i++) {
         SmithObjectRow *row = &smith_object_rows[i];
@@ -1304,7 +1349,7 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
 
 void smith_object(SmithBuild *b, SmithObject *object) {
     SMITH_ASSERT(b != nullptr && object != nullptr);
-    smith_require_text("smith_object", "compiler", object->compiler);
+    smith_require_program("smith_object", "compiler", object->compiler);
     smith_require_text("smith_object", "source", object->source);
     smith_require_text("smith_object", "output", object->output);
     SmithObject copy = *object;
@@ -1358,7 +1403,7 @@ static const char *const *smith_library_files(const char *const *libraries) {
 
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
-    smith_require_text("smith_program", "linker", program->linker);
+    smith_require_program("smith_program", "linker", program->linker);
     smith_require_text("smith_program", "output", program->output);
     if (program->objects == nullptr || program->objects[0] == nullptr)
         smith_fail("smith_program: .objects is empty; give it objects passed to smith_object");
@@ -1569,11 +1614,7 @@ static int smith_tests_scan(SmithRun *run) {
     return 0;
 }
 
-// The task: runs the runner with the options it was given, its output going to the terminal. .args is the program and
-// its arguments.
-static int smith_tests_run(SmithRun *run) {
-    return smith_run_program(run, run->args, nullptr);
-}
+static int smith_tests_run(SmithRun *run);
 
 static bool smith_tests_links(const SmithTests *tests, const char *source) {
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++) { // bounded by the list
@@ -1617,27 +1658,11 @@ static SmithObject *smith_tests_object(SmithBuild *b, const SmithTests *tests, c
     return object;
 }
 
-// The options turned into the runner's, in the order the runner documents.
+// The runner and, after it, the arguments `smith test` was given: the runner's own options (--test, --seed, --seeds,
+// --jobs, --shrink, --shuffle, --full, --isolate and the others its header documents).
 static const char *const *smith_tests_arguments(SmithBuild *b, const char *runner) {
-    static const char *const names[][2] = {{"TEST", "--test"}, {"SEED", "--seed"},     {"SEEDS", "--seeds"},
-                                           {"JOBS", "--jobs"}, {"SHRINK", "--shrink"}, {"SHUFFLE", "--shuffle"}};
-    static const char *const descriptions[] = {"run the tests whose name contains this",
-                                               "run each property test on this one seed",
-                                               "keys per property test (100)",
-                                               "tests running at once (the cores)",
-                                               "0 shows an unshrunk failure, 1 shrinks it",
-                                               "run the tests in an order drawn from this seed"};
     const char *program = strchr(runner, '/') != nullptr ? runner : smith_text("./%s", runner);
-    const char *const *arguments = smith_list(b, program, nullptr);
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-        const char *value = smith_option_value(b, names[i][0], nullptr, descriptions[i]);
-        if (value != nullptr) arguments = smith_cat(b, arguments, smith_list(b, names[i][1], value, nullptr), nullptr);
-    }
-    if (smith_option(b, "FULL", "run the heavy checks at full size"))
-        arguments = smith_cat(b, arguments, smith_list(b, "--full", nullptr), nullptr);
-    if (smith_option(b, "ISOLATE", "run each test in a process of its own, as before the workers"))
-        arguments = smith_cat(b, arguments, smith_list(b, "--isolate", nullptr), nullptr);
-    return arguments;
+    return smith_cat(b, smith_list(b, program, nullptr), smith_args(b), nullptr);
 }
 
 void smith_tests(SmithBuild *b, SmithTests *tests) {
@@ -1648,7 +1673,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     copy.flags = smith_copy_list(tests->flags);
     copy.link_flags = smith_copy_list(tests->link_flags);
     copy.inputs = smith_copy_list(tests->inputs);
-    copy.compiler = smith_copy_string(tests->compiler != nullptr ? tests->compiler : "smith");
+    copy.compiler = smith_copy_string(tests->compiler != nullptr ? tests->compiler : "smith-cc");
     copy.output = smith_copy_string(tests->output != nullptr ? tests->output : "build/tests");
     const char *name = tests->name != nullptr ? tests->name : "test";
     const char *slash = strrchr(copy.output, '/');
@@ -1666,13 +1691,15 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 2 + smith_count((const char *const *)tests->objects));
+    const char **objects = smith_new_list(count + 3 + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
                                                            smith_list(b, list_header, nullptr));
     objects[used++] = (const char *)smith_tests_object(b, &copy, list_table, copy.flags, nullptr);
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
+    if (!smith_tests_links(tests, ".smith/lib/trace.c")) // a project that links the trace library itself is not doubled
+        objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "trace"), copy.flags, nullptr);
     for (size_t i = 0; tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];
     SmithProgram program = {
@@ -1858,6 +1885,84 @@ int smith_run_program(SmithRun *run, const char *const *argv, const char *const 
     if (posix_spawnp(&pid, argv[0], nullptr, nullptr, (char *const *)argv, envp) != 0) return smith_exit_not_started;
     int status = smith_wait(argv[0], pid);
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+// The task of smith_tests: runs the runner with the options it was given. .args is the program and its arguments.
+//
+// A failure is a stack of addresses (<smith/trace.h>), and smith turns them into the failing line and the call chain,
+// so the runner's output goes through `smith symbolize` on its way to the terminal, and the runner is asked for its
+// traces
+// (--trace). That needs the full smith, which links LLVM's symbolizer: the stage0 runs the runner as it always did.
+// AddressSanitizer and UBSan symbolize their reports by starting a program named llvm-symbolizer, which here is smith.
+
+static bool smith_tests_can_symbolize(SmithRun *run, const char *self) {
+    const char *argv[] = {self, "symbolize", "--available", nullptr};
+    return smith_run_status(run, argv, nullptr) == 0;
+}
+
+// .smith/bin/llvm-symbolizer, a link to smith, which smith runs under that name as the symbolizer protocol's server.
+static const char *smith_tests_symbolizer_link(SmithRun *run, const char *self) {
+    char folder[PATH_MAX];
+    if (getcwd(folder, sizeof folder) == nullptr) smith_fail("smith_tests: cannot find the current folder");
+    const char *path = smith_fmt(run->b, "%s/.smith/bin/llvm-symbolizer", folder);
+    smith_make_parents(path);
+    unlink(path);
+    if (symlink(self, path) != 0) smith_fail("smith_tests: cannot make %s", path);
+    return path;
+}
+
+static const char *const *smith_tests_environment(SmithRun *run, const char *self) {
+    const char *link = smith_tests_symbolizer_link(run, self);
+    const char *const *environment = smith_list(run->b, nullptr);
+    static const char *const names[] = {"ASAN_SYMBOLIZER_PATH", "UBSAN_SYMBOLIZER_PATH"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (getenv(names[i]) != nullptr) continue; // the project's own choice stands
+        const char *entry = smith_fmt(run->b, "%s=%s", names[i], link);
+        environment = smith_cat(run->b, environment, smith_list(run->b, entry, nullptr), nullptr);
+    }
+    return environment;
+}
+
+static int smith_tests_exit_code(int status) {
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+static int smith_tests_run(SmithRun *run) {
+    smith_context = nullptr;
+    const char *self = getenv("SMITH_SELF");
+    if (self == nullptr || !smith_tests_can_symbolize(run, self)) return smith_run_program(run, run->args, nullptr);
+    const char *const *runner = smith_cat(run->b, run->args, smith_list(run->b, "--trace", nullptr), nullptr);
+    if (isatty(STDOUT_FILENO) != 0) runner = smith_cat(run->b, runner, smith_list(run->b, "--color", nullptr), nullptr);
+    const char *const filter[] = {self, "symbolize", nullptr};
+    int ends[2];
+    if (pipe(ends) != 0) smith_fail("smith_tests: cannot make a pipe");
+    posix_spawn_file_actions_t into_pipe;
+    posix_spawn_file_actions_t from_pipe;
+    posix_spawn_file_actions_init(&into_pipe);
+    posix_spawn_file_actions_init(&from_pipe);
+    posix_spawn_file_actions_adddup2(&into_pipe, ends[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&into_pipe, ends[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&into_pipe, ends[0]);
+    posix_spawn_file_actions_addclose(&into_pipe, ends[1]);
+    posix_spawn_file_actions_adddup2(&from_pipe, ends[0], STDIN_FILENO);
+    posix_spawn_file_actions_addclose(&from_pipe, ends[0]);
+    posix_spawn_file_actions_addclose(&from_pipe, ends[1]);
+    fflush(stdout);
+    fflush(stderr);
+    pid_t symbolizer = 0;
+    pid_t program = 0;
+    int started = posix_spawn(&symbolizer, self, &from_pipe, nullptr, (char *const *)filter, environ);
+    if (started == 0)
+        started = posix_spawnp(&program, runner[0], &into_pipe, nullptr, (char *const *)runner,
+                               smith_merge_environment(smith_tests_environment(run, self)));
+    close(ends[0]);
+    close(ends[1]);
+    posix_spawn_file_actions_destroy(&into_pipe);
+    posix_spawn_file_actions_destroy(&from_pipe);
+    if (started != 0) return smith_exit_not_started;
+    int status = smith_wait(runner[0], program);
+    (void)smith_wait(self, symbolizer);
+    return smith_tests_exit_code(status);
 }
 
 // What a .run step read, for its depfile. ninja's reader takes a space as '\ ', '#' as '\#' and '$' as '$$'.

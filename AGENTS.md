@@ -48,11 +48,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   with** (linked into smith; the stage0 runs Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`,
   `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
-  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules. lldb stays Apple's, since
-  LLVM's would be a second install to keep in step.
+  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
+- **`smith dbg` and `smith dap` are lldb and lldb-dap, from the same LLVM** (linked in; the stage0 runs `$SMITH_LLDB`
+  and `$SMITH_LLDB_DAP`), with the system's debugserver (Apple signs it), no Python and no curses
+  ([docs/debugging.md](docs/debugging.md); the skill is smith-debug). They add about 17 MB to smith and, because the
+  frameworks lldb needs load with it, about 9 ms to the start of every smith process.
 - **smith never changes a default, so adopting it is trivial and each step is optional.**
-  1. **Use the smith command instead of clang.** For C, C++ and Objective-C it is a pure passthrough: smith never adds,
-     removes or reorders flags, so the build cannot change.
+  1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
+     C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot
+     change.
   2. **Replace the Makefile with a `build.c`.** It only describes the build, explicitly and across platforms, so it
      changes nothing either.
   3. **Run `smith new`.** It writes an explicit, opinionated starting point (C2y with `-std=gnu2y`, for `_Countof`;
@@ -60,7 +64,21 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
      `.clang-tidy`, `.claude/settings.json` enabling the smith plugin, git on `main`, a first build), all in files the
      project owns. smith's skills are not copied: they ship in the smith plugin. There is no house-style mechanism,
      only those files; a project that never runs `smith new` gets none of it.
-- **`smith++` is smith under another name**, as clang++ is to clang. Compiling is identical; linking C++ needs it.
+- **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
+  `build`, `new`, `fetch`, `cache`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
+  foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. For what needs one
+  program path (`CC=` in a Makefile, CMake's `CMAKE_C_COMPILER`, the first word of a `compile_commands.json` command,
+  which clangd reads as a compiler), `smith build install` also installs `smith-cc` and `smith-c++`, links to smith that
+  act as `smith cc` and `smith c++` by their name, as `smith++` did. `smith++` is gone. The program a `build.c` names as
+  a compiler is `smith-cc` or `smith-c++`; `"smith"` is refused with that hint.
+- **A project verb runs the task or alias of its name in the project's `build.c`**: `smith run`, `smith test`,
+  `smith check`, and `smith fmt` and `smith lint` with no arguments (with arguments they are clang-format and
+  clang-tidy). There is no second list of what a project is: the build file defines the targets, as it defines
+  everything, and `smith_tests` already names `test`. `smith run` and `smith test` give their arguments (not their `-D`
+  options) to the task through `smith_args(b)`: the program's for `run`, the test runner's own options for `test`
+  (`--test`, `--seed`, `--jobs`, `--full`, ...). `smith prove` is the prover with arguments and the project's `prove` task with none;
+  `smith dbg` comes with issue #7 and says so until then (a row of the verb table in `smith.c`). The verbs are not targets of `smith build`: `smith build test`
+  is refused with a pointer to `smith test`, so each thing has one way.
 - **smith compiles in its own process**, by running clang's own `clang_main` on the arguments (`shim/clang.cpp`), so
   every flag, diagnostic, exit status, signal and crash report is clang's, and so are pipes. `SMITH_CLANG` runs an
   external clang instead, `execv`ed with its full path as `argv[0]` (gcc finds its files from it), as `.metal` runs
@@ -71,7 +89,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   (`lib/smith-clang.id` of the install, compiled into smith, printed by `--smith-which`), or for `SMITH_CLANG` that
   clang's file. So a smith rebuilt with the same LLVM rebuilds nothing, and a rebuilt LLVM or another clang rebuilds all.
 - **smith's own code is C23 (`-std=gnu23`), libc only, no malloc**: it allocates nothing itself. The LLVM linked into
-  it is C++ and does, and `shim/clang.cpp`, a thin C interface to it, is the only C++ in smith.
+  it is C++ and does, and the files in `shim/` (`clang.cpp`, `lld.cpp`, `symbolize.cpp`), thin C interfaces to it, are
+  the only C++ in smith.
+- **A failure's report is read from its call stack, so checks and contracts are plain functions.** The program walks its
+  stack by frame pointers and writes the addresses with each image's UUID and slide (`<smith/trace.h>`); it holds no
+  symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
+  the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
+  40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
+  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; `SMITH_CHECK_ABORTS` stays a macro.
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
@@ -83,14 +108,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
-- **`smith prove` checks LLVM IR with Alive2 and Z3, linked into a smith built against an LLVM that has them beside it.** Contracts are
-  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. Alive2 needs LLVM built with RTTI and
-  exceptions, so `smith build llvm-prove` makes a second install (`~/.cache/smith/llvm/23.1.3-prove`, the shared one is
-  untouched), `smith build prove-libs` builds Z3 5.3.1 and Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) static
-  beside it, and `smith build -DLLVM=<that install>` links the prover; the compiler's output is byte-identical with and without
-  RTTI and exceptions (only the install path in debug info differs). Each function is proved in a process of its own. Bitwuzla
-  0.9.1 (static, built by `smith build prove-libs` with Meson; it links Homebrew's GMP and MPFR) decides the queries on every
-  core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
+- **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
+  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
+  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the token hook (#11); the compiler's
+  output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
+  llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
+  and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
+  (`scripts/prove-libs.sh`, `scripts/bitwuzla.sh`). Only the stage0 has no prover. Each function is proved in a process of
+  its own. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
   with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
   smith-contract.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
@@ -113,15 +138,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 ## Commands
 
 - smith builds itself with its own `build.c`, so the installed smith must have `smith build`. `smith build` builds
-  `build/<OS>-<arch>/smith` and the `smith++` link: with the LLVM install of `smith build llvm` (or `-DLLVM=`) it links
-  clang in and compiles in its own process, else it builds the stage0, which runs an external clang. `smith build test`
-  runs the routing tests against stub compilers, then the `smith build` tests with a real clang;
+  `build/<OS>-<arch>/smith` and the `smith-cc` and `smith-c++` links: with the LLVM install of `smith build llvm` (or
+  `-DLLVM=`) it links clang in and compiles in its own process, else it builds the stage0, which runs an external
+  clang. `smith test` runs the routing tests against stub compilers (each through `smith cc` and through `smith-cc`),
+  then the `smith build` tests with a real clang;
   `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
-- `smith build check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
+- `smith check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
   same configs as game, build.c included), then runs the
-  `test` and `compare` targets; it must pass before a change is done. `smith build format` rewrites the sources.
-- `smith build install` runs the tests, then copies smith and the `smith++` link to `$PREFIX/bin` (`-DPREFIX=`,
+  `test` and `compare` targets; it must pass before a change is done. `smith fmt` (no arguments) rewrites the sources,
+  and `smith lint` runs clang-tidy over them.
+- `smith build install` runs the tests, then copies smith and the `smith-cc` and `smith-c++` links to `$PREFIX/bin`
+  (and removes an old `smith++` there) (`-DPREFIX=`,
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
   smith's included. The way back needs only a C23 compiler and a clang for build.c, and is also the first build of a
   fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc` builds
@@ -130,10 +158,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
-  `~/.cache/smith/llvm/23.1.3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
+  `~/.cache/smith/llvm/23.1.3-r2/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
   install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+- `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
+  input) into the failing line and the call chain; it needs the full smith.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
@@ -153,13 +183,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
   on `<cache>/smith/lock`). Tests: `tests/cache.sh`, with caches of their own. See [docs/build-c.md](docs/build-c.md).
 - `SMITH_CLANG`, `SMITH_CLANGXX` (an external clang, instead of the one inside smith) and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
-  `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA=<ninja>` makes `smith build` run its
+  `smith cc --smith-which <args>` (or `smith-cc --smith-which <args>`) prints the choice without running it. `SMITH_NINJA=<ninja>` makes `smith build` run its
   manifest with that ninja instead of smith's own executor.
 
 ## How to work
 
 - Load the [smith-development skill](.agents/skills/smith-development/SKILL.md) for any change to smith itself.
-- Load the [smith skill](.agents/skills/smith/SKILL.md) when using smith. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
+- Load the [smith skill](.agents/skills/smith/SKILL.md), the map, when using smith; it names the small skills for the compiler ([smith-cc](.agents/skills/smith-cc/SKILL.md)), `run` and `test` ([smith-run-test](.agents/skills/smith-run-test/SKILL.md)) and `check`, `fmt`, `lint` and `lsp` ([smith-check](.agents/skills/smith-check/SKILL.md)). They ship in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
@@ -174,7 +204,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 ## checkers (`~/Documents/checkers`)
 
 A small checkers game, men only, kept small enough to reason about and to prove correct. Its tests found these bugs,
-which are fixed at their source (checkers' history up to 2d6bbfa still has them, as cases for `smith build prove`):
+which are fixed at their source (checkers' history up to 2d6bbfa still has them, as cases for `smith prove`):
 - `get_user_move` tested `from_char <= 'H'` twice and never `to_char`, so column I read `cells[row][8]`.
 - At end of input `get_user_move` looped forever: `scanf` returned `EOF` and nothing ended the loop.
 - `get_valid_diagonals` and `get_valid_jumps` missed legal moves (`else if`; `col > 1`, `row > 1`, `col > 2` off by

@@ -36,7 +36,7 @@ smith writes the header and the source into `.smith/` on every `smith build`. Th
 
 ```c
 SmithObject arena = {
-    .compiler = "smith",
+    .compiler = "smith-cc",
     .source = smith_library(b, "arena"),
     .output = "build/smith/arena.o",
     .flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr),

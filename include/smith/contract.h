@@ -31,8 +31,10 @@
 //   void smith_contract_requires(bool condition);
 //   void smith_contract_ensures(bool condition);
 //   void smith_contract_invariant(bool condition);
-// A failed check prints which contract failed and calls abort(). Where and what come from the stack trace and the
-// source line, not from the library.
+// A failed check is smith_failure(kind) (<smith/trace.h>): it records the stack and writes `smith-trace begin requires
+// failed` and the frames to standard error, then calls abort(); in a test it fails the test with the same report as a
+// failed check, the failing line and the call chain. Where and what come from the stack and the source line, not from
+// the library, which links with the trace library (smith_library(b, "trace")).
 #pragma once
 
 // What SMITH_CONTRACT_FOR records: the name of the function pointer type and the spec function, as `smith prove` reads

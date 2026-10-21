@@ -58,6 +58,9 @@ void smith_pool(SmithBuild *b, const char *name, int depth);
 bool smith_option(SmithBuild *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 const char *smith_option_value(SmithBuild *b, const char *name, const char *fallback, const char *description);
+// the arguments `smith run` and `smith test` were given (not their -D options): a list, empty for none. A task passes
+// them on, as smith_tests does to the test runner
+const char *const *smith_args(SmithBuild *b);
 // an environment variable, or fallback (may be nullptr)
 const char *smith_env(SmithBuild *b, const char *name, const char *fallback);
 // the union of the patterns' matches, sorted by strcmp, each name once: make's $(sort $(wildcard a b c)).
@@ -81,8 +84,8 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test",
-// "text"; random and io use the arena (io uses random too), so a project that compiles one compiles them all;
-// smith_tests compiles "test").
+// "text", "trace"; random and io use the arena (io uses random too), so a project that compiles one compiles them all;
+// smith_tests compiles "test" and "trace"; "contract" needs "trace").
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
@@ -177,7 +180,7 @@ int smith_run_program(SmithRun *run, const char *const *argv, const char *const 
 //   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
 // with that .d file as the step's depfile.
 typedef struct {
-    const char *compiler;               // the program, such as "smith" or "smith++"; required
+    const char *compiler;               // the program, such as "smith-cc" or "smith-c++"; required
     const char *source;                 // required
     const char *output;                 // the object, such as "build/main.o"; required
     const char *const *flags;           // exactly these, in this order
@@ -189,7 +192,7 @@ typedef struct {
 // Objects linked into a program:
 //   <linker> <flags...> <each object's output...> <libraries...> -o <output>
 typedef struct {
-    const char *linker;                // the program, such as "smith" or "smith++"; required
+    const char *linker;                // the program, such as "smith-cc" or "smith-c++"; required
     const char *output;                // the program file; required
     const char *const *flags;          // before the objects, such as -mmacosx-version-min=26.0
     const SmithObject *const *objects; // the objects to link, each already passed to smith_object
@@ -226,7 +229,7 @@ typedef struct {
 void smith_modules(SmithBuild *b, const SmithModules *modules);
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 typedef struct {
-    const char *compiler;       // compiles and links the tests, by default "smith"
+    const char *compiler;       // compiles and links the tests, by default "smith-cc"
     const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them
     const SmithObject *const *objects; // the code under test, linked in; it must include smith's arena and random
     const char *const *flags;          // for the test files and smith's test library
@@ -250,11 +253,10 @@ typedef struct {
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
 //     The objects are in <output>_objects/. .objects must include smith's arena and random, which are not compiled a
 //     second time; the call fails and says which smith_library to add when one is missing.
-//   the task <name> (a .run task, on the console): runs <output> with the options -DTEST (--test), -DSEED (--seed),
-//     -DSEEDS (--seeds), -DJOBS (--jobs), -DSHRINK (--shrink), -DSHUFFLE (--shuffle) and the booleans -DFULL (--full)
-//     and -DISOLATE (--isolate), each read with smith_option_value or smith_option, so a project that reads the same
-//     name gets the same value. .inputs are the task's inputs after the runner, so they are built before the tests
-//     run and a change to one reruns them.
+//   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
+//     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
+//     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
+//     the runner, so they are built before the tests run and a change to one reruns them.
 void smith_tests(SmithBuild *b, SmithTests *tests);
 // Writes compile_commands.json at path when build.c runs, only when its bytes change, from every smith_object so far,
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it

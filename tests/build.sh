@@ -1476,7 +1476,7 @@ cat >expected.json <<JSON
     "directory": "$here_dir",
     "file": "build.c",
     "arguments": [
-      "smith",
+      "smith-cc",
       "-std=gnu23",
       "-g",
       "-O0",
@@ -1521,9 +1521,9 @@ expect "compile_commands.json: a changed flag changes it" yes "$changed"
 # the build.c entry compiles build.c with exactly these arguments
 args=$(sed -n '/"file": "build.c"/,/^    \]/p' compile_commands.json | sed -n 's/^      "\(.*\)",\{0,1\}$/\1/p' | tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')
 # shellcheck disable=SC2086
-capture /opt/homebrew/opt/llvm/bin/clang $args -fsyntax-only build.c
+capture "$smith" cc $args -fsyntax-only build.c
 expect "build.c entry: clang -fsyntax-only with its arguments succeeds" "0 " "$rc $err"
-bootstrap_flags=$(sed -n 's/.*command = [^ ]* \(-std=gnu23.*-I \.smith\/include\) -MMD.*/\1/p' .smith/bootstrap/build.ninja | head -n 1)
+bootstrap_flags=$(sed -n 's/.*command = [^ ]* \(cc \)\{0,1\}\(-std=gnu23.*-I \.smith\/include\) -MMD.*/\2/p' .smith/bootstrap/build.ninja | head -n 1)
 entry_flags=$(echo $args)
 expect "build.c entry: its flags are the bootstrap's" "$bootstrap_flags" "$entry_flags"
 cd "$copy_project" || exit 1
@@ -1641,7 +1641,7 @@ cat >expected.json <<JSON
     "directory": "$here_dir",
     "file": "build.c",
     "arguments": [
-      "smith",
+      "smith-cc",
       "-std=gnu23",
       "-g",
       "-O0",
@@ -2744,12 +2744,12 @@ SH
     chmod +x "bin/$name"
 done
 mkdir smith-bin
-cp "$smith" smith-bin/smith
+cp "$smith" smith-bin/smith-cc
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    SmithObject a = {.compiler = "smith-bin/smith", .source = "a.c", .output = "build/a.o"};
+    SmithObject a = {.compiler = "smith-bin/smith-cc", .source = "a.c", .output = "build/a.o"};
     smith_object(b, &a);
     smith_default(b, a.step.outputs);
 }
@@ -2777,8 +2777,8 @@ expect_contains "smith upgrade: the first build compiles the object" "$out" "a.c
 expect "smith upgrade: with the real compiler" 0 "$rc"
 build
 expect_contains "smith upgrade: the second build does nothing" "$out" "no work to do"
-cp "$smith" smith-bin/smith.new
-mv smith-bin/smith.new smith-bin/smith
+cp "$smith" smith-bin/smith-cc.new
+mv smith-bin/smith-cc.new smith-bin/smith-cc
 build
 expect_contains "smith upgrade: a replaced smith with the same clang rebuilds nothing" "$out" "no work to do"
 capture env SMITH_CLANG="$(pwd)/bin/w3" "$smith" build

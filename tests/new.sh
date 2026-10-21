@@ -8,7 +8,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin" "$work/home"
-ln -s "$smith" "$work/bin/smith" # the generated build.c names `smith` as its compiler
+ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" # the generated build.c names smith-cc as its compiler
 PATH=$work/bin:$PATH
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
@@ -51,6 +51,8 @@ expect_contains() { # name, text, needle
         ;;
     esac
 }
+
+lines() { printf '%s\n' "$@"; }
 
 has() { case $1 in *"$2"*) echo yes ;; *) echo no ;; esac; } # text, needle
 
@@ -106,10 +108,10 @@ expect "new hello: git tracks exactly the written files" \
     "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new hello: the tree is clean after the commit" "" "$(git -C hello status --porcelain)"
 expect "new hello: the first build made the debug program" yes "$(exists hello/build/debug/hello)"
-expect "new hello: the summary names the next step" yes "$(has "$new_out" "smith build run")"
+expect "new hello: the summary names the next step" yes "$(has "$new_out" "smith run")"
 cd hello || exit 1
-capture smith build run
-expect "new hello: smith build run prints the greeting" "hello from hello" "$(echo "$out" | tail -n 1)"
+capture smith run
+expect "new hello: smith run prints the greeting" "hello from hello" "$(echo "$out" | tail -n 1)"
 capture smith build release
 expect "new hello: smith build release exits 0" 0 "$rc"
 capture smith build fast
@@ -142,8 +144,47 @@ for mode in debug release fast; do
     expect "new hello: $mode compiles with -std=gnu2y" yes "$(has "$command" "-std=gnu2y")"
     expect "new hello: $mode does not use gnu23" no "$(has "$command" "-std=gnu23")"
 done
-expect "new hello: the build.c header lists release" yes "$(has "$(head -n 6 build.c)" "smith build release")"
-expect "new hello: the build.c header lists fast" yes "$(has "$(head -n 6 build.c)" "smith build fast")"
+expect "new hello: the build.c header lists release" yes "$(has "$(head -n 12 build.c)" "smith build release")"
+expect "new hello: the build.c header lists fast" yes "$(has "$(head -n 12 build.c)" "smith build fast")"
+
+# The verbs run the tasks of their names. run takes arguments for the program, test finds no tests, check is the checks.
+cp main.c main.c.orig
+cat >main.c <<'C'
+#include <stdio.h>
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++)
+        puts(argv[i]);
+    return 0;
+}
+C
+capture smith run a "b c" 'x;y' '5%' -- -Dkeep
+expect "new hello: smith run passes its arguments to the program, -D after --" "$(lines a 'b c' 'x;y' '5%' -Dkeep)" \
+    "$(printf '%s\n' "$out" | grep -v '^\[')"
+capture smith run
+expect "new hello: smith run with none passes none" "" "$(printf '%s\n' "$out" | grep -v '^\[' | tr -d '\n')"
+cp main.c.orig main.c
+capture smith test
+expect_contains "new hello: smith test says the project has no tests" "$err" "build.c defines no task or alias named test"
+expect "new hello: ... and fails" 1 "$rc"
+capture smith check x
+expect_contains "new hello: smith check takes no arguments" "$err" "takes no arguments"
+capture smith build check
+expect_contains "new hello: smith build check is refused for the verb" "$err" "check is a verb, not a target of smith build; run \`smith check\`"
+capture smith check
+expect "new hello: smith check passes on the new project" 0 "$rc"
+printf 'int   misformatted;\n' >>main.c
+capture smith check
+expect_contains "new hello: smith check fails on a misformatted file" "$out$err" "misformatted"
+expect "new hello: ... with a nonzero status" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+capture smith fmt
+expect "new hello: smith fmt rewrites the sources" 0 "$rc"
+expect_contains "new hello: ... to the project's style" "$(tail -n 1 main.c)" "int misformatted;"
+cp main.c.orig main.c
+rm main.c.orig
+capture smith lint
+expect "new hello: smith lint runs clang-tidy on the new project" 0 "$rc"
+capture smith build # the log of the last build is the plain build's again
 
 # The generated project passes the tools with the configs smith new wrote.
 if "$smith" fmt --version >/dev/null 2>&1 && "$smith" lint --version >/dev/null 2>&1; then
@@ -179,10 +220,10 @@ cd "$work" || exit 1
 # 1c. smith's libraries build under the template's flags (gnu2y, every warning an error) in all three modes and run.
 mkdir libs && cp hello/main.c libs/main.c.orig
 cat >libs/insert.txt <<'C'
-    SmithObject arena = {.compiler = "smith", .source = smith_library(b, "arena"),
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"),
                          .output = smith_fmt(b, "build/%s/arena.o", variant), .flags = include_flags};
     smith_object(b, &arena);
-    SmithObject random = {.compiler = "smith", .source = smith_library(b, "random"),
+    SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"),
                           .output = smith_fmt(b, "build/%s/random.o", variant), .flags = include_flags};
     smith_object(b, &random);
 C

@@ -38,14 +38,14 @@ for (uint8_t square = 0; square < squares; square++) {
 
 ## At run time
 
-- A failed contract prints which contract failed (`smith: smith_requires failed`) and calls `abort()`, at every optimization level. Where and what come from the stack trace and the source line.
+- A failed contract is `smith_failure(kind)` (`<smith/trace.h>`): it writes `smith-trace begin requires failed` and the stack to standard error and calls `abort()`, at every optimization level; link the trace library (`smith_library(b, "trace")`; `smith_tests` does it itself). In a test it prints the report of a failed check (the failing line and the call chain), and `smith symbolize` turns a saved log into it. Where and what come from the stack and the source line.
 - The three are `static inline` functions marked `always_inline`, with an empty body under `NDEBUG`. Otherwise each is one call of an external function of the library, `smith_contract_requires`, `smith_contract_ensures` or `smith_contract_invariant`, which the optimizer cannot see into. That call stays in the IR at `-O0` and optimized, and it is how `smith prove` finds the contracts without a flag.
 
 ## Get the library in build.c
 
 ```c
 SmithObject contract = {
-    .compiler = "smith",
+    .compiler = "smith-cc",
     .source = smith_library(b, "contract"),
     .output = "build/smith/contract.o",
     .flags = smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr),
@@ -57,7 +57,7 @@ Add `-I .smith/include` to the project's own compiles and put `contract` in the 
 
 ## Prove them: `smith prove <files> [-- <compile flags>]`
 
-Only a smith linked against the prover has it (`smith build llvm-prove`, `smith build prove-libs` (needs `brew install gmp mpfr`), then `smith build -DLLVM=~/.cache/smith/llvm/23.1.3-prove/install`); any other says so and exits 2. It is recognised only as the exact first argument.
+Every full smith has it (`smith build llvm` builds the prover with LLVM); only the stage0, built by `cc` alone, says it has none and exits 2. It is recognised only as the exact first argument.
 
 ```sh
 smith prove main.c util.c -- -I .smith/include -DDEBUG

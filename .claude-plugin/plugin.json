@@ -13,10 +13,14 @@
     "build",
     "clang",
     "lsp",
-    "proofs"
+    "proofs",
+    "debugger"
   ],
   "skills": [
     "./.agents/skills/smith/",
+    "./.agents/skills/smith-cc/",
+    "./.agents/skills/smith-check/",
+    "./.agents/skills/smith-run-test/",
     "./.agents/skills/smith-build/",
     "./.agents/skills/smith-arena/",
     "./.agents/skills/smith-contract/",
@@ -24,6 +28,7 @@
     "./.agents/skills/smith-io/",
     "./.agents/skills/smith-test/",
     "./.agents/skills/smith-text/",
+    "./.agents/skills/smith-debug/",
     "./.agents/skills/smith-json/"
   ],
   "lspServers": {
