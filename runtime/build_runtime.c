@@ -374,7 +374,6 @@ static const SmithEntry *smith_find_output(const char *const *outputs, const cha
 void smith_step(SmithBuild *b, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_name_step(step);
-    if (step->test) smith_fail(".test is for a task: `smith test` runs tasks; use smith_task");
     smith_check_step(step);
     SmithStep copy = smith_copy_step(step);
     bool stamp = smith_count(copy.outputs) == 0 || copy.stamp != nullptr;
@@ -1926,8 +1925,11 @@ static const char *const *smith_needed_files(SmithBuild *b) {
 static const char *const *smith_test_tasks(SmithBuild *b) {
     const char *const *tasks = smith_list(b, nullptr);
     for (size_t i = 0; i < smith_entry_count; i++) {
-        if (smith_entries[i].kind == SmithEntryKind_Task && smith_entries[i].step.test)
+        if (!smith_entries[i].step.test) continue;
+        if (smith_entries[i].kind == SmithEntryKind_Task)
             tasks = smith_cat(b, tasks, smith_one(smith_entries[i].name), nullptr);
+        else if (smith_entries[i].kind == SmithEntryKind_Step) // a step is built, so it is incremental
+            tasks = smith_cat(b, tasks, smith_entries[i].step.outputs, nullptr);
     }
     return tasks;
 }
