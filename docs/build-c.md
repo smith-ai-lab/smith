@@ -1095,7 +1095,8 @@ Rules:
 - A list ends in `nullptr`, and a list is never itself `nullptr`. An empty list is `(const char *[]){nullptr}`;
   `smith_glob` and `smith_when` return one when there is nothing. A loop starts from one:
   `objects = smith_cat(b, objects, cc.outputs, nullptr)`. The `nullptr` that ends `smith_cat`'s arguments is the only
-  one.
+  one: it cannot tell a `nullptr` list from the end, so a `nullptr` first list is an error, and one in the middle drops the
+  lists behind it.
 - A compound literal lives only until the end of its block. Every smith call copies what it is given, so a literal
   passed straight to a call is safe, and what a call returns lives until the build ends. A literal returned from a
   function, or stored in a struct that outlives its block, dangles: the game port's raw translation crashed on one, and

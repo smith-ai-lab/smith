@@ -996,6 +996,14 @@ const char *smith_fmt(SmithBuild *b, const char *format, ...) {
 
 const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     SMITH_ASSERT(b != nullptr);
+    // nullptr ends the arguments, so a nullptr in first place cannot be told from an empty list, and the lists after it
+    // would be dropped without a word (a list that starts from an unset `selected`): it is an error, not an empty list.
+    if (first == nullptr) {
+        smith_context = nullptr;
+        smith_fail(
+            "smith_cat: the first list is nullptr, and nullptr ends the arguments, so the lists after it would be "
+            "dropped; an empty list is (const char *[]){nullptr}");
+    }
     static const char *const *lists[smith_cat_lists_max];
     size_t lists_count = 0;
     va_list args;

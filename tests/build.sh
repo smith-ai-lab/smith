@@ -2959,6 +2959,33 @@ expect_status "modules: the top-level --smith-lower is gone" fail
 capture "$smith" cc --smith-lower src/lib/text.smith
 expect_contains "modules: smith cc --smith-lower prints the lowering" "$out" "lib_text_make"
 
+# 13z. smith_cat: a nullptr first list would end the arguments and drop the other lists, so it is an error that says so.
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *selected = nullptr;
+    const char *const *joined = smith_cat(b, selected, (const char *[]){"--function=x", nullptr}, nullptr);
+    smith_write(b, "joined.txt", smith_join(b, joined, " "));
+}
+C
+build
+expect_status "smith_cat: a nullptr first list fails" fail
+expect_contains "smith_cat: ... as a build.c error that says why" "$err" "smith: build.c: smith_cat: the first list is nullptr"
+expect_contains "smith_cat: ... and what to write instead" "$err" "(const char *[]){nullptr}"
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *selected = (const char *[]){nullptr};
+    const char *const *joined = smith_cat(b, selected, (const char *[]){"--function=x", nullptr}, nullptr);
+    smith_write(b, "joined.txt", smith_join(b, joined, " "));
+}
+C
+build
+expect "smith_cat: an empty first list keeps the others" "--function=x" "$(cat joined.txt 2>/dev/null)"
+
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build
