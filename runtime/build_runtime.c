@@ -1728,12 +1728,18 @@ static void smith_json_entry(FILE *out, const char *directory, const char *file,
         smith_json_string(out, output);
     }
     fputs(",\n    \"arguments\": [\n", out);
+    bool has_standard = false; // the caller's own -std wins, as it does for `smith cc`
+    for (size_t i = 0; arguments[i] != nullptr; i++) // bounded by smith_copy_list
+        has_standard = has_standard || strncmp(arguments[i], "-std=", 5) == 0 || strncmp(arguments[i], "--std=", 6) == 0;
     for (size_t i = 0; arguments[i] != nullptr; i++) { // bounded by smith_copy_list
         fputs(i > 0 ? ",\n      " : "      ", out);
         smith_json_string(out, arguments[i]);
         // `smith cc` reads a .smith file as C by itself; an editor's clangd, which does not know the extension, is told
-        // (without it clangd has no compiler job for the file).
-        if (i == 0 && smith_ends_with(file, ".smith")) fputs(",\n      \"-x\",\n      \"c\"", out);
+        // (without it clangd has no compiler job for the file), and the standard `smith cc` gives a .smith file.
+        if (i == 0 && smith_ends_with(file, ".smith")) {
+            fputs(",\n      \"-x\",\n      \"c\"", out);
+            if (!has_standard) fputs(",\n      \"-std=gnu2y\"", out);
+        }
     }
     fputs("\n    ]\n  }", out);
 }
