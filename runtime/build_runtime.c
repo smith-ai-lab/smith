@@ -1459,7 +1459,7 @@ static const char *smith_lang_slashed(const char *name) {
 static const char *smith_lang_register(const char *source, const char **header) {
     const char *name = smith_lang_module_of(source);
     if (name == nullptr) return nullptr;
-    const char *path = smith_text("%s.smith", smith_lang_slashed(name));
+    const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
     bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
     if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
     *header = smith_text(".smith/include/%s.h", smith_lang_slashed(name));
@@ -1501,7 +1501,7 @@ static const char *const *smith_lang_words(const char *text) {
     size_t count = 0;
     for (const char *c = text; *c != '\0'; c++)
         count += *c != ' ' && (c == text || c[-1] == ' ');
-    const char **words = smith_alloc((count + 1) * sizeof *words);
+    const char **words = smith_new_list(count);
     size_t used = 0;
     for (const char *c = text; *c != '\0' && used < count;) { // bounded by the words
         while (*c == ' ')
