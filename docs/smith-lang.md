@@ -196,6 +196,42 @@ The debugger shows them as well (issue #27): lldb's frames, `bt` and types say `
 from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md for what lldb then accepts (a cast to
 `geometry::box::Box` does; `b box::area` does not, `b geometry::box::area` does).
 
+## Linting
+
+`smith lint x.smith` (clang-tidy 23 of smith's LLVM, in process) reads a `.smith` file as `smith cc` does and reports as
+the source is written: the same hook, the same rule for the command, and the table of names above. `smith lint` with no
+arguments lints what the project's `lint` task lists; what follows is what clang-tidy does with a `.smith` file it is
+given (`tests/lint-smith.sh`).
+
+- **The command.** clang-tidy builds the command of each file with clang's driver, not with `clang::createInvocation`, so
+  it is `shim/tidy.cpp` that applies `smith_lang_command` (`-x c`, and `-std=gnu2y` unless a standard is named): the file
+  is `clang/lib/Tooling/ArgumentsAdjusters.cpp` whole, with one call in `getStripPluginsAdjuster`, the last adjuster
+  clang-tidy appends. smith defines every symbol of that object, so the linker leaves the archive's out. A command with
+  no `.smith` input is returned as it was (clang-tidy runs each file with a command of its own, so a run of `.c` and
+  `.smith` files is right for each), and a compile database's `-x c -std=gnu2y` is already the rule.
+- **The findings.** A check reports from an engine of its own, not the compiler's, so clang's diagnostics (the lowering's
+  among them) went through the hook's consumer and a check's did not. When a check is created `shim/tidy.cpp` notes that
+  engine, and the hook of a `.smith` file puts a consumer in front of it (`smith::presentThrough`): the names in a
+  message, a note and a fix-it are the written ones, as for the compiler's. Two things differ for a tool. The first
+  declaration of an exported function is the lowering's copy of its prototype, and a check reports a name once, at the
+  first declaration it finds, so the finding is moved to the token the copy was made from (the definition's name) and
+  a fix-it in a copy is dropped (the definition's own is what changes the source). And a finding in the interface of an
+  imported module (the generated header, or the module's source read as one) is dropped: the user did not write that text
+  there, and the module's own file is linted as itself. The lowering's own error uses a built-in diagnostic in a tool, so
+  that its number is not mistaken for one of a check's.
+- **The names.** `readability-identifier-naming` judges the name the source wrote. A module's file-scope names are
+  `geometry_box_Box` to the AST, which is no `CamelCase`, so `shim/tidy.cpp` registers, after clang-tidy's own modules, one
+  that wraps every check's factory and replaces this one's with `SmithNaming`, which holds the real check (it is `final`,
+  and its decisions private) and asks it, for a name the lowering made, about the member name (`Box`, `area`):
+  the declaration is given that name for the one question and the old one back. The table is the lowering's own for the
+  file (never a guess at underscores), so `a_b` that is a real C name is judged as it is. The message and the fix-it
+  (which replaces the token the source has) are about the written name. Locals, parameters, fields and every other check
+  see the AST as it is, and a `.c` file, whose names are never in the table, is untouched. An importer's use of a
+  module's badly named export is reported once, in the module's file; a fix there does not rename the importers.
+- **Not done.** Checks that look at a name (a function, a variable) in a message are shown the written one, but a check
+  that compares names in the lowered form (a length or a reserved-name check, say) still sees
+  `geometry_box_x`; `readability-identifier-naming` is the one that has been made to see the written name.
+
 ## How it works
 
 - **The hook** is one patch to smith's clang (`patches/clang-token-hook.patch`, about 100 lines, applied by
