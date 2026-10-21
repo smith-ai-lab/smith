@@ -256,7 +256,7 @@ int main(void) {
 }
 C
 # The template's own build.c, with the two libraries added to its sources and -I .smith/include to its flags.
-sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", ".smith/lib/arena.c", ".smith/lib/random.c", nullptr}|' \
+sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", ".smith/lib/arena.c", ".smith/lib/smith/random.smith", nullptr}|' \
     -e 's|(const char \*\[\]){"-ffp-contract=off", nullptr}|(const char *[]){"-ffp-contract=off", "-I", ".smith/include", nullptr}|' \
     hello/build.c >libs/build.c
 cd libs || exit 1

@@ -899,6 +899,12 @@ export u32 width(u32 x) {
 #error "unsupported machine"
 #endif
 
+// An exported variable's definition has no declaration before it in the module's own compile.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-variable-declarations"
+export u32 counter = 7;
+#pragma clang diagnostic pop
+
 export u32 pair(u32 a, u32 b) {
     return PAIR(a, b);
 }

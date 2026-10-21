@@ -70,7 +70,7 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   `smith_<name>_` prefix, `[[smith::c_name("smith_<name>_x")]] export` on each function so the symbols stay, `[[smith::c_name("SmithX")]]` on
   each type; comments above an export are the header's, written with the C names); change the `#embed` path and the row's
   `false` to `true` in `smith.c`; add the name to `build_generated_headers` in `build.c` and remove the library from `build_tidy` (it has
-  no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it);
+  no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it); a header the library needs beside its own is a quoted include (`#include "arena.h"`), found by `-iquote` (see `smith::random`, which also taught two lowering limits: docs/smith-lang.md, end of "The bootstrap");
   point the library's own test script at the `.smith` source. Compare the old and new header's declarations and `nm -gU` of an
   object from each: they must match. `#include`s in a module are copied into its header, so keep them few.
 - **The bootstrap (`bootstrap/`).** A `.smith` source that smith's own build compiles is compiled from its committed
@@ -78,8 +78,8 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   smith need no knowledge of the language and a fresh clone builds with `cc`. List the source in `build_bootstrap_sources`
   (build.c), run `smith build bootstrap`, commit the file, and have the build compile the `.c` (as `build_protocol` does
   for text). `check-bootstrap` (part of `check`) lowers again and fails naming the stale file, so change a `.smith` that
-  is listed, run `smith build bootstrap`, commit both. The file is `smith cc --smith-lower` (no compiler, so the stage0
-  writes the same bytes) under the header's `#include`s; it has no comments, but keeps `#include`, `#define`, `#pragma`, `#error` and `#if`
+  is listed, run `smith build bootstrap`, commit both. `scripts/bootstrap.sh` writes the file: an include of the module's header, then `smith cc --smith-lower` (no compiler, so the stage0
+  writes the same bytes) less what the header says; smith's runtime (`runtime/package.c`) includes `bootstrap/lib/smith/random.c`, embedded in smith.c and written to `.smith/bootstrap/lib/smith/random.c`, because `io` needs random; a test that reaches a module's private names (`tests/random.c`) includes the lowering; it has no comments, but keeps `#include`, `#define`, `#pragma`, `#error` and `#if`
   chains as written (every branch is lowered; a `#define` body with `::` or a sized type is an error). `tests/bootstrap.sh`
   (`smith build test-bootstrap`) checks the files, the stage0's bytes, the lowering in an empty environment, and the C under
   `/usr/bin/clang` and `cc`. docs/smith-lang.md, "The bootstrap".
