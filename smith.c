@@ -29,10 +29,16 @@
 extern char **environ;
 
 #ifdef SMITH_IN_PROCESS
+#include "scripts/pack.h"
+
+#include <compression.h>
+#include <ftw.h>
+#include <inttypes.h>
+
 // SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (scripts/llvm.sh), compiled in by
 // build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
-// else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (SMITH_LLVM_BIN's clang or clang++)
-// on argv[1 .. argc). argv[0] is ignored.
+// else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
+// that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
 int smith_clang_main(const char *program, int argc, char **argv);
 #endif
 
@@ -336,6 +342,178 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 }
 
 #ifdef SMITH_IN_PROCESS
+// What the driver looks up beside its program, carried inside smith.
+//
+// The driver finds its builtin headers (lib/clang/<major>/include), the compiler-rt libraries (lib/clang/<major>/lib),
+// the sanitizers' ignore lists (lib/clang/<major>/share) and the libLTO.dylib it hands the linker (lib/libLTO.dylib)
+// from the path it is run as: `<folder>/bin/clang` has them in `<folder>/lib`. So smith embeds exactly those files,
+// packed and compressed by scripts/pack.c from the LLVM install (the macOS runtimes only, not iOS's), and writes them
+// once, on first use, to a folder named for the pack's contents, then runs the driver as that folder's `bin/clang`.
+// Nothing else is read from the install. The linker, dsymutil and the other tools are the system's, found on PATH.
+//
+// The folder is outside the caches smith prunes and cleans, in the user's data folder, and is never removed by smith:
+// a sanitized program records an absolute rpath to the runtime's `lib/darwin` in it, and must keep loading it after
+// `smith cache clean` and after the 31 days. A new LLVM or other contents make a new folder; the old one stays, for the
+// programs that were built against it.
+static const unsigned char smith_clang_resource[] = {
+#embed SMITH_CLANG_RESOURCE
+};
+
+static unsigned char smith_resource_chunk[smith_pack_chunk_max];
+static unsigned char smith_resource_scratch[1U << 22]; // for libcompression: LZFSE needs a fraction of it
+
+static SmithPackHeader smith_resource_header(void) {
+    SmithPackHeader header;
+    SMITH_ASSERT(sizeof smith_clang_resource >= sizeof header);
+    memcpy(&header, smith_clang_resource, sizeof header);
+    SMITH_ASSERT(memcmp(header.magic, "SMITHPK1", 8) == 0 && header.count > 0 && header.count <= smith_pack_files_max);
+    return header;
+}
+
+// <data>/smith/clang/llvm-<version>-<key>, where <data> is $XDG_DATA_HOME or $HOME/.local/share.
+static void smith_resource_folder(char *folder) {
+    const char *data = getenv("XDG_DATA_HOME");
+    const char *home = getenv("HOME");
+    char base[PATH_MAX];
+    if (data != nullptr && data[0] == '/') {
+        snprintf(base, sizeof base, "%s", data);
+    } else if (home != nullptr && home[0] == '/') {
+        snprintf(base, sizeof base, "%s/.local/share", home);
+    } else {
+        smith_die(smith_exit_usage, "cannot find a folder for clang's files: set HOME or XDG_DATA_HOME", nullptr);
+    }
+    // The name is the pack's hash carried on over the compiler's identity (FNV-1a, as scripts/pack.c), so another
+    // contents or another compiler is another folder.
+    uint64_t key = smith_resource_header().hash;
+    for (const char *c = SMITH_CLANG_ID; *c != '\0'; c++) // the identity is a short constant
+        key = (key ^ (unsigned char)*c) * 1099511628211ULL;
+    size_t version = strcspn(SMITH_CLANG_ID, " ");
+    int written =
+        snprintf(folder, PATH_MAX, "%s/smith/clang/%.*s-%016" PRIx64, base, (int)version, SMITH_CLANG_ID, key);
+    if (written <= 0 || written >= PATH_MAX - 64)
+        smith_die(smith_exit_usage, "the data folder's path is too long", base);
+}
+
+// mkdir -p for the folders above `path`'s last component (all of them when `whole`).
+static void smith_make_folders(const char *path, bool whole) {
+    char partial[PATH_MAX];
+    size_t length = strlen(path);
+    SMITH_ASSERT(length > 0 && length < sizeof partial);
+    memcpy(partial, path, length + 1);
+    for (size_t i = 1; i <= length; i++) { // bounded by length
+        if (partial[i] != '/' && !(whole && partial[i] == '\0')) continue;
+        partial[i] = '\0';
+        if (mkdir(partial, 0755) != 0 && errno != EEXIST) smith_die(smith_exit_usage, "cannot create", partial);
+        if (i < length) partial[i] = '/';
+    }
+}
+
+static int smith_remove_entry(const char *path, const struct stat *info, int kind, struct FTW *where) {
+    (void)info;
+    (void)kind;
+    (void)where;
+    return remove(path);
+}
+
+static void smith_remove_tree(const char *path) {
+    nftw(path, smith_remove_entry, 64, FTW_DEPTH | FTW_PHYS);
+}
+
+// Writes one file of the pack under `root` and returns the pack's offset after it.
+static size_t smith_resource_write(const char *root, size_t offset) {
+    SmithPackFile file;
+    SMITH_ASSERT(offset + sizeof file <= sizeof smith_clang_resource);
+    memcpy(&file, smith_clang_resource + offset, sizeof file);
+    offset += sizeof file;
+    SMITH_ASSERT(file.path_length > 0 && file.path_length < smith_pack_path_max && file.size <= smith_pack_chunk_max);
+    SMITH_ASSERT(offset + file.path_length + file.stored <= sizeof smith_clang_resource && file.stored <= file.size);
+    char path[PATH_MAX];
+    int written = snprintf(path, sizeof path, "%s/%.*s", root, (int)file.path_length,
+                           (const char *)smith_clang_resource + offset);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+    SMITH_ASSERT(strstr(path, "/../") == nullptr);
+    offset += file.path_length;
+    const unsigned char *data = smith_clang_resource + offset;
+    if (file.stored == file.size) {
+        memcpy(smith_resource_chunk, data, file.size);
+    } else {
+        SMITH_ASSERT(compression_decode_scratch_buffer_size(COMPRESSION_LZFSE) <= sizeof smith_resource_scratch);
+        size_t got = compression_decode_buffer(smith_resource_chunk, sizeof smith_resource_chunk, data, file.stored,
+                                               smith_resource_scratch, COMPRESSION_LZFSE);
+        SMITH_ASSERT(got == file.size);
+    }
+    smith_make_folders(path, false);
+    int fd = open(path, file.continued ? O_WRONLY | O_APPEND : O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) smith_die(smith_exit_usage, "cannot create", path);
+    for (size_t done = 0; done < file.size;) { // each pass writes at least one byte, or stops
+        ssize_t put = write(fd, smith_resource_chunk + done, file.size - done);
+        if (put <= 0) smith_die(smith_exit_usage, "cannot write", path);
+        done += (size_t)put;
+    }
+    if (fchmod(fd, (mode_t)file.mode) != 0 || close(fd) != 0) smith_die(smith_exit_usage, "cannot write", path);
+    return offset + file.stored;
+}
+
+static bool smith_is_folder(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+// Writes the pack's files under `folder`. They are written beside it under a name of this process and renamed into
+// place, so a folder that exists is whole, and processes that start together (a ninja run) all find one, whichever
+// wins.
+static void smith_resource_unpack(const char *folder) {
+    char temporary[PATH_MAX];
+    int written = snprintf(temporary, sizeof temporary, "%s.%d.tmp", folder, (int)getpid());
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary);
+    smith_remove_tree(temporary);
+    smith_make_folders(temporary, true);
+    SmithPackHeader header = smith_resource_header();
+    size_t offset = sizeof header;
+    for (uint32_t i = 0; i < header.count; i++) // bounded by the count, which smith_resource_header limits
+        offset = smith_resource_write(temporary, offset);
+    SMITH_ASSERT(offset == sizeof smith_clang_resource);
+    if (rename(temporary, folder) != 0) { // another process may have won
+        bool won = smith_is_folder(folder);
+        smith_remove_tree(temporary);
+        if (!won) smith_die(smith_exit_usage, "cannot create", folder);
+    }
+}
+
+// Makes <folder>/bin/<name> the smith that is running. The driver runs its program again, with -cc1, for each step of a
+// compile that has more than one (a compile and a link, say), so that program must be smith itself, which runs -cc1 in
+// process. A hard link keeps working when the smith it was made from is replaced or removed (as an install does);
+// across volumes it is a symbolic link. Built beside its place and renamed into it, so that a process which starts
+// meanwhile finds a whole one, and smith_resource_ensure makes it again for the next smith that runs, so it never
+// dangles.
+static void smith_resource_program(const char *folder, const char *self, const char *name) {
+    char path[PATH_MAX];
+    char temporary[PATH_MAX];
+    int written = snprintf(path, sizeof path, "%s/bin/%s", folder, name);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof path - 32);
+    written = snprintf(temporary, sizeof temporary, "%s.%d.tmp", path, (int)getpid());
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary);
+    smith_make_folders(path, false);
+    unlink(temporary);
+    if (link(self, temporary) != 0 && symlink(self, temporary) != 0) smith_die(smith_exit_usage, "cannot link", path);
+    if (rename(temporary, path) != 0) smith_die(smith_exit_usage, "cannot create", path);
+}
+
+// Makes the folder and its programs exist; a second call, or a second process, finds them and does nothing.
+static void smith_resource_ensure(const char *folder, const char *self) {
+    if (!smith_is_folder(folder)) smith_resource_unpack(folder);
+    struct stat mine;
+    SMITH_ASSERT(stat(self, &mine) == 0);
+    static const char *const names[] = {"clang", "clang++"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        char path[PATH_MAX];
+        struct stat theirs;
+        snprintf(path, sizeof path, "%s/bin/%s", folder, names[i]);
+        bool same = stat(path, &theirs) == 0 && theirs.st_dev == mine.st_dev && theirs.st_ino == mine.st_ino;
+        if (!same) smith_resource_program(folder, self, names[i]);
+    }
+}
+
 // Whether clang runs in this process: unless the caller's variable names an external clang to run instead.
 static bool smith_runs_in_process(const char *override_name) {
     const char *override = getenv(override_name);
@@ -343,13 +521,16 @@ static bool smith_runs_in_process(const char *override_name) {
 }
 
 static int smith_route_in_process(int argc, char **argv, int first, bool which, bool plus, const char *self) {
+    char folder[PATH_MAX];
     char program[PATH_MAX];
-    int written = snprintf(program, sizeof program, "%s/%s", SMITH_LLVM_BIN, plus ? "clang++" : "clang");
-    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // a short constant folder and a tool name
-    if (which) {
+    smith_resource_folder(folder);
+    int written = snprintf(program, sizeof program, "%s/bin/%s", folder, plus ? "clang++" : "clang");
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_resource_folder leaves room for it
+    if (which) { // names the program but writes nothing: its folder is made by the first compile
         printf("clang in-process %s\nidentity %s\n", program, SMITH_CLANG_ID);
         return 0;
     }
+    smith_resource_ensure(folder, self);
 #ifdef __APPLE__
     smith_sdk_environment(self);
 #endif
