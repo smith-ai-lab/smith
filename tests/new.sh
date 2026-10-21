@@ -95,8 +95,13 @@ expect "new hello: .claude/settings.json is exactly the plugin settings" '{
     }
   }
 }' "$(cat hello/.claude/settings.json)"
-expect "new hello: no .agents/skills folder" no "$(exists hello/.agents/skills)"
-expect "new hello: no .claude/skills link" no "$(exists hello/.claude/skills)"
+for f in AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hello-docs/SKILL.md; do
+    expect "new hello: creates $f" yes "$(exists "hello/$f")"
+done
+expect "new hello: .claude/skills links to the skills" "../.agents/skills" "$(readlink hello/.claude/skills)"
+expect "new hello: no CLAUDE.md, Claude Code reads AGENTS.md" no "$(exists hello/CLAUDE.md)"
+expect "new hello: AGENTS.md, knowledge and the skill have no placeholder left" "" \
+    "$(grep -rF -e '@NAME@' -e '@KEBAB@' hello/AGENTS.md hello/knowledge hello/.agents hello/build.c)"
 expect_contains "new hello: the summary names the plugin" "$new_out" "/plugin marketplace add adam-r-kowalski/smith"
 expect_contains "new hello: the summary names the install" "$new_out" "/plugin install smith@smith"
 expect "new hello: no missing-entry report" no "$(has "$new_out" 'lacks "smith@smith"')"
@@ -104,7 +109,7 @@ expect "new hello: git is on main" main "$(git -C hello symbolic-ref --short HEA
 expect "new hello: one commit" 1 "$(commits hello)"
 expect "new hello: the commit message" "chore: create hello with smith new" "$(git -C hello log -1 --format=%s)"
 expect "new hello: git tracks exactly the written files" \
-    ".clang-format .clang-tidy .claude/settings.json .gitignore build.c main.c" \
+    ".agents/skills/hello-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md knowledge/program.md main.c" \
     "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new hello: the tree is clean after the commit" "" "$(git -C hello status --porcelain)"
 expect "new hello: the first build made the debug program" yes "$(exists hello/build/debug/hello)"
@@ -266,7 +271,7 @@ capture smith new hello
 expect "second run: exits 0" 0 "$rc"
 expect "second run: changes no bytes" "$before" "$(tree_sum hello)"
 expect "second run: no new commit" 1 "$(commits hello)"
-expect_contains "second run: everything is kept" "$out" "0 created, 5 kept"
+expect_contains "second run: everything is kept" "$out" "0 created, 10 kept"
 
 # 3. No argument: the folder's name, and its own main.c kept.
 mkdir demo && printf 'int main(void) { return 0; }\n' >demo/main.c
@@ -276,6 +281,10 @@ expect "no argument: exits 0" 0 "$rc"
 expect "no argument: keeps main.c" "int main(void) { return 0; }" "$(cat main.c)"
 expect "no argument: names the program demo" yes "$(exists build/debug/demo)"
 expect "no argument: leaves out cd" no "$(has "$out" "cd demo")"
+expect "no argument: no concept about a main.c it did not write" no "$(exists knowledge/program.md)"
+expect "no argument: the index lists no such concept" no "$(has "$(cat knowledge/index.md)" "program.md")"
+capture smith docs .
+expect "no argument: the docs pass" 0 "$rc"
 cd "$work" || exit 1
 
 # 4. Inside an existing repository.
@@ -351,14 +360,20 @@ expect "Makefile: exits 0" 0 "$rc"
 expect "Makefile: writes build.c" yes "$(exists has_make/build.c)"
 expect "Makefile: no main.c" no "$(exists has_make/main.c)"
 expect "Makefile: no first build" no "$(exists has_make/.smith)"
+expect "Makefile: no concept about the program" no "$(exists has_make/knowledge/program.md)"
+expect "Makefile: the index lists nothing but is there" "okf_version" \
+    "$(sed -n 's/^\(okf_version\):.*/\1/p' has_make/knowledge/index.md)"
+expect "Makefile: the index ends with its text, not a dangling item" yes "$(has "$(tail -n 1 has_make/knowledge/index.md)" "Read only the concepts")"
 expect "Makefile: writes the rules" yes "$(exists has_make/.clang-format)"
 expect "Makefile: writes the plugin settings" yes "$(exists has_make/.claude/settings.json)"
 expect_contains "Makefile: the message names the Makefile" "$out" "This project builds with a Makefile."
 expect_contains "Makefile: the message says to port it" "$out" "port the Makefile into it"
 expect_contains "Makefile: the message names the skill" "$out" "smith-build skill"
 expect "Makefile: commits only the files written" \
-    ".clang-format .clang-tidy .claude/settings.json .gitignore build.c" \
+    ".agents/skills/has-make-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md" \
     "$(git -C has_make ls-files | tr '\n' ' ' | sed 's/ $//')"
+capture smith docs has_make
+expect "Makefile: the docs pass" 0 "$rc"
 mkdir has_cmake
 : >has_cmake/CMakeLists.txt
 capture smith new has_cmake
@@ -386,6 +401,85 @@ mkdir -p has_settings2/.claude
 printf '{"enabledPlugins": {"smith@smith": false}}\n' >has_settings2/.claude/settings.json
 capture smith new has_settings2
 expect "settings with the entry: no report" no "$(has "$out" 'lacks "smith@smith"')"
+
+# 13. Docs. The new project has knowledge, a skill and AGENTS.md, and smith docs and smith check hold them.
+cd "$work/hello" || exit 1
+expect "docs: the skill is named for the program" "name: hello-docs" "$(grep '^name:' .agents/skills/hello-docs/SKILL.md)"
+expect_contains "docs: AGENTS.md links the skill" "$(cat AGENTS.md)" "(.agents/skills/hello-docs/SKILL.md)"
+expect_contains "docs: AGENTS.md links the knowledge" "$(cat AGENTS.md)" "(knowledge/index.md)"
+expect "docs: the index lists the concept with its own description" \
+    "- [The program](program.md): $(sed -n 's/^description: //p' knowledge/program.md)" "$(grep '^- \[' knowledge/index.md)"
+capture smith docs
+expect "docs: smith docs passes on a new project" 0 "$rc"
+capture smith docs
+expect "docs: ... and does not run again when no document changed" no "$(has "$out" "concepts")"
+printf '\nA rule.\n' >>AGENTS.md
+capture smith docs
+expect_contains "docs: ... runs again when a document changed" "$out" "smith docs: 1 concepts, 0 problems"
+git checkout -q -- AGENTS.md
+capture smith docs .
+expect "docs: smith docs . checks with the default types" 0 "$rc"
+capture smith build docs
+expect "docs: smith build docs is refused, the verb runs it" 2 "$rc"
+
+# smith check holds the docs: a conflict marker fails it.
+printf '=======\n' >>knowledge/program.md
+capture smith check
+expect "docs: smith check fails on a document with a conflict marker" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+expect_contains "docs: ... and says where" "$out$err" "knowledge/program.md:"
+git checkout -q -- knowledge/program.md
+capture smith check
+expect "docs: smith check passes again" 0 "$rc"
+cd "$work" || exit 1
+
+# Breaking each rule fails smith docs, in a copy.
+broken() { # name, expected message, commands that break the copy in the current folder
+    rm -rf "$work/brk" && mkdir "$work/brk"
+    (cd hello && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd "$work/brk" && tar xf -)
+    (cd "$work/brk" && eval "$3") >/dev/null 2>&1
+    capture smith docs "$work/brk"
+    expect "docs breaks: $1: exits 1" 1 "$rc"
+    expect_contains "docs breaks: $1: says so" "$err" "$2"
+}
+broken "a type the project does not allow" "knowledge/program.md: type 'poem' is not one of convention, architecture, contract, design" \
+    "sed 's/^type: .*/type: poem/' knowledge/program.md >p && mv p knowledge/program.md"
+broken "a concept without a title" "knowledge/program.md: frontmatter lacks title" \
+    "grep -v '^title:' knowledge/program.md >p && mv p knowledge/program.md"
+broken "a concept without a description" "knowledge/program.md: frontmatter lacks description" \
+    "grep -v '^description:' knowledge/program.md >p && mv p knowledge/program.md"
+broken "a concept without frontmatter" "knowledge/program.md: no frontmatter" "printf '# Program\n' >knowledge/program.md"
+broken "a concept that is not kebab-case" "knowledge/Program_Two.md: file name is not kebab-case" \
+    "cp knowledge/program.md knowledge/Program_Two.md"
+broken "a concept the index does not list" "knowledge/index.md: does not list second.md" \
+    "cp knowledge/program.md knowledge/second.md"
+broken "an index item that is no concept" "knowledge/index.md: lists ghost.md, which is not a concept on disk" \
+    "printf -- '- [Ghost](ghost.md): Nothing.\n' >>knowledge/index.md"
+broken "an index description that differs" "knowledge/index.md: description of program.md differs from its own" \
+    "sed 's/promise\./promise, more./' knowledge/index.md >p && mv p knowledge/index.md"
+broken "an index without okf_version" "knowledge/index.md: frontmatter lacks okf_version" \
+    "grep -v '^okf_version' knowledge/index.md >p && mv p knowledge/index.md"
+broken "a skill whose name is not its folder" ".agents/skills/hello-docs/SKILL.md: name 'other' does not match its folder" \
+    "sed 's/^name: .*/name: other/' .agents/skills/hello-docs/SKILL.md >p && mv p .agents/skills/hello-docs/SKILL.md"
+broken "a skill without a description" ".agents/skills/hello-docs/SKILL.md: frontmatter lacks description" \
+    "grep -v '^description:' .agents/skills/hello-docs/SKILL.md >p && mv p .agents/skills/hello-docs/SKILL.md"
+broken "a broken link" "AGENTS.md: broken link nowhere.md" "printf '[x](nowhere.md)\n' >>AGENTS.md"
+broken "a conflict marker" "AGENTS.md:" "printf '<<<<<<< HEAD\n' >>AGENTS.md"
+broken "knowledge linking a skill" "knowledge/program.md: links the skill ../.agents/skills/hello-docs/SKILL.md; knowledge never links skills" \
+    "printf '[how](../.agents/skills/hello-docs/SKILL.md)\n' >>knowledge/program.md"
+broken "no .claude/skills" ".claude/skills: missing; it must be a symlink to ../.agents/skills" "rm .claude/skills"
+broken "a .claude/skills that points elsewhere" ".claude/skills: links to ../skills, not ../.agents/skills" \
+    "rm .claude/skills && ln -s ../skills .claude/skills"
+broken "a .claude/skills that is a folder" ".claude/skills: is not a symlink" \
+    "rm .claude/skills && mkdir .claude/skills"
+
+# A name with more than letters: the skill's name is kebab-case and everything passes.
+capture smith new My_Proj.x
+expect "docs: a name with _ and . exits 0" 0 "$rc"
+expect "docs: ... its skill is my-proj-x-docs" yes "$(exists My_Proj.x/.agents/skills/my-proj-x-docs/SKILL.md)"
+expect "docs: ... its skill's name is its folder" "name: my-proj-x-docs" "$(grep '^name:' My_Proj.x/.agents/skills/my-proj-x-docs/SKILL.md)"
+expect_contains "docs: ... its concept names the program" "$(cat My_Proj.x/knowledge/program.md)" "hello from My_Proj.x"
+(cd My_Proj.x && smith docs) >"$work/docs.out" 2>&1
+expect "docs: ... smith docs passes" 0 "$?"
 
 # 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's.
 # Allowed differences: smith-only assert macro, typedef names, unity-build include check.

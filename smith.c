@@ -1350,35 +1350,66 @@ static const unsigned char smith_new_clang_tidy[] = {
 static const unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
 };
+static const unsigned char smith_new_agents[] = {
+#embed "templates/new/agents.md"
+};
+static const unsigned char smith_new_knowledge_index[] = {
+#embed "templates/new/knowledge-index.md"
+};
+static const unsigned char smith_new_knowledge_program[] = {
+#embed "templates/new/knowledge-program.md"
+};
+static const unsigned char smith_new_docs_skill[] = {
+#embed "templates/new/docs-skill.md"
+};
 
 typedef struct {
     const char *path;
     const unsigned char *bytes;
     size_t size;
-    bool named; // @NAME@ is replaced by the program's name
+    bool named;       // @NAME@ is replaced by the program's name, and @KEBAB@ by the same in kebab-case
+    bool about_main;  // describes main.c, so a project that keeps its own sources does not get it
+    bool lists_main;  // its last line lists what describes main.c, which that project does not get either
+    const char *link; // not a file: a symbolic link to this
 } SmithNewFile;
 
 static const SmithNewFile smith_new_files[] = {
-    {"build.c", smith_new_build_c, sizeof smith_new_build_c, true},
-    {"main.c", smith_new_main_c, sizeof smith_new_main_c, true},
-    {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false},
-    {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false},
-    {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false},
-    {".claude/settings.json", smith_new_claude_settings, sizeof smith_new_claude_settings, false},
+    {"build.c", smith_new_build_c, sizeof smith_new_build_c, true, false, false, nullptr},
+    {"main.c", smith_new_main_c, sizeof smith_new_main_c, true, false, false, nullptr},
+    {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false, false, false, nullptr},
+    {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false, false, false, nullptr},
+    {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false, false, false, nullptr},
+    {".claude/settings.json", smith_new_claude_settings, sizeof smith_new_claude_settings, false, false, false,
+     nullptr},
+    {"AGENTS.md", smith_new_agents, sizeof smith_new_agents, true, false, false, nullptr},
+    {"knowledge/index.md", smith_new_knowledge_index, sizeof smith_new_knowledge_index, true, false, true, nullptr},
+    {"knowledge/program.md", smith_new_knowledge_program, sizeof smith_new_knowledge_program, true, true, false,
+     nullptr},
+    {".agents/skills/@KEBAB@-docs/SKILL.md", smith_new_docs_skill, sizeof smith_new_docs_skill, true, false, false,
+     nullptr},
+    {".claude/skills", nullptr, 0, false, false, false, "../.agents/skills"},
 };
 
 constexpr size_t smith_new_name_max = 200;
-static const char smith_new_placeholder[] = "@NAME@";
-constexpr size_t smith_new_placeholder_length = sizeof smith_new_placeholder - 1;
-constexpr size_t smith_new_written_max = 16;
+constexpr size_t smith_new_written_max = 24;
+constexpr size_t smith_new_path_max = 256;
+constexpr size_t smith_new_text_max = 65536; // the largest file after its placeholders are filled
+constexpr size_t smith_new_kebab_max = 40;
 constexpr size_t smith_new_gitignore_lines_max = 100000;
 
 typedef struct {
     int created;
     int kept;
-    const char *written[smith_new_written_max]; // the paths created, for git
+    char written[smith_new_written_max][smith_new_path_max]; // the paths created, for git
     size_t written_count;
 } SmithNewCounts;
+
+// What the placeholders stand for: the program's name, and the same as a skill's name (lowercase, words joined by
+// hyphens).
+typedef struct {
+    const char *name;
+    char kebab[smith_new_kebab_max + 1];
+} SmithNewNames;
 
 // A name is letters, digits, _, . and -, and does not start with . or -.
 static bool smith_new_is_name(const char *name) {
@@ -1398,23 +1429,79 @@ static bool smith_new_is_name(const char *name) {
     exit(smith_exit_usage);
 }
 
-// Writes the bytes to a path nothing exists at, with @NAME@ replaced when the file is named.
-static void smith_new_write(const SmithNewFile *file, const char *name) {
-    FILE *out = fopen(file->path, "wbx");
-    if (out == nullptr) smith_die(smith_exit_usage, "cannot write", file->path);
-    bool ok = true;
-    for (size_t i = 0; i < file->size; i++) { // bounded by the size of the content
-        bool hole = file->named && file->size - i >= smith_new_placeholder_length &&
-                    memcmp(file->bytes + i, smith_new_placeholder, smith_new_placeholder_length) == 0;
-        if (hole) {
-            ok = fputs(name, out) >= 0 && ok;
-            i += smith_new_placeholder_length - 1;
-        } else {
-            ok = fputc(file->bytes[i], out) != EOF && ok;
+// The name as a skill's: letters and digits in lowercase, any run of other characters one hyphen, none at the ends.
+static void smith_new_kebab(const char *name, char *out) {
+    size_t length = 0;
+    for (const char *c = name; *c != '\0' && length < smith_new_kebab_max; c++) { // bounded by the name's length
+        bool upper = *c >= 'A' && *c <= 'Z';
+        bool word = upper || (*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9');
+        if (word) {
+            out[length++] = upper ? (char)(*c - 'A' + 'a') : *c;
+        } else if (length > 0 && out[length - 1] != '-') {
+            out[length++] = '-';
         }
     }
+    while (length > 0 && out[length - 1] == '-') {
+        length--;
+    }
+    if (length == 0) length = (size_t)snprintf(out, smith_new_kebab_max + 1, "project");
+    out[length] = '\0';
+}
+
+// The bytes with @NAME@ and @KEBAB@ filled in, in out; returns the length. With no names the bytes are copied.
+static size_t smith_new_expand(char *out, size_t capacity, const unsigned char *bytes, size_t size,
+                               const SmithNewNames *names) {
+    size_t used = 0;
+    for (size_t i = 0; i < size; i++) { // bounded by the size of the content
+        const char *with = nullptr;
+        size_t hole = 0;
+        if (names != nullptr && bytes[i] == '@') {
+            if (size - i >= 6 && memcmp(bytes + i, "@NAME@", 6) == 0) {
+                with = names->name;
+                hole = 6;
+            } else if (size - i >= 7 && memcmp(bytes + i, "@KEBAB@", 7) == 0) {
+                with = names->kebab;
+                hole = 7;
+            }
+        }
+        size_t length = with != nullptr ? strlen(with) : 1;
+        SMITH_ASSERT(used + length < capacity);
+        if (with != nullptr) {
+            memcpy(out + used, with, length);
+            i += hole - 1;
+        } else {
+            out[used] = (char)bytes[i];
+        }
+        used += length;
+    }
+    out[used] = '\0';
+    return used;
+}
+
+// Drops the last line, and the blank one before it.
+static size_t smith_new_drop_last_line(const char *text, size_t length) {
+    if (length > 0 && text[length - 1] == '\n') length--;
+    while (length > 0 && text[length - 1] != '\n') {
+        length--;
+    }
+    if (length > 1 && text[length - 2] == '\n') length--;
+    return length;
+}
+
+// Writes a file, or makes a link, at a path nothing exists at, with the placeholders filled when the file is named.
+static void smith_new_write(const SmithNewFile *file, const char *path, const SmithNewNames *names, bool skip_about) {
+    if (file->link != nullptr) {
+        if (symlink(file->link, path) != 0) smith_die(smith_exit_usage, "cannot write", path);
+        return;
+    }
+    static char text[smith_new_text_max];
+    size_t length = smith_new_expand(text, sizeof text, file->bytes, file->size, file->named ? names : nullptr);
+    if (skip_about && file->lists_main) length = smith_new_drop_last_line(text, length);
+    FILE *out = fopen(path, "wbx");
+    if (out == nullptr) smith_die(smith_exit_usage, "cannot write", path);
+    bool ok = fwrite(text, 1, length, out) == length;
     ok = fclose(out) == 0 && ok;
-    if (!ok) smith_die(smith_exit_usage, "cannot write", file->path);
+    if (!ok) smith_die(smith_exit_usage, "cannot write", path);
 }
 
 static bool smith_new_exists(const char *path) {
@@ -1456,22 +1543,28 @@ static void smith_new_count(SmithNewCounts *counts, const char *path, bool exist
         return;
     }
     counts->created += 1;
-    SMITH_ASSERT(counts->written_count < smith_new_written_max);
-    counts->written[counts->written_count++] = path;
+    SMITH_ASSERT(counts->written_count < smith_new_written_max && strlen(path) < smith_new_path_max);
+    memcpy(counts->written[counts->written_count++], path, strlen(path) + 1);
 }
 
 // Each file is written only if nothing exists at its path. main.c is left out when the project has its own sources: a
-// build.c already there, or another build system.
-static void smith_new_files_write(const char *name, bool skip_main, SmithNewCounts *counts) {
+// build.c already there, or another build system. What describes main.c is left out too, and when main.c was there
+// before this run.
+static void smith_new_files_write(const char *name, bool skip_main, bool skip_about, SmithNewCounts *counts) {
+    SmithNewNames names = {.name = name};
+    smith_new_kebab(name, names.kebab);
     for (size_t i = 0; i < sizeof smith_new_files / sizeof smith_new_files[0]; i++) {
         const SmithNewFile *file = &smith_new_files[i];
         if (skip_main && strcmp(file->path, "main.c") == 0) continue;
-        bool exists = smith_new_exists(file->path);
+        char path[smith_new_path_max];
+        smith_new_expand(path, sizeof path, (const unsigned char *)file->path, strlen(file->path), &names);
+        bool exists = smith_new_exists(path);
+        if (skip_about && file->about_main && !exists) continue;
         if (!exists) {
-            smith_new_make_parents(file->path);
-            smith_new_write(file, name);
+            smith_new_make_parents(path);
+            smith_new_write(file, path, &names, skip_about);
         }
-        smith_new_count(counts, file->path, exists);
+        smith_new_count(counts, path, exists);
     }
 }
 
@@ -1578,10 +1671,12 @@ static int smith_new_main(int count, char **args, const char *self) {
     printf("smith new: %s\n", name);
     bool has_build_c = smith_new_exists("build.c");
     const char *other = has_build_c ? nullptr : smith_new_other_build();
+    bool had_main = smith_new_exists("main.c");
     bool had_gitignore = smith_new_exists(".gitignore");
     bool had_settings = smith_new_exists(".claude/settings.json");
     SmithNewCounts counts = {};
-    smith_new_files_write(name, has_build_c || other != nullptr, &counts);
+    bool skip_main = has_build_c || other != nullptr;
+    smith_new_files_write(name, skip_main, skip_main || had_main, &counts);
     fflush(stdout);
     // The template compiles a main.c that a project with another build system does not have, so it is not built.
     if (other == nullptr) {
@@ -1721,6 +1816,7 @@ typedef enum {
     SmithVerb_New,
     SmithVerb_Fetch,
     SmithVerb_Cache,
+    SmithVerb_Docs, // smith docs: checks AGENTS.md, knowledge/ and skills; the project's docs task with no arguments
     SmithVerb_Symbolize,     // smith symbolize: stack traces turned into lines
     SmithVerb_Version,       // smith version: the version line and the commit smith was built from
     SmithVerb_Tool,          // an LLVM tool, whose arguments are its own (smith_tools)
@@ -1744,6 +1840,7 @@ static const SmithVerb smith_verbs[] = {
     {"fetch", SmithVerb_Fetch, nullptr},
     {"cache", SmithVerb_Cache, nullptr},
     {"symbolize", SmithVerb_Symbolize, nullptr},
+    {"docs", SmithVerb_Docs, nullptr},
     {"version", SmithVerb_Version, nullptr},
     {"fmt", SmithVerb_ToolOrProject, nullptr},
     {"lint", SmithVerb_ToolOrProject, nullptr},
@@ -1817,7 +1914,6 @@ static size_t smith_encode_argument(char *out, size_t capacity, size_t used, con
         else
             out[used] = *c;
         used += length;
-    SmithVerb_Docs, // smith docs: checks AGENTS.md, knowledge/ and skills; the project's docs task with no arguments
     }
     out[used] = '\0';
     return used;
@@ -1841,7 +1937,6 @@ static int smith_project_main(const SmithVerb *verb, int count, char **args, con
         } else {
             if (verb->kind == SmithVerb_ProjectBare) {
                 smith_die(smith_exit_usage, "takes no arguments but -D options", verb->name);
-    {"docs", SmithVerb_Docs, nullptr},
             }
             joined_used = smith_encode_argument(joined, sizeof joined, joined_used, arg);
         }
@@ -1865,6 +1960,9 @@ static bool smith_only_options(int count, char **args) {
     }
     return true;
 }
+
+// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, and the project's docs task with no arguments.
+#include "runtime/docs.c"
 
 // The commit smith was built from is in runtime/commit.c (`smith build` compiles it with -DSMITH_COMMIT and links it,
 // and passes -DSMITH_COMMIT_LINKED here, so that a new commit recompiles that file alone). A smith built with one cc
@@ -1898,6 +1996,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_cache_main(argc - 2, argv + 2);
     case SmithVerb_Tool:
         return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);
+    case SmithVerb_Docs:
+        return smith_docs_main(verb, argc - 2, argv + 2, self);
     case SmithVerb_Symbolize:
         return smith_symbolize_main(argc - 2, argv + 2);
     case SmithVerb_Version:
@@ -1926,6 +2026,7 @@ static void smith_usage(FILE *out) {
           "                          clang-tidy\n"
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
+          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"
           "  new, fetch, cache       start a project, fetch a package, show and clean the caches\n"
           "  version                 the version and the commit smith was built from\n",
           out);
@@ -1961,9 +2062,6 @@ int main(int argc, char **argv) {
     if (strcmp(name, "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
     if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0)
         return smith_compile_main(argc, argv, 0, false, self);
-// `smith docs`: the check of AGENTS.md, knowledge/ and the skills, and the project's docs task with no arguments.
-#include "runtime/docs.c"
-
     if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
         return smith_compile_main(argc, argv, 0, true, self);
     if (argc < 2) {
@@ -1982,6 +2080,3 @@ int main(int argc, char **argv) {
     if (verb == nullptr) smith_bare_arguments(argc, argv);
     return smith_dispatch(verb, argc, argv, self);
 }
-    case SmithVerb_Docs:
-        return smith_docs_main(verb, argc - 2, argv + 2, self);
-          "  docs                    check AGENTS.md, knowledge/ and the skills of the project\n"

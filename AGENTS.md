@@ -61,7 +61,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
      changes nothing either.
   3. **Run `smith new`.** It writes an explicit, opinionated starting point (C2y with `-std=gnu2y`, for `_Countof`;
      strict warnings; three builds: debug with sanitizers, release with assertions on, fast without; `.clang-format`,
-     `.clang-tidy`, `.claude/settings.json` enabling the smith plugin, git on `main`, a first build), all in files the
+     `.clang-tidy`, `.claude/settings.json` enabling the smith plugin, `AGENTS.md`, `knowledge/` and a docs skill, git on `main`, a first build), all in files the
      project owns. smith's skills are not copied: they ship in the smith plugin. There is no house-style mechanism,
      only those files; a project that never runs `smith new` gets none of it.
 - **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
@@ -179,7 +179,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
   input) into the failing line and the call chain; it needs the full smith.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
-  `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
+  `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
