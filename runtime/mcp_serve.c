@@ -257,6 +257,21 @@ static bool smith_mcp_next_line(SmithMcpServer *server, SmithText *line) {
 
 // --- the server ------------------------------------------------------------------------------------------------
 
+// The folder the server runs in, as the shell that started it names it: $PWD when that is the same folder as the
+// working one, else the working folder. A compile writes the shell's spelling into its debug info (/var/folders/... for
+// /private/var/folders/... on macOS), and the debugger matches a breakpoint's file against that spelling.
+static void smith_mcp_folder(const SmithIo *io, char *out, size_t size) {
+    const char *shell = smith_args_env(&io->args, "PWD");
+    struct stat named;
+    struct stat actual;
+    if (shell != nullptr && shell[0] == '/' && strlen(shell) < size && stat(shell, &named) == 0 &&
+        stat(".", &actual) == 0 && named.st_dev == actual.st_dev && named.st_ino == actual.st_ino) {
+        snprintf(out, size, "%s", shell);
+    } else if (getcwd(out, size) == nullptr) {
+        snprintf(out, size, "/");
+    }
+}
+
 // Serves MCP on the io's console until its input ends, then closes every session. dap_argv is the debug adapter's
 // command (smith dap). The exit status is 0.
 int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
@@ -272,20 +287,18 @@ int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
     SMITH_ASSERT(server.line != nullptr && server.request != nullptr && server.sessions != nullptr);
     for (size_t i = 0; i < smith_mcp_sessions_max; i++)
         server.sessions[i].used = false;
-    if (getcwd(server.cwd, sizeof server.cwd) == nullptr) snprintf(server.cwd, sizeof server.cwd, "/");
+    smith_mcp_folder(io, server.cwd, sizeof server.cwd);
     smith_mcp_input_submit(&server);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
         SmithText line;
-        bool handled = false;
         while (smith_mcp_next_line(&server, &line)) { // bounded by the buffered input
-            handled = true;
             if (line.length > 0) smith_mcp_handle_line(&server, line);
         }
         if (server.overlong_seen) {
             server.overlong_seen = false;
             smith_mcp_send_error(&server, nullptr, -32600, "message too large");
         }
-        if (server.input_end && !handled) break;
+        if (server.input_end) break; // every whole line is handled: a call may have read the end meanwhile
         smith_mcp_pump(&server, smith_io_forever);
     }
     for (size_t i = 0; i < smith_mcp_sessions_max; i++) { // bounded by the table

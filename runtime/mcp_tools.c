@@ -341,6 +341,11 @@ static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *
     program = test != nullptr ? smith_mcp_runner(server, arguments, folder, out)
                               : smith_mcp_absolute(&server->scratch, folder, program);
     if (program == nullptr) return false;
+    SmithFileInfo info = smith_files_info(&server->io->files, program);
+    if (info.error.code != 0 || info.folder) {
+        smith_mcp_text_add(out, "launch: %s is not a file; build the program first (with -g)\n", program);
+        return false;
+    }
     const char *list[smith_mcp_program_arguments_max];
     size_t count = smith_mcp_program_arguments(server, arguments, test, list);
     SmithMcpSession *session = smith_mcp_session_start(server, out);
