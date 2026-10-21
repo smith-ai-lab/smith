@@ -48,6 +48,11 @@ extern char **environ;
 // else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
 // that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
 int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
+#ifdef SMITH_PROVE
+// shim/prove.cpp: `smith prove`, on argv[0 .. argc), compiling with the clang that smith_clang_main runs as `program`
+// (with `resource` as its resource directory).
+int smith_prove_main(const char *program, const char *resource, int argc, char **argv);
+#endif
 // shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
 int smith_lld_main(int argc, char **argv);
 // shim/format.cpp, shim/tidy.cpp and shim/clangd.cpp: the mains of clang-format, clang-tidy and clangd, each run on
@@ -703,6 +708,33 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, const
     return smith_exit_missing;
 }
 
+// smith prove: the prover (Alive2 and Z3) is linked into a smith built against an LLVM install that has one beside it
+// (build.c); any other smith says so.
+static int smith_prove(int argc, char **argv, const char *self) {
+#if defined(SMITH_PROVE) && defined(SMITH_IN_PROCESS)
+    char folder[PATH_MAX];
+    char programs[PATH_MAX];
+    char program[PATH_MAX];
+    smith_resource_folder(folder);
+    smith_programs_folder(folder, programs);
+    int written = snprintf(program, sizeof program, "%s/bin/clang", programs);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_programs_folder leaves room for it
+    smith_resource_ensure(folder, programs, self);
+    char resource[PATH_MAX];
+    smith_resource_directory(folder, resource);
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
+    return smith_prove_main(program, resource, argc, argv);
+#else
+    (void)argc;
+    (void)argv;
+    (void)self;
+    smith_die(smith_exit_usage, "this smith has no prover; build it against an LLVM that has Alive2 and Z3 beside it",
+              "smith build -DLLVM=<such an install>");
+#endif
+}
+
 // smith build.
 
 // The build program's header and runtime travel inside smith, so `smith build` needs nothing installed beside it and
@@ -734,6 +766,13 @@ static const unsigned char smith_arena_header[] = {
 };
 static const unsigned char smith_arena_source[] = {
 #embed "lib/arena.c"
+};
+
+static const unsigned char smith_contract_header[] = {
+#embed "include/smith/contract.h"
+};
+static const unsigned char smith_contract_source[] = {
+#embed "lib/contract.c"
 };
 
 static const unsigned char smith_io_header[] = {
@@ -782,6 +821,8 @@ typedef struct {
 
 static const SmithLibrary smith_libraries[] = {
     {"arena", smith_arena_header, sizeof smith_arena_header, smith_arena_source, sizeof smith_arena_source},
+    {"contract", smith_contract_header, sizeof smith_contract_header, smith_contract_source,
+     sizeof smith_contract_source},
     {"io", smith_io_header, sizeof smith_io_header, smith_io_source, sizeof smith_io_source},
     {"random", smith_random_header, sizeof smith_random_header, smith_random_source, sizeof smith_random_source},
     {"test", smith_test_header, sizeof smith_test_header, smith_test_source, sizeof smith_test_source},
@@ -1506,6 +1547,7 @@ int main(int argc, char **argv) {
     if (strcmp(smith_base_name(argv[0]), "ld") == 0) return smith_route_linker(argc, argv);
 #endif
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
     const SmithTool *tool = argc >= 2 ? smith_find_tool(argv[1]) : nullptr;
     if (tool != nullptr) return smith_tool_main(tool, argc, argv, self);
     if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
