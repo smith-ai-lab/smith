@@ -112,6 +112,9 @@ static const char *smith_context; // "step x" or "task x" while one is being che
     abort();
 }
 
+// The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file.
+#include "package.c"
+
 // A mistake in build.c, not in smith.
 [[noreturn, gnu::format(printf, 1, 2)]] static void smith_fail(const char *format, ...) {
     va_list args;
@@ -975,6 +978,29 @@ const char *smith_library(SmithBuild *b, const char *name) {
                           smith_list(b, smith_replace_extension(b, found[i] + strlen(".smith/lib/"), ""), nullptr),
                           nullptr);
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
+}
+
+const char *smith_package(SmithBuild *b, const SmithPackage *package) {
+    SMITH_ASSERT(b != nullptr);
+    smith_context = nullptr;
+    if (package == nullptr || package->url == nullptr || package->url[0] == '\0') {
+        smith_fail("smith_package: .url is required");
+    }
+    if (package->hash == nullptr)
+        smith_fail("smith_package: %s: .hash is required; `smith fetch` prints it", package->url);
+    bool offline = smith_option(b, "OFFLINE", "a package missing from the cache is an error instead of a fetch");
+    char folder[PATH_MAX];
+    char hash[smith_package_hash_size];
+    SmithPackageError error;
+    // A package already in the cache is only looked up; a fetch prints a line first, since a download can be slow.
+    if (smith_package_ensure(package->url, package->hash, true, folder, hash, &error)) return smith_copy_string(folder);
+    if (offline) smith_fail("smith_package: %s", error.text);
+    fprintf(stderr, "smith: fetching %s\n", package->url);
+    fflush(stderr);
+    if (!smith_package_ensure(package->url, package->hash, false, folder, hash, &error)) {
+        smith_fail("smith_package: %s", error.text);
+    }
+    return smith_copy_string(folder);
 }
 
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items) {

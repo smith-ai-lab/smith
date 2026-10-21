@@ -1944,14 +1944,159 @@ rm output
 build -n
 expect "ninja arguments: -n does not build" "no" "$([ -e output ] && echo yes || echo no)"
 
-# 11. A smith built with one command.
+# 11. Packages: a URL and a hash, fetched with a curl shim that counts its calls, into a cache of its own.
+pk=$work/packages
+mkdir -p "$pk/src/pkg-1.0/bin"
+printf 'hello package\n' >"$pk/src/pkg-1.0/hello.txt"
+printf '#!/bin/sh\necho tool ran\n' >"$pk/src/pkg-1.0/bin/tool"
+chmod +x "$pk/src/pkg-1.0/bin/tool"
+(cd "$pk/src" && tar -czf ../pkg.tar.gz pkg-1.0 && tar -cJf ../pkg.tar.xz pkg-1.0 && zip -qr ../pkg.zip pkg-1.0)
+cat >"$pk/curl" <<'SH'
+#!/bin/sh
+echo call >>"$CURL_LOG"
+if [ "${CURL_INTERRUPT:-}" = 1 ]; then
+    while [ $# -gt 0 ]; do
+        [ "$1" = --output ] && out=$2
+        shift
+    done
+    head -c 100 /dev/urandom >"$out"
+    kill -9 "$PPID"
+    exit 1
+fi
+exec /usr/bin/curl "$@"
+SH
+chmod +x "$pk/curl"
+export SMITH_CURL=$pk/curl CURL_LOG=$pk/curl.log
+tar_url=file://$pk/pkg.tar.gz
+tar_hash=sha256:$(shasum -a 256 "$pk/pkg.tar.gz" | cut -d' ' -f1)
+tar_hex=${tar_hash#sha256:}
+curl_calls() { lines "$CURL_LOG"; }
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *dir = smith_package(b, &(SmithPackage){
+                                           .url = smith_option_value(b, "URL", nullptr, "the package"),
+                                           .hash = smith_option_value(b, "HASH", nullptr, "its hash"),
+                                       });
+    smith_write(b, "path.txt", dir);
+    SmithStep copy = {
+        .command = (const char *[]){"cp", "$in", "$out", nullptr},
+        .inputs = smith_list(b, smith_fmt(b, "%s/hello.txt", dir), nullptr),
+        .outputs = (const char *[]){"out.txt", nullptr},
+    };
+    smith_step(b, &copy);
+    smith_default(b, copy.outputs);
+}
+C
+export XDG_CACHE_HOME=$pk/cache
+rm -f "$CURL_LOG"
+build -DURL="$tar_url" -DHASH="$tar_hash"
+expect "package: the first build exits 0" 0 "$rc"
+expect_contains "package: it says it is fetching" "$err" "fetching $tar_url"
+expect "package: the path is in the cache, by hash" "$pk/cache/smith/packages/$tar_hex" "$(cat path.txt 2>/dev/null)"
+expect "package: the archive's one top folder is stripped and its files are used" "hello package" "$(cat out.txt 2>/dev/null)"
+expect "package: modes survive extraction" "tool ran" "$("$pk/cache/smith/packages/$tar_hex/bin/tool" 2>&1)"
+expect "package: the first build called curl once" 1 "$(curl_calls)"
+expect "package: no temporary file is left in the cache" 0 "$(ls -A "$pk/cache/smith/packages" | grep -c '^\.tmp')"
+mv "$pk/pkg.tar.gz" "$pk/pkg.tar.gz.away"
+build -DURL="$tar_url" -DHASH="$tar_hash"
+expect "package: a second build exits 0 with the archive gone" 0 "$rc"
+expect "package: a second build does not call curl" 1 "$(curl_calls)"
+expect_contains "package: a second build says nothing about fetching" "x$err" "x"
+mv "$pk/pkg.tar.gz.away" "$pk/pkg.tar.gz"
+build -DURL="$tar_url" -DHASH="$tar_hash" -DOFFLINE
+expect "package: -DOFFLINE succeeds when it is cached" 0 "$rc"
+expect "package: and does not call curl" 1 "$(curl_calls)"
+
+wrong=sha256:$(printf 'f%.0s' $(seq 64))
+build -DURL="$tar_url" -DHASH="$wrong"
+expect_status "package: a wrong hash fails" fail
+expect_contains "package: the message names the URL" "$err" "$tar_url"
+expect_contains "package: and the expected hash" "$err" "expected $wrong"
+expect_contains "package: and the actual hash" "$err" "actual   $tar_hash"
+expect "package: a wrong hash leaves nothing under it" no "$([ -e "$pk/cache/smith/packages/${wrong#sha256:}" ] && echo yes || echo no)"
+expect "package: and no temporary file" 0 "$(ls -A "$pk/cache/smith/packages" | grep -c '^\.tmp')"
+build -DURL="$tar_url" -DHASH=sha256:abc
+expect_status "package: a malformed hash fails" fail
+expect_contains "package: the message says what a hash looks like" "$err" "64 hex digits"
+
+# An interrupted fetch (curl writes half a file and kills the build program) leaves no complete package.
+export XDG_CACHE_HOME=$pk/cache2
+export CURL_INTERRUPT=1
+build -DURL="$tar_url" -DHASH="$tar_hash"
+unset CURL_INTERRUPT
+expect_status "package: an interrupted fetch fails" fail
+expect "package: nothing is in the cache under the hash" no "$([ -e "$pk/cache2/smith/packages/$tar_hex" ] && echo yes || echo no)"
+expect "package: the leftover is a temporary name only" yes "$(ls -A "$pk/cache2/smith/packages" | grep -q '^\.tmp' && echo yes || echo no)"
+build -DURL="$tar_url" -DHASH="$tar_hash"
+expect "package: the next build fetches it properly" "0 hello package" "$rc $(cat out.txt 2>/dev/null)"
+
+# -DOFFLINE with an empty cache is an error that names the URL and fetches nothing.
+export XDG_CACHE_HOME=$pk/cache3
+before=$(curl_calls)
+build -DURL="$tar_url" -DHASH="$tar_hash" -DOFFLINE
+expect_status "package: -DOFFLINE fails when the package is missing" fail
+expect_contains "package: the message names the URL" "$err" "$tar_url"
+expect "package: -DOFFLINE does not call curl" "$before" "$(curl_calls)"
+expect "package: and makes no package" no "$([ -e "$pk/cache3/smith/packages/$tar_hex" ] && echo yes || echo no)"
+
+# smith fetch prints the line to paste, and leaves the package in the cache.
+capture "$smith" fetch "$tar_url"
+expect "package: smith fetch prints the hash line" ".hash = \"$tar_hash\"," "$out"
+expect "package: and leaves the package in the cache" "hello package" "$(cat "$pk/cache3/smith/packages/$tar_hex/hello.txt" 2>/dev/null)"
+build -DURL="$tar_url" -DHASH="$tar_hash" -DOFFLINE
+expect "package: a build offline then uses it" "0 hello package" "$rc $(cat out.txt 2>/dev/null)"
+capture "$smith" fetch
+expect "package: smith fetch needs a URL" 2 "$rc"
+capture "$smith" fetch "file://$pk/missing.tar.gz"
+expect_status "package: smith fetch of a missing file fails" fail
+
+# .tar.xz and .zip extract the same way, and the XDG default is ~/.cache.
+for kind in tar.xz zip; do
+    export XDG_CACHE_HOME=$pk/cache-$kind
+    capture "$smith" fetch "file://$pk/pkg.$kind"
+    hash_line=$out
+    hash=${hash_line#*\"}
+    hash=${hash%%\"*}
+    expect "package: .$kind has the hash shasum gives" "sha256:$(shasum -a 256 "$pk/pkg.$kind" | cut -d' ' -f1)" "$hash"
+    expect "package: .$kind extracts" "hello package" "$(cat "$pk/cache-$kind/smith/packages/${hash#sha256:}/hello.txt" 2>/dev/null)"
+done
+unset XDG_CACHE_HOME
+mkdir "$pk/home"
+HOME=$pk/home capture "$smith" fetch "$tar_url"
+expect "package: with no XDG_CACHE_HOME the cache is ~/.cache" "hello package" \
+    "$(cat "$pk/home/.cache/smith/packages/$tar_hex/hello.txt" 2>/dev/null)"
+unset SMITH_CURL CURL_LOG
+
+# SHA-256 against the NIST vectors (FIPS 180-2 examples, and the empty message), and shasum.
+sha() { "$smith" --smith-sha256 "$1"; }
+printf abc >"$pk/abc"
+expect "sha256: \"abc\"" ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad "$(sha "$pk/abc")"
+: >"$pk/empty"
+expect "sha256: the empty message" e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 "$(sha "$pk/empty")"
+printf abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq >"$pk/448"
+expect "sha256: the 448-bit message" 248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1 "$(sha "$pk/448")"
+printf abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu >"$pk/896"
+expect "sha256: the 896-bit message" cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1 "$(sha "$pk/896")"
+head -c 1000000 /dev/zero | tr '\0' a >"$pk/million"
+expect "sha256: a million \"a\"" cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0 "$(sha "$pk/million")"
+head -c 300000 /dev/urandom >"$pk/random"
+expect "sha256: 300000 random bytes equal shasum" "$(shasum -a 256 "$pk/random" | cut -d' ' -f1)" "$(sha "$pk/random")"
+for size in 55 56 57 63 64 65 119 120 128; do # around the padding boundaries
+    head -c "$size" /dev/urandom >"$pk/size"
+    expect "sha256: $size bytes equal shasum" "$(shasum -a 256 "$pk/size" | cut -d' ' -f1)" "$(sha "$pk/size")"
+done
+
+# 12. A smith built with one command.
 project
 capture "$cc" -std=gnu23 "$here/../smith.c" -o "$work/one-command-smith"
 expect "one command: cc -std=gnu23 smith.c builds a smith" 0 "$rc"
 capture "$work/one-command-smith" --smith-version
 expect_contains "one command: the built smith runs" "$out" "smith 0."
 
-# 12. A no-op build, timed (informational).
+# 13. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build
 start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')

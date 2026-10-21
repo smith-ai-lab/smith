@@ -84,6 +84,22 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // arena, so a project that compiles one compiles both; smith_tests compiles "test").
 const char *smith_library(SmithBuild *b, const char *name);
 
+// A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
+// version solving and no lock file: the hash is the lock, and the same hash always gives the same bytes.
+typedef struct {
+    const char *url;  // https:// (file:// for tests)
+    const char *hash; // "sha256:<64 hex digits>" of the archive's bytes; `smith fetch <url>` prints the line to paste
+} SmithPackage;
+// The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
+// ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash. Fetched, verified and extracted on
+// the first use (/usr/bin/curl and /usr/bin/tar, so .tar.gz, .tar.xz and .zip; $SMITH_CURL picks another curl);
+// afterwards it is only looked up, so a build works offline once it has fetched. When the archive holds one top-level
+// folder, the path is that folder's contents. The package appears in the cache only when it is complete: a fetch that
+// is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
+// -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
+// so it can go in steps, -I flags and objects. macOS only for now.
+const char *smith_package(SmithBuild *b, const SmithPackage *package);
+
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
 // joins lists; the last argument is nullptr

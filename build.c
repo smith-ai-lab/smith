@@ -125,6 +125,7 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
                                                   "build.c",
                                                   "tests/stub.c",
                                                   "runtime/build_runtime.c",
+                                                  "runtime/package.c",
                                                   "include/smith/build.h",
                                                   "include/smith/arena.h",
                                                   "lib/arena.c",
@@ -152,10 +153,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = config->cflags,
         .implicit_inputs =
-            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "include/smith/arena.h", "lib/arena.c",
-                             "include/smith/random.h", "lib/random.c", "include/smith/test.h", "lib/test.c",
-                             "templates/new/build.c", "templates/new/main.c", "templates/new/gitignore",
-                             "templates/new/clang-format", "templates/new/clang-tidy",
+            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c",
+                             "include/smith/arena.h", "lib/arena.c", "include/smith/random.h", "lib/random.c",
+                             "include/smith/test.h", "lib/test.c", "templates/new/build.c", "templates/new/main.c",
+                             "templates/new/gitignore", "templates/new/clang-format", "templates/new/clang-tidy",
                              "templates/new/claude-settings.json", nullptr},
     };
     smith_object(b, &object);

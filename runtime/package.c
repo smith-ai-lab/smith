@@ -1,0 +1,352 @@
+// Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, included by smith.c
+// (`smith fetch`) and by the build runtime (`smith_package`), and embedded in smith so the runtime finds it next to
+// itself in .smith/. It needs SMITH_ASSERT and `environ` from its includer. See docs/build-c.md.
+//
+// The cache is $XDG_CACHE_HOME/smith/packages/<hex>/, or ~/.cache/smith/packages/<hex>/, keyed by the archive's hash. A
+// package is downloaded to a temporary file, verified, extracted into a temporary folder and only then renamed into
+// place, so a folder named by a hash is always complete. Temporary names start with ".tmp-", which no hash does.
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <ftw.h>
+#include <limits.h>
+#include <spawn.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
+constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the terminator
+constexpr size_t smith_package_error_size = 2048;
+constexpr size_t smith_package_read_size = 65536;
+constexpr int smith_package_wait_tries = 1000;
+
+typedef struct {
+    uint32_t state[8];
+    uint64_t bytes;
+    uint8_t block[64];
+    size_t used;
+} SmithSha256;
+
+static const uint32_t smith_sha256_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+static uint32_t smith_sha256_rotate(uint32_t value, unsigned count) {
+    return (value >> count) | (value << (32U - count));
+}
+
+static void smith_sha256_init(SmithSha256 *sha) {
+    static const uint32_t start[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    memcpy(sha->state, start, sizeof start);
+    sha->bytes = 0;
+    sha->used = 0;
+}
+
+static void smith_sha256_block(SmithSha256 *sha, const uint8_t *block) {
+    uint32_t w[64];
+    for (size_t i = 0; i < 16; i++) {
+        w[i] = ((uint32_t)block[i * 4] << 24) | ((uint32_t)block[i * 4 + 1] << 16) | ((uint32_t)block[i * 4 + 2] << 8) |
+               (uint32_t)block[i * 4 + 3];
+    }
+    for (size_t i = 16; i < 64; i++) {
+        uint32_t s0 = smith_sha256_rotate(w[i - 15], 7) ^ smith_sha256_rotate(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = smith_sha256_rotate(w[i - 2], 17) ^ smith_sha256_rotate(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    uint32_t v[8];
+    memcpy(v, sha->state, sizeof v);
+    for (size_t i = 0; i < 64; i++) {
+        uint32_t s1 = smith_sha256_rotate(v[4], 6) ^ smith_sha256_rotate(v[4], 11) ^ smith_sha256_rotate(v[4], 25);
+        uint32_t choose = (v[4] & v[5]) ^ (~v[4] & v[6]);
+        uint32_t first = v[7] + s1 + choose + smith_sha256_k[i] + w[i];
+        uint32_t s0 = smith_sha256_rotate(v[0], 2) ^ smith_sha256_rotate(v[0], 13) ^ smith_sha256_rotate(v[0], 22);
+        uint32_t majority = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+        uint32_t second = s0 + majority;
+        memmove(v + 1, v, 7 * sizeof v[0]);
+        v[4] += first;
+        v[0] = first + second;
+    }
+    for (size_t i = 0; i < 8; i++)
+        sha->state[i] += v[i];
+}
+
+static void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t size) {
+    SMITH_ASSERT(data != nullptr || size == 0);
+    sha->bytes += size;
+    for (size_t at = 0; at < size;) {
+        size_t take = sizeof sha->block - sha->used;
+        if (take > size - at) take = size - at;
+        memcpy(sha->block + sha->used, data + at, take);
+        sha->used += take;
+        at += take;
+        if (sha->used == sizeof sha->block) {
+            smith_sha256_block(sha, sha->block);
+            sha->used = 0;
+        }
+    }
+}
+
+// The digest as 64 lowercase hex digits and a terminator.
+static void smith_sha256_final(SmithSha256 *sha, char hex[smith_sha256_hex_size]) {
+    uint64_t bits = sha->bytes * 8U;
+    uint8_t pad[72] = {0x80};
+    size_t zeros = (sha->used < 56 ? 56 : 120) - sha->used; // up to 56 bytes into a block, then the length
+    smith_sha256_update(sha, pad, zeros);
+    uint8_t length[8];
+    for (size_t i = 0; i < 8; i++)
+        length[i] = (uint8_t)(bits >> (56U - 8U * i));
+    smith_sha256_update(sha, length, sizeof length);
+    SMITH_ASSERT(sha->used == 0);
+    for (size_t i = 0; i < 8; i++) {
+        int written = snprintf(hex + i * 8, 9, "%08x", sha->state[i]);
+        SMITH_ASSERT(written == 8);
+    }
+}
+
+// The SHA-256 of a file's bytes. False when it cannot be read.
+static bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return false;
+    static uint8_t buffer[smith_package_read_size];
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    bool ok = true;
+    for (uint64_t chunks = 0; chunks < (UINT64_C(1) << 40) / smith_package_read_size && ok; chunks++) {
+        ssize_t got = read(fd, buffer, sizeof buffer);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) ok = false;
+        if (got <= 0) break;
+        smith_sha256_update(&sha, buffer, (size_t)got);
+    }
+    close(fd);
+    if (ok) smith_sha256_final(&sha, hex);
+    return ok;
+}
+
+typedef struct {
+    char text[smith_package_error_size];
+} SmithPackageError;
+
+[[gnu::format(printf, 2, 3)]] static bool smith_package_fail(SmithPackageError *error, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(error->text, sizeof error->text, format, args);
+    va_end(args);
+    SMITH_ASSERT(written > 0);
+    return false;
+}
+
+static bool smith_package_is_folder(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+// mkdir -p. False when a part cannot be made.
+static bool smith_package_make_folders(const char *path) {
+    char partial[PATH_MAX];
+    int written = snprintf(partial, sizeof partial, "%s", path);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof partial);
+    for (size_t i = 1; i <= (size_t)written; i++) {
+        if (partial[i] != '/' && partial[i] != '\0') continue;
+        partial[i] = '\0';
+        if (mkdir(partial, 0777) != 0 && errno != EEXIST) return false;
+        if (i < (size_t)written) partial[i] = '/';
+    }
+    return smith_package_is_folder(path);
+}
+
+static int smith_package_remove_entry(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)info;
+    (void)type;
+    (void)where;
+    return remove(path);
+}
+
+// rm -rf, best effort: a path that is not there is fine.
+static void smith_package_remove(const char *path) {
+    struct stat info;
+    if (lstat(path, &info) != 0) return;
+    if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
+}
+
+// Runs a program as a child with the caller's stdout and stderr, and waits. The result is its exit status, 128 plus the
+// signal that killed it, or 127 when it cannot start.
+static int smith_package_spawn(const char *program, char *const *args) {
+    pid_t pid = 0;
+    if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) return 127;
+    int status = 0;
+    int waited = -1;
+    for (int i = 0; i < smith_package_wait_tries && waited < 0; i++)
+        waited = waitpid(pid, &status, 0);
+    if (waited < 0) return 127;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return 128 + WTERMSIG(status);
+}
+
+// The only place a package is downloaded: smith's own HTTP client will replace it. $SMITH_CURL picks another curl, as
+// $SMITH_NINJA picks another ninja. https only (and file:// for tests), also after a redirect.
+static bool smith_package_download(const char *url, const char *destination) {
+    const char *override = getenv("SMITH_CURL");
+    const char *curl = override != nullptr && *override != '\0' ? override : "/usr/bin/curl";
+    char *args[] = {(char *)curl,
+                    (char *)"--fail",
+                    (char *)"--location",
+                    (char *)"--silent",
+                    (char *)"--show-error",
+                    (char *)"--proto",
+                    (char *)"=https,file",
+                    (char *)"--proto-redir",
+                    (char *)"=https",
+                    (char *)"--output",
+                    (char *)destination,
+                    (char *)"--url",
+                    (char *)url,
+                    nullptr};
+    return smith_package_spawn(curl, args) == 0;
+}
+
+static bool smith_package_extract(const char *archive, const char *folder) {
+    char *args[] = {(char *)"/usr/bin/tar", (char *)"-xf", (char *)archive, (char *)"-C", (char *)folder, nullptr};
+    return smith_package_spawn(args[0], args) == 0;
+}
+
+// $XDG_CACHE_HOME/smith/packages, or ~/.cache/smith/packages.
+static bool smith_package_root(char *out, SmithPackageError *error) {
+    const char *xdg = getenv("XDG_CACHE_HOME");
+    const char *home = getenv("HOME");
+    int written = 0;
+    if (xdg != nullptr && *xdg != '\0') {
+        if (xdg[0] != '/') return smith_package_fail(error, "XDG_CACHE_HOME is not an absolute path: %s", xdg);
+        written = snprintf(out, PATH_MAX, "%s/smith/packages", xdg);
+    } else if (home != nullptr && home[0] == '/') {
+        written = snprintf(out, PATH_MAX, "%s/.cache/smith/packages", home);
+    } else {
+        return smith_package_fail(error, "no cache folder: set XDG_CACHE_HOME or HOME");
+    }
+    if (written <= 0 || written >= PATH_MAX) return smith_package_fail(error, "the cache path is too long");
+    return true;
+}
+
+// "sha256:<64 hex digits>" to its lowercase digits. False when it is not that.
+static bool smith_package_parse_hash(const char *hash, char digits[smith_sha256_hex_size]) {
+    if (hash == nullptr || strncmp(hash, "sha256:", 7) != 0 || strlen(hash) != 7 + 64) return false;
+    for (size_t i = 0; i < 64; i++) {
+        char c = hash[7 + i];
+        if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a');
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        digits[i] = c;
+    }
+    digits[64] = '\0';
+    return true;
+}
+
+// The folder to move into place: the archive's one top-level folder when it has exactly one entry (as `zig fetch` and
+// tar --strip-components=1 do), else the extraction folder itself.
+static bool smith_package_contents(const char *extract, char *contents, SmithPackageError *error) {
+    DIR *dir = opendir(extract);
+    if (dir == nullptr) return smith_package_fail(error, "cannot read %s", extract);
+    size_t entries = 0;
+    char only[PATH_MAX] = "";
+    for (size_t i = 0; i < 1000000; i++) {
+        struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        entries++;
+        if (entries == 1) snprintf(only, sizeof only, "%s/%s", extract, entry->d_name);
+    }
+    closedir(dir);
+    if (entries == 0) return smith_package_fail(error, "the archive is empty");
+    struct stat info;
+    bool single = entries == 1 && lstat(only, &info) == 0 && S_ISDIR(info.st_mode);
+    int written = snprintf(contents, PATH_MAX, "%s", single ? only : extract);
+    SMITH_ASSERT(written > 0 && written < PATH_MAX);
+    return true;
+}
+
+typedef struct {
+    char packages[PATH_MAX]; // the cache folder
+    char download[PATH_MAX]; // the temporary archive
+    char extract[PATH_MAX];  // the temporary folder
+} SmithPackageTemps;
+
+static void smith_package_temps(SmithPackageTemps *temps) {
+    int a = snprintf(temps->download, PATH_MAX, "%s/.tmp-%d-archive", temps->packages, (int)getpid());
+    int b = snprintf(temps->extract, PATH_MAX, "%s/.tmp-%d-extract", temps->packages, (int)getpid());
+    SMITH_ASSERT(a > 0 && a < PATH_MAX && b > 0 && b < PATH_MAX);
+    smith_package_remove(temps->download); // left by an earlier process with this pid
+    smith_package_remove(temps->extract);
+}
+
+// Verifies the downloaded archive, extracts it and moves it to its folder. The temporaries are the caller's to remove.
+static bool smith_package_install(const char *url, const char *wanted, const SmithPackageTemps *temps, char *folder,
+                                  char hash[smith_package_hash_size], SmithPackageError *error) {
+    char digits[smith_sha256_hex_size];
+    if (!smith_sha256_file(temps->download, digits))
+        return smith_package_fail(error, "cannot read the download of %s", url);
+    int written = snprintf(hash, smith_package_hash_size, "sha256:%s", digits);
+    SMITH_ASSERT(written == 71);
+    if (wanted != nullptr && strcmp(wanted, hash) != 0) {
+        return smith_package_fail(error, "wrong hash for %s\n  expected %s\n  actual   %s", url, wanted, hash);
+    }
+    written = snprintf(folder, PATH_MAX, "%s/%s", temps->packages, digits);
+    SMITH_ASSERT(written > 0 && written < PATH_MAX);
+    if (smith_package_is_folder(folder)) return true;
+    if (mkdir(temps->extract, 0777) != 0) return smith_package_fail(error, "cannot make %s", temps->extract);
+    if (!smith_package_extract(temps->download, temps->extract)) {
+        return smith_package_fail(error, "cannot extract %s (downloaded from %s)", temps->download, url);
+    }
+    char contents[PATH_MAX];
+    if (!smith_package_contents(temps->extract, contents, error)) return false;
+    if (rename(contents, folder) != 0 && !smith_package_is_folder(folder)) { // another process may have won
+        return smith_package_fail(error, "cannot move the package into %s: %s", folder, strerror(errno));
+    }
+    return true;
+}
+
+// Makes sure the package is in the cache and puts its absolute path in folder (PATH_MAX bytes). With `wanted` (the
+// "sha256:<hex>" a build.c names) the download must match it, and a package already cached is not fetched again. With
+// nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
+// `offline` turns a missing package into an error that names the URL.
+static bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
+                                 char hash[smith_package_hash_size], SmithPackageError *error) {
+    SmithPackageTemps temps;
+    if (!smith_package_root(temps.packages, error)) return false;
+    char digits[smith_sha256_hex_size];
+    char expected[smith_package_hash_size]; // a copy: install writes the actual hash into `hash`
+    if (wanted != nullptr) {
+        if (!smith_package_parse_hash(wanted, digits)) {
+            return smith_package_fail(error, "the hash of %s must be sha256: and 64 hex digits, not \"%s\"", url,
+                                      wanted);
+        }
+        int written = snprintf(folder, PATH_MAX, "%s/%s", temps.packages, digits);
+        SMITH_ASSERT(written > 0 && written < PATH_MAX);
+        snprintf(expected, sizeof expected, "sha256:%s", digits);
+        snprintf(hash, smith_package_hash_size, "%s", expected);
+        if (smith_package_is_folder(folder)) return true;
+        if (offline) return smith_package_fail(error, "%s is not in the cache and -DOFFLINE forbids fetching it", url);
+    }
+    if (!smith_package_make_folders(temps.packages)) {
+        return smith_package_fail(error, "cannot make the cache folder %s", temps.packages);
+    }
+    smith_package_temps(&temps);
+    bool ok = smith_package_download(url, temps.download)
+                  ? smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error)
+                  : smith_package_fail(error, "cannot download %s", url);
+    smith_package_remove(temps.download);
+    smith_package_remove(temps.extract);
+    return ok;
+}

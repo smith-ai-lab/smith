@@ -67,6 +67,10 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
+- `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
+  `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
+  a hash, fetched with `/usr/bin/curl` and extracted with `/usr/bin/tar`; the hash is the lock (no registry, no lock
+  file). `-DOFFLINE` forbids fetching. macOS only for now.
 - `SMITH_CLANG`, `SMITH_CLANGXX` and `SMITH_METAL` pick the compilers, `SMITH_VERBOSE=1` prints the command, and
   `smith --smith-which <args>` prints the choice without running it. `SMITH_NINJA` picks the ninja `smith build`
   runs.
