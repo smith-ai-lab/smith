@@ -248,6 +248,39 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
     smith_task(b, "install", &install);
 }
 
+// The pinned LLVM (`smith build llvm`): sources, CMake and Python by hash, built once into the package cache by
+// scripts/llvm.sh. A .run step, so the packages are fetched only when this target runs, not on every smith build.
+static int build_llvm_run(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *source = smith_package(
+        b,
+        &(SmithPackage){
+            .url =
+                "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz",
+            .hash = "sha256:c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34"});
+    const char *cmake = smith_package(
+        b, &(SmithPackage){
+               .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-macos-universal.tar.gz",
+               .hash = "sha256:4b7b73704b1db9b374e5c9ab8e17ac6148b817b6396ee75cd94a852cbac9d305"});
+    const char *python = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
+                                  "cpython-3.13.16%2B20261020-aarch64-apple-darwin-install_only.tar.gz",
+                           .hash = "sha256:235f3d5b182a171f6564ee98ef2812cfb2da8a73c4a37fca1937b25702f94880"});
+    const char *const argv[] = {"sh", run->inputs[0], source, cmake, python, run->outputs[0], nullptr};
+    return smith_run_program(run, argv, nullptr);
+}
+
+static void build_llvm(SmithBuild *b) {
+    SmithStep llvm = {
+        .run = build_llvm_run,
+        .description = "building LLVM 23.1.3 (static, from source)",
+        .inputs = (const char *[]){"scripts/llvm.sh", nullptr},
+        .outputs = (const char *[]){"build/llvm.stamp", nullptr},
+    };
+    smith_step(b, &llvm);
+    smith_alias(b, "llvm", llvm.outputs);
+}
+
 void build(SmithBuild *b) {
     const char *std = build_variable(b, "STD", "gnu23", "the C standard");
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
@@ -271,6 +304,7 @@ void build(SmithBuild *b) {
     build_compare(b, &config, config.binary);
     build_checks(b, &config);
     build_install(b, &config, config.binary, test.outputs);
+    build_llvm(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.

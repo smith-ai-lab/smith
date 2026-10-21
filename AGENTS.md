@@ -66,6 +66,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   smith's included. The way back needs only a C23 compiler, and is also the first build of a fresh clone:
   `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc`. `-DCC=` picks the
   compiler that builds smith; `smith build clean` removes `build/`.
+- `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
+  `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
+  `~/.cache/smith/llvm/23.1.3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
+  build never run it. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.

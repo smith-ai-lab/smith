@@ -18,11 +18,9 @@
 static_assert(FLT_EVAL_METHOD == 0, "float arithmetic must happen in float");
 
 // a * b as a value the compiler cannot fuse into a following addition. The register class keeps it out of memory on the
-// two architectures that are tested; "X" is correct everywhere, if slower.
+// architecture that is tested; "X" is correct everywhere, if slower.
 #if defined(__aarch64__)
 #define SMITH_RANDOM_OPAQUE(variable) __asm__("" : "+w"(variable))
-#elif defined(__x86_64__)
-#define SMITH_RANDOM_OPAQUE(variable) __asm__("" : "+x"(variable))
 #else
 #define SMITH_RANDOM_OPAQUE(variable) __asm__("" : "+X"(variable))
 #endif

@@ -86,17 +86,6 @@ digest "-O3 -DNDEBUG" -std=gnu23 -O3 -DNDEBUG
 digest "-std=gnu2y" -std=gnu2y -O2
 digest "-ffp-contract=fast, which the pragma defeats" -std=gnu23 -O2 -ffp-contract=fast
 digest "-O3 -march=native -ffp-contract=fast" -std=gnu23 -O3 -march=native -ffp-contract=fast
-if [ "$(uname -s)" = Darwin ]; then
-    if $cc -I "$here/include" -w -std=gnu23 -O2 -arch x86_64 $sources -o "$work/x86" 2>/dev/null &&
-        capture arch -x86_64 "$work/x86" digest && [ "$rc" -eq 0 ]; then
-        expect "digest: -arch x86_64 under Rosetta" "$expected_digest" "$out"
-    else
-        echo "skip  digest: -arch x86_64 (Rosetta is missing or cannot run it; not installed by this test)"
-        $cc -I "$here/include" -std=gnu23 $warn -O2 -arch x86_64 -ffp-contract=fast -c "$here/lib/random.c" -o "$work/x86.o"
-        expect "x86_64: the library compiles (it could not be run)" 0 "$?"
-    fi
-fi
-
 # 4. The refusals.
 capture $cc -std=gnu23 -I "$here/include" -ffast-math -c "$here/lib/random.c" -o "$work/r.o"
 expect "refusal: -ffast-math fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
