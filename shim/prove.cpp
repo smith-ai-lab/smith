@@ -24,6 +24,7 @@
 #include <vector>
 
 extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
+extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, size_t capacity);
 
 namespace {
 
@@ -78,10 +79,17 @@ Arguments parse(int argc, char **argv) {
     return arguments;
 }
 
+bool is_smith(const std::string &file) {
+    return file.size() > 6 && file.compare(file.size() - 6, 6, ".smith") == 0;
+}
+
 // Compiles one file to bitcode in `output` with the clang smith runs in process. Returns clang's exit status.
 int compile(const char *program, const char *resource, const std::string &file, const std::vector<std::string> &flags,
             const std::string &output) {
-    std::vector<std::string> words = {"clang", "-std=gnu23"};
+    // A .smith file is C2y and lowered by the compiler's hook: smith_lang_command gives it `-x c` and the standard.
+    bool smith = is_smith(file);
+    std::vector<std::string> words = {"clang"};
+    if (!smith) words.push_back("-std=gnu23");
     words.insert(words.end(), flags.begin(), flags.end());
     // After the caller's flags, so that they cannot turn the proof's choices off.
     for (const char *forced : {"-c", "-emit-llvm", "-O0", "-g", "-fno-discard-value-names", "-fstrict-flex-arrays=3",
@@ -93,6 +101,15 @@ int compile(const char *program, const char *resource, const std::string &file, 
     for (std::string &word : words)
         pointers.push_back(word.data());
     pointers.push_back(nullptr);
+    std::vector<char *> lowered(pointers.size() + 8);
+    if (smith) {
+        int count = smith_lang_command(static_cast<int>(pointers.size()) - 1, pointers.data(), 1, lowered.data(),
+                                       lowered.size() - 1);
+        if (count > 0) {
+            pointers.assign(lowered.begin(), lowered.begin() + count);
+            pointers.push_back(nullptr);
+        }
+    }
     std::fflush(nullptr);
     pid_t child = fork();
     if (child < 0) return 2;
@@ -281,6 +298,12 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         std::fprintf(stderr, "smith: prove: cannot make a temporary folder\n");
         return 2;
     }
+    // An `import foo` that finds no header looks for foo.smith among the command's .smith files first.
+    std::string smith_inputs;
+    for (const std::string &file : arguments.files) {
+        if (is_smith(file)) smith_inputs += file + "\n";
+    }
+    if (!smith_inputs.empty()) setenv("SMITH_LANG_INPUTS", smith_inputs.c_str(), 1);
     std::vector<std::string> bitcode;
     int status = 0;
     for (size_t i = 0; i < arguments.files.size() && status == 0; i++) {

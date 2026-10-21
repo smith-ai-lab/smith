@@ -739,7 +739,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
     {"test", "test", nullptr, nullptr, 1},
     {"isolate-main", "test", "isolate", "main", 1},
-    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess", 1},
+    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess,lang", 1},
     {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
     {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
     {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},

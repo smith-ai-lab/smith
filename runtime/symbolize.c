@@ -17,8 +17,11 @@
 //
 // The failing frame is the first frame that is not smith's own check, contract and abort machinery (a function whose
 // name starts with smith_test_, smith_check, smith_requires, smith_ensures, smith_invariant, smith_failure,
-// smith_contract_, smith_trace_ or smith.test. or smith.contract.) and not a frame of a system library (libc's abort
-// path, which has no debug info). The chain ends at the first frame of the test runner (smith_test_...) or at main.
+// smith_contract_, smith_trace_, or the library as a module: smith::test::, smith::contract:: or smith::trace::, and
+// the older smith.test. and smith.contract.) and not a frame of a system library (libc's abort path, which has no debug
+// info). The chain ends at the first frame of the test runner (smith_test_... or smith::test::...) or at main. A
+// `.smith` function is shown as written, `geometry::box::area` (the debug names of issue #27), and so is the name of a
+// module's test.
 
 constexpr size_t smith_sym_frames_max = 64;
 constexpr size_t smith_sym_images_max = 32;
@@ -210,9 +213,10 @@ static bool smith_sym_apply(SmithSymTrace *trace, const char *word, const char *
 
 // Rows.
 
-static const char *smith_sym_skipped[] = {"smith_test_",     "smith_check",    "smith_requires",  "smith_ensures",
-                                          "smith_invariant", "smith_failure",  "smith_contract_", "smith_trace_",
-                                          "smith.test.",     "smith.contract."};
+static const char *smith_sym_skipped[] = {
+    "smith_test_",   "smith_check",       "smith_requires", "smith_ensures", "smith_invariant",
+    "smith_failure", "smith_contract_",   "smith_trace_",   "smith.test.",   "smith.contract.",
+    "smith::test::", "smith::contract::", "smith::trace::"};
 
 static bool smith_sym_machinery(const char *function) {
     while (*function == '_')
@@ -367,7 +371,9 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
         chain.last = i;
         const char *name = rows[i].function;
         if (strcmp(name, "main") == 0 || strcmp(name, "_main") == 0) break;
-        if (i > chain.first && smith_sym_machinery(name) && smith_sym_starts(name + (name[0] == '_'), "smith_test_"))
+        const char *bare = name + (name[0] == '_');
+        if (i > chain.first && smith_sym_machinery(name) &&
+            (smith_sym_starts(bare, "smith_test_") || smith_sym_starts(bare, "smith::test::")))
             break;
     }
     return chain;
