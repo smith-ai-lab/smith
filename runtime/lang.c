@@ -30,6 +30,9 @@ constexpr size_t smith_lang_allowed_max = 16; // the macro names c::X lets expan
 constexpr size_t smith_lang_name_max = 256;
 constexpr size_t smith_lang_message_max = 512;
 constexpr size_t smith_lang_cycle_max = 64;
+constexpr size_t smith_lang_written_max = 8192;
+constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
+constexpr size_t smith_lang_transitive_max = 32;
 
 typedef enum {
     SmithLangWord_Other,
@@ -79,7 +82,17 @@ typedef struct {
     SmithLangText name;
     SmithLangNameKind kind;
     bool exported;
+    uint32_t location; // of the declaration's name in the source, in the host's own measure
 } SmithLangName;
+
+// A name the compiler sees, and how the source writes it (runtime/lang_names.c).
+typedef struct {
+    SmithLangText lowered;  // geometry_box_Box
+    SmithLangText written;  // box::Box (Box in the module itself)
+    SmithLangText module;   // geometry::box
+    uint16_t prefix_length; // of lowered: what is left is the member
+    bool direct;
+} SmithLangWritten;
 
 typedef struct {
     SmithLangText name;
@@ -195,6 +208,17 @@ struct SmithLang {
     uint32_t slots[smith_lang_slots];
     SmithLangBinding bindings[smith_lang_bindings_max];
     size_t bindings_count;
+    SmithLangWritten written[smith_lang_written_max];
+    size_t written_count;
+    uint32_t written_slots[smith_lang_written_slots];
+    SmithLangText module_text; // this module's name, as stored text
+    bool qualifier_set;        // the cursor of a completion came right after `x::`
+    bool qualifier_is_c;
+    uint32_t qualifier_location;
+    SmithLangText qualifier_binding;
+    SmithLangText qualifier_prefix;
+    SmithLangText qualifier_module;
+    SmithLangText qualifier_partial;
     size_t chars_used;
     // Generated header and dump.
     size_t imports_count;
@@ -203,6 +227,10 @@ struct SmithLang {
     bool c_import_angled[smith_lang_imports_max];
     size_t c_imports_count;
     bool export_active;
+    bool emit_synthetic;   // everything emitted is a copy with no token of its own in the source (a prototype)
+    bool aligned;          // the header body keeps the source's lines (an interface read in memory, runtime/lang_lex.c)
+    size_t aligned_line;   // the line of the header body that is being written (from 1)
+    size_t aligned_column; // the column of the next character on it (from 1)
     size_t header_used;
     bool dump_enabled;
     size_t dump_used;
@@ -418,6 +446,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Names, bindings and the lowering of one identifier.
 #include "lang_decl.c"
+
+// The names as the source writes them.
+#include "lang_names.c"
 
 // The module line and the imports.
 #include "lang_import.c"

@@ -99,7 +99,10 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 ```
 
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
-which is how an import cycle is found. Importers include it (they need `-I .smith/include`); C and C++ callers include it
+which is how an import cycle is found, and the exports in a `// smith-names:` line (`// smith-names: Replay version open`),
+which is how an importer knows the names it can write back (see "Names as written"). Both depend on the exports only, so
+the header's bytes do not change with an edit to a body, or to the lines above an export (a `#line` for each declaration
+would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
 too; an export with no body is defined against it, in C, by its C name.
 
 ## `smith build`
@@ -120,7 +123,22 @@ file scope kept whole, `import <sys/wait.h>;` included. Inside a function body, 
 `import value = c.x + c.y;` is an indented declaration of a type named `import`. Every C file formats the same as `.c` and as
 `.smith` (`tests/smith-fmt.sh`). `smith fmt` with no arguments formats the project's `.smith` files when its build.c lists them
 (`smith new` globs `**/*.smith`). clangd, which uses the same library, formats `.smith` files the same way; understanding the
-rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
+rest of a `.smith` file (hover, diagnostics, completion) is `smith lsp` (below).
+
+## Names as written
+
+The compiler sees `geometry_box_Box`; the source says `box::Box` where it imports the module and `Box` in the module
+itself. Everything that shows a name to a person shows the written one: the compiler's diagnostics (`error: use of
+undeclared identifier 'box::aera'; did you mean 'box::area'?`, `note: 'box::area' declared here` at
+`geometry/box.smith:5:12`) and, in `smith lsp`, hover, the outline, signature help, hints and completion. The way back is
+a table the lowering keeps of the names it made (`runtime/lang_names.c`, `smith_lang_written_find`), never a guess at
+underscores (`a_b` can be a real C name): the module's own declarations, the exports of each imported module (from the
+`// smith-names:` line of its header) and of the modules those import (written with their whole module name, as the
+file has no name for them), and every `x::name` the file wrote, declared or not. `smith lsp` takes the table from the
+hook when a parse ends (`shim/names.h`) and a layer between the editor and clangd (`shim/lsp.cpp`) rewrites the answers
+(`SMITH_LSP_RAW=1` turns the layer off: the compiler's names). In an editor, after `box::` the module's exports are
+offered, each as its member, and the edit replaces only what comes after the `::` (`box::` + `area`). The layer also
+leaves out of references and renames the generated headers (`.smith/include/*.h`), which are no place to go to or edit.
 
 ## How it works
 
@@ -149,9 +167,26 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
     `smith cc --smith-header` does the same on its own tokens, so a bad module fails at its header.
   - **A module found by its source** is made in memory by `smith_lang_interface` (the header pass over a text; the
     lowering's tables are kept aside and put back, since an importer's own lowering is in the middle of its work). The
-    text becomes the contents the file manager has for the source file, which the include then reads; its imports of other
-    modules found the same way are rewritten to include their sources. Uses of a module that could not be imported are
-    kept out of the diagnostics by a consumer in front of clang's (`Suppressing` in `shim/hook.cpp`), by location.
+    text becomes the contents the file manager has for the source file, which the include then reads. Unlike the header
+    on disk it keeps the module's lines: each declaration is on its line (the first line is `#pragma once`) and its name
+    at its column where the text before allows, so a diagnostic that points into it is at the declaration in the module,
+    `foo.smith:3:12`. The `#include` lines it needs are entered by the hook in front of it, its imports of other modules
+    found the same way are rewritten to include their sources, and `// smith-module:`, `// smith-imports:` and
+    `// smith-names:` are what the lowering of an importer reads of it (`SmithInterface`, `runtime/lang.h`).
+  - **The parser's tokens, for tools.** Output that stands for a token of the source (a renamed name, the head of an
+    exported declaration) is pushed back as a plain stream and passes the hook again without being lowered a second
+    time (`replayed`, "Replay" in `shim/hook.cpp`); what the source has no token of (a `static`, the `__asm__` label) is
+    reinjected. A reinjected stream is not reported to the Preprocessor's token watcher, which is how clangd's
+    `TokenBuffer` (behind hover, references, highlights, the outline) learns the parser's tokens, so without this none
+    of an exported declaration's head, its name included, was known to them and hover at a definition said nothing.
+    The prototype that carries an exported function's symbol is a copy of the head: its tokens are placed in a buffer of
+    their own (`relocate`), so that the declaration it makes is not a second one at the definition's place, and a
+    diagnostic there is left out (the definition has its own).
+  - **Diagnostics as written** go through a consumer in front of clang's (`Presenter`, `shim/hook.cpp`, in `smith cc` and
+    in clangd alike): every message, note and fix-it is rewritten by the lowering's table of names, and a note into a
+    module's generated header goes to the declaration in the module's source (`smith_lang_declarations` reads the
+    module again for where it declares each export, so the header need not say). Uses of a module that could not be
+    imported are kept out by the same consumer, by location.
 - **The questions** the lowering asks the parser (`SmithHost` in `runtime/lang.h`) are answered from `Sema`'s name lookup
   in the current scope, so locals and parameters count and only completed declarations are visible (the hook runs one
   token ahead of the parser): is this name declared, and a type or a value; was it declared by an `import`ed header; and
@@ -186,7 +221,13 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   `compile_commands.json`, for its flags and include paths. The module headers are
   read through the file manager's file system, so a relative `-I .smith/include` means the command's directory. Because a
   module starts with code, clangd's preamble for it is empty, and the "translation unit with no declaration" extension
-  warning that C gives for that is turned off for an empty main buffer. `tests/lsp.sh` drives a real session.
+  warning that C gives for that is turned off for an empty main buffer. The messages go through `shim/lsp.cpp`:
+  `smith_lsp_run` runs clangd's main with its input and output behind a pair of pipes, and a thread each way reads the
+  protocol's messages, notes the requests (hover, completion, outline, signature help, hints, references, rename,
+  workspace symbols) and rewrites the names in their answers with the table of the file asked about; a message that is
+  none of those passes as the bytes it came in. The cursor of a completion that came right after `x::` is given to the
+  lowering as a token (`SmithToken.completion`), which takes the `x::` away and leaves the cursor, so that the parser
+  offers names there and the layer keeps the module's. `tests/lsp.sh` drives a real session.
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
@@ -198,12 +239,13 @@ rest of a `.smith` file (hover, diagnostics, completion) is issue #26.
   not seen by it.
 - A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
-- Diagnostics show lowered names (`game_replay_open`); mapping them back to `game::replay::open` is the consumer's work.
-  So do hover, symbols and completion in `smith lsp`, whose completion after `x::` is empty and whose go-to-definition
-  lands on the generated header until the background index has the module's source.
+- A hover shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's standard C types,
+  where the module says `i32`), and the `asm("_foo::f")` label of the symbol.
+- A rename of an exported name edits what clangd knows of (the module, and the importers its index has seen); it does
+  not edit the generated headers. Like any cross-file rename in clangd it misses an importer the index has not read yet.
+- A fix-it that a mistyped `x::name` offers puts in the member alone (`f`), so it makes `foo::f`.
+- A note into an interface read in memory (no database) shows, in `smith cc`, that interface's line under the caret.
 - `-x smith` is not a clang language: the `.smith` extension and `-x c` stand for it.
-- In `smith lsp` with no database, a "did you mean" note on a mistyped name of another module points at a line of the
-  module's in-memory interface, which is not a line of its source.
 - `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
   location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);
   the parser, the code and the debug info are unaffected. `SMITH_LANG_DUMP` shows the macro arguments of a call after

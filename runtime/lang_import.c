@@ -99,6 +99,7 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
     snprintf(lang->module, sizeof lang->module, "%s", name.colons);
     snprintf(lang->prefix, sizeof lang->prefix, "%s_", name.underscored);
     snprintf(lang->symbol, sizeof lang->symbol, "%s::", name.colons);
+    lang->module_text = smith_lang_store(lang, name.colons, strlen(name.colons));
 }
 
 // ---- Imports
@@ -268,6 +269,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     if (lang->imports_count < smith_lang_imports_max) {
         lang->smith_imports[lang->imports_count++] = smith_lang_store(lang, name.colons, strlen(name.colons));
     }
+    smith_lang_written_read(lang, host, header, name.colons, bind, bind_length);
     host->include(host->context, header, false);
 }
 

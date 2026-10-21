@@ -163,6 +163,8 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
 static const char *const build_format_sources[] = {"smith.c",
                                                    "shim/clang.cpp",
                                                    "shim/hook.cpp",
+                                                   "shim/lsp.cpp",
+                                                   "shim/names.h",
                                                    "shim/prove.cpp",
                                                    "shim/prove.hpp",
                                                    "shim/prove_alive.cpp",
@@ -201,6 +203,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "runtime/lang.c",
                                                    "runtime/lang_out.c",
                                                    "runtime/lang_decl.c",
+                                                   "runtime/lang_names.c",
                                                    "runtime/lang_import.c",
                                                    "runtime/lang_head.c",
                                                    "runtime/lang_sparse.c",
@@ -436,10 +439,11 @@ typedef struct {
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang", "lld", "format", "tidy", "clangd", "symbolize", "hook", "lldb", "lldb_dap"};
+    const char *const sources[] = {"clang",     "lld",  "format", "tidy", "clangd",
+                                   "symbolize", "hook", "lsp",    "lldb", "lldb_dap"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
-        bool is_hook = strcmp(sources[i], "hook") == 0;
+        bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0;
         bool is_lldb = strncmp(sources[i], "lldb", 4) == 0;
         if ((is_hook && !config->hook) || (is_lldb && !config->lldb)) continue;
         build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
@@ -508,6 +512,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang.c",
     "runtime/lang_out.c",
     "runtime/lang_decl.c",
+    "runtime/lang_names.c",
     "runtime/lang_import.c",
     "runtime/lang_head.c",
     "runtime/lang_sparse.c",

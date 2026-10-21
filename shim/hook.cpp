@@ -4,6 +4,9 @@
 // The hook itself is a patch to clang (patches/clang-token-hook.patch): clang::TokenHook, offered each token that
 // leaves Preprocessor::Lex. Everything here is smith's. It stays small and C++ only because clang's API is: the logic
 // is in C, in the lowering.
+#include "names.h"
+
+#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/FileManager.h"
@@ -47,7 +50,10 @@ struct Action {
     bool include = false;
     bool angled = false;
     std::vector<Token> tokens;
+    std::vector<bool> reinjected; // per token: put back as a copy the parser's tokens do not count (see replay)
+    std::vector<bool> synthetic;  // per token: the source has no token of it (see relocate)
     std::string header;
+    std::string preface; // lines to include first (the headers an interface read in memory needs)
     SourceLocation at;
 };
 
@@ -80,12 +86,36 @@ struct Lowering {
     }
 };
 
-// Keeps the diagnostics at some locations out of what is shown: the uses of a module that could not be imported, which
-// the import has already reported. A note that belongs to one that is kept out goes too.
-class Suppressing final : public DiagnosticConsumer {
+// Where the Presenter asks what a name is written as: the hook that made the diagnostic.
+class NameSource {
   public:
-    Suppressing(std::unique_ptr<DiagnosticConsumer> owned, DiagnosticConsumer *inner, const std::set<unsigned> &at)
-        : owned(std::move(owned)), inner(inner), at(at) {
+    virtual ~NameSource() = default;
+    virtual bool writtenName(StringRef lowered, smith::WrittenName &out) = 0;
+    // Where a token at a place that holds a copy was copied from (invalid for any other place).
+    virtual SourceLocation originOf(SourceLocation at) = 0;
+    // Where in a module's source the declaration that stands at a place of its generated header is (invalid for any
+    // other place).
+    virtual SourceLocation sourceOf(SourceLocation at) = 0;
+};
+
+// What a hook shares with the consumer it puts in front of the diagnostics: the hook may be gone when a late diagnostic
+// is made, so it takes its name from here.
+struct PresenterLink {
+    NameSource *source = nullptr;
+    std::set<unsigned> suppressed;
+};
+
+// Shows the diagnostics of a .smith file as the source wrote it, in front of whatever shows them (clang's printer, a
+// language server):
+//   - the names are the written ones, `foo::f` for the compiler's `foo_f`, in every message, note and fix-it. This is
+//     a rewrite of the formatted text by the lowering's table of names (smith_lang_written_find), not a guess at the
+//     underscores, and it reaches what clang prints for any kind of argument;
+//   - the uses of a module that could not be imported are kept out, since the import has reported it. A note that
+//     belongs to one that is kept out goes too.
+class Presenter final : public DiagnosticConsumer {
+  public:
+    Presenter(std::unique_ptr<DiagnosticConsumer> owned, DiagnosticConsumer *inner, std::shared_ptr<PresenterLink> link)
+        : owned(std::move(owned)), inner(inner), link(std::move(link)) {
         NumWarnings = inner->getNumWarnings();
         NumErrors = inner->getNumErrors();
     }
@@ -106,21 +136,110 @@ class Suppressing final : public DiagnosticConsumer {
         if (level == DiagnosticsEngine::Note) {
             if (dropNotes) return;
         } else {
-            dropNotes = info.getLocation().isValid() && at.count(info.getLocation().getRawEncoding()) != 0;
+            dropNotes =
+                info.getLocation().isValid() && link->suppressed.count(info.getLocation().getRawEncoding()) != 0;
             if (dropNotes) return;
         }
+        // A diagnostic in a copy (a prototype's) is the definition's again, which has its own; a note that points into
+        // one points at the token it copies.
+        SourceLocation at = info.getLocation();
+        if (link->source != nullptr) {
+            SourceLocation origin = link->source->originOf(at);
+            if (origin.isValid() && level != DiagnosticsEngine::Note) {
+                dropNotes = true;
+                return;
+            }
+            if (origin.isValid()) at = origin;
+            // A place in a module's generated header is where the module's source declares it.
+            SourceLocation declared = link->source->sourceOf(at);
+            if (declared.isValid()) at = declared;
+        }
         DiagnosticConsumer::HandleDiagnostic(level, info);
-        inner->HandleDiagnostic(level, info);
+        if (link->source == nullptr || !present(level, info, at)) inner->HandleDiagnostic(level, info);
     }
 
   private:
     std::unique_ptr<DiagnosticConsumer> owned;
     DiagnosticConsumer *inner;
-    const std::set<unsigned> &at;
+    std::shared_ptr<PresenterLink> link;
     bool dropNotes = false;
+
+    // The text with the names written as the source writes them.
+    std::string written(StringRef text) {
+        std::string out;
+        out.reserve(text.size());
+        for (size_t at = 0; at < text.size();) {
+            if (!isAsciiIdentifierStart(text[at])) {
+                out += text[at++];
+                continue;
+            }
+            size_t end = at + 1;
+            while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                end += 1;
+            smith::WrittenName name;
+            StringRef word = text.substr(at, end - at);
+            if (word.contains('_') && link->source->writtenName(word, name)) {
+                out += name.written;
+            } else {
+                out += word;
+            }
+            at = end;
+        }
+        return out;
+    }
+
+    // The text a fix-it puts in: a name behind `x::` is the member alone, any other the way the source writes it.
+    std::string fixed(const Diagnostic &info, const FixItHint &hint) {
+        smith::WrittenName name;
+        if (hint.CodeToInsert.empty() || !link->source->writtenName(hint.CodeToInsert, name)) return hint.CodeToInsert;
+        return behindColons(info, hint.RemoveRange.getBegin()) ? name.member : name.written;
+    }
+
+    static bool behindColons(const Diagnostic &info, SourceLocation at) {
+        if (!info.hasSourceManager() || !at.isFileID()) return false;
+        SourceManager &sm = info.getSourceManager();
+        auto [file, offset] = sm.getDecomposedLoc(at);
+        bool invalid = false;
+        StringRef text = sm.getBufferData(file, &invalid);
+        if (invalid || offset > text.size()) return false;
+        while (offset > 0 && (text[offset - 1] == ' ' || text[offset - 1] == '\t'))
+            offset -= 1;
+        return offset >= 2 && text[offset - 1] == ':' && text[offset - 2] == ':';
+    }
+
+    // Passes the diagnostic on with its names written; false when it has nothing to change.
+    bool present(DiagnosticsEngine::Level level, const Diagnostic &info, SourceLocation at) {
+        SmallString<256> formatted;
+        info.FormatDiagnostic(formatted);
+        std::string shown = written(formatted);
+        bool changed = shown != formatted.str() || at != info.getLocation();
+        std::vector<FixItHint> hints(info.getFixItHints().begin(), info.getFixItHints().end());
+        for (FixItHint &hint : hints) {
+            std::string code = fixed(info, hint);
+            if (code == hint.CodeToInsert) continue;
+            hint.CodeToInsert = code;
+            changed = true;
+        }
+        if (!changed) return false;
+        DiagnosticStorage storage;
+        storage.NumDiagArgs = info.getNumArgs();
+        for (unsigned i = 0; i < info.getNumArgs(); i++) {
+            storage.DiagArgumentsKind[i] = info.getArgKind(i);
+            if (info.getArgKind(i) == DiagnosticsEngine::ak_std_string) {
+                storage.DiagArgumentsStr[i] = info.getArgStdStr(i);
+            } else {
+                storage.DiagArgumentsVal[i] = info.getRawArg(i);
+            }
+        }
+        if (at == info.getLocation()) storage.DiagRanges.assign(info.getRanges().begin(), info.getRanges().end());
+        storage.FixItHints.assign(hints.begin(), hints.end());
+        Diagnostic copy(info.getDiags(), at, info.getID(), storage, shown);
+        inner->HandleDiagnostic(level, copy);
+        return true;
+    }
 };
 
-class SmithHook final : public TokenHook {
+class SmithHook final : public TokenHook, public NameSource {
   public:
     bool holding = false; // this hook has the lowering
     explicit SmithHook(Preprocessor &pp) : PP(pp), SM(pp.getSourceManager()), MainFile(SM.getMainFileID()) {
@@ -158,6 +277,8 @@ class SmithHook final : public TokenHook {
                                             SourceLocation());
         }
         stats.on = getenv("SMITH_HOOK_STATS") != nullptr;
+        link->source = this;
+        installPresenter();
         smith_lang_watch_basics(&host);
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
         for (unsigned i = 0; i < 13; i++) {
@@ -171,7 +292,7 @@ class SmithHook final : public TokenHook {
     }
     void semaDestroyed() override {
         sema = nullptr;
-        Lowering::release(holding); // a parse that stopped before the end of the file
+        giveBack(); // a parse that stopped before the end of the file
     }
 
     // SMITH_HOOK_STATS=1: what the hook was offered and what it cost, printed at the end of the file.
@@ -192,13 +313,16 @@ class SmithHook final : public TokenHook {
     }
 
     ~SmithHook() override {
-        Lowering::release(holding);
+        link->source = nullptr;
+        giveBack();
     }
 
     bool transform(Preprocessor &, Token &tok) override {
+        if (replayed(tok)) return false;
         bool end = tok.is(tok::eof); // the lowering is done with its state once it has seen the end of the file
+        if (end) reachedEnd = true;
         bool consumed = measured(tok);
-        if (end) Lowering::release(holding);
+        if (end) giveBack();
         return consumed;
     }
 
@@ -405,18 +529,46 @@ class SmithHook final : public TokenHook {
         return Fast::Kept;
     }
 
-    // A `static` for the parser, then the token: the token goes back on the stream, as a reinjected one is not offered.
+    // A `static` for the parser, then the token: the token goes back on the stream, as the hook is not offered it again
+    // (it is the token the source has at its location, so it is replayed, see below).
     void putStaticBefore(Token &tok) {
         Token keyword = tok;
         IdentifierInfo *info = PP.getIdentifierInfo("static");
         keyword.setIdentifierInfo(info);
         keyword.setKind(info->getTokenID());
+        keyword.setFlag(Token::IsReinjected); // a token of nobody's: tools that record the parser's tokens skip it
         tok.clearFlag(Token::StartOfLine);
         tok.setFlag(Token::LeadingSpace);
         auto tokens = std::make_unique<Token[]>(1);
         tokens[0] = tok;
-        PP.EnterTokenStream(std::move(tokens), 1, /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
+        replay[tok.getLocation().getRawEncoding()] += 1;
+        PP.EnterTokenStream(std::move(tokens), 1, /*DisableMacroExpansion=*/false, /*IsReinject=*/false);
         tok = keyword;
+    }
+
+    // ---- Replay
+    //
+    // The parser reads the lowering's output as a stream the hook pushed back. A stream pushed back as a reinjection is
+    // not reported to the Preprocessor's token watcher, which is how a tool that keeps the parser's tokens next to the
+    // source's (clangd's TokenBuffer, behind hover, references, highlights and the outline) learns them. So the
+    // output that stands for a token of the source, at its location, is pushed back as a plain stream and passes the
+    // hook again without being lowered a second time (`replayed`); only what the source does not have (a `static`,
+    // a symbol label, a prototype's copy) is reinjected. Without this, no token of an exported declaration's head, its
+    // name included, was known to those tools.
+    llvm::DenseMap<unsigned, unsigned>
+        replay; // the locations of the tokens pushed back, until the hook is offered them
+
+    bool replayed(const Token &tok) {
+        if (replay.empty()) return false;
+        if (tok.is(tok::eof)) {
+            replay.clear();
+            return false;
+        }
+        if (tok.getLocation().isInvalid()) return false;
+        auto found = replay.find(tok.getLocation().getRawEncoding());
+        if (found == replay.end()) return false;
+        if (--found->second == 0) replay.erase(found);
+        return true;
     }
 
     // Whether the parser has a declaration of the name that is the program's: not the typedef of a sized type that this
@@ -469,6 +621,8 @@ class SmithHook final : public TokenHook {
     // Per call.
     std::vector<Token> pool; // every token the lowering was given, by handle
     std::vector<Token> out;
+    std::vector<bool> outReinjected; // per token of `out`
+    std::vector<bool> outSynthetic;
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
     llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
@@ -582,6 +736,15 @@ class SmithHook final : public TokenHook {
             out.text = "";
             return out;
         }
+        if (tok.is(tok::code_completion)) { // an editor's cursor, with what was typed of the name before it
+            StringRef typed = PP.getCodeCompletionFilter();
+            out.kind = SmithTokenKind_Punctuator;
+            out.text = "";
+            out.completion = true;
+            out.partial = keep(typed);
+            out.partial_length = typed.size();
+            return out;
+        }
         if (const char *punctuator = tok::getPunctuatorSpelling(tok.getKind())) {
             out.kind = SmithTokenKind_Punctuator;
             out.text = punctuator;
@@ -621,6 +784,8 @@ class SmithHook final : public TokenHook {
     bool feed(Token &tok) {
         if (!smith_lang_holds(lang)) pool.clear(); // held tokens are re-emitted by handle
         out.clear();
+        outReinjected.clear();
+        outSynthetic.clear();
         actions.clear();
         texts.Reset();
         pool.push_back(tok);
@@ -631,6 +796,7 @@ class SmithHook final : public TokenHook {
             return false;
         }
         if (actions.empty() && out.size() == 1 && replaceInPlace(tok, out[0])) {
+            if (outReinjected[0]) tok.setFlag(Token::IsReinjected);
             stats.in_place += 1;
             return false;
         }
@@ -694,16 +860,33 @@ class SmithHook final : public TokenHook {
     // Puts the output back, last piece first, since each is pushed on top of the lexer stack.
     void flush() {
         closeTokens();
+        relocate();
         for (size_t i = actions.size(); i > 0; i--) {
             Action &action = actions[i - 1];
             if (action.include) {
                 enterHeader(action);
-            } else if (!action.tokens.empty()) {
-                auto tokens = std::make_unique<Token[]>(action.tokens.size());
-                std::copy(action.tokens.begin(), action.tokens.end(), tokens.get());
-                PP.EnterTokenStream(std::move(tokens), action.tokens.size(), /*DisableMacroExpansion=*/false,
-                                    /*IsReinject=*/true);
+            } else {
+                enterTokens(action);
             }
+        }
+    }
+
+    // The tokens of one action, in runs of the same kind (see Replay), the last run first.
+    void enterTokens(const Action &action) {
+        size_t end = action.tokens.size();
+        while (end > 0) {
+            bool reinjected = action.reinjected[end - 1];
+            size_t begin = end;
+            while (begin > 0 && action.reinjected[begin - 1] == reinjected)
+                begin -= 1;
+            auto tokens = std::make_unique<Token[]>(end - begin);
+            std::copy(action.tokens.begin() + begin, action.tokens.begin() + end, tokens.get());
+            if (!reinjected) {
+                for (size_t i = begin; i < end; i++)
+                    replay[action.tokens[i].getLocation().getRawEncoding()] += 1;
+            }
+            PP.EnterTokenStream(std::move(tokens), end - begin, /*DisableMacroExpansion=*/false, reinjected);
+            end = begin;
         }
     }
 
@@ -711,12 +894,147 @@ class SmithHook final : public TokenHook {
         if (out.empty()) return;
         Action action;
         action.tokens = std::move(out);
+        action.reinjected = std::move(outReinjected);
+        action.synthetic = std::move(outSynthetic);
         actions.push_back(std::move(action));
         out.clear();
+        outReinjected.clear();
+        outSynthetic.clear();
+    }
+
+    // ---- Relocation
+    //
+    // A prototype's copy of a head, and the tokens of a symbol label, would have the locations of the tokens of the
+    // source they copy or follow, so that the declaration of the prototype stood where the definition does (every
+    // reference, highlight and outline entry twice). They are given a place of their own instead: a buffer that holds
+    // their text, which no tool reads as the file's, and `originOf` answers where each copies from. The diagnostics
+    // there are the definition's again, so the Presenter leaves them out.
+    llvm::DenseMap<unsigned, std::vector<std::pair<unsigned, SourceLocation>>> origins; // by buffer, by offset
+
+    void relocate() {
+        std::string text;
+        std::vector<std::tuple<Token *, unsigned, SourceLocation>> spots; // the token, its offset, where it is from
+        SourceLocation first;
+        for (Action &action : actions) {
+            for (size_t i = 0; i < action.tokens.size(); i++) {
+                if (!action.synthetic[i]) continue;
+                Token &token = action.tokens[i];
+                if (first.isInvalid()) first = token.getLocation();
+                spots.emplace_back(&token, text.size(), token.getLocation());
+                text += PP.getSpelling(token) + " ";
+            }
+        }
+        if (spots.empty()) return;
+        FileID id =
+            SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-copy>"), SrcMgr::C_User, 0, 0, first);
+        SourceLocation start = SM.getLocForStartOfFile(id);
+        std::vector<std::pair<unsigned, SourceLocation>> &list = origins[id.getHashValue()];
+        for (auto &[token, offset, origin] : spots) {
+            list.emplace_back(offset, origin);
+            token->setLocation(start.getLocWithOffset(offset));
+        }
+    }
+
+    // Where the token at a location of a relocated copy was copied from; invalid for any other location.
+    SourceLocation originOf(SourceLocation at) override {
+        if (!at.isFileID() || origins.empty()) return SourceLocation();
+        auto found = origins.find(SM.getFileID(at).getHashValue());
+        if (found == origins.end()) return SourceLocation();
+        unsigned offset = SM.getFileOffset(at);
+        SourceLocation origin;
+        for (auto &[start, from] : found->second) {
+            if (start > offset) break;
+            origin = from;
+        }
+        return origin;
+    }
+
+    // ---- The source of a generated header
+    //
+    // `smith build` writes each module's header and an importer reads it, so a diagnostic about a name of the module
+    // (a note: "'box::area' declared here") points into a file the module's author never wrote. The header says where
+    // it came from and which module it is, and the lowering reads the module's source again to say where it declares
+    // each export (smith_lang_declarations), which is stable where the lines of the header are not: an edit to the
+    // body of a function must not rewrite the header, or every importer would be built again. The note goes to the
+    // module's source, at the name. (An interface read in memory is the source's own file, with its declarations on
+    // the lines of the module's, so it needs none of this.)
+    struct Declared {
+        bool tried = false;
+        std::string path;
+        std::map<std::string, std::pair<unsigned, unsigned>> places; // a member, to its line and column
+    };
+    std::map<std::string, Declared> declared; // by the path the header gives
+
+    // The path of the source, and the module, that a generated header says; false for any other text.
+    static bool generatedBy(StringRef text, std::string &source, std::string &module) {
+        StringRef first = text.take_until([](char c) { return c == '\n'; });
+        if (!first.consume_front("// Generated by smith from ") || !first.consume_back(". Do not edit.")) return false;
+        StringRef rest = text.drop_front(text.find('\n') + 1);
+        StringRef second = rest.take_until([](char c) { return c == '\n'; });
+        if (!second.consume_front("// smith-module: ")) return false;
+        source = first.str();
+        module = second.str();
+        return true;
+    }
+
+    Declared &placesOf(const std::string &source) {
+        Declared &entry = declared[source];
+        if (entry.tried) return entry;
+        entry.tried = true;
+        for (const std::string &path : {source, absolute(source)}) {
+            auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
+            if (!buffer) continue;
+            entry.path = path;
+            std::string out(1 << 16, '\0');
+            size_t used = smith_lang_declarations(path.c_str(), (*buffer)->getBufferStart(), (*buffer)->getBufferSize(),
+                                                  out.data(), out.size());
+            StringRef lines(out.data(), used);
+            while (!lines.empty()) {
+                auto [line, more] = lines.split('\n');
+                lines = more;
+                SmallVector<StringRef, 3> words;
+                line.split(words, ' ');
+                unsigned number = 0, column = 0;
+                if (words.size() == 3 && !words[1].getAsInteger(10, number) && !words[2].getAsInteger(10, column)) {
+                    entry.places[words[0].str()] = {number, column};
+                }
+            }
+            break;
+        }
+        return entry;
+    }
+
+    SourceLocation sourceOf(SourceLocation at) override {
+        if (!at.isFileID() || SM.getFileID(at) == MainFile) return SourceLocation();
+        FileID file = SM.getFileID(at);
+        bool invalid = false;
+        StringRef text = SM.getBufferData(file, &invalid);
+        std::string source, module;
+        if (invalid || !generatedBy(text, source, module)) return SourceLocation();
+        unsigned offset = SM.getFileOffset(at);
+        size_t end = offset;
+        while (end < text.size() && (std::isalnum((unsigned char)text[end]) || text[end] == '_'))
+            end += 1;
+        std::string prefix = module;
+        for (size_t i; (i = prefix.find("::")) != std::string::npos;)
+            prefix.replace(i, 2, "_");
+        prefix += "_";
+        StringRef word = text.slice(offset, end);
+        if (!word.consume_front(prefix)) return SourceLocation();
+        Declared &entry = placesOf(source);
+        auto place = entry.places.find(word.str());
+        if (place == entry.places.end()) return SourceLocation();
+        auto found = PP.getFileManager().getFileRef(entry.path);
+        if (!found) {
+            llvm::consumeError(found.takeError());
+            return SourceLocation();
+        }
+        return SM.translateLineCol(SM.getOrCreateFileID(*found, SrcMgr::C_User), place->second.first,
+                                   place->second.second);
     }
 
     void enterHeader(const Action &action) {
-        std::string text = std::string("#include ") + (action.angled ? "<" : "\"") + action.header +
+        std::string text = action.preface + std::string("#include ") + (action.angled ? "<" : "\"") + action.header +
                            (action.angled ? ">" : "\"") + "\n";
         auto buffer = llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-import>");
         FileID id = SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0, action.at);
@@ -786,7 +1104,13 @@ class SmithHook final : public TokenHook {
         if (token->line_start) made.setFlag(Token::StartOfLine);
         if (token->space_before) made.setFlag(Token::LeadingSpace);
         if ((!token->expand || named) && made.getIdentifierInfo() != nullptr) made.setFlag(Token::DisableExpand);
+        // Replayed (see there): what stands for a token of the source, where the source has it.
+        bool real = !token->synthetic && !(token->expand && !named) && made.isNot(tok::eof) &&
+                    made.getLocation().isFileID() && self->spelledInMain(made.getLocation());
         self->out.push_back(made);
+        self->outReinjected.push_back(!real);
+        self->outSynthetic.push_back(token->copy && made.getLocation().isFileID() &&
+                                     self->spelledInMain(made.getLocation()));
     }
 
     static void includeHeader(void *context, const char *header, bool angled) {
@@ -796,7 +1120,7 @@ class SmithHook final : public TokenHook {
         action.include = true;
         action.angled = angled;
         action.header = header;
-        if (!angled && self->includePathOf(header, action.header)) {
+        if (!angled && self->includePathOf(header, action.header, action.preface)) {
             // A module read from its source: its interface is the text of that file, as far as this compile goes.
         } else if (!angled) { // a quoted header is found beside the file that imports it, as #include "h" would
             llvm::SmallString<256> beside(llvm::sys::path::parent_path(self->mainName));
@@ -968,8 +1292,8 @@ class SmithHook final : public TokenHook {
         if (!name.consume_back(".h")) return false;
         Interface *found = self->interfaceOf(name.str());
         if (found == nullptr || !found->ok) return false;
-        *text = found->text.c_str();
-        *length = found->text.size();
+        *text = found->meta.c_str();
+        *length = found->meta.size();
         return true;
     }
 
@@ -989,16 +1313,17 @@ class SmithHook final : public TokenHook {
         bool done = false;
         bool ok = false;
         bool inProgress = false;
-        std::string source;  // the path found
-        std::string include; // the absolute path to include it by
-        std::string text;
+        std::string source;   // the path found
+        std::string include;  // the absolute path to include it by
+        std::string text;     // the interface (on error, the message)
+        std::string includes; // the lines to include before it
+        std::string meta;     // the comment lines of its header (smith_lang_interface)
+        std::string content;  // the module's source
     };
     std::map<std::string, Interface> interfaces; // by module path (a/b)
     std::vector<std::string> roots; // where a module's path starts: the main file's, and those of the modules found
     bool rootsMade = false;
     std::string problem;
-    std::set<unsigned> suppressed;
-    bool filtering = false;
 
     static std::string moduleFromPath(std::string path) {
         for (size_t at; (at = path.find('/')) != std::string::npos;)
@@ -1100,17 +1425,25 @@ class SmithHook final : public TokenHook {
 
     void make(Interface &entry, const std::string &name, const llvm::MemoryBuffer &source) {
         std::string out(smith_lang_interface_capacity(), '\0');
+        std::string includes(1 << 16, '\0');
+        std::string meta(1 << 16, '\0');
         char error[512];
-        size_t used = 0;
-        if (!smith_lang_interface(entry.source.c_str(), source.getBufferStart(), source.getBufferSize(), out.data(),
-                                  out.size(), &used, error, sizeof error)) {
+        SmithInterface result{out.data(),  out.size(),  0, includes.data(), includes.size(), 0,
+                              meta.data(), meta.size(), 0};
+        if (!smith_lang_interface(entry.source.c_str(), source.getBufferStart(), source.getBufferSize(), &result, error,
+                                  sizeof error)) {
             entry.text = "module `" + name + "` cannot be imported: " + entry.source + ":" + error;
             problem = entry.text;
             return;
         }
-        out.resize(used);
+        out.resize(result.text_used);
+        includes.resize(result.includes_used);
+        meta.resize(result.meta_used);
         entry.include = absolute(entry.source);
         entry.text = out;
+        entry.includes = includes;
+        entry.meta = meta;
+        entry.content = source.getBuffer().str();
         entry.ok = true;
         addRoot(rootOf(entry.source, modulePath(name)));
         nestedImports(entry);
@@ -1123,45 +1456,122 @@ class SmithHook final : public TokenHook {
 
     // What the interface includes of other modules is the source of those, when they too are found by their source.
     void nestedImports(Interface &entry) {
-        size_t at = entry.text.find("// smith-imports:");
-        if (at == std::string::npos) return;
-        StringRef line = StringRef(entry.text).drop_front(at + 17).take_until([](char c) { return c == '\n'; });
-        SmallVector<StringRef, 8> words;
-        line.split(words, ' ', -1, false);
-        for (StringRef word : words) {
-            std::string path = modulePath(word.str());
-            if (headerOnPath(path + ".h")) continue;
-            Interface *nested = interfaceOf(path);
-            if (nested == nullptr || !nested->ok) continue;
-            std::string from = "#include \"" + path + ".h\"";
-            size_t where = entry.text.find(from);
-            if (where != std::string::npos)
-                entry.text.replace(where, from.size(), "#include \"" + nested->include + "\"");
+        std::string rewritten;
+        SmallVector<StringRef, 16> lines;
+        StringRef(entry.includes).split(lines, '\n', -1, false);
+        for (StringRef line : lines) {
+            StringRef path = line;
+            if (path.consume_front("#include \"") && path.consume_back(".h\"")) {
+                std::string module = path.str();
+                Interface *nested = headerOnPath(module + ".h") ? nullptr : interfaceOf(module);
+                if (nested != nullptr && nested->ok) {
+                    rewritten += "#include \"" + nested->include + "\"\n";
+                    continue;
+                }
+            }
+            rewritten += line.str() + "\n";
         }
+        entry.includes = rewritten;
         problem.clear();
     }
 
-    // The path to include a module by, when its interface came from its source.
-    bool includePathOf(const char *header, std::string &path) {
+    // The path to include a module by, when its interface came from its source, and the lines to include first.
+    bool includePathOf(const char *header, std::string &path, std::string &preface) {
         StringRef name(header);
         if (!name.consume_back(".h")) return false;
         auto found = interfaces.find(name.str());
         if (found == interfaces.end() || !found->second.ok || headerOnPath(header)) return false;
         path = found->second.include;
+        preface = found->second.includes;
         return true;
     }
 
     // The uses of a module that could not be imported are kept out of the diagnostics.
     static void suppressUse(void *context, uint32_t location) {
-        auto *self = static_cast<SmithHook *>(context);
-        self->suppressed.insert(location);
-        if (self->filtering) return;
-        self->filtering = true;
-        DiagnosticsEngine &diagnostics = self->PP.getDiagnostics();
+        static_cast<SmithHook *>(context)->link->suppressed.insert(location);
+    }
+
+    // ---- The names as written
+    //
+    // The diagnostics, and what a language server shows (shim/names.h), name things as the source does. The table is
+    // the lowering's, while this hook has the lowering, and a copy of it after.
+    std::shared_ptr<PresenterLink> link = std::make_shared<PresenterLink>();
+    std::shared_ptr<smith::FileNames> snapshot;
+
+    void installPresenter() {
+        DiagnosticsEngine &diagnostics = PP.getDiagnostics();
         DiagnosticConsumer *inner = diagnostics.getClient();
         if (inner == nullptr) return;
         std::unique_ptr<DiagnosticConsumer> owned = diagnostics.takeClient();
-        diagnostics.setClient(new Suppressing(std::move(owned), inner, self->suppressed), /*ShouldOwnClient=*/true);
+        diagnostics.setClient(new Presenter(std::move(owned), inner, link), /*ShouldOwnClient=*/true);
+    }
+
+    static void copyName(const SmithWrittenName &from, smith::WrittenName &to) {
+        to.lowered.assign(from.lowered, from.lowered_length);
+        to.written.assign(from.written, from.written_length);
+        to.member.assign(from.member, from.member_length);
+        to.module.assign(from.module, from.module_length);
+        to.direct = from.direct;
+    }
+
+    bool writtenName(StringRef lowered, smith::WrittenName &out) override {
+        if (holding) {
+            SmithWrittenName found;
+            if (!smith_lang_written_find(lang, lowered.data(), lowered.size(), &found)) return false;
+            copyName(found, out);
+            return true;
+        }
+        const smith::WrittenName *found = snapshot ? snapshot->find(lowered) : nullptr;
+        if (found == nullptr) return false;
+        out = *found;
+        return true;
+    }
+
+    // Takes the table before the lowering is given back, and tells the language server of it.
+    void keepNames() {
+        if (!holding) return;
+        auto names = std::make_shared<smith::FileNames>();
+        if (const char *module = smith_lang_module_name(lang)) names->module = module;
+        for (size_t i = 0, count = smith_lang_written_count(lang); i < count; i++) {
+            SmithWrittenName found;
+            if (!smith_lang_written_at(lang, i, &found)) break;
+            smith::WrittenName name;
+            copyName(found, name);
+            names->index[name.lowered] = names->names.size();
+            names->names.push_back(std::move(name));
+        }
+        snapshot = names;
+        if (mainName.empty() || SM.getBufferData(MainFile).empty()) return;
+        if (reachedEnd) {
+            smith::publishNames(mainName, names);
+        } else {
+            keepQualifier(); // a completion: the parse stopped at the cursor
+        }
+    }
+
+    // Where the cursor stood, when it came right after `x::`.
+    void keepQualifier() {
+        smith::Qualifier qualifier;
+        SmithQualifier found;
+        if (smith_lang_qualifier(lang, &found)) {
+            SourceLocation at = SourceLocation::getFromRawEncoding(found.location);
+            qualifier.present = true;
+            qualifier.binding = found.binding;
+            qualifier.prefix = found.prefix;
+            qualifier.module = found.module;
+            qualifier.partial.assign(found.partial, found.partial_length);
+            qualifier.is_c = found.is_c;
+            qualifier.line = SM.getSpellingLineNumber(at) - 1;
+            qualifier.column = SM.getSpellingColumnNumber(at) - 1;
+        }
+        smith::publishQualifier(mainName, qualifier);
+    }
+    bool reachedEnd = false;
+
+    // The lowering goes back to the next file; what it knew of this one stays.
+    void giveBack() {
+        keepNames();
+        Lowering::release(holding);
     }
 };
 
@@ -1178,3 +1588,36 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
 extern "C" void smith_hook_install() {
     Preprocessor::TokenHookFactory = makeHook;
 }
+
+namespace smith {
+namespace {
+std::mutex registryLock;
+std::map<std::string, std::shared_ptr<const FileNames>> registry;
+} // namespace
+
+void publishNames(const std::string &path, std::shared_ptr<const FileNames> names) {
+    std::lock_guard<std::mutex> guard(registryLock);
+    registry[path] = std::move(names);
+}
+
+std::shared_ptr<const FileNames> namesOf(const std::string &path) {
+    std::lock_guard<std::mutex> guard(registryLock);
+    auto found = registry.find(path);
+    return found == registry.end() ? nullptr : found->second;
+}
+
+namespace {
+std::map<std::string, Qualifier> qualifiers;
+}
+
+void publishQualifier(const std::string &path, const Qualifier &qualifier) {
+    std::lock_guard<std::mutex> guard(registryLock);
+    qualifiers[path] = qualifier;
+}
+
+Qualifier qualifierOf(const std::string &path) {
+    std::lock_guard<std::mutex> guard(registryLock);
+    auto found = qualifiers.find(path);
+    return found == qualifiers.end() ? Qualifier() : found->second;
+}
+} // namespace smith

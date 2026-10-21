@@ -126,9 +126,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   turns. clangd does not know the extension, so `shim/clangd.cpp` defines `clang::createInvocation` (the upstream function)
   with the one rule of `smith cc` for `.smith` inputs (`smith_lang_command`, `runtime/lang_command.c`): `-x c`, and
   `-std=gnu2y` unless a standard is named, for every command clangd uses, a folder with no compile database included
-  (a single file or a few modules need no build.c); no LLVM change. Names in hover,
-  symbols and completion are the lowered C names, and completion after `x::` is empty
-  (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+  (a single file or a few modules need no build.c); no LLVM change. Names are shown as written (`box::area`, `area` in
+  the module), never guessed from underscores: the lowering keeps a table of the names it made, a diagnostic consumer in
+  the hook rewrites messages, notes and fix-its (`smith cc` too) and sends a note into a generated header to the
+  declaration in the module's `.smith`, and a layer between the editor and clangd (`shim/lsp.cpp`, in process, pipes on
+  clangd's stdin and stdout; `SMITH_LSP_RAW=1` turns it off) rewrites hover, symbols, completion (`box::` offers the
+  module's exports), signature help and hints. A module's header has a `// smith-names:` line of its exports, which depends
+  on them only, so an edit to a body does not rebuild importers (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

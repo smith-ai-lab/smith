@@ -30,12 +30,18 @@ typedef struct {
     bool watched;      // the host watches the name (set by a sparse host; a host that offers every token sets none)
     bool declared;     // the parser has a declaration with this name (a typedef of u32, say, makes it no sized type)
     bool expand;       // emitted: macro-expand it when it re-enters the stream (the X of `c.X`)
+    bool synthetic;    // emitted: it has no counterpart in the source (a `static`, a symbol label, a prototype's copy)
+    bool copy;         // emitted: part of a copy of a declaration's head (the prototype of a definition), all of it
+    bool name;         // emitted: the name a declaration introduces
     uint32_t location; // the host's source location, kept by every token derived from this one
     uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
     uint32_t length;
     const char *text;
     const char *header_text; // emitted: the spelling in a generated header, when it differs (uint64_t for u64)
     uint32_t header_length;
+    bool completion;     // given by `next`: the place of an editor's cursor, where a name is being completed
+    const char *partial; // of a completion: what was typed of the name, before the cursor
+    uint32_t partial_length;
 } SmithToken;
 
 // What the parser says a name means where the token is. Only what has been completely parsed is visible.
@@ -152,14 +158,36 @@ const char *smith_lang_header(const SmithLang *lang, size_t *length);
 // The lowered text of the file, when SMITH_LANG_DUMP names a file to write it to.
 void smith_lang_finish(SmithLang *lang);
 
-// The interface of a module read from its source, in memory: what `smith cc --smith-header` writes, for a host that
-// finds a module by its source instead of its header. `file` names the source (for the module line's check and for
-// messages) and `text` is its text. It is safe to call from inside a lowering (it keeps that lowering's state and gives
-// it back), and fills `out` (at least smith_lang_interface_capacity() bytes). Returns false, with the first error
-// (`line:column: message`) in `error`, when the source has one.
+// The interface of a module read from its source, in memory, for a host that finds a module by its source instead of
+// its header. `file` names the source (for the module line's check and for messages) and `text` is its text. It is
+// safe to call from inside a lowering (it keeps that lowering's state and gives it back). Where the header
+// `smith cc --smith-header` writes is one file, the interface is three texts:
+//   - `text`, the declarations (at least smith_lang_interface_capacity() bytes), each on the line the module has it
+//     on (the first line is `#pragma once`, and no declaration is on it), so that a diagnostic that points into it is
+//     at the right line of the module;
+//   - `includes`, the `#include` lines they need, which the host enters in front of them;
+//   - `meta`, the header's comment lines `// smith-module:`, `// smith-imports:` and `// smith-names:`, which is
+//     all the lowering of an importer reads of a header besides the declarations (read_header gives it these).
+// Returns false, with the first error (`line:column: message`) in `error`, when the source has one.
+typedef struct {
+    char *text;
+    size_t text_capacity;
+    size_t text_used;
+    char *includes;
+    size_t includes_capacity;
+    size_t includes_used;
+    char *meta;
+    size_t meta_capacity;
+    size_t meta_used;
+} SmithInterface;
+
 size_t smith_lang_interface_capacity(void);
-bool smith_lang_interface(const char *file, const char *text, size_t length, char *out, size_t capacity, size_t *used,
-                          char *error, size_t error_capacity);
+bool smith_lang_interface(const char *file, const char *text, size_t length, SmithInterface *result, char *error,
+                          size_t error_capacity);
+
+// Where a module's source declares its exports: a line "name line column" (from 1, the name as written) for each, in
+// the order declared, read the way smith_lang_interface reads it. Returns the bytes written to `out`.
+size_t smith_lang_declarations(const char *file, const char *text, size_t length, char *out, size_t capacity);
 // The module of the file being lowered ("a::b"), or null if it is no module.
 const char *smith_lang_module_name(const SmithLang *lang);
 
@@ -179,3 +207,38 @@ size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keywor
 // the command stays as it is, or -1 when `out` is too small. `smith cc` and `smith lsp` (shim/clangd.cpp, for the
 // commands clangd compiles with) apply this one rule.
 int smith_lang_command(int argc, char **argv, int first, char **out, size_t capacity);
+
+// The names as the source writes them (runtime/lang_names.c). For each name the lowering made, the one the compiler
+// sees (`geometry_box_Box`), the one written in this file (`box::Box`, or `Box` in the module itself), its member
+// (`Box`) and its module (`geometry::box`). The text is valid until the next smith_lang_new; a host that keeps it
+// copies it. `direct` is false for a name of a module the file reaches only through another's imports (it is written
+// with its whole module name then).
+typedef struct {
+    const char *lowered;
+    uint32_t lowered_length;
+    const char *written;
+    uint32_t written_length;
+    const char *member;
+    uint32_t member_length;
+    const char *module;
+    uint32_t module_length;
+    bool direct;
+} SmithWrittenName;
+
+// A completion whose cursor came right after `x::` (the host gave the lowering a token with `completion` set there):
+// the lowering took `x::` away and left the cursor, so that the parser completes a name; this says which `x`.
+typedef struct {
+    const char *binding; // box
+    const char *prefix;  // geometry_box_ (empty for c)
+    const char *module;  // geometry::box (empty for c)
+    const char *partial; // what was typed after the `::`
+    uint32_t partial_length;
+    uint32_t location; // of the cursor
+    bool is_c;
+} SmithQualifier;
+
+bool smith_lang_qualifier(const SmithLang *lang, SmithQualifier *out);
+
+size_t smith_lang_written_count(const SmithLang *lang);
+bool smith_lang_written_at(const SmithLang *lang, size_t index, SmithWrittenName *out);
+bool smith_lang_written_find(const SmithLang *lang, const char *lowered, size_t length, SmithWrittenName *out);

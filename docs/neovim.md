@@ -77,7 +77,9 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
   `SMITH_LANG_CASES=<folder>` checks a copy), and every `.c` and `.h` file of smith, all of which must parse with no
   `ERROR` or `MISSING` node. The driver is compiled by smith against the tree-sitter runtime, pinned by hash.
 - `tests/lsp.sh` (not Neovim): a real `smith lsp` session over stdio on a scratch project of two modules (`.smith` diagnostics
-  at the right line and column, hover, definition across modules, symbols, completion, a C file unchanged; and with no
+  at the right line and column, with the names as written, and a note at the declaration in the module; hover (at a
+  definition too), references, highlights, rename, definition across modules, symbols and completion, `box::` included,
+  all with the names as written; a C file unchanged; and with no
   `compile_commands.json`: one file, two modules found by their source, a hand-written database without `-x c`, and a
   command borrowed from a `.c` entry).
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message

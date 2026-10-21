@@ -20,6 +20,15 @@ typedef struct {
     size_t header_length;
 } SmithLangLowered;
 
+// runtime/lang_names.c
+static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
+                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct);
+static void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *binding, size_t lowered_length,
+                                      const char *member, size_t member_length);
+static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, const char *header, const char *module,
+                                    const char *bind, size_t bind_length);
+static void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor);
+
 static uint32_t smith_lang_hash(const char *text, size_t length) {
     uint32_t hash = 2166136261U;
     for (size_t i = 0; i < length; i++) { // bounded by the name
@@ -136,11 +145,14 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
 // Returns null when the name is kept as written (main).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                       uint32_t location, SmithLangNameKind kind, bool exported) {
-    (void)location;
     if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) return nullptr;
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known == nullptr) {
-        smith_lang_name_add(lang, name, length, kind, exported);
+        SmithLangName *added = smith_lang_name_add(lang, name, length, kind, exported);
+        if (added != nullptr) added->location = location;
+        const char *lowered = smith_lang_prefixed(lang, name, length);
+        smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, strlen(lang->prefix), lang->module_text,
+                               true);
         if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
         if (host->rename != nullptr) {
             const char *prefixed = smith_lang_prefixed(lang, name, length);
@@ -187,6 +199,13 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(colons, "::")) return false;
     const SmithToken *member = smith_lang_peek(lang, host, 1, true);
+    if (member->completion) { // `x::` and the cursor: the name to complete is a member of x
+        smith_lang_take(lang, host);
+        SmithToken cursor = smith_lang_take(lang, host);
+        smith_lang_note_qualifier(lang, binding, &cursor);
+        *result = cursor; // it goes to the parser as it is: that is where the completion happens
+        return true;
+    }
     if (member->kind != SmithTokenKind_Identifier || member->foreign) {
         smith_lang_error(lang, host, name->location, "`%s::` must be followed by a name",
                          smith_lang_str(binding->name));
@@ -212,6 +231,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         lang->tmp[total] = 0;
         *result = smith_lang_made(name, lang->tmp, total, false);
         result->location = taken.location;
+        smith_lang_written_access(lang, binding, total, taken.text, taken.length);
     }
     return true;
 }
