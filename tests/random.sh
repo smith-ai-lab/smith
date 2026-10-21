@@ -157,8 +157,8 @@ sleep 1
 capture "$smith" build
 after=$(stat -f %m .smith/lib/random.c 2>/dev/null || stat -c %Y .smith/lib/random.c)
 expect "project: an unchanged library is not rewritten" "$before" "$after"
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    capture /opt/homebrew/opt/llvm/bin/clangd --check=main.c
+if "$smith" lsp --version >/dev/null 2>&1; then
+    capture "$smith" lsp --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"
 fi

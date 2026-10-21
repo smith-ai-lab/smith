@@ -50,6 +50,12 @@ extern char **environ;
 int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
 // shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
 int smith_lld_main(int argc, char **argv);
+// shim/format.cpp, shim/tidy.cpp and shim/clangd.cpp: the mains of clang-format, clang-tidy and clangd, each run on
+// argv[1 .. argc), as argv[0], a path in clang's folder (smith_resource_folder), whose resource directory clang-tidy
+// and clangd use.
+int smith_format_main(int argc, char **argv);
+int smith_tidy_main(int argc, char **argv);
+int smith_clangd_main(int argc, char **argv);
 #endif
 
 #ifdef __APPLE__
@@ -1426,6 +1432,63 @@ static int smith_new_main(int count, char **args, const char *self) {
     return 0;
 }
 
+// `smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, with the arguments unchanged, so
+// a project's .clang-format and .clang-tidy apply as they do to the tools alone. They are recognised only as the exact
+// first argument. A smith with clang inside runs the tool's own main in this process, from the same LLVM as the
+// compiler; the stage0, and a caller who sets the tool's variable, run an external tool instead.
+typedef struct {
+    const char *command;  // smith's name for it
+    const char *tool;     // the LLVM program
+    const char *override; // the variable that names an external one to run instead
+} SmithTool;
+
+static const SmithTool smith_tools[] = {
+    {"fmt", "clang-format", "SMITH_CLANG_FORMAT"},
+    {"lint", "clang-tidy", "SMITH_CLANG_TIDY"},
+    {"lsp", "clangd", "SMITH_CLANGD"},
+};
+
+static const SmithTool *smith_find_tool(const char *command) {
+    for (size_t i = 0; i < sizeof smith_tools / sizeof smith_tools[0]; i++) {
+        if (strcmp(command, smith_tools[i].command) == 0) return &smith_tools[i];
+    }
+    return nullptr;
+}
+
+#ifdef SMITH_IN_PROCESS
+static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
+    char folder[PATH_MAX];
+    char program[PATH_MAX];
+    smith_resource_folder(folder); // clang's own folder: the tool's resource directory is the compiler's
+    int written = snprintf(program, sizeof program, "%s/bin/%s", folder, tool->tool);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_resource_folder leaves room for it
+    smith_resource_ensure(folder, self);
+    argv[0] = program; // the tool is told its own path in that folder, as the clang is
+    if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv);
+    if (strcmp(tool->command, "fmt") == 0) return smith_format_main(argc, argv);
+    if (strcmp(tool->command, "lint") == 0) return smith_tidy_main(argc, argv);
+    return smith_clangd_main(argc, argv);
+}
+#endif
+
+// argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
+// arguments are unchanged.
+static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
+    SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
+#ifdef __APPLE__
+    smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
+#endif
+#ifdef SMITH_IN_PROCESS
+    const char *override = getenv(tool->override);
+    if (override == nullptr || *override == '\0') return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+#endif
+    char program[PATH_MAX];
+    smith_find_clang(tool->tool, tool->override, self, program);
+    argv[1] = program; // the full path, as for the compiler
+    smith_run(program, argv + 1);
+    return smith_exit_missing;
+}
+
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     if (argc >= 2 && strcmp(argv[1], "--smith-version") == 0) {
@@ -1444,6 +1507,8 @@ int main(int argc, char **argv) {
     if (strcmp(smith_base_name(argv[0]), "ld") == 0) return smith_route_linker(argc, argv);
 #endif
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    const SmithTool *tool = argc >= 2 ? smith_find_tool(argv[1]) : nullptr;
+    if (tool != nullptr) return smith_tool_main(tool, argc, argv, self);
     if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);

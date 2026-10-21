@@ -101,6 +101,18 @@ capture "$smith" -fsyntax-only hello.c
 expect "a second compile works" "0" "$rc"
 expect "and rewrites no file" "$stamp" "$(ls -l "$folder/lib/clang/$major/include/stddef.h" "$folder/lib/libLTO.dylib")"
 
+# smith lint and smith lsp read the same folder for the builtin headers, not the LLVM install.
+capture "$smith" lint --quiet --checks='-*,bugprone-sizeof-expression' --extra-arg=-v hello.c --
+expect "smith lint parses a file that includes a builtin header" "0" "$rc"
+expect_contains "and its builtin headers come from clang's folder" "$out$err" "$folder/lib/clang/$major/include"
+expect "and no LLVM install is named" "" "$(printf '%s\n%s\n' "$out" "$err" | grep -F 'smith/llvm' | head -n 1)"
+printf '[{"directory": "%s", "file": "hello.c", "arguments": ["smith", "-c", "hello.c"]}]\n' "$PWD" >compile_commands.json
+capture "$smith" lsp --check=hello.c
+expect "smith lsp --check works" "0" "$rc"
+expect "and logs no error" "0" "$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')"
+expect_contains "and its resource directory is clang's folder" "$out$err" "-resource-dir=$folder/lib/clang/$major"
+rm compile_commands.json
+
 # -flto links with lld, which has LLVM inside it and so needs no libLTO.dylib; the driver still names the one in the folder
 # for a linker that does, and SMITH_LINKER=/usr/bin/ld loads it.
 capture "$smith" -flto hello.c -o lto

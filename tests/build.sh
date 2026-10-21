@@ -2146,8 +2146,8 @@ build
 expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
 expect_contains "modules: the cache is the shared one" "$(ls "$XDG_CACHE_HOME/smith/modules")" "modules.timestamp"
 expect "modules: and nothing is cached under .smith" no "$([ -e .smith/cache ] && echo yes || echo no)"
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/x.c"
+if "$smith" lsp --version >/dev/null 2>&1; then
+    capture "$smith" lsp --check="$(pwd -P)/x.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in x.c" "" "$errors"
 fi
@@ -2313,10 +2313,10 @@ build -v
 expect "modules: smith's headers import alone and together" 0 "$rc"
 expect_contains "modules: the smith map is used" "$out" "-fmodule-map-file=.smith/modules/smith.modulemap"
 expect_contains "modules: the library map has io" "$(cat .smith/modules/smith.modulemap)" "module smith_io {"
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    # compile_commands.json carries the module flags, and Homebrew's clangd (no --query-driver) builds the modules.
+if "$smith" lsp --version >/dev/null 2>&1; then
+    # compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
     expect_contains "modules: compile_commands.json names the smith map" "$(cat compile_commands.json)" "smith.modulemap"
-    capture /opt/homebrew/opt/llvm/bin/clangd --check="$(pwd -P)/all_of_them.c"
+    capture "$smith" lsp --check="$(pwd -P)/all_of_them.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
 fi

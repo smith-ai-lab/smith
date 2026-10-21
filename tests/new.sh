@@ -146,19 +146,18 @@ expect "new hello: the build.c header lists release" yes "$(has "$(head -n 6 bui
 expect "new hello: the build.c header lists fast" yes "$(has "$(head -n 6 build.c)" "smith build fast")"
 
 # The generated project passes the tools with the configs smith new wrote.
-llvm=${LLVM_BIN:-$(brew --prefix llvm 2>/dev/null || echo /opt/homebrew/opt/llvm)/bin}
-if [ -x "$llvm/clang-format" ] && [ -x "$llvm/clang-tidy" ]; then
-    capture "$llvm/clang-format" --dry-run --Werror main.c build.c
-    expect "new hello: clang-format passes on main.c and build.c" 0 "$rc"
+if "$smith" fmt --version >/dev/null 2>&1 && "$smith" lint --version >/dev/null 2>&1; then
+    capture "$smith" fmt --dry-run --Werror main.c build.c
+    expect "new hello: smith fmt passes on main.c and build.c" 0 "$rc"
     sdk=
     if [ "$(uname -s)" = Darwin ]; then sdk=$(xcrun --show-sdk-path); fi
-    capture "$llvm/clang-tidy" --quiet main.c -- -std=gnu2y ${sdk:+-isysroot "$sdk"}
-    expect "new hello: clang-tidy passes on main.c" 0 "$rc"
+    capture "$smith" lint --quiet main.c -- -std=gnu2y ${sdk:+-isysroot "$sdk"}
+    expect "new hello: smith lint passes on main.c" 0 "$rc"
 else
-    echo "skip  new hello: clang-format and clang-tidy (no LLVM at $llvm)"
+    echo "skip  new hello: smith fmt and smith lint (no clang-format and clang-tidy)"
 fi
-if [ -x /opt/homebrew/opt/llvm/bin/clangd ]; then
-    capture /opt/homebrew/opt/llvm/bin/clangd --check=main.c
+if "$smith" lsp --version >/dev/null 2>&1; then
+    capture "$smith" lsp --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "new hello: clangd reports no errors in main.c" 0 "$errors"
 fi

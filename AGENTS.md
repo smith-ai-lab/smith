@@ -44,10 +44,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     for Apple's (measured here, 40 runs of an empty sanitized program). game's sanitized tests, run three times each
     after a clean build: 5.0, 5.5 and 5.8 s under Homebrew's clang, 2.9, 3.0 and 2.8 s under Apple's (a second round on
     a busier machine: 6.9 to 7.2 s against 4.5 to 4.8 s).
-- **clang-format, clang-tidy and clangd come from the same pinned upstream LLVM** on every platform, so formatting,
-  lint and the editor are the same everywhere. Use `/opt/homebrew/opt/llvm/bin/clangd` with no `--query-driver`: with
-  it clangd puts the SDK's include paths ahead of clang's own headers, and Apple's SDK module map refuses that order,
-  so it fails on modules. lldb stays Apple's, since Homebrew's llvm ships none.
+- **`smith fmt`, `smith lint` and `smith lsp` are clang-format, clang-tidy and clangd, from the LLVM smith compiles
+  with** (linked into smith; the stage0 runs Homebrew's, or `$SMITH_CLANG_FORMAT`, `$SMITH_CLANG_TIDY`,
+  `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
+  Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
+  clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules. lldb stays Apple's, since
+  LLVM's would be a second install to keep in step.
 - **smith never changes a default, so adopting it is trivial and each step is optional.**
   1. **Use the smith command instead of clang.** For C, C++ and Objective-C it is a pure passthrough: smith never adds,
      removes or reorders flags, so the build cannot change.
@@ -78,7 +80,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
   recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
   clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
-- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (Homebrew's clangd builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
+- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
@@ -106,7 +108,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   runs the routing tests against stub compilers, then the `smith build` tests with a real clang;
   `smith build compare` runs the same invocations through the clang of the LLVM smith links (`-DREAL=` names another;
   Homebrew's differs in its version string, so the cases with debug info or bitcode differ against it) and through smith.
-- `smith build check` checks formatting and clang-tidy (the same configs as game, build.c included), then runs the
+- `smith build check` checks formatting and clang-tidy, with `smith fmt` and `smith lint` of the smith it builds (the
+  same configs as game, build.c included), then runs the
   `test` and `compare` targets; it must pass before a change is done. `smith build format` rewrites the sources.
 - `smith build install` runs the tests, then copies smith and the `smith++` link to `$PREFIX/bin` (`-DPREFIX=`,
   default `~/.local/bin`), and a build uses it when CC or CXX names smith. A broken install breaks every build,
@@ -119,7 +122,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
   `~/.cache/smith/llvm/23.1.3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
-  install, which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+  install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
+  which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
 - `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
   `main.c` (a few lines of modern C), `.gitignore`, `.clang-format`, `.clang-tidy` and `.claude/settings.json` (which enables the smith plugin
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
