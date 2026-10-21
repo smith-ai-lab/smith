@@ -1018,14 +1018,18 @@ class SmithHook final : public TokenHook, public NameSource {
         unsigned parent;
         SourceLocation call;
         std::string description;
+        SourceLocation definition; // the generic's name in its module's source
     };
     std::map<unsigned, InstanceInfo> instances;       // by id
     llvm::DenseMap<unsigned, unsigned> instanceFiles; // the buffer of an instance's tokens, to its id
+    std::map<unsigned, FileID> instanceSources;       // and to the file it is a copy of
     std::map<std::string, FileID> placedFiles;
 
-    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description) {
+    static void instanceBegin(void *context, uint32_t id, uint32_t parent, uint32_t call, const char *description,
+                              uint32_t definition) {
         auto *self = static_cast<SmithHook *>(context);
-        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description};
+        self->instances[id] = {parent, SourceLocation::getFromRawEncoding(call), description,
+                               SourceLocation::getFromRawEncoding(definition)};
     }
 
     // The file of a module's source, as the text the module has (a module found by its source is given to the file
@@ -1074,31 +1078,35 @@ class SmithHook final : public TokenHook, public NameSource {
         return !notes.empty();
     }
 
-    // Gives the tokens of each instance a buffer of its own.
+    // Gives the tokens of each instance a buffer of its own, a copy of its generic's source file under the same name: a
+    // token is at the offset it has in the source, so the debugger shows the generic's file, line and column (and the
+    // checksum of the file), and a diagnostic is at the place in the source. The tokens that are no source's (the call
+    // the instance is for, the instance's name) stand at the generic's name.
     void relocateInstances() {
-        struct Spots {
-            std::string text;
-            std::vector<std::tuple<Token *, unsigned, SourceLocation>> tokens;
-        };
-        std::map<unsigned, Spots> byInstance;
+        std::map<unsigned, std::vector<Token *>> byInstance;
         for (Action &action : actions) {
             for (size_t i = 0; i < action.tokens.size() && i < action.instance.size(); i++) {
-                if (action.instance[i] == 0) continue;
-                Spots &spots = byInstance[action.instance[i]];
-                spots.tokens.emplace_back(&action.tokens[i], spots.text.size(), action.tokens[i].getLocation());
-                spots.text += action.text[i] + " ";
+                if (action.instance[i] != 0) byInstance[action.instance[i]].push_back(&action.tokens[i]);
             }
         }
-        for (auto &[id, spots] : byInstance) {
-            FileID file =
-                SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(spots.text, "<smith-instance>"), SrcMgr::C_User);
+        for (auto &[id, tokens] : byInstance) {
+            SourceLocation definition = instances[id].definition;
+            FileID source = definition.isValid() && definition.isFileID() ? SM.getFileID(definition) : FileID();
+            if (source.isInvalid()) continue; // the generic's file is not known: the tokens stay where they were
+            StringRef data = SM.getBufferData(source);
+            FileID file = SM.createFileID(
+                llvm::MemoryBuffer::getMemBuffer(data, SM.getBufferName(SM.getLocForStartOfFile(source)), false),
+                SrcMgr::C_User);
             SourceLocation start = SM.getLocForStartOfFile(file);
-            std::vector<std::pair<unsigned, SourceLocation>> &list = origins[file.getHashValue()];
-            for (auto &[token, offset, origin] : spots.tokens) {
-                list.emplace_back(offset, origin);
-                token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
+            unsigned fallback = SM.getFileOffset(definition);
+            for (Token *token : tokens) {
+                SourceLocation origin = token->getLocation();
+                bool inSource = origin.isFileID() && SM.getFileID(origin) == source;
+                token->setLocation(
+                    start.getLocWithOffset(static_cast<int>(inSource ? SM.getFileOffset(origin) : fallback)));
             }
             instanceFiles[file.getHashValue()] = id;
+            instanceSources[file.getHashValue()] = source;
         }
     }
 
@@ -1129,6 +1137,12 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // Where the token at a location of a relocated copy was copied from; invalid for any other location.
     SourceLocation originOf(SourceLocation at) override {
+        if (at.isFileID() && !instanceSources.empty()) { // a copy of a generic's source: the same place in the source
+            auto copy = instanceSources.find(SM.getFileID(at).getHashValue());
+            if (copy != instanceSources.end()) {
+                return SM.getLocForStartOfFile(copy->second).getLocWithOffset(static_cast<int>(SM.getFileOffset(at)));
+            }
+        }
         if (!at.isFileID() || origins.empty()) return SourceLocation();
         auto found = origins.find(SM.getFileID(at).getHashValue());
         if (found == origins.end()) return SourceLocation();
@@ -2136,6 +2150,28 @@ class SmithHook final : public TokenHook, public NameSource {
             copyName(found, name);
             names->index[name.lowered] = names->names.size();
             names->names.push_back(std::move(name));
+        }
+        for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
+            SmithCallSite found;
+            if (!smith_lang_call_site_at(lang, i, &found)) break;
+            smith::CallSite site;
+            SourceLocation at = SourceLocation::getFromRawEncoding(found.location);
+            if (!at.isFileID()) continue;
+            site.line = SM.getSpellingLineNumber(at) - 1;
+            site.column = SM.getSpellingColumnNumber(at) - 1;
+            site.length = found.length;
+            site.hover = found.hover;
+            if (found.definition_location != UINT32_MAX) {
+                SourceLocation def = SourceLocation::getFromRawEncoding(found.definition_location);
+                site.file = mainName;
+                site.definition_line = SM.getSpellingLineNumber(def) - 1;
+                site.definition_column = SM.getSpellingColumnNumber(def) - 1;
+            } else {
+                site.file = absolute(found.file);
+                site.definition_line = found.line > 0 ? found.line - 1 : 0;
+                site.definition_column = found.column > 0 ? found.column - 1 : 0;
+            }
+            names->calls.push_back(std::move(site));
         }
         snapshot = names;
         // A preamble is built from the start of the file, up to its first line that is no directive: a module's

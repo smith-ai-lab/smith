@@ -984,7 +984,11 @@ static int smith_lang_instance_make(SmithLang *lang, uint32_t generic_index, con
     instance->call_location = location;
     instance->depth = lang->instance_depth + 1;
     instance->parent = lang->instance_current;
-    const char *member = description + generic->module.length + 2; // `push(Point)`
+    char member[smith_lang_message_max]; // `push<Point>`: what the debugger shows after the module
+    int used = snprintf(member, sizeof member, "%s<", smith_lang_str(generic->member));
+    for (size_t k = 0; k < generic->type_count; k++) // the types, as written
+        used += snprintf(member + used, sizeof member - (size_t)used, "%s%s", k > 0 ? ", " : "", names->written[k]);
+    snprintf(member + used, sizeof member - (size_t)used, ">");
     smith_lang_written_add(lang, smith_lang_str(instance->cname), instance->cname.length, description,
                            strlen(description), 0, generic->module, true, member, strlen(member));
     lang->instances_count += 1;
@@ -1427,6 +1431,10 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     int index = smith_lang_instance_request(lang, host, generic_index, type_first, type_count, mark, location);
     if (index < 0) return false;
     smith_lang_gen_call_start(lang, host, generic, &smith_lang_instances[index], location, real, replay->instance_id);
+    if (real != UINT32_MAX && lang->call_site_count < smith_lang_call_sites_max) {
+        lang->call_sites[lang->call_site_count++] =
+            (SmithLangCallSite){.location = real, .generic = generic_index, .instance = (uint32_t)index};
+    }
     static const char closers[] = {')', '}', ';', ')'}; // written in the reverse, last first
     for (size_t i = 0; i < sizeof closers; i++)         // the end of the statement expression
         smith_lang_replay_push(replay, 0, 0, closers[i]);
@@ -1560,7 +1568,9 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     lang->instance_current = id;
     if (host->instance != nullptr) {
         host->instance(host->context, id, instance->parent, instance->call_location,
-                       smith_lang_str(instance->description));
+                       smith_lang_str(instance->description),
+                       smith_lang_gen_place(host, generic, &smith_lang_gt.tokens[generic->first + generic->name_index],
+                                            instance->call_location));
     }
     lang->carry_line_start = true;
     smith_lang_gen_note_break(lang);
@@ -1893,4 +1903,72 @@ static void smith_lang_generics_reset(void) {
     smith_lang_gt.text_used = 0;
     smith_lang_it.count = 0;
     smith_lang_it.text_used = 0;
+}
+
+// ---- The calls, for the editor
+// ---------------------------------------------------------------------------------------------------
+
+// The text of a spelling as this file writes it: `arena::Arena` for the compiler's `arena_Arena`, `u32` for its own
+// name.
+static const char *smith_lang_written_spelling(const SmithLang *lang, const char *text, size_t *length) {
+    const SmithLangWritten *written = smith_lang_written_lookup(lang, text, *length);
+    if (written != nullptr) {
+        *length = written->written.length;
+        return smith_lang_str(written->written);
+    }
+    for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // the sized types
+        if (smith_lang_equals(text, *length, smith_lang_sized[k].standard)) {
+            *length = strlen(smith_lang_sized[k].name);
+            return smith_lang_sized[k].name;
+        }
+    }
+    return text;
+}
+
+// The head of the generic as its module wrote it: `T *push(arena::Arena *a, constexpr type T)`, with the name whole.
+static size_t smith_lang_generic_signature(const SmithLang *lang, const SmithLangGeneric *generic, char *out,
+                                           size_t capacity) {
+    size_t used = 0;
+    uint32_t start = smith_lang_generic_skip_attributes(generic);
+    for (uint32_t at = start; at <= generic->close_index && used + 2 < capacity; at++) { // the head, to its `)`
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + at];
+        if (at > start && ((token->flags & smith_lang_gen_flag_space) != 0)) out[used++] = ' ';
+        const char *text = smith_lang_gt_str(token);
+        size_t length = token->length;
+        if (at == generic->name_index) {
+            used += (size_t)snprintf(out + used, capacity - used, "%s::%s", smith_lang_str(generic->module),
+                                     smith_lang_str(generic->member));
+            continue;
+        }
+        if (token->kind == SmithTokenKind_Identifier && token->param == 0)
+            text = smith_lang_written_spelling(lang, text, &length);
+        if (used + length + 1 >= capacity) break;
+        memcpy(out + used, text, length);
+        used += length;
+    }
+    out[used] = 0;
+    return used;
+}
+
+size_t smith_lang_call_site_count(const SmithLang *lang) {
+    return lang->call_site_count;
+}
+
+bool smith_lang_call_site_at(const SmithLang *lang, size_t index, SmithCallSite *out) {
+    if (index >= lang->call_site_count) return false;
+    const SmithLangCallSite *site = &lang->call_sites[index];
+    const SmithLangGeneric *generic = &smith_lang_generics[site->generic];
+    const SmithLangInstance *instance = &smith_lang_instances[site->instance];
+    char signature[512];
+    smith_lang_generic_signature(lang, generic, signature, sizeof signature);
+    *out = (SmithCallSite){.location = site->location, .length = generic->member.length};
+    snprintf(out->hover, sizeof out->hover, "generic function %s::%s\n\n%s\n\ninstance %s",
+             smith_lang_str(generic->module), smith_lang_str(generic->member), signature,
+             smith_lang_str(instance->description));
+    snprintf(out->file, sizeof out->file, "%s", smith_lang_str(generic->source));
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[generic->first + generic->name_index];
+    out->definition_location = name->line == 0 ? name->location : UINT32_MAX;
+    out->line = name->line;
+    out->column = name->column;
+    return true;
 }

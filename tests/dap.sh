@@ -158,6 +158,43 @@ EOF
         fi
         expect_contains "dap's frame has the name as written" "$log" '"name":"geometry::box::area'
         expect_contains "dap's variable has the type as written" "$log" '"type":"geometry::box::Box"'
+
+        # A generic's instance (issue #15): the frame is `pick::larger<i32>` with the types it was asked for, and it is in the
+        # generic's own source, at the line written there, not in the compiler's copy of the tokens.
+        mkdir "$work/generic"
+        cat >"$work/generic/pick.smith" <<'EOF'
+module pick;
+
+export T larger(constexpr type T, T a, T b) {
+    T result = a > b ? a : b;
+    return result;
+}
+EOF
+        cat >"$work/generic/gmain.smith" <<'EOF'
+module gmain;
+import pick;
+int main(void) {
+    i32 a = 3;
+    f64 d = 2.5;
+    return pick::larger(a, 8) + (int)pick::larger(d, 1.5) - 10;
+}
+EOF
+        if (cd "$work/generic" && "$smith" cc -g -O0 gmain.smith pick.smith -o generic); then
+            out=$(cd "$work/generic" && "$smith" dbg -b -o 'br set -r larger' -o run -o bt -o 'frame variable' -o c -o bt generic 2>&1)
+            expect_contains "dbg stops in an instance" "$out" "stop reason = breakpoint 1.1"
+            expect_contains "dbg's frame is the instance, named with its types" "$out" "generic\`pick::larger<i32>(a=3, b=8) at pick.smith:4"
+            expect_contains "dbg's other instance has its own types" "$out" "generic\`pick::larger<f64>(a=2.5, b=1.5) at pick.smith:4"
+            expect_contains "dbg lists the generic's own source" "$out" "T result = a > b ? a : b;"
+            expect_contains "dbg shows the parameter's type as written" "$out" "(i32) a = 3"
+            case $out in
+            *"checksum mismatch"* | *smith-instance*) total=$((total + 1)); failures=$((failures + 1)); echo "FAIL  dbg shows the compiler's copy of the tokens" ;;
+            *) total=$((total + 1)); echo "ok    dbg shows no compiler-made file or warning for an instance" ;;
+            esac
+        else
+            total=$((total + 1))
+            failures=$((failures + 1))
+            echo "FAIL  the generic program does not build"
+        fi
     else
         total=$((total + 1))
         failures=$((failures + 1))

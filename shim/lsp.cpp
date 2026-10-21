@@ -215,6 +215,9 @@ class Layer {
         }
         Object *message = parsed->getAsObject();
         Value *result = message != nullptr ? message->get("result") : nullptr;
+        if (message != nullptr && result != nullptr && calledGeneric(request, *message)) {
+            return llvm::formatv("{0}", *parsed).str();
+        }
         if (result == nullptr || result->kind() == Value::Null) return body;
         answer(request, *result);
         return llvm::formatv("{0}", *parsed).str();
@@ -224,15 +227,45 @@ class Layer {
     std::mutex lock;
     std::map<std::string, Request> pending;
 
+    // A hover or go-to-definition on the name in a call to a generic is the lowering's to answer: the compiler sees an
+    // instance there, whose declaration is made of the call's own tokens. True when the answer was replaced.
+    static bool calledGeneric(const Request &request, Object &message) {
+        if (request.method != "textDocument/hover" && request.method != "textDocument/definition") return false;
+        std::shared_ptr<const smith::FileNames> names = smith::namesOf(pathOfUri(request.uri));
+        if (!names) return false;
+        for (const smith::CallSite &site : names->calls) {
+            if (request.line != site.line || request.character < site.column ||
+                request.character > static_cast<int64_t>(site.column) + static_cast<int64_t>(site.length)) {
+                continue;
+            }
+            Object start{{"line", static_cast<int64_t>(site.line)}, {"character", static_cast<int64_t>(site.column)}};
+            Object end{{"line", static_cast<int64_t>(site.line)},
+                       {"character", static_cast<int64_t>(site.column) + static_cast<int64_t>(site.length)}};
+            if (request.method == "textDocument/hover") {
+                message["result"] = Object{{"contents", Object{{"kind", "plaintext"}, {"value", site.hover}}},
+                                           {"range", Object{{"start", std::move(start)}, {"end", std::move(end)}}}};
+                return true;
+            }
+            Object from{{"line", static_cast<int64_t>(site.definition_line)},
+                        {"character", static_cast<int64_t>(site.definition_column)}};
+            Object to{{"line", static_cast<int64_t>(site.definition_line)},
+                      {"character", static_cast<int64_t>(site.definition_column) + static_cast<int64_t>(site.length)}};
+            message["result"] = Array{Object{{"uri", "file://" + site.file},
+                                             {"range", Object{{"start", std::move(from)}, {"end", std::move(to)}}}}};
+            return true;
+        }
+        return false;
+    }
+
     static std::string key(const Value &id) {
         return llvm::formatv("{0}", id).str();
     }
 
     static bool wanted(StringRef method) {
-        static const char *const methods[] = {"textDocument/hover",          "textDocument/completion",
-                                              "textDocument/documentSymbol", "textDocument/signatureHelp",
-                                              "textDocument/inlayHint",      "workspace/symbol",
-                                              "textDocument/references",     "textDocument/rename"};
+        static const char *const methods[] = {
+            "textDocument/hover",         "textDocument/completion", "textDocument/documentSymbol",
+            "textDocument/signatureHelp", "textDocument/inlayHint",  "workspace/symbol",
+            "textDocument/references",    "textDocument/rename",     "textDocument/definition"};
         for (const char *known : methods) {
             if (method == known) return true;
         }
