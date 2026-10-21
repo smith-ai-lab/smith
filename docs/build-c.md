@@ -91,7 +91,7 @@ How each verb uses it:
   says to name the files (`smith fmt -i <files>`). clang-format reads `.clang-format-ignore` itself when it is given files
   (a generated `parser.c`, the broken inputs of a test).
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
-  findings of different files do not interleave. `.smith` sources are left out (the token hook is the compiler's). It
+  findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
   lints the first compile of a source, so a program built in three variants is checked once, with the first's flags.
 - **prove** proves each program's C sources together, as the program links them (`unit<TAB>source...` in the info; the
   tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first

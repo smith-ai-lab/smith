@@ -207,5 +207,30 @@ expect "plain C on both sides of a .smith file keeps its names" "$(printf '%s\n%
     "plain2.c:1:5: error: invalid case style for function 'geometry_box_Area' [readability-identifier-naming,-warnings-as-errors]" | sort)" \
     "$(findings <"$work/around" | sort)"
 
+# --- `smith lint` with no arguments lints the .smith sources a build compiles --------------------------------------------
+mkdir -p "$work/q" && cd "$work/q" || exit 1
+cp "$here/templates/new/clang-tidy" .clang-tidy
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject object = {.compiler = "smith-cc", .source = "main.smith", .output = "build/main.o"};
+    smith_object(b, &object);
+    smith_default(b, object.step.outputs);
+}
+EOF
+cat >main.smith <<'EOF'
+int main(void) {
+    int BadLocal = 0;
+    return BadLocal;
+}
+EOF
+smith lint >"$work/verb.out" 2>"$work/verb.err"
+status=$?
+expect "smith lint with no arguments fails on a finding in a .smith file the build compiles" "1" "$status"
+expect "... and reports it at the source, as written" "main.smith:2:9: error: invalid case style for variable 'BadLocal' [readability-identifier-naming,-warnings-as-errors]" \
+    "$(grep -h 'main.smith:2:9' "$work/verb.out" "$work/verb.err" | head -n 1 | sed 's|^.*/main.smith|main.smith|')"
+cd "$work/p" || exit 1
+
 echo "lint-smith: $((total - failures)) of $total passed"
 [ $failures = 0 ]

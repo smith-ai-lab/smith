@@ -331,8 +331,9 @@ static size_t smith_verbs_jobs(void) {
 }
 
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
-// on each of its own C-family sources (not .smith: the token hook is the compiler's), side by side, with the flags of
-// the compile (.smith/compile_commands.json).
+// on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
+// `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook; the others (the
+// stage0) leave them out and say so once, as `smith cc` refuses them.
 static int smith_lint_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *const targets[] = {"smith_needs", nullptr};
@@ -341,8 +342,18 @@ static int smith_lint_project(int count, char **args, const char *self) {
     const SmithInfo *info = smith_info_read("smith lint");
     static const char *files[smith_verbs_lines_max + 1];
     size_t files_count = 0;
+    size_t skipped = 0;
     for (size_t i = 0; i < info->compile_count; i++) {
-        if (!smith_ends_with(info->compiles[i], ".smith")) files[files_count++] = info->compiles[i];
+#ifndef SMITH_HOOK // the condition under which smith_route_clang refuses a .smith input
+        if (smith_ends_with(info->compiles[i], ".smith")) {
+            skipped += 1;
+            continue;
+        }
+#endif
+        files[files_count++] = info->compiles[i];
+    }
+    if (skipped > 0) {
+        fprintf(stderr, "smith lint: %zu .smith source(s) left out: this smith's clang has no token hook\n", skipped);
     }
     if (files_count == 0) {
         fprintf(stderr, "smith lint: the build compiles no C or C++ source of the project's own\n");
