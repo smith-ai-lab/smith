@@ -63,6 +63,13 @@ static SmithStep build_program(SmithBuild *b, const char *variant, const char *c
 }
 
 void build(SmithBuild *b) {
+    // Clang modules: every #include of a system header, of a smith library's, and of a header in .folders becomes an
+    // import, parsed once and cached in .smith/cache/modules, so the build gets faster as it grows. The source stays
+    // plain C. When you add a folder of headers, such as "include", list it here:
+    // .folders = (const char *[]){"include", nullptr}. A header that only works after another include is a compile
+    // error here; make it include what it uses, or list it in .textual. Delete this call to turn modules off.
+    smith_modules(b, &(SmithModules){});
+
     // Floating point gives the same bits whatever the compiler and the optimization. On Apple silicon the CPU is named:
     // apple-m1 is the baseline every Apple silicon Mac runs, where -mcpu=native would tune the program to this machine
     // and could crash it on an older one. Elsewhere the compiler's own baseline applies.
