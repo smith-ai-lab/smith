@@ -97,30 +97,32 @@ static void build_format(SmithBuild *b, const char *format, const char *const *l
 static void build_tidy(SmithBuild *b, const char *tidy, const char *const *llvm, const char *const *cflags) {
     const char *sdk = "-isysroot \"$(xcrun --show-sdk-path)\"";
     SmithStep check_tidy = {
-        .command = smith_cat(
-            b,
-            (const char *[]){"sh", "-c",
-                             smith_fmt(b,
-                                       "%s --quiet smith.c -- \"$@\" %s && "
-                                       "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
-                                       "-DSMITH_LLVM_BIN='\"/llvm/bin\"' -DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
-                                       "%s --quiet build.c -- \"$@\" -I include %s && "
-                                       "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
-                                       "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/io.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/io.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/random.c -- \"$@\" -I include %s && "
-                                       "%s --quiet tests/random.c -- \"$@\" -I include %s && "
-                                       "%s --quiet lib/test.c -- \"$@\" -I include %s && "
-                                       "for f in build main; do %s --quiet "
-                                       "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
-                                       "\"$@\" -std=gnu2y -I include %s || exit 1; done",
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
-                             "sh", nullptr},
-            cflags, nullptr),
+        .command =
+            smith_cat(b,
+                      (const char *[]){
+                          "sh", "-c",
+                          smith_fmt(b,
+                                    "%s --quiet smith.c -- \"$@\" %s && "
+                                    "%s --quiet smith.c -- \"$@\" -DSMITH_IN_PROCESS "
+                                    "-DSMITH_CLANG_RESOURCE='\"tests/stub.c\"' -DSMITH_CLANG_ID='\"llvm-0 0\"' %s && "
+                                    "%s --quiet scripts/pack.c -- \"$@\" %s && "
+                                    "%s --quiet build.c -- \"$@\" -I include %s && "
+                                    "%s --quiet runtime/build_runtime.c -- \"$@\" -I include %s && "
+                                    "%s --quiet tests/stub.c -- \"$@\" -DNAME='\"stub\"' %s && "
+                                    "%s --quiet lib/arena.c -- \"$@\" -I include %s && "
+                                    "%s --quiet tests/arena.c -- \"$@\" -I include %s && "
+                                    "%s --quiet lib/io.c -- \"$@\" -I include %s && "
+                                    "%s --quiet tests/io.c -- \"$@\" -I include %s && "
+                                    "%s --quiet lib/random.c -- \"$@\" -I include %s && "
+                                    "%s --quiet tests/random.c -- \"$@\" -I include %s && "
+                                    "%s --quiet lib/test.c -- \"$@\" -I include %s && "
+                                    "for f in build main; do %s --quiet "
+                                    "--config-file=templates/new/clang-tidy templates/new/$f.c -- "
+                                    "\"$@\" -std=gnu2y -I include %s || exit 1; done",
+                                    tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy,
+                                    sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                          "sh", nullptr},
+                      cflags, nullptr),
         .inputs = llvm,
     };
     smith_task(b, "check-tidy", &check_tidy);
@@ -133,6 +135,8 @@ static void build_checks(SmithBuild *b, const BuildConfig *config) {
     SmithStep check_llvm = build_check_llvm(b, format, tidy);
     const char *const *sources = (const char *[]){"smith.c",
                                                   "shim/clang.cpp",
+                                                  "scripts/pack.c",
+                                                  "scripts/pack.h",
                                                   "build.c",
                                                   "tests/stub.c",
                                                   "runtime/build_runtime.c",
@@ -183,6 +187,44 @@ static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const ch
     return shim;
 }
 
+// What the driver looks up beside its program in the LLVM install, packed (scripts/pack.c) into the file smith.c
+// embeds, compressed: clang's resource directory (builtin headers, sanitizer ignore lists, the macOS compiler-rt
+// libraries) and libLTO.dylib, which the system linker loads for -flto. Nothing else of the install is needed. The list
+// is sorted, so the same install makes the same pack.
+static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    SmithObject tool = {
+        .compiler = config->cc,
+        .source = "scripts/pack.c",
+        .output = smith_fmt(b, "%s/pack.o", folder),
+        .flags = config->cflags,
+        .implicit_inputs = (const char *[]){"scripts/pack.h", nullptr},
+    };
+    smith_object(b, &tool);
+    SmithProgram program = {
+        .linker = config->cc,
+        .output = smith_fmt(b, "%s/pack", folder),
+        .objects = (const SmithObject *[]){&tool, nullptr},
+        .libraries = (const char *[]){"-lcompression", nullptr},
+    };
+    smith_program(b, &program);
+    const char *pack = smith_fmt(b, "%s/clang-resource.pack", folder);
+    SmithStep step = {
+        .command =
+            (const char *[]){
+                "sh", "-c",
+                // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                "root=$PWD && cd \"$0\" && (find lib/clang/*/include lib/clang/*/share -type f; "
+                "ls lib/clang/*/lib/darwin/*osx* lib/libLTO.dylib) | LC_ALL=C sort | \"$root/$1\" \"$root/$2\"",
+                config->llvm, program.output, pack, nullptr},
+        .inputs = smith_cat(b, program.step.outputs,
+                            smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr), nullptr),
+        .outputs = (const char *[]){pack, nullptr},
+        .description = "packing clang's resource directory",
+    };
+    smith_step(b, &step);
+    return pack;
+}
+
 // The program, and the same program under another name, as clang++ is to clang: it compiles and links C++ with
 // clang++. The build folder is named for the OS and architecture, so a binary built on one machine is never mistaken
 // for an up-to-date one on another (this folder is shared with a Linux VM as well as macOS). smith.c embeds the build
@@ -191,6 +233,7 @@ static SmithObject build_shim(SmithBuild *b, const BuildConfig *config, const ch
 // libraries are linked in, so that smith compiles in its own process.
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     bool in_process = config->llvm[0] != '\0';
+    const char *pack = in_process ? build_resource_pack(b, config, folder) : "";
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
@@ -198,16 +241,30 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .flags = smith_cat(
             b, config->cflags,
             smith_when(b, in_process,
-                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_LLVM_BIN=\"%s/bin\"", config->llvm),
+                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack),
                                         smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
             nullptr),
-        .implicit_inputs =
-            (const char *[]){"include/smith/build.h", "runtime/build_runtime.c", "runtime/package.c", "runtime/cache.c",
-                             "include/smith/arena.h", "lib/arena.c", "include/smith/io.h", "lib/io.c",
-                             "include/smith/random.h", "lib/random.c", "include/smith/test.h", "lib/test.c",
-                             "templates/new/build.c", "templates/new/main.c", "templates/new/gitignore",
-                             "templates/new/clang-format", "templates/new/clang-tidy",
-                             "templates/new/claude-settings.json", nullptr},
+        .implicit_inputs = (const char *[]){"scripts/pack.h",
+                                            pack,
+                                            "include/smith/build.h",
+                                            "runtime/build_runtime.c",
+                                            "runtime/package.c",
+                                            "runtime/cache.c",
+                                            "include/smith/arena.h",
+                                            "lib/arena.c",
+                                            "include/smith/io.h",
+                                            "lib/io.c",
+                                            "include/smith/random.h",
+                                            "lib/random.c",
+                                            "include/smith/test.h",
+                                            "lib/test.c",
+                                            "templates/new/build.c",
+                                            "templates/new/main.c",
+                                            "templates/new/gitignore",
+                                            "templates/new/clang-format",
+                                            "templates/new/clang-tidy",
+                                            "templates/new/claude-settings.json",
+                                            nullptr},
     };
     smith_object(b, &object);
     SmithObject shim = in_process ? build_shim(b, config, folder) : (SmithObject){};
@@ -218,7 +275,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .objects =
             in_process ? (const SmithObject *[]){&object, &shim, nullptr} : (const SmithObject *[]){&object, nullptr},
         .libraries = in_process ? smith_cat(b, build_clang_libraries(b, config->llvm),
-                                            (const char *[]){"-lc++", "-lm", nullptr}, nullptr)
+                                            (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
                                 : nullptr,
     };
     smith_program(b, &program);
@@ -258,12 +315,13 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // and with --isolate.
 static SmithStep build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
     SmithStep test = {
-        .command = (const char *[]){"sh", "-c",
-                                    // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                                    "for t in run build new arena io random cache test; do env \"$0\" sh tests/$t.sh "
-                                    "\"$1\" || exit 1; done; "
-                                    "env \"$0\" sh tests/test.sh \"$1\" isolate",
-                                    smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
+                             "for t in run build new arena io random cache resource test; do env \"$0\" sh tests/$t.sh "
+                             "\"$1\" || exit 1; done; "
+                             "env \"$0\" sh tests/test.sh \"$1\" isolate",
+                             smith_fmt(b, "CC=%s", config->cc), binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "test", &test);
