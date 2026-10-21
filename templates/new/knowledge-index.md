@@ -1,5 +1,6 @@
 ---
 okf_version: "0.2"
+types: convention, architecture, contract, design
 ---
 # Knowledge
 

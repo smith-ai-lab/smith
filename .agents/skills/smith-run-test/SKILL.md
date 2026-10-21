@@ -7,11 +7,11 @@ description: "smith run and smith test: running a project's program and its test
 
 This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Writing tests is the smith-test skill; writing `build.c` is smith-build.
 
-A project verb builds and runs the task or alias of its name in the project's `build.c`. There is no list of files or programs anywhere else.
+`smith run` and `smith test` act on what the project's `build.c` declares: the program is the default's, the tests are `smith_tests`'. There is no task to write and no list of files or programs anywhere else.
 
 ## smith run
 
-`smith run [<arguments>]` builds the program the `run` task names and runs it on the terminal. Its arguments go to the program, so `smith run level2 --fast` runs `<program> level2 --fast`. `-D` options belong to the build (`smith run -DFONT=x`); `--` ends them, so `smith run -- -Dx` gives the program `-Dx`.
+`smith run [<arguments>]` builds `smith_default` and runs the one program it names on the terminal (a `smith_program` output; other things in the default, such as links, are built but not run). Its arguments go to the program, so `smith run level2 --fast` runs `<program> level2 --fast`. `-D` options belong to the build (`smith run -DFONT=x`); `--` ends them, so `smith run -- -Dx` gives the program `-Dx`. When the default names no program or more than one, it says so and lists the default's targets: make `smith_default` name the one program (`smith build <other>` builds the rest).
 
 ## smith test
 
@@ -24,8 +24,10 @@ Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --see
 
 ## When it goes wrong
 
-- `smith run: build.c defines no task or alias named run`: the project has no such target; add `smith_task(b, "run", ...)` (the smith-build skill). The same for `test`, `prove`, `check`, `fmt`, `lint`. A project made by `smith new` has all of them; one that predates `test` and `prove` in the template adds `smith_tests` and a `prove` task (copy them from `smith new`'s build.c).
-- `this verb was given arguments, but build.c does not read them`: the task does not call `smith_args(b)`; give the arguments to its command.
-- `test is a verb, not a target of smith build`: `smith build run|test|check|fmt|lint` are refused. Use the verb.
+- `smith run: the default of build.c names no program` / `more than one program`: `smith_default` must name exactly one `smith_program` output (aliases are opened); it lists what it names.
+- `smith test: build.c declares no tests`: the build calls no `smith_tests`; add it (the smith-test skill). A task of your own that should run with `smith test` sets `.test = true`.
+- `this verb was given arguments, but build.c does not read them`: `smith test` was given arguments and build.c calls no `smith_tests` (the runner reads them through `smith_args(b)`).
+- `build.c: task 'run' is named after a verb`: no task or alias is named `run`, `test`, `check`, `fmt`, `lint`, `docs` or `prove`; the verb does it, or name the task another way and run it with `smith build <name>`.
+- `test is a verb, not a target of smith build`: `smith build run|test|check|fmt|lint|prove|docs` are refused. Use the verb.
 - `no build.c in this folder`: run it from the project's folder.
 - The old `-DTEST=`, `-DSEED=`, `-DJOBS=`, `-DFULL` options are gone; use the runner's options.

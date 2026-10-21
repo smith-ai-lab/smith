@@ -11,11 +11,13 @@ This skill ships in the smith plugin, from `.agents/skills/smith-check/SKILL.md`
 
 ## On the project: no arguments
 
-- `smith fmt` runs the project's `fmt` task: it rewrites the sources to `.clang-format`.
-- `smith lint` runs the `lint` task: clang-tidy with `.clang-tidy` over the sources, with the flags the build uses.
-- `smith check` runs the `check` alias: everything that must pass before a change is done (format, lint, the docs, tests, and what the project adds; `smith new` writes a `docs` step that runs `smith docs`, see `smith-docs`). It takes no arguments but `-D` options.
-- Before committing: `smith fmt`, then `smith check`. A project without these tasks gets `build.c defines no task or alias named check`; `smith new` writes them.
-- `smith build check` and the other verb names are refused: use the verb.
+The verbs mean the same in every project and read what its `build.c` declares; a project writes no task for them.
+- `smith fmt` rewrites every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith`) to `.clang-format`. A file named in `.clang-format-ignore` (clang-format reads it itself: a generated `parser.c`, a fixture) is left alone. Outside a git repository it says to name the files (`smith fmt -i <files>`).
+- `smith lint` builds what the compiles read (generated headers), then runs clang-tidy with `.clang-tidy` on the project's own sources among the build's compiles (`smith_object`, and `smith_compile_command` for sources the build never compiles), side by side. Not `.smith/`, `build/` outputs or packages, and not `.smith` sources. A `.clang-tidy` in a folder (such as `InheritParentConfig: true` with other checks) applies there.
+- `smith docs` checks AGENTS.md, `knowledge/` and the skills (`smith-docs`).
+- `smith check` runs fmt (clang-format's dry run), docs, lint, test and prove, in that order, and does not stop at a failure: each part prints `smith check: <part> ok` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or `smith check: failed: <parts>`; the exit status is 1 when any failed. It takes no arguments but `-D` options.
+- Before committing: `smith fmt`, then `smith check`.
+- A task of your own (a custom check, a generator) is `smith_task` in build.c and runs with `smith build <task>`; no task or alias may be named `fmt`, `lint`, `docs`, `prove`, `check`, `run` or `test`. `smith build check` and the other verb names are refused: use the verb.
 
 ## On files: with arguments
 
@@ -25,7 +27,7 @@ With arguments they are the tools, unchanged: `smith fmt -i main.c`, `smith fmt 
 
 ## `.smith` files
 
-`smith fmt x.smith` (and `-i`, `--dry-run`, standard input with `--assume-filename=x.smith`) formats a `.smith` file as C, with its `::` paths, `module a::b;` and `import a::b as x;` lines and `import <sys/wait.h>;` kept whole; `smith fmt` with no arguments formats the project's `.smith` files too, when its build.c lists them (the one `smith new` writes globs `**/*.smith`). `import` and `module` inside a function are names, as in C. Needs a smith whose clang-format has the `.smith` patch (a stage0 runs Homebrew's, which reads `.smith` as C++ and so misreads C names that are C++ keywords, such as `throw`). clangd formats `.smith` files the same way.
+`smith fmt x.smith` (and `-i`, `--dry-run`, standard input with `--assume-filename=x.smith`) formats a `.smith` file as C, with its `::` paths, `module a::b;` and `import a::b as x;` lines and `import <sys/wait.h>;` kept whole; `smith fmt` with no arguments formats the project's `.smith` files too (git sees them). `import` and `module` inside a function are names, as in C. Needs a smith whose clang-format has the `.smith` patch (a stage0 runs Homebrew's, which reads `.smith` as C++ and so misreads C names that are C++ keywords, such as `throw`). clangd formats `.smith` files the same way.
 
 `smith lint x.smith -- <flags>` (clang-tidy, with the project's `.clang-tidy`) lints a `.smith` file as `smith cc` reads it (`-x c`, and `-std=gnu2y` unless you name a standard; a compile database's own command is used as it is) and reports as the source is written: findings, notes and fix-its at the lines and columns of the `.smith` text, with the names as written (`area` and `Box` in the module, `box::area` where it is imported, never `geometry_box_area`). `readability-identifier-naming` judges the written name of a module's file-scope names, so the template's rules (snake_case functions and variables, PascalCase types) apply to `area` and `Box`, and `--fix` rewrites the token in the source; the sized types (`u32`, `i32`), the lowering's copies of prototypes and the headers `smith build` writes are never reported. A finding about an export is reported in the module's file, not in each importer, and a fix there does not rename the importers. Other checks show the written names in their messages, but a check that compares the name itself (a length or a reserved-name check, say) still reads the lowered one. Needs a smith whose clang has the token hook (`smith cc --smith-which x.smith` says `token-hook yes`); a stage0 runs Homebrew's clang-tidy, which cannot read `.smith`.
 
