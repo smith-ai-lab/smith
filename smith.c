@@ -1862,9 +1862,259 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 }
 #endif
 
+// ---- smith's defaults for a project with no config file (issue #43, part 1)
+//
+// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/new, embedded) for a file the
+// tool would find none for: clang-format's lookup (`.clang-format` or `_clang-format`, in the file's folder and each
+// folder above) and clang-tidy's (`.clang-tidy`, the same walk). They are written to <data>/smith/defaults/ (named by
+// their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
+// whole, and an explicit option of the tool wins. `--dump-config` is the tool's own, so it prints the effective one.
+// `smith lsp` points clangd at `.smith/compile_commands.json` when the project has no root one.
+constexpr int smith_defaults_args_max = 4096;
+constexpr int smith_defaults_depth_max = 256;
+
+// Whether the folder or one above it holds a file of one of the names (null-terminated list). A path that cannot be
+// held counts as found: the tool is then left alone.
+static bool smith_defaults_found(const char *start, const char *const *names) {
+    char folder[PATH_MAX];
+    int written = snprintf(folder, sizeof folder, "%s", start);
+    if (written <= 0 || (size_t)written >= sizeof folder) return true;
+    for (int depth = 0; depth < smith_defaults_depth_max; depth++) {
+        for (size_t i = 0; names[i] != nullptr; i++) {
+            char path[PATH_MAX + 32];
+            snprintf(path, sizeof path, "%s/%s", folder, names[i]);
+            struct stat info;
+            if (stat(path, &info) == 0 && !S_ISDIR(info.st_mode)) return true;
+        }
+        char *slash = strrchr(folder, '/');
+        if (slash == nullptr || slash == folder) return false;
+        *slash = '\0';
+    }
+    return true;
+}
+
+// The folder a file's lookup starts in: its own, made absolute (a file that does not exist yet, or standard input, is
+// looked up from where it would be). A null name, "-" and "<stdin>" are the current folder.
+static void smith_defaults_start(const char *name, char *folder) {
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof cwd) == nullptr) cwd[0] = '\0';
+    char full[PATH_MAX * 2];
+    if (name == nullptr || strcmp(name, "-") == 0 || strcmp(name, "<stdin>") == 0) {
+        snprintf(full, sizeof full, "%s/x", cwd);
+    } else if (name[0] == '/') {
+        snprintf(full, sizeof full, "%s", name);
+    } else {
+        snprintf(full, sizeof full, "%s/%s", cwd, name);
+    }
+    char *slash = strrchr(full, '/');
+    if (slash != nullptr && slash != full) *slash = '\0';
+    char real[PATH_MAX];
+    snprintf(folder, PATH_MAX, "%s", realpath(full, real) != nullptr ? real : full);
+}
+
+// The path of smith's default file of this kind, written if it is not there (named by its content, so a new default
+// is a new file and an older smith's is left alone).
+static void smith_defaults_path(const unsigned char *bytes, size_t size, const char *stem, char *path) {
+    const char *data = getenv("XDG_DATA_HOME");
+    const char *home = getenv("HOME");
+    char base[PATH_MAX];
+    if (data != nullptr && data[0] == '/') {
+        snprintf(base, sizeof base, "%s", data);
+    } else if (home != nullptr && home[0] == '/') {
+        snprintf(base, sizeof base, "%s/.local/share", home);
+    } else {
+        smith_die(smith_exit_usage, "cannot find a folder for smith's defaults: set HOME or XDG_DATA_HOME", nullptr);
+    }
+    uint64_t key = 14695981039346656037ULL;
+    for (size_t i = 0; i < size; i++)
+        key = (key ^ bytes[i]) * 1099511628211ULL; // FNV-1a
+    char folder[PATH_MAX];
+    mkdir(base, 0777);
+    snprintf(folder, sizeof folder, "%s/smith", base);
+    smith_make_folder(folder);
+    snprintf(folder, sizeof folder, "%s/smith/defaults", base);
+    smith_make_folder(folder);
+    int written = snprintf(path, PATH_MAX, "%s/%s-%016" PRIx64, folder, stem, key);
+    SMITH_ASSERT(written > 0 && (size_t)written < PATH_MAX);
+    smith_write_if_changed(path, bytes, size);
+}
+
+// The option as written: -name, --name, with or without =value.
+static bool smith_defaults_is(const char *arg, const char *name) {
+    if (arg[0] != '-') return false;
+    arg += 1 + (arg[1] == '-');
+    size_t length = strlen(name);
+    return strncmp(arg, name, length) == 0 && (arg[length] == '\0' || arg[length] == '=');
+}
+
+// Whether the option is one that takes its value from the next argument when written without `=`.
+static bool smith_defaults_takes_value(const char *arg, const char *const *names) {
+    if (arg[0] != '-' || strchr(arg, '=') != nullptr) return false;
+    for (size_t i = 0; names[i] != nullptr; i++)
+        if (smith_defaults_is(arg, names[i])) return true;
+    return false;
+}
+
+// Runs this smith on the arguments and returns its exit status.
+static int smith_defaults_again(char *const *args) {
+    pid_t pid;
+    if (posix_spawn(&pid, args[0], nullptr, nullptr, args, environ) != 0) return smith_exit_missing;
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return smith_exit_missing;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : smith_exit_missing;
+}
+
+typedef struct {
+    int files[smith_defaults_args_max]; // the indexes of the file arguments
+    bool missing[smith_defaults_args_max];
+    int count;
+    int missing_count;
+    bool explicit_option; // the user chose a style or config
+    const char *assumed;  // --assume-filename
+} SmithDefaultsScan;
+
+static SmithDefaultsScan smith_defaults_scan;
+
+// Reads the tool's arguments (argv[2 ..]): which are files, whether the user chose a style or config, and which files
+// have no config file in the project.
+static void smith_defaults_read(bool fmt, int argc, char **argv) {
+    static const char *const fmt_names[] = {".clang-format", "_clang-format", nullptr};
+    static const char *const tidy_names[] = {".clang-tidy", nullptr};
+    static const char *const fmt_valued[] = {"style",  "assume-filename", "lines",  "offset",
+                                             "length", "fallback-style",  "cursor", nullptr};
+    static const char *const tidy_valued[] = {"p",
+                                              "checks",
+                                              "config",
+                                              "config-file",
+                                              "header-filter",
+                                              "format-style",
+                                              "export-fixes",
+                                              "extra-arg",
+                                              "extra-arg-before",
+                                              "line-filter",
+                                              "load",
+                                              "vfsoverlay",
+                                              "store-check-profile",
+                                              nullptr};
+    SmithDefaultsScan *scan = &smith_defaults_scan;
+    *scan = (SmithDefaultsScan){};
+    for (int i = 2; i < argc; i++) { // bounded by the arguments
+        const char *arg = argv[i];
+        if (strcmp(arg, "--") == 0) break; // clang-tidy's compile arguments follow
+        if (arg[0] == '-' && arg[1] != '\0') {
+            if (fmt && (smith_defaults_is(arg, "style") || smith_defaults_is(arg, "fallback-style")))
+                scan->explicit_option = true;
+            if (!fmt && (smith_defaults_is(arg, "config") || smith_defaults_is(arg, "config-file")))
+                scan->explicit_option = true;
+            if (fmt && smith_defaults_is(arg, "assume-filename")) {
+                const char *equals = strchr(arg, '=');
+                scan->assumed = equals != nullptr ? equals + 1 : (i + 1 < argc ? argv[i + 1] : nullptr);
+            }
+            if (smith_defaults_takes_value(arg, fmt ? fmt_valued : tidy_valued) && i + 1 < argc) i++;
+            continue;
+        }
+        scan->files[scan->count++] = i;
+    }
+    int checked = scan->count > 0 ? scan->count : 1; // no file: standard input, or the current folder
+    for (int k = 0; k < checked; k++) {
+        const char *name = scan->count > 0 ? argv[scan->files[k]] : nullptr;
+        if (scan->assumed != nullptr && (name == nullptr || strcmp(name, "-") == 0)) name = scan->assumed;
+        char start[PATH_MAX];
+        smith_defaults_start(name, start);
+        scan->missing[k] = !smith_defaults_found(start, fmt ? fmt_names : tidy_names);
+        scan->missing_count += scan->missing[k] ? 1 : 0;
+    }
+}
+
+static char *smith_defaults_argv[smith_defaults_args_max];
+static char smith_defaults_option[PATH_MAX + 32];
+
+// Whether argument i is a file argument that has a config file of the project's (keep) or none (default).
+static bool smith_defaults_is_file(int i, bool want_missing) {
+    SmithDefaultsScan *scan = &smith_defaults_scan;
+    for (int k = 0; k < scan->count; k++)
+        if (scan->files[k] == i) return scan->missing[k] == want_missing;
+    return false;
+}
+
+// For `smith fmt` and `smith lint` with the tool's arguments (argv[1] the command): the arguments with smith's default
+// added for the files that have no config file of the project's, in a static array (the tool runs once per process).
+// Files with a config file and files without need different options, so when both are named the second kind runs in
+// a process of its own. Returns the exit status of that process, or -1 when there was none.
+static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, const char *self) {
+    bool fmt = strcmp(tool->command, "fmt") == 0;
+    int count = *argc;
+    char **args = *argv;
+    if (count > smith_defaults_args_max - 8) return -1;
+    smith_defaults_read(fmt, count, args);
+    SmithDefaultsScan *scan = &smith_defaults_scan;
+    if (scan->explicit_option || scan->missing_count == 0) return -1;
+    char path[PATH_MAX];
+    if (fmt)
+        smith_defaults_path(smith_new_clang_format, sizeof smith_new_clang_format, "clang-format", path);
+    else
+        smith_defaults_path(smith_new_clang_tidy, sizeof smith_new_clang_tidy, "clang-tidy", path);
+    int written = snprintf(smith_defaults_option, sizeof smith_defaults_option,
+                           fmt ? "--style=file:%s" : "--config-file=%s", path);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof smith_defaults_option);
+    bool all = scan->count == 0 || scan->missing_count == scan->count;
+    int status = -1;
+    if (!all) { // the files without run in a process of their own, with the default
+        char *child[smith_defaults_args_max];
+        int used = 0;
+        child[used++] = (char *)self;
+        child[used++] = args[1];
+        child[used++] = smith_defaults_option;
+        for (int i = 2; i < count; i++)
+            if (!smith_defaults_is_file(i, false)) child[used++] = args[i];
+        child[used] = nullptr;
+        status = smith_defaults_again(child);
+    }
+    int out = 0;
+    smith_defaults_argv[out++] = args[0];
+    smith_defaults_argv[out++] = args[1];
+    if (all) smith_defaults_argv[out++] = smith_defaults_option;
+    for (int i = 2; i < count; i++)
+        if (all || !smith_defaults_is_file(i, true)) smith_defaults_argv[out++] = args[i];
+    smith_defaults_argv[out] = nullptr;
+    *argc = out;
+    *argv = smith_defaults_argv;
+    return status;
+}
+
+// `smith lsp` in a project that has `.smith/compile_commands.json` and no compile database of its own at its root (or
+// in build/, clangd's own places): the option that makes clangd read that one. The project is the nearest folder, up
+// from the current one, that has the file. clangd has no other way to be told (no LLVM change).
+static char smith_lsp_option[PATH_MAX + 40];
+
+static bool smith_lsp_commands_option(int argc, char **argv) {
+    for (int i = 2; i < argc; i++)
+        if (smith_defaults_is(argv[i], "compile-commands-dir")) return false;
+    char folder[PATH_MAX];
+    if (getcwd(folder, sizeof folder) == nullptr) return false;
+    for (int depth = 0; depth < smith_defaults_depth_max; depth++) {
+        char path[PATH_MAX + 64];
+        struct stat info;
+        snprintf(path, sizeof path, "%s/.smith/compile_commands.json", folder);
+        if (stat(path, &info) == 0) {
+            snprintf(path, sizeof path, "%s/compile_commands.json", folder);
+            if (stat(path, &info) == 0) return false;
+            snprintf(path, sizeof path, "%s/build/compile_commands.json", folder);
+            if (stat(path, &info) == 0) return false;
+            int written =
+                snprintf(smith_lsp_option, sizeof smith_lsp_option, "--compile-commands-dir=%s/.smith", folder);
+            return written > 0 && (size_t)written < sizeof smith_lsp_option;
+        }
+        char *slash = strrchr(folder, '/');
+        if (slash == nullptr || slash == folder) return false;
+        *slash = '\0';
+    }
+    return false;
+}
+
 // argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
 // arguments are unchanged.
-static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
+static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
 #ifdef __APPLE__
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
@@ -1881,6 +2131,25 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     argv[1] = program; // the full path, as for the compiler
     smith_run(program, argv + 1);
     return smith_exit_missing;
+}
+
+// The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
+// (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
+static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
+    SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
+    int before = -1;
+    if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
+        before = smith_defaults_apply(tool, &argc, &argv, self);
+    } else if (strcmp(tool->command, "lsp") == 0 && argc < smith_defaults_args_max - 2 &&
+               smith_lsp_commands_option(argc, argv)) {
+        for (int i = 0; i < argc; i++)
+            smith_defaults_argv[i] = argv[i];
+        smith_defaults_argv[argc++] = smith_lsp_option;
+        smith_defaults_argv[argc] = nullptr;
+        argv = smith_defaults_argv;
+    }
+    int status = smith_tool_launch(tool, argc, argv, self);
+    return status != 0 ? status : (before > 0 ? before : 0);
 }
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by

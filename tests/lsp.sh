@@ -488,6 +488,25 @@ for dir in handwritten borrowed; do
     expect "$dir: and the only one" 1 "$(printf '%s\n' "$log" | grep -c '^diag ')"
 done
 
+
+# A project with only .smith/compile_commands.json (issue #43): clangd reads that one, so the define its command has
+# reaches the source; a root compile_commands.json, when there is one, is clangd's own choice and wins.
+mkdir -p smithdir/.smith rootwins/.smith
+for dir in smithdir rootwins; do
+    printf '#ifndef NEEDED\n#error needed\n#endif\nint f(void) { return NEEDED; }\n' >"$dir/needs.c"
+done
+printf '[{"directory": "%s", "command": "smith-cc -c needs.c -o needs.o -DNEEDED=1", "file": "needs.c"}]\n' \
+    "$work/p/smithdir" >smithdir/.smith/compile_commands.json
+printf '[{"directory": "%s", "command": "smith-cc -c needs.c -o needs.o -DNEEDED=1", "file": "needs.c"}]\n' \
+    "$work/p/rootwins" >rootwins/.smith/compile_commands.json
+printf '[{"directory": "%s", "command": "smith-cc -c needs.c -o needs.o", "file": "needs.c"}]\n' \
+    "$work/p/rootwins" >rootwins/compile_commands.json
+log=$(client_in "$(cd smithdir && pwd -P)" open needs.c)
+expect_line "smith dir: .smith/compile_commands.json is the project's compile commands (no #error)" "$log" "diagnostics needs.c"
+expect "smith dir: ... and nothing is reported" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+log=$(client_in "$(cd rootwins && pwd -P)" open needs.c)
+expect "smith dir: a root compile_commands.json wins (the #error is reported)" 1 \
+    "$(printf '%s\n' "$log" | grep -c '^diag needs.c:2:2: Needed')"
 echo
 echo "$total language server checks, $failures failed"
 [ "$failures" -eq 0 ]
