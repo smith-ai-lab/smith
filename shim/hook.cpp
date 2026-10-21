@@ -212,8 +212,13 @@ class SmithHook final : public TokenHook {
         case SmithLangAct_Drop:
             return Fast::Dropped;
         case SmithLangAct_Rename:
-            tok.setIdentifierInfo(PP.getIdentifierInfo(StringRef(act.text, act.length)));
+        {
+            auto renamed = renames.find(tok.getIdentifierInfo()); // declared and renamed already: no hashing of the text
+            tok.setIdentifierInfo(renamed != renames.end() && renamed->second->getLength() == act.length
+                                      ? renamed->second
+                                      : PP.getIdentifierInfo(StringRef(act.text, act.length)));
             break;
+        }
         case SmithLangAct_Sized:
             sizedToken(tok, sizedNames.find(tok.getIdentifierInfo())->second);
             break;
