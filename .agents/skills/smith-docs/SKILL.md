@@ -29,7 +29,7 @@ Skills link knowledge; knowledge never links skills. No `CLAUDE.md` is needed: C
 
 ## The check
 
-`smith docs [<root>]` checks the project in the current folder (or `<root>`). It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
+`smith docs [<root>]` checks the project of `<root>`, or, when none is named, of the nearest folder at or above the current one that has an `AGENTS.md`, looking no higher than the repository's root (a build.c in `repo/app/` checks the AGENTS.md and `knowledge/` of `repo/`; with none found it is the current folder). `smith check` uses the same rule. It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
 
 | Rule | Message |
 | --- | --- |
@@ -62,7 +62,7 @@ requires: dataset:license_class=commercial-ok,research-only,unknown; model:owner
 
 - `types:` lists the allowed types, separated by commas. With it, the default types no longer apply, so list them all.
 - `requires:` makes a field a must for a type, separated by `;`: `<type>:<field>`, or `<type>:<field>=a,b,c` to limit its values.
-- On the command line, `--type <name>` (once for each allowed type) and `--require <type>:<field>[=a,b,c]` do the same and replace what the index declares. `smith docs` with no arguments is the check of the current folder with the index's declaration; `--depfile <path> --target <path>` writes the files it read in the form of a compiler's `-MF`.
+- On the command line, `--type <name>` (once for each allowed type) and `--require <type>:<field>[=a,b,c]` do the same and replace what the index declares. `smith docs` with no arguments is the check of that project with the index's declaration; `--depfile <path> --target <path>` writes the files it read in the form of a compiler's `-MF`.
 
 ## In a project
 

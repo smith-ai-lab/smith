@@ -1039,9 +1039,33 @@ static void smith_docs_declared(SmithDocs *docs) {
     }
 }
 
+// The project of the current folder when no root is named: the nearest folder at or above it that has an AGENTS.md,
+// looking no higher than the git root (a folder that has .git); else the current folder. So a build.c in a subfolder
+// (virtual-cell/learner) checks the docs of its repository. A relative path: "." for the current folder, else "..",
+// "../..".
+static const char *smith_docs_find_root(void) {
+    static char root[3 * 64 + 4];
+    char prefix[3 * 64 + 4] = "";
+    for (size_t level = 0; level < 64; level++) { // bounded by the depth
+        char file[sizeof prefix + 16];
+        struct stat info;
+        snprintf(file, sizeof file, "%sAGENTS.md", prefix);
+        if (stat(file, &info) == 0 && S_ISREG(info.st_mode)) {
+            snprintf(root, sizeof root, "%s", level == 0 ? "." : prefix);
+            if (level > 0) root[strlen(root) - 1] = '\0'; // "../.." and not "../../"
+            return root;
+        }
+        snprintf(file, sizeof file, "%s.git", prefix);
+        if (lstat(file, &info) == 0) break; // the git root: nothing above it belongs to the project
+        strcat(prefix, "../");
+    }
+    return ".";
+}
+
 static int smith_docs_check(int count, char **args) {
-    SmithDocs docs = {.root = "."};
+    SmithDocs docs = {.root = nullptr};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
+    if (docs.root == nullptr) docs.root = smith_docs_find_root();
     docs.arena = smith_docs_map(smith_docs_memory_size);
     docs.depends = smith_docs_map(smith_docs_depends_size);
     docs.depended = SMITH_DOCS_PUSH(&docs.depends, const char *, smith_docs_depends_max);

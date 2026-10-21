@@ -116,6 +116,23 @@ cd links || exit 1
 capture smith docs
 expect "no arguments: problems exit 1" 1 "$rc"
 cd ..
+# The project's docs are in the nearest folder at or above the current one that has an AGENTS.md, stopping at the git
+# root: a build.c in a subfolder (virtual-cell/learner) checks its repository's docs.
+mkdir -p repo/sub/deep
+cp -R declared/. repo/
+mkdir repo/.git
+cd repo/sub/deep || exit 1
+capture smith docs
+expect "subfolder: the docs of the folder above are the project's" 0 "$rc"
+expect_contains "subfolder: ... its concepts are found" "$out" "smith docs: 2 concepts, 0 problems"
+cd ../../..
+mkdir -p stray/inner
+cp -R declared/. stray/
+mkdir stray/inner/.git stray/inner/sub
+cd stray/inner/sub || exit 1
+capture smith docs
+expect_contains "subfolder: the search stops at the git root" "$out" "smith docs: 0 concepts"
+cd ../../..
 cd declared || exit 1
 capture smith docs
 expect "declared types: the index's types and requirements are the project's" 0 "$rc"
