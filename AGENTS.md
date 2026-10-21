@@ -51,6 +51,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `$SMITH_CLANGD`), so formatting, lint and the editor are the same everywhere, and each takes the tool's own arguments.
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
   clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
+  - **smith's defaults where a project has no file** (issue #43): a file with no `.clang-format` or `.clang-tidy` up its
+    tree (the tools' own lookup) gets smith's, embedded from `templates/new/` and written to `<data>/smith/defaults/`,
+    passed as `--style=file:` and `--config-file=` (`smith_defaults_apply`, smith.c). A project's file replaces them
+    whole and an explicit `--style`, `--config` or `--config-file` wins. `--dump-config` is the tool's, so it prints the
+    effective one and makes it the project's (`smith fmt --dump-config > .clang-format`). `smith cc` is untouched.
+  - **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
+    the project has no root or `build/` one. clangd has no fallback file for formatting or clang-tidy, so the editor
+    uses smith's defaults only after `--dump-config` makes them the project's (an LLVM change would be needed).
   - **`.smith` is C to clang-format** (issue #25; `patches/clang-format-smith.patch`, about 100 lines): C's keywords
     only, `::` one token, and `module ...;` and `import ...;` lines at file scope kept whole (`import <sys/wait.h>;`).
     Inside a function `import` and `module` are names, as in C. clangd formats `.smith` the same way (same library).
