@@ -12,7 +12,7 @@ module demo::dir;
 #undef UNUSED_NAME
 
 #if 0
-This is not read, and nothing of it is kept.
+static int not_read = 0; // not read, and nothing of it is kept
 #elif defined(__aarch64__)
 static const char *machine = "arm64";
 #else

@@ -702,6 +702,50 @@ i32 main(void) {
     c::printf("%u lines\n", lines);
     return 0;
 }
+==> lowered-directives/src/demo/dir.smith <==
+module demo::dir;
+
+#pragma STDC FP_CONTRACT OFF
+#include <string.h>
+
+#ifdef __FAST_MATH__
+#error "no -ffast-math"
+#endif
+
+// Kept as written, in place: the compiler that builds the lowered C decides each one.
+#define PAIR(a, b) (((a) << 8) | (b))
+#undef UNUSED_NAME
+
+#if 0
+static int not_read = 0; // not read, and nothing of it is kept
+#elif defined(__aarch64__)
+static const char *machine = "arm64";
+#else
+static const char *machine = "other";
+#endif
+
+// A branch the machine does not take is lowered like the rest: sized types need no parser's answer.
+#if defined(__x86_64__)
+export u32 width(u32 x) {
+    u64 wide = x;
+    return (u32)(wide + 1);
+}
+#elif defined(__aarch64__)
+export u32 width(u32 x) {
+    u64 wide = x;
+    return (u32)(wide + 2);
+}
+#else
+#error "unsupported machine"
+#endif
+
+export u32 pair(u32 a, u32 b) {
+    return PAIR(a, b);
+}
+
+export usize name_length(void) {
+    return strlen(machine);
+}
 ==> module-basic/src/main.smith <==
 import shapes::area as area;
 #include <stdio.h>
