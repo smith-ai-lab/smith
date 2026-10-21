@@ -104,7 +104,15 @@ int compile(const char *program, const char *resource, const std::string &file, 
     }
     int status = 0;
     if (waitpid(child, &status, 0) < 0) return 2;
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) == 0 && access(output.c_str(), R_OK) != 0) {
+            std::fprintf(stderr, "smith: prove: compiling %s wrote no bitcode\n", file.c_str());
+            return 2;
+        }
+        return WEXITSTATUS(status);
+    }
+    std::fprintf(stderr, "smith: prove: the compiler stopped on signal %d compiling %s\n", WTERMSIG(status),
+                 file.c_str());
     return 2;
 }
 

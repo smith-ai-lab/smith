@@ -166,6 +166,24 @@ expect "by value: a wrong promise about the fields fails" 1 "$rc"
 expect_contains "by value: ... as a promise that may be false" "$out" "by_value.c:30: smith_ensures(move.row == move.dest_row) may be false"
 case $out in *poison* | *"undefined behaviour"*) expect "by value: the counterexample is not poison" "a value" "$out" ;; *) expect "by value: the counterexample is not poison" "a value" "a value" ;; esac
 
+# 7e. A file that does not compile is an error with clang's message, never "nothing to prove".
+prove "$cases/syntax_error.c"
+expect "compile error: fails" 1 "$rc"
+expect_contains "compile error: ... with clang's message" "$out" "syntax_error.c:2:26: error: expected expression"
+case $out in *"nothing to prove"*) expect "compile error: is not nothing to prove" "an error" "$out" ;; *) expect "compile error: is not nothing to prove" "an error" "an error" ;; esac
+prove "$cases/memory.c" "$cases/syntax_error.c"
+expect "compile error: in the second file fails" 1 "$rc"
+prove "$work/does-not-exist.c"
+expect "missing file: fails" 1 "$rc"
+expect_contains "missing file: ... and names it" "$out" "does-not-exist.c"
+
+# 7f. A function with a variable argument list does not stop the others; calling it is an error that says so.
+prove --function=twice "$cases/varargs.c"
+expect "varargs: another function is proved" 0 "$rc"
+prove --function=uses_sum "$cases/varargs.c"
+expect "varargs: calling one is an error" 1 "$rc"
+expect_contains "varargs: ... that names the call" "$out" "varargs.c:25: cannot be proved: a call of sum, which takes a variable argument list"
+
 # 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 # before the fixes (else-if, col > 1) fails with a counterexample.
 prove --function=get_valid_diagonals "$cases/diagonals.c"
