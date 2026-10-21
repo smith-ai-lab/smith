@@ -1,0 +1,33 @@
+module smith::names;
+
+[[smith::c_name("smith_names_one")]] export int first(void) { return 1; }
+
+// the same C name twice
+[[smith::c_name("smith_names_one")]] export int second(void) { return 2; }
+
+// the name the prefix makes of an export with no C name
+[[smith::c_name("smith_names_plain")]] export int third(void) { return 3; }
+export int plain(void) { return 4; }
+
+// the name the prefix makes of a private one, declared first
+int hidden(void) { return 5; }
+[[smith::c_name("smith_names_hidden")]] export int fourth(void) { return 6; }
+
+// a chosen name that a later declaration would also get
+[[smith::c_name("smith_names_later")]] export int fifth(void) { return 7; }
+int later(void) { return 8; }
+
+// not an export
+[[smith::c_name("smith_names_private")]] int sixth(void) { return 9; }
+
+// not a C identifier, not a keyword, not a string, nor the only thing in the attribute
+[[smith::c_name("not an identifier")]] export int seventh(void) { return 10; }
+[[smith::c_name("int")]] export int eighth(void) { return 11; }
+[[smith::c_name(ninth)]] export int ninth(void) { return 12; }
+[[smith::c_name("a"), gnu::unused]] export int tenth(void) { return 13; }
+
+// two on one export
+[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh(void) { return 14; }
+
+// an export that declares nothing a C name could name
+[[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };

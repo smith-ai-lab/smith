@@ -1,0 +1,6 @@
+D _smith_arena_limit
+T _main
+T _smith::arena::take
+T _smith::text::fill
+T _smith_arena_checksum
+T _smith_arena_create

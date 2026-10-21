@@ -55,16 +55,20 @@ static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, con
     lang->aligned_column = base + gap + length;
 }
 
+static void smith_lang_trivia_to(SmithLang *lang, uint32_t location);
+
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
     if (!lang->is_module || !lang->export_active || token->kind == SmithTokenKind_Eof) return;
+    smith_lang_trivia_to(lang, token->location); // the comments and directives before it
     const char *text = token->header_text != nullptr ? token->header_text : token->text;
     size_t length = token->header_text != nullptr ? token->header_length : token->length;
     if (lang->aligned) {
         smith_lang_put_aligned(lang, token, text, length);
         return;
     }
-    smith_lang_put(smith_lang_header_body, smith_lang_header_max, &lang->header_used, text, length, token->line_start,
-                   token->space_before);
+    bool fresh_line = lang->header_used > 0 && smith_lang_header_body[lang->header_used - 1] == '\n';
+    smith_lang_put(smith_lang_header_body, smith_lang_header_max, &lang->header_used, text, length,
+                   token->line_start && !fresh_line, token->space_before && !fresh_line);
 }
 
 static void smith_lang_flush_kept(SmithLang *lang, const SmithHost *host) {
@@ -162,9 +166,12 @@ static const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host,
     return &lang->queue[(lang->queue_head + index) % smith_lang_queue_max];
 }
 
+static void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const SmithToken *token);
+
 static SmithToken smith_lang_take(SmithLang *lang, const SmithHost *host) {
     smith_lang_peek(lang, host, 0, false);
     SmithToken token = lang->queue[lang->queue_head];
+    smith_lang_trivia_taken(lang, host, &token);
     lang->queue_head = (lang->queue_head + 1) % smith_lang_queue_max;
     lang->queue_count -= 1;
     lang->batch_in += 1;
@@ -189,8 +196,18 @@ static const char *smith_lang_scratch_str(SmithLangText text) {
     return smith_lang_scratch + text.offset;
 }
 
-// The module's prefix and a name, in lang->tmp.
+static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, size_t length);
+
+// The module's prefix and a name, in lang->tmp; or the C name chosen for it, if it has one.
 static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length) {
+    if (lang->c_name_count > 0) {
+        SmithLangName *known = smith_lang_name_find(lang, name, length);
+        if (known != nullptr && known->c_name.length > 0 && known->c_name.length < sizeof lang->tmp) {
+            memcpy(lang->tmp, smith_lang_str(known->c_name), known->c_name.length + 1);
+            lang->tmp_length = known->c_name.length;
+            return lang->tmp;
+        }
+    }
     size_t prefix = strlen(lang->prefix);
     if (prefix + length + 1 > sizeof lang->tmp) {
         lang->broken = true;

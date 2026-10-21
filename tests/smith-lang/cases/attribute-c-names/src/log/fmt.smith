@@ -1,0 +1,22 @@
+module log::fmt;
+import <stdio.h>;
+import <stdarg.h>;
+
+// An attribute's argument is the attribute's own word: `printf` here is no use of the C function.
+[[gnu::format(printf, 1, 2)]] int private_say(const char *format, ...) {
+    c::va_list args;
+    c::va_start(args, format);
+    int n = c::vprintf(format, args);
+    c::va_end(args);
+    return n;
+}
+
+export [[gnu::format(printf, 1, 2)]] int say(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+export __attribute__((format(printf, 1, 2))) int said(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+[[gnu::format(scanf, 2, 3)]] int private_scan(int fd, const char *format, ...);

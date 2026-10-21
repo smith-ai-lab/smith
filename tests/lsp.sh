@@ -147,6 +147,10 @@ cat >util.c <<'EOF'
 int util_twice(int value) {
     return value * 2;
 }
+
+void util_note(void) {
+    fprintf(stderr, "note\n");
+}
 EOF
 cat >cbad.c <<'EOF'
 int util_bad(void) {
@@ -201,7 +205,7 @@ log=$(client open main.smith geometry/box.smith -- hover main.smith 7 18 -- hove
     definition main.smith 7 18 geometry/box.smith:5:12 -- definition main.smith 6 10 geometry/box.smith:3:50 -- \
     symbols main.smith -- hover geometry/box.smith 5 12 -- hover geometry/box.smith 3 50 -- symbols geometry/box.smith)
 expect_line "hover: a call, the function as written" "$log" \
-    'hover main.smith:7:18: function box::area |  | provided by "geometry/box.h" |  | → float |  | Parameters: |  | - box::Box b |  | float box::area(box::Box b) asm("_geometry::box::area")'
+    'hover main.smith:7:18: function box::area |  | provided by "geometry/box.h" |  | → float |  | Parameters: |  | - box::Box b |  | float box::area(box::Box b)'
 expect_line "hover: a type, as written" "$log" \
     'hover main.smith:6:10: type-alias box::Box |  | provided by "geometry/box.h" |  | Type: struct box::Box |  | typedef struct box::Box box::Box'
 expect_line "definition: the function is in the other module's .smith, at its name" "$log" \
@@ -215,6 +219,19 @@ expect_line "hover at the definition: and the type's" "$log" \
 expect "symbols: a module's names, as written, each once" \
     "symbol geometry/box.smith: (anonymous struct) symbol geometry/box.smith: width symbol geometry/box.smith: height symbol geometry/box.smith: Box symbol geometry/box.smith: area symbol geometry/box.smith: twice symbol geometry/box.smith: perimeter" \
     "$(printf '%s\n' "$log" | grep '^symbol geometry/box.smith' | tr '\n' ' ' | sed 's/ $//')"
+
+# A `c::` name is a name of the file like another: hover and go-to-definition at it find the one declaration (not every
+# declaration of the name, which is what the index answers by name: the SDK's and libc++'s `using`), and the hover of a
+# module's name has no label of its symbol. In a .c file of the same project the same requests are as they were.
+log=$(client open main.smith util.c -- hover main.smith 8 8 -- definitions main.smith 8 8 -- hover main.smith 7 18 -- \
+    hover util.c 8 5 -- definitions util.c 8 5)
+case $log in *"hover main.smith:8:8: function printf |  | provided by <stdio.h>"*) chover=yes ;; *) chover=no ;; esac
+expect "c::printf: hover" yes "$chover"
+expect "c::printf: exactly one definition" "definitions main.smith:8:8: 1" "$(printf '%s\n' "$log" | grep '^definitions main.smith:8:8')"
+expect "box::area: a hover without the label of the symbol" 0 "$(printf '%s\n' "$log" | grep '^hover main.smith:7:18' | grep -c 'asm(')"
+case $log in *"hover util.c:8:5: function fprintf |  | provided by <stdio.h>"*) chover=yes ;; *) chover=no ;; esac
+expect "c: fprintf in a .c file, hover" yes "$chover"
+expect "c: fprintf in a .c file, exactly one definition" "definitions util.c:8:5: 1" "$(printf '%s\n' "$log" | grep '^definitions util.c:8:5')"
 
 # The other requests at a definition: references, highlights and rename find the name once, at its place (the copy of the
 # head that carries the symbol is no second declaration), and never go to the generated header.
@@ -338,7 +355,7 @@ log=$(client_in "$modules" open main.smith foo.smith -- hover main.smith 6 18 --
     definition main.smith 6 18 foo.smith:3:12 -- hover foo.smith 3 12 -- hover foo.smith 7 41 -- symbols foo.smith -- \
     references foo.smith 3 12 -- highlight foo.smith 3 12)
 expect_line "modules: hover on a call into the other module, as written" "$log" \
-    'hover main.smith:6:18: function foo::f |  | provided by "foo.smith" |  | → int32_t (aka int) |  | Parameters: |  | - int32_t x (aka int) |  | int32_t foo::f(int32_t x) asm("_foo::f")'
+    'hover main.smith:6:18: function foo::f |  | provided by "foo.smith" |  | → int32_t (aka int) |  | Parameters: |  | - int32_t x (aka int) |  | int32_t foo::f(int32_t x)'
 expect_line "modules: go-to-definition lands in the other module's source" "$log" \
     "definition main.smith:6:18 -> foo.smith:3:12"
 expect_line "modules: hover at the function's definition" "$log" \
@@ -357,6 +374,63 @@ expect_line "modules: foo:: offers the module's function, inserted as written" "
     "complete qualified.smith:5:17:  f(int32_t x) -> 5:17-5:17 f"
 expect_line "modules: and another" "$log" "complete qualified.smith:5:17:  sum(Pair p) -> 5:17-5:17 sum"
 expect "modules: and nothing else" 2 "$(printf '%s\n' "$log" | grep -c '^complete ')"
+
+# `c::` names of every kind, in a folder with no database: a function, a function of a local header, a type, a macro for a
+# variable, a function-like macro and a constant macro. Each hover finds the declaration it names, and go-to-definition has
+# exactly one answer.
+mkdir -p cinterop
+cat >cinterop/local.h <<'EOF'
+static inline int local_value(void) { return 99; }
+EOF
+cat >cinterop/main.smith <<'EOF'
+import <math.h>;
+import <sys/wait.h>;
+import <stdio.h>;
+import "local.h";
+
+int main(void) {
+    f32 root = c::sqrtf(81.0f);
+    int status = 256 * 3;
+    c::FILE *f = c::stdin;
+    c::printf("%.1f %d %d eof=%d %d\n", (double)root, c::WIFEXITED(status), c::WEXITSTATUS(status), c::EOF, c::local_value());
+    return f == nullptr;
+}
+EOF
+cinterop=$(cd cinterop && pwd -P)
+expect "cinterop: it builds and runs" "9.0 1 3 eof=-1 99" "$(cd "$cinterop" && smith cc main.smith -o demo 2>&1 && ./demo)"
+col() { awk -v n="$1" -v w="$2" 'NR == n { print index($0, w) }' "$cinterop/main.smith"; }
+sqrtf_col=$(col 7 sqrtf)
+file_col=$(col 9 FILE)
+stdin_col=$(col 9 stdin)
+printf_col=$(col 10 printf)
+wifexited_col=$(col 10 WIFEXITED)
+eof_col=$(col 10 EOF)
+local_col=$(col 10 local_value)
+log=$(client_in "$cinterop" open main.smith -- hover main.smith 7 "$sqrtf_col" -- hover main.smith 9 "$file_col" -- \
+    hover main.smith 9 "$stdin_col" -- hover main.smith 10 "$printf_col" -- hover main.smith 10 "$wifexited_col" -- \
+    hover main.smith 10 "$eof_col" -- hover main.smith 10 "$local_col" -- definitions main.smith 7 "$sqrtf_col" -- \
+    definitions main.smith 9 "$file_col" -- definitions main.smith 9 "$stdin_col" -- \
+    definitions main.smith 10 "$printf_col" -- definitions main.smith 10 "$wifexited_col" -- \
+    definitions main.smith 10 "$eof_col" -- definitions main.smith 10 "$local_col")
+expect "cinterop: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+hovered() { # line, column, the start of the text
+    printf '%s\n' "$log" | grep -c "^hover main.smith:$1:$2: $3"
+}
+expect "cinterop: hover on a function, c::sqrtf" 1 "$(hovered 7 "$sqrtf_col" 'function sqrtf |  | provided by <math.h>')"
+expect "cinterop: hover on a type, c::FILE" 1 "$(hovered 9 "$file_col" 'type-alias FILE |  | provided by <stdio.h>')"
+expect "cinterop: hover on a macro for a variable, c::stdin" 1 "$(hovered 9 "$stdin_col" 'macro stdin |  | provided by <stdio.h>')"
+expect "cinterop: hover on a variadic function, c::printf" 1 "$(hovered 10 "$printf_col" 'function printf |  | provided by <stdio.h>')"
+expect "cinterop: hover on a function-like macro, c::WIFEXITED" 1 \
+    "$(hovered 10 "$wifexited_col" 'macro WIFEXITED |  | provided by <sys/wait.h>')"
+expect "cinterop: hover on a constant macro, c::EOF" 1 "$(hovered 10 "$eof_col" 'macro EOF |  | provided by <stdio.h>')"
+expect "cinterop: hover on a function of a local header, c::local_value" 1 \
+    "$(hovered 10 "$local_col" 'function local_value |  | provided by "local.h"')"
+for pair in "7 $sqrtf_col" "9 $file_col" "9 $stdin_col" "10 $printf_col" "10 $wifexited_col" "10 $eof_col" "10 $local_col"; do
+    set -- $pair
+    expect "cinterop: exactly one definition at $1:$2" "definitions main.smith:$1:$2: 1" \
+        "$(printf '%s\n' "$log" | grep "^definitions main.smith:$1:$2:")"
+done
+expect_line "cinterop: c::local_value is defined in its header, at its name" "$log" "  place local.h:1:19"
 
 # A compile database that does not say what a .smith file is: written by hand without `-x c`, or naming only a .c file
 # (the .smith files then get a command borrowed from it).

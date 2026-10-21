@@ -33,12 +33,35 @@ u32 helper(void) { … }                              // private
 - **Modules.** The first line, `module a::b;`, makes the file a module; its path must end in `a/b.smith`.
   - Every file-scope name in a module is prefixed with the module's name (`game_replay_open`). `export` makes a
     declaration public; everything else is `static` (functions and variables) and used nowhere else.
+  - **A foreign C symbol** is declared with `extern` and no `export`: `extern char **environ;`, `extern u32 counter;`,
+    `extern u32 triple(u32 x);`. It keeps its C name (no prefix, no `__asm__` label, not in the header), so the module
+    links to the symbol C defines and uses it bare, as C does. For a symbol a header declares, `import <h>;` and
+    `c::name` do the same (`c::optind`, `c::stdout`); `extern` is for one no header declares (macOS's `<unistd.h>` has no
+    `environ`). `export extern T name;` is the opposite: the module's own symbol, defined in C by the prefixed name.
   - `export` applies to functions, typedefs, struct, union and enum tags, enum constants, `constexpr` constants and
     globals. An export has the symbol `game::replay::open` (an `__asm__` label), so no C name can collide with it.
     `main` stays `main`.
+  - **`[[smith::c_name("Name")]]` before `export` chooses the C name** of the export, for a library that keeps its C
+    API when it becomes a module (`[[smith::c_name("SmithArena")]] export typedef struct {…} Arena;`,
+    `[[smith::c_name("smith_text_parse_f64")]] export bool parse_f64(…)`).
+    - What C sees is exactly that name: the generated header declares `SmithArena`, and the symbol of a function or
+      variable is that name too (no `__asm__` label: `_smith_text_parse_f64` on macOS), so C and C++ call it, define
+      an export that has no body in the module, and link against it as against any C function. Other exports keep the
+      prefixed name and the `::` symbol.
+    - A `.smith` importer still writes the module's name (`arena::Arena`, `text::parse_f64`) and gets the C name: the
+      header's `// smith-names:` line lists `Arena=SmithArena`, which is how the importer's lowering, its diagnostics
+      and its editor know the pair. In the module itself the name is the C name in the generated code.
+    - It goes on the export's first name (the tag, in `export typedef struct S {…} S;`, and the typedef of the same
+      name with it); an enumeration's constants keep the prefixed names. It is a string holding one C identifier.
+    - Errors: a C name another export already has chosen; one that the module's prefix gives another name (a private
+      one included); a name declared later that the prefix would make the same; `[[smith::c_name]]` not followed by
+      `export`; two on one export; an export that declares no typedef, tag, function or variable; a string that is no
+      identifier (or a keyword), or an argument that is no string. It is the only attribute in its `[[ ]]`.
   - A C name used with no `c::` is an error in every `.smith` file, a module or not: a function, a variable, a type,
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
+    Inside an attribute (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the
+    attribute's own, not a use of a C name: `printf` there needs no `c::`.
 - **Sized types**, in any `.smith` file: `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize` (`size_t`), `isize` (`ptrdiff_t`),
   `f16` (`_Float16`), `f32`, `f64`. They are typedefs of the standard types (`typedef __INT32_TYPE__ i32;`), so the same
   types (`%llu`, `_Generic` and a C header's `uint64_t` agree) and a diagnostic names them as written:
@@ -100,10 +123,27 @@ game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::op
 
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
 which is how an import cycle is found, and the exports in a `// smith-names:` line (`// smith-names: Replay version open`),
-which is how an importer knows the names it can write back (see "Names as written"). Both depend on the exports only, so
-the header's bytes do not change with an edit to a body, or to the lines above an export (a `#line` for each declaration
-would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
+which is how an importer knows the names it can write back (see "Names as written"); an export with a chosen C name is listed as `member=CName`. Both depend on the exports only, so
+the header's bytes do not change with an edit to a body (an `export inline` function's body is in the header), or to the
+lines above an export (a `#line` for each declaration would, and every importer would be built again on most edits). Importers include it (they need `-I .smith/include`); C and C++ callers include it
 too; an export with no body is defined against it, in C, by its C name.
+
+What the header keeps of the source (written by the plain lexer, `runtime/lang_trivia.c`; the entries are `SmithTrivia`):
+- **Doc comments.** The comments directly above an `export` (or above the `[[smith::c_name]]` before it; no blank line
+  between) are copied above its declaration, as written. Comments inside an exported declaration (a struct's fields) and a
+  comment after its last token on the same line (`export u32 limit = 4; // bytes`) are kept. A comment separated by a
+  blank line from the export, and the comments of private code, are not.
+- **Conditional directives.** An `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else` and `#endif` around exports are copied into
+  the header verbatim, with the branches before an export in it, and nothing is preprocessed at header time: the includer's
+  `-D` flags choose, as for any C header. A chain with no export in it is left out. `#if 0 … #else` writes the live text
+  with no conditional. Because every branch of a chain is read (the lexer has no macros), a name an export declares in two
+  branches is one export, and an importer's `// smith-names:` line lists it whichever branch is live.
+- **Inline functions.** `export inline T f(…) { … }` is written to the header as `static inline T game_replay_f(…) { … }`,
+  body included, and the module defines it the same way: it has no symbol and no `__asm__` label, so C, C++ and `.smith`
+  importers compile it themselves. Its body may use only what the header has: the module's other exports, the module's
+  imports and C. A private name in it is an error in the includer, not in the module.
+- An interface read in memory (`import foo` with no header) keeps the conditionals on the module's own lines, and no
+  comments (diagnostics point at the module's lines).
 
 ## `smith build`
 
@@ -232,7 +272,12 @@ from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md
   workspace symbols) and rewrites the names in their answers with the table of the file asked about; a message that is
   none of those passes as the bytes it came in. The cursor of a completion that came right after `x::` is given to the
   lowering as a token (`SmithToken.completion`), which takes the `x::` away and leaves the cursor, so that the parser
-  offers names there and the layer keeps the module's. `tests/lsp.sh` drives a real session.
+  offers names there and the layer keeps the module's. A `c::name` that is no macro (`c::printf`, `c::FILE`) stays a
+  plain name in the main file, at its place, in the parser's tokens that clangd's token buffer records (a name pushed
+  back as a reinjection is not recorded, and a hover, a definition or a reference at it found no node, so
+  go-to-definition fell back to the index by name and named every declaration of it, the SDK's and libc++'s `using`);
+  a macro (`c::EOF`) is expanded from a stream of its own and clangd finds it as a macro. `tests/lsp.sh` drives a real
+  session.
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
@@ -240,12 +285,12 @@ from `patches/clang-debug-name.patch` and the table above; see docs/debugging.md
 ## Known limits
 
 - A header imported with `import <h>;` is included textually; the importing file's macros reach it.
-- A module's header is written without macros or `#if`: a macro in an exported signature, or an export under `#if`, is
-  not seen by it.
+- A module's header is written without macros: a macro in an exported signature is not seen by it. An export under `#if`
+  works (the directives are copied), but `#define`s are not, and the header pass does not evaluate a condition.
 - A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
-- A hover shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's standard C types,
-  where the module says `i32`), and the `asm("_foo::f")` label of the symbol.
+- A hover in an importer shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's
+  standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`shim/lsp.cpp`).
 - A rename of an exported name edits what clangd knows of (the module, and the importers its index has seen); it does
   not edit the generated headers. Like any cross-file rename in clangd it misses an importer the index has not read yet.
 - A fix-it that a mistyped `x::name` offers puts in the member alone (`f`), so it makes `foo::f`.

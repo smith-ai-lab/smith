@@ -105,6 +105,37 @@ void rewriteText(Value &value, const smith::FileNames &names, Style style) {
     }
 }
 
+// The text without the assembler labels of a module's names (` asm("_foo::f")`, which a generated header gives each
+// export so that C reaches it): no one writes one, and the name above it is the name the source writes. A label of
+// the system's headers (`asm("_fopen$DARWIN_EXTSN")`) has no `::` and stays.
+std::string withoutLabels(StringRef text) {
+    static const StringRef opening = " asm(\"";
+    std::string out;
+    out.reserve(text.size());
+    while (!text.empty()) {
+        size_t at = text.find(opening);
+        if (at == StringRef::npos) break;
+        size_t close = text.find("\")", at + opening.size());
+        bool ours = close != StringRef::npos && text.slice(at + opening.size(), close).contains("::");
+        out += text.take_front(at + (ours ? 0 : opening.size())).str();
+        text = text.drop_front(ours ? close + 2 : at + opening.size());
+    }
+    out += text.str();
+    return out;
+}
+
+// A hover's contents: markup (an object with a `value`), or a string, or an array of those.
+void rewriteHover(Value &value, const smith::FileNames &names) {
+    rewriteText(value, names, Style::Written);
+    if (auto text = value.getAsString()) {
+        value = withoutLabels(*text);
+    } else if (Object *object = value.getAsObject()) {
+        if (Value *inner = object->get("value")) {
+            if (auto text = inner->getAsString()) *inner = withoutLabels(*text);
+        }
+    }
+}
+
 std::string pathOfUri(StringRef uri) {
     if (!uri.consume_front("file://")) return "";
     std::string path;
@@ -216,7 +247,7 @@ class Layer {
         if (!names) return;
         if (request.method == "textDocument/hover") {
             if (Object *object = result.getAsObject()) {
-                if (Value *contents = object->get("contents")) rewriteText(*contents, *names, Style::Written);
+                if (Value *contents = object->get("contents")) rewriteHover(*contents, *names);
             }
         } else if (request.method == "textDocument/documentSymbol") {
             symbols(result, *names, Style::Written);

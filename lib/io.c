@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -33,6 +35,9 @@ constexpr size_t smith_io_reservation = (size_t)64 << 30;
 constexpr size_t smith_io_fake_files_max = 64;
 constexpr size_t smith_io_fake_programs_max = 16;
 constexpr size_t smith_io_fake_capture = (size_t)64 << 10;
+constexpr size_t smith_io_fake_children_max = 16;
+constexpr size_t smith_io_child_input_max = 8192; // what a scripted child keeps of its stdin
+constexpr int smith_io_fake_child_base = 1 << 16; // a fake child's process id is -(base + index + 1)
 constexpr size_t smith_io_events_max = 16;
 constexpr size_t smith_io_entries_max = (size_t)1 << 20; // entries of one folder
 constexpr size_t smith_io_print_max = 4096;              // what smith_console_printf formats
@@ -74,6 +79,23 @@ typedef struct {
     size_t request_size;
 } SmithFakeServer;
 
+// A scripted child of the fake io and its state.
+typedef struct {
+    const char *program;
+    const unsigned char *output;
+    size_t output_size;
+    size_t chunk;
+    SmithChildExit exit_on;
+    int status;
+    bool used;
+    size_t output_position;
+    unsigned char *input; // smith_io_child_input_max + 1 bytes
+    size_t input_size;
+    bool input_closed;
+    bool killed;
+    int signal;
+} SmithFakeChild;
+
 typedef struct {
     SmithFakeServer servers[smith_io_fake_servers_max];
     size_t count;
@@ -85,6 +107,8 @@ typedef struct {
     size_t file_count;
     SmithFakeProgram programs[smith_io_fake_programs_max];
     size_t program_count;
+    SmithFakeChild children[smith_io_fake_children_max];
+    size_t child_count;
     const char *input;
     size_t input_size;
     size_t input_position;
@@ -405,6 +429,71 @@ static SmithError smith_fake_map(SmithFake *fake, const char *path, SmithMapped 
     return (SmithError){};
 }
 
+// ---------------------------------------------------------------- the fake's children
+
+// Whether the scripted child has exited.
+static bool smith_fake_child_ended(const SmithFakeChild *child) {
+    if (child->killed) return true;
+    switch (child->exit_on) {
+    case SmithChildExit_Never:
+        return false;
+    case SmithChildExit_Start:
+        return true;
+    case SmithChildExit_InputClosed:
+        return child->input_closed;
+    case SmithChildExit_OutputRead:
+        return child->output_position == child->output_size;
+    }
+    return false;
+}
+
+static SmithFakeChild *smith_fake_child_of(SmithFake *fake, int id) {
+    int index = -id - smith_io_fake_child_base - 1;
+    if (index < 0 || (size_t)index >= fake->child_count) return nullptr;
+    return &fake->children[index];
+}
+
+// Whether an op of the fake waits for a child that has not got there: a read with no output left from a child still
+// running, or a wait for a child still running. Those never complete by themselves.
+static bool smith_fake_child_waiting(SmithFake *fake, const SmithOp *op) {
+    if (fake == nullptr) return false;
+    if (op->internal.kind == SmithOpKind_ProcessWait) {
+        const SmithFakeChild *child = smith_fake_child_of(fake, op->internal.process);
+        return child != nullptr && !smith_fake_child_ended(child);
+    }
+    if (op->internal.kind == SmithOpKind_PipeRead && op->internal.child != nullptr) {
+        const SmithFakeChild *child = op->internal.child;
+        return child->output_position == child->output_size && !smith_fake_child_ended(child);
+    }
+    return false;
+}
+
+static void smith_fake_child_read(SmithOp *op) {
+    SmithFakeChild *child = op->internal.child;
+    size_t left = child->output_size - child->output_position;
+    size_t n = left < op->internal.capacity ? left : op->internal.capacity;
+    if (child->chunk != 0 && n > child->chunk) n = child->chunk;
+    if (n > 0) memcpy(op->internal.destination, child->output + child->output_position, n);
+    child->output_position += n;
+    op->size = n;
+    op->end = n == 0;
+}
+
+static void smith_fake_child_write(SmithOp *op) {
+    SmithFakeChild *child = op->internal.child;
+    size_t size = op->internal.capacity;
+    if (smith_fake_child_ended(child)) {
+        op->error = smith_error_make(EPIPE, "write", "child stdin");
+    } else if (size > smith_io_child_input_max - child->input_size) {
+        op->error = smith_error_make(ENOSPC, "write", "child stdin (the test io keeps 8 KiB)");
+    } else {
+        memcpy(child->input + child->input_size, op->internal.input, size);
+        child->input_size += size;
+        child->input[child->input_size] = 0;
+        op->size = size;
+    }
+}
+
 // ---------------------------------------------------------------- real file operations
 
 static SmithError smith_real_read_file(SmithArena *arena, const char *path, SmithRead *result) {
@@ -654,6 +743,10 @@ static bool smith_loop_watch(SmithLoop *loop, SmithOp *op) {
         ident = (uintptr_t)op->internal.descriptor;
         filter = EVFILT_READ;
         break;
+    case SmithOpKind_PipeWrite:
+        ident = (uintptr_t)op->internal.descriptor;
+        filter = EVFILT_WRITE;
+        break;
     case SmithOpKind_ProcessWait:
         ident = (uintptr_t)op->internal.process;
         filter = EVFILT_PROC;
@@ -744,6 +837,14 @@ static void smith_loop_finish_console(SmithLoop *loop, SmithOp *op) {
 #pragma clang diagnostic ignored "-Wdeprecated-octal-literals"
 static void smith_loop_finish_wait(SmithLoop *loop, SmithOp *op) {
     if (loop->fake != nullptr) {
+        const SmithFakeChild *child = smith_fake_child_of(loop->fake, op->internal.process);
+        if (child != nullptr) {
+            if (child->killed)
+                op->signal = child->signal;
+            else
+                op->exit_status = child->status;
+            return;
+        }
         size_t index = (size_t)(-op->internal.process) - 1;
         op->exit_status = loop->fake->programs[index].status;
         return;
@@ -765,8 +866,44 @@ static void smith_loop_finish_wait(SmithLoop *loop, SmithOp *op) {
 
 #pragma clang diagnostic pop
 
-// Runs the op's work, marks it done and takes it off the loop.
-static void smith_loop_complete(SmithLoop *loop, SmithOp *op) {
+// Writes what is left of the op's data to the pipe, once. SIGPIPE is blocked for the call and, when the write raised
+// it, taken off the thread, so a pipe whose reader is gone is the error EPIPE and never a signal. True when the op is
+// done: all written, or failed; false when the pipe is full, and the op waits for room again.
+static bool smith_loop_finish_write(SmithLoop *loop, SmithOp *op) {
+    size_t total = op->internal.capacity;
+    if (op->size < total) {
+        sigset_t pipe_signal = {};
+        sigset_t before = {};
+        sigemptyset(&pipe_signal);
+        sigaddset(&pipe_signal, SIGPIPE);
+        pthread_sigmask(SIG_BLOCK, &pipe_signal, &before);
+        ssize_t n =
+            write(op->internal.descriptor, (const unsigned char *)op->internal.input + op->size, total - op->size);
+        int code = errno;
+        if (n < 0 && code == EPIPE) {
+            sigset_t pending = {};
+            int taken = 0;
+            sigpending(&pending);
+            if (sigismember(&pending, SIGPIPE) == 1) sigwait(&pipe_signal, &taken);
+        }
+        pthread_sigmask(SIG_SETMASK, &before, nullptr);
+        if (n >= 0) op->size += (size_t)n;
+        if (n < 0 && code != EAGAIN && code != EINTR) op->error = smith_error_make(code, "write", "child stdin");
+        if (n < 0 && (code == EAGAIN || code == EINTR)) {
+            op->internal.ready = !smith_loop_watch(loop, op);
+            return false;
+        }
+    }
+    if (op->size < total && op->error.code == 0) {
+        op->internal.ready = !smith_loop_watch(loop, op); // wait until the pipe has room again
+        return false;
+    }
+    return true;
+}
+
+// Runs the op's work, marks it done and takes it off the loop. False when the op is not done: a write that the pipe
+// took only part of.
+static bool smith_loop_complete(SmithLoop *loop, SmithOp *op) {
     switch (op->internal.kind) {
     case SmithOpKind_FileRead:
     case SmithOpKind_FileWrite:
@@ -775,7 +912,17 @@ static void smith_loop_complete(SmithLoop *loop, SmithOp *op) {
     case SmithOpKind_ConsoleRead:
         smith_loop_finish_console(loop, op);
         break;
+    case SmithOpKind_PipeWrite:
+        if (op->internal.child != nullptr)
+            smith_fake_child_write(op);
+        else if (!smith_loop_finish_write(loop, op))
+            return false;
+        break;
     case SmithOpKind_PipeRead: {
+        if (op->internal.child != nullptr) {
+            smith_fake_child_read(op);
+            break;
+        }
         ssize_t n = read(op->internal.descriptor, op->internal.destination, op->internal.capacity);
         if (n < 0) op->error = smith_error_make(errno, "read", "pipe");
         op->size = n < 0 ? 0 : (size_t)n;
@@ -797,10 +944,11 @@ static void smith_loop_complete(SmithLoop *loop, SmithOp *op) {
     }
     smith_loop_unlink(loop, op);
     op->done = true;
+    return true;
 }
 
-static bool smith_op_ready(const SmithLoop *loop, const SmithOp *op) {
-    if (smith_net_stalled(op)) return false;
+static bool smith_op_ready(SmithLoop *loop, const SmithOp *op) {
+    if (smith_net_stalled(op) || smith_fake_child_waiting(loop->fake, op)) return false;
     if (loop->fake != nullptr && op->internal.kind == SmithOpKind_Timeout)
         return loop->fake->monotonic >= op->internal.deadline;
     return op->internal.ready;
@@ -813,10 +961,7 @@ static size_t smith_loop_complete_ready(SmithLoop *loop) {
     size_t visit = loop->pending;
     for (size_t i = 0; i < visit && at != nullptr; i++) { // bounded by the ops pending now
         SmithOp *next = at->internal.next;
-        if (smith_op_ready(loop, at)) {
-            smith_loop_complete(loop, at);
-            completed += 1;
-        }
+        if (smith_op_ready(loop, at) && smith_loop_complete(loop, at)) completed += 1;
         at = next;
     }
     return completed;
@@ -843,8 +988,7 @@ static size_t smith_loop_run(SmithLoop *loop, int64_t timeout_ns) {
         }
         SmithOp *op = events[i].udata;
         assert(op != nullptr && !op->done);
-        smith_loop_complete(loop, op);
-        completed += 1;
+        if (smith_loop_complete(loop, op)) completed += 1;
     }
     return completed;
 }
@@ -1106,6 +1250,7 @@ typedef struct {
     int err;       // the same for stderr
     bool leader;   // the child starts its own process group
     bool terminal; // the child keeps this process's stdin; otherwise it reads /dev/null
+    int in;        // when not 0 (a pipe's read end is never 0 here), replaces the child's stdin
 } SmithSpawn;
 
 // Starts argv as the spawn says.
@@ -1115,7 +1260,10 @@ static SmithError smith_spawn_in(const char *const *argv, SmithSpawn spawn, int 
     bool leader = spawn.leader;
     posix_spawn_file_actions_t actions = {};
     posix_spawn_file_actions_init(&actions);
-    if (!spawn.terminal) posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    if (spawn.in > 0)
+        posix_spawn_file_actions_adddup2(&actions, spawn.in, STDIN_FILENO);
+    else if (!spawn.terminal)
+        posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     if (out >= 0) posix_spawn_file_actions_adddup2(&actions, out, STDOUT_FILENO);
     if (err >= 0) posix_spawn_file_actions_adddup2(&actions, err, STDERR_FILENO);
     posix_spawnattr_t attributes = {};
@@ -1164,6 +1312,124 @@ size_t smith_processes_cores(const SmithProcesses *processes) {
     if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
     return cores > 0 ? (size_t)cores : 1;
+}
+
+// --- children with pipes
+
+// Makes a pipe whose ends close on exec; the child gets its copies by dup2.
+static bool smith_pipe_make(int ends[2]) {
+    if (pipe(ends) != 0) return false;
+    fcntl(ends[0], F_SETFD, FD_CLOEXEC);
+    fcntl(ends[1], F_SETFD, FD_CLOEXEC);
+    return true;
+}
+
+static SmithError smith_child_start_real(SmithLoop *loop, const char *const *argv, SmithChild *child) {
+    int in[2] = {-1, -1};
+    int out[2] = {-1, -1};
+    if (!smith_pipe_make(in) || !smith_pipe_make(out)) {
+        SmithError error = smith_error_make(errno, "pipe for", argv[0]);
+        for (size_t end = 0; end < 2; end++) {
+            if (in[end] >= 0) close(in[end]);
+        }
+        return error;
+    }
+    SmithError error =
+        smith_spawn_in(argv, (SmithSpawn){.out = out[1], .err = -1, .leader = true, .in = in[0]}, &child->process.id);
+    close(in[0]);
+    close(out[1]);
+    if (error.code != 0) {
+        close(in[1]);
+        close(out[0]);
+        return error;
+    }
+    fcntl(in[1], F_SETFL, O_NONBLOCK); // a write takes what the pipe has room for
+    child->internal.loop = loop;
+    child->internal.input = in[1];
+    child->internal.output = out[0];
+    return error;
+}
+
+static SmithError smith_child_start_fake(SmithFake *fake, const char *const *argv, SmithChild *child) {
+    for (size_t i = 0; i < fake->child_count; i++) {
+        SmithFakeChild *script = &fake->children[i];
+        if (script->used || strcmp(script->program, argv[0]) != 0) continue;
+        script->used = true;
+        child->process.id = -smith_io_fake_child_base - (int)i - 1;
+        return (SmithError){};
+    }
+    return smith_error_make(ENOENT, "run", argv[0]);
+}
+
+SmithError smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child) {
+    assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && child != nullptr);
+    *child = (SmithChild){.internal = {.loop = processes->loop, .input = -1, .output = -1}};
+    if (processes->loop->fake != nullptr) return smith_child_start_fake(processes->loop->fake, argv, child);
+    return smith_child_start_real(processes->loop, argv, child);
+}
+
+void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, size_t size) {
+    assert(child != nullptr && (data != nullptr || size == 0));
+    SmithLoop *loop = child->internal.loop;
+    smith_op_start(op, loop, SmithOpKind_PipeWrite);
+    op->internal.input = data;
+    op->internal.capacity = size;
+    if (loop->fake != nullptr) {
+        op->internal.child = smith_fake_child_of(loop->fake, child->process.id);
+    } else {
+        assert(child->internal.input >= 0);
+        op->internal.descriptor = child->internal.input;
+    }
+    smith_loop_submit(loop, op);
+}
+
+void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, size_t capacity) {
+    assert(child != nullptr && buffer != nullptr && capacity > 0);
+    SmithLoop *loop = child->internal.loop;
+    smith_op_start(op, loop, SmithOpKind_PipeRead);
+    op->internal.destination = buffer;
+    op->internal.capacity = capacity;
+    op->data = buffer;
+    if (loop->fake != nullptr) {
+        op->internal.child = smith_fake_child_of(loop->fake, child->process.id);
+    } else {
+        assert(child->internal.output >= 0);
+        op->internal.descriptor = child->internal.output;
+    }
+    smith_loop_submit(loop, op);
+}
+
+void smith_child_close_input(SmithChild *child) {
+    assert(child != nullptr);
+    SmithFake *fake = child->internal.loop->fake;
+    if (fake != nullptr) {
+        smith_fake_child_of(fake, child->process.id)->input_closed = true;
+    } else if (child->internal.input >= 0) {
+        close(child->internal.input);
+        child->internal.input = -1;
+    }
+}
+
+SmithError smith_child_kill(SmithChild *child, int signal) {
+    assert(child != nullptr && signal > 0);
+    SmithFake *fake = child->internal.loop->fake;
+    if (fake != nullptr) {
+        SmithFakeChild *script = smith_fake_child_of(fake, child->process.id);
+        if (smith_fake_child_ended(script)) return smith_error_make(ESRCH, "kill", "child");
+        script->killed = true;
+        script->signal = signal;
+        return (SmithError){};
+    }
+    if (kill(-child->process.id, signal) != 0) return smith_error_make(errno, "kill", "child");
+    return (SmithError){};
+}
+
+void smith_child_close(SmithChild *child) {
+    assert(child != nullptr);
+    if (child->internal.loop->fake != nullptr) return;
+    if (child->internal.input >= 0) close(child->internal.input);
+    if (child->internal.output >= 0) close(child->internal.output);
+    child->internal.input = child->internal.output = -1;
 }
 
 // One captured stream of a running process: its pipe, its op, and what it has read.
@@ -2012,6 +2278,32 @@ SmithError smith_io_test_add_program(SmithIo *io, const char *program, const cha
     memcpy(text, output, strlen(output));
     *entry = (SmithFakeProgram){.program = name, .output = text, .status = status};
     return (SmithError){};
+}
+
+SmithError smith_io_test_add_child(SmithIo *io, SmithChildScript script) {
+    SmithFake *fake = smith_fake_of(io->loop);
+    assert(script.program != nullptr);
+    if (fake->child_count == smith_io_fake_children_max) return smith_error_make(ENOSPC, "script", script.program);
+    SmithFakeChild *entry = &fake->children[fake->child_count++];
+    size_t output_size = script.output != nullptr ? strlen(script.output) : 0;
+    char *name = smith_arena_push(&fake->storage, strlen(script.program) + 1, 1);
+    memcpy(name, script.program, strlen(script.program));
+    unsigned char *output = smith_arena_push(&fake->storage, output_size + 1, 1);
+    if (output_size > 0) memcpy(output, script.output, output_size);
+    *entry = (SmithFakeChild){.program = name,
+                              .output = output,
+                              .output_size = output_size,
+                              .chunk = script.chunk,
+                              .exit_on = script.exit_on,
+                              .status = script.status,
+                              .input = smith_arena_push(&fake->storage, smith_io_child_input_max + 1, 1)};
+    return (SmithError){};
+}
+
+const char *smith_io_test_child_input(const SmithIo *io, size_t n) {
+    const SmithFake *fake = smith_fake_of(io->loop);
+    if (n >= fake->child_count) return nullptr;
+    return (const char *)fake->children[n].input;
 }
 
 const char *smith_io_test_output(const SmithIo *io) {
