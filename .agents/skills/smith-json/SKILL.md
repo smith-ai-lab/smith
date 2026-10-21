@@ -52,4 +52,6 @@ if (!smith_json_writer_finish(&w, &out)) { /* w.error: Full, Misplaced, BadUtf8,
 
 The first mistake is kept and the rest do nothing, so check once, at the end. Non-UTF-8 and nan/infinity are refused.
 
+`smith_json_write_value(&w, tree)` writes a whole tree from `smith_json_parse` back as one value (strings escaped again, numbers as they were written, members in order, duplicate keys kept). It is how a protocol keeps a field it does not look inside: store the `const SmithJsonValue *`, write it back later.
+
 It refuses what RFC 8259 does, plus a lone surrogate escape and a byte order mark (JSONTestSuite: all `y_` accepted, all `n_` refused, the 35 `i_` listed in `tests/json.c`). In build.c: `smith_library(b, "json")` with `arena` and `text`; `tests/json.sh` has a worked one.

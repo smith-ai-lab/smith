@@ -966,6 +966,72 @@ void smith_json_write_null(SmithJsonWriter *writer) {
     smith_json_end_value(writer);
 }
 
+typedef struct {
+    const SmithJsonValue *container;
+    size_t next; // the member or element to write next
+} SmithJsonValueFrame;
+
+// Writes a scalar, or the start of a container (pushing it), as the value `current`.
+static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValue *current, SmithJsonValueFrame *stack,
+                                    size_t depth) {
+    switch (current->kind) {
+    case SmithJsonKind_Null:
+        smith_json_write_null(writer);
+        return depth;
+    case SmithJsonKind_False:
+    case SmithJsonKind_True:
+        smith_json_write_bool(writer, current->kind == SmithJsonKind_True);
+        return depth;
+    case SmithJsonKind_Number:
+        smith_json_write_number(writer, current->text.begin, current->text.length);
+        return depth;
+    case SmithJsonKind_String:
+        smith_json_write_string(writer, current->text);
+        return depth;
+    case SmithJsonKind_Array:
+    case SmithJsonKind_Object:
+        break;
+    }
+    assert(depth < smith_json_depth_max);
+    if (current->kind == SmithJsonKind_Array)
+        smith_json_write_array_begin(writer);
+    else
+        smith_json_write_object_begin(writer);
+    stack[depth] = (SmithJsonValueFrame){current, 0};
+    return depth + 1;
+}
+
+void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value) {
+    assert(value != nullptr);
+    SmithJsonValueFrame stack[smith_json_depth_max];
+    size_t depth = 0;
+    const SmithJsonValue *current = value;
+    // Each value is visited once as `current`, once as a child taken from its container, and a container is ended
+    // once: at most three steps for each value the tree holds, which value->span counts.
+    for (size_t step = 0; step < 3 * value->span + 3; step++) {
+        if (current != nullptr) {
+            depth = smith_json_write_node(writer, current, stack, depth);
+            current = nullptr;
+            if (depth == 0) return;
+            continue;
+        }
+        SmithJsonValueFrame *top = &stack[depth - 1];
+        bool object = top->container->kind == SmithJsonKind_Object;
+        if (top->next == top->container->count) {
+            if (object)
+                smith_json_write_object_end(writer);
+            else
+                smith_json_write_array_end(writer);
+            depth--;
+            if (depth == 0) return;
+            continue;
+        }
+        current = top->container->items[top->next++];
+        if (object) smith_json_write_key(writer, current->key);
+    }
+    assert(false && "span does not count the tree");
+}
+
 bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output) {
     assert(output != nullptr);
     if (writer->error.reason == SmithJsonReason_None && writer->state != SmithJsonWriterState_Done)
