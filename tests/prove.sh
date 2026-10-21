@@ -156,6 +156,16 @@ for function in relies_on_the_body clobbered_local clobbered_parameter; do
     case $out in *poison* | *"undefined behaviour"*) expect "memory: $function names no poison" "none" "$out" ;; esac
 done
 
+# 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
+for function in apply_move count_of bump_count is_step; do
+    prove --function=$function "$cases/by_value.c"
+    expect "by value: $function is proved" 0 "$rc"
+done
+prove --function=same_row "$cases/by_value.c"
+expect "by value: a wrong promise about the fields fails" 1 "$rc"
+expect_contains "by value: ... as a promise that may be false" "$out" "by_value.c:30: smith_ensures(move.row == move.dest_row) may be false"
+case $out in *poison* | *"undefined behaviour"*) expect "by value: the counterexample is not poison" "a value" "$out" ;; *) expect "by value: the counterexample is not poison" "a value" "a value" ;; esac
+
 # 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one
 # before the fixes (else-if, col > 1) fails with a counterexample.
 prove --function=get_valid_diagonals "$cases/diagonals.c"

@@ -1278,6 +1278,11 @@ Prepared program_prepare(Program &program, const std::string &name) {
     prepared.module = CloneModule(*program.module);
     prepared.function = prepared.module->getFunction(name);
     Function &function = *prepared.function;
+    // A value a caller passes is a value. clang writes noundef on a scalar parameter, but not on the integers a struct
+    // passed by value is split into (a 4-byte Move arrives as one i32), which Alive2 would then take as poison.
+    for (Argument &argument : function.args()) {
+        if (!argument.getType()->isPointerTy()) argument.addAttr(Attribute::NoUndef);
+    }
     prepared.unit.name = source_name(function);
     if (const DISubprogram *subprogram = function.getSubprogram()) {
         prepared.unit.file = subprogram->getFilename().str();
