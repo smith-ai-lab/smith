@@ -51,8 +51,8 @@ int smith_clang_main(const char *program, int argc, char **argv, bool lld, const
 // shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
 int smith_lld_main(int argc, char **argv);
 // shim/format.cpp, shim/tidy.cpp and shim/clangd.cpp: the mains of clang-format, clang-tidy and clangd, each run on
-// argv[1 .. argc), as argv[0], a path in clang's folder (smith_resource_folder), whose resource directory clang-tidy
-// and clangd use.
+// argv[1 .. argc), as argv[0], a path in this smith's programs folder (smith_programs_folder, beside clang's), whose
+// resource directory clang-tidy and clangd use.
 int smith_format_main(int argc, char **argv);
 int smith_tidy_main(int argc, char **argv);
 int smith_clangd_main(int argc, char **argv);
@@ -371,16 +371,13 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 // a sanitized program records an absolute rpath to the runtime's `lib/darwin` in it, and must keep loading it after
 // `smith cache clean` and after the 31 days. A new LLVM or other contents make a new folder; the old one stays, for the
 // programs that were built against it.
-static const unsigned char smith_clang_resource[] = {
-#embed SMITH_CLANG_RESOURCE
-};
-
+// The pack is smith_clang_resource (runtime/pack_data.c).
 static unsigned char smith_resource_chunk[smith_pack_chunk_max];
 static unsigned char smith_resource_scratch[1U << 22]; // for libcompression: LZFSE needs a fraction of it
 
 static SmithPackHeader smith_resource_header(void) {
     SmithPackHeader header;
-    SMITH_ASSERT(sizeof smith_clang_resource >= sizeof header);
+    SMITH_ASSERT(smith_clang_resource_size >= sizeof header);
     memcpy(&header, smith_clang_resource, sizeof header);
     SMITH_ASSERT(memcmp(header.magic, "SMITHPK1", 8) == 0 && header.count > 0 && header.count <= smith_pack_files_max);
     return header;
@@ -438,11 +435,11 @@ static void smith_remove_tree(const char *path) {
 // Writes one file of the pack under `root` and returns the pack's offset after it.
 static size_t smith_resource_write(const char *root, size_t offset) {
     SmithPackFile file;
-    SMITH_ASSERT(offset + sizeof file <= sizeof smith_clang_resource);
+    SMITH_ASSERT(offset + sizeof file <= smith_clang_resource_size);
     memcpy(&file, smith_clang_resource + offset, sizeof file);
     offset += sizeof file;
     SMITH_ASSERT(file.path_length > 0 && file.path_length < smith_pack_path_max && file.size <= smith_pack_chunk_max);
-    SMITH_ASSERT(offset + file.path_length + file.stored <= sizeof smith_clang_resource && file.stored <= file.size);
+    SMITH_ASSERT(offset + file.path_length + file.stored <= smith_clang_resource_size && file.stored <= file.size);
     char path[PATH_MAX];
     int written = snprintf(path, sizeof path, "%s/%.*s", root, (int)file.path_length,
                            (const char *)smith_clang_resource + offset);
@@ -488,7 +485,7 @@ static void smith_resource_unpack(const char *folder) {
     size_t offset = sizeof header;
     for (uint32_t i = 0; i < header.count; i++) // bounded by the count, which smith_resource_header limits
         offset = smith_resource_write(temporary, offset);
-    SMITH_ASSERT(offset == sizeof smith_clang_resource);
+    SMITH_ASSERT(offset == smith_clang_resource_size);
     if (rename(temporary, folder) != 0) { // another process may have won
         bool won = smith_is_folder(folder);
         smith_remove_tree(temporary);
@@ -1458,11 +1455,13 @@ static const SmithTool *smith_find_tool(const char *command) {
 #ifdef SMITH_IN_PROCESS
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
     char folder[PATH_MAX];
+    char programs[PATH_MAX];
     char program[PATH_MAX];
-    smith_resource_folder(folder); // clang's own folder: the tool's resource directory is the compiler's
-    int written = snprintf(program, sizeof program, "%s/bin/%s", folder, tool->tool);
-    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_resource_folder leaves room for it
-    smith_resource_ensure(folder, self);
+    smith_resource_folder(folder); // clang's own folders: the tool's resource directory is the compiler's
+    smith_programs_folder(folder, programs);
+    int written = snprintf(program, sizeof program, "%s/bin/%s", programs, tool->tool);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof program); // smith_programs_folder leaves room for it
+    smith_resource_ensure(folder, programs, self);
     argv[0] = program; // the tool is told its own path in that folder, as the clang is
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv);
     if (strcmp(tool->command, "fmt") == 0) return smith_format_main(argc, argv);
