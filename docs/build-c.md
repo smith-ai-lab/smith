@@ -32,47 +32,87 @@ it. `.content_hash` is declared but not implemented. The
   new file, a changed list and a changed environment variable whenever the read was not declared (measured: `wildcard`,
   `monad1`, `system2`). That is why v1 reruns instead of caching.
 
-## The verbs: `smith run`, `test`, `check`, `fmt` and `lint`
+## The verbs: fixed meanings, read from what the project declares
 
 smith's top level is only verbs (`smith cc`, `smith c++`, `smith build`, `smith new`, ...), so what a project does is
-`smith <verb>` and what builds a target is `smith build <target>`. The project's verbs are the ones a person types every
-day:
+`smith <verb>` and what builds a target is `smith build <target>`. The verbs a person types every day mean the same
+thing in every project, and each takes what it needs from what the project already declares; smith keeps no list of its
+own (issue #40):
 
 | verb | with no arguments | with arguments |
 | --- | --- | --- |
-| `smith run` | runs the task `run` | the arguments go to the program |
-| `smith test` | runs the task `test` (what `smith_tests` adds) | the arguments are the test runner's options |
-| `smith check` | runs the alias `check`: every check that must pass | refused |
-| `smith fmt` | runs the task `fmt`: rewrites the project's sources | clang-format, with its arguments unchanged |
-| `smith lint` | runs the task `lint`: clang-tidy over the project's sources | clang-tidy, with its arguments unchanged |
-| `smith prove` | runs the task `prove` | the prover, with its arguments |
+| `smith fmt` | formats every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith`) to `.clang-format`; what `.clang-format-ignore` names is left alone | clang-format, with its arguments unchanged |
+| `smith lint` | builds what the compiles read (generated headers), then runs clang-tidy, with `.clang-tidy`, on the project's own sources among the build's compiles, side by side | clang-tidy, with its arguments unchanged |
+| `smith docs` | checks AGENTS.md, `knowledge/` and `.agents/skills/`, with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
+| `smith prove` | proves the contracts of the build's C sources, with the flags of their compiles | the prover, with its arguments |
+| `smith test` | builds and runs the tests `smith_tests` declares | the arguments are the test runner's options |
+| `smith run` | builds `smith_default`, then runs the one program it names | the arguments go to the program |
+| `smith check` | fmt (clang-format's dry run), docs, lint, test and prove, each reported | refused |
 | `smith dbg` | not available yet (issue #7) | |
 
-**A verb is a target named like it.** There is no new way to describe a project: `build.c` defines the task or alias
-that a verb runs, with the calls it already has (`smith_task`, `smith_alias`, `smith_tests`), and the verb builds and
-runs that target. A project that defines none gets one message, `smith: error: smith run: build.c defines no task or alias
-named run; add smith_task(b, "run", ...)`. The reasons, in the order they were weighed:
-- `smith_tests` already names `test`; checkers, game and learner already had `run`, `check` and `format` targets, so the
-  verbs ask them to rename one (`format` is `fmt`, and a `lint` alias is the clang-tidy checks), not to learn a new call.
-- What `run` runs, which files `fmt` formats and which flags `lint` uses are the project's: game formats Objective-C,
-  Metal and C with different rules; smith's own `lint` runs clang-tidy with the flags of the build. A call such as
-  `smith_format(b, sources)` would fix a shape that two of the three projects would have to bypass.
-- The one thing the verbs need that build.c had no way to say is the arguments: `smith run` and `smith test` give
-  them to build.c as **`smith_args(b)`**, a list that is empty for none. The program's arguments are part of the
-  `run` task's command (`.command = smith_cat(b, app.outputs, smith_args(b), nullptr)`); `smith_tests` appends them to
-  the runner's, so `smith test --test name --seed 7 --jobs 1` is the runner's own command line, and the `-DTEST`,
-  `-DSEED`, `-DSEEDS`, `-DJOBS`, `-DSHRINK`, `-DSHUFFLE`, `-DISOLATE` and `-DFULL` options it replaced are gone (one way).
-  They travel as the one option `-DSMITH_ARGS`, each after a ";" (with "%", ";" and newline escaped); a build.c that never calls `smith_args` and is given
-  arguments gets an error that says so.
+**A project's tasks run with `smith build <task>`, and none is named after a verb.** `smith_task` and `smith_alias`
+refuse `fmt`, `lint`, `docs`, `prove`, `check`, `run` and `test` (`smith: build.c: task 'run' is named after a verb;
+`smith run` does the same thing in every project, so use it, or name task another way and run it with `smith build
+<name>``). The reasons, in the order they were weighed:
+- Each project used to carry about sixty lines that said the obvious (a list of sources "add a file when you add one", the
+  clang-format and clang-tidy commands, the docs step), the verbs meant whatever each wrote, and a project without the task
+  got an error (smith's own repository had no `docs` task, so `smith docs` failed there). What a verb does is now the same
+  everywhere, and a `smith new` project has no verb tasks to keep up.
+- The project already says what the verbs need: `smith_object` and `smith_program` say what is compiled and with which
+  flags, `smith_tests` says what the tests are, `smith_default` says what `run` runs, and git says which files exist.
+  smith writes what it learned from the run of build.c in `.smith/` for the verbs (below).
+- The one thing the verbs need that build.c had no way to say is the arguments: `smith run` and `smith test` take them.
+  The test runner's arrive in build.c as **`smith_args(b)`**, a list that is empty for none, which `smith_tests` appends
+  to the runner's command, so `smith test --test name --seed 7 --jobs 1` is the runner's own command line. They travel as
+  the one option `-DSMITH_ARGS`, each after a ";" (with "%", ";" and newline escaped); a build.c that never calls
+  `smith_args` and is given arguments gets an error that says so. The program's arguments are not build.c's: `smith run`
+  starts the program itself, with them.
 - `-D` options still work on a verb (`smith test -DFONT=...`), since they are build.c's, not the verb's; `--` ends them,
   so that a program can be given one (`smith run -- -Dx`).
 
-**The verbs are not targets of `smith build`.** `smith build run`, `test`, `check`, `fmt`, `lint`, `prove` and `dbg` are
+**What a verb reads from the build.** Every run of build.c writes `.smith/build.info`, one line per fact with tabs
+between the fields, and `.smith/compile_commands.json`, and the manifest has two targets of smith's own:
+- `compile<TAB>source<TAB>flag...`: a source of the project's own that the build compiles, with the words of its first
+  compile after the compiler (`-MMD -MF`, `-c` and `-o` among them). Not a generated file, nothing under `.smith/` and no
+  absolute path (a package's). Sources that `smith_compile_command` declares (never compiled, but read with flags) are
+  here too, and build.c itself, with the flags smith compiles it with.
+- `test<TAB>task`: a task with `.test` (what `smith_tests` makes its task; smith's own `test-<name>` tasks set it too).
+- `program<TAB>path`: the output of a `smith_program`; `unit<TAB>source...`: the own sources of a program's objects (not
+  the runner `smith_tests` makes); `default<TAB>target`: a target of `smith_default`, aliases opened.
+- the target `smith_needs` is the generated files those compiles read (their implicit and order-only inputs that a step
+  makes: the tests' list header, a module's header), and `smith_tests` is the test tasks. `smith lint` and `smith prove`
+  build `smith_needs`, `smith test` builds `smith_tests`; both exist in every manifest, empty for none.
+- `.smith/compile_commands.json` lists each source once, by its first compile, for clang-tidy (`-p .smith`); the
+  project's own `smith_compile_commands` file is the editor's and lists every output.
+
+How each verb uses it:
+- **fmt** needs no build: `git ls-files -z --cached --others --exclude-standard`, through smith's io, the wanted
+  extensions, the files that are there (a file removed and not yet staged is still listed). Outside a git repository it
+  says to name the files (`smith fmt -i <files>`). clang-format reads `.clang-format-ignore` itself when it is given files
+  (a generated `parser.c`, the broken inputs of a test).
+- **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
+  findings of different files do not interleave. `.smith` sources are left out (the token hook is the compiler's). It
+  lints the first compile of a source, so a program built in three variants is checked once, with the first's flags.
+- **prove** proves each program's C sources together, as the program links them (`unit<TAB>source...` in the info; the
+  tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first
+  compiles less what only instruments or caches (`-fsanitize`, modules, frame pointers, pattern initialization, the
+  depfile): sources of a program with the same flags go in one `smith prove a.c b.c -- flags`, and programs with the same
+  sources (debug, release and fast) are proved once. A program with no contract has nothing to prove, which is quick.
+- **test** builds `smith_tests` and so runs the runner (the task, on the console); a build that declares none says so.
+- **run** builds the default, then starts the program, replacing smith, so it has the terminal. The default must name
+  exactly one program (the others in it, such as links, are built but not run); otherwise `smith run` says how many it
+  names and lists them.
+- **check** runs fmt, docs, lint, test and prove in that order, cheapest first, and does not stop at a failure: each part
+  prints `smith check: <part> ok` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or
+  `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
+  without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c.
+
+**The verbs are not targets of `smith build`.** `smith build run`, `test`, `check`, `fmt`, `lint`, `docs` and `prove` are
 refused with a pointer to the verb (`smith: test is a verb, not a target of smith build; run `smith test``). The
 alternative, both working, leaves two ways to say the same thing in every document, script and CI file, and a
 person who learns `smith build test` is never told that `smith test --seed 7` exists. A refusal costs one message once;
-every other target (`release`, `fast`, `compare`, `clean`) is still `smith build <target>`. The dispatch is one table,
-`smith_verbs` in smith.c, so a new verb is a row.
+every other target (`release`, `fast`, `clean`, a project's own) is still `smith build <target>`. The dispatch is one
+table, `smith_verbs` in smith.c, so a new verb is a row (the actions are in `runtime/verbs.c`).
 
 For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, the first word of a
 `compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
@@ -607,7 +647,7 @@ rebuilds, a cycle, a path that does not match, a plain file and the helpers.
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
 types, workers that run the tests in parallel, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
-with the exact commands) builds that runner from the project's test files and adds the task `test`, which `smith test` runs.
+with the exact commands) builds that runner from the project's test files and adds the task `test` (a task with `.test`, which `smith test` runs).
 
 ```c
 // tests/test_random.c
@@ -856,6 +896,7 @@ typedef struct {
     int (*run)(SmithRun *run); // a C function in build.c instead of .command; 0 succeeds
     const char *const *args;   // given to .run as run->args
     bool content_hash;         // later: rerun only when the inputs' bytes changed
+    bool test;                 // a task only: `smith test` runs it (smith_tests sets it on its task)
 } SmithStep;
 
 void build(SmithBuild *b); // what the project writes
@@ -873,7 +914,10 @@ void smith_step(SmithBuild *b, SmithStep *step);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
 // start with '/' or '-', end with '/', or hold an empty, '.' or '..' component (check-alone/src/a.c is a name). A task
-// declared again under one name with every field equal changes nothing; with any field different it is an error
+// declared again under one name with every field equal changes nothing; with any field different it is an error.
+// A task or alias may not be named after a verb (fmt, lint, docs, prove, check, run, test): each verb does one fixed
+// thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
+// tests, which `smith test` runs (smith_tests does it for its own)
 void smith_task(SmithBuild *b, const char *name, SmithStep *step);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error
@@ -1080,7 +1124,7 @@ typedef struct {
 //     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
 //     smith_library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
 //     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
-//   the task <name> (a .run task, on the console), which `smith test` runs when <name> is "test": runs <output> with
+//   the task <name> (a .run task, on the console, with .test: `smith test` runs it): runs <output> with
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
 //     the runner, so they are built before the tests run and a change to one reruns them.
@@ -1243,12 +1287,12 @@ void build(SmithBuild *b) {
     };
     smith_step(b, &compile_commands);
 
-    SmithStep run = {
+    SmithStep play = {
         .command = (const char *[]){"./checkers", nullptr},
         .inputs = (const char *[]){"checkers", nullptr},
         .pool = "console",
     };
-    smith_task(b, "run", &run);
+    smith_task(b, "play", &play);
 
     SmithStep clean = {
         .command = (const char *[]){"rm", "-f", "checkers", "checkers.json", "compile_commands.json", nullptr},
@@ -1259,7 +1303,7 @@ void build(SmithBuild *b) {
 }
 ```
 
-- `smith build` builds `checkers` and `compile_commands.json`; `smith run` builds what is needed, then runs the
+- `smith build` builds `checkers` and `compile_commands.json`; `smith build play` builds what is needed, then runs the
   game on the terminal every time; `smith build clean` removes what the Makefile's `clean` removed. `smith build -t
   clean` removes the same three files, because each is a declared output.
 - Compared in one scratch folder, make against `smith build`: the machine code is identical, and `checkers.json` and

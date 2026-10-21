@@ -11,8 +11,8 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd and
 
 - `smith cc`, `smith c++`, and the links `smith-cc` and `smith-c++`: the compiler. Load `smith-cc` (a Makefile's `CC`, compile errors, `.metal`, `compile_commands.json`, `SMITH_VERBOSE`).
 - `smith build`, and a project's `build.c`: load `smith-build`.
-- `smith run`, `smith test`: run the program, run the tests. Load `smith-run-test`; `smith-test` for writing tests.
-- `smith check`, `smith fmt`, `smith lint`, `smith lsp`: format, lint, all checks, the editor. Load `smith-check`.
+- `smith run`, `smith test`: run the program `smith_default` names, run the tests `smith_tests` declares. Load `smith-run-test`; `smith-test` for writing tests.
+- `smith check`, `smith fmt`, `smith lint`, `smith lsp`: format (every file git sees), lint (the build's compiles), all checks (fmt, docs, lint, test, prove), the editor. Load `smith-check`. The verbs mean the same in every project and need no task in build.c; a project's own tasks run with `smith build <task>`.
 - `smith docs`: checks AGENTS.md, knowledge/ (an OKF bundle) and the skills of a project, and says the format. Load `smith-docs`.
 - `smith prove`: load `smith-contract`. `smith dbg` says it is not available yet.
 - `smith new`, `smith fetch`, `smith cache`: start a project, fetch a package, show and clean the caches (the smith-build skill).
