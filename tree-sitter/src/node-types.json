@@ -1646,9 +1646,13 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "attribute_declaration",
+          "named": true
+        },
         {
           "type": "declaration",
           "named": true

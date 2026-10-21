@@ -127,6 +127,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
         return smith_lang_act(SmithLangAct_Slow);
     }
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
+    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
     bool slow = false;
     bool wants = smith_lang_wants_static(lang, host, token, may_peek, &slow);
     if (slow) return smith_lang_act(SmithLangAct_Slow);
@@ -285,6 +286,7 @@ static void smith_lang_head_keyword(SmithLang *lang, const SmithToken *token, Sm
         decl->last_tag_enum = smith_lang_ident(token, "enum");
     }
     if (smith_lang_ident(token, "constexpr")) decl->is_constexpr = true;
+    if (smith_lang_ident(token, "extern")) decl->is_extern = true;
 }
 
 // One token of a private declaration's head (the state Start is its first token), or Slow if it needs more. A Slow

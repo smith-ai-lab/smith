@@ -74,13 +74,15 @@ fi
 # --- the same as C -------------------------------------------------------------------------------------------------
 same=0
 different=0
+own=0 # smith's own files among them: in an agent's worktree, under .claude/worktrees, they are not to be skipped
 for root in "$here" "$HOME/Documents/game" "$HOME/Documents/virtual-cell/learner" "$HOME/Documents/checkers"; do
     [ -d "$root" ] || continue
-    for file in $(find "$root" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' -not -path '*/.claude/*' \
+    for file in $(find "$root" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' -not -path "$root/.claude/*" \
         -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/tree-sitter/src/*' -not -path '*/expect/*' |
         LC_ALL=C sort); do
         as_c=$(format "$file" <"$file" 2>&1)
         as_smith=$(format "${file%.c}.smith" <"$file" 2>&1)
+        [ "$root" = "$here" ] && own=$((own + 1))
         if [ "$as_c" = "$as_smith" ]; then
             same=$((same + 1))
         else
@@ -89,6 +91,7 @@ for root in "$here" "$HOME/Documents/game" "$HOME/Documents/virtual-cell/learner
         fi
     done
 done
+expect "the C files of smith itself are among those checked, wherever the checkout is" yes "$([ "$own" -gt 20 ] && echo yes || echo "no ($own)")"
 total=$((total + 1))
 if [ $different = 0 ] && [ $same -gt 0 ]; then
     echo "ok    $same C files format the same as .c and as .smith"

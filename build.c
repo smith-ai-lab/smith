@@ -14,6 +14,7 @@
 // smith build: the default, text-exhaustive, test-compare -DREAL=..., install (-DCC=..., -DPREFIX=...), llvm and clean.
 #include <smith/build.h>
 
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -36,6 +37,99 @@ typedef struct {
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
 static const char *build_variable(SmithBuild *b, const char *name, const char *fallback, const char *description) {
     return smith_option_value(b, name, smith_env(b, name, fallback), description);
+}
+
+// The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
+// docs/protocol.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed, so a build
+// never needs the network; `smith build protocol` writes them again from the packages, and `smith check` runs
+// check-protocol (a test), which fails when a committed file is not what the generator writes now.
+typedef struct {
+    const char *name;    // dap or mcp: the prefix of the generated names and files
+    const char *url;     // the package: the project's release, a tag
+    const char *hash;    // `smith fetch <url>` prints this line
+    const char *schema;  // the schema's path in the package
+    const char *license; // and the license's
+    const char *source;  // for the header of every generated file
+} BuildProtocol;
+
+static const BuildProtocol build_protocols[] = {
+    {"dap", "https://github.com/microsoft/debug-adapter-protocol/archive/refs/tags/v1.71.0.tar.gz",
+     "sha256:2b314bf3f3baec7a86401b8e25c2cedf6d6b9faaf1f1ec42ce844628ea7d1f9d", "debugAdapterProtocol.json",
+     "License-code.txt", "debugAdapterProtocol.json of microsoft/debug-adapter-protocol v1.71.0"},
+    {"mcp", "https://github.com/modelcontextprotocol/modelcontextprotocol/archive/refs/tags/2026-07-28.tar.gz",
+     "sha256:7df4915b4a5cdc999876f5a80b7af9912bdea21490827224e8c7a10f2c81470a", "schema/2026-07-28/schema.json",
+     "LICENSE", "schema/2026-07-28/schema.json of modelcontextprotocol/modelcontextprotocol, release 2026-07-28"},
+};
+constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
+
+// Whether the package is in the cache already, which is all -DOFFLINE allows.
+static bool build_protocol_cached(SmithBuild *b, const BuildProtocol *protocol) {
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    return access(smith_fmt(b, "%s/smith/packages/%s", cache, protocol->hash + strlen("sha256:")), R_OK) == 0;
+}
+
+// args: "write" or "check", and "offline" or "online". The package is fetched once per machine (the cache keeps it);
+// offline, a package that is not there is skipped and said so, since the committed files cannot be checked without it.
+static int build_protocol_run(SmithRun *run) {
+    bool check = strcmp(run->args[0], "check") == 0;
+    bool offline = strcmp(run->args[1], "offline") == 0;
+    for (size_t i = 0; i < build_protocol_count; i++) { // bounded by the table
+        const BuildProtocol *protocol = &build_protocols[i];
+        if (offline && !build_protocol_cached(run->b, protocol)) {
+            printf("protocol: %s is not in the package cache and -DOFFLINE forbids fetching it: not %s\n",
+                   protocol->name, check ? "checked" : "written");
+            continue;
+        }
+        const char *folder = smith_package(run->b, &(SmithPackage){.url = protocol->url, .hash = protocol->hash});
+        const char *const argv[] = {run->inputs[0],
+                                    protocol->name,
+                                    smith_fmt(run->b, "%s/%s", folder, protocol->schema),
+                                    smith_fmt(run->b, "%s/%s", folder, protocol->license),
+                                    protocol->source,
+                                    "runtime/protocol",
+                                    "tests/protocol",
+                                    check ? "--check" : nullptr,
+                                    nullptr};
+        int status = smith_run_program(run, argv, nullptr);
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
+// The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
+// scripts/pack.c, a tool of the build.
+static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *const sources[] = {"scripts/protocol.c", "lib/arena.c", "lib/text.c", "lib/json.c"};
+    SmithObject objects[4] = {};
+    const SmithObject *linked[5] = {};
+    for (size_t i = 0; i < 4; i++) {
+        objects[i] = (SmithObject){
+            .compiler = config->cc,
+            .source = sources[i],
+            .output = smith_fmt(b, "%s/protocol-%zu.o", folder, i),
+            .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", nullptr}, nullptr),
+        };
+        smith_object(b, &objects[i]);
+        linked[i] = &objects[i];
+    }
+    SmithProgram program = {.linker = config->cc, .output = smith_fmt(b, "%s/protocol", folder), .objects = linked};
+    smith_program(b, &program);
+    bool offline = smith_option(b, "OFFLINE", "a package missing from the cache is an error instead of a fetch");
+    SmithStep write = {
+        .run = build_protocol_run,
+        .description = "writing the protocol code from the pinned schemas",
+        .inputs = program.step.outputs,
+        .args = smith_list(b, "write", offline ? "offline" : "online", nullptr),
+    };
+    smith_task(b, "protocol", &write);
+    SmithStep check = {
+        .run = build_protocol_run,
+        .description = "checking the protocol code against the pinned schemas",
+        .inputs = program.step.outputs,
+        .args = smith_list(b, "check", offline ? "offline" : "online", nullptr),
+        .test = true,
+    };
+    smith_task(b, "check-protocol", &check);
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -299,6 +393,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang.h",
     "runtime/lang.c",
     "runtime/lang_out.c",
+    "runtime/lang_trivia.c",
     "runtime/lang_decl.c",
     "runtime/lang_names.c",
     "runtime/lang_import.c",
@@ -389,6 +484,10 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0) continue;
         smith_compile_command(b, config->cc, sources[i], flags);
     }
+    // The protocol code's hand-written base and its tests' support; the generated files are not linted.
+    smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
+    smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
+                          smith_cat(b, flags, smith_list(b, "-I", "runtime/protocol", nullptr), nullptr));
 }
 
 // One task per test script of tests/, `test-<task>`, each one of smith's tests, so `smith test` runs them side by
@@ -420,10 +519,12 @@ static const BuildTestScript build_test_scripts[] = {
     {"http", "http", nullptr, nullptr, 0},
     {"io", "io", nullptr, nullptr, 0},
     {"json", "json", nullptr, nullptr, 0},
+    {"lint-smith", "lint-smith", nullptr, nullptr, 0},
     {"lsp", "lsp", nullptr, nullptr, 0},
     {"neovim", "neovim", nullptr, nullptr, 0},
     {"new", "new", nullptr, nullptr, 0},
     {"package", "package", nullptr, nullptr, 0},
+    {"protocol", "protocol", nullptr, nullptr, 0},
     {"prove", "prove", nullptr, nullptr, 2},
     {"random", "random", nullptr, nullptr, 0},
     {"resource", "resource", nullptr, nullptr, 0},
@@ -433,7 +534,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
     {"test", "test", nullptr, nullptr, 1},
     {"isolate-main", "test", "isolate", "main", 1},
-    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess", 1},
+    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess,lang", 1},
     {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
     {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
     {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
@@ -695,6 +796,7 @@ void build(SmithBuild *b) {
     SmithStep smith = build_programs(b, &config, folder);
     build_other_objects(b, &config, folder);
     build_unbuilt_sources(b, &config);
+    build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary);
     build_compare(b, &config, config.binary);

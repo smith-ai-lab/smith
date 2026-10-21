@@ -669,7 +669,7 @@ static size_t smith_test_death_read(char *text, size_t capacity) {
         kept += keep;
         total += (size_t)got;
         if (total >= smith_test_output_limit) {
-            kill(smith_test_death.child, SIGKILL);
+            if (smith_test_death.child > 0) kill(smith_test_death.child, SIGKILL); // waited for below, not before
             break;
         }
     }
@@ -1164,7 +1164,7 @@ static SmithTestRead smith_test_read(SmithTestWorker *worker, SmithTestRun *run)
     output->kept += keep;
     output->total += (size_t)got;
     if (output->total < smith_test_output_limit) return SmithTestRead_Data;
-    kill(worker->pid, SIGKILL);
+    if (worker->pid > 0) kill(worker->pid, SIGKILL); // a pid of 0 would be this process's group; waited for after
     return SmithTestRead_Closed;
 }
 
@@ -1848,6 +1848,15 @@ static bool smith_test_parse(const char *text, uint64_t *value) {
 static bool smith_test_parse_value(SmithTestOptions *options, const char *flag, const char *value) {
     uint64_t number = 0;
     if (strcmp(flag, "--test") == 0) {
+        // The name as written, `test_area` or `geometry::box_test::test_area`, selects what the shown name does.
+        const char *last = strrchr(value, ':');
+        const char *tail = last != nullptr ? last + 1 : value;
+        static char written[512];
+        if (strncmp(tail, "test_", strlen("test_")) == 0 && tail[strlen("test_")] != '\0' &&
+            strlen(value) < sizeof written) {
+            snprintf(written, sizeof written, "%.*s%s", (int)(tail - value), value, tail + strlen("test_"));
+            value = written;
+        }
         options->filter = value;
         return true;
     }

@@ -11,7 +11,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-cc/SKILL.md` in
 
 ## One program path
 
-Where a command cannot take an argument, use the links that act as the verbs by their name: `smith-cc` and `smith-c++` (`smith build install` puts them beside smith). `CC := smith-cc` in a Makefile, CMake's `CMAKE_C_COMPILER`, and the first word of a `compile_commands.json` command (clangd reads it as a compiler). A `build.c` names them too: `.compiler = "smith-cc"`; `"smith"` alone is an error. `smith++` is gone.
+Where a command cannot take an argument, use the links that act as the verbs by their name: `smith-cc` and `smith-c++` (`smith build install` puts them beside smith). `CC := smith-cc` in a Makefile, CMake's `CMAKE_C_COMPILER`, and the first word of a `compile_commands.json` command (clangd reads it as a compiler). A `build.c` names them too: `.compiler = "smith-cc"`; `"smith"`, or a path that ends in `/smith` (`CC=$HOME/.local/bin/smith` in the environment, `-DCC=`), is an error before anything runs, with the hint to use `smith-cc` or `smith-c++`. `smith++` is gone.
 
 ## Which compiler runs
 

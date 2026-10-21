@@ -20,9 +20,14 @@ typedef struct {
     size_t header_length;
 } SmithLangLowered;
 
+// runtime/lang_sparse.c
+static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host);
+
 // runtime/lang_names.c
 static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
-                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct);
+                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct,
+                                   const char *member, size_t member_length);
+static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const char *fallback, size_t length);
 static void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *binding, size_t lowered_length,
                                       const char *member, size_t member_length);
 static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, const char *header, const char *module,
@@ -114,8 +119,28 @@ static bool smith_lang_context_typeish(SmithLang *lang, const SmithHost *host, c
     return context->lazy ? smith_lang_typeish(lang, host) : context->typeish;
 }
 
+// Whether the tokens being read are an attribute's: `[[gnu::format(printf, 1, 2)]]` or `__attribute__((format(...)))`.
+// What stands there is the attribute's own argument (a format kind, a name), never a use of a C name or a module.
+static bool smith_lang_in_attribute(const SmithLang *lang) {
+    return lang->in_attribute || lang->attribute_parens > 0;
+}
+
+// The parentheses of `__attribute__((`, followed through the tokens that are tracked.
+static void smith_lang_track_attribute(SmithLang *lang, const SmithToken *token) {
+    if (token->kind == SmithTokenKind_Identifier) {
+        lang->attribute_next = smith_lang_ident(token, "__attribute__") || smith_lang_ident(token, "__attribute");
+        return;
+    }
+    bool open = smith_lang_punct(token, "(");
+    if (open && lang->attribute_parens > 0) lang->attribute_parens += 1;
+    if (open && lang->attribute_parens == 0 && lang->attribute_next) lang->attribute_parens = 1;
+    if (smith_lang_punct(token, ")") && lang->attribute_parens > 0) lang->attribute_parens -= 1;
+    lang->attribute_next = false;
+}
+
 // Remembers what a token was, for the one after it.
 static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
+    smith_lang_track_attribute(lang, token);
     lang->prev_member = false;
     lang->prev_tag = false;
     lang->prev_char = token->kind == SmithTokenKind_Punctuator && token->length > 0 ? token->text[0] : 0;
@@ -141,23 +166,110 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
 
 // ---- Declared names -------------------------------------------------------------------------------------------------
 
-// A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one.
-// Returns null when the name is kept as written (main).
+// The name the prefix and `name` make, as C sees it when no C name was chosen for it: compared with a chosen one.
+static bool smith_lang_default_name_is(const SmithLang *lang, const SmithLangName *entry, const char *c_name,
+                                       size_t length) {
+    size_t prefix = strlen(lang->prefix);
+    const char *text = smith_lang_str(entry->name);
+    return entry->c_name.length == 0 && length == prefix + entry->name.length &&
+           memcmp(c_name, lang->prefix, prefix) == 0 && memcmp(c_name + prefix, text, entry->name.length) == 0;
+}
+
+// A C name chosen with [[smith::c_name]] must be the C name of nothing else the module declares, private names
+// included (they are prefixed and `static`, but the compiler sees one set of names). Returns false, with the error
+// reported, when it is.
+static bool smith_lang_c_name_free(SmithLang *lang, const SmithHost *host, const char *c_name, size_t length,
+                                   const char *name, size_t name_length, uint32_t location) {
+    for (size_t i = 0; i < lang->names_count; i++) { // the names declared so far
+        const SmithLangName *other = &lang->names[i];
+        bool same_chosen = other->c_name.length == length && memcmp(smith_lang_str(other->c_name), c_name, length) == 0;
+        if (same_chosen) {
+            smith_lang_error(lang, host, location,
+                             "[[smith::c_name]] on `%.*s` chooses the C name of `%s`; give one of them another name",
+                             (int)name_length, name, smith_lang_str(other->name));
+            return false;
+        }
+        if (smith_lang_default_name_is(lang, other, c_name, length)) {
+            smith_lang_error(lang, host, location,
+                             "[[smith::c_name]] on `%.*s` chooses the C name the module's prefix gives `%s`; give one "
+                             "of them another name",
+                             (int)name_length, name, smith_lang_str(other->name));
+            return false;
+        }
+    }
+    return true;
+}
+
+// The reverse: a name declared after a chosen C name, which the prefix would make the same.
+static void smith_lang_c_name_taken(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                    uint32_t location) {
+    const char *prefixed = smith_lang_prefixed(lang, name, length);
+    size_t prefixed_length = lang->tmp_length;
+    for (size_t i = 0; i < lang->names_count; i++) { // the names declared so far
+        const SmithLangName *other = &lang->names[i];
+        if (other->c_name.length == prefixed_length &&
+            memcmp(smith_lang_str(other->c_name), prefixed, prefixed_length) == 0) {
+            smith_lang_error(lang, host, location,
+                             "`%.*s` gets the C name that [[smith::c_name]] chose for `%s`; give one of them another "
+                             "name",
+                             (int)length, name, smith_lang_str(other->name));
+            return;
+        }
+    }
+}
+
+// The C name a new export takes from [[smith::c_name]]: the declaration's first name, but no enumeration constant.
+static bool smith_lang_takes_c_name(const SmithLang *lang, SmithLangNameKind kind, bool exported) {
+    return exported && kind != SmithLangName_Constant && lang->decl.c_name.length > 0 && !lang->decl.c_name_used;
+}
+
+static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                   uint32_t location, SmithLangNameKind kind, bool exported) {
+    bool chosen = smith_lang_takes_c_name(lang, kind, exported);
+    char c_name[smith_lang_name_max];
+    size_t c_length = chosen ? lang->decl.c_name.length : 0;
+    if (chosen) {
+        memcpy(c_name, smith_lang_str(lang->decl.c_name), c_length + 1);
+        lang->decl.c_name_used = true;
+        if (!smith_lang_c_name_free(lang, host, c_name, c_length, name, length, lang->decl.c_name_location))
+            chosen = false;
+    } else if (lang->c_name_count > 0) {
+        smith_lang_c_name_taken(lang, host, name, length, location);
+    }
+    SmithLangName *added = smith_lang_name_add(lang, name, length, kind, exported);
+    if (added != nullptr) {
+        added->location = location;
+        if (chosen) {
+            added->c_name = smith_lang_store(lang, c_name, c_length);
+            lang->c_name_count += 1;
+        }
+    }
+    const char *lowered = smith_lang_prefixed(lang, name, length);
+    smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, chosen ? 0 : strlen(lang->prefix),
+                           lang->module_text, true, chosen ? name : nullptr, chosen ? length : 0);
+    if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
+    if (host->rename != nullptr) {
+        const char *prefixed = smith_lang_prefixed(lang, name, length);
+        host->rename(host->context, name, (uint32_t)length, prefixed, (uint32_t)lang->tmp_length);
+    }
+}
+
+// A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one (or the
+// C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                       uint32_t location, SmithLangNameKind kind, bool exported) {
     if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) return nullptr;
+    // `extern T name;` without `export` is a symbol that C defines: it keeps its C name, in the module as in C.
+    bool symbol = kind == SmithLangName_Function || kind == SmithLangName_Value;
+    if (symbol && !exported && lang->decl.is_extern && !lang->decl.is_typedef) return nullptr;
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known == nullptr) {
-        SmithLangName *added = smith_lang_name_add(lang, name, length, kind, exported);
-        if (added != nullptr) added->location = location;
-        const char *lowered = smith_lang_prefixed(lang, name, length);
-        smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, strlen(lang->prefix), lang->module_text,
-                               true);
-        if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
-        if (host->rename != nullptr) {
-            const char *prefixed = smith_lang_prefixed(lang, name, length);
-            host->rename(host->context, name, (uint32_t)length, prefixed, (uint32_t)lang->tmp_length);
-        }
+        smith_lang_declare_new(lang, host, name, length, location, kind, exported);
+    } else if (smith_lang_takes_c_name(lang, kind, exported) && known->c_name.length == 0) {
+        lang->decl.c_name_used = true;
+        smith_lang_error(lang, host, lang->decl.c_name_location,
+                         "`%.*s` was declared before; [[smith::c_name]] goes on its first declaration", (int)length,
+                         name);
     }
     if (known != nullptr && exported && !known->exported) known->exported = true;
     return smith_lang_prefixed(lang, name, length);
@@ -195,7 +307,7 @@ static void smith_lang_allow(SmithLang *lang, uint32_t location) {
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
 static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                  const SmithLangBinding *binding, SmithToken *result) {
-    if (lang->in_attribute) return false;
+    if (smith_lang_in_attribute(lang)) return false;
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(colons, "::")) return false;
     const SmithToken *member = smith_lang_peek(lang, host, 1, true);
@@ -229,6 +341,11 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         memcpy(lang->tmp, prefix, prefix_length);
         memcpy(lang->tmp + prefix_length, taken.text, taken.length);
         lang->tmp[total] = 0;
+        const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
+        if (chosen != nullptr) { // the module chose this export's C name
+            total = chosen->c_name.length;
+            memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
+        }
         *result = smith_lang_made(name, lang->tmp, total, false);
         result->location = taken.location;
         smith_lang_written_access(lang, binding, total, taken.text, taken.length);
@@ -333,6 +450,9 @@ static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, co
 static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                     uint32_t location, bool *is_type) {
     if (length >= 2 && name[0] == '_' && name[1] == '_') return;
+    if (smith_lang_in_attribute(lang) || (host->previous != nullptr && smith_lang_sparse_in_attribute(lang, host))) {
+        return; // [[gnu::format(printf, 1, 2)]]: printf is the attribute's word for a kind of format
+    }
     SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Value);
     *is_type = found.kind == SmithLookup_Type;
     if (found.kind == SmithLookup_None || !found.from_import || found.in_main_file) return;

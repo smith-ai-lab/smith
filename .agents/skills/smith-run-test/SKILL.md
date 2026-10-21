@@ -16,7 +16,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.
 ## smith test
 
 `smith test [<options>]` builds the test runner and runs it. The options are the runner's own:
-- `--test <substring>` runs one test, or every test whose name contains it; `--seed <n>` runs a property test on that one seed; `--seeds <n>` sets the keys per property test (100).
+- `--test <substring>` runs one test, or every test whose name contains it (a test in a `.smith` module is named as written, `geometry::box_test::area`, and `--test geometry::box_test` runs the module's tests; the source's `test_area` works as well); `--seed <n>` runs a property test on that one seed; `--seeds <n>` sets the keys per property test (100).
 - `--jobs <n>` (default: the cores; `--jobs 1` is easier to follow), `--timeout <seconds>` (10), `--shrink 0|1`, `--shuffle <seed>`, `--isolate` (a process per test), `--in-process` (no fork at all, for `smith dbg build/tests -- --test name --in-process`), `--full` (heavy checks at full size), `--trace`, `--color`, `--list`, `--verbose`, `--stats`.
 - A failure ends with the line to rerun it, such as `rerun: smith test --test name --seed 123`.
 

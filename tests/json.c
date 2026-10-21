@@ -1028,6 +1028,50 @@ void test_json_any_value_written_then_read_is_the_same(SmithKey key) {
     SMITH_CHECK(root->span, ==, counter.values);
 }
 
+void test_json_write_value_puts_a_tree_back_as_it_was_written(SmithKey key) {
+    SmithArena arena = smith_test_arena(1 << 20);
+    static char first[1 << 16];
+    static char second[1 << 16];
+    size_t indent = (size_t)test_json_uniform(smith_key_derive(key, 90), 0, 1) * 2;
+    SmithJsonWriter writer = smith_json_writer_make(first, sizeof first, indent);
+    TestJsonDocument *document = SMITH_ARENA_PUSH(&arena, TestJsonDocument);
+    test_json_random_value(&writer, document, smith_key_derive(key, 91),
+                           (size_t)test_json_uniform(smith_key_derive(key, 92), 0, 6));
+    SmithText output = {};
+    SMITH_CHECK(smith_json_writer_finish(&writer, &output));
+    const SmithJsonValue *root = nullptr;
+    SmithJsonError error = {};
+    SMITH_CHECK(smith_json_parse(&arena, output, test_json_wide, &root, &error));
+    SmithJsonWriter again = smith_json_writer_make(second, sizeof second, indent);
+    smith_json_write_value(&again, root);
+    SmithText copy = {};
+    SMITH_CHECK(smith_json_writer_finish(&again, &copy));
+    SMITH_CHECK(copy.length, ==, output.length);
+    SMITH_CHECK(memcmp(copy.begin, output.begin, output.length) == 0);
+}
+
+void test_json_write_value_keeps_numbers_and_duplicate_keys(void) {
+    SmithArena arena = smith_test_arena(1 << 14);
+    const SmithJsonValue *root = nullptr;
+    SmithJsonError error = {};
+    SmithText input = test_json_text("{\"a\":1.50,\"a\":[],\"b\\u00e9\":[1e2,{},\"x\\ny\"],\"c\":null}");
+    SMITH_CHECK(smith_json_parse(&arena, input, test_json_wide, &root, &error));
+    char buffer[256];
+    SmithJsonWriter writer = smith_json_writer_make(buffer, sizeof buffer, 0);
+    smith_json_write_value(&writer, root);
+    SmithText out = {};
+    SMITH_CHECK(smith_json_writer_finish(&writer, &out));
+    SMITH_CHECK(smith_text_is(out, "{\"a\":1.50,\"a\":[],\"b\xc3\xa9\":[1e2,{},\"x\\ny\"],\"c\":null}"));
+    SmithJsonWriter scalar = smith_json_writer_make(buffer, sizeof buffer, 0);
+    smith_json_write_value(&scalar, root->items[0]);
+    SMITH_CHECK(smith_json_writer_finish(&scalar, &out));
+    SMITH_CHECK(smith_text_is(out, "1.50"));
+    SmithJsonWriter tiny = smith_json_writer_make(buffer, 5, 0);
+    smith_json_write_value(&tiny, root);
+    SMITH_CHECK(!smith_json_writer_finish(&tiny, &out));
+    SMITH_CHECK(tiny.error.reason == SmithJsonReason_Full);
+}
+
 void test_json_any_double_round_trips_bit_for_bit(SmithKey key) {
     uint64_t bits = test_json_random_double_bits(key);
     if (smith_bernoulli_sample(smith_key_derive(key, 5), (SmithBernoulli){.probability = 0.5}))

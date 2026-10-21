@@ -1,3 +1,72 @@
+==> attribute-c-names/src/log/fmt.smith <==
+module log::fmt;
+import <stdio.h>;
+import <stdarg.h>;
+
+// An attribute's argument is the attribute's own word: `printf` here is no use of the C function.
+[[gnu::format(printf, 1, 2)]] int private_say(const char *format, ...) {
+    c::va_list args;
+    c::va_start(args, format);
+    int n = c::vprintf(format, args);
+    c::va_end(args);
+    return n;
+}
+
+export [[gnu::format(printf, 1, 2)]] int say(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+export __attribute__((format(printf, 1, 2))) int said(const char *format, ...) {
+    return private_say("%s", format);
+}
+
+[[gnu::format(scanf, 2, 3)]] int private_scan(int fd, const char *format, ...);
+==> attribute-c-names/src/main.smith <==
+module main;
+import log::fmt;
+import <stdio.h>;
+
+int main(void) {
+    fmt::say("%d\n", 7);
+    fmt::said("done\n");
+    c::printf("%d\n", 1);
+    return 0;
+}
+==> c-name/src/smith/arena.smith <==
+module smith::arena;
+
+// A C API that keeps its names: the module's prefix would make smith_arena_Arena of these.
+[[smith::c_name("SmithArena")]] export typedef struct {
+    u64 used;
+    u64 capacity;
+} Arena;
+
+[[smith::c_name("smith_arena_create")]] export Arena make(u64 capacity) {
+    return (Arena){.used = 0, .capacity = capacity};
+}
+
+// No C name: the module's prefix, as before.
+export u64 take(Arena *arena, u64 size) {
+    if (arena->used + size > arena->capacity) return 0;
+    arena->used += size;
+    return arena->used;
+}
+
+[[smith::c_name("smith_arena_limit")]] export u64 limit = 4096;
+
+// Defined in C, by its C name.
+[[smith::c_name("smith_arena_checksum")]] export u64 checksum(const u8 *data, usize size);
+==> c-name/src/smith/text.smith <==
+module smith::text;
+import smith::arena;
+
+// A .smith importer writes the module's names, and gets the C names.
+export u64 fill(u64 capacity) {
+    arena::Arena a = arena::make(capacity);
+    arena::take(&a, 10);
+    const u8 bytes[3] = {1, 2, 3};
+    return arena::take(&a, 5) + arena::checksum(bytes, 3) + arena::limit;
+}
 ==> compile-alone-by-path/src/foo.smith <==
 module foo;
 
@@ -60,6 +129,68 @@ export int size_ok(void) {
     struct c::stat info;
     return (int)sizeof info;
 }
+==> error-c-name/src/smith/names.smith <==
+module smith::names;
+
+[[smith::c_name("smith_names_one")]] export int first(void) {
+    return 1;
+}
+
+// the same C name twice
+[[smith::c_name("smith_names_one")]] export int second(void) {
+    return 2;
+}
+
+// the name the prefix makes of an export with no C name
+[[smith::c_name("smith_names_plain")]] export int third(void) {
+    return 3;
+}
+export int plain(void) {
+    return 4;
+}
+
+// the name the prefix makes of a private one, declared first
+int hidden(void) {
+    return 5;
+}
+[[smith::c_name("smith_names_hidden")]] export int fourth(void) {
+    return 6;
+}
+
+// a chosen name that a later declaration would also get
+[[smith::c_name("smith_names_later")]] export int fifth(void) {
+    return 7;
+}
+int later(void) {
+    return 8;
+}
+
+// not an export
+[[smith::c_name("smith_names_private")]] int sixth(void) {
+    return 9;
+}
+
+// not a C identifier, not a keyword, not a string, nor the only thing in the attribute
+[[smith::c_name("not an identifier")]] export int seventh(void) {
+    return 10;
+}
+[[smith::c_name("int")]] export int eighth(void) {
+    return 11;
+}
+[[smith::c_name(ninth)]] export int ninth(void) {
+    return 12;
+}
+[[smith::c_name("a"), gnu::unused]] export int tenth(void) {
+    return 13;
+}
+
+// two on one export
+[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh(void) {
+    return 14;
+}
+
+// an export that declares nothing a C name could name
+[[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {
     return 1;
@@ -236,6 +367,224 @@ import <sys/stat.h>;
 int main(void) {
     struct stat info;
     return (int)sizeof info;
+}
+==> export-inline/src/math/small.smith <==
+module math::small;
+
+import <stdint.h>;
+
+// Defined in the header, as `static inline`: the includer compiles it, so it has no symbol of the module's.
+export inline u32 twice(u32 x) {
+    return x * 2; // the body is the header's too
+}
+
+export inline u32 clamp(u32 x, u32 low, u32 high) {
+    if (x < low) return low;
+    if (x > high) return high;
+    return x;
+}
+
+// Inline functions call each other, and the module's other exports.
+export inline u32 clamp_twice(u32 x) {
+    return clamp(twice(x), 10, 100);
+}
+
+export u32 regular(u32 x) {
+    return twice(x) + 1;
+}
+==> foreign-extern/src/sys/world.smith <==
+module sys::world;
+
+import <string.h>;
+
+// `extern` without `export` declares a symbol that C defines: it keeps its C name (no sys_world_ prefix, no label).
+extern char **environ;
+extern u32 foreign_counter;
+extern u32 foreign_triple(u32 x);
+
+export u32 env_count(void) {
+    u32 count = 0;
+    for (char **entry = environ; *entry != nullptr; entry++)
+        count += 1;
+    return count;
+}
+
+export u32 counter_times_three(void) {
+    return foreign_triple(foreign_counter);
+}
+
+// An exported extern is still the module's own symbol, defined in C by its C name.
+export extern u32 owned;
+==> header-conditional-define/src/cfg/mode.smith <==
+module cfg::mode;
+
+// Kept verbatim: the includer's flags choose the branch.
+#ifdef WIDE
+export typedef struct {
+    u64 value;
+} Cell;
+#else
+export typedef struct {
+    u32 value;
+} Cell;
+#endif
+
+#if defined(WIDE) && WIDE > 1
+export u32 width(void) {
+    return 128;
+}
+#elif defined(WIDE)
+export u32 width(void) {
+    return 64;
+}
+#else
+export u32 width(void) {
+    return 32;
+}
+#endif
+
+// A branch that holds no export is dropped from the header.
+#ifdef UNUSED
+static u32 hidden = 1;
+#endif
+
+#if 0
+export u32 never(void) {
+    return 0;
+}
+#else
+export u32 always(void) {
+    return 1;
+}
+#endif
+
+#ifdef OUTER
+#ifdef INNER
+export u32 nested(void) {
+    return 3;
+}
+#endif
+#endif
+
+export u32 plain(void) {
+    return 5;
+}
+==> header-conditional/src/cfg/mode.smith <==
+module cfg::mode;
+
+// Kept verbatim: the includer's flags choose the branch.
+#ifdef WIDE
+export typedef struct {
+    u64 value;
+} Cell;
+#else
+export typedef struct {
+    u32 value;
+} Cell;
+#endif
+
+#if defined(WIDE) && WIDE > 1
+export u32 width(void) {
+    return 128;
+}
+#elif defined(WIDE)
+export u32 width(void) {
+    return 64;
+}
+#else
+export u32 width(void) {
+    return 32;
+}
+#endif
+
+// A branch that holds no export is dropped from the header.
+#ifdef UNUSED
+static u32 hidden = 1;
+#endif
+
+#if 0
+export u32 never(void) {
+    return 0;
+}
+#else
+export u32 always(void) {
+    return 1;
+}
+#endif
+
+#ifdef OUTER
+#ifdef INNER
+export u32 nested(void) {
+    return 3;
+}
+#endif
+#endif
+
+export u32 plain(void) {
+    return 5;
+}
+==> header-docs/src/geo/shape.smith <==
+// A file comment that is not above an export: not in the header.
+
+module geo::shape;
+
+import <stdint.h>;
+
+// A point on the plane.
+// Both coordinates are in meters.
+export typedef struct {
+    u32 x; // east
+    u32 y; /* north */
+    /* the height, kept inside the type */
+    u32 z;
+} Point;
+
+/* The squared distance from the origin. */
+export u64 norm2(Point p) {
+    return (u64)p.x * p.x + (u64)p.y * p.y + (u64)p.z * p.z;
+}
+
+// Not a doc comment: a blank line separates it from the export.
+
+export u32 origin_count = 1; // how many origins there are
+
+/** Whether the point is the origin. */
+[[smith::c_name("geo_is_origin")]] export bool is_origin(Point p) {
+    return norm2(p) == 0;
+}
+
+// A private function has no comment in the header.
+static u32 helper(void) {
+    return 7;
+}
+
+export u32 seven(void); // declared here, defined in C
+==> header-in-memory/src/lib.smith <==
+module lib;
+
+// Doc comments are not kept in the interface read in memory; conditionals and inline bodies are.
+#ifdef FAST
+export inline u32 cost(u32 n) {
+    return n;
+}
+#else
+export u32 cost(u32 n) {
+    return n * 10;
+}
+#endif
+
+export inline u32 twice(u32 n) {
+    return cost(n) * 2;
+}
+==> header-in-memory/src/main.smith <==
+module main;
+
+import lib;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%u %u\n", lib::cost(3), lib::twice(3));
+    return 0;
 }
 ==> import-c-header/src/main.smith <==
 import <math.h>;
