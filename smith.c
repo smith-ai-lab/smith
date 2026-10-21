@@ -9,8 +9,8 @@
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
-// runs ninja. See docs/build-c.md. `smith fetch <url>` puts a package in the cache. `smith new` writes a ready project:
-// build.c, main.c, the rules and the plugin settings.
+// runs ninja. See docs/build-c.md. `smith fetch <url>` puts a package in the cache and `smith cache` shows and cleans
+// the caches. `smith new` writes a ready project: build.c, main.c, the rules and the plugin settings.
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -352,6 +352,8 @@ extern char **environ;
 
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
+// `smith cache`, and the lock a build holds on the caches.
+#include "runtime/cache.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -533,6 +535,7 @@ static void smith_build_prepare(const char *clang) {
 static int smith_build_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
+    smith_cache_hold();
     char ninja[PATH_MAX];
     smith_build_find_ninja(self, ninja);
     if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
@@ -882,6 +885,7 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     if (argc >= 2 && strcmp(argv[1], "build") == 0) return smith_build_main(argc - 2, argv + 2, self);
+    if (argc >= 2 && strcmp(argv[1], "cache") == 0) return smith_cache_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "fetch") == 0) return smith_fetch_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "new") == 0) return smith_new_main(argc - 2, argv + 2, self);
