@@ -1,11 +1,13 @@
 #!/bin/sh
 # Tests of smith's own archive extraction (runtime/gzip.c, runtime/xz.c, runtime/untar.c), the part of `smith_package`
-# that used to run tar. Archives are made with the system's tar, gzip and xz, and read back by `smith fetch` and, under
+# that used to run tar. Archives are made with the system's tar and gzip and with tests/xz.py (macOS has no xz, and Homebrew's is not relied on), and read back by `smith fetch` and, under
 # AddressSanitizer and UndefinedBehaviorSanitizer, by tests/untar.c. Every case uses a cache of its own through
 # XDG_CACHE_HOME, so the real ~/.cache/smith is never touched. Usage: sh tests/untar.sh path/to/smith
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
+# The xz fixtures are made by tests/xz.py, which writes the container and lets Python's lzma module compress the blocks.
+xz() { "${PYTHON:-/usr/bin/python3}" -I "$here/tests/xz.py" "$@"; }
 cc=${CC:-cc}
 work=$(mktemp -d)
 trap '[ -n "${KEEP_WORK:-}" ] || rm -rf "$work"' EXIT INT TERM
