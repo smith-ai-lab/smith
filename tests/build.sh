@@ -2304,6 +2304,34 @@ C
     expect_contains "modules: $folders: the message starts smith: build.c: smith_modules" "$err" "smith: build.c: smith_modules"
 done
 
+# 11g. Modules: every header of smith's own libraries imports alone and together (io includes the arena and random).
+project
+for header in arena random io test build; do
+    printf '#include <smith/%s.h>\n' "$header" >"only_$header.c"
+done
+printf '#include <smith/io.h>\n#include <smith/arena.h>\n#include <smith/random.h>\n#include <smith/test.h>\n#include <smith/build.h>\n' >all_of_them.c
+cat >build.c <<'C'
+#include <smith/build.h>
+
+#include <stddef.h>
+
+void build(SmithBuild *b) {
+    smith_modules(b, &(SmithModules){});
+    const char *const *files = smith_glob(b, smith_list(b, "*_*.c", nullptr));
+    const char *const *objects = smith_map(b, files, "build/%s.o");
+    for (size_t i = 0; files[i]; i++) {
+        SmithObject o = {.compiler = "cc", .source = files[i], .output = objects[i],
+                         .flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-I", ".smith/include", nullptr)};
+        smith_object(b, &o);
+    }
+    smith_default(b, objects);
+}
+C
+build -v
+expect "modules: smith's headers import alone and together" 0 "$rc"
+expect_contains "modules: the smith map is used" "$out" "-fmodule-map-file=.smith/modules/smith.modulemap"
+expect_contains "modules: the library map has io" "$(cat .smith/modules/smith.modulemap)" "module smith_io {"
+
 # 12. A smith built with one command.
 project
 capture "$cc" -std=gnu23 "$here/../smith.c" -o "$work/one-command-smith"
