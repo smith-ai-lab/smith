@@ -228,6 +228,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
   symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar.sh`
   (hostile and damaged archives, and the readers under ASan and UBSan). See [docs/build-c.md](docs/build-c.md).
+- **The protocol code of `smith mcp` is generated, never written by hand** (issue #22): `smith build protocol` runs `scripts/protocol.c` on DAP's and MCP's JSON
+  Schemas, each a package pinned by hash in build.c, and writes `runtime/protocol/{dap,mcp}.[ch]` and their tests `tests/protocol/test_protocol_*.c` on
+  `<smith/json.h>`. The output is committed (a fresh clone and the stage0 need no network); `smith check` runs `check-protocol`, which fails when a
+  committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol.sh` builds and runs the tests under
+  the sanitizers. See [docs/protocol.md](docs/protocol.md).
 - **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
   `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
   modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages
