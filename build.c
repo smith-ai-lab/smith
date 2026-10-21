@@ -141,6 +141,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        "%s --quiet tests/text_exhaustive.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/json.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/json.c -- \"$@\" -I include %s && "
+                                       "%s --quiet tests/mcp_fake.c -- \"$@\" -I include %s && "
                                        "%s --quiet tests/tree_sitter.c -- \"$@\" -I \"$root/lib/include\" %s && "
                                        "%s --quiet lib/test.c -- \"$@\" -I include %s && "
                                        "%s --quiet lib/trace.c -- \"$@\" -I include %s && "
@@ -155,7 +156,7 @@ static void build_tidy(SmithBuild *b, const char *tidy, const char *fetch, const
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
                                        tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk,
-                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
+                                       tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk, tidy, sdk),
                              "sh", nullptr},
             cflags, nullptr),
         .inputs = llvm,
@@ -247,6 +248,7 @@ static const char *const build_format_sources[] = {"smith.c",
                                                    "include/smith/json.h",
                                                    "lib/json.c",
                                                    "tests/json.c",
+                                                   "tests/mcp_fake.c",
                                                    "tests/tree_sitter.c",
                                                    "lib/test.c",
                                                    "include/smith/trace.h",
@@ -745,6 +747,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"io", "io", nullptr, nullptr, 0},
     {"json", "json", nullptr, nullptr, 0},
     {"lsp", "lsp", nullptr, nullptr, 0},
+    {"mcp", "mcp", nullptr, nullptr, 0},
     {"neovim", "neovim", nullptr, nullptr, 0},
     {"new", "new", nullptr, nullptr, 0},
     {"package", "package", nullptr, nullptr, 0},
