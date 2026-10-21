@@ -52,10 +52,10 @@
 //
 // Underneath is one kqueue event loop. macOS has no asynchronous file IO, so file operations run synchronously, in
 // the order they were submitted, inside smith_io_run: submitting only queues them. Pipes, the console, timers and
-// process exits wait on kqueue (EVFILT_READ, EVFILT_TIMER, EVFILT_PROC). Network connections are Network.framework's,
-// which calls back on a dispatch queue; each callback pushes its finished op onto a lock-free list and signals the same
-// kqueue (EVFILT_USER), so the ops complete in smith_io_run like every other. Every blocking call is an op submitted
-// and run to completion on the same loop.
+// process exits wait on kqueue (EVFILT_READ, EVFILT_WRITE, EVFILT_TIMER, EVFILT_PROC). Network connections are
+// Network.framework's, which calls back on a dispatch queue; each callback pushes its finished op onto a lock-free list
+// and signals the same kqueue (EVFILT_USER), so the ops complete in smith_io_run like every other. Every blocking call
+// is an op submitted and run to completion on the same loop.
 //
 // For tests there is a fake with the same type: smith_io_make_test. Its files are in memory, its console is scripted
 // text with the output captured, its clock moves only when told to, its key is given, its servers are scripted, and its
@@ -95,6 +95,7 @@ typedef enum {
     SmithOpKind_FileWrite,
     SmithOpKind_ConsoleRead,
     SmithOpKind_PipeRead,
+    SmithOpKind_PipeWrite,
     SmithOpKind_Timeout,
     SmithOpKind_ProcessWait,
     SmithOpKind_NetConnect,
@@ -127,6 +128,7 @@ typedef struct SmithOp {
         SmithLoop *loop;
         void *console;
         void *connection;
+        void *child;              // the fake's child, for a child's reads and writes
         struct SmithOp *finished; // network ops: the list of ops the callbacks have finished
         SmithArena *arena;
         const char *path;
@@ -349,6 +351,43 @@ typedef struct SmithCapture {
 // Takes in what smith_io_run completed and submits the next read; true once the capture is done. Call it after each
 // smith_io_run for every capture still running.
 [[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
+// A process started with pipes (smith_processes_start_piped): the program writes to its stdin and reads its stdout, as
+// ops on the loop, so one smith_io_run waits on several children's output, the program's own stdin, timers and exits
+// together. The caller owns the struct and keeps it where it is until the child is closed. The child leads a process
+// group of its own, so smith_child_kill reaches its children too. Its stderr is the program's own, not a pipe: a child
+// that logs there can never block on a full pipe nobody reads (and for a server whose stdout is a protocol, the client
+// that started it sees the child's log with its own stderr). The pipes carry bytes, not lines: framing is the caller's.
+// One write, one read and one wait may be pending on a child at once. Close a descriptor's side
+// (smith_child_close_input, smith_child_close) only when no op on it is pending.
+typedef struct SmithChild {
+    SmithProcess process; // wait for it with smith_processes_wait_async(processes, op, child.process)
+    struct {              // private to the library
+        SmithLoop *loop;
+        int input;  // the write end of the child's stdin; -1 once closed
+        int output; // the read end of the child's stdout; -1 once closed
+    } internal;
+} SmithChild;
+// Starts argv[0] (found on PATH) with a pipe for stdin and a pipe for stdout and returns at once. The error is that it
+// could not start (a missing program is ENOENT). On the fake, argv[0] needs a script (smith_io_test_add_child) and is
+// otherwise ENOENT.
+[[nodiscard]] SmithError smith_processes_start_piped(SmithProcesses *processes, const char *const *argv,
+                                                     SmithChild *child);
+// Completes when all size bytes are in the child's stdin pipe (op->size is size), or fails: EPIPE when the child has
+// closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program. The data
+// stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child reads, and a
+// program that also reads its output (smith_child_read_async) cannot deadlock on it.
+void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, size_t size);
+// Completes with whatever the child's stdout holds, at least one byte and at most capacity, in buffer (op->data,
+// op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
+// and nothing was read.
+void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, size_t capacity);
+// Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
+void smith_child_close_input(SmithChild *child);
+// Sends the signal to the child's process group. ESRCH if there is nothing left to signal.
+[[nodiscard]] SmithError smith_child_kill(SmithChild *child, int signal);
+// Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
+// child anyway), and call this once, after the last op on the child is done.
+void smith_child_close(SmithChild *child);
 // How many processes can run at once: the machine's logical cores. The fake has what SmithIoTest.cores says, or 1.
 [[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
 
@@ -421,6 +460,30 @@ typedef struct {
 [[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path, const char *text);
 // Scripts a program for smith_processes_run and spawn: its stdout and its exit status.
 [[nodiscard]] SmithError smith_io_test_add_program(SmithIo *io, const char *program, const char *output, int status);
+// When a scripted child (smith_io_test_add_child) has exited.
+typedef enum {
+    SmithChildExit_Never,       // never by itself: only smith_child_kill ends it (a debugger waiting for requests)
+    SmithChildExit_Start,       // at once, like `true`: its output can be read, and a write is EPIPE
+    SmithChildExit_InputClosed, // when its stdin is closed, like `cat`
+    SmithChildExit_OutputRead,  // when all its output has been read
+} SmithChildExit;
+// A child of the fake io, for smith_processes_start_piped: the first script of the program that no child has used yet
+// is the one started (so two children of one program are two scripts). The child writes output to its stdout in pieces
+// of at most chunk bytes when chunk is not 0, from the start; a read waits (never completes, so the clock moves in
+// smith_io_run) while it has written all it will and has not exited, and ends after the exit. A wait completes at the
+// exit, with status, or with the signal of smith_child_kill. Writes are kept (smith_io_test_child_input), up to 8 KiB;
+// a write to an exited child is EPIPE. Up to 16 children.
+typedef struct {
+    const char *program;
+    const char *output;
+    size_t chunk;
+    SmithChildExit exit_on;
+    int status;
+} SmithChildScript;
+[[nodiscard]] SmithError smith_io_test_add_child(SmithIo *io, SmithChildScript script);
+// The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
+// there is no such child.
+[[nodiscard]] const char *smith_io_test_child_input(const SmithIo *io, size_t n);
 // What the program printed to stdout and stderr so far, NUL-terminated.
 [[nodiscard]] const char *smith_io_test_output(const SmithIo *io);
 [[nodiscard]] const char *smith_io_test_errors(const SmithIo *io);
