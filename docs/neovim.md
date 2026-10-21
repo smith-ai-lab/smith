@@ -47,8 +47,15 @@ changes a debug configuration of yours.
   the file as `smith cc` does (`-x c -std=gnu2y`), finding `import foo` by `foo.smith` beside it. A real project wants
   the `compile_commands.json` that its `build.c` writes (`smith_compile_commands`), for its flags and include paths.
 - **Debugging**: when nvim-dap is installed (on the runtimepath at startup, or when a C or `.smith` file opens), the plugin
-  registers a `smith` adapter (`smith dap`) and a launch configuration for `c`, `cpp`, `objc`, `objcpp` and `smith`, each
-  only when you have not set one. It registers; it starts nothing.
+  registers a `smith` adapter (`smith dap`) and two launch configurations for `c`, `cpp`, `objc`, `objcpp` and `smith`,
+  each only when you have not set one. It registers; it starts nothing. The first, "smith: build and launch the program",
+  is for a smith project (the folder with `build.c` or `build.smith`, found from the current buffer, else the working
+  directory): its `program` runs `smith build` there, in nvim-dap's coroutine so the editor stays free, and on a failure
+  shows the build's output (`vim.notify` at ERROR) and aborts the launch. Then it reads `.smith/build.info` and launches the
+  one `program` that is among the `default` lines, as `smith run` picks it (and refuses with its message when there is none or
+  more than one), by its absolute path, with `cwd` the project root. That is how a breakpoint in `main.smith` stops after
+  `main.c` became `main.smith`: nvim-dap alone would launch whatever binary was last built. The second, "smith: launch a
+  program", asks for a path, for a program the build does not name.
 - **The plugin and the installed smith can be different commits.** At start the plugin compares its own commit
   (`git rev-parse HEAD` in its folder) with the one `smith version` prints (`... commit <hash>`, for a smith built
   from a checkout with `smith build`), and says once when they differ. `vim.g.smith_no_version_check = 1` silences it.
@@ -92,5 +99,7 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
 - `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
   file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
-  project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
+  project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter and its two configurations (against a stand-in `dap` module: the build configuration is first; its `program`, run in a
+  coroutine in a real `smith new` project, builds and returns `build/debug/<name>` while the event loop runs; a project whose build
+  fails gets `dap.ABORT` and an ERROR notification; `smith run`'s rule for the program), a user's own adapter staying, and the
   version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.

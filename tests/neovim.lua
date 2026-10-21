@@ -230,6 +230,66 @@ function tests.header_user_choice()
   equal("c", filetype_of(base, { ["build.c"] = "", ["x.h"] = "", ["x.cpp"] = "" }, "x.h"), "g:c_syntax_for_h wins")
 end
 
+-- The launch configuration that builds: first in the list, then the one that prompts.
+function tests.dap_build_configuration()
+  local dap = require("dap")
+  for _, filetype in ipairs({ "c", "cpp", "objc", "objcpp", "smith" }) do
+    local configurations = dap.configurations[filetype]
+    equal("smith: build and launch the program", configurations[1].name, "the first configuration for " .. filetype)
+    equal("function", type(configurations[1].program), "its program is a function")
+    equal("smith: launch a program", configurations[2].name, "the prompting configuration stays, second")
+  end
+end
+
+-- Runs `program` of the first configuration as nvim-dap does, in a coroutine; returns what it returned, and the
+-- notifications it made. The editor must not be frozen: a timer keeps running while the build does.
+local function run_program(folder)
+  vim.cmd.cd(vim.fn.fnameescape(folder))
+  local notices = {}
+  vim.notify = function(message, level) table.insert(notices, { message = message, level = level }) end
+  local ticks = 0
+  local timer = vim.uv.new_timer()
+  timer:start(0, 20, function() ticks = ticks + 1 end)
+  local result, finished
+  local thread = coroutine.create(function()
+    result = require("dap").configurations.c[1].program()
+    finished = true
+  end)
+  assert(coroutine.resume(thread))
+  check(not finished, "program yields while the build runs")
+  wait("the build", function() return finished end)
+  timer:stop()
+  timer:close()
+  check(ticks > 0, "the event loop kept running during the build (" .. ticks .. " ticks)")
+  return result, notices
+end
+
+function tests.dap_build_program()
+  local program = run_program(os.getenv("SMITH_NEW"))
+  equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW") .. "/build/debug/hello"), vim.uv.fs_realpath(program), "the program")
+  check(program:sub(1, 1) == "/", "an absolute path: " .. program)
+  check(vim.uv.fs_stat(program), "the program was built")
+  local configuration = require("dap").configurations.c[1]
+  equal(vim.uv.fs_realpath(os.getenv("SMITH_NEW")), vim.uv.fs_realpath(configuration.cwd()), "cwd is the project root")
+end
+
+function tests.dap_build_fails()
+  local program, notices = run_program(os.getenv("SMITH_BROKEN"))
+  check(program == require("dap").ABORT, "a failed build aborts: " .. vim.inspect(program))
+  equal(1, #notices, "one notification")
+  equal(vim.log.levels.ERROR, notices[1].level, "at ERROR")
+  check(notices[1].message:find("error", 1, true), "it shows the build's error output: " .. notices[1].message)
+end
+
+function tests.dap_program_of()
+  local of = require("smith.dap").program_of
+  equal("build/debug/a", of("program\tbuild/debug/a\nprogram\tbuild/debug/b\ndefault\tbuild/debug/a\n"), "the one named")
+  local none, message = of("program\tbuild/a\ndefault\tother\n")
+  check(none == nil and message:find("names no program", 1, true), "none: " .. tostring(message))
+  local two, many = of("program\ta\nprogram\tb\ndefault\ta\ndefault\tb\n")
+  check(two == nil and many:find("names more than one program: a, b", 1, true), "two: " .. tostring(many))
+end
+
 function tests.dap_registers()
   local dap = require("dap")
   check(dap.adapters.smith, "the smith adapter is registered")
