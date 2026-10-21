@@ -98,8 +98,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
-  a hash, fetched with `/usr/bin/curl` and extracted with `/usr/bin/tar`; the hash is the lock (no registry, no lock
-  file). `-DOFFLINE` forbids fetching. macOS only for now.
+  a hash, fetched with `/usr/bin/curl` and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`; no other
+  process); the hash is the lock (no registry, no lock file). `-DOFFLINE` forbids fetching. macOS only for now.
+- **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE, LZMA2 and tar, no
+  vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
+  symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar.sh`
+  (hostile and damaged archives, and the readers under ASan and UBSan). See [docs/build-c.md](docs/build-c.md).
 - **Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
   `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
   modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages

@@ -92,7 +92,7 @@ typedef struct {
 } SmithPackage;
 // The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
 // ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash. Fetched, verified and extracted on
-// the first use (/usr/bin/curl and /usr/bin/tar, so .tar.gz, .tar.xz and .zip; $SMITH_CURL picks another curl);
+// the first use (/usr/bin/curl; smith itself reads .tar, .tar.gz and .tar.xz; $SMITH_CURL picks another curl);
 // afterwards it is only looked up, so a build works offline once it has fetched. When the archive holds one top-level
 // folder, the path is that folder's contents. The package appears in the cache only when it is complete: a fetch that
 // is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
