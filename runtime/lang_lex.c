@@ -272,6 +272,8 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .include = smith_raw_include,
         .error = smith_raw_error,
         .lookup = smith_raw_lookup,
+        .type_info = nullptr,
+        .field = nullptr,
         .read_header = nullptr,
         .main_file = path,
     };

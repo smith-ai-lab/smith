@@ -74,10 +74,12 @@ too; an export with no body is defined against it, in C, by its C name.
   It may consume tokens and put others back with `EnterTokenStream`, and is told when the translation unit's `Sema`
   exists. Tokens replayed from the lookahead cache are not offered twice. A tool links a factory in; nothing else of
   clang changed. smith's factory (`shim/hook.cpp`) answers only for a main file called `*.smith`.
-- **The questions** the lowering asks the parser (`SmithHost.lookup` in `runtime/lang.h`) are answered from `Sema`'s name
-  lookup in the current scope: whether a name is declared, a type or a value, whether it is from an `import`ed header.
-  The hook runs one token ahead of the parser, so only completed declarations are visible. `struct` fields and sizes are
-  the same channel and not asked yet (issue #15).
+- **The questions** the lowering asks the parser (`SmithHost` in `runtime/lang.h`) are answered from `Sema`'s name lookup
+  in the current scope, so locals and parameters count and only completed declarations are visible (the hook runs one
+  token ahead of the parser): is this name declared, and a type or a value; was it declared by an `import`ed header; and
+  for a typedef or tag, its size, alignment and fields (names and the spelling of their types). The lowering uses the
+  first two; the others are the questions first-class types and reflection will ask (issue #15), built and tested now
+  (`SMITH_LANG_ASK=Packet,struct Header` prints what the parser answers at the end of the file).
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
   clang. A module's file-scope declaration is read whole before it is written (its prefix, `static`, and for an exported
   function a prototype with the symbol label are decided by all of it). The same code runs over a plain lexer
@@ -93,3 +95,9 @@ too; an export with no body is defined against it, in C, by its C name.
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
 - Diagnostics show lowered names (`game_replay_open`); mapping them back to `game.replay.open` is the consumer's work.
 - `-x smith` is not a clang language: the `.smith` extension and `-x c` stand for it.
+- `clang -E` and `-Xclang -dump-tokens` print the source text under a token the lowering made or renamed (it keeps the
+  location of the token it replaces, so diagnostics, the debugger and clang-tidy's fixes point at the `.smith` text);
+  the parser, the code and the debug info are unaffected. `SMITH_LANG_DUMP` shows the macro arguments of a call after
+  the call, and `smith --smith-lower` is the lowering of the text as written.
+- On macOS a backtrace names an export `_game.replay.open`, since the label is used as written (the underscore is the
+  Mach-O prefix of a C symbol); `b game.replay.open` finds it.

@@ -48,6 +48,8 @@ class SmithHook final : public TokenHook {
         host.include = &SmithHook::includeHeader;
         host.error = &SmithHook::reportError;
         host.lookup = &SmithHook::lookupName;
+        host.type_info = &SmithHook::typeInfo;
+        host.field = &SmithHook::fieldOf;
         host.read_header = &SmithHook::readHeader;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
@@ -87,6 +89,8 @@ class SmithHook final : public TokenHook {
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
     llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
+    std::string fieldName;
+    std::string fieldType;
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
     unsigned lastMacro = 0;
@@ -300,15 +304,64 @@ class SmithHook final : public TokenHook {
             << StringRef(message);
     }
 
+    // The declaration a name means at this point of the parse, or null.
+    NamedDecl *findDecl(const char *name, uint32_t length, SmithLookupKind space) {
+        if (sema == nullptr || sema->getCurScope() == nullptr) return nullptr;
+        IdentifierInfo *id = PP.getIdentifierInfo(StringRef(name, length));
+        LookupResult found(*sema, id, SourceLocation(),
+                           space == SmithLookup_Tag ? Sema::LookupTagName : Sema::LookupOrdinaryName);
+        if (!sema->LookupName(found, sema->getCurScope()) || found.empty()) return nullptr;
+        return found.getRepresentativeDecl();
+    }
+
+    // The complete type a typedef or tag names, or a null type.
+    QualType completeType(const char *name, uint32_t length, SmithLookupKind space) {
+        auto *decl = dyn_cast_or_null<TypeDecl>(findDecl(name, length, space));
+        if (decl == nullptr) return QualType();
+        QualType type = sema->getASTContext().getTypeDeclType(decl);
+        if (type.isNull() || type->isIncompleteType() || type->isDependentType()) return QualType();
+        return type;
+    }
+
+    static bool typeInfo(void *context, const char *name, uint32_t length, SmithLookupKind space, SmithTypeInfo *info) {
+        auto *self = static_cast<SmithHook *>(context);
+        QualType type = self->completeType(name, length, space);
+        if (type.isNull()) return false;
+        ASTContext &ast = self->sema->getASTContext();
+        info->size = ast.getTypeSizeInChars(type).getQuantity();
+        info->alignment = ast.getTypeAlignInChars(type).getQuantity();
+        info->fields = 0;
+        info->is_record = false;
+        if (const RecordDecl *record = type->getAsRecordDecl()) {
+            info->is_record = true;
+            info->fields = std::distance(record->field_begin(), record->field_end());
+        }
+        return true;
+    }
+
+    static bool fieldOf(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
+                        const char **field_name, const char **field_type) {
+        auto *self = static_cast<SmithHook *>(context);
+        QualType type = self->completeType(name, length, space);
+        const RecordDecl *record = type.isNull() ? nullptr : type->getAsRecordDecl();
+        if (record == nullptr) return false;
+        uint32_t at = 0;
+        for (const FieldDecl *field : record->fields()) {
+            if (at++ != index) continue;
+            self->fieldName = field->getName().str();
+            self->fieldType = field->getType().getAsString(self->sema->getASTContext().getPrintingPolicy());
+            *field_name = self->fieldName.c_str();
+            *field_type = self->fieldType.c_str();
+            return true;
+        }
+        return false;
+    }
+
     static SmithLookup lookupName(void *context, const char *name, uint32_t length, SmithLookupKind space) {
         auto *self = static_cast<SmithHook *>(context);
         SmithLookup answer{};
-        if (self->sema == nullptr || self->sema->getCurScope() == nullptr) return answer;
-        IdentifierInfo *id = self->PP.getIdentifierInfo(StringRef(name, length));
-        LookupResult found(*self->sema, id, SourceLocation(),
-                           space == SmithLookup_Tag ? Sema::LookupTagName : Sema::LookupOrdinaryName);
-        if (!self->sema->LookupName(found, self->sema->getCurScope()) || found.empty()) return answer;
-        NamedDecl *decl = found.getRepresentativeDecl();
+        NamedDecl *decl = self->findDecl(name, length, space);
+        if (decl == nullptr) return answer;
         answer.kind = space == SmithLookup_Tag ? SmithLookup_Tag
                       : isa<TypeDecl>(decl)    ? SmithLookup_Type
                                                : SmithLookup_Value;

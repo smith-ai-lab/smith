@@ -155,6 +155,7 @@ struct SmithLang {
     bool enum_pending;
     bool init_top;          // an initializer at file scope is being read
     bool tail_declarator;   // after an aggregate's `}` or a comma: names are declarators
+    uint32_t typedef_depth; // the brace depth the typedef statement began at
     bool statement_typedef; // `typedef` seen in this statement
     uint8_t own_words;      // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.

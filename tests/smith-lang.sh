@@ -14,6 +14,7 @@
 #   expect/header/   the generated header of each module (a.b.h)
 #   expect/symbols   the symbols the objects define (nm -g), sorted
 #   flags            extra compiler flags, if any
+#   ask              types to ask the parser about at the end of each file (SMITH_LANG_ASK), and expect/ask its answers
 # Everything runs in the case's own folder, so paths in messages are relative to it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -66,9 +67,11 @@ build_case() { # out
         module=$(echo "${file%.smith}" | tr / .)
         [ -f "$out/include/${file%.smith}.h" ] && cp "$out/include/${file%.smith}.h" "$out/header/$module.h"
     done
+    ask=
+    [ -f ask ] && ask=$(cat ask)
     for file in $sources; do
         module=$(echo "${file%.smith}" | tr / .)
-        "$smith" $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
+        SMITH_LANG_ASK=$ask "$smith" $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
         "$smith" --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
         objects="$objects $out/obj/$module.o"
     done
@@ -134,6 +137,10 @@ run_case() { # name
             kind=$(basename "$(dirname "$expected")")
             check "$name: $kind $(basename "$expected")" "$expected" "$out/$kind/$(basename "$expected")"
         done
+    fi
+    if [ -f ask ]; then # what the parser answers about the types named in `ask`
+        grep '^ask' "$out/stderr" >"$out/asked"
+        check "$name: the answers" expect/ask "$out/asked"
     fi
     if [ -f expect/symbols ]; then
         for object in $objects; do nm -g "$object" 2>/dev/null; done | grep -v ' U ' | awk '{print $2, $3}' |

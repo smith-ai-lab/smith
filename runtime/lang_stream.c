@@ -47,7 +47,10 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
     if (word != SmithLangWord_Other) {
-        if (word == SmithLangWord_Typedef) lang->statement_typedef = true;
+        if (word == SmithLangWord_Typedef) {
+            lang->statement_typedef = true;
+            lang->typedef_depth = lang->brace_depth;
+        }
         if (word == SmithLangWord_Tag) {
             lang->agg_pending = true;
             lang->enum_pending = smith_lang_ident(token, "enum");
@@ -273,12 +276,51 @@ const char *smith_lang_header(const SmithLang *lang, size_t *length) {
     return smith_lang_header_full;
 }
 
+// SMITH_LANG_ASK=Name,struct Tag: at the end of the file, what the parser says of those types (their size, alignment
+// and fields). It exercises the questions that reflection will ask, and tests them.
+static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
+    const char *list = getenv("SMITH_LANG_ASK");
+    if (list == nullptr || host->type_info == nullptr) return;
+    for (const char *at = list; *at != 0;) { // each entry
+        const char *end = strchr(at, ',');
+        size_t length = end != nullptr ? (size_t)(end - at) : strlen(at);
+        SmithLookupKind space = SmithLookup_Type;
+        const char *name = at;
+        static const char *const tags[] = {"struct ", "union ", "enum "};
+        for (size_t i = 0; i < sizeof tags / sizeof tags[0]; i++) { // 3 entries
+            size_t tag_length = strlen(tags[i]);
+            if (length > tag_length && memcmp(at, tags[i], tag_length) == 0) {
+                space = SmithLookup_Tag;
+                name = at + tag_length;
+            }
+        }
+        size_t name_length = length - (size_t)(name - at);
+        SmithTypeInfo info = {0};
+        if (!host->type_info(host->context, name, (uint32_t)name_length, space, &info)) {
+            fprintf(stderr, "ask %.*s: unknown\n", (int)length, at);
+        } else {
+            fprintf(stderr, "ask %.*s: size %llu alignment %llu fields %u\n", (int)length, at,
+                    (unsigned long long)info.size, (unsigned long long)info.alignment, info.fields);
+        }
+        for (uint32_t i = 0; i < info.fields && host->field != nullptr; i++) { // the fields
+            const char *field_name = "";
+            const char *field_type = "";
+            if (host->field(host->context, name, (uint32_t)name_length, space, i, &field_name, &field_type)) {
+                fprintf(stderr, "ask   %s: %s\n", field_name, field_type);
+            }
+        }
+        at = end != nullptr ? end + 1 : at + length;
+    }
+    (void)lang;
+}
+
 static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->state == SmithLangState_Head) {
         smith_lang_resolve(lang, host, token);
         smith_lang_emit_head(lang, host, true, false);
         smith_lang_end_declaration(lang);
     }
+    smith_lang_ask(lang, host);
     smith_lang_finish(lang);
     smith_lang_emit_kept(lang, host, token);
 }

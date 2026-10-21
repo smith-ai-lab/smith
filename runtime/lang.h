@@ -54,6 +54,14 @@ typedef struct {
     bool from_import;  // declared in a header that `import <h>` brought in (not one that `#include` brought in)
 } SmithLookup;
 
+// What the parser knows of a complete type: the questions reflection will ask (size, alignment, fields).
+typedef struct {
+    uint64_t size;      // in bytes
+    uint64_t alignment; // in bytes
+    uint32_t fields;    // of a struct or union; 0 for any other type
+    bool is_record;
+} SmithTypeInfo;
+
 typedef struct {
     void *context;
     // The next token, after the last one given. `unexpanded` asks that macros are not expanded (the X of `c.X`).
@@ -65,6 +73,11 @@ typedef struct {
     void (*error)(void *context, uint32_t location, const char *message);
     // Questions. A host without a parser answers SmithLookup_None and `false`.
     SmithLookup (*lookup)(void *context, const char *name, uint32_t length, SmithLookupKind space);
+    // The size, alignment and field count of a complete type, named as a typedef or (for SmithLookup_Tag) as a tag.
+    bool (*type_info)(void *context, const char *name, uint32_t length, SmithLookupKind space, SmithTypeInfo *info);
+    // The `index`th field of a struct or union: its name and the spelling of its type, valid until the next call.
+    bool (*field)(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
+                  const char **field_name, const char **field_type);
     // Whether a file is found by the include paths; if so its text, in a buffer the host keeps until the next call.
     bool (*read_header)(void *context, const char *relative, const char **text, uint32_t *length);
     const char *main_file; // the path of the file being lowered

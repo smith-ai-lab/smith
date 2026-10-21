@@ -237,7 +237,9 @@ static const SmithToken *smith_lang_after(SmithLang *lang, const SmithHost *host
 static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                                const SmithLangContext *context, const SmithToken **next) {
     const SmithLangSized *sized = smith_lang_find_sized(name, length);
-    if (sized == nullptr || lang->statement_typedef) return smith_lang_keep();
+    if (sized == nullptr || (lang->statement_typedef && lang->brace_depth == lang->typedef_depth)) {
+        return smith_lang_keep();
+    }
     if (smith_lang_follows_declarator(smith_lang_after(lang, host, next)) &&
         smith_lang_context_typeish(lang, host, context)) {
         return smith_lang_keep();
