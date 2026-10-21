@@ -34,7 +34,7 @@ expect() { # name, expected, actual
     fi
 }
 
-mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith++"
+mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
 cc=${CC:-cc}
 
@@ -67,7 +67,7 @@ void build(SmithBuild *b) {
     const char *const *names = smith_list(b, "arena", "random", "text", nullptr);
     SmithObject objects[3] = {};
     for (size_t i = 0; names[i] != nullptr; i++) {
-        objects[i] = (SmithObject){.compiler = "smith", .source = smith_library(b, names[i]),
+        objects[i] = (SmithObject){.compiler = "smith-cc", .source = smith_library(b, names[i]),
                                    .output = smith_fmt(b, "build/smith/%s.o", names[i]), .flags = flags};
         smith_object(b, &objects[i]);
     }
