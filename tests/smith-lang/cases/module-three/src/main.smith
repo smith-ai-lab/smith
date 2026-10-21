@@ -1,0 +1,17 @@
+import game::replay as rp;
+import lib::text;
+import <stdio.h>;
+import <math.h>;
+
+int main(void) {
+    rp::Handle handle = {.fd = 5};
+    rp::Replay replay = rp::open(&handle, "last.replay");
+    f32 root = c::sqrtf(16.0f);
+    c::printf("frames=%llu name=%s length=%zu version=%u mode=%d root=%.1f eof=%d\n",
+             (unsigned long long)replay.frames, replay.name.data, text::length(replay.name), (unsigned)rp::version,
+             rp::Slow, (double)root, c::EOF);
+    c::printf("counter=%u\n", rp::counter);
+    u8 bytes[3] = {1, 2, 3};
+    c::printf("checksum=%llu\n", (unsigned long long)rp::checksum(bytes, 3));
+    return 0;
+}

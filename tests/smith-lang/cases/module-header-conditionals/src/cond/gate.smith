@@ -1,0 +1,8 @@
+module cond::gate;
+
+#if 0
+export int never_there(void);
+export int also_never(void) { return -1; }
+#endif
+
+export int always_there(void) { return 7; }

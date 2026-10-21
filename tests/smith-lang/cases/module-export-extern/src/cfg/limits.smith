@@ -1,0 +1,4 @@
+module cfg::limits;
+
+export extern u32 max_users;
+export u32 users_allowed(void) { return max_users * 2; }

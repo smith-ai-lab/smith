@@ -1,0 +1,2 @@
+src/cycle/a.smith:2:8: import cycle: cycle::a -> cycle::b -> cycle::a
+src/cycle/b.smith:2:8: import cycle: cycle::b -> cycle::a -> cycle::b

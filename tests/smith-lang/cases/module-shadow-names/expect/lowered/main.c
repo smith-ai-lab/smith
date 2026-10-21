@@ -1,0 +1,8 @@
+int main(void) {
+lib_text_Text text = lib_text_make("shadow");
+int c = 2;
+[[gnu::unused]] int unused_one = lib_gnu_answer();
+int gnu = unused_one;
+printf("%zu %d %d\n", lib_text_length(text), c, gnu);
+return 0;
+}

@@ -1,0 +1,1 @@
+src/uses/macro.smith:5:12: `EOF` is a C macro; write `c::EOF`

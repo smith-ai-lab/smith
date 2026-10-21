@@ -1,0 +1,3 @@
+module lib::gnu;
+
+export int answer(void) { return 42; }

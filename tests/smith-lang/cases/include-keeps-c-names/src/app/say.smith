@@ -1,0 +1,6 @@
+module app::say;
+#include <stdio.h>
+
+export void hello(const char *name) {
+    printf("hi %s\n", name);
+}

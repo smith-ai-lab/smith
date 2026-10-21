@@ -1,0 +1,25 @@
+// Nothing here uses the questions: the test asks the parser about these types at the end of the file (see `ask`), the
+// way reflection will, and compares its answers with expect/ask.
+typedef struct {
+    u8 tag;
+    u64 value;
+    f32 weight;
+} Packet;
+
+struct Header {
+    u16 id;
+    u16 flags;
+    char name[6];
+};
+
+union Number {
+    u32 whole;
+    f32 real;
+};
+
+typedef Packet Alias;
+typedef struct Opaque Hidden;
+
+int main(void) {
+    return 0;
+}

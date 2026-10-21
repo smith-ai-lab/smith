@@ -97,6 +97,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
   40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
   `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; `SMITH_CHECK_ABORTS` stays a macro.
+- **`.smith` files are C with modules, lowered to C as clang reads them** ([docs/smith-lang.md](docs/smith-lang.md), issue
+  #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 100
+  lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
+  before the parser; plain C in a `.smith` file costs the compiler under 1%. The language is smith's own C
+  (`runtime/lang*.c`, which knows nothing of clang), and the clang side is `shim/hook.cpp`: the hook, and the parser's
+  name lookup as the lowering's questions. Modules use `::` (`module a::b;`, `x::name`, `c::printf`), never dots. The
+  `.smith` extension turns it on (`smith cc x.smith` is `-x c x.smith`); plain C in a `.smith` file means what it means
+  in a `.c` file (`tests/smith-lang-c.sh`). A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
+  input; it can still write a module's header (`smith --smith-header`).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

@@ -29,7 +29,11 @@
     "./.agents/skills/smith-test/",
     "./.agents/skills/smith-text/",
     "./.agents/skills/smith-debug/",
-    "./.agents/skills/smith-json/"
+    "./.agents/skills/smith-json/",
+    "./.agents/skills/smith-lang/",
+    "./.agents/skills/smith-lang-modules/",
+    "./.agents/skills/smith-lang-c-interop/",
+    "./.agents/skills/smith-lang-sized-types/"
   ],
   "lspServers": {
     "smith": {

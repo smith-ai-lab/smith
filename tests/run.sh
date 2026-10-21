@@ -82,8 +82,24 @@ compile_forms() {
     expect "[$form] mixed .metal and C inputs are refused" "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command" "$err"
     expect "[$form] mixed inputs: status 2 and nothing ran" "2 " "$rc $out"
 
-    capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith -o out.o
-    expect "[$form] a .smith input goes to clang with its arguments untouched" "$(lines "clang argv0=$cl" '[-c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
+    # A .smith input needs a smith whose clang has the token hook; any other refuses it, and does not compile it as C.
+    if env SMITH_CLANG="$cl" "$prog" $v --smith-which -c a.smith >/dev/null 2>&1; then
+        capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith -o out.o
+        expect "[$form] a .smith input is compiled as C, and nothing else changes" "$(lines "clang argv0=$cl" '[-c]' '[-x]' '[c]' '[a.smith]' '[-o]' '[out.o]')" "$out"
+
+        capture env SMITH_CLANG="$cl" "$prog" $v -c -I x.smith a.smith b.c c.smith -o out.o
+        expect "[$form] the language is C for the .smith inputs only, and an option's value is no input" "$(lines "clang argv0=$cl" '[-c]' '[-I]' '[x.smith]' '[-x]' '[c]' '[a.smith]' '[-x]' '[none]' '[b.c]' '[-x]' '[c]' '[c.smith]' '[-o]' '[out.o]')" "$out"
+
+        capture env SMITH_CLANG="$cl" "$prog" $v -x c++ -c a.smith
+        expect "[$form] a language named by the caller is left alone" "$(lines "clang argv0=$cl" '[-x]' '[c++]' '[-c]' '[a.smith]')" "$out"
+    else
+        capture env SMITH_CLANG="$cl" "$prog" $v -c a.smith -o out.o
+        expect "[$form] a .smith input is refused by a smith without the token hook" "smith: .smith files need a smith whose clang has the token hook (patches/clang-token-hook.patch, applied by \`smith build llvm\`); this one has none" "$err"
+        expect "[$form] a .smith input is refused: status 2 and nothing ran" "2 " "$rc $out"
+    fi
+
+    capture env SMITH_CLANG="$cl" "$prog" $v a.smith b.metal
+    expect "[$form] a .smith input and a .metal input are refused" "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command" "$err"
 
     capture env SMITH_CLANGXX="$work/bin/clang++" "$plus_prog" $plus_v -c a.cpp
     expect "[$form] smith++ uses clang++" "$(lines "clang++ argv0=$work/bin/clang++" '[-c]' '[a.cpp]')" "$out"
