@@ -279,8 +279,11 @@ smith_tests(b, &tests);                              // tests.step is the task "
   unwinds with `siglongjmp` to the worker's loop and the result goes back through shared memory, so the worker lives
   on. A crash, a timeout, an exit, output past 16 MiB or a sanitizer's report (in the output of a failed or a passing
   test) ends the worker: the runner records the failure as it always has, forks a fresh worker and goes on, so a
-  crash fails only its own test. What a test leaves in global variables, files and the process stays for the next
-  test on that worker, and which tests share a worker depends on timing unless `--jobs 1`; `--shuffle <seed>` runs the
+  crash fails only its own test. A worker also ends after any failed test, because a failed check unwinds out of
+  arbitrary code and can leave state half-done, and after any test that ran a `SMITH_CHECK_ABORTS`, passed or failed,
+  because a death check stands for the program ending: a worker is reused only after a clean pass with no death
+  check (the shrinking worker is reused across its failing attempts). What a test leaves in global variables, files
+  and the process stays for the next test on that worker after such a pass, and which tests share a worker depends on timing unless `--jobs 1`; `--shuffle <seed>` runs the
   tests in a shuffled order to find such a dependence (it replays with `--jobs 1`), and `--isolate` keeps the old
   process per test (and per `SMITH_CHECK_ABORTS`), exactly. `--stats` prints how many forks the run made. Results are
   printed in table order, in either mode. Output is captured and

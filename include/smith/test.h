@@ -10,11 +10,13 @@
 //
 // The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
 // process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
-// process stays for the next test that worker runs. A crash, a timeout, an exit or a sanitizer report ends the worker
-// and the runner forks another, so one such test fails alone. Which tests share a worker depends on timing, unless
-// there is one job. A test must not depend on another: -DSHUFFLE=<seed> runs the tests in a shuffled order to find one
-// that does (with -DJOBS=1 the order, and so the failure, replays from the seed), and -DISOLATE=1 gives every test a
-// process of its own, which is also what to use under a debugger that cannot follow a fork.
+// process stays for the next test that worker runs, except after these, which end the worker: a failed test (a failed
+// check unwinds out of arbitrary code and can leave state half-done), a test that ran a SMITH_CHECK_ABORTS (a death
+// check stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
+// worker, so a worker is reused only after a clean pass with no death check. Which tests share a worker depends on
+// timing, unless there is one job. A test must not depend on another: -DSHUFFLE=<seed> runs the tests in a shuffled
+// order to find one that does (with -DJOBS=1 the order, and so the failure, replays from the seed), and -DISOLATE=1
+// gives every test a process of its own, which is also what to use under a debugger that cannot follow a fork.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
 // more than this header.
