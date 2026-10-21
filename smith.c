@@ -785,10 +785,6 @@ static const SmithLibrary smith_libraries[] = {
     {"text", smith_text_header, sizeof smith_text_header, smith_text_source, sizeof smith_text_source},
 };
 
-// smith's own io, which runs the build graph (runtime/executor.c): the arena, the keys io needs and the io itself.
-#include "lib/arena.c"
-#include "lib/io.c"
-#include "lib/random.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
