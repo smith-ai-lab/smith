@@ -1,0 +1,81 @@
+# Neovim
+
+Neovim support for `.smith` files and for smith's C comes from this repository, with no fork of any Neovim plugin. It
+needs Neovim 0.12 and `smith` on the `PATH`.
+
+```lua
+vim.pack.add({ "git@github.com:adam-r-kowalski/smith" })   -- HTTPS once the repository is public
+vim.lsp.enable("smith")                                    -- optional: smith lsp for C, C++ and Objective-C
+```
+
+That is the whole setup. The plugin does nothing you did not ask for: it never enables a language server and never
+changes a debug configuration of yours.
+
+## What is in the repository
+
+- `plugin/smith.lua`: the only Neovim file at the root (as fzf keeps `plugin/fzf.vim` at the root of a Go repository);
+  it registers the `.smith` file type, puts `editors/neovim` on the runtimepath and loads `require("smith")`.
+- `editors/neovim/`: the Lua code (`lua/smith/`) and the queries (`queries/smith/{highlights,folds,indents}.scm`, each
+  starting with `; inherits: c`).
+- `tree-sitter/`: the grammar (`grammar.js`) and the generated `src/parser.c`, committed, so that nobody needs the
+  tree-sitter CLI or Node.
+
+## What works now
+
+- **`.smith` files** get the `smith` file type and tree-sitter highlighting: `module`, `import`, `as` and `export`,
+  the `a::b` paths of modules (`module` for each name in a path, `punctuation.delimiter` for `::`), `c::printf` as a
+  call, `tx::Text` as a type, `type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
+  inherited): `vim.wo.foldexpr = "v:lua.vim.treesitter.foldexpr()"` uses the folds; indents are for nvim-treesitter.
+- **The parser** is compiled on first use (a few seconds, in the background, while the first `.smith` buffer opens) by
+  `smith cc -shared` into `stdpath("data")/smith/parser/smith-<hash of parser.c>.so`, and again only when `parser.c`
+  changes (`vim.pack.update`). Neovim 0.12 loads parsers itself, so nvim-treesitter is not required, and works if present.
+  Without `smith` on the `PATH` the plugin says once that it cannot build the parser.
+- **Plain C stays C**: `module`, `import`, `export`, `type`, `throw`, `new` and `class` are names wherever C allows names
+  (`int import;`, `module = 1;`, `s->type`), and `u8` is a variable in a file that declares one.
+- **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc` and `objcpp`, with the
+  root markers `build.c`, `build.smith`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
+  Do not add `--query-driver` (clangd then puts the SDK's include paths ahead of clang's own and the SDK's modules fail).
+  Override anything with `vim.lsp.config("smith", { ... })`.
+- **Debugging**: when nvim-dap is installed (on the runtimepath at startup, or when a C or `.smith` file opens), the plugin
+  registers a `smith` adapter (`smith dap`) and a launch configuration for `c`, `cpp`, `objc`, `objcpp` and `smith`, each
+  only when you have not set one. It registers; it starts nothing.
+- **The plugin and the installed smith can be different commits.** At start the plugin compares its own commit
+  (`git rev-parse HEAD` in its folder) with the one `smith --smith-version` prints (`... commit <hash>`, for a smith built
+  from a checkout with `smith build`), and says once when they differ. `vim.g.smith_no_version_check = 1` silences it.
+
+## What waits
+
+- Formatting `.smith` (`smith fmt`): issue #25.
+- `smith lsp` for `.smith` files, so the language server attaches to them: issue #26.
+- `smith dap` and `smith dbg` for `.smith` programs (names in backtraces, `b game::replay::open`): issue #27.
+- Upstream registrations (Neovim's file types, nvim-treesitter, nvim-lspconfig), later, as contributions.
+
+## The grammar
+
+`tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
+([smith-lang.md](smith-lang.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (on a
+declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `type T` parameters,
+`if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
+what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types
+and operators as macro arguments (`SMITH_ARENA_PUSH(&a, long double)`, `SMITH_CHECK(a, ==, b)`), a macro that defines
+functions without a semicolon, Apple blocks and `__block`.
+
+One ambiguity is C's own: `module ;` and `module a;` are valid C when `module` is a type, and read as the module line.
+
+Regenerating `parser.c` is a developer step: `scripts/tree-sitter.sh` (add `corpus` to run the CLI's own corpus tests). It
+downloads the tree-sitter CLI 0.27.1 into `~/.cache/smith/tools` (sha256 of the release archive pinned in the script),
+fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 15, the one Neovim 0.12 loads. Edit
+`grammar.js` and the corpus in `tree-sitter/test/corpus`, regenerate, commit `src/`.
+
+## Tests
+
+`smith test` runs `tests/tree_sitter.sh` and `tests/neovim.sh`.
+
+- `tests/tree_sitter.sh`: the corpus of `tree-sitter/test/corpus` (one test per construct, run by `tests/tree_sitter.c`
+  without the CLI), the samples in `tests/tree_sitter_cases`, the #11 corpus (`tests/smith-lang/cases`, when it exists;
+  `SMITH_LANG_CASES=<folder>` checks a copy), and every `.c` and `.h` file of smith, all of which must parse with no
+  `ERROR` or `MISSING` node. The driver is compiled by smith against the tree-sitter runtime, pinned by hash.
+- `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
+  when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
+  file of a scratch project, the DAP adapter (against a stand-in `dap` module), a user's own adapter staying, and the
+  version warning. `SMITH_NVIM_ONLY="parser highlights"` runs just those.

@@ -122,6 +122,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs, and a
   contract per function, so that callers use the contract instead of the body. Proofs are cached by content, and only
   what changed is proved again.
+- **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
+  the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
+  `parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.
 - **smith's libraries are a modern standard library for C, holding only what is proven.**
   - **Joining:** a library joins when two projects need the same thing (game's trigonometry and random's logarithm make
     `<smith/math.h>`), never on speculation. So there are no vectors or tensors until a second project needs one.
