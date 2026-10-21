@@ -188,10 +188,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   its own, which ends at its budget (SIGALRM) and when its parent dies. Bitwuzla decides the queries on every core, cheap query first and the full one only if that fails; Z3 only finds a counterexample's values, because on queries
   with many stores through one array Z3 takes minutes where Bitwuzla takes a fraction of a second. Skill:
   smith-contract.
-- **A proof is fast, or it is written wrong.** Like a test, each proof has a time budget of about 10 s, and one that
-  exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs, and a
-  contract per function, so that callers use the contract instead of the body. Proofs are cached by content, and only
-  what changed is proved again.
+- **A proof is fast, or it is written wrong, and fast is CPU time.** Like a test, each proof has a budget of about 10 s,
+  and one that exceeds it fails. The fix is to write it differently: free inputs instead of random draws, local proofs,
+  and a contract per function, so that callers use the contract instead of the body. The budget is CPU time, so that a
+  busy machine slows a proof and never fails it (owner's decision, after load averages of 17 to 54 made proofs time
+  out): a proof is charged what it would take on 8 idle cores, a constant on every machine (`Options::solver_threads`):
+  the CPU time of what runs one thing after another, plus for the queries Bitwuzla runs side by side the longest of
+  them or all of them divided by 8, whichever is more. The child process has the kernel's CPU limit as a backstop and a
+  large wall-clock limit for one that is blocked. `smith prove -v` shows wall, CPU and charged time. Proofs are cached
+  by content, and only what changed is proved again.
 - **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
   the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
   `parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.
