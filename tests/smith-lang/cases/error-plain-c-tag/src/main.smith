@@ -1,0 +1,6 @@
+import <sys/stat.h>;
+
+int main(void) {
+    struct stat info;
+    return (int)sizeof info;
+}

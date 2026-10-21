@@ -1,0 +1,6 @@
+import <stdio.h>;
+
+i32 main() {
+  printf("hello smith\n");
+  return 0;
+}

@@ -39,4 +39,4 @@ Selective imports, re-exports, a module over several files, `smith interface`.
 - `imports come before any declaration`; `cannot find module`: its header is not in `.smith/include`: pass the module's source to `smith_object` in build.c and `smith build` writes the header (by hand: `smith cc --smith-header`, with `-I .smith/include`).
 - `smith: import cycle: a::x -> a::y -> a::x` (from `smith build`, before any compile); `smith_object: src/x.smith declares module a::b, so its path must end in a/b.smith` (build.c, once).
 
-For C names inside a module, load `smith-lang-c-interop`.
+For C names (an `import <h>;` puts them under `c::` in every `.smith` file, a module or not), load `smith-lang-c-interop`.

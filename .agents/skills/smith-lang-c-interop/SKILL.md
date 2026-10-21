@@ -11,7 +11,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang-c-interop/
 
 `import <h>;` (or `import "h";`, looked for beside the file first) includes the header and binds `c`: `c::sqrtf(x)`, `c::EOF`, `c::WIFEXITED(s)`, `struct c::stat`. Macros work. `c::` names C only in a file that imports a header; otherwise `c` is any identifier.
 
-In a module, a name an imported header declared, used without `c::`, is an error (a function, variable, type, tag or macro): `` `sqrtf` is a C name; write `c::sqrtf` ``. Names from `#include`d headers stay bare, as in C. In a file that is not a module, nothing is checked.
+A name an imported header declared, used without `c::`, is an error in every `.smith` file, a module or not (a function, variable, type, tag or macro): `` `sqrtf` is a C name; write `c::sqrtf` ``, `` `struct stat` names a C tag; write `struct c::stat` ``, `` `EOF` is a C macro; write `c::EOF` ``. An import always puts the header's names under `c::`. Names from `#include`d headers stay bare, as in C, so plain C in a `.smith` file means what it means in a `.c` file. A file with no `module` line lowers nothing else: no prefix, nothing `static`.
 
 ## smith into C and C++
 

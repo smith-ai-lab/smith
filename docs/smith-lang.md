@@ -27,7 +27,8 @@ u32 helper(void) { … }                              // private
     module's name (`io::Io io = io::make();`): `io` is a binding only where `::` follows it, and never inside an
     attribute (`[[gnu::unused]]`). This needs C23, which lexes `::` as one token.
   - `import <h>;` and `import "h";` include a header and bind `c`: `c::sinf(x)`, `c::EOF`, `c::WIFEXITED(s)`,
-    `struct c::stat`. A quoted header is looked for beside the importing file first.
+    `struct c::stat`. A quoted header is looked for beside the importing file first. An import always puts the
+    header's names under `c::`, in a module or not; `#include` keeps them bare, as in C.
   - `c::` names C only in a file that imports a header; `c` is otherwise any identifier, and `c.x` is a field.
 - **Modules.** The first line, `module a::b;`, makes the file a module; its path must end in `a/b.smith`.
   - Every file-scope name in a module is prefixed with the module's name (`game_replay_open`). `export` makes a
@@ -35,14 +36,15 @@ u32 helper(void) { … }                              // private
   - `export` applies to functions, typedefs, struct, union and enum tags, enum constants, `constexpr` constants and
     globals. An export has the symbol `game::replay::open` (an `__asm__` label), so no C name can collide with it.
     `main` stays `main`.
-  - A C name used in a module with no `c::` is an error: a function, a variable, a type, a tag or a macro that an
-    `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
+  - A C name used with no `c::` is an error in every `.smith` file, a module or not: a function, a variable, a type,
+    a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
+    A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
 - **Sized types**, in any `.smith` file: `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize` (`size_t`), `isize` (`ptrdiff_t`),
   `f16` (`_Float16`), `f32`, `f64`. They are spellings of the standard types, never typedefs. A file that declares its
   own `u32` (or a variable named `u8`) keeps it.
 - **Errors**, each pointing at the `.smith` text: an exported declaration naming a private type; an import cycle
   (`a -> b -> a`); `export` in a file with no `module` line; a module name that
-  does not match the path; a bare C name in a module; an import after a declaration; a module that is not found; the
+  does not match the path; a bare C name from an imported header; an import after a declaration; a module that is not found; the
   `module` line not first; an export that declares two names.
 - **Not yet:** selective imports, re-exports, a module over several files.
 

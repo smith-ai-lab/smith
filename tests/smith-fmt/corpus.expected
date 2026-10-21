@@ -142,6 +142,26 @@ export int f(void) {
 ==> error-module-syntax/src/syntax.smith <==
 module;
 int x;
+==> error-plain-c-macro/src/main.smith <==
+import <stdio.h>;
+
+int main(void) {
+    return EOF;
+}
+==> error-plain-c-name/src/main.smith <==
+import <stdio.h>;
+
+i32 main() {
+    printf("hello smith\n");
+    return 0;
+}
+==> error-plain-c-tag/src/main.smith <==
+import <sys/stat.h>;
+
+int main(void) {
+    struct stat info;
+    return (int)sizeof info;
+}
 ==> import-c-header/src/main.smith <==
 import <math.h>;
 import <sys/wait.h>;
@@ -557,6 +577,24 @@ int main(void) {
 
 int main(void) {
     printf("hello\n");
+    return 0;
+}
+==> plain-import-c/src/main.smith <==
+import <stdio.h>;
+import <sys/stat.h>;
+
+i32 main() {
+    struct c::stat info;
+    c::printf("hello smith %d\n", c::EOF + (int)sizeof info - (int)sizeof info);
+    return 0;
+}
+==> plain-include-keeps-c-names/src/main.smith <==
+#include <stdio.h>
+#include <sys/stat.h>
+
+i32 main() {
+    struct stat info;
+    printf("hello smith %d\n", EOF + (int)sizeof info - (int)sizeof info);
     return 0;
 }
 ==> plain-names/src/main.smith <==

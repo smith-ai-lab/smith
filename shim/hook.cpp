@@ -369,12 +369,11 @@ class SmithHook final : public TokenHook {
         return false;
     }
 
-    // A macro of an imported header used where the source names it with no `c::` is an error in a module.
+    // A macro of an imported header used where the source names it with no `c::` is an error, in a module or not.
     void macroUsed(const MacroDefinition &definition, SourceRange range) {
         SourceLocation at = range.getBegin();
         const MacroInfo *macro = definition.getMacroInfo();
-        if (!smith_lang_is_module(lang) || !at.isFileID() || SM.getFileID(at) != MainFile || macro == nullptr ||
-            macro->isBuiltinMacro()) {
+        if (!at.isFileID() || SM.getFileID(at) != MainFile || macro == nullptr || macro->isBuiltinMacro()) {
             return;
         }
         if (!importOwned(SM.getFileID(macro->getDefinitionLoc())) ||

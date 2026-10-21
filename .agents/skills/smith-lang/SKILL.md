@@ -10,7 +10,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang/SKILL.md` 
 A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant, and compiles to the same code. A file opts into more, one step at a time; none is needed for the one before:
 
 1. **Sized types** work in any `.smith` file: `u32`, `f64`, `usize` (load `smith-lang-sized-types`).
-2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header (load `smith-lang-modules`, `smith-lang-c-interop`).
+2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header, whose names are then written `c::sqrtf` in a module or not (load `smith-lang-modules`, `smith-lang-c-interop`).
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
 
 It is C23 (`::` must lex as one token), compiled with `smith cc x.smith` (the extension makes it `-x c`) like any C file, with the same flags.
