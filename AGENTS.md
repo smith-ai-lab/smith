@@ -88,6 +88,9 @@ macOS: smith builds itself, checkers, learner and game, and `smith build` builds
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
   them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
   note on what changed and why.
+- **The plugin's skills describe everything smith does today, and nothing it doesn't do yet.** Every command, build.c
+  call and library has a skill that another project's agent can learn it from. Plans go in ROADMAP.md, never in a
+  skill. A change that adds or changes something updates its skill in the same commit.
 - Small Conventional Commits.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 
