@@ -1,0 +1,2 @@
+knowledge/alpha.md: type 'dataset' is not one of convention, architecture, contract, design
+smith docs: 1 concepts, 1 problems

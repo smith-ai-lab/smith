@@ -3,12 +3,13 @@
 //   smith run               builds it and runs it; its arguments go to the program
 //   smith fmt               formats the sources to .clang-format
 //   smith lint              runs clang-tidy (.clang-tidy) on them
-//   smith check             fails when formatting or lint would
+//   smith docs              checks AGENTS.md, knowledge/ and the skills in .agents/skills
+//   smith check             fails when formatting, lint or the docs would
 //   smith build release     the optimized program with assertions on, build/release/@NAME@
 //   smith build fast        the optimized program with assertions off, build/fast/@NAME@
 //   smith build -t clean    removes what was built
-// A verb runs the task or alias of its name in this file: run, test, check, fmt, lint. Add tests with smith_tests and
-// `smith test` runs them.
+// A verb runs the task or alias of its name in this file: run, test, check, fmt, lint, docs. Add tests with smith_tests
+// and `smith test` runs them.
 #include <smith/build.h>
 
 #include <string.h>
@@ -67,6 +68,22 @@ static SmithStep build_program(SmithBuild *b, const char *variant, const char *c
     return program.step;
 }
 
+// smith docs checks AGENTS.md, knowledge/ and the skills (the @KEBAB@-docs skill says how they are kept). The step
+// names every file it read in a depfile, so it runs again only when one of them changes. The types a concept may have
+// are listed here: add one with --type, and a field a type must have with --require <type>:<field>[=<allowed values>].
+static void build_docs(SmithBuild *b) {
+    SmithStep docs = {
+        .command =
+            smith_list(b, "smith", "docs", "--depfile", "build/docs.stamp.d", "--target", "build/docs.stamp", "--type",
+                       "convention", "--type", "architecture", "--type", "contract", "--type", "design", nullptr),
+        .inputs = smith_glob(b, smith_list(b, "AGENTS.md", "knowledge/**/*.md", ".agents/skills/**/*.md", nullptr)),
+        .stamp = "build/docs.stamp",
+        .depfile = "build/docs.stamp.d",
+    };
+    smith_step(b, &docs);
+    smith_alias(b, "docs", docs.outputs);
+}
+
 // smith fmt, smith lint and smith check. The sources are listed here: add a file to the list when you add one.
 // clang-tidy reads the flags of each file from compile_commands.json, which this build writes, so lint checks what the
 // build builds.
@@ -79,7 +96,8 @@ static void build_checks(SmithBuild *b) {
     smith_task(b, "check-format", &check_format);
     SmithStep lint = {.command = smith_list(b, "smith", "lint", "--quiet", "-p", ".", "main.c", nullptr)};
     smith_task(b, "lint", &lint);
-    smith_alias(b, "check", smith_list(b, "check-format", "lint", nullptr));
+    build_docs(b);
+    smith_alias(b, "check", smith_list(b, "check-format", "lint", "docs", nullptr));
 }
 
 void build(SmithBuild *b) {

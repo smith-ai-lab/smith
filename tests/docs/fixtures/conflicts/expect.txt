@@ -1,0 +1,6 @@
+AGENTS.md:3: merge-conflict marker
+AGENTS.md:5: merge-conflict marker
+AGENTS.md:7: merge-conflict marker
+knowledge/alpha.md:10: merge-conflict marker
+knowledge/alpha.md:14: merge-conflict marker
+smith docs: 1 concepts, 5 problems

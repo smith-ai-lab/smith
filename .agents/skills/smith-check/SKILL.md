@@ -13,7 +13,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-check/SKILL.md`
 
 - `smith fmt` runs the project's `fmt` task: it rewrites the sources to `.clang-format`.
 - `smith lint` runs the `lint` task: clang-tidy with `.clang-tidy` over the sources, with the flags the build uses.
-- `smith check` runs the `check` alias: everything that must pass before a change is done (format, lint, tests, and what the project adds). It takes no arguments but `-D` options.
+- `smith check` runs the `check` alias: everything that must pass before a change is done (format, lint, the docs, tests, and what the project adds; `smith new` writes a `docs` step that runs `smith docs`, see `smith-docs`). It takes no arguments but `-D` options.
 - Before committing: `smith fmt`, then `smith check`. A project without these tasks gets `build.c defines no task or alias named check`; `smith new` writes them.
 - `smith build check` and the other verb names are refused: use the verb.
 

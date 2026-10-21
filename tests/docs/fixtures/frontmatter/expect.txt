@@ -1,0 +1,9 @@
+knowledge/Bad_Name.md: file name is not kebab-case
+knowledge/dataset.md: type 'dataset' needs license_class: commercial-ok, research-only, unknown
+knowledge/no-title.md: frontmatter lacks title
+knowledge/odd-type.md: type 'poem' is not one of contract, model, dataset
+knowledge/open.md: no frontmatter
+knowledge/plain.md: no frontmatter
+knowledge/index.md: description of open.md differs from its own
+knowledge/index.md: description of plain.md differs from its own
+smith docs: 6 concepts, 8 problems

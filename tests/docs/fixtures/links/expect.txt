@@ -1,0 +1,7 @@
+AGENTS.md: broken link knowledge/gone.md
+AGENTS.md: broken link missing.md
+AGENTS.md: broken link split.md
+knowledge/alpha.md: broken link ../nope/AGENTS.md
+.agents/skills/a/SKILL.md: broken link references/dead.md
+.agents/skills/a/references/more.md: broken link ../../b/SKILL.md
+smith docs: 1 concepts, 6 problems

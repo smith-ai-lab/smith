@@ -1,0 +1,2 @@
+.claude/skills: missing; it must be a symlink to ../.agents/skills
+smith docs: 0 concepts, 1 problems

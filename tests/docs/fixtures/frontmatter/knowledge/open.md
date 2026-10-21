@@ -1,0 +1,3 @@
+---
+type: model
+title: Open
