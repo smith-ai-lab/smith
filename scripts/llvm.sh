@@ -4,9 +4,27 @@
 # nothing to do. The work lives in the package cache, not in build/, because `smith build clean` would delete an
 # hour's build: $CACHE/smith/llvm/<version>/{build,install}.
 set -eu
-src=$1 cmake=$2 python=$3 stamp=$4
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/23.1.3
+src=$1 cmake=$2 python=$3 stamp=$4 ninja=$5
+# One configuration serves the compiler, the prover and `.smith` (#20): RTTI and exceptions on (Alive2 needs them), and the
+# token hook (#11). A change to either is a new folder: r2 is the second configuration of 23.1.3. SMITH_LLVM_NAME builds
+# into another folder (an experiment next to the shared install).
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r2}
 mkdir -p "$cache" "$(dirname "$stamp")"
+# --- step: the token hook (patches/clang-token-hook.patch; issue #11) ---------------------------------------------------
+# A token transformer on the Preprocessor, for .smith files; off unless smith installs it. The package is read-only to
+# everyone else (other installs are built from it), so the patch goes into a copy, once: a copy that has it is left alone.
+# Remove this step, and the file, to build plain LLVM.
+patch=$(cd "$(dirname "$0")/.." && pwd)/patches/clang-token-hook.patch
+if [ ! -f "$cache/src/.hooked" ]; then
+    rm -rf "$cache/src"
+    mkdir -p "$cache/src"
+    cp -R "$src/." "$cache/src/"
+    chmod -R u+w "$cache/src"
+    patch -p1 -s -d "$cache/src" <"$patch"
+    : >"$cache/src/.hooked"
+fi
+src=$cache/src
+# --- end of the token hook step -----------------------------------------------------------------------------------------
 # The host compiler that builds LLVM is Apple's; the clang it makes finds the SDK at run time.
 sdk=$(xcrun --show-sdk-path)
 host=/usr/bin
@@ -14,16 +32,16 @@ host=/usr/bin
 # /System (zlib, zstd, libxml2, z3, libedit, terminfo, ffi, curl). Off for build time only: tests, benchmarks, examples,
 # docs, bindings, and the compiler-rt parts smith does not use (libfuzzer, memprof, xray, orc, ctx_profile).
 "$cmake/CMake.app/Contents/bin/cmake" -G Ninja -S "$src/llvm" -B "$cache/build" \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=Release "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local" \
     -DCMAKE_INSTALL_PREFIX="$cache/install" \
-    -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" \
+    -DCMAKE_MAKE_PROGRAM="$ninja" \
     -DCMAKE_C_COMPILER=$host/clang -DCMAKE_CXX_COMPILER=$host/clang++ \
     -DCMAKE_OSX_SYSROOT="$sdk" \
     -DPython3_EXECUTABLE="$python/bin/python3" \
     -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld' \
     -DLLVM_ENABLE_RUNTIMES='compiler-rt' \
     -DLLVM_TARGETS_TO_BUILD=AArch64 \
-    -DLLVM_ENABLE_ASSERTIONS=OFF \
+    -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_EH=ON \
     -DBUILD_SHARED_LIBS=OFF -DLLVM_BUILD_LLVM_DYLIB=OFF -DLLVM_LINK_LLVM_DYLIB=OFF -DCLANG_LINK_CLANG_DYLIB=OFF \
     -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_Z3_SOLVER=OFF \
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_FFI=OFF -DLLVM_ENABLE_CURL=OFF \
@@ -31,7 +49,7 @@ host=/usr/bin
     -DLLVM_ENABLE_BINDINGS=OFF -DCLANG_INCLUDE_TESTS=OFF \
     -DCOMPILER_RT_INCLUDE_TESTS=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF \
     -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
-nice ninja -C "$cache/build" install
+nice "$ninja" -C "$cache/build" install
 # The clang binary's own main is a library function, clang_main, in these four objects (the fifth, clang-driver.cpp.o, is
 # its main). smith links them to compile in its own process, so they go beside the libraries as libclangmain.a.
 objects=$cache/build/tools/clang/tools/driver/CMakeFiles/clang.dir
