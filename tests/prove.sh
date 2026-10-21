@@ -176,11 +176,12 @@ expect_contains "by value: ... as a promise that may be false" "$out" "by_value.
 case $out in *poison* | *"undefined behaviour"*) expect "by value: the counterexample is not poison" "a value" "$out" ;; *) expect "by value: the counterexample is not poison" "a value" "a value" ;; esac
 
 # 7e. A file that does not compile is an error with clang's message, never "nothing to prove".
-prove "$cases/syntax_error.c"
+printf '#include <smith/contract.h>\nint f(int x) { return x +; }\n' >"$work/syntax_error.c" # not a .c file of the repository: the tree-sitter test would call it a parse error
+prove "$work/syntax_error.c"
 expect "compile error: fails" 1 "$rc"
 expect_contains "compile error: ... with clang's message" "$out" "syntax_error.c:2:26: error: expected expression"
 case $out in *"nothing to prove"*) expect "compile error: is not nothing to prove" "an error" "$out" ;; *) expect "compile error: is not nothing to prove" "an error" "an error" ;; esac
-prove "$cases/memory.c" "$cases/syntax_error.c"
+prove "$cases/memory.c" "$work/syntax_error.c"
 expect "compile error: in the second file fails" 1 "$rc"
 prove "$work/does-not-exist.c"
 expect "missing file: fails" 1 "$rc"
