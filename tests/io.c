@@ -98,7 +98,7 @@ static void test_real_files(SmithIo *io) {
 
 static void test_real_big_file(SmithIo *io) {
     constexpr size_t size = (size_t)3 << 20;
-    unsigned char *data = SMITH_ARENA_PUSH_ARRAY(&io->arena, unsigned char, size);
+    unsigned char *data = smith_arena_push_array(&io->arena, sizeof(unsigned char), size, alignof(unsigned char));
     for (size_t i = 0; i < size; i++)
         data[i] = (unsigned char)(i * 7 + 1);
     assert(smith_files_write(&io->files, "big.bin", data, size, SmithWrite_Replace).code == 0);
@@ -389,7 +389,7 @@ static void test_memory(void) {
     assert(io.arena.capacity == (size_t)64 << 30);
     assert(made - before < (size_t)16 << 20);
     constexpr size_t touched = (size_t)256 << 20;
-    unsigned char *block = SMITH_ARENA_PUSH_ARRAY(&io.arena, unsigned char, touched);
+    unsigned char *block = smith_arena_push_array(&io.arena, sizeof(unsigned char), touched, alignof(unsigned char));
     assert(block != nullptr);
     size_t after = test_resident();
     assert(after - made >= touched - ((size_t)16 << 20));
@@ -587,7 +587,7 @@ static void test_real_tree(SmithIo *io) {
 
 static void test_real_map_big(SmithIo *io) {
     constexpr size_t size = (size_t)64 << 20;
-    unsigned char *data = SMITH_ARENA_PUSH_ARRAY(&io->arena, unsigned char, size);
+    unsigned char *data = smith_arena_push_array(&io->arena, sizeof(unsigned char), size, alignof(unsigned char));
     for (size_t i = 0; i < size; i += 4096)
         data[i] = (unsigned char)(i / 4096);
     assert(smith_files_write(&io->files, "map.bin", data, size, SmithWrite_Replace).code == 0);

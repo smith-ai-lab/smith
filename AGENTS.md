@@ -242,17 +242,19 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   - **What one looks like:**
     - It does one thing and is named for it, so there is no "base" or "utils".
     - It uses standard types: `<stdint.h>`, `size_t`, `float` and `double`, with no aliases.
-    - It uses the standard `assert`, and macros only where a function cannot do the job, such as capturing a check's
-      expression text.
+    - It uses the standard `assert` and defines no macros: a library's API is functions (and, in `.smith`, generics).
+      The check macros of `<smith/test.h>` are the last ones, and leave when test becomes a module (#45). The reason
+      for them, capturing a check's expression text, is gone: a failure's report reads the failing line from the call
+      stack.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
   - **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
     or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
     `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
     bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random` and `arena` are `.smith` (issue #39; #45 step 2). `arena` offers
-    C its typed pushes as the macros of `include/smith/arena_typed.h` (a module cannot define a macro; its generated header
-    includes that file), and `.smith` the generics `arena::push(&a, T)` and `arena::push_array(&a, T, n)`.
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random` and `arena` are `.smith` (issue #39; #45 step 2). C passes `sizeof` and
+    `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
+    `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 

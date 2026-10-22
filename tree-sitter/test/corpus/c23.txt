@@ -107,7 +107,7 @@ operators and types as macro arguments
 
 void f(void) {
     SMITH_CHECK(line.length, ==, 0);
-    long double *wide = SMITH_ARENA_PUSH(&arena, long double);
+    long double *wide = TYPED_PUSH(&arena, long double);
     c = va_arg(args, const char *const *);
 }
 

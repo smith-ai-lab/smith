@@ -343,7 +343,7 @@ static size_t smith_exec_canonical(char *path, size_t length) {
 // Runs the manifest: a tool, or a build of the targets. A manifest that has a rule of its own (build.c's regeneration)
 // is built first and read again when that changed it. Returns the status of the build.
 static int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOptions *options) {
-    SmithExec *exec = SMITH_ARENA_PUSH(&io->arena, SmithExec);
+    SmithExec *exec = smith_arena_push(&io->arena, sizeof(SmithExec), alignof(SmithExec));
     exec->io = io;
     exec->arena = &io->arena;
     exec->options = *options;

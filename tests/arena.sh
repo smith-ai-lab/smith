@@ -104,22 +104,6 @@ capture "$work/fast" carvestop
 expect "carve: past the parent's capacity the status is abort's" 134 "$rc"
 expect_contains "carve: ... and the message names the request" "$err" "push of 2048 bytes"
 
-# 3b. The wrong pointer type is a compile error with the macro.
-cat >"$work/wrong.c" <<'C'
-#include <smith/arena.h>
-
-typedef struct { int a; } Foo;
-typedef struct { int a; } Bar;
-
-Bar *wrong(SmithArena *arena) {
-    Bar *bar = SMITH_ARENA_PUSH(arena, Foo);
-    return bar;
-}
-C
-capture $cc $flags -c "$work/wrong.c" -o "$work/wrong.o"
-expect "macro: a push of Foo assigned to a Bar pointer fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
-expect_contains "macro: ... because of the pointer types" "$err" "incompatible pointer types"
-
 # 3c. The module compiles as C23 and C2y with the warnings of smith new.
 for std in gnu23 gnu2y; do
     [ $hook = yes ] || break
@@ -170,7 +154,7 @@ typedef struct {
 int main(void) {
     alignas(smith_arena_align_max) static unsigned char memory[1024];
     SmithArena arena = smith_arena_make(memory, sizeof memory);
-    Item *items = SMITH_ARENA_PUSH_ARRAY(&arena, Item, 4);
+    Item *items = smith_arena_push_array(&arena, sizeof(Item), 4, alignof(Item));
     items[3].id = 7;
     printf("item %d, %zu of %zu bytes used\n", items[3].id, arena.used, arena.capacity);
     return 0;

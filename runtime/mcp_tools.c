@@ -55,14 +55,14 @@ static const char *smith_mcp_absolute(SmithArena *arena, const char *folder, con
 }
 
 static const SmithJsonValue *smith_mcp_json_string(SmithArena *arena, SmithText text) {
-    SmithJsonValue *value = SMITH_ARENA_PUSH(arena, SmithJsonValue);
+    SmithJsonValue *value = smith_arena_push(arena, sizeof(SmithJsonValue), alignof(SmithJsonValue));
     SMITH_ASSERT(value != nullptr);
     *value = (SmithJsonValue){.kind = SmithJsonKind_String, .text = text, .span = 1};
     return value;
 }
 
 static const SmithJsonValue *smith_mcp_json_true(SmithArena *arena) {
-    SmithJsonValue *value = SMITH_ARENA_PUSH(arena, SmithJsonValue);
+    SmithJsonValue *value = smith_arena_push(arena, sizeof(SmithJsonValue), alignof(SmithJsonValue));
     SMITH_ASSERT(value != nullptr);
     *value = (SmithJsonValue){.kind = SmithJsonKind_True, .span = 1};
     return value;
@@ -70,8 +70,9 @@ static const SmithJsonValue *smith_mcp_json_true(SmithArena *arena) {
 
 // An array of strings, as the tree a protocol's "any" member holds.
 static const SmithJsonValue *smith_mcp_json_strings(SmithArena *arena, const char *const *strings, size_t count) {
-    SmithJsonValue *array = SMITH_ARENA_PUSH(arena, SmithJsonValue);
-    const SmithJsonValue **items = SMITH_ARENA_PUSH_ARRAY(arena, const SmithJsonValue *, count + 1);
+    SmithJsonValue *array = smith_arena_push(arena, sizeof(SmithJsonValue), alignof(SmithJsonValue));
+    const SmithJsonValue **items = (const SmithJsonValue **)smith_arena_push_array(
+        arena, sizeof(const SmithJsonValue *), count + 1, alignof(const SmithJsonValue *));
     SMITH_ASSERT(array != nullptr && items != nullptr);
     for (size_t i = 0; i < count; i++)
         items[i] = smith_mcp_json_string(arena, smith_text_make(strings[i]));

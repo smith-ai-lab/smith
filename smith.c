@@ -860,10 +860,6 @@ static const unsigned char smith_arena_header[] = {
 static const unsigned char smith_arena_source[] = {
 #embed "lib/smith/arena.smith"
 };
-// The typed-push macros of C, which the generated header includes (a module cannot define a macro): written beside it.
-static const unsigned char smith_embedded_arena_typed_header[] = {
-#embed "include/smith/arena_typed.h"
-};
 
 static const unsigned char smith_contract_header[] = {
 #embed "include/smith/contract.h"
@@ -1304,8 +1300,6 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
-    smith_write_if_changed(".smith/include/smith/arena_typed.h", smith_embedded_arena_typed_header,
-                           sizeof smith_embedded_arena_typed_header);
     smith_write_if_changed(".smith/bootstrap/lib/smith/arena.c", smith_embedded_arena_source,
                            sizeof smith_embedded_arena_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,

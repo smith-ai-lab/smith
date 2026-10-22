@@ -74,14 +74,14 @@ static void test_macros(void) {
     SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
     unsigned char *odd = smith_arena_push(&arena, 1, 1);
     assert(odd != nullptr);
-    TestRecord *record = SMITH_ARENA_PUSH(&arena, TestRecord);
+    TestRecord *record = smith_arena_push(&arena, sizeof(TestRecord), alignof(TestRecord));
     assert(((uintptr_t)record & (alignof(TestRecord) - 1)) == 0);
     assert(record->count == 0 && record->value == 0);
-    TestRecord *records = SMITH_ARENA_PUSH_ARRAY(&arena, TestRecord, 5);
+    TestRecord *records = smith_arena_push_array(&arena, sizeof(TestRecord), 5, alignof(TestRecord));
     assert(((uintptr_t)records & (alignof(TestRecord) - 1)) == 0);
     for (size_t i = 0; i < 5; i++)
         assert(records[i].count == 0 && records[i].value == 0);
-    long double *wide = SMITH_ARENA_PUSH(&arena, long double);
+    long double *wide = smith_arena_push(&arena, sizeof(long double), alignof(long double));
     assert(((uintptr_t)wide & (alignof(long double) - 1)) == 0 && *wide == 0);
 }
 
@@ -184,14 +184,14 @@ static void test_carve(void) {
            (uintptr_t)second.memory % smith_arena_align_max == 0);
     assert(first.memory > before && second.memory >= first.memory + 1000 && after >= second.memory + 2000);
     assert(parent.used >= 3010);
-    unsigned char *a = SMITH_ARENA_PUSH_ARRAY(&first, unsigned char, 900);
-    unsigned char *b = SMITH_ARENA_PUSH_ARRAY(&second, unsigned char, 1900);
+    unsigned char *a = smith_arena_push_array(&first, sizeof(unsigned char), 900, alignof(unsigned char));
+    unsigned char *b = smith_arena_push_array(&second, sizeof(unsigned char), 1900, alignof(unsigned char));
     memset(a, 1, 900);
     memset(b, 2, 1900);
     after[9] = 3;
     smith_arena_reset(&first); // a reset gives back its own memory only
     assert(b[1899] == 2 && after[9] == 3);
-    unsigned char *again = SMITH_ARENA_PUSH_ARRAY(&first, unsigned char, 900);
+    unsigned char *again = smith_arena_push_array(&first, sizeof(unsigned char), 900, alignof(unsigned char));
     assert(again == a && again[0] == 0); // zeroed again
 }
 

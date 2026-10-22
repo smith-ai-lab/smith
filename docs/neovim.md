@@ -107,7 +107,7 @@ changes a debug configuration of yours.
 declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr type T` parameters,
 `if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types
-and operators as macro arguments (`SMITH_ARENA_PUSH(&a, long double)`, `SMITH_CHECK(a, ==, b)`), a macro that defines
+and operators as macro arguments (`TYPED_PUSH(&a, long double)`, `SMITH_CHECK(a, ==, b)`), a macro that defines
 functions without a semicolon, Apple blocks and `__block`.
 
 One ambiguity is C's own: `module ;` and `module a;` are valid C when `module` is a type, and read as the module line.

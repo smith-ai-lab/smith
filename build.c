@@ -460,7 +460,6 @@ static const char *const build_smith_inputs[] = {
     "runtime/protocol/mcp.h",
     "runtime/protocol/mcp.c",
     "include/smith/arena.h",
-    "include/smith/arena_typed.h",
     "lib/smith/arena.smith",
     "bootstrap/lib/smith/arena.c",
     "include/smith/io.h",

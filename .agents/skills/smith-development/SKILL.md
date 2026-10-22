@@ -80,7 +80,7 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   (build.c), run `smith build bootstrap`, commit the file, and have the build compile the `.c` (as `build_protocol` does
   for text). `check-bootstrap` (part of `check`) lowers again and fails naming the stale file, so change a `.smith` that
   is listed, run `smith build bootstrap`, commit both. `scripts/bootstrap.sh` writes the file: an include of the module's header, then `smith cc --smith-lower` (no compiler, so the stage0
-  writes the same bytes) less what the header says; smith's runtime (`runtime/package.c`) includes `bootstrap/lib/smith/arena.c` and `random.c`, embedded in smith.c and written to `.smith/bootstrap/lib/smith/`, because `io` needs both (`include/smith/arena_typed.h`, the C macros of arena's header, is embedded and written beside the headers); a test that reaches a module's private names (`tests/random.c`) includes the lowering; it has no comments, but keeps `#include`, `#define`, `#pragma`, `#error` and `#if`
+  writes the same bytes) less what the header says; smith's runtime (`runtime/package.c`) includes `bootstrap/lib/smith/arena.c` and `random.c`, embedded in smith.c and written to `.smith/bootstrap/lib/smith/`, because `io` needs both; a test that reaches a module's private names (`tests/random.c`) includes the lowering; it has no comments, but keeps `#include`, `#define`, `#pragma`, `#error` and `#if`
   chains as written (every branch is lowered; a `#define` body with `::` or a sized type is an error). `tests/bootstrap.sh`
   (`smith build test-bootstrap`) checks the files, the stage0's bytes, the lowering in an empty environment, and the C under
   `/usr/bin/clang` and `cc`. docs/smith-lang.md, "The bootstrap".

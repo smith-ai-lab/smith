@@ -3,8 +3,8 @@
 // smith-module: smith::arena
 // smith-imports:
 // smith-names: align_max=smith_arena_align_max Arena=SmithArena Scope=SmithArenaScope make=smith_arena_make push_raw=smith_arena_push push_array_raw=smith_arena_push_array fits=smith_arena_fits push=smith_arena_push_type push_array=smith_arena_push_array_type carve=smith_arena_carve reset=smith_arena_reset scope_begin=smith_arena_scope_begin scope_end=smith_arena_scope_end
-// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@174:51=[ p@174:52=[ i@174:53=nodiscard p@174:62=] p@174:63=] iP1w@174:65=T pw@174:67=* i@174:68=smith_arena_push_type p@174:72=( i@174:73=SmithArena pw@174:79=* i@174:80=arena p@174:85=, iw@174:87=constexpr iw@174:97=type iP1w@174:102=T p@174:103=) pw@174:105={ iw@175:5=return pw@175:12=( iP1@175:13=T pw@175:15=* p@175:16=) i@175:17=smith_arena_push p@175:25=( i@175:26=arena p@175:31=, iw@175:33=sizeof p@175:39=( iP1@175:40=T p@175:41=) p@175:42=, iw@175:44=alignof p@175:51=( iP1@175:52=T p@175:53=) p@175:54=) p@175:55=; p@176:1=}
-// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@180:57=[ p@180:58=[ i@180:59=nodiscard p@180:68=] p@180:69=] iP1w@180:71=T pw@180:73=* i@180:74=smith_arena_push_array_type p@180:84=( i@180:85=SmithArena pw@180:91=* i@180:92=arena p@180:97=, iw@180:99=constexpr iw@180:109=type iP1w@180:114=T p@180:115=, iw@181:85=size_t iw@181:92=count p@181:97=) pw@181:99={ iw@182:5=return pw@182:12=( iP1@182:13=T pw@182:15=* p@182:16=) i@182:17=smith_arena_push_array p@182:31=( i@182:32=arena p@182:37=, iw@182:39=sizeof p@182:45=( iP1@182:46=T p@182:47=) p@182:48=, iw@182:50=count p@182:55=, iw@182:57=alignof p@182:64=( iP1@182:65=T p@182:66=) p@182:67=) p@182:68=; p@183:1=}
+// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@163:51=[ p@163:52=[ i@163:53=nodiscard p@163:62=] p@163:63=] iP1w@163:65=T pw@163:67=* i@163:68=smith_arena_push_type p@163:72=( i@163:73=SmithArena pw@163:79=* i@163:80=arena p@163:85=, iw@163:87=constexpr iw@163:97=type iP1w@163:102=T p@163:103=) pw@163:105={ iw@164:5=return pw@164:12=( iP1@164:13=T pw@164:15=* p@164:16=) i@164:17=smith_arena_push p@164:25=( i@164:26=arena p@164:31=, iw@164:33=sizeof p@164:39=( iP1@164:40=T p@164:41=) p@164:42=, iw@164:44=alignof p@164:51=( iP1@164:52=T p@164:53=) p@164:54=) p@164:55=; p@165:1=}
+// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@169:57=[ p@169:58=[ i@169:59=nodiscard p@169:68=] p@169:69=] iP1w@169:71=T pw@169:73=* i@169:74=smith_arena_push_array_type p@169:84=( i@169:85=SmithArena pw@169:91=* i@169:92=arena p@169:97=, iw@169:99=constexpr iw@169:109=type iP1w@169:114=T p@169:115=, iw@170:85=size_t iw@170:92=count p@170:97=) pw@170:99={ iw@171:5=return pw@171:12=( iP1@171:13=T pw@171:15=* p@171:16=) i@171:17=smith_arena_push_array p@171:31=( i@171:32=arena p@171:37=, iw@171:39=sizeof p@171:45=( iP1@171:46=T p@171:47=) p@171:48=, iw@171:50=count p@171:55=, iw@171:57=alignof p@171:64=( iP1@171:65=T p@171:66=) p@171:67=) p@171:68=; p@172:1=}
 // clang-format on
 #pragma once
 #include <assert.h>
@@ -13,11 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if __has_include("arena_typed.h")
-#include "arena_typed.h"
-#else
-#include <smith/arena_typed.h>
-#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,16 +22,13 @@ extern "C" {
 // The project compiles lib/smith/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
 // the project's own flags, sanitizers included.
 //
-// Typed pushes are two one-line macros over the functions, which stay the real API (<smith/arena_typed.h>):
-//   Foo *foo = SMITH_ARENA_PUSH(arena, Foo);
-//   Foo *foos = SMITH_ARENA_PUSH_ARRAY(arena, Foo, count);
-// They are macros because the function form is not equally good: the type is written once, so the size and the
-// alignment cannot disagree, and the result is typed, so `Bar *bar = SMITH_ARENA_PUSH(arena, Foo);` is a compile error
-// where the function's void * converts silently. A .smith file has the same with a type parameter,
+// Typed pushes: C passes the type's size and alignment to the functions, which return a void *, converted with no cast:
+//   Foo *foo = smith_arena_push(arena, sizeof(Foo), alignof(Foo));
+//   Foo *foos = smith_arena_push_array(arena, sizeof(Foo), count, alignof(Foo));
+// A .smith file writes the type as an argument, so the size and the alignment cannot disagree and the result is typed:
 //   Foo *foo = arena::push(&arena, Foo);
 //   Foo *foos = arena::push_array(&arena, Foo, count);
-// (C and C++ cannot call a generic, hence the macros). When the type is not known at the call site, use the functions:
-//   void *item = smith_arena_push(arena, size, align);
+// (C and C++ cannot call a generic.)
 //
 // The alignment an arena's memory must start at, and the largest a push may ask for. Pushes then lay out the same way
 // whatever the addresses, so a run is deterministic.
