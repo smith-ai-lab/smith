@@ -2617,10 +2617,16 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
     const char *const *own = nullptr;
     static const char *const fmt_options[] = {"--dry-run", "-n", "--Werror", "-i", nullptr};
     static const char *const lint_options[] = {"--quiet", nullptr};
+    static const char *const prove_options[] = {"-v", "--no-cache", nullptr};
     if (strcmp(verb, "fmt") == 0) own = fmt_options;
     if (strcmp(verb, "lint") == 0) own = lint_options;
+    if (strcmp(verb, "prove") == 0) own = prove_options;
     for (int i = 0; i < count; i++) { // bounded by count
         if (strncmp(args[i], "-D", 2) == 0) continue;
+        // `smith prove --budget=20` and `--emit-ir=ir.ll` are the project's too: they name no file
+        if (strcmp(verb, "prove") == 0 &&
+            (strncmp(args[i], "--budget=", 9) == 0 || strncmp(args[i], "--emit-ir=", 10) == 0))
+            continue;
         bool known = false;
         for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)
             known = known || strcmp(args[i], own[j]) == 0;

@@ -156,7 +156,9 @@ $ smith prove clamp.c -- -I .smith/include
 ```
 
 The prover checks the LLVM IR with Alive2, Bitwuzla and Z3. It also proves that nothing in the function is undefined
-behaviour. Each function gets about 10 seconds.
+behaviour. Each function gets about 10 seconds. `smith prove` with no arguments proves every function with a contract; a function at
+the program's edge (io, inline assembly, a library) starts with `smith_trusted();`, which makes its callers use its
+contract and lists it as trusted, never as proved.
 
 `smith docs` checks a project's `AGENTS.md`, `knowledge/` and `.agents/skills/` against one format:
 

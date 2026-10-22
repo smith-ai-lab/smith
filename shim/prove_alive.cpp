@@ -316,7 +316,8 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             variable.name = llvm_util::value_name(*variable.value);
         for (CallSite &site : unit.call_sites) {
             for (llvm::Value *argument : site.arguments) {
-                if (!argument->hasName() && !llvm::isa<llvm::Constant>(argument)) argument->setName("argument");
+                if (argument != nullptr && !argument->hasName() && !llvm::isa<llvm::Constant>(argument))
+                    argument->setName("argument");
             }
         }
         std::set<std::string> given_memory;         // loads of what a parameter or a global holds, which is values
@@ -327,6 +328,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             instruction.setMetadata("smith.havoced", nullptr);
         }
         std::map<std::string, std::pair<std::string, unsigned>> locations; // where each named instruction is written
+        std::map<std::string, const llvm::Instruction *> by_llvm_name;     // the instruction a name stands for
         for (llvm::Instruction &instruction : llvm::instructions(function)) {
             if (instruction.getType()->isVoidTy()) continue;
             if (!instruction.hasName()) instruction.setName("t");
@@ -337,6 +339,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                     (local != nullptr && havoced.count(local) != 0))
                     given_memory.insert(llvm_util::value_name(instruction));
             }
+            by_llvm_name[llvm_util::value_name(instruction)] = &instruction;
             if (instruction.getDebugLoc()) {
                 locations[llvm_util::value_name(instruction)] = {instruction.getDebugLoc()->getFilename().str(),
                                                                  instruction.getDebugLoc().getLine()};
@@ -351,8 +354,9 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         std::vector<std::vector<std::string>> call_site_names(unit.call_sites.size());
         for (size_t i = 0; i < unit.call_sites.size(); i++) {
             for (llvm::Value *argument : unit.call_sites[i].arguments) {
-                call_site_names[i].push_back(llvm::isa<llvm::ConstantInt>(argument) ? ""
-                                                                                    : llvm_util::value_name(*argument));
+                call_site_names[i].push_back(argument == nullptr || llvm::isa<llvm::ConstantInt>(argument)
+                                                 ? ""
+                                                 : llvm_util::value_name(*argument));
             }
         }
         auto target = llvm_util::llvm2alive(*stub, library.getTLI(*stub), false, source->getGlobalVars());
@@ -396,6 +400,14 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         transform.preprocess();
         tools::TransformVerify verifier(transform, false);
         auto [state, target_state] = verifier.exec();
+        outcome.execution_seconds = thread_cpu_seconds() - thread_start;
+        double phase_mark = 0; // what charged() was when the last phase ended
+        auto phase = [&](const std::string &what) {
+            double now = charged();
+            outcome.phases.emplace_back(what, now - phase_mark);
+            phase_mark = now;
+        };
+        phase("translating the function to Alive2's IR and executing it symbolically");
         if (options.dump) std::cerr << transform.src << "\n";
         if (options.dump) std::cerr << "symbolic execution took " << seconds_since(start) << " s\n";
         if (charged() > options.budget_seconds) {
@@ -403,7 +415,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             outcome.seconds = seconds_since(start);
             outcome.cpu_seconds = process_cpu_seconds() - cpu_start;
             outcome.charged = charged();
-            return outcome;
+            return outcome; // the symbolic execution alone used the budget: no query was asked
         }
 
         // The values to show at a counterexample, by their names in the function that was proved.
@@ -481,7 +493,8 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 const CallSite &site = unit.call_sites[static_cast<size_t>(point.call_site)];
                 for (size_t j = 0; j < site.arguments.size(); j++) {
                     std::string name = site.callee + "." + site.parameters[j];
-                    if (auto *constant = llvm::dyn_cast<llvm::ConstantInt>(site.arguments[j])) {
+                    if (auto *constant =
+                            llvm::dyn_cast_or_null<llvm::ConstantInt>(site.arguments[j].operator llvm::Value *())) {
                         values.emplace_back(name, std::to_string(constant->getSExtValue()));
                         continue;
                     }
@@ -567,9 +580,14 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 smt::Solver fallback(true); // a query Bitwuzla cannot read: Z3 decides it, if it can
                 fallback.add(job->whole);
                 smt::Result answer;
+                const double z3_before = thread_cpu_seconds();
                 bool out_of_time = with_z3_cpu_limit(std::max(0.0, options.budget_seconds - charged()),
                                                      [&] { answer = fallback.check(name); });
-                if (out_of_time) return false;
+                job->cpu += thread_cpu_seconds() - z3_before;
+                if (out_of_time) {
+                    job->verdict = Verdict::Timeout;
+                    return false;
+                }
                 job->verdict = answer.isSat() ? Verdict::Sat : answer.isUnsat() ? Verdict::Unsat : Verdict::Unknown;
             }
             return true;
@@ -581,6 +599,46 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             const Point *point;           // a proof point, else
             const IR::Instr *instruction; // an instruction whose own conditions may fail
             Job job;
+        };
+        // The query as the report names it: the contract or check it asks about, or the instruction that may have
+        // undefined behaviour, with its line.
+        auto name_query = [&](const Task &task) {
+            QueryTime time;
+            if (task.point != nullptr) {
+                const Point &point = *task.point;
+                const char *kinds[] = {"smith_requires", "smith_ensures", "smith_invariant", "assert", "", "", ""};
+                if (point.kind == Kind::Requires && point.call_site >= 0) {
+                    const CallSite &site = unit.call_sites[static_cast<size_t>(point.call_site)];
+                    time.what = "smith_requires(" + point.text + ") of " + site.callee + ", at its call";
+                    time.file = site.file;
+                    time.line = site.line;
+                    return time;
+                }
+                time.what = point.kind <= Kind::Assert
+                                ? std::string(kinds[static_cast<int>(point.kind)]) + "(" + point.text + ")"
+                                : point.text;
+                time.file = point.file;
+                time.line = point.line;
+                return time;
+            }
+            std::ostringstream text;
+            task.instruction->print(text);
+            std::string printed = text.str();
+            if (printed.size() > 70) printed = printed.substr(0, 67) + "...";
+            time.what = "undefined behaviour of `" + printed + "`";
+            auto own = locations.find(task.instruction->getName());
+            if (own != locations.end()) {
+                time.file = own->second.first;
+                time.line = own->second.second;
+            }
+            for (const IR::Value *operand : task.instruction->operands()) { // a phi has no line: its operands do
+                auto found = locations.find(operand->getName());
+                if (time.line == 0 && found != locations.end()) {
+                    time.file = found->second.first;
+                    time.line = found->second.second;
+                }
+            }
+            return time;
         };
         std::vector<Task> tasks;
         bool timed_out = false;
@@ -706,12 +764,23 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 known = true;
             }
         }
+        phase("collecting the " + std::to_string(tasks.size()) + " conditions to check");
         std::vector<Job *> jobs;
+        // Writing a query takes time of its own, in a function with thousands of checks, so the budget is looked at
+        // between queries: a proof that cannot finish does not spend minutes before the solver starts.
         for (Task &task : tasks) {
+            if (charged() > options.budget_seconds) {
+                timed_out = true;
+                break;
+            }
             prepare(task.job, task.small, task.name);
             jobs.push_back(&task.job);
+            outcome.queries_written++;
         }
-        timed_out = !solve(jobs, "queries");
+        phase("writing " + std::to_string(outcome.queries_written) + " of the " + std::to_string(tasks.size()) +
+              " queries as SMT");
+        if (!timed_out) timed_out = !solve(jobs, "queries");
+        phase("the solver");
         if (options.dump) std::cerr << tasks.size() << " queries decided at " << seconds_since(start) << " s\n";
         if (!timed_out) { // the small query failed: ask in full
             std::vector<Job *> again;
@@ -743,6 +812,49 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             const smt::Model *model = found.isSat() ? &found.getModel() : nullptr;
             outcome.findings.push_back(task.point != nullptr ? describe(*task.point, model)
                                                              : describe_unlocated(*task.instruction, model));
+        }
+        // Which queries were slow, and which costly operations their values depend on.
+        {
+            outcome.query_count = static_cast<unsigned>(tasks.size());
+            std::vector<const Task *> order;
+            for (const Task &task : tasks) {
+                if (task.job.cpu > 0) order.push_back(&task);
+            }
+            // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order): ordered by CPU time, not by address
+            std::stable_sort(order.begin(), order.end(),
+                             [](const Task *a, const Task *b) { return a->job.cpu > b->job.cpu; });
+            for (size_t i = 0; i < order.size() && i < 4; i++) {
+                QueryTime time = name_query(*order[i]);
+                time.cpu = order[i]->job.cpu;
+                time.ran_out = order[i]->job.verdict == Verdict::Timeout;
+                std::set<const llvm::Instruction *> cone;
+                std::vector<const llvm::Instruction *> roots;
+                if (order[i]->point != nullptr && order[i]->point->where != nullptr) {
+                    roots.push_back(order[i]->point->where);
+                } else if (order[i]->instruction != nullptr) {
+                    std::vector<std::string> names = {order[i]->instruction->getName()};
+                    for (const IR::Value *operand : order[i]->instruction->operands())
+                        names.push_back(operand->getName());
+                    for (const std::string &name : names) {
+                        auto found = by_llvm_name.find(name);
+                        if (found != by_llvm_name.end()) roots.push_back(found->second);
+                    }
+                }
+                for (const llvm::Instruction *root : roots) {
+                    std::set<const llvm::Instruction *> part = data_cone(root);
+                    cone.insert(part.begin(), part.end());
+                }
+                for (size_t c = 0; c < unit.costs.size(); c++) {
+                    if (unit.costs[c].weight != 3) continue;
+                    for (const llvm::Instruction *operation : unit.costs[c].instructions) {
+                        if (cone.count(operation) != 0) {
+                            time.feeds.push_back(c);
+                            break;
+                        }
+                    }
+                }
+                outcome.queries.push_back(time);
+            }
         }
         if (timed_out)
             outcome.status = Outcome::Timeout;
