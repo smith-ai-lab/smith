@@ -233,7 +233,8 @@ expect_contains "a launch stopped before sleep" "$(reply gone.out 1)" "stopped: 
 pid=$(cat spin.pid 2>/dev/null || echo 0)
 sleep 1
 if kill -0 "$pid" 2>/dev/null; then
-    kill -9 "$pid" 2>/dev/null
+    # Not killed here: the program is no child of this script, so its pid may already be another process's (another
+    # test's compile). It ends by itself when its sleep does.
     expect_equal "the program is gone when the client's input ends" gone "still running"
 else
     expect_equal "the program is gone when the client's input ends" gone gone
