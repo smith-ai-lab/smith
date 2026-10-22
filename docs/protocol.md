@@ -8,7 +8,7 @@ committed, so a plain `smith build`, a fresh clone and the stage0 never need the
 
 | Path | What |
 | --- | --- |
-| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/arena.c`, `text.c`, `json.c`) |
+| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from the lowerings of `arena` and `text` in `bootstrap/`, and `json.c`) |
 | `runtime/protocol/protocol.h`, `protocol.c` | hand-written: the error a parse reports, the types a schema starts from (string, integer, number, boolean, any JSON), the checks the generated code shares |
 | `runtime/protocol/dap.h`, `dap.c`, `mcp.h`, `mcp.c` | generated: a struct and four functions per type |
 | `runtime/protocol/LICENSE-dap.txt`, `LICENSE-mcp.txt` | the schemas' license texts, copied; the first lines are also in the header of every generated file |

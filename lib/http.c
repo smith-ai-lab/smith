@@ -552,7 +552,7 @@ SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path) {
     assert(io != nullptr && url != nullptr && path != nullptr);
     SmithArena *arena = &io->arena;
     SmithArenaScope scope = smith_arena_scope_begin(arena);
-    SmithHttp *http = SMITH_ARENA_PUSH(arena, SmithHttp);
+    SmithHttp *http = smith_arena_push(arena, sizeof(SmithHttp), alignof(SmithHttp));
     http->io = io;
     http->net = &io->net;
     http->files = &io->files;

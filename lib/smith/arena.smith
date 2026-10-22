@@ -1,0 +1,228 @@
+// smith::arena, <smith/arena.h>: memory without malloc. Its C API is the generated header include/smith/arena.h
+// (committed; `smith build headers` regenerates it), so the comments above an export are written with the C names
+// (smith_arena_push), which are what C code calls and what the header shows.
+module smith::arena;
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// <smith/arena.h>: a fixed block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its
+// own; a reset frees everything, and a scope frees what was pushed since it began.
+//
+// The project compiles lib/smith/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
+// the project's own flags, sanitizers included.
+//
+// Typed pushes: C passes the type's size and alignment to the functions, which return a void *, converted with no cast:
+//   Foo *foo = smith_arena_push(arena, sizeof(Foo), alignof(Foo));
+//   Foo *foos = smith_arena_push_array(arena, sizeof(Foo), count, alignof(Foo));
+// A .smith file writes the type as an argument, so the size and the alignment cannot disagree and the result is typed:
+//   Foo *foo = arena::push(&arena, Foo);
+//   Foo *foos = arena::push_array(&arena, Foo, count);
+// (C and C++ cannot call a generic.)
+//
+// The alignment an arena's memory must start at, and the largest a push may ask for. Pushes then lay out the same way
+// whatever the addresses, so a run is deterministic.
+[[smith::c_name("smith_arena_align_max")]] export constexpr size_t align_max = 64;
+
+[[smith::c_name("SmithArena")]] export typedef struct {
+    unsigned char *memory;
+    size_t capacity;
+    size_t used;
+    size_t scopes;  // scopes begun and not yet ended
+    size_t touched; // AddressSanitizer builds: the poison high-water mark, see lib/smith/arena.smith; otherwise unused
+} Arena;
+
+// A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is
+// reset only with none open; both are asserted.
+[[smith::c_name("SmithArenaScope")]] export typedef struct {
+    Arena *arena;
+    size_t used;
+    size_t depth; // the arena's scopes before this one began
+} Scope;
+
+// Sanitizer builds start each push on an ASan granule and leave a poisoned gap after it, and poison the memory past the
+// cursor, so ASan catches a read or write outside the pushes. The poison is lazy. An arena may be a 64 GiB reservation,
+// and poisoning all of it would commit its shadow (an eighth of it, 8 GiB) before the program pushed anything. So the
+// arena keeps a high-water mark `touched`, with the invariant that [used, touched) is poisoned and the memory past
+// `touched` has not been poisoned by this arena. Every push keeps touched >= used + window by poisoning [touched,
+// used + window) (capped at the capacity); reset and the end of a scope poison [used, touched) again. Shadow memory
+// then grows with what the program has used, not with the capacity. The window is 64 KiB: an overflow past the top
+// of the arena lands in poison unless it runs more than 64 KiB past the last push, which is longer than the overruns
+// that come from off-by-one, off-by-a-row and short-array mistakes, while the shadow it costs is 8 KiB.
+#if __has_feature(address_sanitizer)
+// What <sanitizer/asan_interface.h> declares (ASAN_POISON_MEMORY_REGION is a call of these), declared here so that the
+// module's header does not include it.
+extern void __asan_poison_memory_region(const volatile void *address, size_t size);
+extern void __asan_unpoison_memory_region(const volatile void *address, size_t size);
+
+constexpr size_t poison_granule = 8;               // ASan tracks memory in 8-byte granules
+constexpr size_t poison_gap = 16;                  // poisoned bytes left after each push
+constexpr size_t poison_window = (size_t)64 << 10; // poisoned past the cursor after each push
+
+// Poisons [used, touched) again, after a reset or the end of a scope.
+static void poison_unused(const Arena *arena) {
+    assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
+    __asan_poison_memory_region(arena->memory + arena->used, arena->touched - arena->used);
+}
+
+// Keeps touched >= used + window, poisoning what is new.
+static void poison_ahead(Arena *arena) {
+    size_t room = arena->capacity - arena->used;
+    size_t target = arena->used + (room < poison_window ? room : poison_window);
+    if (target <= arena->touched) return;
+    __asan_poison_memory_region(arena->memory + arena->touched, target - arena->touched);
+    arena->touched = target;
+}
+#endif
+
+static_assert((align_max & (align_max - 1)) == 0); // a power of two
+
+[[maybe_unused]] static bool align_valid(size_t align) {
+    return align > 0 && align <= align_max && (align & (align - 1)) == 0;
+}
+
+// The alignment a push really uses: a sanitizer build starts every push on a granule.
+static size_t effective_align(size_t align) {
+#if __has_feature(address_sanitizer)
+    if (align < poison_granule) return poison_granule;
+#endif
+    return align;
+}
+
+// Whether size bytes at align fit; the bytes of padding go to *padding. Written so that no sum can overflow.
+static bool measure(const Arena *arena, size_t size, size_t align, size_t *padding) {
+    assert(arena != nullptr);
+    assert(arena->used <= arena->capacity);
+    assert(align_valid(align));
+    align = effective_align(align);
+    *padding = (align - (arena->used & (align - 1))) & (align - 1);
+    size_t room = arena->capacity - arena->used;
+    return *padding <= room && size <= room - *padding;
+}
+
+// A push that cannot be served stops here in every build, so a build with NDEBUG never writes past the memory.
+[[noreturn]] static void stop(const Arena *arena, size_t size, size_t align) {
+    fprintf(stderr, "smith: arena out of capacity: push of %zu bytes (align %zu) with %zu of %zu bytes used\n", size,
+            align, arena->used, arena->capacity);
+    fflush(stderr);
+    abort();
+}
+
+// memory must be aligned to smith_arena_align_max and hold capacity bytes.
+[[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, size_t capacity) {
+    assert(memory != nullptr);
+    assert(((uintptr_t)memory & (align_max - 1)) == 0);
+    assert(capacity > 0);
+    return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
+}
+
+// Zeroed memory for size bytes at align (a power of two, at most smith_arena_align_max). Running out of capacity stops
+// the program with a message naming the request and the capacity, in every build: it is a single comparison, and
+// without it a build with NDEBUG would write past the memory.
+[[smith::c_name("smith_arena_push")]] export [[nodiscard]] void *push_raw(Arena *arena, size_t size, size_t align) {
+    size_t padding = 0;
+    if (!measure(arena, size, align, &padding)) stop(arena, size, align);
+
+    unsigned char *result = arena->memory + arena->used + padding;
+    arena->used += padding + size;
+#if __has_feature(address_sanitizer)
+    size_t gap = arena->capacity - arena->used;
+    arena->used += gap < poison_gap ? gap : poison_gap;
+    poison_ahead(arena);                         // poisons the padding, the new memory and the gap...
+    __asan_unpoison_memory_region(result, size); // ...and the push alone is made addressable
+#endif
+    memset(result, 0, size);
+
+    assert(arena->used <= arena->capacity);
+    return result;
+}
+
+// count items of size bytes; an overflowing count * size is the same stop.
+[[smith::c_name("smith_arena_push_array")]] export [[nodiscard]] void *push_array_raw(Arena *arena, size_t size,
+                                                                                      size_t count, size_t align) {
+    assert(arena != nullptr);
+    if (size > 0 && count > SIZE_MAX / size) {
+        fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n", count,
+                size, arena->capacity);
+        fflush(stderr);
+        abort();
+    }
+    return push_raw(arena, size * count, align);
+}
+
+// Whether a push of size at align would fit.
+[[smith::c_name("smith_arena_fits")]] export [[nodiscard]] bool fits(const Arena *arena, size_t size, size_t align) {
+    size_t padding = 0;
+    return measure(arena, size, align, &padding);
+}
+
+// A zeroed T, the size and the alignment of the type. For .smith; C passes sizeof and alignof to smith_arena_push.
+[[smith::c_name("smith_arena_push_type")]] export [[nodiscard]] T *push(Arena *arena, constexpr type T) {
+    return (T *)push_raw(arena, sizeof(T), alignof(T));
+}
+
+// count zeroed Ts; a count that overflows is the same stop as in smith_arena_push_array. For .smith; C passes sizeof,
+// the count and alignof to smith_arena_push_array.
+[[smith::c_name("smith_arena_push_array_type")]] export [[nodiscard]] T *push_array(Arena *arena, constexpr type T,
+                                                                                    size_t count) {
+    return (T *)push_array_raw(arena, sizeof(T), count, alignof(T));
+}
+
+// A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,
+// aligned to smith_arena_align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so
+// when the parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages
+// only as it is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset
+// every frame, one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the
+// parent has no scope open, since the end of the scope would hand the carved memory back.
+[[smith::c_name("smith_arena_carve")]] export [[nodiscard]] Arena carve(Arena *parent, size_t capacity) {
+    assert(parent != nullptr && capacity > 0);
+    assert(parent->scopes == 0); // ending a scope would give the carved memory back
+    size_t start = (parent->used + align_max - 1) & ~(align_max - 1);
+    if (start > parent->capacity || capacity > parent->capacity - start) stop(parent, capacity, align_max);
+    unsigned char *memory = parent->memory + start;
+    parent->used = start + capacity;
+#if __has_feature(address_sanitizer)
+    // The parent poisoned a window past its old cursor, which the carved memory now covers: it is the new arena's, and
+    // it poisons for itself. The parent's poison resumes past the carve.
+    if (parent->touched > start)
+        __asan_unpoison_memory_region(memory,
+                                      (parent->touched < parent->used ? parent->touched : parent->used) - start);
+    if (parent->touched < parent->used) parent->touched = parent->used;
+#endif
+    return make(memory, capacity);
+}
+
+// Frees everything. Asserts no scope is open.
+[[smith::c_name("smith_arena_reset")]] export void reset(Arena *arena) {
+    assert(arena != nullptr);
+    assert(arena->used <= arena->capacity);
+    assert(arena->scopes == 0); // a scope still open would restore a cursor past the reset
+    arena->used = 0;
+#if __has_feature(address_sanitizer)
+    poison_unused(arena);
+#endif
+}
+
+[[smith::c_name("smith_arena_scope_begin")]] export [[nodiscard]] Scope scope_begin(Arena *arena) {
+    assert(arena != nullptr);
+    assert(arena->used <= arena->capacity);
+    assert(arena->scopes < SIZE_MAX);
+    Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};
+    arena->scopes += 1;
+    return scope;
+}
+
+[[smith::c_name("smith_arena_scope_end")]] export void scope_end(Scope scope) {
+    assert(scope.arena != nullptr);
+    assert(scope.arena->scopes > 0);                // more ends than begins
+    assert(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
+    assert(scope.used <= scope.arena->used);
+    scope.arena->scopes -= 1;
+    scope.arena->used = scope.used;
+#if __has_feature(address_sanitizer)
+    poison_unused(scope.arena);
+#endif
+}

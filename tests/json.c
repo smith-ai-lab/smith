@@ -469,7 +469,7 @@ void test_json_tree_of_a_document(void) {
 
 void test_json_tree_does_not_touch_the_arena_on_failure(void) {
     SmithArena arena = smith_test_arena(1 << 16);
-    (void)SMITH_ARENA_PUSH(&arena, uint64_t);
+    (void)smith_arena_push(&arena, sizeof(uint64_t), alignof(uint64_t));
     size_t used = arena.used;
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
@@ -1012,7 +1012,7 @@ void test_json_any_value_written_then_read_is_the_same(SmithKey key) {
     static char buffer[1 << 16];
     size_t indent = (size_t)test_json_uniform(smith_key_derive(key, 90), 0, 1) * 2;
     SmithJsonWriter writer = smith_json_writer_make(buffer, sizeof buffer, indent);
-    TestJsonDocument *document = SMITH_ARENA_PUSH(&arena, TestJsonDocument);
+    TestJsonDocument *document = smith_arena_push(&arena, sizeof(TestJsonDocument), alignof(TestJsonDocument));
     test_json_random_value(&writer, document, smith_key_derive(key, 91),
                            (size_t)test_json_uniform(smith_key_derive(key, 92), 0, 6));
     SmithText output = {};
@@ -1034,7 +1034,7 @@ void test_json_write_value_puts_a_tree_back_as_it_was_written(SmithKey key) {
     static char second[1 << 16];
     size_t indent = (size_t)test_json_uniform(smith_key_derive(key, 90), 0, 1) * 2;
     SmithJsonWriter writer = smith_json_writer_make(first, sizeof first, indent);
-    TestJsonDocument *document = SMITH_ARENA_PUSH(&arena, TestJsonDocument);
+    TestJsonDocument *document = smith_arena_push(&arena, sizeof(TestJsonDocument), alignof(TestJsonDocument));
     test_json_random_value(&writer, document, smith_key_derive(key, 91),
                            (size_t)test_json_uniform(smith_key_derive(key, 92), 0, 6));
     SmithText output = {};
@@ -1197,7 +1197,7 @@ void test_json_damaged_documents_never_misbehave(SmithKey key) {
     SmithJsonWriter writer;
     static char buffer[1 << 14];
     writer = smith_json_writer_make(buffer, sizeof buffer, (size_t)test_json_uniform(smith_key_derive(key, 90), 0, 1));
-    TestJsonDocument *document = SMITH_ARENA_PUSH(&arena, TestJsonDocument);
+    TestJsonDocument *document = smith_arena_push(&arena, sizeof(TestJsonDocument), alignof(TestJsonDocument));
     test_json_random_value(&writer, document, smith_key_derive(key, 91), 6);
     SmithText output = {};
     SMITH_CHECK(smith_json_writer_finish(&writer, &output));
