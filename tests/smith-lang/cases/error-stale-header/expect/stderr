@@ -1,4 +1,11 @@
-main.smith:5:45: error: module `shapes` has no export `new_area`; if it has one, the header smith wrote for it is stale: `smith build` writes it again
+main.smith:5:45: error: use of undeclared identifier 'shapes::new_area'; did you mean 'shapes::old_area'?
+    5 |     return shapes::old_area(side) + shapes::new_area(side);
+      |                                             ^~~~~~~~
+      |                                             old_area
+./shapes.h:8:9: note: 'shapes::old_area' declared here
+    8 | int32_t shapes_old_area(int32_t side) __asm__("_shapes::old_area");
+      |         ^
+main.smith:5:45: note: the header of module `shapes` lists no export `new_area`; if the module has one, the header is stale: `smith build` writes it again
     5 |     return shapes::old_area(side) + shapes::new_area(side);
       |                                             ^
 1 error generated.

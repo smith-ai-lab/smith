@@ -804,6 +804,31 @@ module num;
 export T add(constexpr type T, T a, T b) {
     return a + b;
 }
+==> generic-if-constexpr-analyzer/src/guard.smith <==
+module guard;
+
+import target;
+
+// A fact of the target in a generic's `if constexpr`, with a fact of T: asked of the compiler when an instance is made.
+export T pick_one(constexpr type T, T a, T b) {
+    if constexpr (target::static_analyzer) {
+        return a;
+    } else if constexpr (target::arch == target::aarch64 && sizeof(T) == 4) {
+        return b;
+    } else if constexpr (target::os == target::macos || target::assertions) {
+        return a > b ? a : b;
+    } else {
+        return a;
+    }
+}
+==> generic-if-constexpr-analyzer/src/main.smith <==
+import guard;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %g\n", guard::pick_one(i32, 3, 9), guard::pick_one(f64, 2.5, 1.5));
+    return 0;
+}
 ==> generic-if-constexpr-c-type/src/kind.smith <==
 module kind;
 

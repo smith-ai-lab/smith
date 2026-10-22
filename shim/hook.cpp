@@ -115,10 +115,12 @@ struct PresenterLink {
     NameSource *source = nullptr;
     unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
+    std::map<unsigned, std::string> hints; // by place: a note for the error the compiler reports there
 };
 
 // The engine a tool reports its own findings from, which the next hook of this thread puts its Presenter in front of
 // (see smith::presentThrough), and the Presenter it made.
+bool inEditor = false;
 thread_local DiagnosticsEngine *toolEngine = nullptr;
 thread_local DiagnosticConsumer *toolConsumer = nullptr;
 
@@ -182,6 +184,12 @@ class Presenter final : public DiagnosticConsumer {
             if (instance &&
                 level != DiagnosticsEngine::Note) { // an error in an instance: where it was asked for follows
                 pendingNotes = std::move(chain);
+                engine = info.getDiags();
+            }
+            auto hint = level == DiagnosticsEngine::Error && at.isValid() ? link->hints.find(at.getRawEncoding())
+                                                                          : link->hints.end();
+            if (hint != link->hints.end()) { // the lowering knows why the name is not found
+                pendingNotes.insert(pendingNotes.begin(), {at, hint->second});
                 engine = info.getDiags();
             }
             if (origin.isValid()) at = origin;
@@ -338,6 +346,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
+        host.hint = &SmithHook::hintAt;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
         }
@@ -2477,6 +2486,11 @@ class SmithHook final : public TokenHook, public NameSource {
         static_cast<SmithHook *>(context)->link->suppressed.insert(location);
     }
 
+    // (Not in the editor: clangd shows a note in the file it is in as a diagnostic of its own, beside the error.)
+    static void hintAt(void *context, uint32_t location, const char *message) {
+        if (!inEditor) static_cast<SmithHook *>(context)->link->hints[location] = message;
+    }
+
     // ---- The names as written
     //
     // The diagnostics, and what a language server shows (shim/names.h), name things as the source does. The table is
@@ -2624,6 +2638,11 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
 }
 
 } // namespace
+
+// This process is the editor's (clangd).
+extern "C" void smith_hook_editor() {
+    inEditor = true;
+}
 
 // Makes every translation unit in this process offer its .smith main file to the lowering.
 extern "C" void smith_hook_install() {

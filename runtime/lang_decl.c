@@ -366,16 +366,19 @@ static void smith_lang_allow(SmithLang *lang, uint32_t location) {
 }
 
 // `x::name` where the module's header lists its exports and `name` is not among them (`lang->tmp` holds the C name the
-// access makes): a typo, a private name, or a header from before the module had it. The one error; clang's own
-// "undeclared identifier" at the place is kept out of the way.
+// access makes): a typo, a private name, or a header from before the module had it. The compiler reports the name as
+// undeclared (with its own suggestion, if it has one); this is the note that follows that error, about the header.
 static void smith_lang_check_listed(SmithLang *lang, const SmithHost *host, const SmithLangBinding *binding,
                                     const SmithToken *taken, size_t total) {
-    if (!binding->listed || smith_lang_written_lookup(lang, lang->tmp, total) != nullptr) return;
-    smith_lang_error(lang, host, taken->location,
-                     "module `%s` has no export `%.*s`; if it has one, the header smith wrote for it is stale: `smith "
-                     "build` writes it again",
-                     smith_lang_str(binding->module), (int)taken->length, taken->text);
-    if (host->suppress != nullptr) host->suppress(host->context, taken->location);
+    if (!binding->listed || host->hint == nullptr || smith_lang_written_lookup(lang, lang->tmp, total) != nullptr) {
+        return;
+    }
+    char message[smith_lang_message_max];
+    snprintf(message, sizeof message,
+             "the header of module `%s` lists no export `%.*s`; if the module has one, the header is stale: `smith "
+             "build` writes it again",
+             smith_lang_str(binding->module), (int)taken->length, taken->text);
+    host->hint(host->context, taken->location, message);
 }
 
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
