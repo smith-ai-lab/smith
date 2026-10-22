@@ -698,7 +698,7 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
     smith_lang_emit_kept(lang, host, token);
 }
 
-static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+static void smith_lang_dispatch(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->body_sparse) {
         smith_lang_body(lang, host, token);
         smith_lang_remember(lang, token);
@@ -731,6 +731,23 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         smith_lang_stream(lang, host, token);
         break;
     }
+}
+
+// What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
+static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    bool closes = false;
+    if (!token->foreign && !lang->recording && !smith_lang_capturing(lang)) {
+        if (token->kind == SmithTokenKind_Identifier) {
+            if (smith_lang_ident(token, "if") && smith_lang_ifc_begin(lang, host, token)) return;
+            if (host->maybe_if_constexpr && smith_lang_ident(token, "constexpr")) smith_lang_ifc_constant(lang, host);
+        } else if (lang->ifc_count > 0 && token->kind == SmithTokenKind_Punctuator) {
+            lang->ifc_braces += smith_lang_punct(token, "{") ? 1 : 0;
+            lang->ifc_braces -= smith_lang_punct(token, "}") ? 1 : 0;
+            closes = smith_lang_punct(token, "}") && lang->ifc_braces == lang->ifc[lang->ifc_count - 1].target;
+        }
+    }
+    smith_lang_dispatch(lang, host, token);
+    if (closes) smith_lang_ifc_close(lang, host);
 }
 
 // One lowering per process at a time: a fresh one for each file.

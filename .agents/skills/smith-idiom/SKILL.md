@@ -1,0 +1,188 @@
+---
+name: smith-idiom
+description: "Idiomatic Smith: how to write, edit, review or port a .smith file so it is not C renamed. Load whenever you write, edit, review or port a .smith file, on 'idiomatic', 'C renamed', 'port this C to smith', 'convert to .smith', or when a .smith file has uint32_t, size_t, #include, #define or smith_arena_push(&a, sizeof(T), alignof(T)) in it."
+---
+
+# Write Smith, not C renamed
+
+This skill ships in the smith plugin, from `.agents/skills/smith-idiom/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The language is `smith-lang`; this skill is what to write in it.
+
+A `.smith` file is C, so a renamed `.c` file compiles and means what it meant. That is the first step of a port and never the last: a module that still has the standard C types, an `#include`, a `#define` or a `sizeof`/`alignof` passed to a function is not done. The libraries `lib/smith/arena.smith`, `random.smith`, `text.smith` and `build.smith` in smith's repository are the reference; read one before writing a module.
+
+## The rules
+
+Each rule says what enforces it today. "Review" means nothing checks it: you and the reviewer do, with the counts below.
+
+1. **Sized types.** `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize`, `isize`, `f32`, `f64`, `bool`; `char` stays `char` (`smith-lang-sized-types`).
+   - Not `uint32_t`, `size_t`, `ptrdiff_t`, `unsigned`, `float`, `double`.
+   - Enforced by: review and the counts. The compiler accepts both spellings, since they are the same types.
+2. **Import C headers, never include them.** `import <math.h>;` and write `c::sqrt(x)`, `c::EOF`, `struct c::stat` (`smith-lang-c-interop`).
+   - Enforced by the compiler where it can: a bare name that an `import`ed header declared is the error `` `sqrtf` is a C name; write `c::sqrtf` ``. A name from an `#include`d header stays bare, so nothing flags an `#include`.
+   - Enforced by: the compiler for bare names after `import`, review for `#include`.
+3. **Modules import modules.** A library that is a module is used with `import smith::arena;` and `arena::push(...)`, not with its C header (`smith-lang-modules`). A project's own `.smith` files are modules too: `module rolls;`, `export`, `import rolls;`, with no header written by hand (`smith build` writes it for C callers).
+   - Enforced by: the compiler for private names (`is private; export it`) and for import cycles; review for a module that includes a header of a library that is a module (`#include <smith/arena.h>` in a `.smith` file).
+4. **Generics where C passes a type as `sizeof` and `alignof`.** `arena::push(&a, Foo)`, not `smith_arena_push(&a, sizeof(Foo), alignof(Foo))`; your own `export T *make(arena::Arena *a, constexpr type T)` when a function of yours takes a type (`smith-lang-generics`).
+   - Enforced by: review and the `sizeof/alignof` count. The raw functions (`arena::push_raw`) exist for C, which cannot call a generic.
+5. **No `#define`; `constexpr` for constants.** `constexpr usize capacity = 1 << 20;`, and `export constexpr` when others use it. An enumeration or a function does what a macro of several lines did. Checks, contracts and `expect_abort` are functions (rule 8), never macros.
+   - Enforced by: review and the `#define` count. `#if` stays for one question, a platform or a feature the compiler answers (`__has_feature(address_sanitizer)`); `arena.smith` shows the way: ordinary code behind a `constexpr bool`, so every branch type-checks.
+6. **Effects come only through capabilities passed down from `main`.** A function that prints takes a `c::SmithConsole *`; one that reads a file takes `c::SmithFiles *`; one that needs memory takes an `arena::Arena *`; randomness is a `random::Key` passed in. Take the part of `SmithIo` the function needs, not all of it, so the signature says what it can do (`smith-io`).
+   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-effects`: a raw call such as `c::printf` or `c::fopen` outside a capability's own module is reported, with the capability to take instead; `smith_io_make` outside `main` is reported; so is a capability in static storage. It is in smith's default `.clang-tidy` and in `smith check`.
+7. **No globals, no `malloc`.** Memory is an arena passed in (`smith-arena`); state is a value passed in.
+   - Enforced by: `smith-effects` reports `malloc` and `free`; review for a mutable global the check does not know about.
+8. **Checks, contracts and `expect_abort` are plain functions.** `c::smith_check_equal_u64(a, b)`, `c::smith_requires(low <= high)`, `c::smith_test_expect_abort()`: a failure's report is read from the call stack, which is why they are not macros (`smith-test`, `smith-contract`, `smith-trace`). Write a check you need as a function too.
+   - Enforced by: the library (the deprecated `SMITH_CHECK` macros still work; new tests do not use them); review.
+9. **Module-local names are short, and `[[smith::c_name]]` only where a C API must stay.** Inside `module smith::arena` the type is `Arena` and the function is `push`; the module's name is the prefix, so `arena_push` in `arena.smith` is wrong. `[[smith::c_name("SmithArena")]] export typedef struct {...} Arena;` is for a library whose C callers must not change; a project's own module gets none.
+   - Enforced by: review. `readability-identifier-naming` in `smith lint` judges the case of a name as written, not its length or a repeated prefix.
+10. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as `smith-development` asks of every agent.
+
+## A C module, and the same as Smith
+
+A module that allocates from an arena, draws random numbers and prints through io. First the C, as an agent writes it from the C API:
+
+```c
+// rolls.h
+#ifndef ROLLS_H
+#define ROLLS_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <smith/arena.h>
+#include <smith/io.h>
+#include <smith/random.h>
+
+#define ROLLS_SIDES 6
+
+typedef struct {
+    uint32_t *faces;
+    size_t count;
+} Rolls;
+
+Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count);
+double rolls_mean(const Rolls *rolls);
+void rolls_print(SmithConsole *console, const Rolls *rolls);
+
+#endif
+```
+
+```c
+// rolls.c
+#include "rolls.h"
+
+#include <stdalign.h>
+
+// count rolls of a die, each from its own key derived from `key`.
+Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count) {
+    Rolls rolls = {.faces = smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t)), .count = count};
+    for (size_t i = 0; i < count; i++) {
+        SmithKey roll = smith_key_derive(key, i);
+        rolls.faces[i] = (uint32_t)smith_uniform_int64_sample(roll, (SmithUniformInt64){.low = 1, .high = ROLLS_SIDES});
+    }
+    return rolls;
+}
+
+double rolls_mean(const Rolls *rolls) {
+    uint64_t sum = 0;
+    for (size_t i = 0; i < rolls->count; i++) sum += rolls->faces[i];
+    return rolls->count == 0 ? 0 : (double)sum / (double)rolls->count;
+}
+
+void rolls_print(SmithConsole *console, const Rolls *rolls) {
+    for (size_t i = 0; i < rolls->count; i++) smith_console_printf(console, "%u ", rolls->faces[i]);
+    smith_console_printf(console, "(mean %.2f)\n", rolls_mean(rolls));
+}
+```
+
+Renamed to `rolls.smith` this compiles, and it has 13 standard C types, 7 `#include`s and 2 `#define`s. As Smith it is one file with no header:
+
+```smith
+// rolls.smith
+module rolls;
+
+import smith::arena;
+import smith::random;
+import <smith/io.h>;
+
+constexpr i64 sides = 6;
+
+export typedef struct {
+    u32 *faces;
+    usize count;
+} Rolls;
+
+// count rolls of a die, each from its own key derived from `key`.
+export Rolls make(arena::Arena *arena, random::Key key, usize count) {
+    Rolls rolls = {.faces = arena::push_array(arena, u32, count), .count = count};
+    for (usize i = 0; i < count; i++) {
+        random::Key roll = random::key_derive(key, i);
+        rolls.faces[i] = (u32)random::uniform_int64_sample(roll, (random::UniformInt64){.low = 1, .high = sides});
+    }
+    return rolls;
+}
+
+export f64 mean(const Rolls *rolls) {
+    u64 sum = 0;
+    for (usize i = 0; i < rolls->count; i++) sum += rolls->faces[i];
+    return rolls->count == 0 ? 0 : (f64)sum / (f64)rolls->count;
+}
+
+export void print(c::SmithConsole *console, const Rolls *rolls) {
+    for (usize i = 0; i < rolls->count; i++) c::smith_console_printf(console, "%u ", rolls->faces[i]);
+    c::smith_console_printf(console, "(mean %.2f)\n", mean(rolls));
+}
+```
+
+```smith
+// main.smith
+module main;
+
+import rolls;
+import <smith/io.h>;
+
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    rolls::Rolls dice = rolls::make(&io.arena, io.key, 10);
+    rolls::print(&io.console, &dice);
+    return 0;
+}
+```
+
+What changed, by rule:
+- 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `u32`, `usize`, `u64`, `f64`.
+- 2: `<smith/io.h>` is imported and its names are `c::SmithConsole`, `c::smith_console_printf`, `c::SmithIo`, `c::smith_io_make`. Until io is a module (it is C today), this is its honest form.
+- 3: `rolls.h` is gone; `import smith::arena;` and `import smith::random;` replace two includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`). `main` imports `rolls`.
+- 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_array(arena, u32, count)`: the size and alignment cannot disagree, and the result is typed.
+- 5: `ROLLS_SIDES` is `constexpr i64 sides`.
+- 6: `print` takes the `SmithConsole` and nothing more; `make` takes the arena and the key; only `main` makes the io. `smith lint` would report `c::printf` here.
+- 9: `rolls_make` is `rolls::make`; the module name is the prefix.
+
+`smith build` (no build file needed: `main.smith` and `rolls.smith` in a folder) built it with the strict warnings and `smith run` printed `6 1 4 6 3 6 4 5 2 6 (mean 4.30)`; the seed is random unless `SMITH_SEED` is set.
+
+## Porting checklist
+
+Port one file per commit. Run the counts before and after; every line but the last two should reach 0 for a module you ported, and `c:: names` and `raw calls` tell you what is left for the capabilities.
+
+```sh
+files=$(git ls-files '*.smith')
+n() { cat $files | grep -cE "$1"; }
+echo "standard C types  $(n '\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t|unsigned|double|float)\>')"
+echo "#include          $(n '^[[:space:]]*#[[:space:]]*include')"
+echo "#if               $(n '^[[:space:]]*#[[:space:]]*(if|ifdef|ifndef|elif)\>')"
+echo "#define           $(n '^[[:space:]]*#[[:space:]]*define')"
+echo "sizeof/alignof    $(n '\<(sizeof|alignof)\>')"
+echo "c:: names         $(n 'c::')"
+echo "raw calls         $(n 'c::(f?printf|puts|f?open|fread|fwrite|fclose|malloc|calloc|free|memcpy|memset|time|exit|rand)\(')"
+```
+
+Set `files` to one path to count one file. The counts are lines, comments included. For the example above `rolls.c` and `rolls.h` together have 13, 7, 1, 2, 1, 0, 0 and the Smith has 0, 0, 0, 0, 0, 4, 0.
+
+- **Standard C types, `#include`, `#define`, `sizeof`/`alignof`: 0.** A `sizeof` that stays measures something that is not a type argument (`sizeof memory` of an array).
+- **`#if`: only the questions the compiler answers,** each with a comment saying which.
+- **`c::` names** are the calls into C; each should be a library's job (a capability, or `<math.h>` and `<string.h>`, which are pure). `c::` calls into the world outside the program are the next count.
+- **Raw calls: 0 outside a capability's module.** `smith lint` reports them; the count is the quick check.
+- Then: `smith build`, `smith test` and `smith check` as before the port, and `smith fmt` (`.smith` is formatted as C with `::`).
+- Do not claim a module is idiomatic until the counts are in your report.
+
+## Examples in skills are compiled
+
+Every ` ```smith ` block in the plugin's skills is a complete file that `tests/skills.sh` compiles with the smith under test (`smith build test-skills`). A block that is only part of a file is marked ` ```smith fragment ` and skipped; use it sparingly. C is ` ```c `. A block that must fail (an error message's cause) is ` ```text `. `smith-docs` has nothing to do with this; it checks structure and links.

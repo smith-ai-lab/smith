@@ -52,7 +52,7 @@ Skills link knowledge; knowledge never links skills. No `CLAUDE.md` is needed: C
 
 The default types are `convention`, `architecture`, `contract` and `design`. A project with others declares them in `knowledge/index.md`'s frontmatter, which is where the check reads them (as `.clang-format` holds the style):
 
-```
+```text
 ---
 okf_version: "0.2"
 types: contract, convention, dataset, model

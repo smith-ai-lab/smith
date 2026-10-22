@@ -9,19 +9,28 @@ This skill ships in the smith plugin, from `.agents/skills/smith-contract/SKILL.
 
 A contract is a call that stops the program when its condition is false, as `assert` does. The header is `.smith/include/smith/contract.h`; read it first.
 
-```c
-#include <smith/contract.h>
+**contract is C today, and a `.smith` file uses it as `import <smith/contract.h>;` with the calls under `c::`**; it becomes a module later and the calls stay. The prose below names the calls by their C names; in `.smith` write `c::` before each. A contract is a plain function call, never a macro, so a failure's report is read from the call stack (`smith-trace`).
 
-int32_t clamp(int32_t x, int32_t low, int32_t high) {
-    smith_requires(low <= high);                     // the caller's job
-    int32_t result = x < low ? low : x > high ? high : x;
-    smith_ensures(low <= result && result <= high);  // this function's promise
+```smith
+module geometry::box;
+
+import <smith/contract.h>;
+
+export i32 clamp(i32 x, i32 low, i32 high) {
+    c::smith_requires(low <= high);                     // the caller's job
+    i32 result = x < low ? low : x > high ? high : x;
+    c::smith_ensures(low <= result && result <= high);  // this function's promise
     return result;
 }
 
-for (uint8_t square = 0; square < squares; square++) {
-    smith_invariant(moves->len <= 2 * square);       // the first statement of a loop body
-    // ...
+export u32 count_pairs(u32 squares, u32 *moves) {
+    u32 len = 0;
+    for (u32 square = 0; square < squares; square++) {
+        c::smith_invariant(len <= 2 * square);          // the first statement of a loop body
+        moves[len] = square;
+        len += square % 2;
+    }
+    return len;
 }
 ```
 
@@ -32,9 +41,27 @@ for (uint8_t square = 0; square < squares; square++) {
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass |
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
 
-- An old value is a `const` local saved at the top: `const uint8_t old = moves->len;`. The result is the variable about to be returned.
+- An old value is a `const` local saved at the top: `const u8 old = moves->len;`. The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
 - **A condition must be free of side effects.** The call evaluates it, and with `-DNDEBUG` nothing else happens: the body is empty, so the optimizer removes an argument that has none.
+
+## From C
+
+```c
+#include <smith/contract.h>
+
+int32_t clamp(int32_t x, int32_t low, int32_t high) {
+    smith_requires(low <= high);
+    int32_t result = x < low ? low : x > high ? high : x;
+    smith_ensures(low <= result && result <= high);
+    return result;
+}
+
+for (uint8_t square = 0; square < squares; square++) {
+    smith_invariant(moves->len <= 2 * square);
+    // ...
+}
+```
 
 ## At run time
 
@@ -112,7 +139,7 @@ In `.smith` it is `c::smith_trusted();` (with `import <smith/contract.h>;`), the
 
 A proof that runs out of its budget, and `-v` for every function, say what took the time:
 
-```
+```text
 FAIL  divmod  (division.c:6)
   over its budget of 2 s of CPU time ...
   where the time went (CPU, as charged):

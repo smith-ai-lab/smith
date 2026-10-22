@@ -9,40 +9,47 @@ This skill ships in the smith plugin, from `.agents/skills/smith-test/SKILL.md` 
 
 ## Write a test
 
-A test is a plain function in a file build.c names. There is no `TEST()` macro and no registration: the build finds the functions by name, so the definition line must be exactly this (clang-format keeps it):
+A test is a plain function in a file build.c names. There is no `TEST()` macro and no registration: the build finds the functions by name, so the definition line must be exactly this (clang-format keeps it). **test is C today, and a `.smith` file uses it as `import <smith/test.h>;` with the names under `c::`** (`c::smith_check_equal_u64`); it becomes a module (`smith::test`) later and the checks and the runner stay as they are. Random keys and arenas are modules already.
 
-```c
-#include <smith/test.h>
+```smith
+import smith::arena;
+import smith::random;
+import <smith/test.h>;
 
 void test_addition(void) {
-    SMITH_CHECK(2 + 2, ==, 4);
+    c::smith_check_equal_i32(2 + 2, 4);
 }
 
-void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 100 keys
-    SmithArena arena = smith_test_arena(1 << 16);  // this test's memory, given back before each key
-    size_t count = (size_t)smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 100});
-    smith_test_note("count %zu", count);           // printed under a failure
-    ...
+void test_sorted_stays_sorted(c::SmithKey key) { // a property test: runs on 100 keys
+    arena::Arena a = c::smith_test_arena(1 << 16); // this test's memory, given back before each key
+    usize count = (usize)random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 100});
+    c::smith_test_note("count %zu", count); // printed under a failure
+    usize *items = arena::push_array(&a, usize, count);
+    for (usize i = 0; i < count; i++)
+        items[i] = (usize)random::uniform_int64_sample(random::key_derive(key, i + 1), (random::UniformInt64){.low = 0, .high = 9});
 }
 ```
 
-- `void test_<name>(void) {` is a test; `void test_<name>(SmithKey key) {` is a property test. `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`.
+- `void test_<name>(void) {` is a test; `void test_<name>(c::SmithKey key) {` is a property test. `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. The build finds the property test by the literal text `SmithKey` or `c::SmithKey`, so the parameter is not written `random::Key` (it is the same type, and inside the test you use `random::` freely). A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`.
 - A property test draws everything from its key (derive one key per use) and is run on `--seeds` keys. The seed in a failure replays it exactly.
 
-### Tests in `.smith`
+### Tests in modules
 
-Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/**/*_test.smith", nullptr))`; `import <smith/test.h>;` and the checks are `c::smith_check_equal_u64(...)` until the library is a module). The same lines are tests:
+Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/**/*_test.smith", nullptr))`). The same lines are tests:
 
-```c
+```smith
 // tests/geometry/box_test.smith
 module geometry::box_test;
-import <smith/test.h>;
-import geometry::box;
 
-export void test_area(void) {                 // `export`: a private function is static, nothing can call it
-    c::smith_check_equal_u64(box::area(2, 3), 6);
+import <smith/test.h>;
+
+export void test_area(void) { // `export`: a private function is static, nothing can call it
+    c::smith_check_equal_u64(3 * 2, 6);
 }
-export void test_area_property(c::SmithKey key) { ... }
+
+export void test_area_property(c::SmithKey key) {
+    c::smith_check(c::smith_key_bits(key, 0) == c::smith_key_bits(key, 0));
+}
 ```
 
 - A property test's key may also be written `random::Key key` after `import smith::random;` (`<alias>::Key` for `import smith::random as <alias>;`): `export void test_area_property(random::Key key) { ... }`.
@@ -56,15 +63,15 @@ export void test_area_property(c::SmithKey key) { ... }
 Write checks as plain functions. A failure shows the line that called the check and the call chain, read from the stack and
 the source file, so a check needs no macro.
 
-```c
-smith_check(condition)                      // a bool
-smith_check_equal_u64(a, b)                 // bool, char, i8 i16 i32 i64, u8 u16 u32 u64, f32, f64, ptr: the type is in the name
-smith_check_near_f32(a, b, tolerance)       // |a - b| <= tolerance; also _f64; a NaN fails
-smith_check_same_bits_f64(a, b)             // bitwise identical; also _f32
-smith_test_expect_abort()                   // from this call on the test must abort (below)
+```smith fragment
+c::smith_check(condition)                      // a bool
+c::smith_check_equal_u64(a, b)                 // bool, char, i8 i16 i32 i64, u8 u16 u32 u64, f32, f64, ptr: the type is in the name
+c::smith_check_near_f32(a, b, tolerance)       // |a - b| <= tolerance; also _f64; a NaN fails
+c::smith_check_same_bits_f64(a, b)             // bitwise identical; also _f32
+c::smith_test_expect_abort()                   // from this call on the test must abort (below)
 ```
 
-The `SMITH_CHECK*` macros below still work and are deprecated: new tests call the functions above.
+The `SMITH_CHECK*` macros below (C only) still work and are deprecated: new tests call the functions above.
 
 ```c
 SMITH_CHECK(condition)              // a bool, or anything that converts to one
@@ -78,9 +85,17 @@ SMITH_CHECK_SAME_BITS(a, b)         // float or double, bitwise identical: -0 is
 - A failed check ends the test. A comma outside parentheses inside an argument splits it; parenthesize.
 - `smith_test_expect_abort()` is a plain function that says "from this call on, the test must abort". Call it, then run the code that aborts, as the test's last statements (`(void)expr;` where an unused result would warn):
 
-  ```c
+  ```smith
+  import <assert.h>;
+  import <smith/test.h>;
+
+  static i32 halve(i32 x) {
+      c::assert(x % 2 == 0);
+      return x / 2;
+  }
+
   void test_halve_refuses_odd(void) {
-      smith_test_expect_abort();
+      c::smith_test_expect_abort();
       (void)halve(5);
   }
   ```
@@ -99,7 +114,7 @@ A failure in `smith build test` looks like this; the last line reproduces it. Th
 (`<smith/trace.h>`); smith turns them into files, lines and source text with LLVM's symbolizer, so the program holds no
 symbolizer and the test binary links as quickly as before:
 
-```
+```text
 FAIL moves_every_step
   check failed at tests/moves_test.c:42
        42 |     smith_check_equal_u64(moves.count, expected);
@@ -116,7 +131,7 @@ UBSan stacks have lines too: smith answers their symbolizer protocol. A runner r
 plain-function check; `smith symbolize [--binary <program>] [<log>]` turns a saved log back into the report. The older macro form of the
 same failure:
 
-```
+```text
 FAIL uniform_stays_in_range with seed 6387777158891554393
   tests/test_random.c:12
       SMITH_CHECK(x, <=, range.high);
@@ -132,13 +147,31 @@ A failing property test is shrunk before it is shown: the runner reruns the key,
 
 A crash is `FAIL name: killed by SIGSEGV` with the process's stderr under it (a sanitizer's report), a timeout `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). One crash fails one test, and the rest run on a fresh worker. A passing test's output is hidden.
 
+## From C
+
+The same tests in C include the header and use the names without `c::`:
+
+```c
+#include <smith/test.h>
+
+void test_addition(void) {
+    smith_check_equal_i32(2 + 2, 4);
+}
+
+void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 100 keys
+    SmithArena arena = smith_test_arena(1 << 16);  // this test's memory, given back before each key
+    size_t count = (size_t)smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 100});
+    smith_test_note("count %zu", count);           // printed under a failure
+}
+```
+
 ## Set it up
 
 In build.c (the smith-build skill has the rest):
 
 ```c
 SmithTests tests = {
-    .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+    .sources = smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/test_*.c", nullptr)), // .smith or C files
     .objects = (const SmithObject *[]){&code_under_test, nullptr}, // the code under test; nullptr for none. smith_tests links the arena, random, trace and contract libraries itself
     .flags = flags,       // the test files and smith's test library, -I .smith/include included
     .link_flags = link_flags,

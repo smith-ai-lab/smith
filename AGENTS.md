@@ -167,6 +167,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
   modules itself: a header step per module, and every `.smith` compile, and every C compile that names a header of `.smith/include` as an input or puts that folder on its include path, waits for all of them (docs/build-c.md).
+- **A `.smith` file has no preprocessor, and the facts of the target are `target::`** (issue #46; `runtime/lang_target.c`,
+  [docs/smith-lang.md](docs/smith-lang.md)). `import target;` is a module that is no file: `target::arch` (`aarch64`,
+  `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions`,
+  `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`. A compile asks clang's preprocessor from
+  the token hook (`SmithHost.target_fact`, no patch) and writes literals, so they work in `static_assert`, array sizes
+  and `constexpr` initializers; the raw lowering (`--smith-lower`, `--smith-header`, which is where `bootstrap/` and the
+  stage0 get their C) has no preprocessor and writes the equivalent macro (defined at the top by an `#if` chain) and
+  `#if`/`#else`/`#endif`. **`if constexpr` works in any function body** (blocks; the condition is `target::` facts,
+  `constexpr` constants and literals): the branch not taken is dropped before the parser. A file that contains `if
+  constexpr` is offered every token of a body by the hook (keywords are not identifiers), others are untouched. The next
+  steps of the owner's goal (no `#pragma`, `c::assert`, `c::` macros in `.smith`; then the lint that refuses them) are in
+  issue #46.
 - **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
   Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
   called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the

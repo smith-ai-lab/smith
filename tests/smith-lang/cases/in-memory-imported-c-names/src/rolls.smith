@@ -1,0 +1,7 @@
+module rolls;
+
+import core;
+
+export i32 total(core::Thing *thing, i32 more) {
+    return thing->x + more;
+}

@@ -237,6 +237,23 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-if-constexpr/src/main.smith <==
+import target;
+
+int main(void) {
+    int n = 3;
+    if constexpr (n > 2) {
+        return 1;
+    }
+    if constexpr (target::bogus) {
+        return 2;
+    }
+    if constexpr (target::arch == target::aarch64 || n) {
+        return 3;
+    }
+    if constexpr (1) return 4;
+    return 0;
+}
 ==> error-import-broken-module/src/broken.smith <==
 module broken;
 
@@ -403,6 +420,14 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
+==> error-target-fact/src/bad.smith <==
+module bad;
+
+import target;
+
+export constexpr i32 wide = target::f32_mantissa_bits;
+i32 oops = target::nothing;
+i32 module_name = target;
 ==> export-inline/src/math/small.smith <==
 module math::small;
 
@@ -1135,6 +1160,100 @@ i32 main(void) {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
+==> if-constexpr/src/kind.smith <==
+module kind;
+
+import target;
+
+constexpr i32 wide = 8;
+constexpr bool both = wide == 8 && target::float_radix == 2;
+
+// A chain: the branches not taken are never given to the parser, so they may be anything.
+export i32 arch_name(void) {
+    if constexpr (target::arch == target::aarch64) {
+        return 1;
+    } else if constexpr (target::arch == target::x86_64) {
+        undeclared_function();
+    } else {
+        return 3;
+    }
+}
+
+// The constraint for another architecture would not compile here.
+export i32 opaque(i32 value) {
+    if constexpr (target::arch == target::aarch64) {
+        __asm__("" : "+w"(value));
+    } else {
+        __asm__("" : "+nonsense"(value));
+    }
+    return value;
+}
+
+// Nested blocks, constants of the file and of the function, and a condition of literals.
+export i32 nested(i32 x) {
+    constexpr i32 local = 3;
+    i32 result = 0;
+    if constexpr (wide == 8) {
+        if constexpr (target::os == target::macos) {
+            result = 10;
+        } else {
+            undeclared_function();
+        }
+        if constexpr (both) {
+            result += 1;
+        }
+        if constexpr (wide < 4) {
+            undeclared_function();
+        } else {
+            result += x;
+        }
+        if constexpr (local == 3 && !(1 > 2) || false) {
+            result += 100;
+        }
+    }
+    if constexpr (0 == 1) {
+        undeclared_function();
+    }
+    return result;
+}
+
+// A generic's `if constexpr` still chooses the branch for each instance.
+export i32 describe(constexpr type T, T value) {
+    (void)value;
+    if constexpr (T == f32) {
+        return 1;
+    } else if constexpr (sizeof(T) == 8) {
+        return 2;
+    } else {
+        return 3;
+    }
+}
+==> if-constexpr/src/main.smith <==
+import kind;
+import target;
+import <stdio.h>;
+
+constexpr bool fast = target::assertions == false;
+
+int main(void) {
+    i32 answer = 0;
+    // In a file with no module line the branches flow the same.
+    if constexpr (target::os == target::macos) {
+        answer = 7;
+    } else {
+        undeclared_function();
+    }
+    if constexpr (fast) {
+        c::printf("assertions are off\n");
+    } else if constexpr (target::arch == target::aarch64) {
+        c::printf("answer is seven\n");
+    } else {
+        c::printf("neither\n");
+    }
+    c::printf("%d %d %d\n", kind::arch_name(), kind::opaque(5), kind::nested(20));
+    c::printf("%d %d %d\n", kind::describe(f32, 1.5f), kind::describe(u64, 9), kind::describe(u8, 1));
+    return answer == 7 ? 0 : 1;
+}
 ==> import-c-header/src/main.smith <==
 import <math.h>;
 import <sys/wait.h>;
@@ -1181,6 +1300,34 @@ int main(void) {
     text::Text t = text::make("hello");
     printf("%zu %d\n", text::length(t), u::twice(21));
     return 0;
+}
+==> in-memory-imported-c-names/src/core.smith <==
+module core;
+
+[[smith::c_name("CoreThing")]] export typedef struct {
+    i32 x;
+} Thing;
+
+[[smith::c_name("core_make")]] export Thing make(i32 x) {
+    return (Thing){x};
+}
+==> in-memory-imported-c-names/src/main.smith <==
+import core;
+import rolls;
+import <stdio.h>;
+
+int main(void) {
+    core::Thing thing = core::make(40);
+    c::printf("%d\n", rolls::total(&thing, 2));
+    return 0;
+}
+==> in-memory-imported-c-names/src/rolls.smith <==
+module rolls;
+
+import core;
+
+export i32 total(core::Thing *thing, i32 more) {
+    return thing->x + more;
 }
 ==> include-keeps-c-names/src/app/say.smith <==
 module app::say;
@@ -1953,6 +2100,57 @@ i32 main() {
     auto count = _Countof(numbers);
     printf("%zu\n", count);
     return 0;
+}
+==> target-facts/src/main.smith <==
+import target;
+import <stdio.h>;
+
+// Each fact of the target, against the answer of C's own preprocessor in facts.c (`#if` and the predefined macros).
+extern i32 c_arch(void);
+extern i32 c_os(void);
+extern i32 c_address_sanitizer(void);
+extern i32 c_undefined_sanitizer(void);
+extern i32 c_thread_sanitizer(void);
+extern i32 c_assertions(void);
+extern i32 c_float_radix(void);
+extern i32 c_f32_mantissa_bits(void);
+extern i32 c_f64_mantissa_bits(void);
+extern i32 c_float_eval_method(void);
+
+// A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
+static_assert(target::float_radix == 2);
+static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
+static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
+static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
+
+u8 mantissa[target::f32_mantissa_bits];
+constexpr i32 arch_copy = target::arch;
+constexpr bool sanitized = target::address_sanitizer;
+static_assert(_Countof(mantissa) == 24);
+
+static i32 check(const char *name, i32 smith, i32 compiler) {
+    if (smith != compiler) {
+        c::printf("%s: %d, and the compiler says %d\n", name, smith, compiler);
+        return 1;
+    }
+    c::printf("%s ok\n", name);
+    return 0;
+}
+
+int main(void) {
+    i32 bad = 0;
+    bad += check("arch", target::arch, c_arch());
+    bad += check("os", target::os, c_os());
+    bad += check("address_sanitizer", target::address_sanitizer, c_address_sanitizer());
+    bad += check("undefined_sanitizer", target::undefined_sanitizer, c_undefined_sanitizer());
+    bad += check("thread_sanitizer", target::thread_sanitizer, c_thread_sanitizer());
+    bad += check("assertions", target::assertions, c_assertions());
+    bad += check("float_radix", target::float_radix, c_float_radix());
+    bad += check("f32_mantissa_bits", target::f32_mantissa_bits, c_f32_mantissa_bits());
+    bad += check("f64_mantissa_bits", target::f64_mantissa_bits, c_f64_mantissa_bits());
+    bad += check("float_eval_method", target::float_eval_method, c_float_eval_method());
+    bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
+    return bad;
 }
 ==> type-query/src/main.smith <==
 // Nothing here uses the question: the test asks the parser what it makes of these types, written as tokens the way a

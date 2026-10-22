@@ -26,7 +26,7 @@ A folder with no `build.c` and a `main.smith` or `main.c` at its root builds, ru
 
 A root `build.smith` is the build file when there is no `build.c` (both is an error naming both; smith's own repository stays `build.c`). The full smith compiles it as a `.smith` file; the stage0 refuses it (`build.smith needs the full smith`). The verbs, `smith lint` included (it lints the file as written), work on it as on a build.c. It has no `module` line, so it defines a plain `void build(build::Build *b)` (no `export`):
 
-```c
+```smith
 import smith::build;
 
 void build(build::Build *b) {

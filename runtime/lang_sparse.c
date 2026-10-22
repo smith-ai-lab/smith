@@ -16,6 +16,8 @@ void smith_lang_watch_basics(const SmithHost *host) {
         host->watch(host->context, words[i], (uint32_t)strlen(words[i]));
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 13 entries
         host->watch(host->context, smith_lang_sized[i].name, (uint32_t)strlen(smith_lang_sized[i].name));
+    // `if` and `else` are keywords, which a host offers only in its all-tokens mode.
+    if (host->maybe_if_constexpr) host->watch_mode(host->context, SmithWatch_All);
 }
 
 // The token `back` places before the one being lowered (1 is the one before): this batch's own, then the host's record.
@@ -160,7 +162,7 @@ static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *hos
     if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "import")) return;
     host->watch_imports(host->context);
     lang->imports_watched = true;
-    host->watch_mode(host->context, SmithWatch_Names);
+    host->watch_mode(host->context, host->maybe_if_constexpr ? SmithWatch_All : SmithWatch_Names);
 }
 
 static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
@@ -321,7 +323,7 @@ bool smith_lang_body_sparse(const SmithLang *lang) {
 }
 
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open) {
-    if (!lang->body_sparse || lang->broken) return false;
+    if (!lang->body_sparse || lang->broken || lang->ifc_count > 0) return false; // an `if constexpr` counts braces
     if (!open) {
         if (lang->brace_depth == 1 && lang->braces[0] == SmithLangBrace_Function) { // the function's own: it ends
             lang->brace_depth = 0;

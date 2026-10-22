@@ -1,0 +1,9 @@
+module core;
+
+[[smith::c_name("CoreThing")]] export typedef struct {
+    i32 x;
+} Thing;
+
+[[smith::c_name("core_make")]] export Thing make(i32 x) {
+    return (Thing){x};
+}

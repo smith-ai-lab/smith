@@ -9,7 +9,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang-generics/S
 
 A function of a module with `constexpr type T` parameters is written once and compiled for each type it is called with. `constexpr` in a parameter list means compile-time: the parameter is in no generated function. A bare `type T` is an error (``a type parameter is compile-time: write `constexpr type T` ``).
 
-```c
+```smith fragment
 module arena;
 export T *push(Arena *a, constexpr type T) {              // T is usable in the signature and the body
     usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
@@ -48,7 +48,7 @@ export i32 describe(constexpr type T, T value) {
 }
 ```
 
-Only in a generic's body. The condition is a constant expression: integers, `true`, `false`, the operators of C, `sizeof(T)`, `alignof(T)`, `T == U` and `T != U`, and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`. The branch not taken is never given to the parser, so it may use what `T` has not (`value.x`).
+In a generic's body, where it chooses the branch for each instance; in any other function body it chooses by the target (`if constexpr (target::arch == target::aarch64) { } else { }`, see `smith-lang`), with blocks for branches. In a generic the condition is a constant expression: integers, `true`, `false`, the operators of C, `sizeof(T)`, `alignof(T)`, `T == U` and `T != U`, and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`. The branch not taken is never given to the parser, so it may use what `T` has not (`value.x`).
 
 ## Errors
 
@@ -56,4 +56,4 @@ Every error is at the generic's source, with a note at the call that asked for t
 
 ## Not built
 
-Generic types, functions that return `type`, compile-time value parameters (`constexpr u32 tile`), overloading, specialization, variadic lists of types, pointers to generics, and a function-local type as `T`.
+Generic types, functions that return `type`, compile-time value parameters (`constexpr u32 tile`), overloading, specialization, variadic lists of types, pointers to generics, a function-local type as `T`, and a `target::` fact in a generic's condition when lowering without the compiler (`smith cc --smith-lower`; a compile accepts it).

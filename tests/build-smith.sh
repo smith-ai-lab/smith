@@ -215,6 +215,8 @@ capture smith build -t commands build/debug/dump build/release/dump build/fast/d
 expect "dump: the build.smith gives the commands of no build file" "$conventional" "$out"
 capture smith build
 expect "dump: ... builds" 0 "$rc"
+# It failed once under the load of a full smith check and never alone: show what the build said, to find out why.
+[ "$rc" -eq 0 ] || printf '  stdout: %s\n  stderr: %s\n' "$out" "$err"
 capture smith run
 expect "dump: ... runs" "12" "$(last "$out")"
 capture smith test
