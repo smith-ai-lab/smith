@@ -2,12 +2,21 @@
 import primes;
 
 import <assert.h>;
-import <stdio.h>;
+import <smith/io.h>;
 
-int main(void) {
+// A function takes only the capability it uses, so its signature says what it can do to the world.
+// smith lint (smith-effects) reports a call like c::printf anywhere but in a capability's own module.
+static void report(c::SmithConsole *console, i32 sum) {
+    (void)c::smith_console_printf(console, "the first 5 primes add up to %d\n", sum);
+    (void)c::smith_console_print(console, "hello from @NAME@\n");
+}
+
+// main makes the program's io once, and only main may: it passes down the parts each function needs.
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
     i32 sum = primes::sum(5);
     c::assert(sum == 28);
-    c::printf("the first 5 primes add up to %d\n", sum);
-    c::puts("hello from @NAME@");
+    report(&io.console, sum);
+    c::smith_io_close(&io);
     return 0;
 }

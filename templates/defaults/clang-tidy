@@ -5,6 +5,11 @@
 #   easily-swappable-parameters: flags every pair like (size, align); too noisy for C.
 #   switch-missing-default-case: an enum switch leaves out default so -Wswitch names a missing case.
 #
+# smith-effects: a program touches the world only through capabilities (SmithIo and its parts) that main passes down, so a
+# function's signature says what it can do. A call into a system header that is not pure is reported: take a
+# SmithFiles *, SmithConsole * and so on instead (the smith-io skill). Delete smith-effects from Checks to opt out, or set
+# smith-effects.CFiles: false below to check .smith files only.
+#
 # Tiger Style: a function fits on a screen, and nothing recurses, so the code's paths can be checked. Delete
 # misc-no-recursion and readability-function-size (and its LineThreshold below) to opt out.
 Checks: >
@@ -15,7 +20,8 @@ Checks: >
   clang-analyzer-*,
   misc-no-recursion,
   readability-function-size,
-  readability-identifier-naming
+  readability-identifier-naming,
+  smith-effects
 WarningsAsErrors: '*'
 # Diagnostics come from the project's own files, never from system headers.
 HeaderFilterRegex: '.*'

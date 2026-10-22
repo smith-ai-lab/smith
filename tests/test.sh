@@ -1352,6 +1352,8 @@ if part main; then
 cd "$work/main" || exit 1
 if "$smith" lsp --version >/dev/null 2>&1; then
     capture "$smith" build
+    # The sample is not what smith-effects tests; its checks are off.
+    printf 'Checks: "-*"\n' >.clang-tidy
     capture "$smith" lsp --check=tests/test_checks.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"

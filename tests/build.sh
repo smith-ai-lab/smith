@@ -2147,6 +2147,8 @@ expect "modules: the cache survives a clean of build/ and is reused" 0 "$rc"
 expect_contains "modules: the cache is the shared one" "$(ls "$XDG_CACHE_HOME/smith/modules")" "modules.timestamp"
 expect "modules: and nothing is cached under .smith" no "$([ -e .smith/cache ] && echo yes || echo no)"
 if "$smith" lsp --version >/dev/null 2>&1; then
+    # The sample is not what smith-effects tests; its checks are off.
+    printf 'Checks: "-*"\n' >.clang-tidy
     capture "$smith" lsp --check="$(pwd -P)/x.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in x.c" "" "$errors"
@@ -2316,6 +2318,8 @@ expect_contains "modules: the library map has io" "$(cat .smith/modules/smith.mo
 if "$smith" lsp --version >/dev/null 2>&1; then
     # compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
     expect_contains "modules: compile_commands.json names the smith map" "$(cat compile_commands.json)" "smith.modulemap"
+    # The sample is not what smith-effects tests; its checks are off.
+    printf 'Checks: "-*"\n' >.clang-tidy
     capture "$smith" lsp --check="$(pwd -P)/all_of_them.c"
     errors=$(printf '%s\n' "$err" | grep -v 'tweak:' | grep 'E\[' || true)
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
