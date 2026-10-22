@@ -3,7 +3,7 @@
 --   require("neotest").setup({ adapters = { require("neotest-smith") } })
 --
 -- How it works:
---   * A test file is a `.c` or `.smith` file in a smith project (a folder with build.c or build.smith) whose name is
+--   * A test file is a `.c` or `.smith` file in a smith project (a folder with a build file, or a main.smith or main.c) whose name is
 --     `test_*` or `*_test`: cheap, by name only, the way `smith_tests` globs `tests/test_*.c`.
 --   * The tests are the `test_` function definitions, found with tree-sitter (the c parser, or smith's for `.smith`). A
 --     position is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has `module a::b;`.
@@ -17,9 +17,7 @@
 --     line); a failure carries the failing check's file, line and values.
 local M = { name = "neotest-smith" }
 
-local markers = { "build.c", "build.smith" }
-
-function M.root(dir) return vim.fs.root(dir, markers) end
+function M.root(dir) return require("smith.project").root(dir) end
 
 function M.filter_dir(name) return name ~= "build" and name ~= ".smith" and name ~= ".git" end
 
@@ -27,7 +25,7 @@ function M.is_test_file(file_path)
   local name = vim.fs.basename(file_path)
   local stem = name:match("^(.+)%.c$") or name:match("^(.+)%.smith$")
   if not stem or not (stem:match("^test_") or stem:match("_test$")) then return false end
-  return vim.fs.root(file_path, markers) ~= nil
+  return M.root(file_path) ~= nil
 end
 
 local function read_lines(path)

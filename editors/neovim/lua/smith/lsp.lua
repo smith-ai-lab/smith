@@ -6,7 +6,7 @@ local M = {}
 M.config = {
   cmd = { "smith", "lsp" },
   filetypes = { "c", "cpp", "objc", "objcpp", "smith" },
-  root_markers = { "build.c", "build.smith", "compile_commands.json", ".git" },
+  root_markers = { "build.c", "build.smith", "main.smith", "main.c", "compile_commands.json", ".git" },
 }
 
 function M.define()
