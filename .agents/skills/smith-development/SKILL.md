@@ -73,9 +73,13 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 - Cost: a plain `.smith` file must compile as fast as the `.c` (the host is offered only watched identifiers). Compare with alternating runs, at least 20 each, and note the load.
 - **What the hook offers the lowering:** identifiers it watches, and braces or every token only in the modes that ask for them. Keywords (`if`, `else`, `constexpr`) are never offered as such, and the hook's fast path handles file-scope keywords without calling the lowering; a feature that must see a keyword asks for every token in the file (as `if constexpr` does for a file whose text has it).
 - **`smith_lang_keep_aside` holds one saved state:** reading another module's interface while one is set aside corrupts the caller. Read imported modules first (`smith_raw_prefetch`), never nested.
+- **A smith-lang corpus case is read by two tests:** after adding or changing one, run `UPDATE=1 sh tests/smith-lang.sh <smith>` and `UPDATE=1 sh tests/smith-fmt.sh <smith>`, and read both diffs.
+- **A module the bootstrap lowers writes its generics' types out** (`arena::push_array(arena, f64, n)`): the header pass and `--smith-lower` have no parser, so they cannot infer a type, and the error ("the compiler cannot say") means exactly that.
 - **The tests include the bootstrap lowering** (`tests/random.c` includes `bootstrap/lib/smith/random.c`), so a change to what a module imports can break a test's compile: run `smith lint`, which compiles them.
 
 ## Libraries in C and in `.smith`
+
+**Adding a library to the registry touches, in one commit:** its row in `smith_libraries` and its embeds in smith.c (with any flags it declares, as random's `-ffp-contract=off`); the lists in build.c that name the libraries (sources, headers, bootstrap, lint compiles); `scripts/bootstrap.sh`'s list when it is a `.smith` module; runtime/package.c if the build runtime compiles it; the test scripts that build smith's libraries by hand; its skill and the smith map. A module that only a body imports becomes a relative `#include` in the bootstrap lowering, so the stage0's one-command build still finds it.
 
 - A library is a row of `smith_libraries` in `smith.c` (`SMITH_LIBRARY(name, lang)`), its two `#embed`s just above (the header
   `include/smith/<name>.h` and the source), and its name in `build_smith_inputs` and `build_format_sources` in `build.c`. The source
