@@ -345,7 +345,7 @@ expect "always: reruns the step every build" 2 "$(lines ticks)"
 project
 build
 expect_status "errors: no build.c fails" 2
-expect "errors: no build.c message" "smith: no build.c in this folder" "$err"
+expect "errors: no build.c message" "smith: no build.c in this folder, and no main.smith or main.c to build by convention" "$(printf '%s\n' "$err" | head -1)"
 
 project
 cat >build.c <<'C'
@@ -3058,7 +3058,7 @@ fi
 # The helpers are under the compiler; the top level is only verbs.
 lang_project
 capture "$smith" cc --smith-header src/lib/text.smith -o header.h
-expect "modules: smith cc --smith-header writes a header" "0 // smith-module: lib::text" "$rc $(sed -n 2p header.h)"
+expect "modules: smith cc --smith-header writes a header" "0 // smith-module: lib::text" "$rc $(sed -n 3p header.h)"
 capture "$smith" cc --smith-header src/lib/text.smith -o header.h
 cp header.h header.copy
 touch -t 200001010000 header.h

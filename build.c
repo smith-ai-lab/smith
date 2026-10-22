@@ -136,8 +136,10 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // The libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>): their C headers,
 // include/smith/<name>.h, are generated and committed, because the stage0 has no hook and embeds them as bytes. Porting
 // a library adds its name here. `smith build headers` regenerates them; `check-headers` (a test, so part of `smith
-// check`) fails when a committed header differs from what its module generates.
-static const char *const build_generated_headers[] = {"random", "text", nullptr};
+// check`) fails when a committed header differs from what its module generates. The header is written as the generator
+// makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
+// clang-format, the same version), so it reads like one written by hand.
+static const char *const build_generated_headers[] = {"build", "random", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -148,6 +150,7 @@ static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, con
                                         "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
                                         "for name in %s; do "
                                         "\"$0\" cc --smith-header lib/smith/$name.smith -o \"$dir/$name.h\" || exit 1; "
+                                        "\"$0\" fmt --style=file:.clang-format -i \"$dir/$name.h\" || exit 1; "
                                         "%s; done; exit $status",
                                         names, action),
                               config->binary, nullptr),
@@ -434,6 +437,7 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
     "include/smith/build.h",
+    "lib/smith/build.smith",
     "runtime/build_runtime.c",
     "runtime/package.c",
     "runtime/gzip.c",
@@ -470,11 +474,10 @@ static const char *const build_smith_inputs[] = {
     "lib/http.c",
     "include/smith/test.h",
     "lib/test.c",
-    "templates/new/build.c",
     "templates/new/main.c",
     "templates/new/gitignore",
-    "templates/new/clang-format",
-    "templates/new/clang-tidy",
+    "templates/defaults/clang-format",
+    "templates/defaults/clang-tidy",
     "templates/new/claude-settings.json",
     "runtime/lang.h",
     "runtime/lang.c",
@@ -589,6 +592,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/random.smith",
                           smith_cat(b, flags, smith_list(b, "-iquote", "include/smith", nullptr), nullptr));
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -616,8 +620,10 @@ static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
     {"bootstrap", "bootstrap", nullptr, nullptr, 0},
     {"build", "build", nullptr, nullptr, 1},
+    {"build-smith", "build-smith", nullptr, nullptr, 1},
     {"cache", "cache", nullptr, nullptr, 0},
     {"contract", "contract", nullptr, nullptr, 0},
+    {"conventions", "conventions", nullptr, nullptr, 1},
     {"dap", "dap", nullptr, nullptr, 0},
     {"defaults", "defaults", nullptr, nullptr, 0},
     {"defer", "defer", nullptr, nullptr, 0},

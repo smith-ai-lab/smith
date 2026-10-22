@@ -1,13 +1,13 @@
 ---
 name: smith-run-test
-description: "smith run and smith test: running a project's program and its tests, the arguments they take, the test runner's options (--test, --seed, --seeds, --jobs, --shrink, --full, --isolate), 'defines no task or alias named', 'is a verb, not a target of smith build'. Load when running or debugging the program or the tests of a project that has a build.c."
+description: "smith run and smith test: running a project's program and its tests, the arguments they take, the test runner's options (--test, --seed, --seeds, --jobs, --shrink, --full, --isolate), 'defines no task or alias named', 'is a verb, not a target of smith build'. Load when running or debugging the program or the tests of a project that has a build.c or builds by convention."
 ---
 
 # smith run and smith test
 
 This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Writing tests is the smith-test skill; writing `build.c` is smith-build.
 
-`smith run` and `smith test` act on what the project's `build.c` declares: the program is the default's, the tests are `smith_tests`'. There is no task to write and no list of files or programs anywhere else.
+`smith run` and `smith test` act on what the project's `build.c` declares: the program is the default's, the tests are `smith_tests`'. There is no task to write and no list of files or programs anywhere else. A project with no build file (a `main.smith` or `main.c` at the root, tests under `tests/`) builds by convention: `smith run` runs `build/debug/<folder>`, and `smith test` runs every `.smith` file and `test_*.c` file under `tests/` (the smith-build skill, "No build file").
 
 ## smith run
 
@@ -29,9 +29,9 @@ Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --see
 ## When it goes wrong
 
 - `smith run: the default of build.c names no program` / `more than one program`: `smith_default` must name exactly one `smith_program` output (aliases are opened); it lists what it names.
-- `smith test: build.c declares no tests`: the build calls no `smith_tests`; add it (the smith-test skill). A task of your own that should run with `smith test` sets `.test = true`.
+- `smith test: the build declares no tests`: the build calls no `smith_tests`; add it (the smith-test skill). A task of your own that should run with `smith test` sets `.test = true`.
 - `this verb was given arguments, but build.c does not read them`: `smith test` was given arguments and build.c calls no `smith_tests` (the runner reads them through `smith_args(b)`).
 - `build.c: task 'run' is named after a verb`: no task or alias is named `run`, `test`, `check`, `fmt`, `lint`, `docs` or `prove`; the verb does it, or name the task another way and run it with `smith build <name>`.
 - `test is a verb, not a target of smith build`: `smith build run|test|check|fmt|lint|prove|docs` are refused. Use the verb.
-- `no build.c in this folder`: run it from the project's folder.
+- `no build.c in this folder, and no main.smith or main.c to build by convention`: run it from the project's folder, or add a `main.smith` or `main.c`.
 - The old `-DTEST=`, `-DSEED=`, `-DJOBS=`, `-DFULL` options are gone; use the runner's options.

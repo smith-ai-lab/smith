@@ -39,6 +39,8 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
 
+A project's build file can be `.smith` too: a root `build.smith` with `import smith::build;` and a plain `void build(build::Build *b)` (no `module` line, so no `export`) calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build` ("build.smith").
+
 ## Tests and proofs
 
 `smith_tests` finds `.smith` tests: `void test_x(void) {` in a file with no `module` line, `export void test_x(void) {` in a module; the runner, `--test` and a failure's report name them as written (`geometry::box_test::area`, a `.smith` line and function). `smith prove geometry/box.smith` names functions as written too. See `smith-test` (".smith tests") and `smith-contract`.

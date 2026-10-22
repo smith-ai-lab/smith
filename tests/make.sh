@@ -668,5 +668,43 @@ esac
 total=$((total + 1))
 
 [ -z "${KEEP_WORK:-}" ] || echo "kept: $work"
+# 17. A Makefile and a main, and no build file: --dump-config translates the Makefile, and nothing builds by convention.
+project
+printf 'int main(void) { return 0; }\n' >main.c
+cat >Makefile <<'MK'
+prog: main.c
+	cc main.c -o prog
+MK
+capture "$smith" build --dump-config
+expect "makefile and main: --dump-config exits 0" 0 "$rc"
+contains "makefile and main: it translates the Makefile" "$out" "translated from Makefile"
+capture "$smith" build
+expect "makefile and main: smith build stops" 2 "$rc"
+contains "makefile and main: and says to translate it" "$err" "smith build --dump-config > build.c"
+contains "makefile and main: or to delete it" "$err" "delete it to build by convention"
+capture "$smith" run
+expect "makefile and main: a verb stops too" 2 "$rc"
+contains "makefile and main: with the same message" "$err" "smith build --dump-config > build.c"
+expect "makefile and main: nothing was built" "" "$(ls prog build .smith 2>/dev/null)"
+rm Makefile
+capture "$smith" build --dump-config
+contains "no Makefile: the conventions are dumped" "$out" "smith_app"
+
+# 18. An empty build file is none, for build.c and for build.smith, in the translator and in the conventions.
+for name in build.c build.smith; do
+    project
+    printf 'int main(void) { return 0; }\n' >main.c
+    printf 'prog: main.c\n\tcc main.c -o prog\n' >Makefile
+    : >"$name"
+    capture "$smith" build --dump-config
+    expect "empty $name: the Makefile is translated" 0 "$rc"
+    contains "empty $name: the output is the translation" "$out" "translated from Makefile"
+    capture "$smith" build
+    contains "empty $name: smith build still sees the Makefile" "$err" "smith build --dump-config > build.c"
+    rm Makefile
+    capture "$smith" build --dump-config
+    contains "empty $name: and with no Makefile the conventions are dumped" "$out" "smith_app"
+done
+
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]

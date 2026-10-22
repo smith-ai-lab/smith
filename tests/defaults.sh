@@ -1,6 +1,6 @@
 #!/bin/sh
 # smith's defaults where a project has no config file (issue #43, part 1). `smith fmt` and `smith lint` use smith's own
-# .clang-format and .clang-tidy (templates/new, embedded) for a file the tool would find no config for, looked up as
+# .clang-format and .clang-tidy (templates/defaults, embedded) for a file the tool would find no config for, looked up as
 # the tools do (the file's folder and each above it); a project's file replaces them whole, an explicit --style or
 # --config wins, and --dump-config prints the effective one, so `smith fmt --dump-config > .clang-format` makes smith's
 # the project's. A scratch tree outside any project, with a data folder of its own.
@@ -37,13 +37,13 @@ fi
 mkdir -p "$work/bare/sub" "$work/own/sub" "$work/mixed"
 cd "$work/bare" || exit 1
 printf 'int main(void) {\nif (1) {\nreturn 0;\n}\n}\n' >a.c
-smith_style=$(sed -n 's/^IndentWidth: *//p' "$here/templates/new/clang-format")
+smith_style=$(sed -n 's/^IndentWidth: *//p' "$here/templates/defaults/clang-format")
 expect "fmt: smith's default has an indent of 4" 4 "$smith_style"
 expect "fmt: no style file, a file is formatted in smith's style" "    if (1) {" "$("$smith" fmt a.c | sed -n 2p)"
 expect "fmt: ... and a file in a folder below" "    if (1) {" "$(cp a.c sub/b.c && "$smith" fmt sub/b.c | sed -n 2p)"
 expect "fmt: ... and standard input with --assume-filename" "    if (1) {" \
     "$("$smith" fmt --assume-filename=x.c <a.c | sed -n 2p)"
-expect "fmt: --dump-config prints smith's style" "$(sed -n 's/^IndentWidth: *//p' "$here/templates/new/clang-format")" \
+expect "fmt: --dump-config prints smith's style" "$(sed -n 's/^IndentWidth: *//p' "$here/templates/defaults/clang-format")" \
     "$("$smith" fmt --dump-config | sed -n 's/^IndentWidth: *//p')"
 "$smith" fmt --dump-config >dumped.yaml
 expect "fmt: ... which round-trips as the project's own" "$("$smith" fmt a.c)" \
@@ -102,7 +102,7 @@ expect "lint: no .clang-tidy, smith's rules find a bad name" 1 "$(grep -c 'BadNa
 expect "lint: ... and fail" 1 "$?"
 "$smith" lint --quiet sub/b.c -- -std=gnu2y >/dev/null 2>&1
 expect "lint: ... in a folder below too" 1 "$?"
-expect "lint: --dump-config prints smith's config" "$(sed -n 's/^HeaderFilterRegex: //p' "$here/templates/new/clang-tidy")" \
+expect "lint: --dump-config prints smith's config" "$(sed -n 's/^HeaderFilterRegex: //p' "$here/templates/defaults/clang-tidy")" \
     "$("$smith" lint --dump-config | sed -n 's/^HeaderFilterRegex: //p')"
 "$smith" lint --quiet --config='{Checks: "-*,misc-no-recursion"}' a.c -- -std=gnu2y >/dev/null 2>&1
 expect "lint: an explicit --config wins over smith's" 0 "$?"

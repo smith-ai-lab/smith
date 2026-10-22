@@ -1,0 +1,13 @@
+// @NAME@. `smith run` builds and runs it.
+import primes;
+
+import <assert.h>;
+import <stdio.h>;
+
+int main(void) {
+    i32 sum = primes::sum(5);
+    c::assert(sum == 28);
+    c::printf("the first 5 primes add up to %d\n", sum);
+    c::puts("hello from @NAME@");
+    return 0;
+}

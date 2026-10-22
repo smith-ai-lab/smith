@@ -45,37 +45,38 @@ On first use smith unpacks clang's builtin headers and runtimes to `~/.local/sha
 ```
 $ smith new hello
 smith new: hello
-  created  build.c
-  created  main.c
-  created  primes.h
-  created  primes.c
-  created  tests/test_primes.c
+  created  main.smith
+  created  primes.smith
+  created  tests/test_primes.smith
   ...
-smith new: hello: 14 created, 0 kept
+smith new: hello: 10 created, 0 kept
   git: created a repository on main with one commit
 $ cd hello && smith run
-[1/1] build/debug/hello
+[1/6] smith-cc --smith-header primes.smith -o .smith/include/primes.h
+...
 the first 5 primes add up to 28
 hello from hello
 ```
 
-`smith new` writes a starting point you own: `build.c`, `main.c` and `primes.c` (which `main.c` and the test call), a test
-in `tests/`, `.clang-format`, `.clang-tidy`, `.gitignore`, an `AGENTS.md` and a `knowledge/` folder, a skill for the
-project's docs, and `.claude/settings.json`. It builds once and commits on `main`. The project is C2y with strict warnings, and has three builds: `smith build` (debug, with
+`smith new` writes a starting point you own, in `.smith` (`--language c` writes C): `main.smith`, the module
+`primes.smith` (which `main.smith` and the test import), a test in `tests/`, `.gitignore`, an `AGENTS.md` and a
+`knowledge/` folder, a skill for the project's docs, and `.claude/settings.json`. It builds once and commits on `main`.
+There is no build file and no config file: smith builds by convention, and uses its own style and checks until you dump
+them (`smith fmt --dump-config > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config`
+for the build file). The project is C2y with strict warnings, and has three builds: `smith build` (debug, with
 AddressSanitizer and UBSan), `smith build release` (optimized, assertions on) and `smith build fast` (assertions off).
 
 ### Test, check, format, lint
 
-`smith test` runs the tests that `smith_tests` in `build.c` finds, and a new project has some. A test is a plain
-function; this is `tests/test_primes.c`:
+`smith test` runs the tests in the files under `tests/`, and a new project has some. A test is a plain function; this
+is `tests/test_primes.smith`:
 
 ```c
-#include "primes.h"
-
-#include <smith/test.h>
+import <smith/test.h>;
+import primes;
 
 void test_the_first_five_primes_add_up_to_28(void) {
-    smith_check_equal_i32(primes_sum(5), 28);
+    c::smith_check_equal_i32(primes::sum(5), 28);
 }
 ```
 
@@ -101,7 +102,7 @@ $ smith check
 ...
 2 passed, 0 failed in 0.08 s
 smith docs: 1 concepts, 0 problems
-[4/4] smith lint --quiet -p . main.c primes.c tests/test_primes.c
+[4/4] smith lint --quiet -p . main.smith primes.smith tests/test_primes.smith
 ...
 ```
 
@@ -114,26 +115,24 @@ arguments they run the project's tasks. With arguments they are clang-format and
 `smith dbg` is lldb, from smith's own LLVM:
 
 ```
-$ smith dbg -b -o 'b primes.c:10' -o run -o 'frame variable' -o kill build/debug/hello
-Breakpoint 1: where = hello`primes_sum + 436 at primes.c:10:23, address = 0x0000000100000aec
-Process 34952 stopped
+$ smith dbg -b -o 'b primes.smith:12' -o run -o 'frame variable' -o kill build/debug/hello
+Breakpoint 1: where = hello`primes::sum + 436 at primes.smith:12:24, address = 0x0000000100000aec
+Process 46027 stopped
 * thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
--> 10  	        sum += primes[i];
-(size_t) count = 5
-(const int32_t[5]) primes = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
-(int32_t) sum = 0
-(size_t) i = 0
+-> 12  	        total += first[i];
+(usize) count = 5
+(const i32[5]) first = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
+(i32) total = 0
+(usize) i = 0
 ```
 
 `smith dap` is lldb-dap for editors. Debugging needs Developer mode on the Mac; see the
 [smith-debug skill](.agents/skills/smith-debug/SKILL.md).
 
-`smith prove` proves contracts. A new project has a `prove` task for it, and until you write a contract it says there is
-nothing to prove:
+`smith prove` proves contracts, and until you write a contract there is nothing to prove:
 
 ```
 $ smith prove
-[1/1] smith prove main.c primes.c -- -I .smith/include
 smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant
 ```
 

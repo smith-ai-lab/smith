@@ -1,6 +1,6 @@
 ---
 name: smith-build
-description: "Running, writing and editing a project's build.c with smith build. Load when a project has a build.c at its root, when running smith build, on any message that starts with smith: build.c:, when something under .smith/ comes up, or when replacing a Makefile with build.c."
+description: "Running, writing and editing a project's build.c or build.smith with smith build, and smith build --dump-config. Load when a project has a build.c or build.smith at its root or builds by convention (a main.smith or main.c and no build file), when running smith build, on any message that starts with smith: build.c:, when something under .smith/ comes up, or when replacing a Makefile with build.c."
 ---
 
 # Build with smith build
@@ -8,6 +8,34 @@ description: "Running, writing and editing a project's build.c with smith build.
 This skill ships in the smith plugin, from `.agents/skills/smith-build/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there; projects get the update through the plugin.
 
 `build.c` describes the build in C, explicitly and with no defaults. `smith build` compiles it, runs it, and runs the manifest it writes (a ninja-language file) with its own executor; no ninja is needed. The API is `.smith/include/smith/build.h` and its implementation is `.smith/runtime.c`. Every `smith build` writes both, and they match the installed smith exactly, so read them first. The source's home is https://github.com/adam-r-kowalski/smith (`include/smith/build.h`, `runtime/build_runtime.c`), and the design and its reasons are in `docs/build-c.md` there. The repository is private, so read it with `gh`, for example `gh api repos/adam-r-kowalski/smith/contents/docs/build-c.md -H 'Accept: application/vnd.github.raw'`.
+
+## No build file: the conventions
+
+A folder with no `build.c` and a `main.smith` or `main.c` at its root builds, runs and tests with no build file: `smith build`, `run`, `test`, `lint`, `prove` and `check` run an embedded build program (`.smith/conventions.c`) that is nothing but `smith_app(b, &(SmithApp){}); smith_app_tests(b, &(SmithAppTests){});`. Read this first in any project that has neither file; do not write a build.c unless the conventions fall short.
+
+- **The program:** `main.smith` or `main.c` (both is an error), named after the folder, built to `build/debug/<name>` (the default: `-g -O0`, address and undefined sanitizers), `build/release/<name>` (`smith build release`: `-O2`, assertions on) and `build/fast/<name>` (`smith build fast`: `-O2 -DNDEBUG`). Every profile has `-std=gnu2y` with the warnings and `-Werror`, `-ffp-contract=off`, `-mcpu=apple-m1` on Apple silicon, and Clang modules.
+- **What is compiled is what `main` reaches.** `.smith`: every `import a::b;` is found at `a/b.smith` and followed transitively; a module nothing imports is not compiled. C: every quoted `#include "foo.h"` is followed to the `foo.c` beside the header, transitively (the including file's folder, then the root). The scan is lexical: a conditional include is followed anyway, an include built by a macro is missed, and a `.c` file that no header names is not compiled. When a source is missed, write a build file (below) or rename to `.smith`.
+- **smith's libraries need no declaration:** `#include <smith/io.h>` (or `import <smith/io.h>;`), or `import smith::text;`, compiles and links that library and what it needs. (`import smith::io;` does not exist yet: io is a C library.)
+- **Tests:** every `.smith` file and every `test_*.c` under `tests/`, built with the debug flags and linked with the program's other objects; `smith test` runs them (the smith-test skill).
+- **No packages.** `smith_package` needs a build file.
+- **A folder with neither** (say a Makefile and no main) is an error that says what smith looked for. `CC = smith-cc` in the Makefile builds it unchanged; a `build.c` replaces it (below).
+- **Making it explicit:** `smith build --dump-config > build.smith` (a `main.smith` project) or `> build.c` (a `main.c` one) prints the build file that does exactly what the conventions do, in the highest-level API, with the defaults as fields (`.entry`, `.name`, the tests' `.folder`); building with it gives the same commands as with no file. On a project that already has a build file it says so on stderr, prints nothing and exits 0. Or write a `build.c` with the two calls above (the fields are `.entry`, `.name`, `.flags`, `.link_flags`, `.libraries` for the program and `.folder` for the tests; `docs/build-c.md` shows each call's expansion into `smith_object`, `smith_program`, `smith_tests`), then replace a call with its expansion where you need control. `smith_app` makes the profiles, the aliases `release` and `fast` and the default, so a build.c that calls it declares no `smith_default` of its own; call `smith_compile_commands` after it if another tool wants a root `compile_commands.json` (the editor and the verbs read `.smith/compile_commands.json`).
+
+## build.smith: the same build file in `.smith`
+
+A root `build.smith` is the build file when there is no `build.c` (both is an error naming both; smith's own repository stays `build.c`). The full smith compiles it as a `.smith` file; the stage0 refuses it (`build.smith needs the full smith`). The verbs, `smith lint` included (it lints the file as written), work on it as on a build.c. It has no `module` line, so it defines a plain `void build(build::Build *b)` (no `export`):
+
+```c
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.smith"});
+    build::app_tests(b, &(build::AppTests){});
+    build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hi", nullptr)});
+}
+```
+
+`smith::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `include/smith/build.h`), so everything below applies; read `smith_x` as `build::x`.
 
 ## Run it
 
@@ -102,12 +130,15 @@ void build(SmithBuild *b) {
 
 ## Start a project
 
-- `smith new <name>` (or `smith new` in the folder) creates a project with build.c, main.c and primes.c (split so that a test can call the code), a test in `tests/test_primes.c` that `smith test` runs (`smith_tests`, which `smith check` runs too), the rules (`.clang-format`, `.clang-tidy`, `.gitignore`), `.claude/settings.json`, which enables the smith plugin (it carries these skills), and its docs (`AGENTS.md`, `knowledge/` with a first concept, the project's own skill `.agents/skills/<name>-docs`, the `.claude/skills` link, and its docs checked by `smith docs`, which `smith check` runs: see `smith-docs`); build.c has no task for the verbs (they read the sources, the default and the tests it declares), then builds once and commits on `main`. It never overwrites: a file that exists is kept. The project builds three ways, each into `build/<name>/<project>`: `smith build` is debug (`-O0`, sanitizers, assertions on), `smith build release` is `-O2` with assertions on, and `smith build fast` is `-O2 -DNDEBUG`, assertions off. Its sources are C2y (`-std=gnu2y`, for `_Countof`), a draft standard that Apple clang and upstream clang 21 or later accept; the project's build.c itself is still compiled by `smith build` as C23.
+- `smith new [--language smith|c] [<name>]` (`smith` is the default; with no name, the current folder) creates a project that builds by convention, so it has **no build file, no `.clang-format`, no `.clang-tidy` and no root `compile_commands.json`**: smith's defaults cover them. A `.smith` project has `main.smith`, the module `primes.smith` (no header) and `tests/test_primes.smith`; with `--language c`, `main.c`, `primes.c`, `primes.h` and `tests/test_primes.c`. Both have `.gitignore` and what agents need: `AGENTS.md`, `.claude/settings.json`, which enables the smith plugin (it carries these skills), `knowledge/` with a first concept, the project's own skill `.agents/skills/<name>-docs`, the `.claude/skills` link, all checked by `smith docs` (which `smith check` runs: see `smith-docs`). It then builds once and commits on `main`. It never overwrites: a file that exists is kept, and a folder with a `main`, a build file or a Makefile, a `CMakeLists.txt` keeps its own program (beside another build system it also does not build). Any other value of `--language` is an error naming both. `smith new --help` shows the usage.
+- The project builds three ways, each into `build/<name>/<project>`: `smith build` is debug (`-O0`, sanitizers, assertions on), `smith build release` is `-O2` with assertions on, and `smith build fast` is `-O2 -DNDEBUG`, assertions off. Its sources are C2y (`-std=gnu2y`, for `_Countof`), a draft standard that Apple clang and upstream clang 21 or later accept.
+- To change a default, make it the project's first: `smith fmt --dump-config > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config > build.smith` (or `build.c` in a C project). Nothing changes until the file is edited.
 
 ## Replace a Makefile
 
-`smith build --dump-config > build.c` in the folder of a Makefile (`GNUmakefile`, `makefile` or `Makefile`, with no build.c or build.smith) prints the Makefile as a build.c, read by smith's own reader of GNU make's common subset. It is the low-level API of this skill, so read it, edit it and build it like any build.c. Write it to a file, then:
+This is step 2 of the ladder for an existing C project. `smith build --dump-config > build.c` in the folder of a Makefile (`GNUmakefile`, `makefile` or `Makefile`, with no build.c or build.smith, or only an empty one; a `main.c` beside it makes no difference) prints the Makefile as a build.c, read by smith's own reader of GNU make's common subset. It is the low-level API of this skill, so read it, edit it and build it like any build.c. Write it to a file, then:
 
+- **Until it is translated, nothing builds:** with a Makefile and no build file, `smith build` and the verbs stop and say to translate it or delete it. They never build by convention behind a Makefile.
 - **Read the top of the file first.** It lists the command-line options (`make NAME=value` is `smith build -DNAME=value`) and, under `NOT TRANSLATED`, everything the Makefile has that the reader did not follow (also on standard error, as `smith: Makefile:12: not translated: ...`). The translation still builds; what is listed is left out or approximated, so do it by hand or leave the Makefile for it.
 - **What it follows:** variables (`=`, `:=`, `?=`, `+=`, `override`, `define`, `$(X:a=b)`), the functions (`wildcard`, `patsubst`, `subst`, `filter`, `filter-out`, `addprefix`, `addsuffix`, `basename`, `notdir`, `dir`, `suffix`, `sort`, `foreach`, `if`, `or`, `and`, `strip`, `words`, `word`, `wordlist`, `firstword`, `lastword`, `join`, `call`, `shell`, `abspath`), explicit, order-only, pattern and static pattern rules, `$@ $< $^ $+ $? $* $|`, `@` and `-` and continuation lines, `.PHONY`, `.DEFAULT_GOAL`, make's built-in C and C++ rules, `include` and `-include`, `ifeq`, `ifneq`, `ifdef`, `ifndef` and `else`, `$(MAKE) goal` and `$(MAKE) -C dir goal` (the other Makefile is read too and its targets join, named `dir/name`, run with `cd dir`), and `$(eval ...)` on a line of its own. A `$(wildcard)` is the files it matched when you ran the command: add a file, translate again.
 - **What it writes:** a compile (a compiler, `-c`, one source, `-o`) is `smith_object`, a link of objects the Makefile compiles is `smith_program`, any other recipe is a `smith_step` (one simple command is its words, anything else is `sh -c`), a phony target with a recipe is a `smith_task` and one without is a `smith_alias`, and the default goal is `smith_default`. The compiler is `smith-cc` or `smith-c++`; `-MMD -MP` are dropped (`smith_object` writes the depfile). A variable a command uses as whole words is a named array with the Makefile's name, and each block has a comment with the Makefile line. The platform (`$(shell uname -s)`, `uname -m`) is `b->os` and `b->arch`, and a test of it keeps both branches.
@@ -123,5 +154,5 @@ void build(SmithBuild *b) {
 - `smith: build.c: <step or task>: <message>` is a mistake in build.c. Fix build.c.
 - A compiler error in build.c means build.c does not compile; the failed step prints clang's message.
 - `smith: error: ...` is the executor's own, for example an input that no step makes and that does not exist, a dependency cycle, or a manifest it cannot read.
-- `smith: no build.c in this folder`: run from the project's root. `smith: cannot find ninja` appears only with `SMITH_NINJA` set to something that is not ninja.
+- `smith: no build.c in this folder, and no main.smith or main.c to build by convention`: run from the project's root, add a `main.smith` or `main.c`, or write a build.c. `smith: cannot find ninja` appears only with `SMITH_NINJA` set to something that is not ninja.
 - If smith build itself seems wrong, or smith is missing or broken, stop. Run the command again with `SMITH_VERBOSE=1` and report it to the owner. Do not work around it.

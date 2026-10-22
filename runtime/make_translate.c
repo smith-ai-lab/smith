@@ -284,32 +284,6 @@ static void smith_make_emit_header(FILE *out, const char *path) {
     fprintf(out, "#include <smith/build.h>\n#include <string.h>\n\n");
 }
 
-// `smith build --dump-config` in a folder with a Makefile and no build file prints the Makefile as a build.c: whether
-// this was that. The folder's Makefile is the first of GNUmakefile, makefile and Makefile, as GNU make reads them.
-static bool smith_make_dump_config(int count, char **args) {
-    if (count != 1 || strcmp(args[0], "--dump-config") != 0) return false;
-    // `smith build --dump-config > build.c` makes the file before it runs: an empty build file is no build file.
-    static const char *const build_files[] = {"build.c", "build.smith"};
-    for (size_t i = 0; i < sizeof build_files / sizeof build_files[0]; i++) {
-        struct stat info;
-        if (stat(build_files[i], &info) == 0 && info.st_size > 0) return false;
-    }
-    static const char *const names[] = {"GNUmakefile", "makefile", "Makefile"};
-    DIR *folder = opendir(".");
-    if (folder == nullptr) return false;
-    const char *found = nullptr;
-    for (size_t i = 0; i < sizeof names / sizeof names[0] && found == nullptr; i++) { // case matters, as in make
-        rewinddir(folder);
-        for (const struct dirent *entry = readdir(folder); entry != nullptr; entry = readdir(folder)) {
-            if (strcmp(entry->d_name, names[i]) == 0) found = names[i];
-        }
-    }
-    closedir(folder);
-    if (found == nullptr) return false;
-    smith_make_translate(found, stdout);
-    return true;
-}
-
 // Prints the translation of the Makefile at path to out. Warnings about what is not translated go to stderr.
 static int smith_make_translate(const char *path, FILE *out) {
     smith_make.file = path;

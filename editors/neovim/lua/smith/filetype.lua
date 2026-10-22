@@ -1,6 +1,6 @@
 -- The file type of a `.h` file in a smith project. Neovim reads every `.h` as C++ (unless it sees `@interface`, or the
 -- user set g:c_syntax_for_h), which is wrong in a C project, and highlighting and ftplugins follow the file type. Only
--- inside a smith project (a folder at or above the file with build.c, build.smith or .smith/) does this decide anything;
+-- inside a smith project (a folder at or above the file with a build file, a main.smith or main.c, or .smith/) does this decide anything;
 -- everywhere else, and whenever it has no answer, the extension function returns nil and Neovim's own rule runs.
 --   1. g:c_syntax_for_h or g:ch_syntax_for_h set: the user's choice, which is Neovim's rule.
 --   2. a source beside the header with the same stem: .c or .smith is c, .cpp .cc .cxx cpp, .m objc, .mm objcpp.
@@ -43,7 +43,7 @@ end
 function M.detect(path)
   if vim.g.c_syntax_for_h or vim.g.ch_syntax_for_h then return nil end
   path = vim.fs.normalize(path)
-  local root = vim.fs.root(path, { "build.c", "build.smith", ".smith" })
+  local root = require("smith.project").root(path, { ".smith" })
   if not root then return nil end
   local stem = path:gsub("%.h$", "")
   for _, pair in ipairs(M.siblings) do
