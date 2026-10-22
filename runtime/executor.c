@@ -251,6 +251,13 @@ struct SmithExec {
     size_t running;
 };
 
+// What a message calls the project's build file: build.c, build.smith, or "the build" when it runs by convention.
+static const char *smith_project_build_file(void) {
+    if (access("build.c", F_OK) == 0) return "build.c";
+    if (access("build.smith", F_OK) == 0) return "build.smith";
+    return "the build";
+}
+
 [[noreturn]] static void smith_exec_fail(const char *format, ...) __attribute__((format(printf, 1, 2)));
 [[noreturn]] static void smith_exec_fail(const char *format, ...) {
     fflush(stdout);
