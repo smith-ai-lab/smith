@@ -52,6 +52,9 @@ export void test_area_property(c::SmithKey key) {
 }
 ```
 
+- A property test's key may also be written `random::Key key` after `import smith::random;` (`<alias>::Key` for `import smith::random as <alias>;`): `export void test_area_property(random::Key key) { ... }`.
+- Test files are compiled with `-Werror=missing-prototypes`, on purpose: a test the finder does not recognise (a misspelt signature) has no prototype in the generated list and fails the build instead of silently not running. The cost is that a helper function in a test file needs `static` when the file has no `module` line (in a module every non-`export` function is private already): "no previous prototype for function 'helper'" means make it `static`.
+
 - In a file with no `module` line, `void test_x(void) {` is a test with no `export`, named `x`. In a module the test is shown, listed and selected by its name as written, `geometry::box_test::area` (`smith test --test geometry::box_test` runs the module's tests; `--test geometry::box_test::test_area` works too, `test_` as in the source). Two files cannot define the same test (a module's tests are `a::b::test_x`, so only the same module and name collide).
 - A failure names the `.smith` line and its source, and the function as written (`tests/geometry/box_test.smith:12  geometry::box_test::test_area_fails`). Frames of the test library (`smith_test_*`, and `smith::test::*` once it is a module) and of check functions are left out of the report.
 
