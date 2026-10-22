@@ -333,9 +333,15 @@ mkdir "$work/make" && cd "$work/make" || exit 1
 printf 'all:\n\tcc -o app app.c\n' >Makefile
 capture smith build
 expect "error: a Makefile and no main: status 2" 2 "$rc"
+expect_contains "error: ... says the Makefile is the build" "$err" "smith: this folder has a Makefile and no build.c or build.smith"
+expect_contains "error: ... and how to translate it" "$err" "Translate it with \`smith build --dump-config > build.c\`"
+expect_contains "error: ... or to build by convention" "$err" "delete it to build by convention"
+mkdir "$work/empty" && cd "$work/empty" || exit 1
+capture smith build
+expect "error: an empty folder: status 2" 2 "$rc"
 expect_contains "error: ... says what smith looked for" "$err" "smith: no build.c in this folder, and no main.smith or main.c to build by convention"
 expect_contains "error: ... and how to start a build file" "$err" "Add a main.smith or main.c (\`smith new\` writes one)"
-expect_contains "error: ... and suggests smith cc for the Makefile" "$err" "A Makefile is here: \`CC = smith-cc\`"
+cd "$work/make" || exit 1
 expect "error: ... and guesses nothing" no "$(exists .smith/program)"
 for verb in run test; do
     capture smith $verb

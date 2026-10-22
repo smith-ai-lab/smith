@@ -72,8 +72,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
        C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot
        change.
-    2. **Use the Makefile as a build file** (#44 translates it): a `build.c` that describes the same build explicitly
-       and across platforms, in smith's low-level API, so it changes nothing either.
+    2. **Translate the Makefile into a build file** (#44): `smith build --dump-config > build.c` in the folder
+       writes a `build.c` that describes the same build explicitly and across platforms, in smith's low-level API, so
+       it changes nothing either. A folder with a Makefile and no build file never builds by convention, even beside a
+       `main.c`: `smith build` and the verbs stop and say to translate it or delete it.
     3. **Rename `.c` files to `.smith` one at a time,** deciding module by module when to use smith's features.
   - **From a new project (convention):**
     1. **Follow the conventions and write no files.** There is no build file and no config file: `smith build`, `run`,
@@ -200,6 +202,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
   recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
   clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
+- **A Makefile is translated into a `build.c` by smith's own reader of GNU make's common subset** (`runtime/make*.c`, issue
+  #44, [docs/build-c.md](docs/build-c.md)): `smith build --dump-config` in a folder with a Makefile and no build file
+  prints it (also beside a `main.smith` or `main.c`: the Makefile is the project's real build), in the low-level API.
+  An empty `build.c` or `build.smith` counts as none, since the redirect makes it before smith runs. No vendored make (GNU make is GPLv3, and the owner does not want any license forced
+  on smith). The Makefile is evaluated at translation time, with what a command line, the environment and the platform
+  can change kept as options and tests in build.c; a construct outside the subset is reported by name, file and line,
+  never guessed.
 - **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). the conventions turn them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
