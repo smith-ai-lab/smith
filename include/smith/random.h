@@ -72,7 +72,7 @@ typedef struct {
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-typedef __typeof__(uint64_t) (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
+typedef uint64_t (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
 
 extern SmithRandomHook smith_random_hook;
 

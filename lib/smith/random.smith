@@ -69,7 +69,7 @@ module smith::random;
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-[[smith::c_name("SmithRandomHook")]] export typedef __typeof__(uint64_t) (*Hook)(Key key, uint64_t n, uint64_t bits);
+[[smith::c_name("SmithRandomHook")]] export typedef uint64_t (*Hook)(Key key, uint64_t n, uint64_t bits);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-variable-declarations"
 [[smith::c_name("smith_random_hook")]] export Hook hook = nullptr;

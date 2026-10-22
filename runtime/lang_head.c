@@ -124,6 +124,10 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
         is_type = lowered.is_type;
     }
     if (!declared) is_type = is_type || smith_lang_type_use_follows(next);
+    if (!declared && !is_type && lang->paren_depth == 0 && lang->bracket_depth == 0 && smith_lang_punct(next, "(")) {
+        // `uint64_t (*hook)(int)`: a name before the `(*` of a function pointer's declarator is the result type
+        is_type = smith_lang_punct(smith_lang_peek(lang, host, 0, false), "*");
+    }
     if (is_type) lang->decl.saw_type = true;
     SmithToken as_token = smith_lang_held_token(lang, held);
     smith_lang_track(lang, &as_token, is_type);
