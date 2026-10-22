@@ -10,8 +10,13 @@ module smith::random;
 #include <stdint.h>
 #include <string.h>
 
-// Beside this module's header (include/smith); a compile of the module adds -iquote for that folder.
+// Beside this module's header (include/smith) when that header includes it, which is how smith's own build, with no
+// include path, finds it; the module's own compile finds it by the include path.
+#if __has_include("arena.h")
 #include "arena.h"
+#else
+#include <smith/arena.h>
+#endif
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -69,11 +74,8 @@ module smith::random;
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-[[smith::c_name("SmithRandomHook")]] export typedef __typeof__(uint64_t) (*Hook)(Key key, uint64_t n, uint64_t bits);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-variable-declarations"
+[[smith::c_name("SmithRandomHook")]] export typedef uint64_t (*Hook)(Key key, uint64_t n, uint64_t bits);
 [[smith::c_name("smith_random_hook")]] export Hook hook = nullptr;
-#pragma clang diagnostic pop
 
 // [low, high)
 [[smith::c_name("SmithUniformFloat")]] export typedef struct {

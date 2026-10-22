@@ -2996,6 +2996,11 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
         '"arguments":["bin/smith-cc","-x","c","-I",".smith/include","-std=gnu23"'
     build
     expect_contains "modules: the second build does nothing" "$out" "no work to do"
+    # A C object that reads a module's header waits for every header, as a .smith compile does: its header may include
+    # another that its inputs do not name, and one written after the compile started would make the next build compile
+    # it again (found under load: the second build recompiled src/checksum.c and relinked).
+    expect "modules: a C object that reads a module's header waits for all the headers" yes \
+        "$(grep -A3 '^build build/src/checksum.c.o' .smith/build.ninja | grep -q '|| .smith/imports.stamp' && echo yes)"
 
     stat -f %m .smith/include/lib/text.h >header_time
     sleep 1

@@ -175,6 +175,55 @@ expect "another check's message has the written name too" "geometry/recursive.sm
 expect "and its note too" "geometry/recursive.smith:3:12: note: example recursive call chain, starting from function 'fact'" \
     "$(sed "s|$work/p/||" "$work/recursion" | grep 'note:.*example recursive' | head -n 1)"
 
+# --- every kind of name the lowering renames is judged as written ---------------------------------------------------------
+# A typedef, a struct tag, an enumerator, a constant and a parameter, each well named (quiet) and badly named (flagged at
+# the written name, never the lowering's `kinds_bad_type`).
+cat >kinds.smith <<'SMITH'
+module kinds;
+
+export typedef struct {
+    u32 a;
+} Good;
+
+export typedef struct {
+    u32 a;
+} bad_type;
+
+export struct Tag {
+    u32 a;
+};
+
+export struct tag_bad {
+    u32 a;
+};
+
+export typedef enum {
+    Color_Red,
+    Color_Green,
+} Color;
+
+export typedef enum {
+    Shade_Light,
+    bad_shade,
+} Shade;
+
+export constexpr u32 limit = 4;
+export constexpr u32 BadLimit = 4;
+
+export u32 f(u32 good_param, u32 BadParam) {
+    return good_param + BadParam + limit + BadLimit;
+}
+SMITH
+run kinds.smith >"$work/kinds"
+expect "typedef, tag, enumerator, constant and parameter: the bad ones flagged as written, the good ones quiet" \
+    "kinds.smith:9:3: error: invalid case style for typedef 'bad_type' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:15:15: error: invalid case style for struct 'tag_bad' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:26:5: error: invalid case style for enum constant 'bad_shade'; cannot be fixed automatically [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:30:22: error: invalid case style for constexpr variable 'BadLimit' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:32:34: error: invalid case style for parameter 'BadParam' [readability-identifier-naming,-warnings-as-errors]" \
+    "$(findings <"$work/kinds")"
+expect "... and the lowering's names never appear" "0" "$(grep -c 'kinds_' "$work/kinds")"
+
 # --- a clean module -------------------------------------------------------------------------------------------------------
 run clean/ok.smith >"$work/clean"
 status=$?

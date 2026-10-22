@@ -1412,16 +1412,11 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
     return nullptr;
 }
 
-// A .smith compile finds the modules' headers there. smith's own library modules (.smith/lib/smith/<name>.smith) also
-// find the headers of their siblings by a quoted include (`#include "arena.h"`, which their generated header says too:
-// the header sits beside arena.h), as `-iquote .smith/include/smith`.
+// A .smith compile finds the modules' headers there.
 static bool smith_ends_with(const char *text, const char *suffix);
 
 static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
     if (!smith_ends_with(source, ".smith")) return smith_list(b, nullptr);
-    if (strncmp(source, ".smith/lib/smith/", strlen(".smith/lib/smith/")) == 0) {
-        return smith_list(b, "-I", ".smith/include", "-iquote", ".smith/include/smith", nullptr);
-    }
     return smith_list(b, "-I", ".smith/include", nullptr);
 }
 
@@ -1667,6 +1662,26 @@ static void smith_lang_finish(SmithBuild *b) {
     smith_step(b, &check);
 }
 
+// Whether a compile of a C source reads the headers of modules: it names one as an input, or puts the folder of the
+// headers on the include path. Such a compile waits for every header like a .smith one does: it may include a header
+// that includes another, which its inputs do not name, and a header written after the compile started would make the
+// next build compile it again (the recorded start of an output is compared with the times of the files it read).
+static bool smith_reads_module_headers(const SmithObject *object) {
+    const char *folder = ".smith/include";
+    size_t length = strlen(folder);
+    for (size_t i = 0; object->implicit_inputs != nullptr && object->implicit_inputs[i] != nullptr; i++) {
+        if (strncmp(object->implicit_inputs[i], folder, length) == 0) return true;
+    }
+    for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++) {
+        const char *flag = object->flags[i];
+        if (strncmp(flag, "-I", 2) == 0 && strncmp(flag + 2, folder, length) == 0 && flag[2 + length] == '\0')
+            return true;
+        if (strcmp(flag, "-I") == 0 && object->flags[i + 1] != nullptr && strcmp(object->flags[i + 1], folder) == 0)
+            return true;
+    }
+    return false;
+}
+
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
     SmithStep step = {
@@ -1694,20 +1709,21 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
     const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
     bool lang = smith_ends_with(copy.source, ".smith");
+    bool headers = lang || smith_reads_module_headers(&copy);
+    if (headers) smith_lang_sources_used = true;
     if (lang) {
         const char *header = nullptr;
         // A smith library's header is the formatted one smith wrote with its source (.smith/include/smith/): a step
         // would write it again as the generator makes it, unformatted, and the two would take turns
         bool library = strncmp(copy.source, ".smith/lib/smith/", 17) == 0;
         if (smith_lang_register(copy.source, &header) != nullptr && !library) smith_lang_header_step(b, &copy, header);
-        smith_lang_sources_used = true;
     }
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
                              smith_lang_flags(b, copy.source), copy.flags, tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
-        .order_only_inputs = lang ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
+        .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         .outputs = smith_one(copy.output),
         .depfile = depfile,
     };

@@ -71,7 +71,7 @@ void build(SmithBuild *b);
 // an error. With .stamp the step's output is that file, $out is it, and afterwards .outputs is {stamp}; .stamp with
 // .outputs (other than the {stamp} a returned step holds) is an error, and so is .stamp on a task. Declared again,
 // .stamp must be equal like every other field.
-void smith_step(SmithBuild *b, SmithStep *edge);
+void smith_step(SmithBuild *b, SmithStep *step);
 
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
@@ -81,7 +81,7 @@ void smith_step(SmithBuild *b, SmithStep *edge);
 // thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
 // tests, which `smith test` runs (smith_tests does it for its own). .test on a step (smith_step) makes `smith test`
 // build it with the tests; it is incremental like any step, so a check stamped by its inputs does not rerun
-void smith_task(SmithBuild *b, const char *name, SmithStep *edge);
+void smith_task(SmithBuild *b, const char *name, SmithStep *step);
 
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error
@@ -153,7 +153,7 @@ typedef struct {
 // is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
 // -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
 // so it can go in steps, -I flags and objects. macOS only for now.
-const char *smith_package(SmithBuild *b, const SmithPackage *config);
+const char *smith_package(SmithBuild *b, const SmithPackage *package);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
@@ -201,12 +201,12 @@ const char *const *smith_run_lines(SmithRun *run, const char *const *argv);
 // Like smith_run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
-int smith_run_status(SmithRun *run, const char *const *argv, const char *const **output);
+int smith_run_status(SmithRun *run, const char *const *argv, const char *const **lines);
 
 // Like smith_run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
 // order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
 // limit covers both streams together.
-int smith_run_combined(SmithRun *run, const char *const *argv, const char *const **output);
+int smith_run_combined(SmithRun *run, const char *const *argv, const char *const **lines);
 
 // Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
 // these paths when the function returns. A .run step that records a path must have a .depfile.
@@ -249,9 +249,9 @@ typedef struct {
 // writes its header, .smith/include/a/b.h, through `<compiler> --smith-header`, and every .smith compile gets
 // `-I .smith/include` and waits for all the headers and for a check that fails on an import cycle. The module a::b must
 // be in a file whose path ends in a/b.smith.
-void smith_object(SmithBuild *b, SmithObject *config);
+void smith_object(SmithBuild *b, SmithObject *object);
 
-void smith_program(SmithBuild *b, SmithProgram *config);
+void smith_program(SmithBuild *b, SmithProgram *program);
 
 // Records a compile_commands.json entry for source with no step: {directory: the root, file: source, arguments:
 // [compiler, flags..., "-c", source]} and no "output". It is for files the build never compiles on their own, such as
@@ -279,7 +279,7 @@ typedef struct {
     const char *const *textual; // headers that stay textual
 } SmithModules;
 
-void smith_modules(SmithBuild *b, const SmithModules *config);
+void smith_modules(SmithBuild *b, const SmithModules *modules);
 
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 typedef struct {
@@ -313,7 +313,7 @@ typedef struct {
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
 //     the runner, so they are built before the tests run and a change to one reruns them.
-void smith_tests(SmithBuild *b, SmithTests *config);
+void smith_tests(SmithBuild *b, SmithTests *tests);
 
 // Writes compile_commands.json at path when the build file runs, only when its bytes change, from every smith_object so
 // far, then every smith_compile_command, plus one entry for the build file itself with the command smith compiles it
@@ -358,7 +358,7 @@ typedef struct {
     SmithStep step;                    // set: the debug program, the default target
 } SmithApp;
 
-void smith_app(SmithBuild *b, SmithApp *config);
+void smith_app(SmithBuild *b, SmithApp *app);
 
 // The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
 // file below the folder (tests are found by smith_tests's rules). Call it after smith_app. The code under test is the
@@ -372,7 +372,7 @@ typedef struct {
     SmithStep step;     // set: the task test
 } SmithAppTests;
 
-void smith_app_tests(SmithBuild *b, SmithAppTests *config);
+void smith_app_tests(SmithBuild *b, SmithAppTests *tests);
 #ifdef __cplusplus
 }
 #endif

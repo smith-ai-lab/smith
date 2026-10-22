@@ -339,10 +339,3 @@ static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t
     lang->tmp_length = prefix + length;
     return lang->tmp;
 }
-
-// A header the file includes, for the generated header: its `import <h>;` and `#include` lines.
-static void smith_lang_add_include(SmithLang *lang, const char *text, size_t length, bool angled) {
-    if (lang->c_imports_count >= smith_lang_imports_max) return;
-    lang->c_imports[lang->c_imports_count] = smith_lang_store(lang, text, length);
-    lang->c_import_angled[lang->c_imports_count++] = angled;
-}

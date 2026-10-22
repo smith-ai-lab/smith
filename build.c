@@ -589,8 +589,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         smith_compile_command(b, config->cc, sources[i], flags);
     }
     // The text library is a module, linted as written.
-    smith_compile_command(b, config->cc, "lib/smith/random.smith",
-                          smith_cat(b, flags, smith_list(b, "-iquote", "include/smith", nullptr), nullptr));
+    smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
@@ -726,11 +725,11 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
-// needs them), the token hook (#11), and the prover's libraries beside it. r2 is the second configuration;
-// scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
+// needs them), the token hook (#11), and the prover's libraries beside it. r3 is the third configuration
+// (patches/*.patch); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r2"));
+    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r3"));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {
@@ -831,9 +830,12 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
-        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh",
-                                   "scripts/prove-libs.sh", "scripts/bitwuzla.sh", "patches/clang-token-hook.patch",
-                                   "patches/clang-debug-name.patch", nullptr},
+        .inputs =
+            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh", "scripts/prove-libs.sh",
+                             "scripts/bitwuzla.sh", "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
+                             "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
+                             "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
+                             "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
@@ -847,6 +849,14 @@ static bool build_has_hook(SmithBuild *b, const char *llvm) {
     return strcmp(smith_capture(b, (const char *[]){"sh", "-c", script, llvm, nullptr}), "yes") == 0;
 }
 
+// Whether the LLVM install has the command hook (patches/smith-command-hook.patch), which the shims of clangd and
+// clang-tidy install: an install made before r3 has none.
+static bool build_has_command_hook(SmithBuild *b, const char *llvm) {
+    const char *script = "grep -q 'CLANG_HAS_COMMAND_HOOK' \"$0/include/clang/Driver/CreateInvocationFromArgs.h\" && "
+                         "echo yes || echo no";
+    return strcmp(smith_capture(b, (const char *[]){"sh", "-c", script, llvm, nullptr}), "yes") == 0;
+}
+
 // The LLVM install that `smith build llvm` makes, which smith links clang from; "" when there is none (and on other
 // systems than macOS, where it is not built), so that the plain smith, which runs an external clang, is built instead.
 static const char *build_llvm_install(SmithBuild *b) {
@@ -854,7 +864,7 @@ static const char *build_llvm_install(SmithBuild *b) {
         build_variable(b, "LLVM", smith_fmt(b, "%s/install", build_llvm_folder(b)),
                        "the LLVM install smith links clang from; empty: a smith that runs an external clang");
     if (strcmp(b->os, "Darwin") != 0) return "";
-    bool linkable = access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+    bool linkable = build_has_command_hook(b, llvm) && access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;

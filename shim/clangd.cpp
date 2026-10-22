@@ -4,33 +4,19 @@
 // diagnostic are clangd's own. See tool.h for how its initializers and its resource directory are handled.
 #include "tool.h"
 
-#include "clang/Basic/DiagnosticFrontend.h"
-#include "clang/Basic/DiagnosticOptions.h"
-#include "clang/Driver/Compilation.h"
-#include "clang/Driver/CreateInvocationFromArgs.h"
-#include "clang/Driver/Driver.h"
-#include "clang/Driver/Tool.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/Utils.h"
-#include "clang/Options/Options.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/Option/ArgList.h"
-#include "llvm/Support/VirtualFileSystem.h"
+#include "clang/Format/Format.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Host.h"
 
 #include <cstdlib>
 #include <memory>
-#include <vector>
-
-extern "C" {
-#include "../runtime/lang.h"
-}
+#include <string>
 
 // shim/hook.cpp: makes every translation unit with a .smith main file, clangd's included, offer its tokens to the
 // lowering.
 #ifdef SMITH_HOOK
 extern "C" void smith_hook_install();
+// shim/tidy.cpp: the module that makes the checks judge a .smith file's names as written.
+extern "C" void smith_tidy_names_register(bool present);
 // shim/lsp.cpp: runs clangd's main with the editor's messages and clangd's behind a layer that rewrites names.
 extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **));
 #endif
@@ -40,6 +26,11 @@ class Transport;
 
 // NOLINTNEXTLINE(readability-identifier-naming): clangd's name
 int clangdMain(int argc, char **argv);
+
+// The .clang-tidy that clangd's checks use where the project has none (clangd/TidyProvider.cpp, patched by
+// patches/smith-editor-defaults.patch).
+// NOLINTNEXTLINE(readability-identifier-naming): clangd's name
+extern const char *FallbackTidyConfigFile;
 
 // clangd's XPC transport serves it as a macOS XPC service, which only `CLANGD_AS_XPC_SERVICE` asks for. It is left out:
 // it links Foundation, whose loading would cost every smith process, compiles included, 10 ms. clangd's own message
@@ -51,97 +42,26 @@ std::unique_ptr<Transport> newXPCTransport() {
 }
 } // namespace clang::clangd
 
-// The one place a command becomes a compiler invocation in clangd (clangd/Compiler.cpp, for the open file, the preamble
-// and the background index alike) is clang::createInvocation. This is that function, from clang/lib/Driver/
-// CreateInvocationFromArgs.cpp (Apache-2.0 WITH LLVM-exception, the version of this LLVM), with one addition: the
-// command is first made what `smith cc` makes the command of a .smith input (smith_lang_command, the one rule of
-// runtime/lang_command.c: `-x c`, and `-std=gnu2y` unless it names a standard), so a .smith file compiles in the editor
-// whatever its command is: the fallback of a folder with no compile database, a hand-written database, or a command
-// borrowed from a .c file. smith defines the symbol, so the linker takes it and leaves the archive's member out.
-namespace clang {
-std::unique_ptr<CompilerInvocation> createInvocation(ArrayRef<const char *> ArgList, CreateInvocationOptions Opts) {
-    assert(!ArgList.empty());
-    std::optional<DiagnosticOptions> LocalDiagOpts;
-    IntrusiveRefCntPtr<DiagnosticsEngine> Diags;
-    if (Opts.Diags) {
-        Diags = std::move(Opts.Diags);
-    } else {
-        LocalDiagOpts.emplace();
-        Diags =
-            CompilerInstance::createDiagnostics(Opts.VFS ? *Opts.VFS : *llvm::vfs::getRealFileSystem(), *LocalDiagOpts);
-    }
-
-    SmallVector<const char *, 16> Args(ArgList);
-    std::vector<char *> lowered(Args.size() + 16);
-    int count =
-        smith_lang_command((int)Args.size(), const_cast<char **>(Args.data()), 1, lowered.data(), lowered.size() - 1);
-    if (count > 0) Args.assign(lowered.begin(), lowered.begin() + count);
-
-    // FIXME: Find a cleaner way to force the driver into restricted modes.
-    Args.insert(llvm::find_if(Args, [](const char *Elem) { return llvm::StringRef(Elem) == "--"; }), "-fsyntax-only");
-
-    // FIXME: We shouldn't have to pass in the path info.
-    driver::Driver TheDriver(Args[0], llvm::sys::getDefaultTargetTriple(), *Diags, "clang LLVM compiler", Opts.VFS);
-
-    // Don't check that inputs exist, they may have been remapped.
-    TheDriver.setCheckInputsExist(false);
-    TheDriver.setProbePrecompiled(Opts.ProbePrecompiled);
-
-    std::unique_ptr<driver::Compilation> C(TheDriver.BuildCompilation(Args));
-    if (!C) return nullptr;
-
-    if (C->getArgs().hasArg(options::OPT_fdriver_only)) return nullptr;
-
-    // Just print the cc1 options if -### was present.
-    if (C->getArgs().hasArg(options::OPT__HASH_HASH_HASH)) {
-        C->getJobs().Print(llvm::errs(), "\n", true);
-        return nullptr;
-    }
-
-    // We expect to get back exactly one command job, if we didn't something failed. Offload compilation is an
-    // exception as it creates multiple jobs. If that's the case, we proceed with the first job.
-    const driver::JobList &Jobs = C->getJobs();
-    bool OffloadCompilation = false;
-    if (Jobs.size() > 1) {
-        for (auto &A : C->getActions()) {
-            // On MacOSX real actions may end up being wrapped in BindArchAction
-            if (isa<driver::BindArchAction>(A)) A = *A->input_begin();
-            if (isa<driver::OffloadAction>(A)) {
-                OffloadCompilation = true;
-                break;
-            }
-        }
-    }
-
-    bool PickFirstOfMany = OffloadCompilation || Opts.RecoverOnError;
-    if (Jobs.size() == 0 || (Jobs.size() > 1 && !PickFirstOfMany)) {
-        SmallString<256> Msg;
-        llvm::raw_svector_ostream OS(Msg);
-        Jobs.Print(OS, "; ", true);
-        Diags->Report(diag::err_fe_expected_compiler_job) << OS.str();
-        return nullptr;
-    }
-    auto Cmd = llvm::find_if(
-        Jobs, [](const driver::Command &Cmd) { return StringRef(Cmd.getCreator().getName()) == "clang"; });
-    if (Cmd == Jobs.end()) {
-        Diags->Report(diag::err_fe_expected_clang_command);
-        return nullptr;
-    }
-
-    const llvm::opt::ArgStringList &CCArgs = Cmd->getArguments();
-    if (Opts.CC1Args) *Opts.CC1Args = {CCArgs.begin(), CCArgs.end()};
-    auto CI = std::make_unique<CompilerInvocation>();
-    if (!CompilerInvocation::CreateFromArgs(*CI, CCArgs, *Diags, Args[0]) && !Opts.RecoverOnError) return nullptr;
-    return CI;
+// smith's defaults for the editor: the fallback style of clangd's formatting is `file:<style>` (the default of its
+// --fallback-style, so the flag still wins), and its checks use <tidy> where no .clang-tidy governs a file. A project's
+// own file wins whole in both. The strings live for the process.
+extern "C" void smith_clangd_defaults(const char *style, const char *tidy) {
+    static std::string fallback;
+    static std::string checks;
+    fallback = std::string("file:") + style;
+    checks = tidy;
+    clang::format::DefaultFallbackStyle = fallback.c_str();
+    clang::clangd::FallbackTidyConfigFile = checks.c_str();
 }
-} // namespace clang
 
 // Runs clangd on argv[1 .. argc), as argv[0], <folder>/bin/clangd, in clang's folder. Returns its exit
 // status.
 extern "C" int smith_clangd_main(int argc, char **argv) {
     smith_tool_start("__smith_lsp", argv[0]);
+    clang::CommandHook = smith_command_hook; // a .smith file compiles in the editor as `smith cc` compiles it
 #ifdef SMITH_HOOK
     smith_hook_install();
+    smith_tidy_names_register(false); // clangd's built-in checks judge the names as written, as `smith lint` does
     // The editor talks to clangd through the layer of shim/lsp.cpp, which shows the names as the source writes them.
     return smith_lsp_run(argc, argv,
                          [](int count, char **arguments) { return clang::clangd::clangdMain(count, arguments); });
