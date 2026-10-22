@@ -681,9 +681,50 @@ static const BuildTestScript build_test_scripts[] = {
 
 constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof build_test_scripts[0];
 
+// Stops the build with a message.
+static void build_stop(SmithBuild *b, const char *message) {
+    (void)smith_capture(b, (const char *[]){"sh", "-c", "echo \"build.c: $0\" >&2; exit 1", message, nullptr});
+}
+
+// Whether the list, its names split by `separator`, holds the name.
+static bool build_list_has(SmithBuild *b, const char *list, char separator, const char *name) {
+    return strstr(smith_fmt(b, "%c%s%c", separator, list, separator),
+                  smith_fmt(b, "%c%s%c", separator, name, separator)) != nullptr;
+}
+
+// The parts of tests/test.sh and the shards of build_test_scripts must be the same set: a part in no `isolate` row
+// would never run under --isolate, and a name in a row that is no part would run nothing, silently.
+static void build_check_test_parts(SmithBuild *b) {
+    const char *parts = smith_capture(b, (const char *[]){"sh", "tests/test.sh", "--parts", nullptr});
+    for (const char *name = parts; *name != '\0';) {
+        size_t length = strcspn(name, "\n");
+        const char *part = smith_fmt(b, "%.*s", (int)length, name);
+        bool run = false;
+        for (size_t row = 0; row < build_test_script_count; row++) {
+            const char *shard = build_test_scripts[row].shard;
+            run = run || (shard != nullptr && build_list_has(b, shard, ',', part));
+        }
+        if (!run)
+            build_stop(b, smith_fmt(b, "part '%s' of tests/test.sh is in no isolate row of build_test_scripts", part));
+        name += length + (name[length] == '\n' ? 1 : 0);
+    }
+    for (size_t row = 0; row < build_test_script_count; row++) {
+        const BuildTestScript *script = &build_test_scripts[row];
+        for (const char *name = script->shard; name != nullptr && *name != '\0';) {
+            size_t length = strcspn(name, ",");
+            const char *part = smith_fmt(b, "%.*s", (int)length, name);
+            if (!build_list_has(b, parts, '\n', part))
+                build_stop(
+                    b, smith_fmt(b, "task test-%s names '%s', which is no part of tests/test.sh", script->task, part));
+            name += length + (name[length] == ',' ? 1 : 0);
+        }
+    }
+}
+
 // The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
 // waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary) {
+    build_check_test_parts(b);
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++)
         names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);

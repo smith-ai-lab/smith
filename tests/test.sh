@@ -8,6 +8,11 @@
 # budget, misc, workers, reports, flags, inprocess, lang).
 # A scratch project builds a runner from test files that fail on purpose, and each case runs it and compares the output.
 set -u
+# `--parts` prints the names of the parts, one a line: build.c checks them against its task rows.
+if [ "${1:-}" = --parts ]; then
+    sed -n 's/^if part \(.*\); then$/\1/p' "$0" | tr ' ' '\n' | sort -u
+    exit 0
+fi
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 iso=
 if [ "${2:-}" = isolate ]; then
@@ -15,6 +20,13 @@ if [ "${2:-}" = isolate ]; then
     shift
 fi
 parts=${2:-all}
+for name in $(echo "$parts" | tr ',' ' '); do # a name that is no part would run nothing, silently
+    [ "$name" = all ] && continue
+    if ! sh "$0" --parts | grep -qx "$name"; then
+        echo "tests/test.sh: '$name' is not a part (the parts: $(sh "$0" --parts | tr '\n' ' '))" >&2
+        exit 2
+    fi
+done
 part() { # name...: whether this run includes any of the parts
     for name in "$@"; do
         case ",$parts," in *,all,* | *",$name,"*) return 0 ;; esac
