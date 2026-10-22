@@ -46,11 +46,12 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 
 - **Test the smith under test.** Run a change's tests with `build/<OS>-<arch>/smith`, not the installed `smith`, when the change is to the language, a library or the build. A test that builds a project puts the tested smith's folder (its `smith-cc` and `smith-c++`) first on `PATH`, so nothing in it compiles with the installed smith.
 - **Regenerate after a merge.** A merge that touches `lib/smith/*.smith` or the lowering needs `smith build headers` and `smith build bootstrap`; `check-headers` and `check-bootstrap` fail until it is done.
-- **LLVM is not yours to rebuild.** Never run `smith build llvm` or start a new LLVM configuration (a new `-rN`) unless your task says to: ask whoever gave it to you.
+- **A change to LLVM is a new configuration, never an edit of the one in use.** When a change needs LLVM rebuilt (a new patch in `patches/`, a changed `scripts/llvm.sh`), bump the configuration (`23.1.3-rN` to `-rN+1` in build.c, `scripts/llvm.sh` and the scripts that name it) and build it beside the old one with `smith build llvm`, about 10 minutes and 11 GB. The installed smith and every other worktree keep using the old one until the change merges, so nothing breaks while it builds. Say in your report that you built one, and why.
 - **Write idiomatic Smith, not C renamed.** In a `.smith` file: sized types (`u64`, `usize`, `f64`), `import <h>;` with `c::` names, modules that import modules, generics where a type was passed as `sizeof` and `alignof`, and no preprocessor. Count them before and after a port: a module with a standard C type, an `#include` or an `#if` left is not done.
 - **Effects come through capabilities.** No raw call to the world outside a capability's own module (`smith-effects`); a function takes the part of `SmithIo` it needs as a parameter.
 - **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
 - **One full `smith check` at a time** on a machine, and say plainly what you did not run.
+- **Report friction when you finish.** Besides what you did, say what slowed you down or misled you: a skill that was wrong, missing or hard to find, an error message that did not say the fix, a rule you had to guess, a check that caught you (and whether its message was enough). Name the skill, message or check. Each report is how the skills and the checks get better, and whether a change to them helped shows in the next agent's report.
 
 ## Verbs and the compiler links
 
