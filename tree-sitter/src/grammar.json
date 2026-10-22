@@ -5203,6 +5203,13 @@
           "value": "enum"
         },
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "attribute_declaration"
+          }
+        },
+        {
           "type": "CHOICE",
           "members": [
             {
@@ -5463,6 +5470,13 @@
             ]
           },
           {
+            "type": "REPEAT",
+            "content": {
+              "type": "SYMBOL",
+              "name": "attribute_declaration"
+            }
+          },
+          {
             "type": "CHOICE",
             "members": [
               {
@@ -5540,6 +5554,13 @@
           {
             "type": "STRING",
             "value": "union"
+          },
+          {
+            "type": "REPEAT",
+            "content": {
+              "type": "SYMBOL",
+              "name": "attribute_declaration"
+            }
           },
           {
             "type": "CHOICE",

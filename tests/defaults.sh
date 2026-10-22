@@ -115,5 +115,24 @@ expect "lint: a project's .clang-tidy wins, whole" 0 "$?"
 expect "lint: --dump-config prints the project's config" 1 \
     "$("$smith" lint --dump-config | grep -c "^Checks:.*misc-no-recursion")"
 
+# ---- first runs in parallel: the defaults are written through a unique temporary name, so none fails with "cannot write"
+mkdir -p "$work/parallel"
+cd "$work/parallel" || exit 1
+for n in 1 2 3 4 5 6 7 8; do
+    printf 'int f%s(int x) {\n    return x;\n}\n' "$n" >"f$n.c"
+done
+fresh=$work/fresh-data
+pids=""
+for n in 1 2 3 4 5 6 7 8; do
+    XDG_DATA_HOME=$fresh "$smith" lint --quiet "f$n.c" -- -std=gnu2y >"out$n" 2>&1 &
+    pids="$pids $!"
+done
+bad=0
+for pid in $pids; do
+    wait "$pid" || bad=$((bad + 1))
+done
+expect "lint: eight first runs at once on an empty data folder all succeed" 0 "$bad"
+expect "lint: ... and none says it cannot write" 0 "$(cat out? | grep -c 'cannot write' | sed 's/^ *//')"
+
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]

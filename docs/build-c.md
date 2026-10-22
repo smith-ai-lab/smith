@@ -94,7 +94,7 @@ How each verb uses it:
   (a generated `parser.c`, the broken inputs of a test).
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
   findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
-  lints the first compile of a source, so a program built in three variants is checked once, with the first's flags.
+  lints the first compile of a source, so a program built in three variants is checked once, with the first's flags. The checks are the project's `.clang-tidy`, or smith's defaults, which include `smith-effects` (a raw call such as `printf` or `fopen` outside a capability's implementation; skill smith-io).
 - **prove** proves each program's C and `.smith` sources together, as the program links them (`unit<TAB>source...` in the info; the
   tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first
   compiles less what only instruments or caches (`-fsanitize`, modules, frame pointers, pattern initialization, the

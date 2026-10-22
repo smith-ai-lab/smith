@@ -107,6 +107,7 @@ expect "smith lint parses a file that includes a builtin header" "0" "$rc"
 expect_contains "and its builtin headers come from clang's folder" "$out$err" "$XDG_DATA_HOME/smith/programs/"
 expect "and no LLVM install is named" "" "$(printf '%s\n%s\n' "$out" "$err" | grep -F 'smith/llvm' | head -n 1)"
 printf '[{"directory": "%s", "file": "hello.c", "arguments": ["smith-cc", "-c", "hello.c"]}]\n' "$PWD" >compile_commands.json
+printf 'Checks: "-*"\n' >.clang-tidy
 capture "$smith" lsp --check=hello.c
 expect "smith lsp --check works" "0" "$rc"
 expect "and logs no error" "0" "$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')"

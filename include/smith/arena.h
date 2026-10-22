@@ -3,8 +3,8 @@
 // smith-module: smith::arena
 // smith-imports:
 // smith-names: align_max=smith_arena_align_max Arena=SmithArena Scope=SmithArenaScope make=smith_arena_make push_raw=smith_arena_push push_array_raw=smith_arena_push_array fits=smith_arena_fits push=smith_arena_push_type push_array=smith_arena_push_array_type carve=smith_arena_carve reset=smith_arena_reset scope_begin=smith_arena_scope_begin scope_end=smith_arena_scope_end
-// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@163:51=[ p@163:52=[ i@163:53=nodiscard p@163:62=] p@163:63=] iP1w@163:65=T pw@163:67=* i@163:68=smith_arena_push_type p@163:72=( i@163:73=SmithArena pw@163:79=* i@163:80=arena p@163:85=, iw@163:87=constexpr iw@163:97=type iP1w@163:102=T p@163:103=) pw@163:105={ iw@164:5=return pw@164:12=( iP1@164:13=T pw@164:15=* p@164:16=) i@164:17=smith_arena_push p@164:25=( i@164:26=arena p@164:31=, iw@164:33=sizeof p@164:39=( iP1@164:40=T p@164:41=) p@164:42=, iw@164:44=alignof p@164:51=( iP1@164:52=T p@164:53=) p@164:54=) p@164:55=; p@165:1=}
-// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@169:57=[ p@169:58=[ i@169:59=nodiscard p@169:68=] p@169:69=] iP1w@169:71=T pw@169:73=* i@169:74=smith_arena_push_array_type p@169:84=( i@169:85=SmithArena pw@169:91=* i@169:92=arena p@169:97=, iw@169:99=constexpr iw@169:109=type iP1w@169:114=T p@169:115=, iw@170:85=size_t iw@170:92=count p@170:97=) pw@170:99={ iw@171:5=return pw@171:12=( iP1@171:13=T pw@171:15=* p@171:16=) i@171:17=smith_arena_push_array p@171:31=( i@171:32=arena p@171:37=, iw@171:39=sizeof p@171:45=( iP1@171:46=T p@171:47=) p@171:48=, iw@171:50=count p@171:55=, iw@171:57=alignof p@171:64=( iP1@171:65=T p@171:66=) p@171:67=) p@171:68=; p@172:1=}
+// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@166:51=[ p@166:52=[ i@166:53=nodiscard p@166:62=] p@166:63=] iP1w@166:65=T pw@166:67=* i@166:68=smith_arena_push_type p@166:72=( i@166:73=SmithArena pw@166:79=* i@166:80=arena p@166:85=, iw@166:87=constexpr iw@166:97=type iP1w@166:102=T p@166:103=) pw@166:105={ iw@167:5=return pw@167:12=( iP1@167:13=T pw@167:15=* p@167:16=) i@167:17=smith_arena_push p@167:25=( i@167:26=arena p@167:31=, iw@167:33=sizeof p@167:39=( iP1@167:40=T p@167:41=) p@167:42=, iw@167:44=alignof p@167:51=( iP1@167:52=T p@167:53=) p@167:54=) p@167:55=; p@168:1=}
+// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@172:57=[ p@172:58=[ i@172:59=nodiscard p@172:68=] p@172:69=] iP1w@172:71=T pw@172:73=* i@172:74=smith_arena_push_array_type p@172:84=( i@172:85=SmithArena pw@172:91=* i@172:92=arena p@172:97=, iw@172:99=constexpr iw@172:109=type iP1w@172:114=T p@172:115=, iw@173:85=size_t iw@173:92=count p@173:97=) pw@173:99={ iw@174:5=return pw@174:12=( iP1@174:13=T pw@174:15=* p@174:16=) i@174:17=smith_arena_push_array p@174:31=( i@174:32=arena p@174:37=, iw@174:39=sizeof p@174:45=( iP1@174:46=T p@174:47=) p@174:48=, iw@174:50=count p@174:55=, iw@174:57=alignof p@174:64=( iP1@174:65=T p@174:66=) p@174:67=) p@174:68=; p@175:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
@@ -54,7 +54,7 @@ typedef struct {
 // without it a build with NDEBUG would write past the memory.
 [[nodiscard]] void *smith_arena_push(SmithArena *arena, size_t size, size_t align);
 
-// count items of size bytes; an overflowing count * size is the same stop.
+// count items of size bytes.
 [[nodiscard]] void *smith_arena_push_array(SmithArena *arena, size_t size, size_t count, size_t align);
 
 // Whether a push of size at align would fit.

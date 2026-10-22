@@ -185,6 +185,8 @@ expect "project: the source is written" yes "$([ -f .smith/lib/io.c ] && echo ye
 capture build/app
 expect "project: the program runs" "0 write 0, words 4, seed 1" "$rc $out"
 if "$smith" lsp --version >/dev/null 2>&1; then
+    # The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
+    printf 'Checks: "-*"\n' >.clang-tidy
     capture "$smith" lsp --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"

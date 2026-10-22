@@ -165,7 +165,7 @@ done
 for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.c primes.c primes.h; do
     expect "new hello: writes no $f" no "$(exists "hello/$f")"
 done
-expect_contains "new hello: main.smith names the program" "$(cat hello/main.smith)" 'c::puts("hello from hello");'
+expect_contains "new hello: main.smith names the program" "$(cat hello/main.smith)" 'c::smith_console_print(console, "hello from hello\n");'
 expect "new hello: no placeholder is left" "" "$(grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith)"
 expect "new hello: .gitignore is the template" "$(cat "$here/templates/new/gitignore")" "$(cat hello/.gitignore)"
 expect "new hello: .claude/settings.json is the template" "$(cat "$here/templates/new/claude-settings.json")" \
@@ -215,7 +215,7 @@ done
 for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.smith primes.smith; do
     expect "new --language c: writes no $f" no "$(exists "hellc/$f")"
 done
-expect_contains "new --language c: main.c names the program" "$(cat hellc/main.c)" 'puts("hello from hellc");'
+expect_contains "new --language c: main.c names the program" "$(cat hellc/main.c)" 'smith_console_print(console, "hello from hellc\n");'
 expect_contains "new --language c: the concept describes the C program" "$(cat hellc/knowledge/program.md)" "primes_sum"
 expect "new --language c: git tracks exactly the written files" "$c_files" "$(git -C hellc ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new --language c: the tree is clean after the commit" "" "$(git -C hellc status --porcelain)"
@@ -622,7 +622,8 @@ expect_contains "docs: ... its concept names the program" "$(cat My_Proj.x/knowl
 expect "docs: ... smith docs passes" 0 "$?"
 
 # 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's.
-# Allowed differences: smith-only assert macro, typedef names, unity-build include check.
+# Allowed differences: smith-only assert macro, typedef names, unity-build include check, and smith-effects.CFiles
+# (smith's C is being ported to .smith, so smith checks .smith only; the template checks C files too).
 tidy_items() { # file: one line per Checks entry and per CheckOptions key
     awk '
         /^Checks:/ { mode = "checks"; next }
@@ -634,7 +635,7 @@ tidy_items() { # file: one line per Checks entry and per CheckOptions key
 }
 missing_rules() { # smith's file, the template: what the template lacks
     tidy_items "$1" | grep -v -e 'bugprone-suspicious-include' -e 'bugprone-assert-side-effect.AssertMacros' \
-        -e 'readability-identifier-naming.TypedefIgnoredRegexp' | while read -r kind item; do
+        -e 'readability-identifier-naming.TypedefIgnoredRegexp' -e 'smith-effects.CFiles' | while read -r kind item; do
         tidy_items "$2" | grep -qxF "$kind $item" || echo "$kind $item"
     done
 }

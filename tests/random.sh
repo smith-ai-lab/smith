@@ -178,6 +178,8 @@ capture "$smith" build
 after=$(stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith)
 expect "project: an unchanged library is not rewritten" "$before" "$after"
 if "$smith" lsp --version >/dev/null 2>&1; then
+    # The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
+    printf 'Checks: "-*"\n' >.clang-tidy
     capture "$smith" lsp --check=main.c
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"

@@ -1,0 +1,14 @@
+diff --git a/clang-tools-extra/clangd/TidyProvider.cpp b/clang-tools-extra/clangd/TidyProvider.cpp
+--- a/clang-tools-extra/clangd/TidyProvider.cpp
++++ b/clang-tools-extra/clangd/TidyProvider.cpp
+@@ -349,6 +349,10 @@
+ }
+
+ std::optional<bool> isFastTidyCheck(llvm::StringRef Check) {
++  // smith's own checks (smith-effects) are one pass over the functions of the
++  // unit, as quick as the naming check, so the editor runs them by default.
++  if (Check.starts_with("smith-"))
++    return true;
+   static auto &Fast = *new llvm::StringMap<bool>{
+ #define FAST(CHECK, TIME) {#CHECK,true},
+ #define SLOW(CHECK, TIME) {#CHECK,false},

@@ -311,7 +311,7 @@ expect "fmt: outside a git repository it says to name the files" \
 capture sh -c "cd '$work/empty' && GIT_CEILING_DIRECTORIES='$work' '$smith' check"
 expect "check: a part that fails is reported, and the exit status is 1" 1 "$rc"
 case $err in
-*"smith check: fmt FAILED (status 2)"*"smith check: docs ok"*"smith check: no build.c, so lint, test and prove are skipped"*"smith check: failed: fmt") ok=yes ;;
+*"smith check: fmt FAILED (status 2)"*"smith check: docs ok"*"smith check: no build file and no main, so lint, test and prove are skipped"*"smith check: failed: fmt") ok=yes ;;
 *) ok=no ;;
 esac
 expect "check: every part is reported, in order, and the failures are summed up" yes "$ok"

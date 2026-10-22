@@ -1011,7 +1011,8 @@ static bool smith_file_has_bytes(const char *path, const unsigned char *bytes, s
 static void smith_write_if_changed(const char *path, const unsigned char *bytes, size_t size) {
     if (smith_file_has_bytes(path, bytes, size)) return;
     char temporary[PATH_MAX];
-    int written = snprintf(temporary, sizeof temporary, "%s.tmp", path);
+    int written = snprintf(temporary, sizeof temporary, "%s.%d.tmp", path,
+                           (int)getpid());                           // unique, so parallel first runs do not meet
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary); // a short constant path
     FILE *file = fopen(temporary, "wb");
     if (file == nullptr) smith_die(smith_exit_usage, "cannot write", temporary);
