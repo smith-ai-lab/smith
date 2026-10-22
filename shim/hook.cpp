@@ -1796,7 +1796,8 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     // The index of the binary operator that ends the expression, the last of the lowest precedence outside any
-    // brackets (they associate to the left), or `end` for none. A `?` is found first: the conditional is below them all.
+    // brackets (they associate to the left), or `end` for none. A `?` is found first: the conditional is below them
+    // all.
     size_t splitBinary(const std::vector<std::string> &t, size_t begin, size_t end, bool *conditional) {
         size_t found = end;
         int lowest = 100;
@@ -1869,8 +1870,8 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     QualType subexpressionType(const std::vector<std::string> &t, size_t begin, size_t end) {
-        return expressionType(std::vector<std::string>(t.begin() + static_cast<long>(begin),
-                                                       t.begin() + static_cast<long>(end)));
+        return expressionType(
+            std::vector<std::string>(t.begin() + static_cast<long>(begin), t.begin() + static_cast<long>(end)));
     }
 
     // The type of an expression with a binary operator or a `?:` at its top, or null with typeWhy (and `handled`

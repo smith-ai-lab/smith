@@ -382,8 +382,8 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
 
 // A generic check may be given its type first, `test::check_equal(u64, a, b)`: that argument names no value.
 static size_t smith_sym_drop_type(char arguments[smith_sym_arguments_max][128], size_t count) {
-    static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32",      "i64",    "isize", "u8",
-                                        "u16",  "u32",  "u64", "usize", "f32",      "f64",    "int",   "long",
+    static const char *const types[] = {"bool",  "char",  "i8",     "i16",    "i32",       "i64",    "isize", "u8",
+                                        "u16",   "u32",   "u64",    "usize",  "f32",       "f64",    "int",   "long",
                                         "short", "float", "double", "size_t", "ptrdiff_t", "uint8_t"};
     if (count < 2) return count;
     bool type = strchr(arguments[0], '*') != nullptr || strncmp(arguments[0], "const ", 6) == 0;
@@ -395,8 +395,9 @@ static size_t smith_sym_drop_type(char arguments[smith_sym_arguments_max][128], 
     return count - 1;
 }
 
-// The arguments of the check call (smith_check_equal_u64 in C, test::check_equal in .smith) on the source line: the texts between the top-level commas of its parentheses.
-// Returns how many (at most smith_sym_arguments_max); each is a copy with its blanks trimmed.
+// The arguments of the check call (smith_check_equal_u64 in C, test::check_equal in .smith) on the source line: the
+// texts between the top-level commas of its parentheses. Returns how many (at most smith_sym_arguments_max); each is a
+// copy with its blanks trimmed.
 static size_t smith_sym_arguments(const char *source, char arguments[smith_sym_arguments_max][128]) {
     const char *call = strstr(source, "smith_check_");
     if (call == nullptr) call = strstr(source, "::check_"); // test::check_equal(a, b)

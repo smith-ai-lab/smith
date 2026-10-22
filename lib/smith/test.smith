@@ -40,8 +40,8 @@ import <unistd.h>;
 //
 // A property test is run on --seeds keys; the key comes from the run's seed, so a failure prints the seed that replays
 // it. A test that takes an io gets a real one made by the runner for that test alone: its key is made from the run's
-// seed (--seed replays it), its arena is fresh, and it has a scratch folder of its own, test::scratch(io), which is also
-// $TMPDIR. The folder is removed when the test passes and kept, with its path printed, when it fails. The working
+// seed (--seed replays it), its arena is fresh, and it has a scratch folder of its own, test::scratch(io), which is
+// also $TMPDIR. The folder is removed when the test passes and kept, with its path printed, when it fails. The working
 // directory stays the project root, so fixtures resolve. A test makes fakes (smith_io_make_test) anywhere, but never a
 // real io: smith-effects allows smith_io_make only in main, so the runner can always seed, sandbox and clean up after a
 // test and parallel tests never share the real world.
@@ -134,31 +134,31 @@ import <unistd.h>;
 // ---------------------------------------------------------------------------------------------------------------
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 
-constexpr i32 sig_abrt = c::SIGABRT;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_alrm = c::SIGALRM;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_bus = c::SIGBUS;                  // NOLINT(smith-preprocessor)
-constexpr i32 sig_fpe = c::SIGFPE;                  // NOLINT(smith-preprocessor)
-constexpr i32 sig_ill = c::SIGILL;                  // NOLINT(smith-preprocessor)
-constexpr i32 sig_kill = c::SIGKILL;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_pipe = c::SIGPIPE;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_segv = c::SIGSEGV;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_trap = c::SIGTRAP;                // NOLINT(smith-preprocessor)
-constexpr i32 sig_xfsz = c::SIGXFSZ;                // NOLINT(smith-preprocessor)
-constexpr i32 on_stack = c::SA_ONSTACK;             // NOLINT(smith-preprocessor)
-constexpr i32 with_info = c::SA_SIGINFO;            // NOLINT(smith-preprocessor)
-constexpr i32 stdout_fd = c::STDOUT_FILENO;         // NOLINT(smith-preprocessor)
-constexpr i32 stderr_fd = c::STDERR_FILENO;         // NOLINT(smith-preprocessor)
-constexpr i32 protect_read = c::PROT_READ;           // NOLINT(smith-preprocessor)
-constexpr i32 protect_write = c::PROT_WRITE;         // NOLINT(smith-preprocessor)
-constexpr i32 map_anonymous = c::MAP_ANON;          // NOLINT(smith-preprocessor)
-constexpr i32 map_private = c::MAP_PRIVATE;         // NOLINT(smith-preprocessor)
-constexpr i32 map_shared = c::MAP_SHARED;           // NOLINT(smith-preprocessor)
-constexpr i32 set_flags = c::F_SETFL;               // NOLINT(smith-preprocessor)
-constexpr i32 non_blocking = c::O_NONBLOCK;         // NOLINT(smith-preprocessor)
-constexpr i16 poll_in = c::POLLIN;                  // NOLINT(smith-preprocessor)
-constexpr i32 files_limit = c::RLIMIT_NOFILE;       // NOLINT(smith-preprocessor)
-constexpr i32 again = c::EAGAIN;                    // NOLINT(smith-preprocessor)
-constexpr i32 interrupted = c::EINTR;               // NOLINT(smith-preprocessor)
+constexpr i32 sig_abrt = c::SIGABRT;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_alrm = c::SIGALRM;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_bus = c::SIGBUS;            // NOLINT(smith-preprocessor)
+constexpr i32 sig_fpe = c::SIGFPE;            // NOLINT(smith-preprocessor)
+constexpr i32 sig_ill = c::SIGILL;            // NOLINT(smith-preprocessor)
+constexpr i32 sig_kill = c::SIGKILL;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_pipe = c::SIGPIPE;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_segv = c::SIGSEGV;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_trap = c::SIGTRAP;          // NOLINT(smith-preprocessor)
+constexpr i32 sig_xfsz = c::SIGXFSZ;          // NOLINT(smith-preprocessor)
+constexpr i32 on_stack = c::SA_ONSTACK;       // NOLINT(smith-preprocessor)
+constexpr i32 with_info = c::SA_SIGINFO;      // NOLINT(smith-preprocessor)
+constexpr i32 stdout_fd = c::STDOUT_FILENO;   // NOLINT(smith-preprocessor)
+constexpr i32 stderr_fd = c::STDERR_FILENO;   // NOLINT(smith-preprocessor)
+constexpr i32 protect_read = c::PROT_READ;    // NOLINT(smith-preprocessor)
+constexpr i32 protect_write = c::PROT_WRITE;  // NOLINT(smith-preprocessor)
+constexpr i32 map_anonymous = c::MAP_ANON;    // NOLINT(smith-preprocessor)
+constexpr i32 map_private = c::MAP_PRIVATE;   // NOLINT(smith-preprocessor)
+constexpr i32 map_shared = c::MAP_SHARED;     // NOLINT(smith-preprocessor)
+constexpr i32 set_flags = c::F_SETFL;         // NOLINT(smith-preprocessor)
+constexpr i32 non_blocking = c::O_NONBLOCK;   // NOLINT(smith-preprocessor)
+constexpr i16 poll_in = c::POLLIN;            // NOLINT(smith-preprocessor)
+constexpr i32 files_limit = c::RLIMIT_NOFILE; // NOLINT(smith-preprocessor)
+constexpr i32 again = c::EAGAIN;              // NOLINT(smith-preprocessor)
+constexpr i32 interrupted = c::EINTR;         // NOLINT(smith-preprocessor)
 
 // A status from waitpid, as the signal that ended the process (or 0) and its exit status (or 0). The low seven bits
 // are the signal, 0 for an exit and 0x7f for a stop; an exit's status is the next byte.
@@ -299,9 +299,22 @@ export constexpr Op op_greater_equal = 5;
 // _Generic, which needs no compiler to lower, so a module's tests can call the checks too. bool, char, the sized
 // integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
 export [[nodiscard]] Value value_of(constexpr type T, T v) {
-    return _Generic(v, bool: value_bool, char: value_char, i8: value_i8, i16: value_i16, i32: value_i32, i64: value_i64,
-                    isize: value_isize, u8: value_u8, u16: value_u16, u32: value_u32, u64: value_u64, usize: value_usize,
-                    f32: value_f32, f64: value_f64, default: value_pointer)(v);
+    return _Generic(v,
+        bool: value_bool,
+        char: value_char,
+        i8: value_i8,
+        i16: value_i16,
+        i32: value_i32,
+        i64: value_i64,
+        isize: value_isize,
+        u8: value_u8,
+        u16: value_u16,
+        u32: value_u32,
+        u64: value_u64,
+        usize: value_usize,
+        f32: value_f32,
+        f64: value_f64,
+        default: value_pointer)(v);
 }
 
 constexpr i32 less = -1;
@@ -460,9 +473,9 @@ usize memory_used; // a multiple of arena::align_max
 bool full_run;     // the runner was given --full; set before any test forks, so every child sees it
 bool worker;       // this process is a worker: a failed check unwinds to its loop
 c::sigjmp_buf loop_jump;
-bool in_process;     // --in-process: the runner is its own worker, and an expected abort jumps to its loop
-u64 *forks;          // the forks of the whole run, counted in memory every process shares
-bool hooking;        // the next process forked draws its words through the runner's tap
+bool in_process;               // --in-process: the runner is its own worker, and an expected abort jumps to its loop
+u64 *forks;                    // the forks of the whole run, counted in memory every process shares
+bool hooking;                  // the next process forked draws its words through the runner's tap
 const random::Tap *active_tap; // the tap this process gives its property tests' keys, or nullptr
 volatile c::sig_atomic_t abort_signal; // --in-process: the signal an expected abort raised
 
@@ -474,7 +487,6 @@ void count_fork(void) {
 [[smith::c_name("smith_test_full")]] export [[nodiscard]] bool full(void) {
     return full_run;
 }
-
 
 void reset(void) {
     memory_used = 0;
@@ -489,9 +501,10 @@ void reset(void) {
 // The tests' memory is out of capacity: the test stops, with a message.
 [[noreturn]] void memory_stop(usize capacity) {
     char message[256];
-    i32 length = __builtin_snprintf(message, sizeof message,
-                             "smith: the tests' memory is out of capacity: test::memory(%zu) with %zu of %zu bytes used\n",
-                             capacity, memory_used, memory_capacity);
+    i32 length = __builtin_snprintf(
+        message, sizeof message,
+        "smith: the tests' memory is out of capacity: test::memory(%zu) with %zu of %zu bytes used\n", capacity,
+        memory_used, memory_capacity);
     (void)c::write(stderr_fd, message, (usize)length);
     c::abort();
 }
@@ -558,7 +571,8 @@ void write_values(Line *lines, usize count) {
         if (lines[i].bits && !finite(lines[i].value)) {
             usize length = c::strlen(lines[i].formatted);
             i32 digits = lines[i].value.kind == kind_f32 ? 8 : 16;
-            __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*llx]", digits, raw_bits(lines[i].value));
+            __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*llx]", digits,
+                               raw_bits(lines[i].value));
         }
         usize formatted_length = c::strlen(lines[i].formatted);
         if (formatted_length > value_width) value_width = formatted_length;
@@ -812,8 +826,8 @@ typedef struct {
 
 constexpr u64 seeds_default = 100;
 constexpr u64 seeds_max = 1'000'000'000;
-constexpr u64 seed_root = 0x5eed;      // the key the properties' seeds are drawn from
-constexpr usize commands_max = 1U << 30; // what a worker serves before it exits and is forked again
+constexpr u64 seed_root = 0x5eed;            // the key the properties' seeds are drawn from
+constexpr usize commands_max = 1U << 30;     // what a worker serves before it exits and is forked again
 constexpr usize rounds_max = (usize)1 << 40; // polls of the runner's loops: more than a run can make
 
 typedef enum : u8 {
@@ -913,8 +927,8 @@ T *map(constexpr type T, usize count, i32 flags) {
 // A process that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for an expected
 // abort or a crashing test. AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers, whose report ends in
 // abort(). After test::expect_abort, SIGABRT and SIGTRAP are what the test expects: the process exits, and the runner,
-// finding the flag in the shared block, passes the test. --in-process has no process to end: the runner's loop takes the
-// test back.
+// finding the flag in the shared block, passes the test. --in-process has no process to end: the runner's loop takes
+// the test back.
 void on_signal(i32 signal_number, c::siginfo_t *info, void *context) {
     (void)info;
     if (shared->expect_abort && (signal_number == sig_abrt || signal_number == sig_trap)) {
@@ -949,7 +963,7 @@ void catch_signals(void) {
 
 // The words a property test draws, recorded and replaced (shrinking, below), and the runner's tap that does it.
 
-constexpr usize draws_max = 65536; // words recorded; past it, no more are
+constexpr usize draws_max = 65536;  // words recorded; past it, no more are
 constexpr usize slots_max = 131072; // a power of two, twice the words: the hash table is never full
 constexpr u32 shrink_runs_max = 1000;
 constexpr u32 shrink_seconds_default = 10;
@@ -1046,8 +1060,8 @@ void run_key(const Test *test, const Options *options, u64 seed) {
 // row, and made $TMPDIR and $SMITH_TEST_SCRATCH while the test runs. Its path goes to the shared block, where the
 // runner finds it after the test: removed when the test passed, kept and printed when it failed.
 void make_scratch(const Test *test, const Options *options, c::SmithIo *io) {
-    __builtin_snprintf(shared->scratch, path_capacity, "%s/smith-test-%d-%zu", options->scratch_base, options->runner_pid,
-                (usize)(test - table));
+    __builtin_snprintf(shared->scratch, path_capacity, "%s/smith-test-%d-%zu", options->scratch_base,
+                       options->runner_pid, (usize)(test - table));
     c::SmithError made = c::smith_files_make_folder(&io->files, shared->scratch);
     if (made.code != 0) {
         __builtin_snprintf(shared->detail, detail_capacity, "cannot make the scratch folder: %s\n", made.message);
@@ -1186,7 +1200,7 @@ const char *abort_verdict(i32 signal_number, i32 code, const char *text, usize l
             __builtin_snprintf(message, capacity, "expected an abort; it crashed with %s, which is not an abort", name);
         else
             __builtin_snprintf(message, capacity, "expected an abort; it crashed with signal %d, which is not an abort",
-                        signal_number);
+                               signal_number);
         return message;
     }
     if (code == 0) return "expected an abort; the test returned";
@@ -1365,7 +1379,8 @@ void judge_expectation(Run *run, const Shared *block) {
         break;
     }
     char message[160];
-    const char *verdict = abort_verdict(signal_number, code, run->output.text, run->output.kept, message, sizeof message);
+    const char *verdict =
+        abort_verdict(signal_number, code, run->output.text, run->output.kept, message, sizeof message);
     run->detail[0] = '\0';
     run->frame_count = 0;
     run->heading = nullptr;
@@ -1383,8 +1398,8 @@ void judge_expectation(Run *run, const Shared *block) {
 // Whether a worker that answered is not to run another test. A test that expected an abort stands for the program
 // ending, so the worker that ran one ends too, whether it passed or failed. A failed check siglongjmps out of arbitrary
 // code and can leave state half-done, so a failed test ends its worker; the shrinking worker is the exception, since it
-// reruns one key and its attempts mostly fail. A sanitizer's report in the output means the state is not trusted. Only a
-// clean pass that expected no abort is followed by another test.
+// reruns one key and its attempts mostly fail. A sanitizer's report in the output means the state is not trusted. Only
+// a clean pass that expected no abort is followed by another test.
 bool retire(usize slot, const Run *run, const Shared *block) {
     if (block->expect_abort || has_report(run->output.text, run->output.kept)) return true;
     return run->outcome.end != End_Passed && slot != shrink_slot;
@@ -1412,8 +1427,8 @@ void remove_scratch(const Options *options, const char *path) {
     arena::scope_end(scope);
 }
 
-// The test has ended, by the worker's answer or (reply is nullptr) by the process's end: judge it, and copy what it left
-// in the shared block to the run.
+// The test has ended, by the worker's answer or (reply is nullptr) by the process's end: judge it, and copy what it
+// left in the shared block to the run.
 void finish(const Options *options, usize slot, Run *run, const Reply *reply) {
     Process *process = &processes[slot];
     const Shared *block = &shared_slots[slot];
@@ -1608,8 +1623,8 @@ void report(const Test *test, const Options *options, const Run *run) {
 // override table that the tap reads. A try keeps the failure only when it is the same: the same check (the same stack),
 // or the same signal or exit status.
 
-// What shrinking one failure holds: the runs it keeps (the best failure so far and the latest try), and the words of the
-// best one's draws.
+// What shrinking one failure holds: the runs it keeps (the best failure so far and the latest try), and the words of
+// the best one's draws.
 typedef struct {
     const Test *test;
     const Options *options;
@@ -1640,8 +1655,8 @@ bool in_budget(const Shrink *shrink) {
     return shrink->runs < shrink_runs_max && seconds(shrink->options) < shrink->deadline;
 }
 
-// Runs the key once more in the shrinking worker, which records its draws, with the overrides in place. The run lands in
-// shrink->candidate, with its output.
+// Runs the key once more in the shrinking worker, which records its draws, with the overrides in place. The run lands
+// in shrink->candidate, with its output.
 void try_run(Shrink *shrink) {
     Run *run = shrink->candidate;
     Options options = *shrink->options;
@@ -1738,8 +1753,8 @@ bool shrink_confirm(Shrink *shrink) {
     return same_failure(shrink->best, shrink->candidate);
 }
 
-// Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on; the
-// same seed gives the same shrunk case unless the time budget ends the search.
+// Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on;
+// the same seed gives the same shrunk case unless the time budget ends the search.
 void shrink_run(const Test *test, const Options *options, Run *run) {
     Shrink *shrink = map(Shrink, 1, map_private);
     *shrink = (Shrink){.test = test,
@@ -1797,7 +1812,8 @@ void pump(Plan *plan) {
     for (usize job = 0; job < jobs; job++) {
         const Process *process = &processes[job];
         bool busy = plan->running[job] != idle;
-        plan->polls[2 * job] = (struct c::pollfd){.fd = busy && !process->output_eof ? process->output : -1, .events = poll_in};
+        plan->polls[2 * job] =
+            (struct c::pollfd){.fd = busy && !process->output_eof ? process->output : -1, .events = poll_in};
         plan->polls[2 * job + 1] = (struct c::pollfd){.fd = busy ? process->control : -1, .events = poll_in};
     }
     if (c::poll(plan->polls, (c::nfds_t)(2 * jobs), -1) < 0) {
@@ -1835,8 +1851,8 @@ bool any_running(const Plan *plan) {
 
 // Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it (in table order) has
 // finished. A failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking
-// takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result would
-// depend on another test. Then the held failures are shrunk and printed in order.
+// takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result
+// would depend on another test. Then the held failures are shrunk and printed in order.
 void run_all(Plan *plan) {
     for (usize job = 0; job < jobs_max; job++)
         plan->running[job] = idle;
@@ -2028,8 +2044,8 @@ bool selects(const Options *options, const char *name) {
     return c::strstr(name, options->filter) != nullptr;
 }
 
-// Fisher-Yates, drawing from the seed: the same seed gives the same order. This finds a test that passes only because of
-// what ran before it.
+// Fisher-Yates, drawing from the seed: the same seed gives the same order. This finds a test that passes only because
+// of what ran before it.
 void shuffle(usize *order_of, usize count, u64 seed) {
     for (usize i = count; i > 1; i--) {
         usize other = (usize)(mix(seed, i) % i);

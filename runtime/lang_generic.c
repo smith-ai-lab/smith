@@ -1373,14 +1373,15 @@ static bool smith_lang_infer(SmithLang *lang, const SmithHost *host, const Smith
                 return false;
             }
             SmithLangInferred here = {.literal = smith_lang_infer_literal(args[i])};
-            // Without a compiler (the header pass, `--smith-lower`) nothing can be typed, and the lowering is read for its
-            // declarations only: a call takes `int` for T, which no output keeps.
+            // Without a compiler (the header pass, `--smith-lower`) nothing can be typed, and the lowering is read for
+            // its declarations only: a call takes `int` for T, which no output keeps.
             bool answered = host->expr_type == nullptr;
             if (answered) {
                 snprintf(here.type.written, sizeof here.type.written, "int");
                 snprintf(here.type.canonical, sizeof here.type.canonical, "int");
             } else {
-                answered = host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
+                answered =
+                    host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
             }
             if (!answered) {
                 char shown[256] = "";
