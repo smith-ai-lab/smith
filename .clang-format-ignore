@@ -13,8 +13,9 @@ runtime/protocol/mcp.c
 runtime/protocol/mcp.h
 tests/protocol/test_protocol_dap.c
 tests/protocol/test_protocol_mcp.c
-# Generated from lib/smith/text.smith and lib/smith/random.smith (smith build headers).
+# Generated from lib/smith/text.smith, lib/smith/random.smith and lib/smith/build.smith (smith build headers).
 include/smith/text.h
 include/smith/random.h
+include/smith/build.h
 # The lowering of lib/smith/text.smith (smith build bootstrap).
 bootstrap/**
