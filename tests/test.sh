@@ -140,7 +140,8 @@ void test_passing(void) {
     SMITH_CHECK_NEAR(1.0f, 1.0001f, 0.001f);
     int array[3] = {1, 2, 3};
     SMITH_CHECK(array, ==, &array[0]);
-    SMITH_CHECK_ABORTS(assert(false));
+    smith_test_expect_abort();
+    assert(false);
 }
 
 void test_compare(void) {
@@ -306,44 +307,73 @@ cat >tests/test_aborts.c <<'C'
 #include <stdlib.h>
 
 void test_abort_assert(void) {
-    SMITH_CHECK_ABORTS((printf("child noise\n"), assert(1 > 2)));
+    smith_test_expect_abort();
+    printf("child noise\n");
+    assert(1 > 2);
 }
 
 void test_abort_arena(void) {
     SmithArena arena = smith_test_arena(128);
-    SMITH_CHECK_ABORTS((void)smith_arena_push(&arena, 1000, 8));
+    smith_test_expect_abort();
+    (void)smith_arena_push(&arena, 1000, 8);
 }
 
 void test_abort_abort(void) {
-    SMITH_CHECK_ABORTS(abort());
+    smith_test_expect_abort();
+    abort();
 }
 
 void test_abort_trap(void) {
-    SMITH_CHECK_ABORTS(__builtin_trap());
+    smith_test_expect_abort();
+    __builtin_trap();
 }
 
 void test_sanitized_read(void) {
     char *bytes = malloc(8);
     volatile size_t index = 8;
-    SMITH_CHECK_ABORTS((printf("before\n"), (void)bytes[index]));
+    smith_test_expect_abort();
+    printf("before\n");
+    (void)bytes[index];
     free(bytes);
 }
 
 void test_sanitized_overflow(void) {
     volatile int largest = INT_MAX;
-    SMITH_CHECK_ABORTS((void)(largest + 1));
+    smith_test_expect_abort();
+    (void)(largest + 1);
 }
 
 void test_abort_exit(void) {
-    SMITH_CHECK_ABORTS(exit(3));
+    smith_test_expect_abort();
+    exit(3);
 }
 
 void test_abort_returns(void) {
-    SMITH_CHECK_ABORTS(printf("child output\n"));
+    smith_test_expect_abort();
+    printf("child output\n");
 }
 
 void test_abort_check_inside(void) {
-    SMITH_CHECK_ABORTS(smith_test_fail_condition(__FILE__, __LINE__));
+    smith_test_expect_abort();
+    smith_check(false);
+}
+
+void test_abort_twice(void) {
+    smith_test_expect_abort();
+    smith_test_expect_abort(); // harmless
+    abort();
+}
+
+void test_abort_before(void) {
+    printf("aborting early\n");
+    abort();
+    smith_test_expect_abort();
+}
+
+void test_abort_after_check(void) {
+    smith_check_equal_i32(1 + 1, 2);
+    smith_test_expect_abort();
+    abort();
 }
 C
 capture "$smith" build
@@ -366,16 +396,26 @@ expect_contains "aborts: a UBSan error fails" "$out" "stopped by a sanitizer rep
 expect_contains "aborts: ... and shows the child's output" "$out" "runtime error: signed integer overflow"
 capture build/tests $iso --test abort_exit
 expect_contains "aborts: exit(3) fails" "$out" "it exited with status 3"
-line=$(line_of tests/test_aborts.c 'SMITH_CHECK_ABORTS(printf("child output\n"));')
-expect "aborts: returning fails, and shows the child's output" "FAIL abort_returns
-  tests/test_aborts.c:$line
-      SMITH_CHECK_ABORTS(printf(\"child output\\n\"));
-    expected an abort; it returned
-    child output
-
-0 passed, 1 failed" "$(run_plain --test abort_returns)"
+line=$(($(line_of tests/test_aborts.c 'printf("child output\n");') - 1)) # the call, the line above the print
+capture build/tests $iso --test abort_returns
+expect_contains "aborts: returning fails" "$out" "FAIL abort_returns"
+expect_contains "aborts: ... saying it returned" "$out" "expected an abort; the test returned"
+expect_contains "aborts: ... and shows the test's output" "$out" "child output"
+if "$smith" symbolize --available; then
+    capture sh -c "build/tests $iso --test abort_returns --trace 2>&1 | '$smith' symbolize"
+    expect_contains "aborts: ... at the call's line" "$out" "  check failed at tests/test_aborts.c:$line"
+    expect_contains "aborts: ... showing the call" "$out" "$line |     smith_test_expect_abort();"
+fi
 capture build/tests $iso --test abort_check_inside
-expect_contains "aborts: a check inside the expression is not an abort" "$out" "expected an abort; a check inside it failed"
+expect_contains "aborts: a check that fails after the call is not an abort" "$out" "expected an abort; a check failed, which is not an abort"
+capture build/tests $iso --test abort_twice --verbose
+expect_contains "aborts: a second call is harmless" "$out" "PASS abort_twice"
+capture build/tests $iso --test abort_after_check --verbose
+expect_contains "aborts: checks before the call run as always" "$out" "PASS abort_after_check"
+capture build/tests $iso --test abort_before
+expect_contains "aborts: an abort before the call is an ordinary failure" "$out" "FAIL abort_before: killed by SIGABRT"
+expect_lacks "aborts: ... not an expected one" "$out" "expected an abort"
+expect_contains "aborts: ... showing what it printed" "$out" "aborting early"
 
 # A crash without the sanitizers, in a project of its own.
 project "$work/nosan"
@@ -388,19 +428,25 @@ cat >tests/test_crash.c <<'C'
 #include <unistd.h>
 
 void test_abort_segv(void) {
-    SMITH_CHECK_ABORTS((printf("before the crash\n"), raise(SIGSEGV)));
+    smith_test_expect_abort();
+    printf("before the crash\n");
+    raise(SIGSEGV);
 }
 
 void test_abort_hangs(void) {
-    SMITH_CHECK_ABORTS((printf("hanging\n"), sleep(30)));
+    smith_test_expect_abort();
+    printf("hanging\n");
+    sleep(30);
 }
 
 void test_abort_exits_zero(void) {
-    SMITH_CHECK_ABORTS(exit(0));
+    smith_test_expect_abort();
+    exit(0);
 }
 
 void test_abort_survivor(void) {
-    SMITH_CHECK_ABORTS(abort());
+    smith_test_expect_abort();
+    abort();
 }
 C
 capture "$smith" build -DSAN=0
@@ -412,9 +458,71 @@ expect_contains "aborts: ... and showing what it printed first" "$out" "before t
 capture build/tests $iso --test abort_hangs --timeout 1
 expect_contains "aborts: a hang is the test's timeout" "$out" "FAIL abort_hangs: timed out after 1."
 capture build/tests $iso --test abort_exits_zero
-expect_contains "aborts: exit(0) is a return, not an abort" "$out" "expected an abort; it returned"
+expect_contains "aborts: exit(0) is a return, not an abort" "$out" "expected an abort; the test returned"
 capture build/tests $iso --test abort_ --timeout 1
 expect_contains "aborts: the tests after a crash, a hang and an exit still run" "$out" "1 passed, 3 failed"
+
+# The three profiles. debug is the runners above (sanitizers on). release is -O2 with assertions on, and fast is -O2
+# -DNDEBUG, where an assert is gone: abort() and __builtin_trap() still stop, and a test that expects an assert to stop it
+# returns.
+for profile in release fast; do
+    project "$work/profile-$profile"
+    if [ $profile = release ]; then flags='"-O2"'; else flags='"-O2", "-DNDEBUG"'; fi
+    sed "s/\"-Wconversion\",/\"-Wconversion\", $flags,/" build.c >build.c.new && mv build.c.new build.c
+    cat >tests/test_profile.c <<'C'
+#include <smith/test.h>
+
+#include <assert.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+void test_profile_abort(void) {
+    smith_test_expect_abort();
+    abort();
+}
+
+void test_profile_trap(void) {
+    smith_test_expect_abort();
+    __builtin_trap();
+}
+
+void test_profile_assert(void) {
+    smith_test_expect_abort();
+    assert(false);
+}
+
+void test_profile_returns(void) {
+    smith_test_expect_abort();
+}
+
+void test_profile_before(void) {
+    abort();
+    smith_test_expect_abort();
+}
+
+void test_profile_segv(void) {
+    smith_test_expect_abort();
+    raise(SIGSEGV);
+}
+C
+    capture "$smith" build -DSAN=0
+    expect "profiles: the $profile runner builds" 0 "$rc"
+    capture build/tests $iso --test profile_ --verbose
+    expect_contains "profiles: $profile: abort() passes" "$out" "PASS profile_abort"
+    expect_contains "profiles: $profile: __builtin_trap() passes" "$out" "PASS profile_trap"
+    if [ $profile = release ]; then
+        expect_contains "profiles: release: an assert passes" "$out" "PASS profile_assert"
+        expect_contains "profiles: release: 3 passed, 3 failed" "$out" "3 passed, 3 failed"
+    else
+        expect_contains "profiles: fast: an assert is gone, so the test returns" "$out" "FAIL profile_assert"
+        expect_contains "profiles: fast: 2 passed, 4 failed" "$out" "2 passed, 4 failed"
+    fi
+    expect_contains "profiles: $profile: returning fails" "$out" "FAIL profile_returns"
+    expect_contains "profiles: $profile: ... saying so" "$out" "expected an abort; the test returned"
+    expect_contains "profiles: $profile: an abort before the call is an ordinary failure" "$out" "FAIL profile_before: killed by SIGABRT"
+    expect_contains "profiles: $profile: a SIGSEGV fails" "$out" "it crashed with SIGSEGV"
+done
 cd "$work/main" || exit 1
 
 # 3. Isolation: a crash, a sanitizer report and a timeout each fail one test and the rest still run.
@@ -527,8 +635,8 @@ expect "task: --test filters, and a passing run exits 0" 0 "$rc"
 capture "$smith" test $iso --test stops
 expect_contains "task: a failing test is printed" "$out$err" "FAIL stops"
 expect "task: ... and the task fails" 1 "$rc"
-all=$(build/tests $iso --test abort 2>&1 | plain)
-one=$(build/tests $iso --test abort --jobs 1 2>&1 | plain)
+all=$(build/tests $iso --test abort 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)') # the addresses differ per run
+one=$(build/tests $iso --test abort --jobs 1 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)')
 expect "jobs: --jobs 1 gives the same results" "$all" "$one"
 
 capture build/tests $iso --test prop_fails --shrink 0
@@ -987,26 +1095,29 @@ void test_report_4_after(void) {
     SMITH_CHECK(true);
 }
 
-void test_aborts_1_three(void) {
-    SMITH_CHECK_ABORTS(assert(false));
-    SMITH_CHECK_ABORTS(abort());
-    SMITH_CHECK_ABORTS(__builtin_trap());
+void test_aborts_1_assert(void) {
+    smith_test_expect_abort();
+    assert(false);
 }
 
 void test_aborts_2_quiet(void) {
-    SMITH_CHECK_ABORTS(assert(1 > 2));
-    SMITH_CHECK_ABORTS((printf("hidden-by-the-check\n"), abort()));
+    smith_test_expect_abort();
+    printf("hidden-by-the-check\n");
+    abort();
 }
 
 void test_aborts_3_reads(void) {
     char *bytes = malloc(8);
     volatile size_t index = 8;
-    SMITH_CHECK_ABORTS((printf("before the read\n"), (void)bytes[index]));
+    smith_test_expect_abort();
+    printf("before the read\n");
+    (void)bytes[index];
     free(bytes);
 }
 
 void test_aborts_4_after(void) {
-    SMITH_CHECK_ABORTS(abort());
+    smith_test_expect_abort();
+    abort();
 }
 
 void test_unwind_1_fails(void) {
@@ -1052,7 +1163,8 @@ static int dirty_failed;
 
 void test_dirty_1_death(void) {
     dirty_death = 1;
-    SMITH_CHECK_ABORTS(abort()); // stands for the program ending: the worker ends with it
+    smith_test_expect_abort(); // stands for the program ending: the worker ends with it
+    abort();
 }
 
 void test_dirty_2_fresh(void) {
@@ -1143,15 +1255,19 @@ expect_contains "workers: ... and a test that only prints a report passes" "$out
 expect "workers: ... the crash and the printed report each replaced the worker" "$(by_mode 3 4)" "$(forks_of "$out")"
 
 capture build/tests $iso --test aborts_ --jobs 1 --stats --verbose
-expect_contains "workers: SMITH_CHECK_ABORTS passes" "$out" "PASS aborts_1_three"
-expect_contains "workers: ... twice" "$out" "PASS aborts_2_quiet"
-expect_lacks "workers: ... hiding the expression's output" "$out" "hidden-by-the-check"
-expect_contains "workers: ... a sanitizer report fails the check" "$out" "FAIL aborts_3_reads"
+expect_contains "workers: an expected abort passes" "$out" "PASS aborts_1_assert"
+expect_contains "workers: ... and another" "$out" "PASS aborts_2_quiet"
+expect_lacks "workers: ... hiding the test's output" "$out" "hidden-by-the-check"
+expect_contains "workers: ... a sanitizer report fails the test" "$out" "FAIL aborts_3_reads"
 expect_contains "workers: ... saying so" "$out" "expected an abort; it was stopped by a sanitizer report"
 expect_contains "workers: ... with the report" "$out" "AddressSanitizer: heap-buffer-overflow"
-expect_contains "workers: ... and shows what the expression printed" "$out" "before the read"
+expect_contains "workers: ... and shows what the test printed" "$out" "before the read"
 expect_contains "workers: ... a later check passes" "$out" "PASS aborts_4_after"
-expect "workers: ... in-process, the checks forked nothing: a test with a death check ends its worker, one fork a test" "$(by_mode 4 11)" "$(forks_of "$out")"
+expect "workers: a test that expected an abort ends its worker, so one fork a test" 4 "$(forks_of "$out")"
+
+capture build/tests $iso --test aborts_ --jobs 4
+expect_contains "workers: ... with several jobs, the sanitizer report still fails its test" "$out" "FAIL aborts_3_reads"
+expect_contains "workers: ... and the other three pass" "$out" "3 passed, 1 failed"
 
 capture build/tests $iso --test unwind_ --jobs 1 --stats
 expect_contains "workers: failed checks fail their tests" "$out" "1 passed, 2 failed"
@@ -1174,9 +1290,9 @@ else
 fi
 
 capture build/tests $iso --test dirty_ --jobs 1 --stats
-expect_contains "dirty: a test after a death check sees clean globals, and after a failed test too" "$out" "3 passed, 1 failed"
+expect_contains "dirty: a test after an expected abort sees clean globals, and after a failed test too" "$out" "3 passed, 1 failed"
 expect_contains "dirty: ... only the failing test failed" "$out" "FAIL dirty_3_fails"
-expect "dirty: ... the death check and the failure each ended a worker" "$(by_mode 3 5)" "$(forks_of "$out")"
+expect "dirty: ... the expected abort and the failure each ended a worker" "$(by_mode 3 4)" "$(forks_of "$out")"
 
 capture build/tests $iso --test out_ --jobs 1 --stats
 first=$(printf '%s\n' "$out" | sed -n '/^FAIL out_1_fails/,/^FAIL out_3_fails/p')
@@ -1462,8 +1578,8 @@ M
 "
 fi
 
-# A failed contract is a failure like a failed check: smith_failure gives it the same report, and a SMITH_CHECK_ABORTS
-# still passes on it, as it does on an assert.
+# A failed contract is a failure like a failed check: smith_failure gives it the same report, and a test that called
+# smith_test_expect_abort still passes on it, as it does on an assert.
 if "$smith" symbolize --available; then
     project "$work/contracts"
     {
@@ -1497,7 +1613,8 @@ void test_requires_fails(void) {
 }
 
 void test_requires_aborts(void) {
-    SMITH_CHECK_ABORTS((void)halve(5));
+    smith_test_expect_abort();
+    (void)halve(5);
 }
 
 void test_requires_holds(void) {
@@ -1510,7 +1627,7 @@ C
     expect_contains "contract: ... shows the source" "$out$err" "$line |     smith_requires(value % 2 == 0);"
     caller=$(line_of tests/test_contracts.c '(void)halve(odd);')
     expect_contains "contract: ... and the call chain, with the caller" "$out$err" "tests/test_contracts.c:$caller"
-    expect_contains "contract: SMITH_CHECK_ABORTS passes on a failed contract, and the true one passes" "$out$err" "2 passed, 1 failed"
+    expect_contains "contract: smith_test_expect_abort passes on a failed contract, and the true one passes" "$out$err" "2 passed, 1 failed"
     expect_lacks "contract: ... with no smith_failure frame in the chain" "$out$err" "smith_failure"
 fi
 
@@ -1580,6 +1697,7 @@ cat >tests/test_inproc.c <<'C'
 #include <smith/test.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 void test_inproc_pass(void) {
@@ -1602,6 +1720,25 @@ void test_inproc_local(void) {
 void test_inproc_pid(void) {
     printf("pid %d\n", (int)getpid());
 }
+
+void test_inabort_abort(void) {
+    smith_test_expect_abort();
+    abort();
+}
+
+void test_inabort_trap(void) {
+    smith_test_expect_abort();
+    __builtin_trap();
+}
+
+void test_inabort_returns(void) {
+    smith_test_expect_abort();
+}
+
+void test_inabort_check_after(void) {
+    smith_test_expect_abort();
+    SMITH_CHECK(1, ==, 2);
+}
 C
 capture "$smith" build
 expect "in-process: the runner builds" 0 "$rc"
@@ -1610,6 +1747,13 @@ expect_contains "in-process: a failed check is reported" "$out" "FAIL inproc_fai
 expect_contains "in-process: ... with its values" "$out" "41"
 expect_contains "in-process: the other tests ran around it" "$out" "3 passed, 1 failed"
 expect_contains "in-process: output goes to the terminal as written" "$out" "in-process output"
+capture build/tests --in-process --test inabort_ --verbose --stats
+expect_contains "in-process: an expected abort passes" "$out" "PASS inabort_abort"
+expect_contains "in-process: ... a trap too" "$out" "PASS inabort_trap"
+expect_contains "in-process: ... returning fails" "$out" "FAIL inabort_returns"
+expect_contains "in-process: ... saying so" "$out" "expected an abort; the test returned"
+expect_contains "in-process: ... a failed check after the call fails" "$out" "expected an abort; a check failed, which is not an abort"
+expect_contains "in-process: ... and nothing forked" "$out" "forks: 0"
 capture build/tests --in-process --test inproc_pass --stats
 expect_contains "in-process: no fork" "$out" "forks: 0"
 capture build/tests --test inproc_pass --stats

@@ -12,14 +12,14 @@
 // The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
 // process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
 // process stays for the next test that worker runs, except after these, which end the worker: a failed test (a failed
-// check unwinds out of arbitrary code and can leave state half-done), a test that ran a SMITH_CHECK_ABORTS (a death
-// check stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
-// worker, so a worker is reused only after a clean pass with no death check. Which tests share a worker depends on
+// check unwinds out of arbitrary code and can leave state half-done), a test that called smith_test_expect_abort (an
+// abort stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
+// worker, so a worker is reused only after a clean pass that expected no abort. Which tests share a worker depends on
 // timing, unless there is one job. A test must not depend on another: --shuffle <seed> runs the tests in a shuffled
 // order to find one that does (with --jobs 1 the order, and so the failure, replays from the seed), and --isolate
 // gives every test a process of its own. Under a debugger that cannot follow a fork (lldb on macOS) use --in-process:
 // the tests run in the runner's own process, one after another, with no fork (`smith dbg build/tests -- --test name
-// --in-process`). It gives up the isolation: a crash, an abort outside a SMITH_CHECK_ABORTS or a hang ends the whole
+// --in-process`). It gives up the isolation: a crash, an abort the test did not expect or a hang ends the whole
 // run, state a test leaves reaches the tests after it, there is no timeout unless --timeout is given, and no shrinking.
 //
 // A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
@@ -44,16 +44,28 @@
 //                                          i64, u8 u16 u32 u64, f32, f64 or ptr (as <math.h> names sinf and sin)
 //   smith_check_near_f32(a, b, tolerance)  |a - b| <= tolerance; a NaN fails; equal infinities pass. Also _f64
 //   smith_check_same_bits_f32(a, b)        a and b have the same bits: -0 is not 0, and a NaN is itself. Also _f64
-//   SMITH_CHECK_ABORTS(statement)          see below
+//   smith_test_expect_abort()              from here on the test must abort; see below
+//
+// smith_test_expect_abort() says that from this call on the running test must stop the program on purpose: it raises
+// SIGABRT or SIGTRAP (an assert, abort(), __builtin_trap, the arena's capacity stop, a failed contract or library
+// check) with no sanitizer report in its output. It is a plain function, called before the code that aborts, which is
+// the last thing the test does:
+//
+//   void test_halve_refuses_odd(void) {
+//       smith_test_expect_abort();
+//       (void)halve(5);
+//   }
+//
+// The test passes if it aborts after the call. It fails, at the call's file and line, if it returns, exits, crashes
+// with another signal (SIGSEGV), fails a smith_check, or prints a sanitizer report (a memory bug is not the stop the
+// test expected). An abort before the call is an ordinary failure. Nothing in the test runs after the abort, so its
+// process ends (a worker is replaced; with --isolate the test's child ends; --in-process, which has no process to end,
+// takes the test back to the runner's loop). A second call in the same test is harmless.
 //
 // The SMITH_CHECK macros that follow are the old spelling. They keep working, and print what they always printed (the
 // check's file, line, source text and values) when the runner is run by hand, but they are deprecated: new tests call
 // the functions. (No compiler warning marks them, since they are used about 3,500 times under -Werror.)
 //
-// SMITH_CHECK_ABORTS stays a macro, because it is control flow, not text. The statement must run under a sigsetjmp that
-// is still on the stack when the statement aborts, and C has no closure to hand it to a function: the function form
-// would need a body function and a context struct at every use, more noise than the macro hides. (`.smith`, which has
-// closures, can make it a function.) It no longer needs to capture the text: the report reads the line from the stack.
 //
 //   SMITH_CHECK(condition)            a bool, or anything that converts to one
 //   SMITH_CHECK(a, op, b)             op is ==, !=, <, <=, > or >=; each argument is evaluated once, and both values
@@ -66,21 +78,11 @@
 //                                     not 0, and a NaN is itself. A failure prints both values, shortest and in hex; a
 //                                     NaN or an infinity also shows its bits. For determinism: the same inputs must
 //                                     give the same bits, not merely near ones.
-//   SMITH_CHECK_ABORTS(expression)    the expression stops the program on purpose: it raises SIGABRT or SIGTRAP (an
-//                                     assert, abort(), __builtin_trap, the arena's capacity stop) with no sanitizer
-//                                     report in its output. In a worker it runs in this process: the signal is caught
-//                                     and the check goes on, and the expression's effects (its writes) stay. With
-//                                     --isolate it runs in a child process. It fails, showing the expression's output,
-//                                     if it returns, exits (which ends the worker), crashes with another signal
-//                                     (SIGSEGV), or prints a sanitizer report (which retires the worker): a memory bug
-//                                     is not the stop the test expected. A variable the expression changes and the
-//                                     test reads afterwards should be volatile, as with any longjmp.
 //
 // A failed check ends the test, so nothing after it runs. Because the arguments of SMITH_CHECK are separated by
 // commas, a comma outside parentheses in an argument (a compound literal's braces) splits it: parenthesize it.
 #pragma once
 
-#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -189,19 +191,6 @@ void smith_check_same_bits_f64(double a, double b);
 
 #define SMITH_TEST_REAL_TYPE(value) typeof(_Generic((value), float: 0.0F, double: 0.0))
 
-// The sigsetjmp is here, not in a function, because it must return into a frame that is still live: the runner jumps
-// back to it when the expression raises SIGABRT or SIGTRAP, or a check inside it fails.
-#define SMITH_CHECK_ABORTS(expression) \
-    do { \
-        if (sigsetjmp(*smith_test_abort_jump_buffer(), 1) == 0) { \
-            if (smith_test_abort_child(__FILE__, __LINE__)) { \
-                (void)(expression); \
-                smith_test_abort_returned(); \
-            } \
-        } \
-        smith_test_abort_judge(__FILE__, __LINE__); \
-    } while (0)
-
 // The type of value as an expression's result: an array becomes a pointer, const drops, and no integer promotion
 // applies. Every pointer's type is const volatile void *, so any two pointers compare, as addresses. The types are the
 // ones SMITH_TEST_VALUE prints. (Written with _Generic, not with a test on the type's class: clangd offers to swap the
@@ -307,13 +296,5 @@ typedef struct {
 [[noreturn]] void smith_test_fail_near(const char *a_text, const char *b_text, const char *tolerance_text,
                                        const SmithTestValue values[4], const char *file, int line);
 
-// SMITH_CHECK_ABORTS. In a worker, abort_child captures the output and returns true; the expression runs;
-// abort_returned notes that it returned; and abort_judge fails the check unless the expression stopped by SIGABRT or
-// SIGTRAP with no sanitizer report in its output. A SIGABRT or SIGTRAP, or a failed check inside the expression, jumps
-// back to the macro's sigsetjmp (abort_jump_buffer), which goes straight to abort_judge. With --isolate the child
-// forks: it returns true in the child, which runs the expression and exits in abort_returned, and false in the parent,
-// whose abort_judge reads how the child ended.
-[[nodiscard]] sigjmp_buf *smith_test_abort_jump_buffer(void);
-[[nodiscard]] bool smith_test_abort_child(const char *file, int line);
-void smith_test_abort_returned(void);
-void smith_test_abort_judge(const char *file, int line);
+// Says that the test must abort from here on (see the top of this header).
+void smith_test_expect_abort(void);

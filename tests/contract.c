@@ -1,5 +1,5 @@
 // Tests of <smith/contract.h>, in smith's own test library; tests/contract.sh builds them in a scratch project as
-// tests/test_contract.c. A failed contract stops the program as an assert does, which SMITH_CHECK_ABORTS catches.
+// tests/test_contract.c. A failed contract stops the program as an assert does, which smith_test_expect_abort expects.
 #include <smith/contract.h>
 #include <smith/test.h>
 
@@ -36,13 +36,16 @@ void test_contract_true_contracts_pass(void) {
 }
 
 void test_contract_a_false_requires_stops(void) {
-    SMITH_CHECK_ABORTS(test_contract_clamp(0, 3, 1));
+    smith_test_expect_abort();
+    (void)test_contract_clamp(0, 3, 1);
 }
 
 void test_contract_a_false_ensures_stops(void) {
-    SMITH_CHECK_ABORTS(test_contract_wrong(1));
+    smith_test_expect_abort();
+    (void)test_contract_wrong(1);
 }
 
 void test_contract_a_false_invariant_stops(void) {
-    SMITH_CHECK_ABORTS(test_contract_sum(5));
+    smith_test_expect_abort();
+    (void)test_contract_sum(5);
 }
