@@ -114,7 +114,7 @@ typedef enum {
                         // makes a unique name, by trying another
 } SmithWrite;
 
-typedef struct SmithOp {
+typedef struct [[clang::annotate("smith::capability")]] SmithOp {
     bool done;        // set by smith_io_run when the op finished, successfully or not
     SmithError error; // valid once done
     const char *data; // reads: NUL-terminated, in the arena given at submit
@@ -149,26 +149,26 @@ typedef struct SmithOp {
 // for at least one operation.
 constexpr int64_t smith_io_forever = -1;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
     unsigned char buffer[4096]; // input read from the console and not yet taken
     size_t start;
     size_t end;
 } SmithConsole;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
 } SmithFiles;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
 } SmithClock;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
 } SmithProcesses;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
 } SmithNet;
 
@@ -179,7 +179,7 @@ typedef struct {
         *environment; // the fake's "NAME=value" entries, then nullptr; the real io's is nullptr (see below)
 } SmithArgs;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     SmithArena arena;
     SmithKey key;  // from getentropy, or from $SMITH_SEED to replay a run
     uint64_t seed; // the key's seed: print it to be able to replay
@@ -196,7 +196,7 @@ typedef struct {
 // AddressSanitizer the arena poisons lazily, so the shadow grows with what is used). SMITH_SEED, a
 // decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
 // failure to reserve memory, stops the program with a message.
-[[nodiscard]] SmithIo smith_io_make(int argc, char **argv);
+[[nodiscard, clang::annotate("smith::main_only")]] SmithIo smith_io_make(int argc, char **argv);
 
 // Releases the reservation and the event loop. A program need not call it: the process ends.
 void smith_io_close(SmithIo *io);
@@ -327,7 +327,7 @@ void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithPro
 // A process whose stdout and stderr are captured together (as `2>&1`, so the lines come in the order the process wrote
 // them) while it runs on the loop, so a program can run several at once and print each one's output whole when it ends.
 // The caller owns the struct and keeps it where it is until done.
-typedef struct SmithCapture {
+typedef struct [[clang::annotate("smith::capability")]] SmithCapture {
     SmithProcess process; // the process started; it leads a process group of its own, so kill(-process.id, ...) reaches
                           // its children as well
     bool done;            // set by smith_capture_poll: the process exited and its output was read to the end
@@ -369,7 +369,7 @@ typedef struct SmithCapture {
 // that started it sees the child's log with its own stderr). The pipes carry bytes, not lines: framing is the caller's.
 // One write, one read and one wait may be pending on a child at once. Close a descriptor's side
 // (smith_child_close_input, smith_child_close) only when no op on it is pending.
-typedef struct SmithChild {
+typedef struct [[clang::annotate("smith::capability")]] SmithChild {
     SmithProcess process; // wait for it with smith_child_wait_async (smith_processes_wait_async cannot tell
                           // smith_child_kill that the process is gone)
     struct {              // private to the library
@@ -417,7 +417,7 @@ void smith_child_close(SmithChild *child);
 // system's own trust decides; there is no way to turn the check off. A connection that failed is closed by the program,
 // as one that worked is: close completes every op still pending on it with ECANCELED, and it is the last thing to touch
 // the connection, so it may be freed once the close is done.
-typedef struct SmithConnection {
+typedef struct [[clang::annotate("smith::capability")]] SmithConnection {
     struct { // private to the library
         SmithLoop *loop;
         void *handle;
