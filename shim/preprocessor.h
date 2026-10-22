@@ -1,5 +1,6 @@
-// smith-preprocessor: a clang-tidy check that a .smith file has no preprocessor (issue #46). Registered by shim/tidy.cpp
-// (smith lint, and smith lsp's built-in checks, since its name starts with smith-). In a .smith file it reports
+// smith-preprocessor: a clang-tidy check that a .smith file has no preprocessor (issue #46). Registered by
+// shim/tidy.cpp (smith lint, and smith lsp's built-in checks, since its name starts with smith-). In a .smith file it
+// reports
 //
 //   1. every preprocessor directive: #define, #undef, #include, #if and its kin (#ifdef, #ifndef, #elif, #elifdef,
 //      #elifndef, #else, #endif), #pragma, #error, #warning, #line, #embed, and _Pragma; and
@@ -39,7 +40,8 @@ inline const char *directive_advice(llvm::StringRef name) {
     if (name == "undef") return "there are no macros to undefine";
     if (name == "if" || name == "ifdef" || name == "ifndef" || name == "elif" || name == "elifdef" ||
         name == "elifndef" || name == "else" || name == "endif") {
-        return "ask the language: `import target;` and `if constexpr (target::os == target::macos) { ... } else { ... }`";
+        return "ask the language: `import target;` and `if constexpr (target::os == target::macos) { ... } else { ... "
+               "}`";
     }
     if (name == "pragma" || name == "_Pragma") {
         return "a compile flag a library needs is declared by its row of smith_libraries, and an attribute goes before "
@@ -108,9 +110,10 @@ class Callbacks final : public PPCallbacks {
         Token name;
         lexer.LexFromRawLexer(name);
         std::string spelled = name.is(tok::raw_identifier) ? name.getRawIdentifier().str() : "";
-        if (name.is(tok::eof) || name.isAtStartOfLine() || spelled.empty()) return; // a null directive, or `# 33 "file"`
-        check.diag(hash.getLocation(), "`#%0` is the preprocessor, and a .smith file has none: %1") << llvm::StringRef(spelled)
-            << llvm::StringRef(directive_advice(spelled));
+        if (name.is(tok::eof) || name.isAtStartOfLine() || spelled.empty())
+            return; // a null directive, or `# 33 "file"`
+        check.diag(hash.getLocation(), "`#%0` is the preprocessor, and a .smith file has none: %1")
+            << llvm::StringRef(spelled) << llvm::StringRef(directive_advice(spelled));
     }
 
     void macro(const Token &name) {

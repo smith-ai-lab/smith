@@ -383,7 +383,8 @@ return origin < last ? origin : last;
 SmithUniformFloat uniform);
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key,
 SmithUniformFloat uniform) {
-smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.high);}) && uniform.low < uniform.high);
+smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.high);}) &&
+uniform.low < uniform.high);
 smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.high-uniform.low);}));
 __UINT64_TYPE__ origin = smith_random_origin_float(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (__UINT64_TYPE__)1 << 24);
@@ -394,7 +395,8 @@ return value < uniform.high ? value : smith_random_below_float(uniform.high);
 SmithUniformDouble uniform);
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key,
 SmithUniformDouble uniform) {
-smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.high);}) && uniform.low < uniform.high);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.high);}) &&
+uniform.low < uniform.high);
 smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.high-uniform.low);}));
 __UINT64_TYPE__ origin = smith_random_origin_double(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (__UINT64_TYPE__)1 << 53);
@@ -487,14 +489,16 @@ return (float)(grid * 2 + 1) * 0x1p-24f;
 SmithNormalDouble normal);
 [[nodiscard]] double smith_normal_double_sample(SmithKey key,
 SmithNormalDouble normal) {
-smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.deviation);}) && normal.deviation > 0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.deviation);}) &&
+normal.deviation > 0);
 return normal.mean + smith_random_mul_double(normal.deviation, smith_random_ppnd16(smith_random_normal_u_double(key)));
 }
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal);
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal) {
-smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.deviation);}) && normal.deviation > 0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.deviation);}) &&
+normal.deviation > 0);
 return normal.mean + smith_random_mul_float(normal.deviation, smith_random_ppnd7(smith_random_normal_u_float(key)));
 }
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli);

@@ -1774,9 +1774,9 @@ void smith_object(SmithBuild *b, SmithObject *object) {
             smith_lang_header_step(b, &copy, header);
     }
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, smith_library_flags(b, copy.source), tail,
-                             nullptr),
+        .command =
+            smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
+                      copy.flags, smith_library_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
@@ -1977,9 +1977,9 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
-    const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
-                                             smith_lang_flags(b, copy), smith_copy_list(flags),
-                                             smith_library_flags(b, copy), tail, nullptr);
+    const char *const *arguments =
+        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
+                  smith_copy_list(flags), smith_library_flags(b, copy), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 

@@ -118,8 +118,8 @@ constexpr std::string_view failure_names[] = {
     "__builtin_trap", "__builtin_unreachable", "__builtin_debugtrap", "__builtin_abort", "__builtin_verbose_trap",
 };
 constexpr std::string_view failure_prefixes[] = {
-    "smith_failure",   "smith_contract_", "smith_requires",  "smith_ensures",
-    "smith_invariant", "smith_assert",    "smith_check",     "smith_test_fail", "smith_test_expect_abort",
+    "smith_failure", "smith_contract_", "smith_requires",  "smith_ensures",           "smith_invariant",
+    "smith_assert",  "smith_check",     "smith_test_fail", "smith_test_expect_abort",
 };
 
 // ---- What to take instead ------------------------------------------------------------------------------------------

@@ -21,7 +21,7 @@ The verbs mean the same in every project and read what its `build.c` declares; a
 
 ## On files: with arguments
 
-clang-tidy's analyzer (`clang-analyzer-*`) reads `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>` as assumptions, so an index a contract bounds is not reported by `clang-analyzer-security.ArrayBound`.
+clang-tidy's analyzer (`clang-analyzer-*`) reads `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert` of `<smith/contract.h>` as assumptions (`target::static_analyzer`), so an index a contract bounds is not reported by `clang-analyzer-security.ArrayBound`.
 
 smith's default `.clang-tidy` turns off two analyzer checks that were noise (on game, learner and smith: 546 of 616 findings): `clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling` (every `memcpy`) and `clang-analyzer-optin.performance.Padding`. Turn one back on in the project's own `.clang-tidy` (`smith lint --dump-config > .clang-tidy` writes the effective file) by deleting its `-clang-analyzer-...` line.
 
@@ -32,6 +32,10 @@ With arguments they are the tools, unchanged: `smith fmt -i main.c`, `smith fmt 
 ## smith-effects
 
 smith's default `.clang-tidy` lists the check `smith-effects` beside bugprone, misc-no-recursion, readability-function-size and readability-identifier-naming: a program may touch the world only through capabilities (SmithIo and its parts) that `main` passes down, so `printf`, `fopen`, `time`, `malloc` and the like are reported with the capability to take instead (`SmithConsole *`, `SmithFiles *`, `SmithClock *`, `SmithArena *`). `smith lint` and the editor both run it, on `.smith` files with names as written (`c::fopen`). `smith lint --dump-config > .clang-tidy` shows it; a project that does not want it deletes it from `Checks`, and `smith-effects.CFiles: false` makes it read `.smith` files only. The rules, how to mark a project's own capability and how to fix each finding are in [smith-io](../smith-io/SKILL.md).
+
+## smith-preprocessor
+
+smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file has no preprocessor.** In a `.smith` file it reports every directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`, `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead: `#include` becomes `import`, `#define` of a constant `constexpr`, `#if` `if constexpr` with `target::`, `#pragma` a flag the library declares, `#error` `static_assert(false, ...)`; `c::assert` becomes `contract::assert`, `c::isfinite` `math::is_finite`, `c::SIZE_MAX` `math::max(usize)`, `c::INFINITY` and `c::NAN` `math::infinity(f64)` and `math::nan(f32)`; any other macro is the module that wraps the C API's to provide (`smith-lang-c-interop`). A `.c` file is left alone. The directives are read from the file's text, so those in a branch the compiler did not take count, and the `c::` names are the macros the file's imports defined (the lowering's own test, so `c::memset` is a macro in a fortified SDK: write `__builtin_memset`). The editor shows it too. A line that must keep one says `// NOLINT(smith-preprocessor)` (or `NOLINTBEGIN`/`NOLINTEND`); deleting `smith-preprocessor` from `Checks` opts a project out.
 
 ## `.smith` files
 

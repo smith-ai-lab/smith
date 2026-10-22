@@ -441,7 +441,7 @@ static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     if (lang->is_module && lang->export_active) { // an exported inline function's body is in the header too
         smith_lang_header_line(lang, text, length, 0);
         if (lang->aligned && smith_lang_header_append(lang, "\n", 1)) { // the interface read in memory: the next token
-            lang->aligned_line += 1;                                     // is on a line after the directive
+            lang->aligned_line += 1;                                    // is on a line after the directive
             lang->aligned_column = 1;
         }
     }

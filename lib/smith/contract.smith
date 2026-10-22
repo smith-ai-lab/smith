@@ -1,6 +1,6 @@
 // smith::contract, <smith/contract.h>: contracts written as calls. Its C API is the generated header
-// include/smith/contract.h (committed; `smith build headers` regenerates it). Every export has a short name here and a C
-// name (the attribute before it): `contract::requires` is `smith_requires`. The comments above an export are the
+// include/smith/contract.h (committed; `smith build headers` regenerates it). Every export has a short name here and a
+// C name (the attribute before it): `contract::requires` is `smith_requires`. The comments above an export are the
 // header's doc comments, so they name the Smith names; the first one says how a C name follows from them.
 module smith::contract;
 
@@ -55,7 +55,8 @@ import <smith/trace.h>;
 //
 // clang's static analyzer (clang-tidy's clang-analyzer-*, `smith lint`) cannot see what a call means, so without help
 // it reports every index a contract bounds. Under target::static_analyzer (true only there) each is an assumption, as
-// the failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as above.
+// the failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as
+// above.
 [[smith::c_name("smith_contract_requires")]] export void check_requires(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Requires);
 }
@@ -96,7 +97,8 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_invariant")]] export inline __attribute__((always_inline, unused)) void invariant(bool condition) {
+[[smith::c_name("smith_invariant")]] export inline __attribute__((always_inline, unused)) void
+invariant(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {

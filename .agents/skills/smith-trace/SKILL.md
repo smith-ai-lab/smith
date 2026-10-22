@@ -14,9 +14,10 @@ A failure comes from a plain function call in a `.smith` file as it does in C. `
 ```smith
 module util;
 
-import <smith/contract.h>;
+import smith::contract;
+
 export i32 clamp(i32 x, i32 lo, i32 hi) {
-    c::smith_requires(lo <= hi);
+    contract::requires(lo <= hi);
     return x < lo ? lo : x > hi ? hi : x;
 }
 ```
@@ -27,7 +28,7 @@ and `smith-trace` lines of `clamp(15, 10, 0)`, turned into the line and the call
 $ ./build/app 2> run.log                    # exit 134: abort
 $ smith symbolize --binary build/app run.log
 requires failed at src/util.smith:5
-      5 |     c::smith_requires(lo <= hi);
+      5 |     contract::requires(lo <= hi);
 called from
   src/util.smith:5      util::clamp
   src/main.smith:5      main
@@ -37,9 +38,9 @@ called from
 
 - `smith symbolize [--binary <program>] [<log>]` reads a file, a pipe or standard input. `--binary` names the program when the image's path in the log is gone or moved. A log from another run of the same binary works as long as the object files it names are still on disk. It needs the full smith (`smith symbolize --available` exits 3 on a stage0).
 - `smith test` does this itself: the runner prints a failure's line, source and call chain, and `smith build test` pipes the runner through `smith symbolize`. For a runner started by hand: `build/tests --test name --trace | smith symbolize`.
-- **Where it comes from.** `smith_failure(kind)` of `<smith/trace.h>` (kinds `SmithFailure_Check`, `_Requires`, `_Ensures`, `_Invariant`) is what `smith_requires`, `smith_ensures`, `smith_invariant` and the `smith_check*` functions call. Outside a test it writes the block to standard error and calls `abort()`. The failing line is the caller's: frames whose names start with `smith_failure`, `smith_contract_`, `smith_check`, `smith_requires`, `smith_ensures` or `smith_invariant` are skipped. So a check or contract is a plain function, never a macro.
-- **Linking it.** A program that uses contracts links the trace library, and naming `smith_library(b, "contract")` is enough: `smith_program` brings trace (as `build/.../trace.o`, beside the contract object). To make trace's object yourself, `smith_object` it before the program, with `smith_library(b, "trace")`, and `smith_program` uses that one. `smith_tests` links it itself. Keep frame pointers (`-fno-omit-frame-pointer`; Apple's ABI keeps them).
+- **Where it comes from.** `smith_failure(kind)` of `<smith/trace.h>` (kinds `SmithFailure_Check`, `_Requires`, `_Ensures`, `_Invariant`, `_Assert` and `_Capacity`) is what `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_assert`, the `smith_check*` functions and the arena's out-of-capacity stop call; `smith_failure_detail(kind, text)` and `smith_failure_format(kind, "push of %zu bytes", size)` add one line of what was wrong (`smith-trace detail`). Outside a test it writes the block to standard error and calls `abort()`. The failing line is the caller's: frames whose names start with `smith_failure`, `smith_contract_`, `smith_check`, `smith_requires`, `smith_ensures`, `smith_invariant` or `smith_assert` are skipped. So a check or contract is a plain function, never a macro.
+- **Linking it.** A program that uses contracts or the arena links the trace library, and naming `smith_library(b, "contract")` or `"arena"` is enough: `smith_program` brings trace (as `build/.../trace.o`, beside the contract object). To make trace's object yourself, `smith_object` it before the program, with `smith_library(b, "trace")`, and `smith_program` uses that one. `smith_tests` links it itself. Keep frame pointers (`-fno-omit-frame-pointer`; Apple's ABI keeps them).
 - **Writing your own failure** (a library that cannot include `<smith/test.h>`; from `.smith`, `import <smith/trace.h>;` and `c::smith_failure(c::SmithFailure_Check)`): call `smith_failure(SmithFailure_Check)`; to write a block yourself, `smith_trace_capture` and `smith_trace_write(fd, indent, heading, site, details, frames, count, exact, names)` (the last is safe in a signal handler with `names` false).
 - **Sanitizers.** The debug profile (`smith build`, or `smith new` projects) compiles with `-fsanitize=address,undefined -fno-sanitize-recover=all`. smith answers as `llvm-symbolizer` for the sanitizers' runtimes: the test runs make `.smith/bin/llvm-symbolizer`, a link to smith, and point `ASAN_SYMBOLIZER_PATH` at it; for a run by hand, do the same with a link of your own. So their reports have file and line. A sanitized binary records an absolute rpath to smith's runtime folder (`$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>`, else `~/.local/share/...`), which `smith cache clean` and pruning never touch, so built binaries keep running; a deleted folder makes them fail at load, naming the missing library. A sanitized process starts as fast as Apple's (9 ms for an empty program).
-- Release (`smith build release`) is `-O2` with assertions on and no sanitizers; fast (`smith build fast`) is `-O2 -DNDEBUG`: contracts and `assert` do nothing there.
+- Release (`smith build release`) is `-O2` with assertions on and no sanitizers; fast (`smith build fast`) is `-O2 -DNDEBUG`: contracts and `contract::assert` do nothing there (the arena's out-of-capacity stop stays).
 - For a failure you cannot read from the trace, debug it: `smith-debug`.

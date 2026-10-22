@@ -567,7 +567,8 @@ u64 origin_double(f64 low, f64 high) {
 // checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[smith::c_name("smith_uniform_float_sample")]] export [[nodiscard]] f32 uniform_float_sample(Key key,
                                                                                               UniformFloat uniform) {
-    contract::assert(math::is_finite(f32, uniform.low) && math::is_finite(f32, uniform.high) && uniform.low < uniform.high);
+    contract::assert(math::is_finite(f32, uniform.low) && math::is_finite(f32, uniform.high) &&
+                     uniform.low < uniform.high);
     contract::assert(math::is_finite(f32, uniform.high - uniform.low));
     u64 origin = origin_float(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 40, origin, (u64)1 << 24);
@@ -577,7 +578,8 @@ u64 origin_double(f64 low, f64 high) {
 
 [[smith::c_name("smith_uniform_double_sample")]] export [[nodiscard]] f64 uniform_double_sample(Key key,
                                                                                                 UniformDouble uniform) {
-    contract::assert(math::is_finite(f64, uniform.low) && math::is_finite(f64, uniform.high) && uniform.low < uniform.high);
+    contract::assert(math::is_finite(f64, uniform.low) && math::is_finite(f64, uniform.high) &&
+                     uniform.low < uniform.high);
     contract::assert(math::is_finite(f64, uniform.high - uniform.low));
     u64 origin = origin_double(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 11, origin, (u64)1 << 53);
@@ -689,13 +691,15 @@ f32 normal_u_float(Key key) {
 
 [[smith::c_name("smith_normal_double_sample")]] export [[nodiscard]] f64 normal_double_sample(Key key,
                                                                                               NormalDouble normal) {
-    contract::assert(math::is_finite(f64, normal.mean) && math::is_finite(f64, normal.deviation) && normal.deviation > 0);
+    contract::assert(math::is_finite(f64, normal.mean) && math::is_finite(f64, normal.deviation) &&
+                     normal.deviation > 0);
     return normal.mean + mul_double(normal.deviation, ppnd16(normal_u_double(key)));
 }
 
 [[smith::c_name("smith_normal_float_sample")]] export [[nodiscard]] f32 normal_float_sample(Key key,
                                                                                             NormalFloat normal) {
-    contract::assert(math::is_finite(f32, normal.mean) && math::is_finite(f32, normal.deviation) && normal.deviation > 0);
+    contract::assert(math::is_finite(f32, normal.mean) && math::is_finite(f32, normal.deviation) &&
+                     normal.deviation > 0);
     return normal.mean + mul_float(normal.deviation, ppnd7(normal_u_float(key)));
 }
 

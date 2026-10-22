@@ -1,6 +1,6 @@
 ---
 name: smith-contract
-description: "Using <smith/contract.h>, smith's contracts: smith_requires, smith_ensures, smith_invariant and smith_trusted, checks written as calls, and smith prove, which proves them. Load when code includes <smith/contract.h>, when a build.c calls smith_library(b, \"contract\"), when running smith prove, on a question about preconditions, postconditions or loop invariants in C, or when a proof fails with a cost report, a trusted boundary or `smith prove --emit-ir`."
+description: "Using smith::contract and <smith/contract.h>, smith's contracts: contract::requires, ensures, invariant, assert and trusted (smith_requires, smith_ensures, smith_invariant, smith_assert and smith_trusted in C), checks written as calls, and smith prove, which proves them. Load when code includes <smith/contract.h> or imports smith::contract, when a build.c calls smith_library(b, \"contract\"), when running smith prove, on a question about preconditions, postconditions, loop invariants or assert in C or .smith, or when a proof fails with a cost report, a trusted boundary or `smith prove --emit-ir`."
 ---
 
 # Contracts: smith's assertions about a function
@@ -9,24 +9,24 @@ This skill ships in the smith plugin, from `.agents/skills/smith-contract/SKILL.
 
 A contract is a call that stops the program when its condition is false, as `assert` does. The header is `.smith/include/smith/contract.h`; read it first.
 
-**contract is C today, and a `.smith` file uses it as `import <smith/contract.h>;` with the calls under `c::`**; it becomes a module later and the calls stay. The prose below names the calls by their C names; in `.smith` write `c::` before each. A contract is a plain function call, never a macro, so a failure's report is read from the call stack (`smith-trace`).
+**contract is the module `smith::contract`** (`lib/smith/contract.smith`), and a `.smith` file writes `import smith::contract;` and `contract::requires(c)`, `contract::ensures(c)`, `contract::invariant(c)`, `contract::assert(c)` and `contract::trusted()`. C includes `<smith/contract.h>` and calls `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_assert` and `smith_trusted`; the prose below names the calls by their C names. The assert is `contract::assert`, not `assert`: C's `assert` is a macro, and a `.smith` file has no macro (`smith lint` refuses `c::assert` and tells you to write this). A contract is a plain function call, never a macro, so a failure's report is read from the call stack (`smith-trace`).
 
 ```smith
 module geometry::box;
 
-import <smith/contract.h>;
+import smith::contract;
 
 export i32 clamp(i32 x, i32 low, i32 high) {
-    c::smith_requires(low <= high);                     // the caller's job
+    contract::requires(low <= high);                     // the caller's job
     i32 result = x < low ? low : x > high ? high : x;
-    c::smith_ensures(low <= result && result <= high);  // this function's promise
+    contract::ensures(low <= result && result <= high);  // this function's promise
     return result;
 }
 
 export u32 count_pairs(u32 squares, u32 *moves) {
     u32 len = 0;
     for (u32 square = 0; square < squares; square++) {
-        c::smith_invariant(len <= 2 * square);          // the first statement of a loop body
+        contract::invariant(len <= 2 * square);          // the first statement of a loop body
         moves[len] = square;
         len += square % 2;
     }
@@ -39,11 +39,12 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 | `smith_requires(c)` | the start of a function | a caller must make `c` true |
 | `smith_ensures(c)` | just before a `return` (one return, after one `smith_ensures` per promise) | the function makes `c` true |
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass |
+| `smith_assert(c)` | anywhere in a body | `c` is true here: the statement `assert` was, as a function. `smith prove` proves it where the function is part of a proof (in a function with a contract, or inlined into one), and a program stops on it in the debug and release profiles; the fast profile compiles it away |
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
 
 - An old value is a `const` local saved at the top: `const u8 old = moves->len;`. The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
-- **A condition must be free of side effects.** The call evaluates it, and with `-DNDEBUG` nothing else happens: the body is empty, so the optimizer removes an argument that has none.
+- **A condition must be free of side effects.** The call evaluates it, and when assertions are off (`target::assertions`, which `-DNDEBUG` turns off: the fast profile) nothing else happens: the body is empty, so the optimizer removes an argument that has none.
 
 ## From C
 
@@ -66,8 +67,9 @@ for (uint8_t square = 0; square < squares; square++) {
 ## At run time
 
 - A failed contract is `smith_failure(kind)` (`<smith/trace.h>`): it writes `smith-trace begin requires failed` and the stack to standard error and calls `abort()`, at every optimization level; link the trace library (`smith_library(b, "trace")`; `smith_tests` does it itself). In a test it prints the report of a failed check (the failing line and the call chain), and `smith symbolize` turns a saved log into it. Where and what come from the stack and the source line.
-- **The static analyzer takes a contract as an assumption.** clang-tidy's `clang-analyzer-*` (`smith lint`) defines `__clang_analyzer__`, and there each of the three is `__builtin_assume(condition)`, in every build, `NDEBUG` or not; so `smith_requires(index < N)` stops `clang-analyzer-security.ArrayBound` from reporting that index, as `assert` does, and an index nothing bounds is still reported. A compile, `smith prove` and the checks never see this branch.
-- The three are `static inline` functions marked `always_inline`, with an empty body under `NDEBUG`. Otherwise each is one call of an external function of the library, `smith_contract_requires`, `smith_contract_ensures` or `smith_contract_invariant`, which the optimizer cannot see into. That call stays in the IR at `-O0` and optimized, and it is how `smith prove` finds the contracts without a flag.
+- **The static analyzer takes a contract as an assumption.** clang-tidy's `clang-analyzer-*` (`smith lint`) defines `__clang_analyzer__` (`target::static_analyzer`), and there each of the four is `__builtin_assume(condition)`, in every build, `NDEBUG` or not; so `smith_requires(index < N)` stops `clang-analyzer-security.ArrayBound` from reporting that index, as `assert` does, and an index nothing bounds is still reported. A compile, `smith prove` and the checks never see this branch.
+- The four are `static inline` functions marked `always_inline` that the header carries (the module's `export inline`, whose `if constexpr` on `target::` is written to the header as the `#if` a C includer's compiler answers), with an empty body when assertions are off. Otherwise each is one call of an external function of the library, `smith_contract_requires`, `smith_contract_ensures`, `smith_contract_invariant` or `smith_contract_assert`, which the optimizer cannot see into. That call stays in the IR at `-O0` and optimized, and it is how `smith prove` finds the contracts without a flag.
+- **The library is compiled from source with the project's flags**, so `target::assertions` there is the project's: in the fast profile the library's functions are empty, as the header's inline ones are.
 
 ## Get the library in build.c
 
@@ -92,13 +94,13 @@ smith prove main.c util.c -- -I .smith/include -DDEBUG
 smith prove --function=clamp --budget=5 -v clamp.c -- -I .smith/include
 ```
 
-- **A `.smith` file** is compiled as `smith cc` compiles it (C2y, imports found among the files named, `import <smith/contract.h>;` and `c::smith_requires(...)`), and its functions are named as written everywhere: `ok    geometry::box::clamp  (geometry/box.smith:5)`, `--function=geometry::box::clamp`, `the call of geometry::box::clamp may break smith_requires(low <= high)`, counterexample values `geometry::box::clamp.low = 10`. Lines are the `.smith` source's. A module's imports are other `.smith` files named in the same command, or headers on the include path.
+- **A `.smith` file** is compiled as `smith cc` compiles it (C2y, imports found among the files named, `import smith::contract;` and `contract::requires(...)`), and its functions are named as written everywhere: `ok    geometry::box::clamp  (geometry/box.smith:5)`, `--function=geometry::box::clamp`, `the call of geometry::box::clamp may break smith_requires(low <= high)`, counterexample values `geometry::box::clamp.low = 10`. Lines are the `.smith` source's. A module's imports are other `.smith` files named in the same command, or headers on the include path.
 - A project's `smith prove` (no arguments) proves the C and `.smith` sources of each program it builds (`smith_program`; not the tests' runner), together as the program links them, with the flags of their first compiles less what only instruments or caches (`-fsanitize`, modules, frame pointers, `-ftrivial-auto-var-init`, the depfile); it needs no task or list in build.c, and `smith check` runs it. A `.smith` project with no build file (the conventions) works the same. `smith prove -v`, `--budget=SECONDS`, `--emit-ir=FILE` and `--no-cache` are the project's options too. A source the compile rejects with the build's strict flags (a missing prototype) is reported by the compiler, not as "nothing to prove" alone: put the prototypes in a header. With no contract in the files it prints `smith: prove: nothing to prove: ...` and succeeds; a `--function=` that names no function the prover read is an error that names it (each one, before anything is proved), and a function with no contract is one too. A `static` function that nothing calls is not emitted by clang, so a harness written as one is absent: mark it `[[gnu::used]]`.
 - **The default set is every function with a contract** (`smith_requires`, `smith_ensures` or `smith_invariant` of its own), **minus the trusted ones**. `main` and any function with no contract are not proved, and nothing says anything of them; a proved function that calls one reads its body, and one with a `smith_ensures` is used through its contract. To have a function proved, give it a contract (`smith_ensures(true)` is enough to ask for its undefined behaviour and asserts).
 - Each file is compiled to LLVM IR in smith's own clang: C23, `-O0`, debug info, UBSan's checks for undefined behaviour in trap mode (signed overflow, shifts, division by zero, array bounds with trailing arrays counted, `float` casts, `__builtin_unreachable`), `-UNDEBUG`. The files are linked into one program. The flags after `--` are the project's include paths and defines.
 - A function is proved when it carries a contract and is not trusted. Each is proved in a process of its own, in at most 10 s (`--budget=`) of CPU time; one that runs out fails like a test that times out. The budget is CPU time so that a busy machine slows a proof but never fails it: a proof is charged what it would take on 8 idle cores (the CPU time of what runs in sequence, plus, for the queries that run side by side, the longest or all of them divided by 8, whichever is more), which is close to its wall time on an idle machine. That process ends at its budget even if the prover is stuck, and when `smith prove` itself is killed. `-v` lists every function: the proved ones with their wall time, CPU time and charged time, a proof from the cache as `cached: proved before in ...` with the time it took then, and the trusted ones.
 - **A proof is kept by its content.** A function proved once is proved again at once while the IR the prover checks for it (its body, the contracts of its callees, the globals and declarations it uses) is the same: the key is a hash of that IR without line numbers, kept under `$XDG_CACHE_HOME/smith/proofs` (else `~/.cache/smith/proofs`), an entry unused for 31 days removed (checked at most once a week). Only a proof that succeeded is kept. `--no-cache` proves again. The summary says `N proved, M failed, K trusted, J cached`.
-- What is proved: every `smith_ensures` and `smith_invariant`, every `assert`, every UBSan check, and that nothing else is undefined (an invalid access, a poison value used). `smith_requires` of the function is assumed.
+- What is proved: every `smith_ensures` and `smith_invariant`, every `smith_assert` and `assert`, every UBSan check, and that nothing else is undefined (an invalid access, a poison value used). `smith_requires` of the function is assumed.
 - **A call of a function with a `smith_ensures`** proves its `smith_requires` at the call and then assumes its `smith_ensures`. **A call of any other function is inlined**, so its contracts and checks are proved where it is called. A pointer parameter is a valid object of its type (not null, all there, aligned for what the body does, writable if the body stores through it), parameters of different struct types are different objects, and a struct passed by value is a value (its bytes are free, never poison).
 - **What a caller may assume after a call is the callee's `smith_ensures`, and nothing else the body does.**
   - The memory the call may write is whatever the callee's pointer parameters point to (and what LLVM infers it may reach; a note says where that is not enough). After the call that memory holds arbitrary values, then the callee's `smith_ensures` is assumed of it, so an `smith_ensures` about memory is about the memory after the call. A local object the call was given is treated the same way.
@@ -123,7 +125,7 @@ static void show(int32_t value) {
 }
 ```
 
-In `.smith` it is `c::smith_trusted();` (with `import <smith/contract.h>;`), the same as the other contracts.
+In `.smith` it is `contract::trusted();` (with `import smith::contract;`), the same as the other contracts.
 
 - A trusted function is **assumed, never proved**: callers prove its `smith_requires` at each call and assume its `smith_ensures`; its body is not read, so assembly and io inside it are fine. The report lists it on its own line, `trusted  show  (file:line)  not proved; callers prove its 1 smith_requires and assume its 1 smith_ensures`, and counts it as `K trusted`, never as proved. `--function=` of a trusted function is an error that says so.
 - **What a caller may assume of a trusted function:** it writes only through the pointer parameters it is given (not through `const` ones) and nothing else a proved function can see, and it frees nothing it was not given a writable pointer to. Its `smith_ensures` says what it does to those objects; say what stays the same, as for any callee. A function that really writes a global the callers read is outside what a contract here can state: keep that state out of the proved functions.

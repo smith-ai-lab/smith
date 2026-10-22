@@ -65,11 +65,11 @@ typedef enum : unsigned char {
 // "check failed", "requires failed", "ensures failed", "invariant failed", "assert failed", "arena out of capacity".
 [[nodiscard]] const char *smith_failure_heading(SmithFailureKind kind);
 
-// The entry point of plain-function checks and contracts (smith_requires, smith_ensures, smith_invariant, smith_assert and a
-// library's own checks): it ends the program, or the test, with a report. It captures the stack of its caller, so the
-// failing line is the caller's, and a function that calls it is skipped when the frame is chosen if its name starts
-// with smith_failure, smith_contract_, smith_check, smith_requires, smith_ensures, smith_invariant or smith_assert. It does not
-// capture file, line or text: smith reads the line from the source file.
+// The entry point of plain-function checks and contracts (smith_requires, smith_ensures, smith_invariant, smith_assert
+// and a library's own checks): it ends the program, or the test, with a report. It captures the stack of its caller, so
+// the failing line is the caller's, and a function that calls it is skipped when the frame is chosen if its name starts
+// with smith_failure, smith_contract_, smith_check, smith_requires, smith_ensures, smith_invariant or smith_assert. It
+// does not capture file, line or text: smith reads the line from the source file.
 //
 // In a test run by smith_tests, the test fails with the report. Anywhere else it writes the heading and the trace to
 // standard error and calls abort(), so a log holds what `smith symbolize` needs.

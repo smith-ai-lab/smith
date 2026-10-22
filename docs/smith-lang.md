@@ -170,9 +170,11 @@ and `cc` with `-std=gnu23 -Wall -Wextra -Wpedantic -Werror`. Its code is the cod
 (same assembly at `-O2`), except for the line numbers `assert` prints, which are the lowered file's.
 
 The lowering keeps the module's preprocessor directives as written (see "Lowering"), so the compiler that builds the C
-decides them: a module may use `#pragma STDC FP_CONTRACT OFF` (`smith::random` does, for now), `#error` and `#pragma clang
-diagnostic`, but not `#if`: a fact of the target is `target::` and a choice is `if constexpr`, and the raw lowering writes
-the `#if` for them ("The target, and `if constexpr` outside generics"). A module's own
+decides them, but the goal is that a `.smith` file has none (issue #46): a fact of the target is `target::` and a choice is
+`if constexpr` ("The target, and `if constexpr` outside generics"), a compile flag a library needs is declared by the library
+(`-ffp-contract=off` for `smith::random`: the `smith_libraries` row in smith.c, written beside the source as
+`.smith/lib/smith/random.flags`, which `smith build` adds after the project's own flags), and `smith lint` reports every
+directive and every `c::` macro of a `.smith` file (`smith-preprocessor`, below). smith's own libraries are clean. A module's own
 code needs none of them to say what it needs: it `import`s a C header and writes `c::name`, and `import`s a module
 (`import smith::arena;`), where the lowering writes the `#include`. Left out: comments (the
 `.smith` source keeps them), and the use of `::` or a sized type in a `#define` body, which is an error (use an inline
@@ -336,6 +338,17 @@ given (`tests/lint-smith.sh`).
 - **Not done.** Checks that look at a name (a function, a variable) in a message are shown the written one, but a check
   that compares names in the lowered form (a length or a reserved-name check, say) still sees
   `geometry_box_x`; `readability-identifier-naming` is the one that has been made to see the written name.
+- **`smith-preprocessor`** (`shim/preprocessor.h`, registered in the same module) reports, in a `.smith` file, every
+  preprocessor directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`,
+  `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead (`import`,
+  `constexpr`, `if constexpr` with `target::`, `contract::assert`, `math::is_finite`, `math::max(usize)`; for another
+  macro, that the module that wraps the C API should provide it). The directives are found by the raw lexer over the
+  file's text (so a branch the compiler did not take counts, and `#error`, `#warning` and `#line`, which have no
+  preprocessor callback, are not missed); the macros are looked up when the file ends, among those the file's imports
+  defined: the lowering's own test, so `c::memset` and `c::snprintf` are macros in a fortified SDK. A `.c` file is left
+  alone. A line that must keep one says `// NOLINT(smith-preprocessor)`; the corpus of `tests/smith-lang` and
+  `tests/smith-lang-c.sh` compile `.smith` files with the preprocessor on purpose and are not linted (they are not among
+  the build's compiles). `tests/lint-smith.sh` tests it.
 - **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
   system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
   constructor is named as the module writes it, and the rules about capabilities (a type marked
@@ -520,6 +533,7 @@ is compiled for.
 | `target::address_sanitizer`, `target::undefined_sanitizer`, `target::thread_sanitizer` | `true` when the compile has it (`__has_feature(address_sanitizer)`, `undefined_behavior_sanitizer`, `thread_sanitizer`) |
 | `target::assertions` | `true` unless `NDEBUG` is defined |
 | `target::float_radix`, `target::f32_mantissa_bits`, `target::f64_mantissa_bits`, `target::float_eval_method` | `__FLT_RADIX__`, `__FLT_MANT_DIG__`, `__DBL_MANT_DIG__`, `__FLT_EVAL_METHOD__` |
+| `target::static_analyzer` | `true` only while clang-tidy's analyzer runs (`__clang_analyzer__`); `smith::contract` takes a contract as an assumption there |
 
 - **A compile asks the preprocessor** (`SmithHost.target_fact`, `shim/hook.cpp`: `defined(__aarch64__)`, the language
   options' sanitizers, `NDEBUG`, the predefined float macros), and `target::arch` is then the literal `1` (`true` or `false`
@@ -531,7 +545,13 @@ is compiled for.
   (`SMITH_TARGET_ARCH`), defined at the top of the output by an `#if` chain (`#if defined(__aarch64__)`, `#if
   __has_feature(address_sanitizer)`, `#define SMITH_TARGET_F32_MANTISSA_BITS __FLT_MANT_DIG__`), and for an `if
   constexpr` the branches between `#if`, `#else` and `#endif`. The preprocessor lives only in generated output. A fact
-  cannot be in an exported declaration (the header is written without a compiler, for every target).
+  cannot be in an exported declaration (the header is written without a compiler, for every target). The body of an
+  exported `inline` function is the exception: its `if constexpr` is written to the header as the `#if`, `#elif`, `#else`
+  and `#endif` the raw lowering writes, and the `SMITH_TARGET_*` definitions it needs go once at the top of the header
+  (and, in the interface read in memory, on the blank lines before the first declaration), so a C includer's compiler
+  answers it, as a `.smith` importer's does. `smith::contract` is built on this: `smith_requires` and the others are
+  `static inline` in `include/smith/contract.h`, choosing between `__builtin_assume` (`target::static_analyzer`), a call of
+  the library (`target::assertions`) and nothing (`NDEBUG`).
 - **`if constexpr (condition) { ... } else if constexpr (...) { ... } else { ... }` in a function body.** The branches
   are blocks. The condition is a constant expression of integers and `true` and `false`, the operators of C,
   `target::` facts, and the `constexpr` constants of the file or the function (`constexpr bool sanitized =

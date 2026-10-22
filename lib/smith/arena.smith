@@ -8,7 +8,7 @@ import smith::contract;
 import smith::math;
 import target;
 import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_REGION is one of them
-import <smith/trace.h>;               // smith_failure: the stop below is the report a failed contract writes
+import <smith/trace.h>;              // smith_failure: the stop below is the report a failed contract writes
 import <stdint.h>;
 
 // <smith/arena.h>: a fixed block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its

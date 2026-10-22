@@ -961,9 +961,9 @@ typedef struct {
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, true),  SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, false),   SMITH_LIBRARY(json, false),
-    SMITH_LIBRARY(math, true),   SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"), SMITH_LIBRARY(test, false), SMITH_LIBRARY(text, true),
-    SMITH_LIBRARY(trace, false),
+    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, false),
+    SMITH_LIBRARY(json, false), SMITH_LIBRARY(math, true),     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
+    SMITH_LIBRARY(test, false), SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.

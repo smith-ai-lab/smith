@@ -25,6 +25,7 @@
     "./.agents/skills/smith-build/",
     "./.agents/skills/smith-arena/",
     "./.agents/skills/smith-contract/",
+    "./.agents/skills/smith-math/",
     "./.agents/skills/smith-random/",
     "./.agents/skills/smith-io/",
     "./.agents/skills/smith-test/",

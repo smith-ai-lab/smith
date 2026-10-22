@@ -170,15 +170,25 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **A `.smith` file has no preprocessor, and the facts of the target are `target::`** (issue #46; `runtime/lang_target.c`,
   [docs/smith-lang.md](docs/smith-lang.md)). `import target;` is a module that is no file: `target::arch` (`aarch64`,
   `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions`,
-  `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`. A compile asks clang's preprocessor from
+  `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer`. A compile asks clang's preprocessor from
   the token hook (`SmithHost.target_fact`, no patch) and writes literals, so they work in `static_assert`, array sizes
   and `constexpr` initializers; the raw lowering (`--smith-lower`, `--smith-header`, which is where `bootstrap/` and the
   stage0 get their C) has no preprocessor and writes the equivalent macro (defined at the top by an `#if` chain) and
   `#if`/`#else`/`#endif`. **`if constexpr` works in any function body** (blocks; the condition is `target::` facts,
   `constexpr` constants and literals): the branch not taken is dropped before the parser. A file that contains `if
-  constexpr` is offered every token of a body by the hook (keywords are not identifiers), others are untouched. The next
-  steps of the owner's goal (no `#pragma`, `c::assert`, `c::` macros in `.smith`; then the lint that refuses them) are in
-  issue #46.
+  constexpr` is offered every token of a body by the hook (keywords are not identifiers), others are untouched. **An
+  exported `inline` function's `if constexpr` is written to the header as `#if`** (with the `SMITH_TARGET_*` definitions
+  at its top), which is how `smith::contract` keeps `NDEBUG` and the analyzer in a C header. smith's own `.smith`
+  libraries have no directive and no `c::` name that is a C macro: `#pragma STDC FP_CONTRACT OFF` is a flag the library
+  declares (`SMITH_LIBRARY_FLAGS` in smith.c; the build adds it after the project's, from `.smith/lib/smith/<name>.flags`),
+  `c::assert` is `contract::assert`, `c::isfinite`, `sqrt`, `fabs`, `SIZE_MAX`, `INFINITY` and `NAN` are `smith::math`'s
+  generics (`math::is_finite(x)`, `math::max(usize)`; not constant expressions, since a generic call is a call), and
+  the arena's stop is `smith_failure_format` of trace (so arena, and everything that uses it, links contract and trace).
+- **`smith-preprocessor` is a clang-tidy check that a `.smith` file has no preprocessor** (`shim/preprocessor.h`,
+  registered in `shim/tidy.cpp`, so `smith lint` and the editor run it; on in smith's default `.clang-tidy` and smith's
+  own). It reports every directive (read from the file's text with the raw lexer), `_Pragma`, and every `c::` name that
+  is a C macro (looked up when the file ends, among the macros its imports defined: `c::memset` is one in a fortified
+  SDK), each with the replacement. `.c` files are untouched; `// NOLINT(smith-preprocessor)` opts a line out.
 - **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
   Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
   called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
@@ -233,7 +243,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
-  the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
+  the calls `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert` of `<smith/contract.h>` (the module `smith::contract`). There is one LLVM configuration
   (`~/.cache/smith/llvm/23.1.3-r4`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27, XNU fast mmap, the editor's defaults (`smith-editor-defaults`), `.smith` as a source file in clang-format's main-include rule (`smith-format-source-extension`), the command hook for clangd and clang-tidy (`smith-command-hook`), clangd running `smith-*` checks (`smith-editor-fast-check`)); the compiler's
   output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL

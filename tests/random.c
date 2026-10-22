@@ -8,8 +8,8 @@
 
 #include <assert.h>
 #include <float.h>
-#include <math.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
