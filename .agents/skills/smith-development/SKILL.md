@@ -71,6 +71,9 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 - `tests/smith-lang.sh <smith>` runs the corpus in `tests/smith-lang/cases` (`UPDATE=1` rewrites the expectations: read the diff), and `tests/smith-lang-c.sh <smith>` compiles smith's own sources as `.c` and as `.smith` and compares the code. Both skip themselves for a smith without the hook.
 - `smith cc --smith-lower x.smith` prints the lowering of the text as written, `smith cc --smith-header x.smith -o x.h` a module's header (the helpers are under `smith cc`; the top level is only verbs). `smith build` runs the header steps itself (`smith_object` of a `.smith` source, `runtime/build_runtime.c`, "`.smith` sources" in docs/build-c.md); `tests/build.sh` section 15 tests it. `SMITH_LANG_ASK=Name,struct Tag` prints what the parser answers about those types at the end of a file (`?const char *` asks about a type written as tokens, the question generics use).
 - Cost: a plain `.smith` file must compile as fast as the `.c` (the host is offered only watched identifiers). Compare with alternating runs, at least 20 each, and note the load.
+- **What the hook offers the lowering:** identifiers it watches, and braces or every token only in the modes that ask for them. Keywords (`if`, `else`, `constexpr`) are never offered as such, and the hook's fast path handles file-scope keywords without calling the lowering; a feature that must see a keyword asks for every token in the file (as `if constexpr` does for a file whose text has it).
+- **`smith_lang_keep_aside` holds one saved state:** reading another module's interface while one is set aside corrupts the caller. Read imported modules first (`smith_raw_prefetch`), never nested.
+- **The tests include the bootstrap lowering** (`tests/random.c` includes `bootstrap/lib/smith/random.c`), so a change to what a module imports can break a test's compile: run `smith lint`, which compiles them.
 
 ## Libraries in C and in `.smith`
 

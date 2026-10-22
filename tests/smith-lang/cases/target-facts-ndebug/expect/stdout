@@ -1,0 +1,11 @@
+arch ok
+os ok
+address_sanitizer ok
+undefined_sanitizer ok
+thread_sanitizer ok
+assertions ok
+float_radix ok
+f32_mantissa_bits ok
+f64_mantissa_bits ok
+float_eval_method ok
+constexpr copies ok

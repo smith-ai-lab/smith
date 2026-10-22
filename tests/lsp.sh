@@ -147,6 +147,32 @@ int f(void) {
     geometry_box_ar
 }
 EOF
+cat >choice.smith <<'EOF'
+module choice;
+import target;
+
+export i32 pick(i32 x) {
+    if constexpr (target::arch == target::aarch64) {
+        return x + 1;
+    } else {
+        return missing_name(x);
+    }
+}
+
+export i32 never(i32 y) {
+    if constexpr (target::os == 0 && target::arch == 0) {
+        return y;
+    } else if constexpr (y > 1) {
+        return 2;
+    }
+    return 0;
+}
+
+export i32 sized(void) {
+    static_assert(target::f32_mantissa_bits == 24);
+    return target::f32_mantissa_bits;
+}
+EOF
 cat >pick.smith <<'EOF'
 module pick;
 
@@ -258,6 +284,20 @@ expect_line "generic call: go-to-definition is the generic's name in its module"
     "definition genuse.smith:7:31 -> pick.smith:4:10"
 expect_line "generic call: hover, T written" "$log" \
     'hover genuse.smith:8:31: generic function pick::larger |  | T pick::larger(constexpr type T, T a, T b) |  | instance pick::larger(f64)'
+
+# `if constexpr` outside a generic: the branch taken is ordinary code (hover works in it), the branch not taken is never
+# given to the parser, so an undeclared name there is no diagnostic and hover there is empty (as in a generic's instance
+# that was not made). A condition that is no constant is reported at the condition. The `target::` facts are
+# literals to the compiler.
+log=$(client open choice.smith -- hover choice.smith 6 16 -- hover choice.smith 8 16)
+expect_line "if constexpr: the branch not taken has no diagnostics" "$log" "diagnostics choice.smith"
+expect "if constexpr: ... of any kind, the undeclared name included" 0 \
+    "$(printf '%s\n' "$log" | grep -c '^diag choice.smith:8')"
+expect "if constexpr: a name in the branch taken is hovered as in any code" 1 \
+    "$(printf '%s\n' "$log" | grep -c '^hover choice.smith:6:16: param x')"
+expect_line "if constexpr: a name in the branch not taken has no hover" "$log" "hover choice.smith:8:16: (nothing)"
+expect "if constexpr: a condition that is no constant is reported at the condition, as written" 1 \
+    "$(printf '%s\n' "$log" | grep -c '^diag choice.smith:15:26: In `if constexpr`: `y` is not a constant')"
 
 # A `c::` name is a name of the file like another: hover and go-to-definition at it find the one declaration (not every
 # declaration of the name, which is what the index answers by name: the SDK's and libc++'s `using`), and the hover of a

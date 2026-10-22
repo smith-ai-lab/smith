@@ -34,6 +34,7 @@ extern "C" {
 #include "../runtime/lang.h"
 }
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -343,6 +344,9 @@ class SmithHook final : public TokenHook, public NameSource {
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
+        host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
+        host.target_fact = &SmithHook::targetFact;
+        host.constant = &SmithHook::constantValue;
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
         // compiler's, and would take this one's number for one of its checks'; a built-in diagnostic that is the text
         // alone has no such number.
@@ -565,7 +569,11 @@ class SmithHook final : public TokenHook, public NameSource {
     // counted, with a few lookups and no call into the lowering.
     Fast tryFastSparse(Token &tok, bool body) {
         if (tok.isNot(tok::identifier)) {
-            return body && smith_lang_fast_brace(lang, &host, tok.is(tok::l_brace)) ? Fast::Kept : Fast::No;
+            // A file with an `if constexpr` is offered every token of a body, not only its braces.
+            return body && tok.isOneOf(tok::l_brace, tok::r_brace) &&
+                           smith_lang_fast_brace(lang, &host, tok.is(tok::l_brace))
+                       ? Fast::Kept
+                       : Fast::No;
         }
         IdentifierInfo *info = tok.getIdentifierInfo();
         const IdentifierInfo *beforeInfo = nullptr;
@@ -1844,6 +1852,91 @@ class SmithHook final : public TokenHook, public NameSource {
         auto *self = static_cast<SmithHook *>(context);
         self->renames[self->PP.getIdentifierInfo(StringRef(name, length))] =
             self->PP.getIdentifierInfo(StringRef(prefixed, prefixedLength));
+    }
+
+    // Whether the text has the word `if` and then `constexpr`, white space between (comments and strings count).
+    static bool hasIfConstexpr(StringRef text) {
+        for (size_t at = text.find("constexpr"); at != StringRef::npos; at = text.find("constexpr", at + 9)) {
+            size_t before = at;
+            while (before > 0 && isWhitespace(text[before - 1]))
+                before -= 1;
+            if (before >= 2 && text.substr(before - 2, 2) == "if" &&
+                (before == 2 || !isAsciiIdentifierContinue(text[before - 3]))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The integer a predefined macro stands for (`__FLT_MANT_DIG__`): its tokens' spellings, less parentheses.
+    bool macroNumber(const char *name, int64_t *value) {
+        const MacroInfo *info = PP.getMacroInfo(PP.getIdentifierInfo(name));
+        if (info == nullptr) return false;
+        std::string text;
+        for (const Token &token : info->tokens())
+            text += PP.getSpelling(token);
+        text.erase(std::remove_if(text.begin(), text.end(), [](char c) { return c == '(' || c == ')'; }), text.end());
+        char *end = nullptr;
+        long long number = strtoll(text.c_str(), &end, 10);
+        if (text.empty() || *end != 0) return false;
+        *value = number;
+        return true;
+    }
+
+    // The facts `target::` names (module target), from the preprocessor of this compile. The raw lowering writes the
+    // `#if` of each into its output (runtime/lang_target.c), and these are the same questions.
+    static bool targetFact(void *context, SmithTarget fact, int64_t *value) {
+        auto *self = static_cast<SmithHook *>(context);
+        Preprocessor &pp = self->PP;
+        const SanitizerSet &sanitize = pp.getLangOpts().Sanitize;
+        switch (fact) {
+        case SmithTarget_Arch:
+            *value = pp.isMacroDefined("__aarch64__") ? 1 : pp.isMacroDefined("__x86_64__") ? 2 : 0;
+            return true;
+        case SmithTarget_Os:
+            *value =
+                pp.isMacroDefined("__APPLE__") && pp.isMacroDefined("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__") ? 1
+                : pp.isMacroDefined("__linux__") ? 2
+                                                 : 0;
+            return true;
+        case SmithTarget_AddressSanitizer:
+            *value = sanitize.has(SanitizerKind::Address) ? 1 : 0;
+            return true;
+        case SmithTarget_UndefinedSanitizer:
+            *value = sanitize.hasOneOf(SanitizerKind::Undefined) ? 1 : 0;
+            return true;
+        case SmithTarget_ThreadSanitizer:
+            *value = sanitize.has(SanitizerKind::Thread) ? 1 : 0;
+            return true;
+        case SmithTarget_Assertions:
+            *value = pp.isMacroDefined("NDEBUG") ? 0 : 1;
+            return true;
+        case SmithTarget_FloatRadix:
+            return self->macroNumber("__FLT_RADIX__", value);
+        case SmithTarget_F32MantissaBits:
+            return self->macroNumber("__FLT_MANT_DIG__", value);
+        case SmithTarget_F64MantissaBits:
+            return self->macroNumber("__DBL_MANT_DIG__", value);
+        case SmithTarget_FloatEvalMethod: { // a builtin macro, not a defined one: asked as the builtin asks
+            LangOptions::FPEvalMethodKind method = pp.getTUFPEvalMethod();
+            if (method == LangOptions::FEM_UnsetOnCommandLine) method = pp.getLangOpts().getFPEvalMethod();
+            if (method == LangOptions::FEM_UnsetOnCommandLine) method = pp.getTargetInfo().getFPEvalMethod();
+            *value = static_cast<int>(method);
+            return true;
+        }
+        }
+        return false;
+    }
+
+    // The value of a `constexpr` integer variable the parser has parsed, for an `if constexpr` condition.
+    static bool constantValue(void *context, const char *name, uint32_t length, int64_t *value) {
+        auto *self = static_cast<SmithHook *>(context);
+        auto *variable = dyn_cast_or_null<VarDecl>(self->findDecl(name, length, SmithLookup_Value));
+        if (variable == nullptr || !variable->isConstexpr() || variable->isInvalidDecl()) return false;
+        const APValue *evaluated = variable->evaluateValue();
+        if (evaluated == nullptr || !evaluated->isInt()) return false;
+        *value = evaluated->getInt().getSExtValue();
+        return true;
     }
 
     static void watchName(void *context, const char *name, uint32_t length) {

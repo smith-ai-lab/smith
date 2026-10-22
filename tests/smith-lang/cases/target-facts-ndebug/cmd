@@ -1,0 +1,1 @@
+../../target-facts/src/main.smith ../../target-facts/src/facts.c -DNDEBUG -o @OUT@/program

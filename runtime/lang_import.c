@@ -209,6 +209,13 @@ static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
+// `import target;` is the facts of the target (runtime/lang_target.c), no module of any file: no header is read.
+static bool smith_lang_import_is_target(SmithLang *lang, const char *module, const char *bind, size_t bind_length) {
+    if (strcmp(module, "target") != 0) return false;
+    smith_lang_binding_find(lang, bind, bind_length)->is_target = true;
+    return true;
+}
+
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {0};
     if (!smith_lang_read_module_name(lang, host, &name)) {
@@ -239,6 +246,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
         return;
     }
     if (!smith_lang_add_binding(lang, host, bind, bind_length, name.location, &name, false)) return;
+    if (smith_lang_import_is_target(lang, name.colons, bind, bind_length)) return;
     if (lang->is_module && strcmp(name.colons, lang->module) == 0) {
         smith_lang_error(lang, host, name.location, "module `%s` imports itself", name.colons);
         smith_lang_binding_find(lang, bind, bind_length)->missing = true;

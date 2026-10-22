@@ -120,6 +120,21 @@ typedef enum {
     SmithWatch_All,    // every token
 } SmithWatch;
 
+// The facts of the target that `target::` names ask the compiler (module `target`, docs/smith-lang.md). The values
+// of `arch` and `os` are SmithTargetArch_* and SmithTargetOs_*; a boolean fact is 0 or 1.
+typedef enum {
+    SmithTarget_Arch,
+    SmithTarget_Os,
+    SmithTarget_AddressSanitizer,
+    SmithTarget_UndefinedSanitizer,
+    SmithTarget_ThreadSanitizer,
+    SmithTarget_Assertions,
+    SmithTarget_FloatRadix,
+    SmithTarget_F32MantissaBits,
+    SmithTarget_F64MantissaBits,
+    SmithTarget_FloatEvalMethod,
+} SmithTarget;
+
 typedef struct {
     void *context;
     // The next token, after the last one given. `unexpanded` asks that macros are not expanded (the X of `c.X`).
@@ -144,6 +159,14 @@ typedef struct {
                      uint32_t definition_location);
     // The host location of a line and column (from 1) of a file, or UINT32_MAX when it cannot say.
     uint32_t (*locate)(void *context, const char *file, uint32_t line, uint32_t column);
+    // The value of a fact of the target, from the compiler's preprocessor (`defined(__aarch64__)`,
+    // `__has_feature(...)`,
+    // `__FLT_MANT_DIG__`). A host without a preprocessor leaves this null: the lowering then writes the equivalent
+    // `#if` or macro into its output instead (the raw lowering, `smith cc --smith-lower` and `--smith-header`).
+    bool (*target_fact)(void *context, SmithTarget fact, int64_t *value);
+    // The value of a `constexpr` constant of integer type the parser has completely parsed (a variable of the file, or
+    // a local declared by an earlier statement), named as the compiler sees it. Null for a host without a parser.
+    bool (*constant)(void *context, const char *name, uint32_t length, int64_t *value);
     // The `index`th field of a struct or union: its name and the spelling of its type, valid until the next call.
     bool (*field)(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
                   const char **field_name, const char **field_type);
@@ -163,6 +186,9 @@ typedef struct {
     // Whether the file's text may declare a generic (it contains `type `); false lets a declaration be decided at its
     // first token.
     bool maybe_generic;
+    // Whether the file's text may contain an `if constexpr` (the words in that order): the host then offers every token
+    // of a function body, because `if` and `else` are keywords and a sparse host is offered only identifiers.
+    bool maybe_if_constexpr;
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).

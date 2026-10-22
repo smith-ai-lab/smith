@@ -53,6 +53,9 @@ constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameter
 constexpr size_t smith_lang_call_params_max = 16;          // parameters of one generic
 constexpr size_t smith_lang_instance_depth_max = 32;       // generics asked for by the instances of generics
 constexpr size_t smith_lang_generic_modules_max = 64;      // modules whose generics were read
+constexpr size_t smith_lang_if_depth_max = 32;             // `if constexpr` blocks open at once
+constexpr size_t smith_lang_constants_max = 256;           // `constexpr` constants a condition may name
+constexpr size_t smith_lang_condition_max = 200;           // tokens of one condition
 constexpr size_t smith_lang_generic_scan_max = 200;        // tokens read ahead to see whether a declaration is generic
 
 typedef enum {
@@ -201,6 +204,7 @@ typedef struct {
     SmithLangText prefix; // game_replay_
     SmithLangText module; // game::replay
     bool is_c;
+    bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
     bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
 } SmithLangBinding;
@@ -258,6 +262,19 @@ typedef struct {
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
 } SmithLangDecl;
+
+// An `if constexpr` outside a generic whose then-block is being read (runtime/lang_target.c).
+typedef struct {
+    int32_t target; // the brace count before the then-block's `{`: the `}` that returns to it ends the block
+    bool raw;       // the raw lowering: the branches are written between `#if`, `#else` and `#endif`
+    bool in_else;   // raw: the last block is the `else`'s
+} SmithLangIfFrame;
+
+// A `constexpr` constant the raw lowering lets a condition name (a compile asks the parser).
+typedef struct {
+    SmithLangText name;
+    SmithLangText text; // the raw lowering's `#if` text of the initializer
+} SmithLangConstant;
 
 struct SmithLang {
     bool broken;
@@ -417,6 +434,13 @@ struct SmithLang {
     size_t allowed_next;
     char tmp[smith_lang_name_max * 2];
     size_t tmp_length;
+    // `target::` and `if constexpr` outside generics (runtime/lang_target.c).
+    SmithLangIfFrame ifc[smith_lang_if_depth_max];
+    size_t ifc_count;
+    int32_t ifc_braces;
+    SmithLangConstant constants[smith_lang_constants_max];
+    size_t constants_count;
+    uint32_t target_used; // the raw lowering: a bit for each fact the output uses
 };
 
 static char smith_lang_chars[smith_lang_chars_max];
@@ -638,6 +662,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Generic functions: `type T` parameters, their calls and their instances.
 #include "lang_generic.c"
+
+// The module `target`, and `if constexpr` outside generics.
+#include "lang_target.c"
 
 // A file that is not a module, with the host offering few tokens.
 #include "lang_sparse.c"

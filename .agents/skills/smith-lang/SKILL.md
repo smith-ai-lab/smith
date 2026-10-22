@@ -13,6 +13,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header, whose names are then written `c::sqrtf` in a module or not (load `smith-lang-modules`, `smith-lang-c-interop`).
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
 4. **Generic functions** in a module: parameters marked `constexpr type T`, called as `arena::push(&a, Point)` or with `T` inferred, and `if constexpr` in their bodies (load `smith-lang-generics`).
+5. **The target, and `if constexpr` in any function body**, in place of the preprocessor: `import target;`, then `target::arch == target::aarch64`, `target::address_sanitizer` (below).
 
 It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
 
@@ -40,6 +41,32 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
 
 A project's build file can be `.smith` too: a root `build.smith` with `import smith::build;` and a plain `void build(build::Build *b)` (no `module` line, so no `export`) calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build` ("build.smith").
+
+## The target and `if constexpr`: no preprocessor in `.smith`
+
+A `.smith` file needs no `#if`. A fact of the target the file is compiled for is a constant of the module `target` (a module that is no file; `import target;` first), and a choice between code that may not compile on every target is `if constexpr`:
+
+```smith
+import target;
+
+constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
+static_assert(target::f32_mantissa_bits == 24 && target::float_radix == 2);
+
+i32 opaque(i32 value) {
+    if constexpr (target::arch == target::aarch64) {        // the branch not taken is dropped: it may not compile here
+        __asm__("" : "+w"(value));
+    } else {
+        __asm__("" : "+X"(value));
+    }
+    return value;
+}
+
+bool poisons_memory(void) {
+    return sanitized;
+}
+```
+
+The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`. The condition of `if constexpr` is made of `target::` facts, `constexpr` constants (of the file or the function) and literals, with the operators of C; the branches are blocks (`else if constexpr (...) { }` continues a chain). Anything else in a condition is an error at the name (``in `if constexpr`: `n` is not a constant``). The branch not taken is never parsed: no diagnostics and no hover in it. Facts cannot be in an exported declaration. `smith cc --smith-lower` has no preprocessor, so it writes macros (`SMITH_TARGET_ARCH`, defined at the top by `#if defined(__aarch64__)`) and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output. Details: docs/smith-lang.md, "The target, and `if constexpr` outside generics".
 
 ## Tests and proofs
 
