@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests of <smith/text.h>, with real clang and ninja. Usage: sh tests/text.sh path/to/smith [exhaustive]
-# The checks are tests/text.c, built as a scratch project's test file with smith_tests (smith's own test library), in
+# The checks are tests/text.smith, built as a scratch project's test file with smith_tests (smith's own test library), in
 # three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
 # finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith test`.
 set -u
@@ -53,9 +53,9 @@ if [ "${2:-}" = exhaustive ]; then
     exit "$status"
 fi
 
-# The scratch project: smith's text library, and the runner built from tests/test_text.c.
+# The scratch project: smith's text library, and the runner built from tests/test_text.smith.
 mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/text.c" tests/test_text.c
+cp "$here/tests/text.smith" tests/test_text.smith
 cat >build.c <<'C'
 #include <smith/build.h>
 
@@ -77,7 +77,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_text.c", nullptr),
+        .sources = smith_list(b, "tests/test_text.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -87,7 +87,7 @@ void build(SmithBuild *b) {
 }
 C
 
-count=$(grep -c '^void test_' "$here/tests/text.c")
+count=$(grep -c '^void test_' "$here/tests/text.smith")
 for mode in asan fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"

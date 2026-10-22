@@ -606,6 +606,9 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/test.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
+    smith_compile_command(b, config->cc, "tests/contract.smith", flags);
+    smith_compile_command(b, config->cc, "tests/json.smith", flags);
+    smith_compile_command(b, config->cc, "tests/text.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
