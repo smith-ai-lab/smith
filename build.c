@@ -599,17 +599,18 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0) continue;
         smith_compile_command(b, config->cc, sources[i], flags);
     }
-    // The text library is a module, linted as written.
-    smith_compile_command(b, config->cc, "lib/smith/arena.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/contract.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/math.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/test.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
-    smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
-    smith_compile_command(b, config->cc, "tests/contract.smith", flags);
-    smith_compile_command(b, config->cc, "tests/json.smith", flags);
-    smith_compile_command(b, config->cc, "tests/text.smith", flags);
+    // The modules are linted as written, and `.smith` is C2y (as `smith cc` compiles it), so `_Countof` works.
+    const char *const *smith_flags = smith_cat(b, flags, smith_list(b, "-std=gnu2y", nullptr), nullptr);
+    smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
+    smith_compile_command(b, config->cc, "tests/contract.smith", smith_flags);
+    smith_compile_command(b, config->cc, "tests/json.smith", smith_flags);
+    smith_compile_command(b, config->cc, "tests/text.smith", smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",

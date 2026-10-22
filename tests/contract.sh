@@ -193,7 +193,7 @@ cat >build.c <<'C'
 #include <stddef.h>
 
 void build(SmithBuild *b) {
-    const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
     const char *const *names = smith_list(b, "arena", "contract", "random", nullptr);
     SmithObject objects[3] = {};
     for (size_t i = 0; names[i] != nullptr; i++) {
