@@ -20,7 +20,7 @@ void test_addition(void) {
     c::smith_check_equal_i32(2 + 2, 4);
 }
 
-void test_sorted_stays_sorted(c::SmithKey key) { // a property test: runs on 100 keys
+void test_sorted_stays_sorted(random::Key key) { // a property test: runs on 100 keys
     arena::Arena a = c::smith_test_arena(1 << 16); // this test's memory, given back before each key
     usize count = (usize)random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 100});
     c::smith_test_note("count %zu", count); // printed under a failure
@@ -30,7 +30,7 @@ void test_sorted_stays_sorted(c::SmithKey key) { // a property test: runs on 100
 }
 ```
 
-- `void test_<name>(void) {` is a test; `void test_<name>(c::SmithKey key) {` is a property test. `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. The build finds the property test by the literal text `SmithKey` or `c::SmithKey`, so the parameter is not written `random::Key` (it is the same type, and inside the test you use `random::` freely). A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`.
+- `void test_<name>(void) {` is a test; `void test_<name>(random::Key key) {` is a property test (`import smith::random;`; `smith-module-library` reports `c::SmithKey`, since random is a module). `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. The build finds the property test by the text `random::Key` (`<alias>::Key` for `import smith::random as <alias>;`), or `SmithKey` or `c::SmithKey` in C. A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`.
 - A property test draws everything from its key (derive one key per use) and is run on `--seeds` keys. The seed in a failure replays it exactly.
 
 ### Tests in modules
@@ -41,18 +41,18 @@ Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "tests/test_
 // tests/geometry/box_test.smith
 module geometry::box_test;
 
+import smith::random;
 import <smith/test.h>;
 
 export void test_area(void) { // `export`: a private function is static, nothing can call it
     c::smith_check_equal_u64(3 * 2, 6);
 }
 
-export void test_area_property(c::SmithKey key) {
-    c::smith_check(c::smith_key_bits(key, 0) == c::smith_key_bits(key, 0));
+export void test_area_property(random::Key key) {
+    c::smith_check(random::key_bits(key, 0) == random::key_bits(key, 0));
 }
 ```
 
-- A property test's key may also be written `random::Key key` after `import smith::random;` (`<alias>::Key` for `import smith::random as <alias>;`): `export void test_area_property(random::Key key) { ... }`.
 - Test files are compiled with `-Werror=missing-prototypes`, on purpose: a test the finder does not recognise (a misspelt signature) has no prototype in the generated list and fails the build instead of silently not running. The cost is that a helper function in a test file needs `static` when the file has no `module` line (in a module every non-`export` function is private already): "no previous prototype for function 'helper'" means make it `static`.
 
 - In a file with no `module` line, `void test_x(void) {` is a test with no `export`, named `x`. In a module the test is shown, listed and selected by its name as written, `geometry::box_test::area` (`smith test --test geometry::box_test` runs the module's tests; `--test geometry::box_test::test_area` works too, `test_` as in the source). Two files cannot define the same test (a module's tests are `a::b::test_x`, so only the same module and name collide).
@@ -86,11 +86,11 @@ SMITH_CHECK_SAME_BITS(a, b)         // float or double, bitwise identical: -0 is
 - `smith_test_expect_abort()` is a plain function that says "from this call on, the test must abort". Call it, then run the code that aborts, as the test's last statements (`(void)expr;` where an unused result would warn):
 
   ```smith
-  import <assert.h>;
+  import smith::contract;
   import <smith/test.h>;
 
   static i32 halve(i32 x) {
-      c::assert(x % 2 == 0);
+      contract::assert(x % 2 == 0);
       return x / 2;
   }
 
