@@ -113,6 +113,7 @@ expect "build.smith: smith test passes" 0 "$rc"
 expect_contains "build.smith: ... its test" "$out$err" "1 passed, 0 failed"
 capture smith prove
 expect "build.smith: smith prove runs" 0 "$rc"
+expect_contains "build.smith: ... and says there is nothing to prove" "$out" "nothing to prove"
 capture smith build release fast
 expect "build.smith: the other profiles build" 0 "$rc"
 expect "build.smith: ... and run" "12" "$(build/release/shapes)"

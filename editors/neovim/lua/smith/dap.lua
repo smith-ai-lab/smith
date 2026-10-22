@@ -8,11 +8,12 @@ local M = {}
 
 M.filetypes = { "c", "cpp", "objc", "objcpp", "smith" }
 
--- The folder of the project the current buffer (else the working directory) is in: the one with build.c or build.smith.
+-- The folder of the project the current buffer (else the working directory) is in: the one with a build file, or a
+-- main.smith or main.c (smith/project.lua).
 function M.project_root()
-  local markers = { "build.c", "build.smith" }
+  local project = require("smith.project")
   local name = vim.api.nvim_buf_get_name(0)
-  return (name ~= "" and vim.fs.root(name, markers)) or vim.fs.root(vim.fn.getcwd(), markers)
+  return (name ~= "" and project.root(name)) or project.root(vim.fn.getcwd())
 end
 
 -- The program `smith run` runs, from the text of .smith/build.info (`program<TAB>path`, `default<TAB>target`): the one

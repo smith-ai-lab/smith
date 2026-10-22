@@ -27,7 +27,7 @@ changes a debug configuration of yours.
   call, `tx::Text` as a type, `constexpr type T` parameters, and everything C highlights. Folds and indents are the queries (C's,
   inherited): `vim.wo.foldexpr = "v:lua.vim.treesitter.foldexpr()"` uses the folds; indents are for nvim-treesitter.
 - **A `.h` file gets its language from the project**, not Neovim's guess (which is `cpp` for every `.h`). Only in a smith
-  project (a folder at or above the file with `build.c`, `build.smith` or `.smith/`); elsewhere nothing changes. If you set
+  project (a folder at or above the file with `build.c`, `build.smith`, `main.smith`, `main.c` or `.smith/`); elsewhere nothing changes. If you set
   `g:c_syntax_for_h` or `g:ch_syntax_for_h`, that is Neovim's rule and it wins. Otherwise a source beside the header with the
   same stem decides (`.c` or `.smith`: `c`; `.cpp`, `.cc`, `.cxx`: `cpp`; `.m`: `objc`; `.mm`: `objcpp`), then
   the `compile` lines of `.smith/build.info` (every source C or `.smith`: `c`; C and `.m`: `objc`), and with a C++ source
@@ -40,7 +40,7 @@ changes a debug configuration of yours.
 - **Plain C stays C**: `module`, `import`, `export`, `type`, `throw`, `new` and `class` are names wherever C allows names
   (`int import;`, `module = 1;`, `s->type`), and `u8` is a variable in a file that declares one.
 - **`vim.lsp.enable("smith")`** runs `smith lsp` (clangd from smith's LLVM) for `c`, `cpp`, `objc`, `objcpp` and `smith`, with the
-  root markers `build.c`, `build.smith`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
+  root markers `build.c`, `build.smith`, `main.smith`, `main.c`, `compile_commands.json` and `.git`. It replaces a `clangd` config: enable one.
   Do not add `--query-driver` (clangd then puts the SDK's include paths ahead of clang's own and the SDK's modules fail).
   Override anything with `vim.lsp.config("smith", { ... })`. A `.smith` file needs nothing more for a single file or a few
   modules in one folder: with no `build.c` and no `compile_commands.json` the server attaches in single-file mode and reads
@@ -50,8 +50,9 @@ changes a debug configuration of yours.
   registers a `smith` adapter (`smith dap`) and one launch configuration, "smith: launch", for `c`, `cpp`, `objc`,
   `objcpp` and `smith`, each only when you have not set one, so nvim-dap never shows a list to pick from. It registers;
   it starts nothing. The configuration is callable (nvim-dap calls it in its coroutine, so the editor stays free, and uses
-  the table it returns), and its decision is made when you start a session, in a smith project (the folder with `build.c`
-  or `build.smith`, found from the current buffer, else the working directory), with `cwd` the project root:
+  the table it returns), and its decision is made when you start a session, in a smith project (a folder with a build file,
+  `build.c` or `build.smith`, or else a `main.smith` or `main.c`, which is smith's own rule and what `smith new` writes; found from
+  the current buffer, else the working directory; `lua/smith/project.lua` is the one place that rule is written), with `cwd` the project root:
   - **The cursor inside a function named `test_...`** in a `c` or `smith` buffer: it runs `smith build smith_needs` (which
     runs `build.c` and writes `.smith/build.info`), then builds the runner that file names on its `runner` line (the program
     `smith_tests` makes), and launches it with `--test <name> --in-process`: the name is `test_x`, or `a::b::test_x` when the
@@ -72,8 +73,7 @@ changes a debug configuration of yours.
   `plugin/smith.lua` puts on the runtimepath; during `init.lua` `vim.pack.add` runs no `plugin/` file (its `load` is false
   there), so a neotest setup in `init.lua` needs the plugin loaded first:
   `vim.pack.add({ "git@github.com:adam-r-kowalski/smith" }, { load = true })`, before the setup.
-  - **Test files and tests.** A test file is a `.c` or `.smith` file in a smith project (a folder with `build.c` or
-    `build.smith`) named `test_*` or `*_test`; the rule is the name only, which is cheap, the way `smith_tests` globs
+  - **Test files and tests.** A test file is a `.c` or `.smith` file in a smith project (a folder with a build file or a `main`, as above) named `test_*` or `*_test`; the rule is the name only, which is cheap, the way `smith_tests` globs
     `tests/test_*.c`. The tests in it are the `test_` function definitions, found with tree-sitter (the `c` parser, or
     smith's for `.smith`), and each is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has
     `module a::b;`.

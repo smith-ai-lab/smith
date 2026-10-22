@@ -28,11 +28,11 @@ printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c",
     >"$work/project/compile_commands.json"
 # A folder with a .smith file and nothing else: no build.c, no compile_commands.json, no .git.
 mkdir "$work/alone" && printf '#include <stdio.h>\n\nint main() {\n  printf("hello world\\n");\n  return zzz;\n}\n' >"$work/alone/main.smith"
-# Projects made by smith new: one that builds, one whose main.c does not compile. The plugin finds a project by its build
-# file, which smith new does not write, so each gets the one that does what the conventions do (smith build --dump-config).
+# Projects made by smith new, which writes no build file (the plugin finds them by their main): a C one that builds, a C
+# one whose main.c does not compile, and one of the default language, .smith.
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 mkdir "$work/home" "$work/new"
-(cd "$work/new" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c && for p in hello broken; do (cd $p && "$smith" build --dump-config >../dumped && mv ../dumped build.c); done)
+(cd "$work/new" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c && "$smith" new fresh >/dev/null 2>&1)
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {}, ABORT = setmetatable({}, { __tostring = function() return "ABORT" end }) }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.
@@ -53,7 +53,7 @@ one() {
     case " ${SMITH_NVIM_ONLY:-$name} " in *" $name "*) ;; *) return ;; esac # SMITH_NVIM_ONLY="a b" runs just those
     total=$((total + 1))
     result=$(env PATH="$path" SMITH_NVIM_TEST="$name" SMITH_REPO="$here" SMITH_PROJECT="$work/project" SMITH_ALONE="$work/alone" \
-        SMITH_NEW="$work/new/hello" SMITH_BROKEN="$work/new/broken" \
+        SMITH_NEW="$work/new/hello" SMITH_BROKEN="$work/new/broken" SMITH_FRESH="$work/new/fresh" \
         "$nvim" --headless -u NONE -i NONE --cmd "set runtimepath^=$here" --cmd "filetype on" --cmd "let g:smith_no_version_check = 1" \
         "$@" --cmd "runtime plugin/smith.lua" \
         -c "lua vim.api.nvim_create_autocmd('VimEnter', {once = true, callback = function() vim.schedule(function() dofile('$here/tests/neovim.lua') end) end})" 2>&1)
@@ -97,6 +97,7 @@ one neotest_discover_smith "$base"
 one neotest_build_spec "$base"
 one neotest_results "$base"
 one dap_build_program "$base" --cmd "set runtimepath+=$work/fakedap"
+one dap_default_project "$base" --cmd "set runtimepath+=$work/fakedap"
 one dap_build_fails "$base" --cmd "set runtimepath+=$work/fakedap"
 one dap_program_of "$base"
 one dap_keeps_the_users "$base" --cmd "set runtimepath+=$work/fakedap" --cmd "lua package.loaded.dap = { adapters = { smith = 'mine' }, configurations = { c = { { name = 'user c' } } } }"

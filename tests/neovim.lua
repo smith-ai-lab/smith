@@ -5,6 +5,15 @@ local test = os.getenv("SMITH_NVIM_TEST")
 local repo = os.getenv("SMITH_REPO")
 local project = os.getenv("SMITH_PROJECT")
 
+-- Nothing may wait for a person: a launch that asks for a program's path (vim.fn.input) once hung a headless Neovim for
+-- ten minutes, so asking fails the test at once, and a test that means to be asked stubs this itself. A watchdog ends a
+-- test that is stuck anywhere else.
+vim.fn.input = function(prompt) error("asked for input: " .. tostring(prompt), 2) end
+vim.defer_fn(function()
+  io.stderr:write("the test ran for five minutes\n")
+  vim.cmd("cquit 1")
+end, 300000)
+
 local function check(condition, message)
   if not condition then error(message, 2) end
 end
@@ -137,7 +146,7 @@ function tests.lsp_config()
   check(config, "vim.lsp.config.smith is defined")
   equal({ "smith", "lsp" }, config.cmd, "the server command")
   equal({ "c", "cpp", "objc", "objcpp", "smith" }, config.filetypes, "the file types")
-  equal({ "build.c", "build.smith", "compile_commands.json", ".git" }, config.root_markers, "the root markers")
+  equal({ "build.c", "build.smith", "main.smith", "main.c", "compile_commands.json", ".git" }, config.root_markers, "the root markers")
   check(not vim.lsp.is_enabled("smith"), "the plugin does not enable the server")
   vim.cmd("edit " .. vim.fn.fnameescape(project .. "/main.c"))
   vim.wait(500)
@@ -524,6 +533,21 @@ local smith_test_source = table.concat({
   "export void test_perimeter(void) {",
   "}",
 }, "\n")
+
+-- A project from `smith new` has no build file: its main.smith is what marks it, for the launch configuration and for
+-- neotest.
+function tests.dap_default_project()
+  stub_neotest()
+  local fresh = os.getenv("SMITH_FRESH")
+  local program = run_program(fresh)
+  equal(vim.uv.fs_realpath(fresh .. "/build/debug/fresh"), vim.uv.fs_realpath(program), "the program")
+  local root = require("smith.project").root
+  equal(vim.uv.fs_realpath(fresh), vim.uv.fs_realpath(root(fresh .. "/tests")), "main.smith marks the root")
+  check(require("neotest-smith").is_test_file(fresh .. "/tests/test_primes.smith"), "a test file, with no build file")
+  equal(nil, root(write_project({ ["test_x.c"] = "" })), "no root without a build file or a main")
+  local with_main = write_project({ ["main.c"] = "" })
+  equal(vim.uv.fs_realpath(with_main), vim.uv.fs_realpath(root(with_main)), "main.c marks the root")
+end
 
 function tests.neotest_is_test_file()
   local adapter = require("neotest-smith")

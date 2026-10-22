@@ -219,6 +219,7 @@ expect "c: the tests pass" 0 "$rc"
 expect_contains "c: ... one of them" "$out$err" "1 passed, 0 failed"
 capture smith prove
 expect "c: smith prove runs on it" 0 "$rc"
+expect_contains "c: ... and says there is nothing to prove" "$out" "nothing to prove"
 cp "$here/.clang-tidy" "$here/.clang-format" .
 capture smith lint
 expect "c: smith lint reads the build's compiles" 0 "$rc"
