@@ -2,10 +2,11 @@
 // NOLINTBEGIN
 #include "../../../include/smith/text.h"
 #include <assert.h>
+
 [[nodiscard]] SmithText smith_text_make(const char *string);
 [[nodiscard]] SmithText smith_text_make(const char *string) {
 assert(string != nullptr);
-size_t length = 0;
+__SIZE_TYPE__ length = 0;
 while (string[length] != '\0') {
 length += 1;
 }
@@ -18,15 +19,15 @@ return c == ' ' || c == '\t';
 [[nodiscard]] bool smith_text_take_line(SmithText *text, SmithText *line) {
 assert(text != nullptr && line != nullptr);
 if (text->length == 0) return false;
-size_t length = 0;
+__SIZE_TYPE__ length = 0;
 while (length < text->length && text->begin[length] != '\n') {
 length += 1;
 }
 *line = (SmithText){text->begin, length};
-size_t consumed = length < text->length ? length + 1 : length;
+__SIZE_TYPE__ consumed = length < text->length ? length + 1 : length;
 text->begin += consumed;
 text->length -= consumed;
-size_t comment = 0;
+__SIZE_TYPE__ comment = 0;
 while (comment < line->length && line->begin[comment] != '#') {
 comment += 1;
 }
@@ -44,7 +45,7 @@ line->begin += 1;
 line->length -= 1;
 }
 if (line->length == 0) return false;
-size_t length = 0;
+__SIZE_TYPE__ length = 0;
 while (length < line->length && !smith_text_is_space(line->begin[length])) {
 length += 1;
 }
@@ -56,50 +57,52 @@ return true;
 [[nodiscard]] bool smith_text_is(SmithText word, const char *string);
 [[nodiscard]] bool smith_text_is(SmithText word, const char *string) {
 assert(string != nullptr);
-for (size_t i = 0; i < word.length; i++) {
+for (__SIZE_TYPE__ i = 0; i < word.length; i++) {
 if (string[i] != word.begin[i]) return false;
 }
 return string[word.length] == '\0';
 }
-[[nodiscard]] bool smith_text_parse_u64(SmithText word, uint64_t *value);
-[[nodiscard]] bool smith_text_parse_u64(SmithText word, uint64_t *value) {
+static constexpr __UINT64_TYPE__ smith_text_u64_max = ~(__UINT64_TYPE__)0;
+static constexpr __INT64_TYPE__ smith_text_i64_max = (__INT64_TYPE__)(smith_text_u64_max >> 1);
+[[nodiscard]] bool smith_text_parse_u64(SmithText word, __UINT64_TYPE__ *value);
+[[nodiscard]] bool smith_text_parse_u64(SmithText word, __UINT64_TYPE__ *value) {
 assert(value != nullptr);
 if (word.length == 0) return false;
-uint64_t result = 0;
-for (size_t i = 0; i < word.length; i++) {
+__UINT64_TYPE__ result = 0;
+for (__SIZE_TYPE__ i = 0; i < word.length; i++) {
 char c = word.begin[i];
 if (c < '0' || c > '9') return false;
-uint64_t digit = (uint64_t)(c - '0');
-if (result > (UINT64_MAX - digit) / 10) return false;
+__UINT64_TYPE__ digit = (__UINT64_TYPE__)(c - '0');
+if (result > (smith_text_u64_max - digit) / 10) return false;
 result = result * 10 + digit;
 }
 *value = result;
 return true;
 }
-[[nodiscard]] bool smith_text_parse_i64(SmithText word, int64_t *value);
-[[nodiscard]] bool smith_text_parse_i64(SmithText word, int64_t *value) {
+[[nodiscard]] bool smith_text_parse_i64(SmithText word, __INT64_TYPE__ *value);
+[[nodiscard]] bool smith_text_parse_i64(SmithText word, __INT64_TYPE__ *value) {
 assert(value != nullptr);
 bool negative = word.length > 0 && word.begin[0] == '-';
 SmithText digits = negative ? (SmithText){word.begin + 1, word.length - 1} : word;
-uint64_t magnitude = 0;
+__UINT64_TYPE__ magnitude = 0;
 if (!smith_text_parse_u64(digits, &magnitude)) return false;
-uint64_t limit = negative ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
+__UINT64_TYPE__ limit = negative ? (__UINT64_TYPE__)smith_text_i64_max + 1 : (__UINT64_TYPE__)smith_text_i64_max;
 if (magnitude > limit) return false;
-*value = negative ? (int64_t)(0 - magnitude) : (int64_t)magnitude;
+*value = negative ? (__INT64_TYPE__)(0 - magnitude) : (__INT64_TYPE__)magnitude;
 return true;
 }
-[[nodiscard]] bool smith_text_parse_hex(SmithText word, uint64_t *value);
-[[nodiscard]] bool smith_text_parse_hex(SmithText word, uint64_t *value) {
+[[nodiscard]] bool smith_text_parse_hex(SmithText word, __UINT64_TYPE__ *value);
+[[nodiscard]] bool smith_text_parse_hex(SmithText word, __UINT64_TYPE__ *value) {
 assert(value != nullptr);
 if (word.length == 0) return false;
-uint64_t result = 0;
-for (size_t i = 0; i < word.length; i++) {
+__UINT64_TYPE__ result = 0;
+for (__SIZE_TYPE__ i = 0; i < word.length; i++) {
 char c = word.begin[i];
-uint64_t digit = 0;
+__UINT64_TYPE__ digit = 0;
 if (c >= '0' && c <= '9')
-digit = (uint64_t)(c - '0');
+digit = (__UINT64_TYPE__)(c - '0');
 else if (c >= 'a' && c <= 'f')
-digit = (uint64_t)(c - 'a') + 10;
+digit = (__UINT64_TYPE__)(c - 'a') + 10;
 else
 return false;
 if ((result >> 60) != 0) return false;
@@ -108,75 +111,75 @@ result = (result << 4) | digit;
 *value = result;
 return true;
 }
-static constexpr size_t smith_text_digits_max = 800;
-static constexpr size_t smith_text_big_limbs = 128;
-static constexpr int64_t smith_text_exponent_max = 1'000'000;
-static constexpr size_t smith_text_fast_digits_max = 15;
-static constexpr int64_t smith_text_fast_exponent_max = 22;
-static constexpr uint32_t smith_text_chunk_digits = 9;
+static constexpr __SIZE_TYPE__ smith_text_digits_max = 800;
+static constexpr __SIZE_TYPE__ smith_text_big_limbs = 128;
+static constexpr __INT64_TYPE__ smith_text_exponent_max = 1'000'000;
+static constexpr __SIZE_TYPE__ smith_text_fast_digits_max = 15;
+static constexpr __INT64_TYPE__ smith_text_fast_exponent_max = 22;
+static constexpr __UINT32_TYPE__ smith_text_chunk_digits = 9;
 typedef struct {
-uint32_t mantissa_bits;
-int64_t smallest_exponent;
-int64_t field_offset;
-int64_t field_infinity;
+__UINT32_TYPE__ mantissa_bits;
+__INT64_TYPE__ smallest_exponent;
+__INT64_TYPE__ field_offset;
+__INT64_TYPE__ field_infinity;
 } smith_text_Format;
-static constexpr uint32_t smith_text_infinity_bits = 0x7f800000;
-static constexpr uint64_t smith_text_double_infinity_bits = 0x7ff0000000000000;
+static constexpr __UINT32_TYPE__ smith_text_infinity_bits = 0x7f800000;
+static constexpr __UINT64_TYPE__ smith_text_double_infinity_bits = 0x7ff0000000000000;
 static const smith_text_Format smith_text_float_format = {24, -149, 150, 255};
 static const smith_text_Format smith_text_double_format = {53, -1074, 1075, 2047};
 static const double smith_text_powers[smith_text_fast_exponent_max + 1] = {
 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
-static const uint32_t smith_text_powers_u32[smith_text_chunk_digits + 1] = {
+static const __UINT32_TYPE__ smith_text_powers_u32[smith_text_chunk_digits + 1] = {
 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000,
 };
 typedef struct {
-uint32_t limb[smith_text_big_limbs];
-size_t count;
+__UINT32_TYPE__ limb[smith_text_big_limbs];
+__SIZE_TYPE__ count;
 } smith_text_Big;
-static void smith_text_big_mul_add(smith_text_Big *big, uint32_t multiplier, uint32_t addend) {
-uint64_t carry = addend;
-for (size_t i = 0; i < big->count; i++) {
-uint64_t product = (uint64_t)big->limb[i] * multiplier + carry;
-big->limb[i] = (uint32_t)product;
+static void smith_text_big_mul_add(smith_text_Big *big, __UINT32_TYPE__ multiplier, __UINT32_TYPE__ addend) {
+__UINT64_TYPE__ carry = addend;
+for (__SIZE_TYPE__ i = 0; i < big->count; i++) {
+__UINT64_TYPE__ product = (__UINT64_TYPE__)big->limb[i] * multiplier + carry;
+big->limb[i] = (__UINT32_TYPE__)product;
 carry = product >> 32;
 }
 if (carry != 0) {
 assert(big->count < smith_text_big_limbs);
-big->limb[big->count] = (uint32_t)carry;
+big->limb[big->count] = (__UINT32_TYPE__)carry;
 big->count += 1;
 }
 }
-static void smith_text_big_mul_pow10(smith_text_Big *big, uint64_t power) {
+static void smith_text_big_mul_pow10(smith_text_Big *big, __UINT64_TYPE__ power) {
 while (power >= smith_text_chunk_digits) {
 smith_text_big_mul_add(big, smith_text_powers_u32[smith_text_chunk_digits], 0);
 power -= smith_text_chunk_digits;
 }
 smith_text_big_mul_add(big, smith_text_powers_u32[power], 0);
 }
-static uint64_t smith_text_big_bits(const smith_text_Big *big) {
+static __UINT64_TYPE__ smith_text_big_bits(const smith_text_Big *big) {
 if (big->count == 0) return 0;
-uint32_t top = big->limb[big->count - 1];
-uint64_t bits = (uint64_t)(big->count - 1) * 32;
+__UINT32_TYPE__ top = big->limb[big->count - 1];
+__UINT64_TYPE__ bits = (__UINT64_TYPE__)(big->count - 1) * 32;
 while (top != 0) {
 bits += 1;
 top >>= 1;
 }
 return bits;
 }
-static void smith_text_big_shift_left(smith_text_Big *big, uint64_t shift) {
+static void smith_text_big_shift_left(smith_text_Big *big, __UINT64_TYPE__ shift) {
 if (big->count == 0 || shift == 0) return;
-size_t whole = (size_t)(shift / 32);
-uint32_t part = (uint32_t)(shift % 32);
+__SIZE_TYPE__ whole = (__SIZE_TYPE__)(shift / 32);
+__UINT32_TYPE__ part = (__UINT32_TYPE__)(shift % 32);
 assert(big->count + whole + 1 <= smith_text_big_limbs);
 big->limb[big->count + whole] = 0;
-for (size_t i = big->count; i-- > 0;) {
-uint64_t moved = (uint64_t)big->limb[i] << part;
-big->limb[i + whole + 1] |= (uint32_t)(moved >> 32);
-big->limb[i + whole] = (uint32_t)moved;
+for (__SIZE_TYPE__ i = big->count; i-- > 0;) {
+__UINT64_TYPE__ moved = (__UINT64_TYPE__)big->limb[i] << part;
+big->limb[i + whole + 1] |= (__UINT32_TYPE__)(moved >> 32);
+big->limb[i + whole] = (__UINT32_TYPE__)moved;
 }
-for (size_t i = 0; i < whole; i++) {
+for (__SIZE_TYPE__ i = 0; i < whole; i++) {
 big->limb[i] = 0;
 }
 big->count += whole + 1;
@@ -185,8 +188,8 @@ big->count -= 1;
 }
 }
 static void smith_text_big_shift_right_one(smith_text_Big *big) {
-for (size_t i = 0; i < big->count; i++) {
-uint32_t above = i + 1 < big->count ? big->limb[i + 1] : 0;
+for (__SIZE_TYPE__ i = 0; i < big->count; i++) {
+__UINT32_TYPE__ above = i + 1 < big->count ? big->limb[i + 1] : 0;
 big->limb[i] = (big->limb[i] >> 1) | (above << 31);
 }
 while (big->count > 0 && big->limb[big->count - 1] == 0) {
@@ -195,60 +198,60 @@ big->count -= 1;
 }
 static bool smith_text_big_at_least(const smith_text_Big *a, const smith_text_Big *b) {
 if (a->count != b->count) return a->count > b->count;
-for (size_t i = a->count; i-- > 0;) {
+for (__SIZE_TYPE__ i = a->count; i-- > 0;) {
 if (a->limb[i] != b->limb[i]) return a->limb[i] > b->limb[i];
 }
 return true;
 }
 static void smith_text_big_subtract(smith_text_Big *a, const smith_text_Big *b) {
-uint64_t borrow = 0;
-for (size_t i = 0; i < a->count; i++) {
-uint64_t take = (i < b->count ? b->limb[i] : 0) + borrow;
+__UINT64_TYPE__ borrow = 0;
+for (__SIZE_TYPE__ i = 0; i < a->count; i++) {
+__UINT64_TYPE__ take = (i < b->count ? b->limb[i] : 0) + borrow;
 borrow = a->limb[i] < take ? 1 : 0;
-a->limb[i] = (uint32_t)((uint64_t)a->limb[i] - take);
+a->limb[i] = (__UINT32_TYPE__)((__UINT64_TYPE__)a->limb[i] - take);
 }
 assert(borrow == 0);
 while (a->count > 0 && a->limb[a->count - 1] == 0) {
 a->count -= 1;
 }
 }
-static uint64_t smith_text_ratio_to_bits(const smith_text_Format *format, smith_text_Big numerator, smith_text_Big denominator) {
-int64_t p = format->mantissa_bits;
-int64_t scale = p + 1 - ((int64_t)smith_text_big_bits(&numerator) - (int64_t)smith_text_big_bits(&denominator));
+static __UINT64_TYPE__ smith_text_ratio_to_bits(const smith_text_Format *format, smith_text_Big numerator, smith_text_Big denominator) {
+__INT64_TYPE__ p = format->mantissa_bits;
+__INT64_TYPE__ scale = p + 1 - ((__INT64_TYPE__)smith_text_big_bits(&numerator) - (__INT64_TYPE__)smith_text_big_bits(&denominator));
 if (scale >= 0)
-smith_text_big_shift_left(&numerator, (uint64_t)scale);
+smith_text_big_shift_left(&numerator, (__UINT64_TYPE__)scale);
 else
-smith_text_big_shift_left(&denominator, (uint64_t)(0 - scale));
+smith_text_big_shift_left(&denominator, (__UINT64_TYPE__)(0 - scale));
 smith_text_Big step = denominator;
-smith_text_big_shift_left(&step, (uint64_t)(p + 1));
-uint64_t q = 0;
-for (uint32_t bit = format->mantissa_bits + 2; bit-- > 0;) {
+smith_text_big_shift_left(&step, (__UINT64_TYPE__)(p + 1));
+__UINT64_TYPE__ q = 0;
+for (__UINT32_TYPE__ bit = format->mantissa_bits + 2; bit-- > 0;) {
 if (smith_text_big_at_least(&numerator, &step)) {
 smith_text_big_subtract(&numerator, &step);
-q |= (uint64_t)1 << bit;
+q |= (__UINT64_TYPE__)1 << bit;
 }
 smith_text_big_shift_right_one(&step);
 }
-int64_t drop = (q >> (format->mantissa_bits + 1)) != 0 ? 2 : 1;
+__INT64_TYPE__ drop = (q >> (format->mantissa_bits + 1)) != 0 ? 2 : 1;
 if (scale + format->smallest_exponent > drop) drop = scale + format->smallest_exponent;
 if (drop > p + 2) return 0;
-uint64_t shift = (uint64_t)drop;
-uint64_t kept = q >> shift;
-uint64_t low = q & (((uint64_t)1 << shift) - 1);
-uint64_t half = (uint64_t)1 << (shift - 1);
+__UINT64_TYPE__ shift = (__UINT64_TYPE__)drop;
+__UINT64_TYPE__ kept = q >> shift;
+__UINT64_TYPE__ low = q & (((__UINT64_TYPE__)1 << shift) - 1);
+__UINT64_TYPE__ half = (__UINT64_TYPE__)1 << (shift - 1);
 if (low > half || (low == half && (numerator.count != 0 || (kept & 1) != 0))) kept += 1;
-int64_t exponent = drop - scale;
-uint64_t one = (uint64_t)1 << (format->mantissa_bits - 1);
-if (exponent + format->field_offset >= format->field_infinity) return (uint64_t)format->field_infinity * one;
-return (uint64_t)(exponent + format->field_offset) * one + kept - one;
+__INT64_TYPE__ exponent = drop - scale;
+__UINT64_TYPE__ one = (__UINT64_TYPE__)1 << (format->mantissa_bits - 1);
+if (exponent + format->field_offset >= format->field_infinity) return (__UINT64_TYPE__)format->field_infinity * one;
+return (__UINT64_TYPE__)(exponent + format->field_offset) * one + kept - one;
 }
 typedef struct {
 smith_text_Big digits;
-uint64_t small;
-size_t significant;
-uint32_t chunk;
-uint32_t chunk_length;
-int64_t exp10;
+__UINT64_TYPE__ small;
+__SIZE_TYPE__ significant;
+__UINT32_TYPE__ chunk;
+__UINT32_TYPE__ chunk_length;
+__INT64_TYPE__ exp10;
 bool sticky;
 } smith_text_Decimal;
 static void smith_text_decimal_init(smith_text_Decimal *decimal) {
@@ -260,7 +263,7 @@ decimal->chunk_length = 0;
 decimal->exp10 = 0;
 decimal->sticky = false;
 }
-static void smith_text_decimal_add_digit(smith_text_Decimal *decimal, uint32_t digit, bool in_fraction) {
+static void smith_text_decimal_add_digit(smith_text_Decimal *decimal, __UINT32_TYPE__ digit, bool in_fraction) {
 if (decimal->significant == 0 && digit == 0) {
 if (in_fraction) decimal->exp10 -= 1;
 return;
@@ -281,16 +284,16 @@ decimal->chunk_length = 0;
 }
 if (in_fraction) decimal->exp10 -= 1;
 }
-static bool smith_text_decimal_scan_mantissa(SmithText word, size_t *index, smith_text_Decimal *decimal) {
+static bool smith_text_decimal_scan_mantissa(SmithText word, __SIZE_TYPE__ *index, smith_text_Decimal *decimal) {
 bool in_fraction = false;
 bool any = false;
-size_t i = *index;
+__SIZE_TYPE__ i = *index;
 for (; i < word.length; i++) {
 char c = word.begin[i];
 if (c == '.' && !in_fraction) {
 in_fraction = true;
 } else if (c >= '0' && c <= '9') {
-smith_text_decimal_add_digit(decimal, (uint32_t)(c - '0'), in_fraction);
+smith_text_decimal_add_digit(decimal, (__UINT32_TYPE__)(c - '0'), in_fraction);
 any = true;
 } else {
 break;
@@ -299,14 +302,14 @@ break;
 *index = i;
 return any;
 }
-static bool smith_text_decimal_scan_exponent(SmithText word, size_t *index, smith_text_Decimal *decimal) {
-size_t i = *index;
+static bool smith_text_decimal_scan_exponent(SmithText word, __SIZE_TYPE__ *index, smith_text_Decimal *decimal) {
+__SIZE_TYPE__ i = *index;
 if (i == word.length || (word.begin[i] != 'e' && word.begin[i] != 'E')) return true;
 i += 1;
 bool negative = i < word.length && word.begin[i] == '-';
 if (i < word.length && (word.begin[i] == '-' || word.begin[i] == '+')) i += 1;
-int64_t magnitude = 0;
-size_t digits = 0;
+__INT64_TYPE__ magnitude = 0;
+__SIZE_TYPE__ digits = 0;
 for (; i < word.length && word.begin[i] >= '0' && word.begin[i] <= '9'; i++) {
 if (magnitude < smith_text_exponent_max) magnitude = magnitude * 10 + (word.begin[i] - '0');
 digits += 1;
@@ -316,13 +319,13 @@ decimal->exp10 += negative ? -magnitude : magnitude;
 *index = i;
 return true;
 }
-static uint64_t smith_text_decimal_exact(const smith_text_Decimal *decimal, const smith_text_Format *format) {
+static __UINT64_TYPE__ smith_text_decimal_exact(const smith_text_Decimal *decimal, const smith_text_Format *format) {
 smith_text_Big numerator = decimal->digits;
 smith_text_Big denominator = {.limb = {1}, .count = 1};
 if (decimal->exp10 >= 0)
-smith_text_big_mul_pow10(&numerator, (uint64_t)decimal->exp10);
+smith_text_big_mul_pow10(&numerator, (__UINT64_TYPE__)decimal->exp10);
 else
-smith_text_big_mul_pow10(&denominator, (uint64_t)(0 - decimal->exp10));
+smith_text_big_mul_pow10(&denominator, (__UINT64_TYPE__)(0 - decimal->exp10));
 return smith_text_ratio_to_bits(format, numerator, denominator);
 }
 static bool smith_text_decimal_is_fast(const smith_text_Decimal *decimal) {
@@ -342,13 +345,13 @@ decimal->exp10 -= 1;
 decimal->significant += 1;
 }
 }
-static bool smith_text_decimal_to_f32_bits(smith_text_Decimal *decimal, uint32_t *bits) {
+static bool smith_text_decimal_to_f32_bits(smith_text_Decimal *decimal, __UINT32_TYPE__ *bits) {
 if (decimal->significant == 0) {
 *bits = 0;
 return true;
 }
 smith_text_decimal_finish(decimal);
-int64_t magnitude = (int64_t)decimal->significant + decimal->exp10;
+__INT64_TYPE__ magnitude = (__INT64_TYPE__)decimal->significant + decimal->exp10;
 if (magnitude >= 40) return false;
 if (magnitude <= -47) {
 *bits = 0;
@@ -356,23 +359,23 @@ return true;
 }
 if (smith_text_decimal_is_fast(decimal)) {
 double nearest = smith_text_decimal_fast(decimal);
-uint64_t nearest_bits = __builtin_bit_cast(uint64_t, nearest);
+__UINT64_TYPE__ nearest_bits = __builtin_bit_cast(__UINT64_TYPE__, nearest);
 bool halfway = (nearest_bits & 0x1fffffff) == 0x10000000;
 if (nearest >= (double)__FLT_MIN__ && nearest <= 1e38 && !halfway) {
-*bits = __builtin_bit_cast(uint32_t, (float)nearest);
+*bits = __builtin_bit_cast(__UINT32_TYPE__, (float)nearest);
 return true;
 }
 }
-*bits = (uint32_t)smith_text_decimal_exact(decimal, &smith_text_float_format);
+*bits = (__UINT32_TYPE__)smith_text_decimal_exact(decimal, &smith_text_float_format);
 return *bits < smith_text_infinity_bits;
 }
-static bool smith_text_decimal_to_f64_bits(smith_text_Decimal *decimal, uint64_t *bits) {
+static bool smith_text_decimal_to_f64_bits(smith_text_Decimal *decimal, __UINT64_TYPE__ *bits) {
 if (decimal->significant == 0) {
 *bits = 0;
 return true;
 }
 smith_text_decimal_finish(decimal);
-int64_t magnitude = (int64_t)decimal->significant + decimal->exp10;
+__INT64_TYPE__ magnitude = (__INT64_TYPE__)decimal->significant + decimal->exp10;
 if (magnitude >= 310) return false;
 if (magnitude <= -325) {
 *bits = 0;
@@ -381,7 +384,7 @@ return true;
 if (smith_text_decimal_is_fast(decimal)) {
 double nearest = smith_text_decimal_fast(decimal);
 if (nearest >= __DBL_MIN__ && nearest <= 1e300) {
-*bits = __builtin_bit_cast(uint64_t, nearest);
+*bits = __builtin_bit_cast(__UINT64_TYPE__, nearest);
 return true;
 }
 }
@@ -389,7 +392,7 @@ return true;
 return *bits < smith_text_double_infinity_bits;
 }
 static bool smith_text_decimal_scan(SmithText word, smith_text_Decimal *decimal, bool *negative) {
-size_t index = 0;
+__SIZE_TYPE__ index = 0;
 *negative = word.length > 0 && word.begin[0] == '-';
 if (word.length > 0 && (word.begin[0] == '-' || word.begin[0] == '+')) index = 1;
 if (!smith_text_decimal_scan_mantissa(word, &index, decimal)) return false;
@@ -403,7 +406,7 @@ smith_text_Decimal decimal;
 smith_text_decimal_init(&decimal);
 bool negative = false;
 if (!smith_text_decimal_scan(word, &decimal, &negative)) return false;
-uint32_t bits = 0;
+__UINT32_TYPE__ bits = 0;
 if (!smith_text_decimal_to_f32_bits(&decimal, &bits)) return false;
 if (negative) bits |= 0x80000000;
 *value = __builtin_bit_cast(float, bits);
@@ -416,75 +419,75 @@ smith_text_Decimal decimal;
 smith_text_decimal_init(&decimal);
 bool negative = false;
 if (!smith_text_decimal_scan(word, &decimal, &negative)) return false;
-uint64_t bits = 0;
+__UINT64_TYPE__ bits = 0;
 if (!smith_text_decimal_to_f64_bits(&decimal, &bits)) return false;
-if (negative) bits |= (uint64_t)1 << 63;
+if (negative) bits |= (__UINT64_TYPE__)1 << 63;
 *value = __builtin_bit_cast(double, bits);
 return true;
 }
-size_t smith_text_write_u64(char *out, uint64_t value);
-size_t smith_text_write_u64(char *out, uint64_t value) {
+__SIZE_TYPE__ smith_text_write_u64(char *out, __UINT64_TYPE__ value);
+__SIZE_TYPE__ smith_text_write_u64(char *out, __UINT64_TYPE__ value) {
 assert(out != nullptr);
 char reversed[smith_text_number_capacity];
-size_t count = 0;
+__SIZE_TYPE__ count = 0;
 do {
 reversed[count++] = (char)('0' + value % 10);
 value /= 10;
 } while (value != 0 && count < smith_text_number_capacity);
 assert(value == 0);
-for (size_t i = 0; i < count; i++) {
+for (__SIZE_TYPE__ i = 0; i < count; i++) {
 out[i] = reversed[count - 1 - i];
 }
 return count;
 }
-size_t smith_text_write_i64(char *out, int64_t value);
-size_t smith_text_write_i64(char *out, int64_t value) {
+__SIZE_TYPE__ smith_text_write_i64(char *out, __INT64_TYPE__ value);
+__SIZE_TYPE__ smith_text_write_i64(char *out, __INT64_TYPE__ value) {
 assert(out != nullptr);
-if (value >= 0) return smith_text_write_u64(out, (uint64_t)value);
+if (value >= 0) return smith_text_write_u64(out, (__UINT64_TYPE__)value);
 out[0] = '-';
-return 1 + smith_text_write_u64(out + 1, 0 - (uint64_t)value);
+return 1 + smith_text_write_u64(out + 1, 0 - (__UINT64_TYPE__)value);
 }
-size_t smith_text_write_hex(char *out, uint64_t value);
-size_t smith_text_write_hex(char *out, uint64_t value) {
+__SIZE_TYPE__ smith_text_write_hex(char *out, __UINT64_TYPE__ value);
+__SIZE_TYPE__ smith_text_write_hex(char *out, __UINT64_TYPE__ value) {
 assert(out != nullptr);
-for (size_t i = 0; i < 16; i++) {
-uint64_t digit = (value >> (60 - 4 * i)) & 0xf;
+for (__SIZE_TYPE__ i = 0; i < 16; i++) {
+__UINT64_TYPE__ digit = (value >> (60 - 4 * i)) & 0xf;
 out[i] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
 }
 return 16;
 }
-static constexpr uint32_t smith_text_f64_digits_max = 17;
-static constexpr int64_t smith_text_f64_positional_max = 16;
-static constexpr int64_t smith_text_f64_positional_min = -5;
+static constexpr __UINT32_TYPE__ smith_text_f64_digits_max = 17;
+static constexpr __INT64_TYPE__ smith_text_f64_positional_max = 16;
+static constexpr __INT64_TYPE__ smith_text_f64_positional_min = -5;
 static_assert(smith_text_f64_capacity >= 1 + smith_text_f64_digits_max + 1 + 5, "sign, digits, a point and e-324");
-static uint64_t smith_text_big_divide(smith_text_Big *numerator, const smith_text_Big *denominator) {
-int64_t shift = (int64_t)smith_text_big_bits(numerator) - (int64_t)smith_text_big_bits(denominator);
+static __UINT64_TYPE__ smith_text_big_divide(smith_text_Big *numerator, const smith_text_Big *denominator) {
+__INT64_TYPE__ shift = (__INT64_TYPE__)smith_text_big_bits(numerator) - (__INT64_TYPE__)smith_text_big_bits(denominator);
 if (shift < 0) return 0;
 assert(shift < 63);
 smith_text_Big step = *denominator;
-smith_text_big_shift_left(&step, (uint64_t)shift);
-uint64_t q = 0;
-for (uint32_t bit = (uint32_t)shift + 1; bit-- > 0;) {
+smith_text_big_shift_left(&step, (__UINT64_TYPE__)shift);
+__UINT64_TYPE__ q = 0;
+for (__UINT32_TYPE__ bit = (__UINT32_TYPE__)shift + 1; bit-- > 0;) {
 if (smith_text_big_at_least(numerator, &step)) {
 smith_text_big_subtract(numerator, &step);
-q |= (uint64_t)1 << bit;
+q |= (__UINT64_TYPE__)1 << bit;
 }
 smith_text_big_shift_right_one(&step);
 }
 return q;
 }
-static uint64_t smith_text_f64_scaled(uint64_t m, int64_t e, int64_t s, bool round) {
-smith_text_Big numerator = {.limb = {(uint32_t)m, (uint32_t)(m >> 32)}, .count = (m >> 32) != 0 ? 2U : 1U};
+static __UINT64_TYPE__ smith_text_f64_scaled(__UINT64_TYPE__ m, __INT64_TYPE__ e, __INT64_TYPE__ s, bool round) {
+smith_text_Big numerator = {.limb = {(__UINT32_TYPE__)m, (__UINT32_TYPE__)(m >> 32)}, .count = (m >> 32) != 0 ? 2U : 1U};
 smith_text_Big denominator = {.limb = {1}, .count = 1};
 if (e >= 0)
-smith_text_big_shift_left(&numerator, (uint64_t)e);
+smith_text_big_shift_left(&numerator, (__UINT64_TYPE__)e);
 else
-smith_text_big_shift_left(&denominator, (uint64_t)(0 - e));
+smith_text_big_shift_left(&denominator, (__UINT64_TYPE__)(0 - e));
 if (s >= 0)
-smith_text_big_mul_pow10(&denominator, (uint64_t)s);
+smith_text_big_mul_pow10(&denominator, (__UINT64_TYPE__)s);
 else
-smith_text_big_mul_pow10(&numerator, (uint64_t)(0 - s));
-uint64_t q = smith_text_big_divide(&numerator, &denominator);
+smith_text_big_mul_pow10(&numerator, (__UINT64_TYPE__)(0 - s));
+__UINT64_TYPE__ q = smith_text_big_divide(&numerator, &denominator);
 if (!round) return q;
 smith_text_big_shift_left(&numerator, 1);
 bool above = smith_text_big_at_least(&numerator, &denominator);
@@ -492,27 +495,27 @@ bool equal = above && smith_text_big_at_least(&denominator, &numerator);
 if (above && (!equal || (q & 1) != 0)) q += 1;
 return q;
 }
-static uint64_t smith_text_pow10_u64(uint32_t power) {
-uint64_t result = 1;
-for (uint32_t i = 0; i < power; i++) {
+static __UINT64_TYPE__ smith_text_pow10_u64(__UINT32_TYPE__ power) {
+__UINT64_TYPE__ result = 1;
+for (__UINT32_TYPE__ i = 0; i < power; i++) {
 result *= 10;
 }
 return result;
 }
-static uint64_t smith_text_f64_round_to(uint64_t m, int64_t e, int64_t first, uint32_t p, int64_t *s) {
-*s = first - (int64_t)p + 1;
-uint64_t q = smith_text_f64_scaled(m, e, *s, true);
+static __UINT64_TYPE__ smith_text_f64_round_to(__UINT64_TYPE__ m, __INT64_TYPE__ e, __INT64_TYPE__ first, __UINT32_TYPE__ p, __INT64_TYPE__ *s) {
+*s = first - (__INT64_TYPE__)p + 1;
+__UINT64_TYPE__ q = smith_text_f64_scaled(m, e, *s, true);
 if (q == smith_text_pow10_u64(p)) {
 q = smith_text_pow10_u64(p - 1);
 *s += 1;
 }
 return q;
 }
-static int64_t smith_text_f64_first_exponent(uint64_t m, int64_t e) {
-int64_t binary = e + (int64_t)(64 - (uint32_t)__builtin_clzll(m)) - 1;
-int64_t first = (binary * 78913) / 262144;
-for (int attempt = 0; attempt < 4; attempt++) {
-uint64_t q = smith_text_f64_scaled(m, e, first, false);
+static __INT64_TYPE__ smith_text_f64_first_exponent(__UINT64_TYPE__ m, __INT64_TYPE__ e) {
+__INT64_TYPE__ binary = e + (__INT64_TYPE__)(64 - (__UINT32_TYPE__)__builtin_clzll(m)) - 1;
+__INT64_TYPE__ first = (binary * 78913) / 262144;
+for (__INT32_TYPE__ attempt = 0; attempt < 4; attempt++) {
+__UINT64_TYPE__ q = smith_text_f64_scaled(m, e, first, false);
 if (q == 0)
 first -= 1;
 else if (q >= 10)
@@ -523,75 +526,75 @@ return first;
 assert(false);
 return first;
 }
-static bool smith_text_f64_reads_back(uint64_t q, int64_t s, uint64_t bits) {
+static bool smith_text_f64_reads_back(__UINT64_TYPE__ q, __INT64_TYPE__ s, __UINT64_TYPE__ bits) {
 char text[smith_text_number_capacity * 2];
-size_t length = smith_text_write_u64(text, q);
+__SIZE_TYPE__ length = smith_text_write_u64(text, q);
 text[length++] = 'e';
 length += smith_text_write_i64(text + length, s);
 double back = 0;
-return smith_text_parse_f64((SmithText){text, length}, &back) && __builtin_bit_cast(uint64_t, back) == bits;
+return smith_text_parse_f64((SmithText){text, length}, &back) && __builtin_bit_cast(__UINT64_TYPE__, back) == bits;
 }
-static size_t smith_text_f64_format(char *out, uint64_t q, uint32_t p, int64_t first) {
+static __SIZE_TYPE__ smith_text_f64_format(char *out, __UINT64_TYPE__ q, __UINT32_TYPE__ p, __INT64_TYPE__ first) {
 char digits[smith_text_number_capacity];
-size_t count = smith_text_write_u64(digits, q);
+__SIZE_TYPE__ count = smith_text_write_u64(digits, q);
 assert(count == p);
 (void)p;
-size_t used = 0;
+__SIZE_TYPE__ used = 0;
 if (first >= smith_text_f64_positional_min && first <= smith_text_f64_positional_max) {
 if (first < 0) {
 out[used++] = '0';
 out[used++] = '.';
-for (int64_t i = 0; i < -first - 1; i++) {
+for (__INT64_TYPE__ i = 0; i < -first - 1; i++) {
 out[used++] = '0';
 }
 }
-for (size_t i = 0; i < count; i++) {
-if (first >= 0 && (int64_t)i == first + 1) out[used++] = '.';
+for (__SIZE_TYPE__ i = 0; i < count; i++) {
+if (first >= 0 && (__INT64_TYPE__)i == first + 1) out[used++] = '.';
 out[used++] = digits[i];
 }
-for (int64_t i = (int64_t)count; i < first + 1; i++) {
+for (__INT64_TYPE__ i = (__INT64_TYPE__)count; i < first + 1; i++) {
 out[used++] = '0';
 }
 return used;
 }
 out[used++] = digits[0];
 if (count > 1) out[used++] = '.';
-for (size_t i = 1; i < count; i++) {
+for (__SIZE_TYPE__ i = 1; i < count; i++) {
 out[used++] = digits[i];
 }
 out[used++] = 'e';
 return used + smith_text_write_i64(out + used, first);
 }
-size_t smith_text_write_f64(char *out, double value);
-size_t smith_text_write_f64(char *out, double value) {
+__SIZE_TYPE__ smith_text_write_f64(char *out, double value);
+__SIZE_TYPE__ smith_text_write_f64(char *out, double value) {
 assert(out != nullptr);
-uint64_t bits = __builtin_bit_cast(uint64_t, value);
-uint64_t field = (bits >> 52) & 0x7ff;
+__UINT64_TYPE__ bits = __builtin_bit_cast(__UINT64_TYPE__, value);
+__UINT64_TYPE__ field = (bits >> 52) & 0x7ff;
 assert(field != 0x7ff);
-size_t used = 0;
+__SIZE_TYPE__ used = 0;
 if ((bits >> 63) != 0) out[used++] = '-';
-uint64_t fraction = bits & 0xfffffffffffffULL;
+__UINT64_TYPE__ fraction = bits & 0xfffffffffffffULL;
 if (field == 0 && fraction == 0) {
 out[used++] = '0';
 return used;
 }
-uint64_t m = field == 0 ? fraction : fraction | ((uint64_t)1 << 52);
-int64_t e = field == 0 ? -1074 : (int64_t)field - 1075;
-uint64_t positive = bits & ~((uint64_t)1 << 63);
-int64_t first = smith_text_f64_first_exponent(m, e);
-uint32_t low = 1;
-uint32_t high = smith_text_f64_digits_max;
+__UINT64_TYPE__ m = field == 0 ? fraction : fraction | ((__UINT64_TYPE__)1 << 52);
+__INT64_TYPE__ e = field == 0 ? -1074 : (__INT64_TYPE__)field - 1075;
+__UINT64_TYPE__ positive = bits & ~((__UINT64_TYPE__)1 << 63);
+__INT64_TYPE__ first = smith_text_f64_first_exponent(m, e);
+__UINT32_TYPE__ low = 1;
+__UINT32_TYPE__ high = smith_text_f64_digits_max;
 while (low < high) {
-uint32_t middle = (low + high) / 2;
-int64_t s = 0;
-uint64_t q = smith_text_f64_round_to(m, e, first, middle, &s);
+__UINT32_TYPE__ middle = (low + high) / 2;
+__INT64_TYPE__ s = 0;
+__UINT64_TYPE__ q = smith_text_f64_round_to(m, e, first, middle, &s);
 if (smith_text_f64_reads_back(q, s, positive))
 high = middle;
 else
 low = middle + 1;
 }
-int64_t s = 0;
-uint64_t q = smith_text_f64_round_to(m, e, first, low, &s);
-return used + smith_text_f64_format(out + used, q, low, s + (int64_t)low - 1);
+__INT64_TYPE__ s = 0;
+__UINT64_TYPE__ q = smith_text_f64_round_to(m, e, first, low, &s);
+return used + smith_text_f64_format(out + used, q, low, s + (__INT64_TYPE__)low - 1);
 }
 // NOLINTEND

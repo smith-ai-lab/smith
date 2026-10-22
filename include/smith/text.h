@@ -15,6 +15,18 @@ extern "C" {
 // pointer and a length, never a terminated string, so a file read into memory is read where it lies, and every loop is
 // bounded by a length.
 //
+// Names. The module's names are short (text::make, text::take_line, text::parse_u64). In C a function is
+// smith_text_<name> (smith_text_make) and the type is SmithText; the capacities are smith_text_number_capacity and
+// smith_text_f64_capacity.
+//
+//   text::Text text = text::make("move 3 4\nturn -90 # left\n");
+//   text::Text line, word;
+//   while (text::take_line(&text, &line)) {
+//       if (!text::take_word(&line, &word)) continue;      // a blank line
+//       if (text::is(word, "move")) { ... }
+//   }
+//
+// In C, the same:
 //   SmithText text = smith_text_make("move 3 4\nturn -90 # left\n");
 //   SmithText line, word;
 //   while (smith_text_take_line(&text, &line)) {
@@ -23,7 +35,7 @@ extern "C" {
 //   }
 //
 // A parse that fails returns false and writes nothing to its result. A write never fails: the caller gives room for
-// smith_text_number_capacity characters.
+// number_capacity characters.
 //
 // A run of characters: all of a file, one line of it, or one word of a line.
 typedef struct {
@@ -31,11 +43,11 @@ typedef struct {
     size_t length;
 } SmithText;
 
-// Writes a number into out, which has room for smith_text_number_capacity characters, and returns how many it wrote.
+// Writes a number into out, which has room for number_capacity characters, and returns how many it wrote.
 // There is no terminator.
 constexpr size_t smith_text_number_capacity = 20;
 
-// Room for smith_text_write_f64.
+// Room for write_f64.
 constexpr size_t smith_text_f64_capacity = 32;
 
 // The text of a terminated string.
@@ -61,12 +73,12 @@ constexpr size_t smith_text_f64_capacity = 32;
 [[nodiscard]] bool smith_text_parse_hex(SmithText word, uint64_t *value);
 
 // A decimal number: an optional sign, digits with an optional fraction (-90, 0.25, .5, 5.), and an optional exponent
-// (1e-5, 2.5E+3). The result is the float nearest to the number, ties to even, as strtof gives in the C locale, for
+// (1e-5, 2.5E+3). The result is the f32 nearest to the number, ties to even, as strtof gives in the C locale, for
 // any number of digits; "-0" is negative zero. It returns false for no digits, a stray character, or a number too
-// large for a float (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
+// large for an f32 (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
 [[nodiscard]] bool smith_text_parse_f32(SmithText word, float *value);
 
-// The same for a double: the double nearest the number, ties to even, as strtod gives in the C locale, for any number
+// The same for an f64: the f64 nearest the number, ties to even, as strtod gives in the C locale, for any number
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
 [[nodiscard]] bool smith_text_parse_f64(SmithText word, double *value);
 
@@ -77,9 +89,9 @@ size_t smith_text_write_i64(char *out, int64_t value);
 // 16 digits, so every hash lines up.
 size_t smith_text_write_hex(char *out, uint64_t value);
 
-// A double in the fewest digits, at most 17, that smith_text_parse_f64 reads back as the same bits, signs of zero
+// An f64 in the fewest digits, at most 17, that parse_f64 reads back as the same bits, signs of zero
 // included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
-// exponent (no plus), always valid JSON. Room for smith_text_f64_capacity characters; no terminator. The value must be
+// exponent (no plus), always valid JSON. Room for f64_capacity characters; no terminator. The value must be
 // finite (asserted): infinity and nan have no text.
 size_t smith_text_write_f64(char *out, double value);
 #ifdef __cplusplus
