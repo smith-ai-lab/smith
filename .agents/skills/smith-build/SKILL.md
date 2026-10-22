@@ -1,6 +1,6 @@
 ---
 name: smith-build
-description: "Running, writing and editing a project's build.c with smith build. Load when a project has a build.c at its root or builds by convention (a main.smith or main.c and no build file), when running smith build, on any message that starts with smith: build.c:, when something under .smith/ comes up, or when replacing a Makefile with build.c."
+description: "Running, writing and editing a project's build.c or build.smith with smith build, and smith build --dump-config. Load when a project has a build.c or build.smith at its root or builds by convention (a main.smith or main.c and no build file), when running smith build, on any message that starts with smith: build.c:, when something under .smith/ comes up, or when replacing a Makefile with build.c."
 ---
 
 # Build with smith build
@@ -19,7 +19,23 @@ A folder with no `build.c` and a `main.smith` or `main.c` at its root builds, ru
 - **Tests:** every `.smith` file and every `test_*.c` under `tests/`, built with the debug flags and linked with the program's other objects; `smith test` runs them (the smith-test skill).
 - **No packages.** `smith_package` needs a build file.
 - **A folder with neither** (say a Makefile and no main) is an error that says what smith looked for. `CC = smith-cc` in the Makefile builds it unchanged; a `build.c` replaces it (below).
-- **Making it explicit:** write a `build.c` with the two calls above (the fields are `.entry`, `.name`, `.flags`, `.link_flags`, `.libraries` for the program and `.folder` for the tests; `docs/build-c.md` shows each call's expansion into `smith_object`, `smith_program`, `smith_tests`), then replace a call with its expansion where you need control. `smith_app` makes the profiles, the aliases `release` and `fast` and the default, so a build.c that calls it declares no `smith_default` of its own; call `smith_compile_commands` after it if another tool wants a root `compile_commands.json` (the editor and the verbs read `.smith/compile_commands.json`).
+- **Making it explicit:** `smith build --dump-config > build.smith` (a `main.smith` project) or `> build.c` (a `main.c` one) prints the build file that does exactly what the conventions do, in the highest-level API, with the defaults as fields (`.entry`, `.name`, the tests' `.folder`); building with it gives the same commands as with no file. On a project that already has a build file it says so on stderr, prints nothing and exits 0. Or write a `build.c` with the two calls above (the fields are `.entry`, `.name`, `.flags`, `.link_flags`, `.libraries` for the program and `.folder` for the tests; `docs/build-c.md` shows each call's expansion into `smith_object`, `smith_program`, `smith_tests`), then replace a call with its expansion where you need control. `smith_app` makes the profiles, the aliases `release` and `fast` and the default, so a build.c that calls it declares no `smith_default` of its own; call `smith_compile_commands` after it if another tool wants a root `compile_commands.json` (the editor and the verbs read `.smith/compile_commands.json`).
+
+## build.smith: the same build file in `.smith`
+
+A root `build.smith` is the build file when there is no `build.c` (both is an error naming both; smith's own repository stays `build.c`). The full smith compiles it as a `.smith` file; the stage0 refuses it (`build.smith needs the full smith`). The verbs, `smith lint` included (it lints the file as written), work on it as on a build.c. It has no `module` line, so it defines a plain `void build(build::Build *b)` (no `export`):
+
+```c
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.smith"});
+    build::app_tests(b, &(build::AppTests){});
+    build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hi", nullptr)});
+}
+```
+
+`smith::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `include/smith/build.h`), so everything below applies; read `smith_x` as `build::x`.
 
 ## Run it
 

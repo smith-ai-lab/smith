@@ -462,7 +462,7 @@ void build(SmithBuild *b) {
   file.
 - **A folder that follows no convention** (no `build.c`, no `main.smith`, no `main.c`) is an error that says what
   `smith build` looked for and how to start a build file, and when a Makefile is beside it, that `CC = smith-cc` builds it
-  unchanged. It never guesses. A `build.smith` is refused for now.
+  unchanged. It never guesses. A root `build.smith` is a build file like `build.c` (below).
 
 **The profiles.** `debug` is the default target; `release` and `fast` are aliases (`smith build release`, `smith build
 fast`). The flags are those `smith new` wrote before there was a convention, moved into smith:
@@ -531,8 +531,8 @@ smith_tests(b, &(SmithTests){
 The debug objects of the program are shared with the tests (one compile of each source). The tests' libraries that
 `smith_tests` compiles itself (arena, random, trace, contract) are skipped when the program already links them.
 
-`smith build --dump-config` (issue #43, not yet written) prints exactly this program, with the defaults as fields, and a
-file that has it builds the same commands as no file.
+`smith build --dump-config` prints exactly this program, with the defaults as fields (below), and a file that has it
+builds the same commands as no file.
 
 ## Packages: `smith_package`
 
@@ -990,11 +990,90 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
   flags (`smith lsp --check` on a test file reports no errors).
 
+## `build.smith`, the module `smith::build`, and `--dump-config`
+
+**`build.smith`.** A project's root may hold `build.smith` instead of `build.c` (issue #43). It is the same build file
+in `.smith`: `smith build` compiles it as a `.smith` file (C2y, `smith cc build.smith`, through the same bootstrap
+manifest as a build.c and the embedded `.smith/conventions.c`) and links it with the same runtime, so the verbs (`run`,
+`test`, `lint`, `prove`, `check`, `docs`) work on it exactly as on a build.c. It has no `module` line: a file without
+one lowers nothing, so `void build(build::Build *b)` is the function the runtime calls, and `export` is not used (a
+file with no `module` line has no exports). `import smith::build;` gives the API:
+
+```c
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.smith"});
+    build::app_tests(b, &(build::AppTests){.folder = "tests"});
+    build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hello", nullptr)});
+}
+```
+
+- **Both `build.c` and `build.smith`** is an error that names both. smith's own repository stays a `build.c`, so a fresh
+  clone builds with a plain `cc`.
+- **The stage0 refuses `build.smith`** (`build.smith needs the full smith`): it has no clang inside, so it has no token
+  hook. A C project by convention, or with a build.c, still builds with it.
+- **`smith lint` lints it as written**, like a build.c: the build file's compile is in `.smith/build.info` and
+  `.smith/compile_commands.json` (`file` "build.smith", `arguments` `smith-cc -g -O0 -Wall -Wextra -I .smith/include -c
+  build.smith`).
+
+**`smith::build` is the same API with module names.** The header `<smith/build.h>` is generated from the module
+`lib/smith/build.smith` (committed, like `random.h` and `text.h`; `smith build headers` regenerates it). Every call there
+has no body: the build runtime (`runtime/build_runtime.c`, C) defines it under its C name (`[[smith::c_name("smith_task")]]`),
+so a build.smith and a build.c call the very same functions and nothing is implemented twice. The C names are unchanged;
+the module names drop the `smith_` and the `Smith`:
+
+| C | `import smith::build;` |
+|---|---|
+| `SmithBuild`, `SmithStep`, `SmithRun` | `build::Build`, `build::Step`, `build::Run` |
+| `SmithObject`, `SmithProgram`, `SmithModules`, `SmithTests`, `SmithPackage` | `build::Object`, `build::Program`, `build::Modules`, `build::Tests`, `build::Package` |
+| `SmithApp`, `SmithAppTests` | `build::App`, `build::AppTests` |
+| `smith_app`, `smith_app_tests` | `build::app`, `build::app_tests` |
+| `smith_object`, `smith_program`, `smith_modules`, `smith_tests` | `build::object`, `build::program`, `build::modules`, `build::tests` |
+| `smith_step`, `smith_task`, `smith_alias`, `smith_pool` | `build::step`, `build::task`, `build::alias`, `build::pool` |
+| `smith_default` | `build::default_targets` (`default` is a keyword) |
+| `smith_option`, `smith_option_value`, `smith_args`, `smith_env` | `build::option`, `build::option_value`, `build::args`, `build::env` |
+| `smith_glob`, `smith_capture`, `smith_capture_or`, `smith_write`, `smith_library`, `smith_package` | `build::glob`, `build::capture`, `build::capture_or`, `build::write`, `build::library`, `build::package` |
+| `smith_fmt`, `smith_cat`, `smith_map`, `smith_when`, `smith_join`, `smith_list`, `smith_replace_extension` | `build::fmt`, `build::cat`, `build::map`, `build::when`, `build::join`, `build::list`, `build::replace_extension` |
+| `smith_defer`, `smith_lines`, `smith_compile_command`, `smith_compile_commands` | `build::defer`, `build::lines`, `build::compile_command`, `build::compile_commands` |
+| `smith_run_lines`, `smith_run_status`, `smith_run_combined`, `smith_run_depend`, `smith_run_program` | `build::run_lines`, `build::run_status`, `build::run_combined`, `build::run_depend`, `build::run_program` |
+| `build` (what the file defines) | `build::build` (declared; a build.smith defines `build`) |
+
+Everything below this section is written with the C names; read `smith_x` as `build::x`. A `.run` function is a
+function of the build.smith, taking a `build::Run *`. Fields are the same (`.entry`, `.flags`, `.output`...), and a list
+is `build::list(b, "a", "b", nullptr)` or a compound literal `(const char *const[]){"a", nullptr}`.
+
+**`smith build --dump-config`** prints the build file that does exactly what the conventions do, in the highest-level
+API and the language of the entry point, with the defaults spelled out as fields, on stdout:
+
+```
+$ smith build --dump-config > build.smith     # a main.smith project
+// build.smith: what `smith build` does with no build file (docs/build-c.md, Conventions), written out by
+// `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){
+        .entry = "main.smith",
+        .name = "hello",
+    });
+    build::app_tests(b, &(build::AppTests){.folder = "tests"});
+}
+```
+
+A `main.c` project gets the same as a build.c through `<smith/build.h>` (`smith_app`, `.entry = "main.c"`). Building with
+the dumped file gives the same commands, for every target, as building with no file (`tests/build-smith.sh` compares
+`smith build -t commands` for `.smith` and C). A project that already has a build file is already explicit: the
+command says so on stderr, prints nothing to stdout and exits 0. A folder that follows no convention is the same error as
+`smith build`. (A folder with a Makefile and no main is the Makefile translator's, issue #44.) Everything else the
+command says goes to stderr, so the redirect makes the file.
+
 ## The API
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
-generated mesh list. Everything else is later. The text below is [include/smith/build.h](../include/smith/build.h)
-without `#pragma once`. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.
+generated mesh list. Everything else is later. The text below is the API in C names, as in [include/smith/build.h](../include/smith/build.h)
+(generated from [lib/smith/build.smith](../lib/smith/build.smith), where the types come in the order they depend on
+each other) without `#pragma once`. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.
 
 ```c
 // smith/build.h: the API of a project's build.c, which `smith build` compiles and runs to write build.ninja.

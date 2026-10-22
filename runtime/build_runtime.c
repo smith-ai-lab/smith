@@ -1213,10 +1213,20 @@ static size_t smith_command_row_count;
 static const char *const smith_build_c_words[] = {"smith-cc", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
                                                   "-I",       ".smith/include", "-c", "build.c", nullptr};
 
-// A project built by convention has no build.c: the build program is smith's own (.smith/conventions.c), which the
-// editor and the linter have no use for.
-static bool smith_has_build_c(void) {
-    return access("build.c", F_OK) == 0;
+// The same for a build.smith, which is compiled as a .smith file (C2y, the default of smith cc for one).
+static const char *const smith_build_smith_words[] = {"smith-cc",       "-g", "-O0",         "-Wall", "-Wextra", "-I",
+                                                      ".smith/include", "-c", "build.smith", nullptr};
+
+// The project's own build file, and the words of the command that compiles it. A project built by convention has
+// none: the build program is smith's own (.smith/conventions.c), which the editor and the linter have no use for.
+static const char *smith_build_file_name(void) {
+    if (access("build.c", F_OK) == 0) return "build.c";
+    if (access("build.smith", F_OK) == 0) return "build.smith";
+    return nullptr;
+}
+
+static const char *const *smith_build_file_words(const char *name) {
+    return strcmp(name, "build.c") == 0 ? smith_build_c_words : smith_build_smith_words;
 }
 
 // Clang modules (smith_modules): a module map per header folder, one module per header, and the flags that use them.
@@ -1858,7 +1868,8 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool firs
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr, smith_command_rows[i].arguments);
         fputs(",\n", out);
     }
-    if (smith_has_build_c()) smith_json_entry(out, b->root, "build.c", nullptr, smith_build_c_words);
+    const char *build_file = smith_build_file_name();
+    if (build_file != nullptr) smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
     fputs("\n]\n", out);
 }
 
@@ -1981,10 +1992,12 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
             fprintf(out, "\t%s", row->arguments[j]);
         fputc('\n', out);
     }
-    if (smith_has_build_c()) { // build.c itself, with the flags smith compiles it with
-        fputs("compile\tbuild.c", out);
-        for (size_t j = 1; smith_build_c_words[j] != nullptr; j++)
-            fprintf(out, "\t%s", smith_build_c_words[j]);
+    const char *build_file = smith_build_file_name();
+    if (build_file != nullptr) { // the build file itself, with the flags smith compiles it with
+        const char *const *words = smith_build_file_words(build_file);
+        fprintf(out, "compile\t%s", build_file);
+        for (size_t j = 1; words[j] != nullptr; j++)
+            fprintf(out, "\t%s", words[j]);
         fputc('\n', out);
     }
     const char *const *tests = smith_test_tasks(b);
