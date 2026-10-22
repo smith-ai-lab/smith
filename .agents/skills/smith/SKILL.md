@@ -10,7 +10,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith/SKILL.md` in ht
 smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd and lld linked into one binary, and a build system whose build file is C. Its top level is only verbs, so `smith foo.c` is an error that says to run `smith cc foo.c`.
 
 - `smith cc`, `smith c++`, and the links `smith-cc` and `smith-c++`: the compiler. Load `smith-cc` (a Makefile's `CC`, compile errors, `.metal`, `compile_commands.json`, `SMITH_VERBOSE`).
-- `smith build`, and a project's `build.c`: load `smith-build`.
+- `smith build`, and a project's `build.c`, and turning a Makefile into one (`smith build --dump-config > build.c`): load `smith-build`.
 - `smith run`, `smith test`: run the program `smith_default` names, run the tests `smith_tests` declares. Load `smith-run-test`; `smith-test` for writing tests.
 - `smith check`, `smith fmt`, `smith lint`, `smith lsp`: format (every file git sees), lint (the build's compiles), all checks (fmt, docs, lint, test, prove), the editor. Load `smith-check`. The verbs mean the same in every project and need no task in build.c; a project's own tasks run with `smith build <task>`.
 - `smith docs`: checks AGENTS.md, knowledge/ (an OKF bundle) and the skills of a project, and says the format. Load `smith-docs`.
