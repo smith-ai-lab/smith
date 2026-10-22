@@ -95,6 +95,7 @@ typedef struct {
     bool no_knobs;          // an undefined variable is empty, not a knob (make's own rules use CFLAGS and the like)
     bool generated_include; // a Makefile that this one makes is included: a variable it does not define may be there
     bool reading;           // the Makefile is being read (a $(eval) then adds lines to it)
+    bool in_eval;           // the line being read is the text of an $(eval)
     const char *evals[64];  // the text of $(eval) calls the reader has not read yet
     size_t eval_count;
 } SmithMake;

@@ -15,6 +15,7 @@ typedef struct {
     size_t length;
     size_t pos;
     uint32_t line;
+    bool eval; // the text of an $(eval), not a file
 } SmithMakeSource;
 
 typedef struct {
@@ -34,6 +35,7 @@ typedef struct {
     size_t recipe_count;
     const char *guard; // a C condition, or nullptr: the rule is under a test of the platform or an option
     bool pattern;
+    bool from_eval;      // made by an $(eval): the names of its variables were made by an expansion
     const char *stem;    // a static pattern rule's stem for its one target
     int64_t recipe_from; // the rule whose recipe lines these are, when a line made several rules; else -1
 } SmithMakeRule;
@@ -746,7 +748,8 @@ static SmithMakeRule *smith_make_rule_new(void) {
     SmithMakeReader *r = &smith_make_reader;
     if (r->rule_count >= smith_make_rules_max) smith_die(smith_exit_usage, "make: too many rules", nullptr);
     SmithMakeRule *rule = &r->rules[r->rule_count++];
-    *rule = (SmithMakeRule){.where = smith_make.here, .guard = smith_make_guard(), .recipe_from = -1};
+    *rule = (SmithMakeRule){
+        .where = smith_make.here, .guard = smith_make_guard(), .recipe_from = -1, .from_eval = smith_make.in_eval};
     rule->recipe_first = r->recipe_line_count;
     return rule;
 }
@@ -951,7 +954,8 @@ static void smith_make_flush_evals(void) {
         r->sources[r->source_count++] = (SmithMakeSource){.name = smith_make.here.file,
                                                           .text = (char *)text,
                                                           .length = strlen(text),
-                                                          .line = smith_make.here.line - 1};
+                                                          .line = smith_make.here.line - 1,
+                                                          .eval = true};
     }
     smith_make.eval_count = 0;
 }
@@ -1097,6 +1101,7 @@ static void smith_make_read(const char *path) {
             continue;
         }
         smith_make.here = line.where;
+        smith_make.in_eval = source->eval;
         if (line.recipe) {
             smith_make_recipe_line(line.text);
         } else {

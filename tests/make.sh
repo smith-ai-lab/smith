@@ -425,8 +425,11 @@ has "conditionals: a test of an option the Makefile never sets is an option" 'op
 
 # 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
 project
-printer 4
+printer 5
 cat >Makefile <<'MK'
+ifeq ($(OS),Windows_NT)
+EXE = .exe
+endif
 UNAME := $(shell uname -s)
 ARCH = $(shell uname -m)
 ifeq ($(UNAME),Darwin)
@@ -443,7 +446,7 @@ CPU = arm
 else
 CPU = not-arm
 endif
-CFLAGS = -DR1='"$(OS_NAME)"' -DR2='"$(CPU)"' -DR3='"$(if $(filter Darwin,$(shell uname -s)),mac,notmac)"' -DR4='"$(ARCH)"'
+CFLAGS = -DR1='"$(OS_NAME)"' -DR2='"$(CPU)"' -DR3='"$(if $(filter Darwin,$(shell uname -s)),mac,notmac)"' -DR4='"$(ARCH)"' -DR5='"x$(EXE)"'
 prog: main.c
 	cc $(CFLAGS) main.c $(LIBS) -o prog
 MK
@@ -451,6 +454,7 @@ translate
 same_output "platform" prog
 has "platform: Darwin is a test of b->os" 'strcmp(b->os, "Darwin") == 0'
 has "platform: and Linux" 'strcmp(b->os, "Linux") == 0'
+has "platform: OS == Windows_NT is a test of b->os too" 'strcmp(b->os, "Windows_NT") == 0'
 has "platform: the architecture is b->arch" 'b->arch'
 expect "platform: a test of the platform is not reported as unsupported" "" "$(cat dump.err)"
 

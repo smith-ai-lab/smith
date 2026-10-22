@@ -363,7 +363,7 @@ static void smith_make_node_expand(SmithMakeNode *node) {
             if (*text == '-') command->ignore = true;
             text++;
         }
-        smith_make.no_knobs = node->built_in;
+        smith_make.no_knobs = node->built_in || rule->from_eval;
         command->text = smith_make_expand_text(text, true);
         smith_make.no_knobs = false;
     }

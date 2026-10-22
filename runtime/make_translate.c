@@ -160,6 +160,29 @@ static void smith_make_emit_default(SmithMakeBuffer *out) {
 
 // ---- The whole file
 
+// Whether a target's name is the name, once a hole in it is taken as empty (`app$(EXT)` and `app`).
+static bool smith_make_named_with_holes(const char *name) {
+    const SmithMakeGraph *g = &smith_make_graph;
+    for (size_t i = 0; i < g->node_count; i++) {
+        const char *node = g->nodes[i].name;
+        if (!smith_make_has_hole(node, strlen(node))) continue;
+        SmithMakeBuffer plain;
+        smith_make_buffer_init(&plain, strlen(node) + 1);
+        for (const char *c = node; *c != '\0'; c++) {
+            if (*c == smith_make_hole_begin) {
+                while (*c != '\0' && *c != smith_make_hole_end)
+                    c++;
+                if (*c == '\0') break;
+            } else {
+                smith_make_put_char(&plain, *c);
+            }
+        }
+        plain.data[plain.length] = '\0';
+        if (strcmp(plain.data, name) == 0) return true;
+    }
+    return false;
+}
+
 // The nodes in the order of the Makefile: by file, then line.
 static size_t *smith_make_nodes_in_order(void) {
     const SmithMakeGraph *g = &smith_make_graph;
@@ -311,8 +334,10 @@ static int smith_make_translate(const char *path, FILE *out) {
     smith_make_buffer_init(&head, smith_make_body_size);
     smith_make_emit_options(&head);
     smith_make_emit_arrays(&head);
-    for (size_t i = 0; i < g->missing_count; i++)
-        smith_make_report_at(smith_make.here, "note: no rule makes %s, and no such file is here", g->missing[i]);
+    for (size_t i = 0; i < g->missing_count; i++) {
+        if (!smith_make_named_with_holes(g->missing[i]))
+            smith_make_report_at(smith_make.here, "note: no rule makes %s, and no such file is here", g->missing[i]);
+    }
     smith_make_emit_header(out, path);
     if (smith_make_output.words_used) fputs(smith_make_words_helper, out);
     fputs("void build(SmithBuild *b) {\n", out);

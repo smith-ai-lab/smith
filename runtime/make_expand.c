@@ -246,6 +246,7 @@ static const char *const smith_make_env_names[] = {"HOME", "PATH", "USER", "SHEL
                                                    "LANG", "TERM", "OS",   "LOGNAME", "HOSTNAME", "XDG_CACHE_HOME"};
 
 static bool smith_make_is_env_name(const char *name, size_t length) {
+    if (length == 2 && memcmp(name, "OS", 2) == 0) return false; // the platform: b->os
     for (size_t i = 0; i < sizeof smith_make_env_names / sizeof smith_make_env_names[0]; i++) {
         if (strlen(smith_make_env_names[i]) == length && memcmp(smith_make_env_names[i], name, length) == 0)
             return true;
@@ -278,6 +279,10 @@ static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
 // unless its name was made by an expansion ($(BINARY_$(1))), which is how a Makefile asks whether a setting exists.
 static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t length, bool computed) {
     if (length == 0 || smith_make.no_knobs) return;
+    if (length == 2 && memcmp(name, "OS", 2) == 0) { // Windows sets OS to Windows_NT; here it is the platform
+        smith_make_put_text(&m->buffer, smith_make_hole_text("b->os"));
+        return;
+    }
     if (computed && !smith_make_is_env_name(name, length)) return;
     if (smith_make.generated_include) { // reported once for each name
         static const char *reported[256];
