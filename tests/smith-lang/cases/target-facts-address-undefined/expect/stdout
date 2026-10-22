@@ -8,4 +8,5 @@ float_radix ok
 f32_mantissa_bits ok
 f64_mantissa_bits ok
 float_eval_method ok
+static_analyzer ok
 constexpr copies ok

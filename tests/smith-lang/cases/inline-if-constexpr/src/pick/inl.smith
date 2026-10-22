@@ -1,0 +1,21 @@
+module pick::inl;
+
+import target;
+import <stdio.h>;
+
+// An exported inline function with an `if constexpr` on the target: the header carries the preprocessor's own question
+// (the facts it needs defined once at the top, the branches between #if, #else and #endif), so a C includer's compiler
+// answers it, as the compiler of a .smith importer does.
+export inline i32 flavor(void) {
+    if constexpr (target::address_sanitizer) {
+        return 1;
+    } else if constexpr (target::assertions) {
+        return 2;
+    } else {
+        return 3;
+    }
+}
+
+export void show(void) {
+    c::printf("flavor %d\n", flavor());
+}

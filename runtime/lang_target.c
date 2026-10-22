@@ -438,7 +438,13 @@ static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host) 
 
 static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     size_t length = strlen(text);
-    if (lang->is_module && lang->export_active) smith_lang_header_line(lang, text, length, 0); // an inline body's
+    if (lang->is_module && lang->export_active) { // an exported inline function's body is in the header too
+        smith_lang_header_line(lang, text, length, 0);
+        if (lang->aligned && smith_lang_header_append(lang, "\n", 1)) { // the interface read in memory: the next token
+            lang->aligned_line += 1;                                     // is on a line after the directive
+            lang->aligned_column = 1;
+        }
+    }
     if (!lang->dump_enabled || lang->dump_used + length + 2 > smith_lang_dump_max) return;
     if (lang->dump_used > 0 && smith_lang_dump[lang->dump_used - 1] != '\n') smith_lang_dump[lang->dump_used++] = '\n';
     memcpy(smith_lang_dump + lang->dump_used, text, length);

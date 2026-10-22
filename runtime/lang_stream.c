@@ -554,8 +554,21 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
 // the lines the module has them (the first line is `#pragma once`), with no other line. The includes it needs and the
 // comment lines are the host's to use, apart from it.
 static void smith_lang_assemble_aligned(SmithLang *lang) {
+    // An exported inline function whose `if constexpr` asks the target needs the facts defined above its #if lines. They
+    // take the blank lines before the first declaration (the comments and the imports of the module's top), so the
+    // declarations stay on their lines.
+    char prelude[2048];
+    size_t prelude_used = smith_lang_target_header_prelude(lang, prelude, sizeof prelude, 0);
+    size_t lines = 0;
+    for (size_t i = 0; i < prelude_used; i++)
+        lines += prelude[i] == '\n';
+    size_t blank = 0;
+    while (blank < lang->header_used && smith_lang_header_body[blank] == '\n')
+        blank += 1;
+    size_t skip = blank >= lines ? lines : 0;
     lang->header_full_used = smith_lang_append(smith_lang_header_full, sizeof smith_lang_header_full, 0,
-                                               "#pragma once\n%.*s\n", (int)lang->header_used, smith_lang_header_body);
+                                               "#pragma once\n%.*s%.*s\n", (int)prelude_used, prelude,
+                                               (int)(lang->header_used - skip), smith_lang_header_body + skip);
 }
 
 static void smith_lang_write_file(const char *path, const char *bytes, size_t length) {
