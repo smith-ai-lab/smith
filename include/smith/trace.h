@@ -80,6 +80,10 @@ typedef enum : unsigned char {
 // else runs; in a test the hook fails the test with the heading, as for smith_failure.
 [[noreturn]] void smith_failure_detail(SmithFailureKind kind, const char *details);
 
+// smith_failure_detail with the line formatted like printf's (at most 255 characters): `smith_failure_format(kind,
+// "push of %zu bytes", size)`. A caller that wants no snprintf of its own, and no macro of the C library, uses this.
+[[noreturn, gnu::format(printf, 2, 3)]] void smith_failure_format(SmithFailureKind kind, const char *format, ...);
+
 // What smith_failure does instead of writing and aborting; smith_tests installs it in the test runner. It must not
 // return. frames and count are the caller's stack, as smith_trace_capture gives it.
 extern void (*smith_failure_hook)(SmithFailureKind kind, const uintptr_t *frames, size_t count);

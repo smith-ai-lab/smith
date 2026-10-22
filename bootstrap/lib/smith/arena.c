@@ -12,8 +12,6 @@
 #include "../../../include/smith/math.h"
 #include <sanitizer/asan_interface.h>
 #include "../../../include/smith/trace.h"
-#include <stdio.h>
-#include <string.h>
 
 static constexpr bool smith_arena_sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
 static constexpr __SIZE_TYPE__ smith_arena_poison_granule = 8;
@@ -48,10 +46,8 @@ __SIZE_TYPE__ room = arena->capacity - arena->used;
 return *padding <= room && size <= room - *padding;
 }
 [[noreturn]] static void smith_arena_stop(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align) {
-char details[160];
-snprintf(details, sizeof details, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size, align,
-arena->used, arena->capacity);
-smith_failure_detail(SmithFailure_Capacity, details);
+smith_failure_format(SmithFailure_Capacity, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size,
+align, arena->used, arena->capacity);
 }
 [[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity);
 [[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity) {
@@ -72,15 +68,13 @@ arena->used += gap < smith_arena_poison_gap ? gap : smith_arena_poison_gap;
 smith_arena_poison_ahead(arena);
 __asan_unpoison_memory_region(result, size);
 }
-memset(result, 0, size);
+__builtin_memset(result, 0, size);
 smith_assert(arena->used <= arena->capacity);
 return result;
 }
 [[noreturn]] static void smith_arena_stop_overflow(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ count) {
-char details[160];
-snprintf(details, sizeof details, "%zu items of %zu bytes overflow size_t (capacity %zu)", count, size,
-arena->capacity);
-smith_failure_detail(SmithFailure_Capacity, details);
+smith_failure_format(SmithFailure_Capacity, "%zu items of %zu bytes overflow size_t (capacity %zu)", count,
+size, arena->capacity);
 }
 [[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
 __SIZE_TYPE__ count, __SIZE_TYPE__ align);

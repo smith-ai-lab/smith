@@ -4,6 +4,7 @@
 #include "../include/smith/trace.h"
 
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -304,6 +305,15 @@ void smith_failure_detail(SmithFailureKind kind, const char *details) {
     fflush(nullptr);
     smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, details, frames, count, false, true);
     abort();
+}
+
+void smith_failure_format(SmithFailureKind kind, const char *format, ...) {
+    char details[256];
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(details, sizeof details, format, arguments);
+    va_end(arguments);
+    smith_failure_detail(kind, details);
 }
 
 void smith_failure(SmithFailureKind kind) {

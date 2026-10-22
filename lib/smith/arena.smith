@@ -10,8 +10,6 @@ import target;
 import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_REGION is one of them
 import <smith/trace.h>;               // smith_failure: the stop below is the report a failed contract writes
 import <stdint.h>;
-import <stdio.h>;
-import <string.h>;
 
 // <smith/arena.h>: a fixed block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its
 // own; a reset frees everything, and a scope frees what was pushed since it began.
@@ -112,10 +110,8 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // A push that cannot be served stops here in every build, so a build with NDEBUG never writes past the memory.
 [[noreturn]] void stop(const Arena *arena, usize size, usize align) {
-    char details[160];
-    c::snprintf(details, sizeof details, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size, align,
-                arena->used, arena->capacity);
-    c::smith_failure_detail(c::SmithFailure_Capacity, details);
+    c::smith_failure_format(c::SmithFailure_Capacity, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size,
+                            align, arena->used, arena->capacity);
 }
 
 // An arena over memory, which must be aligned to align_max and hold capacity bytes.
@@ -141,7 +137,7 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
         poison_ahead(arena);                            // poisons the padding, the new memory and the gap...
         c::__asan_unpoison_memory_region(result, size); // ...and the push alone is made addressable
     }
-    c::memset(result, 0, size);
+    __builtin_memset(result, 0, size); // memset is a macro in a fortified SDK; the builtin is a function
 
     contract::assert(arena->used <= arena->capacity);
     return result;
@@ -149,10 +145,8 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // An overflowing count * size is the same stop.
 [[noreturn]] void stop_overflow(const Arena *arena, usize size, usize count) {
-    char details[160];
-    c::snprintf(details, sizeof details, "%zu items of %zu bytes overflow size_t (capacity %zu)", count, size,
-                arena->capacity);
-    c::smith_failure_detail(c::SmithFailure_Capacity, details);
+    c::smith_failure_format(c::SmithFailure_Capacity, "%zu items of %zu bytes overflow size_t (capacity %zu)", count,
+                            size, arena->capacity);
 }
 
 // count items of size bytes.

@@ -16,6 +16,11 @@
 # SmithFiles *, SmithConsole * and so on instead (the smith-io skill). Delete smith-effects from Checks to opt out, or set
 # smith-effects.CFiles: false below to check .smith files only.
 #
+# smith-preprocessor: a .smith file has no preprocessor. Every directive (#include, #define, #if, #pragma, ...) and every
+# c:: name that is a C macro (c::assert, c::SIZE_MAX) is reported with what to write instead (import, constexpr,
+# if constexpr with target::, contract::assert, math::max(usize)). A .c file is left alone; put // NOLINT(smith-preprocessor)
+# on a line that must keep one. Delete smith-preprocessor from Checks to opt out.
+#
 # Tiger Style: a function fits on a screen, and nothing recurses, so the code's paths can be checked. Delete
 # misc-no-recursion and readability-function-size (and its LineThreshold below) to opt out.
 Checks: >
@@ -29,7 +34,8 @@ Checks: >
   misc-no-recursion,
   readability-function-size,
   readability-identifier-naming,
-  smith-effects
+  smith-effects,
+  smith-preprocessor
 WarningsAsErrors: '*'
 # Diagnostics come from the project's own files, never from system headers.
 HeaderFilterRegex: '.*'
