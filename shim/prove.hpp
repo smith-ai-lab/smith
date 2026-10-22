@@ -125,6 +125,7 @@ struct Program {
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
     std::set<const llvm::Function *> recursive;
+    bool verbose = false;                    // program_load prints each phase's time and the module's size
     std::set<const llvm::Function *> called; // functions some function of the program calls or takes the address of
 };
 

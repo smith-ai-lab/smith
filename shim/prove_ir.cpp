@@ -14,6 +14,9 @@
 //      which shim/prove_alive.cpp turns into proof points.
 #include "prove.hpp"
 
+#include <chrono>
+#include <cstdio>
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SCCIterator.h"
@@ -187,6 +190,13 @@ bool has_any_own_contract(const Function &function) {
 // A function that carries smith_trusted(): assumed through its contract, not proved, its body not read.
 bool is_trusted(const Function &function) {
     return !function.isDeclaration() && has_own_contract(function, Contract::Trusted);
+}
+
+// What program_units proves, and what program_load asks before it flattens anything: a defined function, not a
+// snapshot and not trusted, with a contract of its own. One definition, so the gate and the units cannot disagree.
+bool is_unit(const Function &function) {
+    return !function.isDeclaration() && !function.hasFnAttribute("smith.snapshot") && !is_trusted(function) &&
+           has_any_own_contract(function);
 }
 
 // A function with an smith_ensures, or a trusted one, is used through its contract; any other is part of its caller.
@@ -419,6 +429,19 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
     }
 }
 
+using Clock = std::chrono::steady_clock;
+
+double seconds_since(Clock::time_point begin) {
+    return std::chrono::duration<double>(Clock::now() - begin).count();
+}
+
+unsigned instruction_count(const Module &module) {
+    unsigned count = 0;
+    for (const Function &function : module)
+        count += function.getInstructionCount();
+    return count;
+}
+
 const char *const snapshot_suffix = ".smith.contract";
 
 // A modular function is used through its contract, and a contract about memory is about the memory after the call.
@@ -459,6 +482,7 @@ bool is_snapshot(const Function &function) {
 } // namespace
 
 bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error) {
+    Clock::time_point begin = Clock::now();
     program.context = std::make_unique<LLVMContext>();
     unsigned counter = 0;
     for (const std::string &path : bitcode) {
@@ -477,11 +501,29 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         }
     }
     Module &module = *program.module;
-    bool contracts = false;
-    for (Function &function :
-         module) // with no contract there is nothing to prove, nor to prepare (the inlining and the
-        contracts = contracts || contract_name(function.getName()); // verifier would still read every function)
-    if (!contracts) return true;
+    double read_seconds = seconds_since(begin);
+    // Flattening every function costs far more than reading the module (a program of 300k instructions grew to 100M),
+    // so it is done only when some function has a contract of its own, which is what program_units proves. Asserts in
+    // a proved function, or in a callee inlined into one, are no reason: they are proved with that function.
+    unsigned own = 0, trusted = 0, asserts = 0;
+    for (const Function &function : module) {
+        if (function.isDeclaration()) continue;
+        if (is_unit(function)) {
+            own++;
+        } else if (is_trusted(function)) {
+            trusted++;
+        } else if (has_own_contract(function, Contract::Assert)) {
+            asserts++;
+        }
+    }
+    unsigned before = instruction_count(module);
+    if (program.verbose) {
+        std::printf("phase read and link: %.2f s, %u instructions\n", read_seconds, before);
+        std::printf("phase gate: %u functions with a contract of their own, %u trusted, %u with only smith_assert%s\n",
+                    own, trusted, asserts, own == 0 ? "; skipped flattening, nothing to prove" : "");
+    }
+    if (own == 0) return true;
+    Clock::time_point flatten_begin = Clock::now();
     for (Function &function : module) {
         for (const Use &use : function.uses()) {
             auto *call = dyn_cast<CallBase>(use.getUser());
@@ -541,18 +583,22 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (!may_free) function.addFnAttr(Attribute::NoFree);
     }
     if (!analyses.run_module(module, "inferattrs,cgscc(function-attrs)", error)) return false;
+    if (program.verbose)
+        std::printf("phase flatten: %.2f s, %u instructions before, %u after\n", seconds_since(flatten_begin), before,
+                    instruction_count(module));
+    Clock::time_point verify_begin = Clock::now();
     if (verifyModule(module, &errs())) {
         error = "the linked module does not verify";
         return false;
     }
+    if (program.verbose) std::printf("phase verify: %.2f s\n", seconds_since(verify_begin));
     return true;
 }
 
 std::vector<std::string> program_units(const Program &program) {
     std::vector<std::string> names;
     for (const Function &function : *program.module) {
-        if (function.isDeclaration() || is_snapshot(function) || is_trusted(function)) continue;
-        if (has_any_own_contract(function)) names.push_back(function.getName().str());
+        if (is_unit(function)) names.push_back(function.getName().str());
     }
     return names;
 }

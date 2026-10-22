@@ -403,6 +403,30 @@ prove "$cases/bad_caller.c" "$cases/clamp.c"
 expect_contains "cached: a function that fails is never cached" "$out" "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)"
 export XDG_CACHE_HOME=$work/xdg-cache
 
+# 16. A program with no contract of its own (only smith_assert) has nothing to prove, and is not flattened for it; a
+# program with a contract is flattened and proved as before, its asserts included.
+prove -v "$cases/asserts_only.c"
+expect "gate: asserts alone are not a unit" 0 "$rc"
+expect_contains "gate: nothing to prove" "$out" "smith: prove: nothing to prove: no function with smith_requires"
+expect_contains "gate: -v counts the functions with only smith_assert" "$out" "phase gate: 0 functions with a contract of their own, 0 trusted, 1 with only smith_assert; skipped flattening"
+case $out in *"phase flatten"*) expect "gate: no flattening" "no" "$out" ;; *) expect "gate: no flattening" "no" "no" ;; esac
+prove "$cases/asserts_only.c"
+expect_contains "gate: the default output is the same without -v" "$out" "smith: prove: nothing to prove"
+case $out in *phase*) expect "gate: no phase lines without -v" "no" "$out" ;; *) expect "gate: no phase lines without -v" "no" "no" ;; esac
+prove -v "$cases/assertion.c"
+expect_contains "gate: a contract is flattened" "$out" "phase flatten: "
+expect_contains "gate: ... and the module's size before and after" "$out" " instructions before, "
+expect_contains "gate: ... counting its functions" "$out" "phase gate: 2 functions with a contract of their own"
+expect_contains "gate: ... a failing assert is still refuted" "$out" "assertion.c:16: assert(x < 50) may fail"
+
+# 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
+# rebuild of smith with the same prover keeps the proofs.
+if grep -q '__DATE__\|__TIME__' "$here/shim/prove.cpp"; then
+    expect "cache key: no build time in it" "no" "yes"
+else
+    expect "cache key: no build time in it" "no" "no"
+fi
+
 echo
 echo "$total prove checks, $failures failed"
 [ "$failures" -eq 0 ]
