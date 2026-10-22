@@ -139,7 +139,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
   the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
   40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
-  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; `SMITH_CHECK_ABORTS` stays a macro.
+  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; a test that must abort calls
+  `smith_test_expect_abort()`.
 - **`.smith` files are C with modules, lowered to C as clang reads them** ([docs/smith-lang.md](docs/smith-lang.md), issue
   #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 100
   lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
