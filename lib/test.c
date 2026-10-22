@@ -1057,6 +1057,7 @@ static bool smith_test_service(size_t slot, SmithTestRun *run, short output_even
 // Waits for the test in the slot to finish; nothing else runs meanwhile.
 static void smith_test_wait(size_t slot, SmithTestRun *run) {
     SmithTestWorker *worker = &smith_test_workers[slot];
+    // NOLINTNEXTLINE(smith-bounded-loop): lib/test.c is replaced by the module smith::test, whose loops are bounded
     for (;;) { // the test ends, or dies, or its alarm kills it
         struct pollfd polls[2] = {{.fd = worker->output_eof ? -1 : worker->output, .events = POLLIN},
                                   {.fd = worker->control, .events = POLLIN}};
@@ -1550,6 +1551,7 @@ static void smith_test_run_all(SmithTestPlan *plan) {
         plan->running[job] = smith_test_idle;
     size_t next = 0;
     size_t printed = 0;
+    // NOLINTNEXTLINE(smith-bounded-loop): lib/test.c is replaced by the module smith::test, whose loops are bounded
     for (;;) { // each pass starts a test, finishes one or reads output, and there are finitely many tests
         while (next < plan->count && smith_test_launch(plan, &next)) {
         }
