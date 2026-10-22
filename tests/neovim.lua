@@ -358,10 +358,10 @@ function tests.dap_test_name_in_module()
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
     "module test_primes;",
-    "import <smith/test.h>;",
+    "import smith::test;",
     "",
     "export void test_one(void) {",
-    "    c::smith_check_equal_i32(1, 1);",
+    "    test::check_equal_i32(1, 1);",
     "}",
     "",
     "void helper(void) {",
@@ -521,10 +521,10 @@ end
 
 local smith_test_source = table.concat({
   "module geometry::box_test;",
-  "import <smith/test.h>;",
+  "import smith::test;",
   "",
   "export void test_area(void) {",
-  "    c::smith_check_equal_i32(1, 1);",
+  "    test::check_equal_i32(1, 1);",
   "}",
   "",
   "void helper(void) {",
@@ -650,7 +650,7 @@ local direct_output = [[
 PASS test_primes::the_first_five_primes_add_up_to_28
 FAIL test_primes::no_primes_add_up_to_nothing
   tests/test_primes.smith:12
-      c::smith_check_equal_i32(primes::sum(0), 1);
+      test::check_equal(primes::sum(0), 1);
     primes::sum(0) = 0, 1   (i32)
 
 slowest:
@@ -668,11 +668,11 @@ slowest:
       0.00 s  test_primes::the_first_five_primes_add_up_to_28
 
 1 passed, 1 failed in 0.01 s
-       12 |     c::smith_check_equal_i32(primes::sum(0), 1);
+       12 |     test::check_equal(primes::sum(0), 1);
             primes::sum(0) = 0, 1   (i32)
   called from
     tests/test_primes.smith:12     test_primes::test_no_primes_add_up_to_nothing
-    .smith/lib/test.c:943          smith_test_execute
+    .smith/lib/smith/test.smith:1065   smith_test_execute
 smith: test: failed (status 1)
 ]]
 piped_output = piped_output:gsub("<ESC>", "\27")
