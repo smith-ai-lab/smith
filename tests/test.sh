@@ -1562,7 +1562,7 @@ flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 
 for standard in gnu2y gnu23; do
     for library in test random arena trace; do
         source=$repo/lib/$library.c
-        [ "$library" = random ] && source=$repo/lib/smith/random.smith # a .smith module
+        case $library in random | arena) source=$repo/lib/smith/$library.smith ;; esac # .smith modules
         # shellcheck disable=SC2086
         capture "$smith" cc -std=$standard $flags -I "$repo/include" -c "$source" -o "$work/$library.o"
         expect "flags: ${source#"$repo"/} compiles clean under $standard with the conventions' warnings" 0 "$rc"

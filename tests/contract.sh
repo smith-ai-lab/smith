@@ -56,12 +56,6 @@ cat >"$work/clamp.c" <<'C'
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef void (*OpsBegin)(int *);
-static void ops_begin_contract(int *position) {
-    smith_requires(position != nullptr);
-}
-SMITH_CONTRACT_FOR(OpsBegin, ops_begin_contract);
-
 int32_t clamp(int32_t x, int32_t low, int32_t high) {
     smith_requires(low <= high);
     const int32_t old = x; // kept only for the contract below
@@ -178,11 +172,9 @@ for level in -O0 -O2; do
     expect_contains "IR $level: smith_ensures is a call" "$ir" "call void @smith_contract_ensures(i1"
     expect_contains "IR $level: smith_invariant is a call" "$ir" "call void @smith_contract_invariant(i1"
 done
-expect_contains "IR: SMITH_CONTRACT_FOR is a global named for the type" "$ir" "@smith_contract_for_OpsBegin = "
 $cc $flags -DNDEBUG -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
 calls=$(grep -c 'call void @smith_contract_' "$work/clamp.ll")
 expect "IR NDEBUG: no contract call" 0 "$calls"
-expect_contains "IR NDEBUG: SMITH_CONTRACT_FOR is still there" "$(cat "$work/clamp.ll")" "@smith_contract_for_OpsBegin = "
 
 # 5. The library alone compiles as C23 and C2y.
 for std in gnu23 gnu2y; do

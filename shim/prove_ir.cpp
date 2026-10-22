@@ -1112,8 +1112,7 @@ bool resolve_calls(UnitContext &context) {
             }
             if (callee == nullptr) {
                 context.fail(call, "a call through a function pointer: the target is not known",
-                             "call the function directly; a contract on the pointer's type (SMITH_CONTRACT_FOR) is not "
-                             "read yet");
+                             "call the function directly");
                 return false;
             }
             StringRef name = callee->getName();

@@ -526,15 +526,15 @@ assert(isfinite(weights[i]) && weights[i] >= 0.0);
 sum += weights[i];
 }
 assert(isfinite(sum) && sum > 0.0);
-double *probability = SMITH_ARENA_PUSH_ARRAY(arena, double, count);
-size_t *alias = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
+double *probability = smith_arena_push_array(arena, sizeof(double), count, alignof(double));
+size_t *alias = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
 for (size_t i = 0; i < count; i++) {
 probability[i] = weights[i] * (double)count / sum;
 alias[i] = i;
 }
 SmithArenaScope scope = smith_arena_scope_begin(arena);
-size_t *small = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
-size_t *large = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
+size_t *small = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
+size_t *large = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
 smith_random_alias_build(probability, alias, small, large, count);
 smith_arena_scope_end(scope);
 return (SmithCategorical){.probability = probability, .alias = alias, .count = count};

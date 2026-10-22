@@ -408,7 +408,8 @@ static SmithFileList smith_fake_list(SmithFake *fake, SmithArena *arena, const c
         return list;
     }
     size_t length = smith_fake_folder_length(folder);
-    SmithFileEntry *entries = SMITH_ARENA_PUSH_ARRAY(arena, SmithFileEntry, smith_io_fake_files_max + 1);
+    SmithFileEntry *entries =
+        smith_arena_push_array(arena, sizeof(SmithFileEntry), smith_io_fake_files_max + 1, alignof(SmithFileEntry));
     for (size_t i = 0; i < fake->file_count; i++) {
         const SmithFakeFile *file = &fake->files[i];
         if (length > 0 && !(strncmp(file->path, folder, length) == 0 && file->path[length] == '/')) continue;
@@ -597,7 +598,7 @@ static SmithFileInfo smith_real_info(const char *path) {
 static SmithFileEntry *smith_real_entries_grow(SmithArena *arena, SmithFileEntry *entries, size_t count,
                                                size_t *capacity) {
     size_t wanted = *capacity == 0 ? 64 : *capacity * 2;
-    SmithFileEntry *bigger = SMITH_ARENA_PUSH_ARRAY(arena, SmithFileEntry, wanted);
+    SmithFileEntry *bigger = smith_arena_push_array(arena, sizeof(SmithFileEntry), wanted, alignof(SmithFileEntry));
     if (count > 0) memcpy(bigger, entries, count * sizeof *entries);
     *capacity = wanted;
     return bigger;
@@ -2008,7 +2009,8 @@ SmithError smith_net_close(SmithNet *net, SmithConnection *connection) {
 SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server) {
     assert(io != nullptr && server.host != nullptr && (server.response != nullptr || server.response_size == 0));
     SmithLoop *loop = io->loop;
-    if (loop->servers == nullptr) loop->servers = SMITH_ARENA_PUSH(&io->arena, SmithFakeNet);
+    if (loop->servers == nullptr)
+        loop->servers = smith_arena_push(&io->arena, sizeof(SmithFakeNet), alignof(SmithFakeNet));
     SmithFakeNet *net = loop->servers;
     if (net->count == smith_io_fake_servers_max) return smith_error_make(ENOSPC, "script", server.host);
     SmithFakeServer *entry = &net->servers[net->count++];
@@ -2184,10 +2186,10 @@ const char *smith_args_env(const SmithArgs *args, const char *name) {
 // ---------------------------------------------------------------- making io
 
 static SmithLoop *smith_loop_make(SmithArena *arena, bool fake) {
-    SmithLoop *loop = SMITH_ARENA_PUSH(arena, SmithLoop);
+    SmithLoop *loop = smith_arena_push(arena, sizeof(SmithLoop), alignof(SmithLoop));
     loop->queue = -1;
     if (fake) {
-        loop->fake = SMITH_ARENA_PUSH(arena, SmithFake);
+        loop->fake = smith_arena_push(arena, sizeof(SmithFake), alignof(SmithFake));
         loop->fake->output = smith_arena_push(arena, smith_io_fake_capture, 1);
         loop->fake->errors = smith_arena_push(arena, smith_io_fake_capture, 1);
         size_t storage = (arena->capacity - arena->used) / 4 / smith_arena_align_max * smith_arena_align_max;
@@ -2268,7 +2270,8 @@ SmithIo smith_io_make_test(SmithIoTest test) {
         memcpy(copy, test.input, fake->input_size);
         fake->input = copy;
     }
-    const char **values = SMITH_ARENA_PUSH_ARRAY(&io.arena, const char *, test.argc + 1);
+    const char **values =
+        (const char **)smith_arena_push_array(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
     for (size_t i = 0; i < test.argc; i++) {
         assert(test.argv != nullptr);
         values[i] = test.argv[i];
@@ -2276,7 +2279,8 @@ SmithIo smith_io_make_test(SmithIoTest test) {
     size_t entries = 0;
     for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
     }
-    const char **variables = SMITH_ARENA_PUSH_ARRAY(&io.arena, const char *, entries + 1);
+    const char **variables =
+        (const char **)smith_arena_push_array(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
     for (size_t i = 0; i < entries; i++)
         variables[i] = test.environment[i];
     fake->cores = test.cores > 0 ? test.cores : 1;
