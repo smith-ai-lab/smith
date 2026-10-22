@@ -58,31 +58,39 @@ smith_check(condition)                      // a bool
 smith_check_equal_u64(a, b)                 // bool, char, i8 i16 i32 i64, u8 u16 u32 u64, f32, f64, ptr: the type is in the name
 smith_check_near_f32(a, b, tolerance)       // |a - b| <= tolerance; also _f64; a NaN fails
 smith_check_same_bits_f64(a, b)             // bitwise identical; also _f32
+smith_test_expect_abort()                   // from this call on the test must abort (below)
 ```
 
-`SMITH_CHECK_ABORTS(statement)` stays a macro (C has no closure to hand the statement to a function). The `SMITH_CHECK*`
-macros below still work and are deprecated: new tests call the functions above.
+The `SMITH_CHECK*` macros below still work and are deprecated: new tests call the functions above.
 
 ```c
 SMITH_CHECK(condition)              // a bool, or anything that converts to one
 SMITH_CHECK(a, op, b)               // op: == != < <= > >=; both values print with their types
 SMITH_CHECK_NEAR(a, b, tolerance)   // |a - b| <= tolerance, float or double; a NaN fails
 SMITH_CHECK_SAME_BITS(a, b)         // float or double, bitwise identical: -0 isn't 0, a NaN is itself; prints both in hex
-SMITH_CHECK_ABORTS(expression)      // the expression stops the program on purpose: SIGABRT or SIGTRAP, no sanitizer report
 ```
 
 - A comparison evaluates each argument once and converts `b` to `a`'s type, so a lossy comparison (`SMITH_CHECK(count, ==, 3.5)`) is a `-Wconversion` error. Put the value under test first.
 - Pointers compare, and print, as addresses. An array decays; `const` drops.
 - A failed check ends the test. A comma outside parentheses inside an argument splits it; parenthesize.
-- `SMITH_CHECK_ABORTS` is strict: it passes only when the expression raises SIGABRT or SIGTRAP (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop) and its output holds no sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer", "runtime error:"). It fails, showing the expression's output, if it returns, exits, crashes with another signal (SIGSEGV) or is stopped by a sanitizer report, so a memory bug before the assertion cannot pass. The expression runs in the worker's own process (in a child with `--isolate`), so its effects stay: make a variable it changes that you read afterwards `volatile`. A hang is the test's timeout.
+- `smith_test_expect_abort()` is a plain function that says "from this call on, the test must abort". Call it, then run the code that aborts, as the test's last statements (`(void)expr;` where an unused result would warn):
+
+  ```c
+  void test_halve_refuses_odd(void) {
+      smith_test_expect_abort();
+      (void)halve(5);
+  }
+  ```
+
+  It is strict: the test passes only if it then ends with SIGABRT or SIGTRAP (an `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop, a failed contract) and its output holds no sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer", "runtime error:"). It fails, at the call's file and line and showing the test's output, if the test returns ("expected an abort; the test returned"), exits, crashes with another signal (SIGSEGV), fails a check, or is stopped by a sanitizer report, so a memory bug before the assertion cannot pass. An abort before the call is an ordinary failure. Nothing runs after the abort, so one test holds one expected abort (a second call is harmless); test two aborts in two tests. A hang is the test's timeout.
 
 ## Run them
 
-`smith test`. Its arguments are the runner's own options, so `smith test --test <substring>` runs one test (or every name that contains it), `--seed <n>` a property test on that one seed, `--seeds <n>` sets the keys per property test (100), and there are `--jobs <n>`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shuffle <seed>`, `--isolate`, `--in-process` (no fork, for a debugger), `--stats` (prints how many forks the run made), `--full` (the heavy checks at full size), `--list` and `--verbose`. `-D` options are build.c's own (`smith test -DFAST`). The runner is `build/tests`, so under a debugger it is `smith dbg build/tests -- --test name --in-process`. `--in-process` runs the tests one after another in the runner's own process, because lldb on macOS does not follow forks (`--jobs 1` and `--isolate` still fork, so a breakpoint in a test kills its child with SIGTRAP). It gives up isolation: a crash, an abort outside a `SMITH_CHECK_ABORTS` or a hang ends the whole run, state one test leaves reaches the next, there is no timeout unless `--timeout` is given, and no shrinking (a failing property test prints its seed; replay it with `--seed`).
+`smith test`. Its arguments are the runner's own options, so `smith test --test <substring>` runs one test (or every name that contains it), `--seed <n>` a property test on that one seed, `--seeds <n>` sets the keys per property test (100), and there are `--jobs <n>`, `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shuffle <seed>`, `--isolate`, `--in-process` (no fork, for a debugger), `--stats` (prints how many forks the run made), `--full` (the heavy checks at full size), `--list` and `--verbose`. `-D` options are build.c's own (`smith test -DFAST`). The runner is `build/tests`, so under a debugger it is `smith dbg build/tests -- --test name --in-process`. `--in-process` runs the tests one after another in the runner's own process, because lldb on macOS does not follow forks (`--jobs 1` and `--isolate` still fork, so a breakpoint in a test kills its child with SIGTRAP). It gives up isolation: a crash, an abort the test did not expect or a hang ends the whole run, state one test leaves reaches the next, there is no timeout unless `--timeout` is given, and no shrinking (a failing property test prints its seed; replay it with `--seed`).
 
 ### Workers
 
-The runner forks `--jobs` workers once and each runs the tests it is sent, one after another, in its own process. Each test starts with its arenas given back and an empty note; everything else it leaves behind (globals, open files, the heap) stays for the next test on that worker, and which tests share a worker depends on timing unless `--jobs 1`. So a test must not depend on another. `--shuffle <seed>` runs the tests in a shuffled order to find one that does; with `--jobs 1` the same seed replays it. A worker is reused only after a clean pass with no `SMITH_CHECK_ABORTS`. A failed test ends its worker (a failed check unwinds out of arbitrary code and can leave state half-done), a test that ran a death check ends it too, passed or failed (a death check stands for the program ending, so shared state it left, such as a committed GPU command buffer, must not reach the next test), and so do a crash, a timeout, an exit and a sanitizer's report; the runner forks the next. Shrinking reuses one worker across its failing attempts, so the runner reruns the shrunk case once in a fresh worker; if it does not fail the same way you get the unshrunk failure and a line saying state leaked between attempts. A test that leaves global state dirty therefore only matters to the passing tests that follow it. `--isolate` runs each test in a process of its own, as before the workers. A sanitized `fork` costs about 2 ms (smith's compiler-rt carries the fast-mmap patch; upstream's cost about 40 ms).
+The runner forks `--jobs` workers once and each runs the tests it is sent, one after another, in its own process. Each test starts with its arenas given back and an empty note; everything else it leaves behind (globals, open files, the heap) stays for the next test on that worker, and which tests share a worker depends on timing unless `--jobs 1`. So a test must not depend on another. `--shuffle <seed>` runs the tests in a shuffled order to find one that does; with `--jobs 1` the same seed replays it. A worker is reused only after a clean pass that expected no abort. A failed test ends its worker (a failed check unwinds out of arbitrary code and can leave state half-done), a test that called `smith_test_expect_abort` ends it too, passed or failed (an abort stands for the program ending, so shared state it left, such as a committed GPU command buffer, must not reach the next test), and so do a crash, a timeout, an exit and a sanitizer's report; the runner forks the next. Shrinking reuses one worker across its failing attempts, so the runner reruns the shrunk case once in a fresh worker; if it does not fail the same way you get the unshrunk failure and a line saying state leaked between attempts. A test that leaves global state dirty therefore only matters to the passing tests that follow it. `--isolate` runs each test in a process of its own, as before the workers. A sanitized `fork` costs about 2 ms (smith's compiler-rt carries the fast-mmap patch; upstream's cost about 40 ms).
 
 A failure in `smith build test` looks like this; the last line reproduces it. The runner only records the addresses of the stack
 (`<smith/trace.h>`); smith turns them into files, lines and source text with LLVM's symbolizer, so the program holds no

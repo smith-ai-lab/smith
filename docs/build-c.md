@@ -828,7 +828,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     for a C test); `--test` also takes the written form, `--test geometry::box_test::test_area` (or `test_area` for a C
     test). Two tests with the same C name are an error that names both files.
 - **`SMITH_CHECK(condition)`**, **`SMITH_CHECK(a, op, b)`**, **`SMITH_CHECK_NEAR(a, b, tolerance)`** and
-  **`SMITH_CHECK_ABORTS(expression)`** are the checks. A comparison evaluates each argument once and converts `b` to
+  **`smith_test_expect_abort()`** are the checks. A comparison evaluates each argument once and converts `b` to
   `a`'s type as an assignment would, so `-Wconversion` flags a lossy comparison (`SMITH_CHECK(int_value, ==, 3.5)` is a
   compile error) and both values print in `a`'s type. `a`'s type is its type as a value: an array becomes a pointer and
   `const` drops; every pointer compares, and prints, as an address. Printed types: `bool`, `char`, every standard
@@ -838,23 +838,20 @@ smith_tests(b, &tests);                              // tests.step is the task "
   and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
   compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
   infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
-- **`SMITH_CHECK_ABORTS` stays a macro, and why.** What it needs is control flow, not text: the statement must run under
-  a `sigsetjmp` that is still on the stack when the statement aborts. C has no closure, so a function form would take a
-  function pointer and a context (`smith_check_aborts(body, context)`) and every use would write a body function and a
-  context struct, more noise than the macro hides. (`.smith` has closures, and can make it a function.) The stack
-  traces took away the other reason for a macro, the captured text and line, so the macro no longer reports from them.
-- **`SMITH_CHECK_ABORTS`** runs the expression in the worker's own process, with its output going to a temporary file.
-  It checks that the program stops on purpose: the check passes when the expression raises `SIGABRT` or `SIGTRAP` (an
-  `assert`, `abort()`, `__builtin_trap`, the arena's capacity stop), which the worker catches and jumps back from with
-  `siglongjmp`, and its output holds no sanitizer report. It fails, with the expression's output shown, when it
-  returns ("it returned"), exits ("it exited with status N"; the exit ends the worker), crashes with another signal
-  such as `SIGSEGV` ("it crashed"; the worker ends), or is stopped by a sanitizer report ("AddressSanitizer",
-  "UndefinedBehaviorSanitizer", "LeakSanitizer", "ThreadSanitizer" or "runtime error:" in its output: a bug, not the
-  stop the test expected; the worker is retired). So a memory bug before the assertion cannot make the test pass. The
-  output is discarded on a pass. A hang is the test's timeout, which ends the worker. With `--isolate` the expression
-  runs in a forked child and the parent judges how it ended, as before the workers. In a worker the expression's
-  effects (writes to variables) stay, as with any `longjmp`; a variable it changes that the test reads afterwards
-  should be `volatile`.
+- **`smith_test_expect_abort()`** says that from this call on the running test must stop the program on purpose, and is
+  a plain function (`.smith` will call it `test::expect_abort()`): the test calls it and then runs the code that aborts,
+  as its last statements. It records a flag and the call's stack in the block the worker shares with the runner, and the
+  runner judges how the test ended. The test passes when it ends with `SIGABRT` or `SIGTRAP` (an `assert`, `abort()`,
+  `__builtin_trap`, the arena's capacity stop, a failed contract or library check) and its output holds no sanitizer
+  report. It fails, at the call's file and line from its stack, when the test returns ("the test returned"), exits ("it
+  exited with status N"), crashes with another signal such as `SIGSEGV` ("it crashed"), fails a check ("a check failed,
+  which is not an abort"), or is stopped by a sanitizer report ("AddressSanitizer", "UndefinedBehaviorSanitizer",
+  "LeakSanitizer", "ThreadSanitizer" or "runtime error:" in its output: a bug, not the stop the test expected). So a
+  memory bug before the assertion cannot make the test pass. An abort before the call is an ordinary failure, and a hang
+  is the test's timeout. Nothing in the test runs after the abort, so there is no jump buffer: the signal ends the
+  worker (or the child of `--isolate`), whose end the runner reads, as for any crash; `--in-process`, which has no
+  process to end, jumps to its loop. A second call in a test is harmless. The test's output is shown only for a failure,
+  as always.
 - **`smith_test_note(format, ...)`** prints under a failure, whether a failed check, a crash or a timeout; each note
   replaces the last. **`smith_test_arena(capacity)`** is the test's memory, from a block the runner reserved once with
   `mmap`, given back before each test and each key.
@@ -865,18 +862,18 @@ smith_tests(b, &tests);                              // tests.step is the task "
   on. A crash, a timeout, an exit, output past 16 MiB or a sanitizer's report (in the output of a failed or a passing
   test) ends the worker: the runner records the failure as it always has, forks a fresh worker and goes on, so a
   crash fails only its own test. A worker also ends after any failed test, because a failed check unwinds out of
-  arbitrary code and can leave state half-done, and after any test that ran a `SMITH_CHECK_ABORTS`, passed or failed,
-  because a death check stands for the program ending: a worker is reused only after a clean pass with no death
+  arbitrary code and can leave state half-done, and after any test that called `smith_test_expect_abort`, passed or failed,
+  because an abort stands for the program ending: a worker is reused only after a clean pass that expected no abort
   check (the shrinking worker is reused across its failing attempts, so the runner reruns the final shrunk case once in a fresh worker: if that does not fail the same way, the failure is shown unshrunk with a line saying state leaked between attempts). What a test leaves in global variables, files
   and the process stays for the next test on that worker after such a pass, and which tests share a worker depends on timing unless `--jobs 1`; `--shuffle <seed>` runs the
   tests in a shuffled order to find such a dependence (it replays with `--jobs 1`), and `--isolate` keeps the old
-  process per test (and per `SMITH_CHECK_ABORTS`), exactly. `--stats` prints how many forks the run made. Results are
+  process per test, exactly. `--stats` prints how many forks the run made. Results are
   printed in table order, in either mode. Output is captured and
   shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options are the runner's arguments, which `smith test` gives it
   (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it; a name written with `test_`, as in the source, selects the same test), `--seed <n>`
   (each property test on that one seed), `--seeds <n>` (keys per property test, 100 by default), `--jobs <n>` (default:
   the cores), `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
-  time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort outside `SMITH_CHECK_ABORTS` or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
+  time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort the test did not expect or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
 - **Full size: `smith_test_full()`.** It is false by default and true when the run was given `--full`. A test with a heavy check
   picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either
