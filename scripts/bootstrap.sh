@@ -34,6 +34,13 @@ trap 'rm -rf "$dir"' EXIT
             return text
         }
         function opens(line) { return line ~ /^typedef .*\{$/ }
+        # The braces a line opens less the ones it closes, so a block with a struct inside (`struct {...} internal;`)
+        # ends at its own last brace and not at the inner one.
+        function braces(line,    rest, opened, closed) {
+            rest = line; opened = gsub(/\{/, "", rest)
+            rest = line; closed = gsub(/\}/, "", rest)
+            return opened - closed
+        }
         # An exported inline function has its attributes before `static inline` ([[gnu::always_inline, maybe_unused]]):
         # they are not part of the head that is compared.
         function core(line) { sub(/^\[\[[^]]*\]\] /, "", line); return line }
@@ -66,8 +73,9 @@ trap 'rm -rf "$dir"' EXIT
             if (line ~ /^#include "/) { rel = line; sub(/^#include "/, "", rel); sub(/"$/, "", rel); hinc["#include \"" full(rel) "\""] = 1 }
             if (collecting) {
                 block = block "\n" line
-                if (line ~ /^\}.*;$/) { collecting = 0; hblock[norm(block)] = 1 }
-            } else if (opens(line)) { collecting = 1; block = line }
+                block_depth += braces(line)
+                if (block_depth <= 0 && line ~ /;$/) { collecting = 0; hblock[norm(block)] = 1 }
+            } else if (opens(line)) { collecting = 1; block = line; block_depth = braces(line) }
             else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[norm(line)] = 1
             next
         }
@@ -89,11 +97,12 @@ trap 'rm -rf "$dir"' EXIT
         }
         collecting {
             block = block "\n" $0
-            if ($0 ~ /^\}.*;$/) { collecting = 0; if (!(norm(block) in hblock)) print block }
+            block_depth += braces($0)
+            if (block_depth <= 0 && $0 ~ /;$/) { collecting = 0; if (!(norm(block) in hblock)) print block }
             next
         }
         /^#[ \t]*if/ { chain_on = 1; chain = $0; chain_ok = 1; depth = 1; next }
-        opens($0) { collecting = 1; block = $0; next }
+        opens($0) { collecting = 1; block = $0; block_depth = braces($0); next }
         /^#include/ && ($0 in hinc) { next }
         /^(constexpr|extern|typedef) .*;$/ && (norm($0) in hline) { next }
         { print }
