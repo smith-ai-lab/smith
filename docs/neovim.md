@@ -135,12 +135,12 @@ fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
   file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
   project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter and its one configuration (against a stand-in `dap` module: exactly one per file type; called in a
-  coroutine in a real `smith new` project it builds while the event loop runs, and with the cursor in a test function of
+  coroutine in a real `smith new --language c` project it builds while the event loop runs, and with the cursor in a test function of
   `tests/test_*.c` gives the runner's absolute path, `--test <name> --in-process` and the project as `cwd`, in `main.c` gives
   `build/debug/<name>` and no arguments; a `.smith` buffer's test is named with its module; with no project it asks for the
   path; a project whose build fails gets `dap.ABORT` and an ERROR notification; `smith run`'s rule for the program), a user's
   own adapter staying, the neotest adapter (against stand-in `nio` and `neotest.lib` modules: test files and the root,
-  the tests found in a `smith new` project's C test and in a `.smith` module with its name, the specs for a test, a file, the
+  the tests found in a `smith new --language c` project's C test and in a `.smith` module with its name, the specs for a test, a file, the
   suite and the dap strategy, and the results from output captured from the runner), and the version warning. The real nvim-dap
   and neotest were run by hand, not by the tests (a breakpoint in `main.smith` and one in a `.smith` test stop; nearest, file and
   suite pass and fail with the right line; debug nearest stops in the test). `SMITH_NVIM_ONLY="parser highlights"` runs just those.
