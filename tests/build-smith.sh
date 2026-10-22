@@ -297,6 +297,25 @@ expect "lint: a finding in build.smith fails" 1 "$rc"
 expect_contains "lint: ... at its line, in the name as written" "$out$err" "build.smith:8:12"
 cd "$work" || exit 1
 
+# smith check reads a build.smith too: with no build.c and no main, it still lints and tests.
+mkdir "$work/checked" && cd "$work/checked" || exit 1
+printf 'int main(void) {\n    return 0;\n}\n' >prog.c
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "prog.c"});
+}
+EOF
+capture smith check
+case $err in
+*"are skipped"*) ok=no ;;
+*"smith check: lint "*"smith check: test "*) ok=yes ;;
+*) ok=no ;;
+esac
+expect "check: a build.smith with no main is linted and tested" yes "$ok"
+cd "$work" || exit 1
+
 echo
 echo "$total build.smith checks, $failures failed"
 [ "$failures" -eq 0 ]
