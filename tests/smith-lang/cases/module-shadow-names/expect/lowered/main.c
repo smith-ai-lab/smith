@@ -1,3 +1,7 @@
+#include "lib/text.h"
+#include "lib/gnu.h"
+#include <stdio.h>
+
 int main(void) {
 lib_text_Text text = lib_text_make("shadow");
 int c = 2;

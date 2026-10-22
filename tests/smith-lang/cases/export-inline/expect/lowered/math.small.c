@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 static inline __UINT32_TYPE__ math_small_twice(__UINT32_TYPE__ x) {
 return x * 2;
 }

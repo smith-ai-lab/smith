@@ -1,3 +1,7 @@
+#include "arena.h"
+#include "list.h"
+#include <stdio.h>
+
 typedef struct {
 __INT32_TYPE__ x;
 __INT32_TYPE__ y;

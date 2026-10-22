@@ -7,21 +7,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include <stdint.h>
-#if defined(INC_FIRST)
-#include <stdio.h>
-#elif defined(INC_SECOND)
-#include <stdlib.h>
-#if defined(INC_DEEP)
-#include <ctype.h>
-#endif
-#else
-#include <string.h>
-#endif
-#include <math.h>
-#if __has_include("chain_extra.h")
-#include "chain_extra.h"
-#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
