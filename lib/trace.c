@@ -4,6 +4,7 @@
 #include "../include/smith/trace.h"
 
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -289,15 +290,32 @@ const char *smith_failure_heading(SmithFailureKind kind) {
         return "ensures failed";
     case SmithFailure_Invariant:
         return "invariant failed";
+    case SmithFailure_Assert:
+        return "assert failed";
+    case SmithFailure_Capacity:
+        return "arena out of capacity";
     }
     return "failed";
 }
 
-void smith_failure(SmithFailureKind kind) {
+void smith_failure_detail(SmithFailureKind kind, const char *details) {
     uintptr_t frames[smith_trace_frames_max];
     size_t count = smith_trace_capture(frames, smith_trace_frames_max);
     if (smith_failure_hook != nullptr) smith_failure_hook(kind, frames, count);
     fflush(nullptr);
-    smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, nullptr, frames, count, false, true);
+    smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, details, frames, count, false, true);
     abort();
+}
+
+void smith_failure_format(SmithFailureKind kind, const char *format, ...) {
+    char details[256];
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(details, sizeof details, format, arguments);
+    va_end(arguments);
+    smith_failure_detail(kind, details);
+}
+
+void smith_failure(SmithFailureKind kind) {
+    smith_failure_detail(kind, nullptr);
 }

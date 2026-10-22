@@ -12,6 +12,7 @@ extern i32 c_float_radix(void);
 extern i32 c_f32_mantissa_bits(void);
 extern i32 c_f64_mantissa_bits(void);
 extern i32 c_float_eval_method(void);
+extern i32 c_static_analyzer(void);
 
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
@@ -45,6 +46,7 @@ int main(void) {
     bad += check("f32_mantissa_bits", target::f32_mantissa_bits, c_f32_mantissa_bits());
     bad += check("f64_mantissa_bits", target::f64_mantissa_bits, c_f64_mantissa_bits());
     bad += check("float_eval_method", target::float_eval_method, c_float_eval_method());
+    bad += check("static_analyzer", target::static_analyzer, c_static_analyzer());
     bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
     return bad;
 }

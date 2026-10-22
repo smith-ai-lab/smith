@@ -41,12 +41,13 @@ static const SmithLangTargetEntry smith_lang_target_table[] = {
     {"f32_mantissa_bits", SmithTarget_F32MantissaBits, 0, "SMITH_TARGET_F32_MANTISSA_BITS"},
     {"f64_mantissa_bits", SmithTarget_F64MantissaBits, 0, "SMITH_TARGET_F64_MANTISSA_BITS"},
     {"float_eval_method", SmithTarget_FloatEvalMethod, 0, "SMITH_TARGET_FLOAT_EVAL_METHOD"},
+    {"static_analyzer", SmithTarget_StaticAnalyzer, 0, "SMITH_TARGET_STATIC_ANALYZER"},
 };
 
 // The facts that are true or false, written `true` and `false` in compiled code.
 static bool smith_lang_target_boolean(int fact) {
     return fact == SmithTarget_AddressSanitizer || fact == SmithTarget_UndefinedSanitizer ||
-           fact == SmithTarget_ThreadSanitizer || fact == SmithTarget_Assertions;
+           fact == SmithTarget_ThreadSanitizer || fact == SmithTarget_Assertions || fact == SmithTarget_StaticAnalyzer;
 }
 
 // What the raw lowering defines for each fact at the top of its output: the preprocessor's own question.
@@ -81,7 +82,20 @@ static const char *const smith_lang_target_prelude_text[] = {
         ("#ifndef SMITH_TARGET_F64_MANTISSA_BITS\n#define SMITH_TARGET_F64_MANTISSA_BITS __DBL_MANT_DIG__\n#endif\n"),
     [SmithTarget_FloatEvalMethod] = ("#ifndef SMITH_TARGET_FLOAT_EVAL_METHOD\n"
                                      "#define SMITH_TARGET_FLOAT_EVAL_METHOD __FLT_EVAL_METHOD__\n#endif\n"),
+    [SmithTarget_StaticAnalyzer] = ("#ifndef SMITH_TARGET_STATIC_ANALYZER\n"
+                                    "#ifdef __clang_analyzer__\n#define SMITH_TARGET_STATIC_ANALYZER 1\n"
+                                    "#else\n#define SMITH_TARGET_STATIC_ANALYZER 0\n#endif\n#endif\n"),
 };
+
+// The definitions a header needs, for the facts the `if constexpr` of its inline functions use (the header is
+// written without the compiler, so the includer's preprocessor answers).
+static size_t smith_lang_target_header_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+    for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
+        if ((lang->header_target_used & (1U << i)) != 0)
+            used = smith_lang_append(out, capacity, used, "%s", smith_lang_target_prelude_text[i]);
+    }
+    return used;
+}
 
 // The definitions the raw lowering's output needs, for the facts it used.
 static void smith_lang_target_prelude(const SmithLang *lang, FILE *out) {
@@ -102,7 +116,7 @@ static void smith_lang_target_unknown(SmithLang *lang, const SmithHost *host, co
     smith_lang_error(lang, host, location,
                      "`target::%.*s` is not a fact of the target; they are arch (aarch64, x86_64), os (macos, linux), "
                      "address_sanitizer, undefined_sanitizer, thread_sanitizer, assertions, float_radix, "
-                     "f32_mantissa_bits, f64_mantissa_bits and float_eval_method",
+                     "f32_mantissa_bits, f64_mantissa_bits, float_eval_method and static_analyzer",
                      (int)length, name);
 }
 
@@ -253,6 +267,7 @@ static bool smith_lang_ifc_substitute_one(SmithLang *lang, const SmithHost *host
             if (!raw)
                 return smith_lang_ifc_fail(error, name->location, "the compiler cannot say `target::%s`", entry->name);
             lang->target_used |= 1U << (unsigned)entry->fact;
+            if (lang->export_active) lang->header_target_used |= 1U << (unsigned)entry->fact;
             return smith_lang_ifc_add(&token, SmithTokenKind_Identifier, entry->macro, strlen(entry->macro),
                                       smith_lang_ifc_pseudo);
         }
@@ -423,6 +438,13 @@ static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host) 
 
 static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     size_t length = strlen(text);
+    if (lang->is_module && lang->export_active) { // an exported inline function's body is in the header too
+        smith_lang_header_line(lang, text, length, 0);
+        if (lang->aligned && smith_lang_header_append(lang, "\n", 1)) { // the interface read in memory: the next token
+            lang->aligned_line += 1;                                    // is on a line after the directive
+            lang->aligned_column = 1;
+        }
+    }
     if (!lang->dump_enabled || lang->dump_used + length + 2 > smith_lang_dump_max) return;
     if (lang->dump_used > 0 && smith_lang_dump[lang->dump_used - 1] != '\n') smith_lang_dump[lang->dump_used++] = '\n';
     memcpy(smith_lang_dump + lang->dump_used, text, length);

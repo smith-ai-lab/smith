@@ -243,7 +243,8 @@ with its own flags (`smith_library` in `build.c`). A library joins smith when tw
 - [io](.agents/skills/smith-io/SKILL.md): the one way a program touches the world: console, files, clock, processes, the
   network. A fake io is there for tests.
 - [test](.agents/skills/smith-test/SKILL.md): checks that print both values, parallel workers, property tests on keys.
-- [contract](.agents/skills/smith-contract/SKILL.md): `smith_requires`, `smith_ensures` and `smith_invariant`.
+- [contract](.agents/skills/smith-contract/SKILL.md): `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert`.
+- [math](.agents/skills/smith-math/SKILL.md): `is_finite`, `sqrt`, `abs`, and the largest integer, infinity and NaN of a type.
 - [random](.agents/skills/smith-random/SKILL.md): random numbers from keys, so a run can be replayed.
 - [text](.agents/skills/smith-text/SKILL.md): lines, words and numbers in memory.
 - [json](.agents/skills/smith-json/SKILL.md): a pull parser, an arena tree and a bounded writer.

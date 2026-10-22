@@ -53,15 +53,15 @@ if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
 module="$here/lib/smith/arena.smith"
 
 # 1. The checks, plain and under AddressSanitizer (which lays pushes out on granules).
-$cc $flags "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/plain" || exit 1
+$cc $flags "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/plain" || exit 1
 capture "$work/plain"
 expect "library: the checks pass" "0 arena: all checks passed" "$rc $out"
-$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/asan" || exit 1
+$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/asan" || exit 1
 capture "$work/asan"
 expect "library: the checks pass under ASan and UBSan" "0 arena: all checks passed" "$rc $out"
 
 # 2. The capacity stop is on in every build, NDEBUG included.
-$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/fast" || exit 1
+$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/fast" || exit 1
 capture "$work/fast" stop
 expect "stop: the status is abort's" 134 "$rc"
 expect_contains "stop: the message names the request" "$err" "push of 100 bytes"
@@ -257,7 +257,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "unknown: the build fails with status 2" 2 "$rc"
-expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: contract, io, json, test, trace, arena, random, text'
+expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: io, json, test, trace, arena, contract, math, random, text'
 
 echo
 echo "$total arena checks, $failures failed"

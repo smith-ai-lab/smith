@@ -68,3 +68,11 @@ int c_f64_mantissa_bits(void) {
 int c_float_eval_method(void) {
     return FLT_EVAL_METHOD;
 }
+
+int c_static_analyzer(void) {
+#ifdef __clang_analyzer__
+    return 1;
+#else
+    return 0;
+#endif
+}

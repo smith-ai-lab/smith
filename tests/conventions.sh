@@ -275,7 +275,7 @@ int main(int argc, char **argv) {
 EOF
 capture smith run
 expect "library: #include <smith/io.h> links io" "seed 1" "$(last "$out")"
-expect "library: ... and the libraries io needs" "arena.o io.o random.o" "$(ls build/debug/smith | tr '\n' ' ' | sed 's/ $//')"
+expect "library: ... and the libraries io needs" "arena.o contract.o io.o math.o random.o trace.o" "$(ls build/debug/smith | tr '\n' ' ' | sed 's/ $//')"
 cd "$work" || exit 1
 mkdir "$work/textual" && cd "$work/textual" || exit 1
 cat >main.smith <<'EOF'

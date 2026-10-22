@@ -57,6 +57,8 @@ trap 'rm -rf "$dir"' EXIT
             }
             line = plain($0)
             if (line == "") next
+            if (line ~ /^static inline / && line !~ /[;{]$/) { getline rest; line = line " " plain(rest) } # the formatter may wrap the head
+            if (line ~ /^static inline .*\) \{$/) { match(line, /[A-Za-z_0-9]+\([^()]*\) \{$/); hinline[substr(line, RSTART, index(substr(line, RSTART), "(") - 1)] = 1 }
             if (line ~ /^#include/) hinc[line] = 1
             if (line ~ /^#include "/) { rel = line; sub(/^#include "/, "", rel); sub(/"$/, "", rel); hinc["#include \"" full(rel) "\""] = 1 }
             if (collecting) {
@@ -65,6 +67,12 @@ trap 'rm -rf "$dir"' EXIT
             } else if (opens(line)) { collecting = 1; block = line }
             else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[norm(line)] = 1
             next
+        }
+        /^static inline / && $0 !~ /[;{]$/ { head = $0; getline rest; $0 = head " " rest } # the lowering wraps long heads too
+        skipping { if ($0 == "}" && previous == "") skipping = 0; previous = $0; next } # an inline function the header has: it ends with a } after a blank line
+        /^static inline .*\) \{$/ {
+            match($0, /[A-Za-z_0-9]+\([^()]*\) \{$/)
+            if (substr($0, RSTART, index(substr($0, RSTART), "(") - 1) in hinline) { skipping = 1; previous = "x"; next }
         }
         chain_on { # a conditional chain: left out when it holds nothing but the header'"'"'s includes
             chain = chain "\n" $0
@@ -89,3 +97,9 @@ trap 'rm -rf "$dir"' EXIT
     ' header_file="$dir/header.h" "$dir/header.h" "$dir/low.c"
     echo '// NOLINTEND'
 } >"$out"
+# A module of smith's that the lowering imports (`#include "smith/contract.h"`) or a header of smith's the module imports
+# (`#include <smith/trace.h>`) is found relative to this file, as the line above finds the module's own header: the
+# one-command build of smith.c has no include path.
+sed -e 's|^#include "smith/\([a-z_]*\.h\)"|#include "../../../include/smith/\1"|' \
+    -e 's|^#include <smith/\([a-z_]*\.h\)>|#include "../../../include/smith/\1"|' "$out" >"$out.tmp"
+mv "$out.tmp" "$out"

@@ -133,6 +133,7 @@ typedef enum {
     SmithTarget_F32MantissaBits,
     SmithTarget_F64MantissaBits,
     SmithTarget_FloatEvalMethod,
+    SmithTarget_StaticAnalyzer,
 } SmithTarget;
 
 typedef struct {

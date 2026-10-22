@@ -313,5 +313,90 @@ echo "$?" >"$work/generic.status"
 expect "a module that calls a generic lints clean" "0" "$(cat "$work/generic.status")"
 expect "... with no finding about the instance's name" "0" "$(grep -c "push_array<" "$work/generic.out")"
 
+# --- smith-preprocessor (issue #46): a .smith file has no preprocessor ----------------------------------------------------
+mkdir -p "$work/p/pre"
+cat >"$work/p/pre/bad.smith" <<'EOF2'
+module pre::bad;
+
+#include <stdio.h>
+import <assert.h>;
+import <math.h>;
+import <stdint.h>;
+#define LIMIT 4
+#pragma STDC FP_CONTRACT OFF
+
+#if 1
+export i32 f(i32 x) {
+    c::assert(x < c::SIZE_MAX);
+    c::assert(c::isfinite(1.0));
+    _Pragma("clang diagnostic push")
+    return x + LIMIT;
+}
+#else
+#endif
+#error nope
+EOF2
+cat >"$work/p/pre/optout.smith" <<'EOF2'
+module pre::optout;
+
+#define LIMIT 4 // NOLINT(smith-preprocessor)
+
+export i32 g(void) {
+    return LIMIT;
+}
+EOF2
+cat >"$work/p/pre/plain.c" <<'EOF2'
+#include <stdio.h>
+#define LIMIT 4
+#if LIMIT
+int plain(void) { return LIMIT; }
+#endif
+EOF2
+cat >"$work/p/pre/good.smith" <<'EOF2'
+module pre::good;
+
+import target;
+import smith::contract;
+import smith::math;
+
+constexpr usize limit = 4;
+
+export usize h(usize x) {
+    contract::assert(x < math::max(usize));
+    if constexpr (target::os == target::macos) {
+        return x + limit;
+    } else {
+        return x;
+    }
+}
+EOF2
+run pre/bad.smith >"$work/pre.out"
+preprocessor_only() { findings | grep -E "smith-preprocessor" | sed -e 's/ \[smith-preprocessor,-warnings-as-errors\]$//' -e 's/: \(`[^`]*`\) is the preprocessor, and a .smith file has none: .*/: \1/' -e 's/: \(`c::[a-zA-Z_]*`\) is a C macro, and a .smith file has no preprocessor: .*/: \1 macro/'; }
+expected="pre/bad.smith:3:1: error: \`#include\`
+pre/bad.smith:7:1: error: \`#define\`
+pre/bad.smith:8:1: error: \`#pragma\`
+pre/bad.smith:10:1: error: \`#if\`
+pre/bad.smith:12:8: error: \`c::assert\` macro
+pre/bad.smith:12:22: error: \`c::SIZE_MAX\` macro
+pre/bad.smith:13:8: error: \`c::assert\` macro
+pre/bad.smith:13:18: error: \`c::isfinite\` macro
+pre/bad.smith:14:5: error: \`_Pragma\`
+pre/bad.smith:17:1: error: \`#else\`
+pre/bad.smith:18:1: error: \`#endif\`
+pre/bad.smith:19:1: error: \`#error\`"
+expect "smith-preprocessor: every directive, _Pragma and C macro of a .smith file, at its place" "$expected" "$(preprocessor_only <"$work/pre.out")"
+expect "smith-preprocessor: #include says import" "1" "$(grep -c 'write `import <header>;`' "$work/pre.out")"
+expect "smith-preprocessor: #define says constexpr" "1" "$(grep -c 'a constant is `constexpr usize name = value;`' "$work/pre.out")"
+expect "smith-preprocessor: #if, #else and #endif say if constexpr and target" "3" "$(grep -c 'if constexpr (target::os == target::macos)' "$work/pre.out")"
+expect "smith-preprocessor: c::assert says contract::assert" "2" "$(grep -c 'write `contract::assert(condition)`' "$work/pre.out")"
+expect "smith-preprocessor: c::isfinite says math::is_finite" "1" "$(grep -c 'write `math::is_finite(x)`' "$work/pre.out")"
+expect "smith-preprocessor: c::SIZE_MAX says math::max(usize)" "1" "$(grep -c 'write `math::max(usize)`' "$work/pre.out")"
+run pre/optout.smith >"$work/pre-optout.out"
+expect "smith-preprocessor: NOLINT(smith-preprocessor) opts a line out" "0" "$(grep -c 'smith-preprocessor' "$work/pre-optout.out")"
+smith lint --quiet pre/plain.c -- -std=gnu2y >"$work/pre-plain.out" 2>&1
+expect "smith-preprocessor: a .c file is left alone" "0" "$(grep -c 'smith-preprocessor' "$work/pre-plain.out")"
+run pre/good.smith >"$work/pre-good.out"
+expect "smith-preprocessor: a module with contract, math, target and constexpr is clean" "0" "$(grep -c 'smith-preprocessor' "$work/pre-good.out")"
+
 echo "lint-smith: $((total - failures)) of $total passed"
 [ $failures = 0 ]

@@ -440,7 +440,8 @@ struct SmithLang {
     int32_t ifc_braces;
     SmithLangConstant constants[smith_lang_constants_max];
     size_t constants_count;
-    uint32_t target_used; // the raw lowering: a bit for each fact the output uses
+    uint32_t target_used;        // the raw lowering: a bit for each fact the output uses
+    uint32_t header_target_used; // the same for an exported inline function's `if constexpr`: the header defines them
 };
 
 static char smith_lang_chars[smith_lang_chars_max];

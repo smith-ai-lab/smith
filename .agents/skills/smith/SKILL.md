@@ -24,12 +24,12 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 - `smith check`, `smith fmt`, `smith lint`: format (every file the repository tracks or could track), lint (the build's compiles), all checks (fmt, docs, lint, test, prove). Load `smith-check`. The verbs mean the same in every project and need no task in build.c; a project's own tasks run with `smith build <task>`. `smith fmt --dump-config > .clang-format` and `smith lint --dump-config > .clang-tidy` take the defaults over.
 - `smith lsp`: the language server for C, C++, Objective-C and `.smith` (any editor, Claude Code). Load `smith-lsp`; for Neovim `smith-neovim`.
 - `smith docs`: checks AGENTS.md, knowledge/ (an OKF bundle) and the skills of a project, and says the format. Load `smith-docs`.
-- `smith prove`: contracts (`smith_requires`, `smith_ensures`, `smith_invariant`) and their proofs. Load `smith-contract`.
+- `smith prove`: contracts (`smith_requires`, `smith_ensures`, `smith_invariant`, `smith_assert`) and their proofs. Load `smith-contract`.
 - `smith dbg`, `smith dap`: debugging at a terminal and in an editor (`smith-debug`); `smith mcp`: the debugger as tools for an agent (`smith-mcp`).
 - `smith symbolize`, `<smith/trace.h>`, a log with `smith-trace` lines, sanitizer reports: `smith-trace`.
 - `smith fetch`, `smith cache`, `smith_package`: packages and the caches: `smith-packages`.
 - `smith new`: above. `smith version`: prints the version and, after `commit`, the commit smith was built from.
 - `.smith` files, C with modules; what to write in them is `smith-idiom` (load it first). The language (`module a::b;`, `import`, `export`, `c::printf`, `u32`): load `smith-lang`, then `smith-lang-modules`, `smith-lang-c-interop`, `smith-lang-sized-types` or `smith-lang-generics` (`constexpr type T`, `if constexpr`).
-- Libraries (each shows `.smith` first, C under "From C"): `smith-arena`, `smith-io`, `smith-random`, `smith-text`, `smith-json`, `smith-test`, `smith-contract`, `smith-trace`. The build API as a module (`import smith::build;`) is in `smith-build`.
+- Libraries (each shows `.smith` first, C under "From C"): `smith-arena`, `smith-io`, `smith-random`, `smith-math`, `smith-text`, `smith-json`, `smith-test`, `smith-contract`, `smith-trace`. The build API as a module (`import smith::build;`) is in `smith-build`.
 
 If smith is missing from PATH or seems broken, stop and tell the owner. Never swap in another compiler to get around a problem; rerun with `SMITH_VERBOSE=1` and report the command and its output.

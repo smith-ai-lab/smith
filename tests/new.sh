@@ -248,7 +248,7 @@ expect_contains "new --help: shows the flag" "$out" "--language smith|c"
 cd "$work" || exit 1
 
 # 1b. assert(false) stops debug and release and not fast, in a scratch copy of each generated project.
-for pair in "hello smith c::assert" "hellc c assert"; do
+for pair in "hello smith contract::assert" "hellc c assert"; do
     set -- $pair
     dir=$1 ext=$2 macro=$3
     mkdir "abort_$dir" && (cd "$dir" && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd "abort_$dir" && tar xf -)

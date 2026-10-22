@@ -62,6 +62,13 @@ prove -v "$cases/clamp.c"
 expect "clamp: proved" 0 "$rc"
 expect_contains "clamp: ... both functions" "$out" "2 proved, 0 failed"
 
+# 1b. smith_assert is a proof point, like the assert it replaces.
+prove "$cases/assertion.c" --function=next
+expect "assert: one the premise gives is proved" 0 "$rc"
+prove "$cases/assertion.c" --function=too_sure
+expect "assert: one it does not give fails" 1 "$rc"
+expect_contains "assert: ... with its line and condition" "$out" "assertion.c:16: assert(x < 50) may fail"
+
 # 2. A caller that breaks the contract fails, with the line and the values.
 prove "$cases/clamp.c" "$cases/bad_caller.c"
 expect "caller: fails" 1 "$rc"

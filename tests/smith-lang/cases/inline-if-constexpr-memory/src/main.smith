@@ -1,0 +1,8 @@
+import pick::inl;
+import <stdio.h>;
+
+int main(void) {
+    inl::show();
+    c::printf("same in main: %d\n", inl::flavor());
+    return 0;
+}

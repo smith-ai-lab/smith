@@ -56,6 +56,13 @@
 #ifndef SMITH_TARGET_FLOAT_EVAL_METHOD
 #define SMITH_TARGET_FLOAT_EVAL_METHOD __FLT_EVAL_METHOD__
 #endif
+#ifndef SMITH_TARGET_STATIC_ANALYZER
+#ifdef __clang_analyzer__
+#define SMITH_TARGET_STATIC_ANALYZER 1
+#else
+#define SMITH_TARGET_STATIC_ANALYZER 0
+#endif
+#endif
 #include <stdio.h>
 
 extern __INT32_TYPE__ c_arch(void);
@@ -68,6 +75,7 @@ extern __INT32_TYPE__ c_float_radix(void);
 extern __INT32_TYPE__ c_f32_mantissa_bits(void);
 extern __INT32_TYPE__ c_f64_mantissa_bits(void);
 extern __INT32_TYPE__ c_float_eval_method(void);
+extern __INT32_TYPE__ c_static_analyzer(void);
 static_assert(SMITH_TARGET_FLOAT_RADIX == 2);
 static_assert(SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53, "f32 and f64 are IEEE");
 static_assert(1 != 2 && 1 != 2);
@@ -96,6 +104,7 @@ bad += check("float_radix", SMITH_TARGET_FLOAT_RADIX, c_float_radix());
 bad += check("f32_mantissa_bits", SMITH_TARGET_F32_MANTISSA_BITS, c_f32_mantissa_bits());
 bad += check("f64_mantissa_bits", SMITH_TARGET_F64_MANTISSA_BITS, c_f64_mantissa_bits());
 bad += check("float_eval_method", SMITH_TARGET_FLOAT_EVAL_METHOD, c_float_eval_method());
+bad += check("static_analyzer", SMITH_TARGET_STATIC_ANALYZER, c_static_analyzer());
 bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
 return bad;
 }

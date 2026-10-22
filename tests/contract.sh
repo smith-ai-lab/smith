@@ -113,27 +113,27 @@ int main(void) {
 C
 
 # 1. At run time: passing contracts are silent, a failing one prints its text, file and line, then aborts.
-$cc $flags "$work/clamp.c" "$here/lib/contract.c" "$here/lib/trace.c" -o "$work/clamp" || exit 1
+$cc $flags "$work/clamp.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/clamp" || exit 1
 capture "$work/clamp" 5 1 3
 expect "run: true contracts pass" "0 3 6" "$rc $out"
 capture "$work/clamp" 5 3 1
 expect "run: a false smith_requires aborts" 134 "$rc"
 expect_contains "run: ... and says which contract failed" "$err" "smith-trace begin requires failed"
 expect "run: ... before anything else is printed" "" "$out"
-$cc $flags "$work/ensures.c" "$here/lib/contract.c" "$here/lib/trace.c" -o "$work/ensures" || exit 1
+$cc $flags "$work/ensures.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/ensures" || exit 1
 capture "$work/ensures"
 expect "run: a false smith_ensures aborts" 134 "$rc"
 expect_contains "run: ... and says which contract failed" "$err" "smith-trace begin ensures failed"
-$cc $flags "$work/invariant.c" "$here/lib/contract.c" "$here/lib/trace.c" -o "$work/invariant" || exit 1
+$cc $flags "$work/invariant.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/invariant" || exit 1
 capture "$work/invariant"
 expect "run: a false smith_invariant aborts" 134 "$rc"
 expect_contains "run: ... and says which contract failed" "$err" "smith-trace begin invariant failed"
 
 # 2. The same program under the sanitizers, and optimized: the checks are calls, so no optimization drops them.
-$cc $flags -g -fsanitize=address,undefined "$work/clamp.c" "$here/lib/contract.c" "$here/lib/trace.c" -o "$work/clamp_asan" || exit 1
+$cc $flags -g -fsanitize=address,undefined "$work/clamp.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/clamp_asan" || exit 1
 capture "$work/clamp_asan" 5 1 3
 expect "sanitized: true contracts pass" "0 3 6" "$rc $out"
-$cc $flags -O2 "$work/clamp.c" "$here/lib/contract.c" "$here/lib/trace.c" -o "$work/clamp_fast" || exit 1
+$cc $flags -O2 "$work/clamp.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/clamp_fast" || exit 1
 capture "$work/clamp_fast" 5 3 1
 expect "optimized: a false smith_requires still aborts" 134 "$rc"
 
@@ -178,7 +178,7 @@ expect "IR NDEBUG: no contract call" 0 "$calls"
 
 # 5. The library alone compiles as C23 and C2y.
 for std in gnu23 gnu2y; do
-    capture $cc -std=$std -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I "$here/include" -c "$here/lib/contract.c" -o "$work/contract.o"
+    capture $cc -std=$std -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I "$here/include" -c "$here/bootstrap/lib/smith/contract.c" -o "$work/contract.o"
     expect "library: compiles as $std" 0 "$rc"
 done
 

@@ -459,7 +459,11 @@ void build(SmithBuild *b) {
   library, importable as the header only. `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
   The same resolver serves `smith_library`: `smith_program` links, beside the objects it is given, the libraries that
   the libraries among them need (found by scanning their header and source, `smith_library_needs`), so naming
-  `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random). A needed library
+  `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random; arena brings contract, math and trace).
+  **A library may declare compile flags** (`SMITH_LIBRARY_FLAGS` in smith.c: `-ffp-contract=off` for random): smith
+  writes them beside the source (`.smith/lib/smith/random.flags`, one flag a line), and every compile of that source
+  (`smith_object`, `smith_compile_command` for the compile database) adds them after the project's own flags, so a
+  project that compiles the library through `smith_library` with its own flags still gets them. A needed library
   is the object the project made of that source (any `smith_object` of it), else one compiled with the flags and
   compiler of the library that needs it, as `<folder of its object>/<name>.o`.
 - **Tests:** every `.smith` file and every `test_*.c` below `tests/`, built with the debug flags, and every other `.c`

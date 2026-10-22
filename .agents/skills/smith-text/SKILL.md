@@ -7,7 +7,7 @@ description: "Using <smith/text.h>, smith's reader and writer of small text form
 
 This skill ships in the smith plugin, from `.agents/skills/smith-text/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
 
-Text is a pointer and a length (`SmithText`), never a terminated string, so a file read into memory is read where it lies. The library calls no C library function and no locale, and every loop is bounded by a length. A number written here reads back as the same value on any machine. The header is `.smith/include/smith/text.h`; read it first.
+Text is a pointer and a length (`SmithText`), never a terminated string, so a file read into memory is read where it lies. The library calls no C library function and no locale (its checks are `contract::assert`, so it links the contract and trace libraries, which `smith_program` brings), and every loop is bounded by a length. A number written here reads back as the same value on any machine. The header is `.smith/include/smith/text.h`; read it first.
 
 **text is a `.smith` module** (`module smith::text;`, `lib/smith/text.smith` in smith's repository, issue #39), and its C header is generated from it. From `.smith` it is `import smith::text;` and the names are the module's: `text::Text`, `text::make(...)`, `text::take_line(&t, &line)`, `text::parse_u64(word, &x)`, `text::number_capacity`. C keeps its API under "From C". Compile the module with a smith that has clang inside (the `.smith` source is `.smith/lib/smith/text.smith`; a stage0 cannot compile it, though C code that only includes the header needs nothing). `smith cc main.smith lib/smith/text.smith -I include` builds a single command.
 
