@@ -63,6 +63,47 @@ main hands each function the narrowest thing that covers what it uses, so a func
 
 If a signature wants four or more separate capabilities, pass `SmithIo *` or define the struct. A random key is passed alone (`io.key`; derive one per use, see smith-random).
 
+## smith-effects: the model, checked
+
+`smith lint` (and the editor) run the clang-tidy check `smith-effects`, which makes the model above a rule: a program touches the world only through capabilities passed down from `main`, so a function's signature says what it can do. It is on in smith's default `.clang-tidy` (a project that does not want it runs `smith lint --dump-config > .clang-tidy` and deletes `smith-effects` from `Checks`). Everything is decided per function from the source; no file is exempt.
+
+The rules:
+1. **A raw effect is a call into a system header that is not on the pure allow list** (`<string.h>`, `<math.h>`, `<ctype.h>`, `<stdint.h>`, `<stddef.h>`, `<float.h>`, `<limits.h>`, `<stdbit.h>`, `<stdckdint.h>`, `snprintf`, `vsnprintf`, `sscanf`, the `strto*` family, `qsort`, `bsearch`, `abs`, `div`, `__builtin_*`), or an Objective-C message to a system framework's class or object (`[NSFileManager defaultManager]`). The list is `shim/effects.h` in smith; a call the list does not name is reported. In a `.smith` file the finding names the callee as written (`c::fopen`).
+2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls and the checks of `<smith/test.h>` are allowed everywhere.
+3. **Raw effects are allowed in a capability's implementation.** A capability is a type marked `[[clang::annotate("smith::capability")]]`: SmithIo, SmithConsole, SmithFiles, SmithClock, SmithProcesses, SmithNet and SmithArgs (the process's inputs: the live environment), and the handles SmithOp, SmithCapture, SmithChild and SmithConnection. (SmithKey and SmithArena are values, not capabilities.) Its implementation is the module that defines it: the `.smith` module file, or for C the `.c` file beside the header that defines it (`io.c` with `io.h`; `lib/io.c` or `src/io.c` with a header under the `include/` beside them). Every function there, private helpers included, may make raw calls.
+4. **An exported function of that module that reaches a raw effect, directly or through the module's own static functions, must take or return a capability** (or a struct holding one). Otherwise make it `static`.
+5. **A main-only constructor may be called only inside `main`:** `smith_io_make`, marked `[[clang::annotate("smith::main_only")]]`. `smith_io_make_test` is not: tests make fakes anywhere.
+6. **No capability in static storage:** a global or `static` local of a capability type, a pointer to one, or a struct that holds one.
+
+One option, `smith-effects.CFiles` (default true): `false` makes the check skip `.c` and `.m` files and read `.smith` only (smith's own `.clang-tidy` does this while its C is ported).
+
+**Marking a project's own capability** (a window, a GPU device), in a header or `.smith` module:
+
+```c
+typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;          // C
+export typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;   // .smith
+```
+
+Raw calls into the platform then go in `window.c` beside `window.h` (or in the `.smith` module), every exported function there takes a `Window *`, and the rest of the program takes a `Window *` like any other capability. A project's constructor that must be called only in main: `[[nodiscard, clang::annotate("smith::main_only")]] Window window_make(...)`.
+
+**Fixing a finding:**
+
+| Finding | Fix |
+| --- | --- |
+| `fopen`, `open`, `stat`, `rename`... touch the world | take a `SmithFiles *` and call `smith_files_read`, `smith_files_write`... |
+| `printf`, `puts`, `fputs(stderr)`, `getchar` | take a `SmithConsole *`: `smith_console_printf`, `smith_console_print`, `smith_console_read_line` |
+| `time`, `clock_gettime`, `sleep` | take a `SmithClock *`: `smith_clock_now`, `smith_clock_wall`, `smith_clock_sleep` |
+| `fork`, `system`, `popen`, `waitpid` | take a `SmithProcesses *`: `smith_processes_run`, `smith_processes_spawn` |
+| `socket`, `connect`, `send` | take a `SmithNet *`: `smith_net_connect`, `smith_net_send`, `smith_net_receive` |
+| `malloc`, `free` | take a `SmithArena *`: `smith_arena_push`, or `arena::push` in `.smith` |
+| `rand`, `arc4random` | take a `SmithKey` and derive from it (smith-random) |
+| `getenv` | `smith_args_env(&io.args, "NAME")` |
+| `exit` | return the status from `main` |
+| an exported function "reaches `X` but takes no capability" | add the capability parameter it needs, or make it `static` |
+| `smith_io_make` "may be called only in main" | take the `SmithIo *` (or the part) as a parameter; a test uses `smith_io_make_test` |
+| a capability "cannot be kept in static storage" | pass it as a parameter from `main` |
+| an Objective-C message to a framework | wrap the framework in a capability's implementation and take that capability |
+
 ## Errors are values
 
 Every operation reports success or a `SmithError`: `code` is 0 or an errno value, `message` says what failed (`open config.txt: No such file or directory`). Nothing is printed behind your back. Only what the program cannot continue without stops it: failing to reserve the arena, a bad `SMITH_SEED`, and the arena's capacity stop.

@@ -286,13 +286,34 @@ cd "$work" || exit 1
 
 # 8. smith lint lints a build.smith as written, as it lints a build.c.
 cd "$work/shapes" || exit 1
-cp "$here/.clang-tidy" "$here/.clang-format" .
+cp "$here/.clang-format" .
+# smith's own checks, but not smith-effects: this program prints with printf, and the lint here is about build.smith.
+sed 's/^  smith-effects$/  -smith-effects/' "$here/.clang-tidy" >.clang-tidy
 capture smith lint
 expect "lint: a clean build.smith passes" 0 "$rc"
 printf '\nstatic int BadName(int x) {\n    return x;\n}\n' >>build.smith
 capture smith lint
 expect "lint: a finding in build.smith fails" 1 "$rc"
 expect_contains "lint: ... at its line, in the name as written" "$out$err" "build.smith:8:12"
+cd "$work" || exit 1
+
+# smith check reads a build.smith too: with no build.c and no main, it still lints and tests.
+mkdir "$work/checked" && cd "$work/checked" || exit 1
+printf 'int main(void) {\n    return 0;\n}\n' >prog.c
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "prog.c"});
+}
+EOF
+capture smith check
+case $err in
+*"are skipped"*) ok=no ;;
+*"smith check: lint "*"smith check: test "*) ok=yes ;;
+*) ok=no ;;
+esac
+expect "check: a build.smith with no main is linted and tested" yes "$ok"
 cd "$work" || exit 1
 
 echo

@@ -148,16 +148,19 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     return result;
 }
 
-// count items of size bytes; an overflowing count * size is the same stop.
+// An overflowing count * size is the same stop.
+[[noreturn]] void stop_overflow(const Arena *arena, usize size, usize count) {
+    c::fprintf(c::stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n",
+               count, size, arena->capacity);
+    c::fflush(c::stderr);
+    c::abort();
+}
+
+// count items of size bytes.
 [[smith::c_name("smith_arena_push_array")]] export [[nodiscard]] void *push_array_raw(Arena *arena, usize size,
                                                                                       usize count, usize align) {
     c::assert(arena != nullptr);
-    if (size > 0 && count > c::SIZE_MAX / size) {
-        c::fprintf(c::stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n",
-                   count, size, arena->capacity);
-        c::fflush(c::stderr);
-        c::abort();
-    }
+    if (size > 0 && count > c::SIZE_MAX / size) stop_overflow(arena, size, count);
     return push_raw(arena, size * count, align);
 }
 

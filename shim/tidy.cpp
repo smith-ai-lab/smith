@@ -9,6 +9,7 @@
 #ifdef SMITH_HOOK
 #include "clang-tidy/ClangTidyModule.h"
 #include "clang-tidy/readability/IdentifierNamingCheck.h"
+#include "effects.h"
 #include "names.h"
 #endif
 
@@ -162,6 +163,10 @@ class SmithModule final : public ClangTidyModule {
                 return make(Name, Context);
             });
         }
+        Factories.registerCheckFactory("smith-effects", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_effects::Effects>(Name, Context);
+        });
         Factories.registerCheckFactory("readability-identifier-naming", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<SmithNaming>(Name, Context);

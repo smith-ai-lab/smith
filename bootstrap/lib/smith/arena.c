@@ -72,17 +72,18 @@ memset(result, 0, size);
 assert(arena->used <= arena->capacity);
 return result;
 }
-[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
-__SIZE_TYPE__ count, __SIZE_TYPE__ align);
-[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
-__SIZE_TYPE__ count, __SIZE_TYPE__ align) {
-assert(arena != nullptr);
-if (size > 0 && count > SIZE_MAX / size) {
+[[noreturn]] static void smith_arena_stop_overflow(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ count) {
 fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n",
 count, size, arena->capacity);
 fflush(stderr);
 abort();
 }
+[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
+__SIZE_TYPE__ count, __SIZE_TYPE__ align);
+[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
+__SIZE_TYPE__ count, __SIZE_TYPE__ align) {
+assert(arena != nullptr);
+if (size > 0 && count > SIZE_MAX / size) smith_arena_stop_overflow(arena, size, count);
 return smith_arena_push(arena, size * count, align);
 }
 [[nodiscard]] bool smith_arena_fits(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align);

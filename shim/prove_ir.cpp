@@ -27,6 +27,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -45,8 +46,10 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 using namespace llvm;
@@ -56,7 +59,7 @@ namespace {
 
 // ---- names the macros and clang use ----
 
-enum class Contract { None, Requires, Ensures, Invariant };
+enum class Contract { None, Requires, Ensures, Invariant, Trusted };
 
 Contract contract_of(const Instruction *instruction) {
     auto *call = dyn_cast_or_null<CallBase>(instruction);
@@ -65,11 +68,13 @@ Contract contract_of(const Instruction *instruction) {
     if (name == "smith_contract_requires") return Contract::Requires;
     if (name == "smith_contract_ensures") return Contract::Ensures;
     if (name == "smith_contract_invariant") return Contract::Invariant;
+    if (name == "smith_contract_trusted") return Contract::Trusted;
     return Contract::None;
 }
 
 bool contract_name(StringRef name) {
-    return name == "smith_contract_requires" || name == "smith_contract_ensures" || name == "smith_contract_invariant";
+    return name == "smith_contract_requires" || name == "smith_contract_ensures" ||
+           name == "smith_contract_invariant" || name == "smith_contract_trusted";
 }
 
 // The function a call names, even when the call uses another type than the function declares (an Objective-C message
@@ -166,16 +171,24 @@ bool has_own_contract(const Function &function, Contract kind) {
     return false;
 }
 
+// A smith_requires, smith_ensures or smith_invariant the function wrote itself (smith_trusted() is not one).
 bool has_any_own_contract(const Function &function) {
     for (const Instruction &instruction : instructions(function)) {
-        if (contract_of(&instruction) != Contract::None && owner_id(instruction) == function_id(function)) return true;
+        Contract kind = contract_of(&instruction);
+        if (kind != Contract::None && kind != Contract::Trusted && owner_id(instruction) == function_id(function))
+            return true;
     }
     return false;
 }
 
-// A function with an smith_ensures is used through its contract; any other is part of its caller.
+// A function that carries smith_trusted(): assumed through its contract, not proved, its body not read.
+bool is_trusted(const Function &function) {
+    return !function.isDeclaration() && has_own_contract(function, Contract::Trusted);
+}
+
+// A function with an smith_ensures, or a trusted one, is used through its contract; any other is part of its caller.
 bool is_modular(const Function &function) {
-    return !function.isDeclaration() && has_own_contract(function, Contract::Ensures);
+    return !function.isDeclaration() && (has_own_contract(function, Contract::Ensures) || is_trusted(function));
 }
 
 // ---- passes ----
@@ -506,6 +519,24 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (!analyses.run_function(*function, clean_pipeline, error)) return false;
         mark_accessed_parameters(*function);
     }
+    // A trusted function is assumed to do what its contract says. What the prover could infer from its body (inline
+    // assembly, a call into the operating system) is "may write any memory", which would make a caller forget
+    // everything it knew. It is assumed instead to touch only what its pointer parameters point to (its smith_ensures
+    // says what it does to them) and nothing else a proved function can see; inference may only narrow that.
+    for (Function &function : module) {
+        if (!is_trusted(function)) continue;
+        function.setMemoryEffects(MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
+                                  MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef));
+        // It frees nothing the caller can see either, unless it is given a pointer it may write through (it could be
+        // free's wrapper); without nofree a caller could not rely on any object it was given still being there.
+        bool may_free = false;
+        for (const Argument &argument : function.args()) {
+            if (argument.getType()->isPointerTy() && !argument.hasAttribute(Attribute::ReadOnly) &&
+                !function.getParamAttribute(argument.getArgNo(), Attribute::ReadOnly).isValid())
+                may_free = true;
+        }
+        if (!may_free) function.addFnAttr(Attribute::NoFree);
+    }
     if (!analyses.run_module(module, "inferattrs,cgscc(function-attrs)", error)) return false;
     if (verifyModule(module, &errs())) {
         error = "the linked module does not verify";
@@ -517,18 +548,15 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
 std::vector<std::string> program_units(const Program &program) {
     std::vector<std::string> names;
     for (const Function &function : *program.module) {
-        if (function.isDeclaration() || is_snapshot(function)) continue;
-        bool unit = has_any_own_contract(function);
-        if (!unit && program.called.count(&function) == 0) {
-            for (const Instruction &instruction : instructions(function)) {
-                auto *call = dyn_cast<CallBase>(&instruction);
-                if (call != nullptr && call->getCalledFunction() != nullptr && is_modular(*call->getCalledFunction()))
-                    unit = true;
-            }
-        }
-        if (unit) names.push_back(function.getName().str());
+        if (function.isDeclaration() || is_snapshot(function) || is_trusted(function)) continue;
+        if (has_any_own_contract(function)) names.push_back(function.getName().str());
     }
     return names;
+}
+
+bool program_is_trusted(const Program &program, const std::string &name) {
+    const Function *function = program.module->getFunction(name);
+    return function != nullptr && !is_snapshot(*function) && is_trusted(*function);
 }
 
 namespace {
@@ -538,6 +566,27 @@ std::string source_name(const Function &function);
 std::string program_label(const Program &program, const std::string &name) {
     const Function *function = program.module->getFunction(name);
     return function == nullptr ? name : source_name(*function);
+}
+
+std::vector<Trusted> program_trusted(const Program &program) {
+    std::vector<Trusted> found;
+    for (const Function &function : *program.module) {
+        if (function.isDeclaration() || is_snapshot(function) || !is_trusted(function)) continue;
+        Trusted trusted;
+        trusted.name = source_name(function);
+        if (const DISubprogram *subprogram = function.getSubprogram()) {
+            trusted.file = subprogram->getFilename().str();
+            trusted.line = subprogram->getLine();
+        }
+        for (const Instruction &instruction : instructions(function)) {
+            if (owner_id(instruction) != function_id(function)) continue;
+            Contract kind = contract_of(&instruction);
+            trusted.requires_count += kind == Contract::Requires;
+            trusted.ensures_count += kind == Contract::Ensures;
+        }
+        found.push_back(trusted);
+    }
+    return found;
 }
 
 namespace {
@@ -586,6 +635,10 @@ struct Analysis {
         if (auto *store = dyn_cast<StoreInst>(&instruction)) {
             return !isa<AllocaInst>(getUnderlyingObject(store->getPointerOperand()));
         }
+        // A memset or memcpy of a local (the zero-initialization of a struct) writes memory the function owns.
+        if (auto *memory = dyn_cast<MemIntrinsic>(&instruction)) {
+            return !isa<AllocaInst>(getUnderlyingObject(memory->getRawDest()));
+        }
         return instruction.mayWriteToMemory();
     }
 
@@ -608,24 +661,55 @@ struct Analysis {
         return found->second.contains(to->getParent());
     }
 
-    bool written_before(const Instruction &load) const {
+    // A write that can run before / after the load, or nullptr.
+    const Instruction *write_before(const Instruction &load) const {
         for (const Instruction *writer : writers) {
-            if (writer != &load && reaches(writer, &load)) return true;
+            if (writer != &load && reaches(writer, &load)) return writer;
         }
-        return false;
+        return nullptr;
     }
 
-    bool written_after(const Instruction &load) const {
+    const Instruction *write_after(const Instruction &load) const {
         for (const Instruction *writer : writers) {
-            if (writer != &load && reaches(&load, writer)) return true;
+            if (writer != &load && reaches(&load, writer)) return writer;
         }
-        return false;
+        return nullptr;
+    }
+
+    bool written_before(const Instruction &load) const {
+        return write_before(load) != nullptr;
     }
 };
 
 std::string location_of(const Instruction *instruction) {
     if (instruction == nullptr || !instruction->getDebugLoc()) return "";
     return instruction->getDebugLoc()->getFilename().str() + ":" + std::to_string(instruction->getDebugLoc().getLine());
+}
+
+// An instruction for a message: where it is in the source, what the instruction is, and, when it came from a helper
+// that was inlined, which helper.
+std::string describe_instruction(const Instruction *instruction) {
+    std::string text;
+    raw_string_ostream stream(text);
+    instruction->print(stream);
+    stream.flush();
+    size_t start = text.find_first_not_of(" \t\n");
+    text = start == std::string::npos ? text : text.substr(start);
+    size_t metadata = text.find(", !");
+    if (metadata != std::string::npos) text.resize(metadata);
+    if (text.size() > 90) text = text.substr(0, 87) + "...";
+    std::string where = location_of(instruction);
+    if (where.empty()) {
+        // an instruction a pass made has no line; the nearest one before it in its block says where it is near
+        for (const Instruction *before = instruction->getPrevNode(); before != nullptr && where.empty();
+             before = before->getPrevNode())
+            where = location_of(before);
+        where = where.empty() ? "no line" : "near " + where;
+    }
+    std::string result = where + ": `" + text + "`";
+    if (instruction->getDebugLoc() && instruction->getDebugLoc()->getInlinedAt() != nullptr)
+        result += " (in " + instruction->getDebugLoc()->getScope()->getSubprogram()->getName().str() + ")";
+    return result;
 }
 
 // Collects what `roots` depend on. `stop` becomes a parameter of the slice, so what computes it is not needed;
@@ -805,9 +889,11 @@ Slices build_slices(Function &callee) {
         if (!compute_cone(analysis, requires_roots, nullptr, false, cone, slices.error)) return slices;
         for (const Instruction *instruction : cone.keep) {
             auto *load = dyn_cast<LoadInst>(instruction);
-            if (load != nullptr && analysis.written_before(*load)) {
-                slices.error = "its smith_requires reads memory after the function has written (" + location_of(load) +
-                               "); put every smith_requires first";
+            const Instruction *written = load != nullptr ? analysis.write_before(*load) : nullptr;
+            if (written != nullptr) {
+                slices.error = "its smith_requires reads memory at " + describe_instruction(load) +
+                               " after the function has written, at " + describe_instruction(written) +
+                               "; put every smith_requires before the first write, or read only parameters in it";
                 return slices;
             }
         }
@@ -828,9 +914,11 @@ Slices build_slices(Function &callee) {
             auto *load = dyn_cast<LoadInst>(instruction);
             if (load == nullptr || instruction == result) continue;
             bool is_old = llvm::is_contained(cone.old_loads, load);
-            if (!is_old && analysis.written_after(*load)) {
-                slices.error = "its smith_ensures reads memory before the function's last write (" + location_of(load) +
-                               "); put every smith_ensures just before the return";
+            const Instruction *later = is_old ? nullptr : analysis.write_after(*load);
+            if (later != nullptr) {
+                slices.error = "its smith_ensures reads memory at " + describe_instruction(load) +
+                               " before a later write, at " + describe_instruction(later) +
+                               "; put every smith_ensures just before the return, after the last write";
                 return slices;
             }
         }
@@ -890,6 +978,9 @@ struct UnitContext {
     std::map<Function *, Slices> slices;
     std::unique_ptr<Unprovable> unprovable;
     unsigned havocs = 0; // the objects a call has been allowed to change
+    // The copies of read-only parameters that calls are given (see pass_copies_of_readonly), one for each parameter and
+    // size when nothing in the function writes the parameter's object.
+    std::map<std::pair<const Value *, uint64_t>, AllocaInst *> shared_copies;
 
     void fail(const Instruction *at, std::string what, std::string fix) {
         auto failure = std::make_unique<Unprovable>();
@@ -916,6 +1007,25 @@ bool known_library_function(StringRef name) {
 std::string source_name(const Function &function) {
     if (const DISubprogram *subprogram = function.getSubprogram()) return subprogram->getName().str();
     return function.getName().str();
+}
+
+// The function whose body wrote the call, as the source names it: the one a trusted marker would go in.
+std::string writer_of(const UnitContext &context, const Instruction *call) {
+    if (call != nullptr && call->getDebugLoc()) {
+        if (const DISubprogram *subprogram = call->getDebugLoc()->getScope()->getSubprogram())
+            return subprogram->getName().str();
+    }
+    return source_name(context.function);
+}
+
+// What to do about a call the prover cannot read: the program's edge is a trusted function, whose contract the callers
+// use. `alternative` is the other way out, when there is one.
+std::string boundary_fix(const UnitContext &context, const Instruction *call, const std::string &alternative) {
+    std::string who = writer_of(context, call);
+    std::string fix = "this is the edge of the program: put smith_trusted() as the first statement of " + who +
+                      ", so that its callers use its smith_requires and smith_ensures and its body is not proved";
+    if (!alternative.empty()) fix += "; or " + alternative;
+    return fix;
 }
 
 bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
@@ -999,8 +1109,43 @@ Instruction *havoc_locals(UnitContext &context, CallBase &call, Function &callee
 // that might write it as undefined behaviour), so the attribute is dropped from the call and the promise kept by hand:
 // the call is given a copy of the object, made before it, and everything else (the contract's slices, the code after
 // the call) keeps reading the object itself, which no call can have changed.
-void pass_copies_of_readonly(Function &function, CallBase &call, Function &callee, IRBuilder<> &entry,
+// Whether every use of a pointer reads: a load, or a pointer passed on to a parameter the callee only reads.
+bool only_read(const Value *root) {
+    SmallVector<const Value *, 8> work = {root};
+    SmallPtrSet<const Value *, 8> visited;
+    while (!work.empty()) {
+        const Value *value = work.pop_back_val();
+        if (!visited.insert(value).second) continue;
+        for (const Use &use : value->uses()) {
+            const User *user = use.getUser();
+            if (isa<LoadInst>(user)) continue;
+            if (isa<GetElementPtrInst>(user) || isa<BitCastInst>(user) || isa<AddrSpaceCastInst>(user)) {
+                work.push_back(user);
+                continue;
+            }
+            auto *call = dyn_cast<CallBase>(user);
+            if (call == nullptr) return false;
+            Function *callee = call->getCalledFunction();
+            if (callee == nullptr) return false;
+            if (callee->isIntrinsic()) {
+                Intrinsic::ID id = callee->getIntrinsicID();
+                if (id == Intrinsic::lifetime_start || id == Intrinsic::lifetime_end || id == Intrinsic::assume)
+                    continue;
+                return false;
+            }
+            unsigned index = call->getArgOperandNo(&use);
+            if (callee->hasParamAttribute(index, Attribute::ReadOnly) ||
+                callee->hasParamAttribute(index, Attribute::ReadNone))
+                continue;
+            return false;
+        }
+    }
+    return true;
+}
+
+void pass_copies_of_readonly(UnitContext &context, CallBase &call, Function &callee, IRBuilder<> &entry,
                              SmallPtrSetImpl<const Value *> &copies) {
+    Function &function = context.function;
     MemoryEffects effects = callee.getMemoryEffects();
     if (!isModSet(effects.getModRef(IRMemLocation::ArgMem)) && !isModSet(effects.getModRef(IRMemLocation::Other)))
         return;
@@ -1012,9 +1157,24 @@ void pass_copies_of_readonly(Function &function, CallBase &call, Function &calle
         uint64_t bytes = callee.getParamDereferenceableBytes(i);
         if (bytes == 0) continue;
         Align align = callee.getParamAlign(i).valueOrOne();
-        auto *copy = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(function.getContext()), bytes));
-        copy->setAlignment(align);
-        copy_object(&call, call.getDebugLoc(), copy, pointer, bytes, align);
+        // A parameter of the function that nothing writes is the same object at every call: one copy, made at the
+        // start, serves all of them. A function that calls a callee 64 times with the same board would otherwise copy
+        // the board 64 times, and every copy is loads and stores for the solver.
+        bool shared = isa<Argument>(pointer) && only_read(pointer);
+        AllocaInst *copy = nullptr;
+        auto found = shared ? context.shared_copies.find({pointer, bytes}) : context.shared_copies.end();
+        if (found != context.shared_copies.end()) {
+            copy = found->second;
+        } else {
+            copy = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(function.getContext()), bytes));
+            copy->setAlignment(align);
+            if (shared) {
+                copy_object(&*entry.GetInsertPoint(), call.getDebugLoc(), copy, pointer, bytes, align);
+                context.shared_copies[{pointer, bytes}] = copy;
+            } else {
+                copy_object(&call, call.getDebugLoc(), copy, pointer, bytes, align);
+            }
+        }
         call.setArgOperand(i, copy);
         copies.insert(copy);
     }
@@ -1058,7 +1218,7 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     }
     IRBuilder<> entry(&*function.getEntryBlock().getFirstInsertionPt());
     SmallPtrSet<const Value *, 2> copies; // what the call is given in place of the objects it may not write
-    pass_copies_of_readonly(function, call, callee, entry, copies);
+    pass_copies_of_readonly(context, call, callee, entry, copies);
     SmallVector<Value *, 4> slots;
     for (Type *type : slices.old_types)
         slots.push_back(entry.CreateAlloca(type));
@@ -1105,20 +1265,25 @@ bool resolve_calls(UnitContext &context) {
             target = call;
             Function *callee = direct_callee(call);
             if (call->isInlineAsm()) {
-                context.fail(
-                    call, "inline assembly cannot be proved",
-                    "move it into a function with a body that is plain C, or into one that a smith_ensures describes");
+                context.fail(call, "inline assembly cannot be proved in " + writer_of(context, call),
+                             boundary_fix(context, call,
+                                          "move it into a function of its own and mark that one trusted, with a "
+                                          "smith_ensures describing what it gives"));
                 return false;
             }
             if (callee == nullptr) {
-                context.fail(call, "a call through a function pointer: the target is not known",
-                             "call the function directly");
+                context.fail(call,
+                             "a call through a function pointer in " + writer_of(context, call) +
+                                 ": the target is not known",
+                             boundary_fix(context, call, "call the function directly"));
                 return false;
             }
             StringRef name = callee->getName();
             if (name.starts_with("objc_msgSend")) {
-                context.fail(call, "an Objective-C message send: the method it reaches is not known",
-                             "call a C function that wraps it and has a smith_ensures, or a plain C function");
+                context.fail(call,
+                             "an Objective-C message send in " + writer_of(context, call) +
+                                 ": the method it reaches is not known",
+                             boundary_fix(context, call, "call a plain C function"));
                 return false;
             }
             if (callee->isIntrinsic() || contract_of(call) != Contract::None || is_assert_failure(call) ||
@@ -1152,9 +1317,10 @@ bool resolve_calls(UnitContext &context) {
                 target = nullptr;
                 continue;
             }
-            context.fail(call, "a call of " + name.str() + ", which has neither a body nor a contract",
-                         "define " + name.str() +
-                             " in a file given to smith prove, or give the call to a function with a smith_ensures");
+            context.fail(
+                call, "a call of " + name.str() + ", which has neither a body nor a contract",
+                boundary_fix(context, call,
+                             "define " + name.str() + " in a file given to smith prove, or give it a contract"));
             return false;
         }
         if (target == nullptr) return true;
@@ -1331,14 +1497,32 @@ void drop_unsupported_attributes(Function &function) {
 
 // LLVM deletes a loop it can solve (n counted down to 0) and the proof would then say nothing of it, so each loop gets
 // a call the optimizer cannot remove: when unrolling is done, a loop that is left is a loop with no constant bound.
-void mark_loops(Analyses &analyses, Function &function) {
+void mark_loops(Analyses &analyses, Function &function, Unit &unit) {
     Module &module = *function.getParent();
     FunctionCallee marker = module.getOrInsertFunction("smith_loop", Type::getVoidTy(module.getContext()));
     cast<Function>(marker.getCallee())->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
     auto &loops = analyses.functions.getResult<LoopAnalysis>(function);
+    auto &evolution = analyses.functions.getResult<ScalarEvolutionAnalysis>(function);
+    DenseMap<const Loop *, unsigned> passes; // the passes of a loop in all, its outer loops' passes counted
     for (Loop *loop : loops.getLoopsInPreorder()) {
         BasicBlock *header = loop->getHeader();
         CallInst::Create(marker, "", header->getFirstInsertionPt());
+        UnrolledLoop info;
+        if (DebugLoc location = loop->getStartLoc()) {
+            info.file = location->getFilename().str();
+            info.line = location.getLine();
+        }
+        // A loop with a check that traps in its body has several exits; the exact count is then not asked, and the
+        // largest the counted exit allows is the number of passes.
+        unsigned own = evolution.getSmallConstantTripCount(loop);
+        if (own == 0) own = evolution.getSmallConstantMaxTripCount(loop);
+        // The count is how often the loop's test runs when the test is at the top (a C `for`): its body runs once less.
+        if (own > 0 && loop->isLoopExiting(loop->getHeader())) own--;
+        const Loop *outer = loop->getParentLoop();
+        unsigned outside = outer == nullptr ? 1 : passes.lookup(outer);
+        info.passes = own == 0 || outside == 0 ? 0 : own * outside;
+        passes[loop] = info.passes;
+        unit.loops.push_back(info);
     }
     analyses.functions.invalidate(function, PreservedAnalyses::none());
 }
@@ -1375,6 +1559,130 @@ bool find_loop(Function &function, std::string &where) {
     return true;
 }
 
+// ---- what a proof costs the solver ----
+
+unsigned type_bits(const Value *value) {
+    return value->getType()->isIntegerTy() ? value->getType()->getIntegerBitWidth() : 0;
+}
+
+std::pair<std::string, unsigned> source_line_of(const Instruction *instruction) {
+    for (const Instruction *at = instruction; at != nullptr; at = at->getPrevNode()) {
+        if (at->getDebugLoc()) return {at->getDebugLoc()->getFilename().str(), at->getDebugLoc().getLine()};
+    }
+    return {"", 0};
+}
+
+// The operations of the prepared function that make queries costly, found in its IR (never estimated): a division or
+// remainder by a variable and a multiplication of two variables (the solver blasts them into thousands of gates), the
+// loads and stores of a source line (each is a read or write of a memory array, and unrolled loops make many), a copy
+// of a large object, and the loops that were unrolled.
+void collect_costs(Function &function, Unit &unit) {
+    std::vector<Cost> found;
+    std::map<std::pair<std::string, unsigned>, Cost> memory; // by source line
+    std::map<std::pair<std::string, std::string>, Cost> arithmetic;
+    unit.instructions = unit.loads = unit.stores = 0;
+    for (Instruction &instruction : instructions(function)) {
+        unit.instructions++;
+        auto [file, line] = source_line_of(&instruction);
+        auto add_to = [&](std::map<std::pair<std::string, unsigned>, Cost> &table, const std::string &what,
+                          unsigned weight) {
+            Cost &cost = table[{file, line}];
+            if (cost.instructions.empty()) {
+                cost.what = what;
+                cost.file = file;
+                cost.line = line;
+                cost.count = 0;
+                cost.weight = weight;
+            }
+            cost.count++;
+            cost.instructions.push_back(&instruction);
+        };
+        if (isa<LoadInst>(instruction)) {
+            unit.loads++;
+            add_to(memory, "loads and stores of memory", 2);
+        } else if (isa<StoreInst>(instruction)) {
+            unit.stores++;
+            add_to(memory, "loads and stores of memory", 2);
+        } else if (auto *operation = dyn_cast<BinaryOperator>(&instruction)) {
+            unsigned bits = type_bits(operation);
+            unsigned opcode = operation->getOpcode();
+            bool divides = opcode == Instruction::UDiv || opcode == Instruction::SDiv || opcode == Instruction::URem ||
+                           opcode == Instruction::SRem;
+            bool variable_divisor = divides && !isa<Constant>(operation->getOperand(1));
+            bool variable_product = opcode == Instruction::Mul && bits >= 16 &&
+                                    !isa<Constant>(operation->getOperand(0)) &&
+                                    !isa<Constant>(operation->getOperand(1));
+            if (!variable_divisor && !variable_product) continue;
+            std::string what = std::to_string(bits) + "-bit ";
+            if (variable_product) {
+                what += "multiplication of two variables";
+            } else {
+                bool is_signed = opcode == Instruction::SDiv || opcode == Instruction::SRem;
+                bool remainder = opcode == Instruction::URem || opcode == Instruction::SRem;
+                what += std::string(is_signed ? "signed " : "unsigned ") + (remainder ? "remainder" : "division") +
+                        " by a variable";
+            }
+            Cost &cost = arithmetic[{file + ":" + std::to_string(line), what}];
+            if (cost.instructions.empty()) {
+                cost.what = what;
+                cost.file = file;
+                cost.line = line;
+                cost.count = 0;
+                cost.weight = 3;
+            }
+            cost.count++;
+            cost.instructions.push_back(&instruction);
+        } else if (auto *memory_call = dyn_cast<MemIntrinsic>(&instruction)) {
+            auto *length = dyn_cast<ConstantInt>(memory_call->getLength());
+            if (length != nullptr && length->getZExtValue() < 32) continue;
+            Cost cost;
+            cost.what = std::string(isa<MemSetInst>(memory_call) ? "memset" : "memcpy") + " of " +
+                        (length != nullptr ? std::to_string(length->getZExtValue()) + " bytes" : "a variable size");
+            cost.file = file;
+            cost.line = line;
+            cost.weight = length != nullptr ? 2 : 3;
+            cost.instructions.push_back(&instruction);
+            found.push_back(cost);
+        }
+    }
+    for (auto &entry : arithmetic)
+        found.push_back(entry.second);
+    std::vector<Cost> lines;
+    for (auto &entry : memory) {
+        if (entry.second.count >= 8) lines.push_back(entry.second);
+    }
+    std::stable_sort(lines.begin(), lines.end(), [](const Cost &a, const Cost &b) { return a.count > b.count; });
+    for (size_t i = 0; i < lines.size() && i < 3; i++)
+        found.push_back(lines[i]);
+    for (Instruction &instruction : instructions(function)) { // large local objects
+        auto *object = dyn_cast<AllocaInst>(&instruction);
+        if (object == nullptr) continue;
+        std::optional<TypeSize> size = object->getAllocationSize(function.getParent()->getDataLayout());
+        if (!size || size->isScalable() || size->getFixedValue() < 128) continue;
+        Cost cost;
+        const Instruction *user = object->user_empty() ? object : cast<Instruction>(*object->user_begin());
+        auto [file, line] = source_line_of(user);
+        cost.what = "a local object of " + std::to_string(size->getFixedValue()) + " bytes";
+        cost.file = file;
+        cost.line = line;
+        cost.weight = 2;
+        cost.instructions.push_back(object);
+        found.push_back(cost);
+    }
+    for (const UnrolledLoop &loop : unit.loops) {
+        Cost cost;
+        cost.what = loop.passes != 0 ? "a loop unrolled into " + std::to_string(loop.passes) + " passes"
+                                     : "a loop unrolled (its pass count is not a constant LLVM reads before unrolling)";
+        cost.file = loop.file;
+        cost.line = loop.line;
+        cost.count = loop.passes;
+        cost.weight = 1;
+        found.push_back(cost);
+    }
+    std::stable_sort(found.begin(), found.end(), [](const Cost &a, const Cost &b) { return a.weight > b.weight; });
+    unit.costs = std::move(found);
+}
+
 } // namespace
 
 Prepared program_prepare(Program &program, const std::string &name) {
@@ -1409,7 +1717,7 @@ Prepared program_prepare(Program &program, const std::string &name) {
     std::set<std::string> recursive;
     for (const Function *function : program.recursive)
         recursive.insert(function->getName().str());
-    UnitContext context{*prepared.module, function, prepared.unit, recursive, {}, nullptr};
+    UnitContext context{*prepared.module, function, prepared.unit, recursive, {}, nullptr, 0, {}};
     auto finish = [&]() {
         prepared.unprovable = std::move(context.unprovable);
         return std::move(prepared);
@@ -1435,7 +1743,7 @@ Prepared program_prepare(Program &program, const std::string &name) {
     allow_unlimited_unrolling();
     analyses.run_function(function, clean_pipeline, error);
     std::string loop;
-    mark_loops(analyses, function);
+    mark_loops(analyses, function, prepared.unit);
     for (int round = 0; round < 4 && find_loop(function, loop); round++) {
         analyses.run_function(function, unroll_pipeline, error);
     }
@@ -1456,11 +1764,158 @@ Prepared program_prepare(Program &program, const std::string &name) {
     Normalizer(context).run();
     drop_unsupported_attributes(function);
     analyses.run_function(function, "dce", error);
+    collect_costs(function, prepared.unit);
     if (verifyFunction(function, &errs())) {
         context.fail(nullptr, "internal error: the IR of " + prepared.unit.name + " does not verify after preparing it",
                      "");
     }
     return finish();
+}
+
+std::set<const Instruction *> data_cone(const Instruction *root) {
+    std::set<const Instruction *> cone;
+    std::vector<const Instruction *> work = {root};
+    while (!work.empty() && cone.size() < 200000) {
+        const Instruction *instruction = work.back();
+        work.pop_back();
+        if (!cone.insert(instruction).second) continue;
+        for (const Value *operand : instruction->operands()) {
+            if (auto *dependency = dyn_cast<Instruction>(operand)) work.push_back(dependency);
+        }
+    }
+    return cone;
+}
+
+namespace {
+const char *kind_name(Kind kind) {
+    switch (kind) {
+    case Kind::Requires:
+        return "smith_requires of a callee, proved at the call";
+    case Kind::Ensures:
+        return "smith_ensures, proved";
+    case Kind::Invariant:
+        return "smith_invariant, proved";
+    case Kind::Assert:
+        return "assert, proved";
+    case Kind::Trap:
+        return "undefined behaviour, proved absent";
+    case Kind::Abort:
+        return "abort or trap, proved not reached";
+    case Kind::Premise:
+        return "smith_requires, assumed";
+    }
+    return "";
+}
+} // namespace
+
+std::string program_ir_text(const Prepared &prepared) {
+    std::string text;
+    raw_string_ostream stream(text);
+    stream << "; " << prepared.unit.name << " (" << prepared.unit.file << ":" << prepared.unit.line
+           << "), as `smith prove` checks it:\n";
+    stream
+        << "; callees with a smith_ensures are replaced by their contracts (the smith_requires slice before the call, "
+           "the\n; smith_ensures slice after it), the other callees are inlined, loops are unrolled, and each "
+           "contract, assert\n; and undefined behaviour is a call of smith_point(id, condition) listed here:\n";
+    for (const Point &point : prepared.unit.points) {
+        stream << ";   point " << point.id << ": " << kind_name(point.kind) << ": " << point.text << "  (" << point.file
+               << ":" << point.line << ")\n";
+    }
+    if (prepared.unprovable != nullptr) {
+        stream << "; cannot be proved: " << prepared.unprovable->what << " (" << prepared.unprovable->file << ":"
+               << prepared.unprovable->line << "); this is the IR as far as the prover got\n";
+    }
+    prepared.function->print(stream);
+    stream << "\n";
+    stream.flush();
+    return text;
+}
+
+namespace {
+
+// Removes " #<digits>" (the number of an attribute group, which depends on the other functions of the module).
+std::string without_group_numbers(const std::string &text) {
+    std::string out;
+    for (size_t i = 0; i < text.size(); i++) {
+        if (text[i] == '#' && i > 0 && text[i - 1] == ' ' && i + 1 < text.size() &&
+            isdigit(static_cast<unsigned char>(text[i + 1]))) {
+            size_t end = i + 1;
+            while (end < text.size() && isdigit(static_cast<unsigned char>(text[end])))
+                end++;
+            out.pop_back(); // the space before it
+            i = end - 1;
+            continue;
+        }
+        out += text[i];
+    }
+    return out;
+}
+
+void attributes_text(raw_string_ostream &stream, const AttributeList &attributes) {
+    for (unsigned index : attributes.indexes()) {
+        std::string text = attributes.getAsString(index);
+        if (!text.empty()) stream << "[" << index << ":" << text << "]";
+    }
+}
+
+} // namespace
+
+std::string program_proof_key(const Prepared &prepared) {
+    std::unique_ptr<Module> copy = CloneModule(*prepared.module);
+    StripDebugInfo(*copy);
+    Function *function = copy->getFunction(prepared.function->getName());
+    std::string text;
+    raw_string_ostream stream(text);
+    stream << copy->getDataLayoutStr() << "\n" << copy->getTargetTriple().str() << "\n";
+    std::set<const GlobalValue *> used;
+    std::vector<const Constant *> work;
+    std::set<const Constant *> visited;
+    for (Instruction &instruction : instructions(*function)) {
+        for (const Value *operand : instruction.operands()) {
+            if (auto *constant = dyn_cast<Constant>(operand)) work.push_back(constant);
+        }
+    }
+    while (!work.empty()) {
+        const Constant *constant = work.back();
+        work.pop_back();
+        if (!visited.insert(constant).second) continue;
+        if (auto *global = dyn_cast<GlobalValue>(constant)) {
+            if (global != function) used.insert(global);
+            if (auto *variable = dyn_cast<GlobalVariable>(global)) {
+                if (variable->hasInitializer()) work.push_back(variable->getInitializer());
+            }
+            continue;
+        }
+        for (const Value *operand : constant->operands()) {
+            if (auto *inner = dyn_cast<Constant>(operand)) work.push_back(inner);
+        }
+    }
+    std::vector<const GlobalValue *> sorted(used.begin(), used.end());
+    // Ordered by name, which the pointers do not decide.
+    // NOLINTNEXTLINE(bugprone-nondeterministic-pointer-iteration-order)
+    std::sort(sorted.begin(), sorted.end(),
+              [](const GlobalValue *a, const GlobalValue *b) { return a->getName() < b->getName(); });
+    std::string body;
+    raw_string_ostream body_stream(body);
+    for (const GlobalValue *global : sorted) {
+        global->print(body_stream);
+        if (auto *callee = dyn_cast<Function>(global)) attributes_text(body_stream, callee->getAttributes());
+        body_stream << "\n";
+    }
+    function->print(body_stream);
+    attributes_text(body_stream, function->getAttributes());
+    for (Instruction &instruction : instructions(*function)) {
+        if (auto *call = dyn_cast<CallBase>(&instruction)) attributes_text(body_stream, call->getAttributes());
+    }
+    body_stream.flush();
+    stream << without_group_numbers(body) << "\n";
+    for (const Point &point : prepared.unit.points)
+        stream << "point " << point.id << " " << static_cast<int>(point.kind) << " " << point.assume << " "
+               << point.call_site << "\n";
+    for (auto [first, second] : prepared.unit.distinct_pointers)
+        stream << "distinct " << first << " " << second << "\n";
+    stream.flush();
+    return text;
 }
 
 } // namespace prove

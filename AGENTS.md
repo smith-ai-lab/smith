@@ -115,7 +115,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `.clang-format-ignore` names is left alone); `smith lint` is clang-tidy on the project's own sources among the build's
   compiles, in parallel; `smith docs` checks AGENTS.md, `knowledge/` and `.agents/skills/` (the concept types and
   required fields are declared in `knowledge/index.md`'s frontmatter); `smith prove` proves the contracts of the
-  C sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
+  C and `.smith` sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
   that `smith_default` names, when it names exactly one (its arguments go to the program); `smith check` runs fmt (the dry
   run), docs, lint, test and prove, reports every part and fails if any did. With arguments `fmt`, `lint` and `prove`
   are clang-format, clang-tidy and the prover, as before. `smith_task` and `smith_alias` refuse a name that is a verb. A
@@ -217,7 +217,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
   the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
-  (`~/.cache/smith/llvm/23.1.3-r3`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27, XNU fast mmap, the editor's defaults (`smith-editor-defaults`), `.smith` as a source file in clang-format's main-include rule (`smith-format-source-extension`), the command hook for clangd and clang-tidy (`smith-command-hook`)); the compiler's
+  (`~/.cache/smith/llvm/23.1.3-r4`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27, XNU fast mmap, the editor's defaults (`smith-editor-defaults`), `.smith` as a source file in clang-format's main-include rule (`smith-format-source-extension`), the command hook for clangd and clang-tidy (`smith-command-hook`), clangd running `smith-*` checks (`smith-editor-fast-check`)); the compiler's
   output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
   and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
@@ -232,8 +232,20 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   out): a proof is charged what it would take on 8 idle cores, a constant on every machine (`Options::solver_threads`):
   the CPU time of what runs one thing after another, plus for the queries Bitwuzla runs side by side the longest of
   them or all of them divided by 8, whichever is more. The child process has the kernel's CPU limit as a backstop and a
-  large wall-clock limit for one that is blocked. `smith prove -v` shows wall, CPU and charged time. Proofs are cached
-  by content, and only what changed is proved again.
+  large wall-clock limit for one that is blocked. `smith prove -v` lists every function with wall, CPU and charged time (a
+  cached one marked cached, with the time it took), the slowest query of each and, for one that took a second or
+  ran out, what made it costly: the IR's divisions by a variable, products of variables, loads and stores by line, copies
+  of large objects and unrolled loops. Proofs are cached by content (`$XDG_CACHE_HOME/smith/proofs`, a hash of the IR the
+  prover checks, 31 days unused removed), and only what changed is proved again; `--no-cache` proves again.
+- **The prover's boundary is `smith_trusted()`, and there is no list** (issue #42, owner's decision: no proof file or
+  function list in build.c). `smith prove` proves every function with a contract of its own, minus the trusted ones;
+  `main` and functions with no contract are not proved. A function whose first statement is `smith_trusted()` (a call, so
+  it reads from the IR and works in C and `.smith` alike) is assumed: callers prove its `smith_requires` and assume its
+  `smith_ensures`, its body is never read, and it is memory-assumed to write only through the pointers it is given. The
+  report lists it as `trusted` and counts it apart from `proved`. A proved function that calls io, inline assembly or a
+  libc function with no contract fails with a message that names the call and the function to mark. Errors name their
+  cause (a `smith_requires` that reads after a write names both lines), and `--emit-ir=FILE` writes the IR the prover
+  checks. Skill: smith-contract.
 - **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
   the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
   `parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.
@@ -258,6 +270,24 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
+- **`smith-effects` is a clang-tidy check that a program touches the world only through capabilities passed down from
+  `main`** (`shim/effects.h`, registered in `shim/tidy.cpp` beside `SmithNaming`, so `smith lint` and `smith lsp` both
+  run it, `.smith` names as written; skill smith-io). `main` makes `SmithIo io = smith_io_make(argc, argv)` and a function
+  takes the part it needs, so its signature says what it can do. Decided function by function from the source, with no
+  lists of files:
+  - **A raw effect is a call into a system header that is not on the pure allow list** (in `shim/effects.h`, each
+    entry with its reason: `<string.h>`, `<math.h>`, `<ctype.h>`, the `strto*` family, `snprintf`, `qsort`...), or an
+    Objective-C message to a system framework's class or object. `abort`, `assert`, `__builtin_trap` and smith's failure
+    path are not effects.
+  - **A capability is a record marked `[[clang::annotate("smith::capability")]]`** (SmithIo, SmithConsole, SmithFiles,
+    SmithClock, SmithProcesses, SmithNet, SmithArgs (the live environment), and the handles SmithOp, SmithCapture,
+    SmithChild and SmithConnection; not SmithKey or SmithArena, which are values). Raw effects are allowed in its implementation: the `.smith`
+    module that defines it, or the `.c` beside its header (`io.c` with `io.h`; `lib/io.c` with `include/.../io.h`). An
+    exported function there that reaches a raw effect must take or return a capability. `smith_io_make` is marked
+    `[[clang::annotate("smith::main_only")]]` and may be called only in `main`; no capability in static storage.
+  - **Default on, `smith-effects.CFiles` true;** smith's own `.clang-tidy` sets it false, because smith's C is being
+    ported to `.smith` (issue #45) and each ported module must be clean from the day it lands. The editor runs it
+    because `patches/smith-editor-fast-check.patch` makes clangd treat `smith-*` checks as fast (LLVM `23.1.3-r4`).
 
 ## Commands
 
@@ -285,7 +315,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
-  `~/.cache/smith/llvm/23.1.3-r3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
+  `~/.cache/smith/llvm/23.1.3-r4/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
   install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
@@ -337,6 +367,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **The plugin's skills describe everything smith does today, and nothing it doesn't do yet.** Every command, build.c
   call and library has a skill that another project's agent can learn it from. Plans go in GitHub issues, never in a
   skill. A change that adds or changes something updates its skill in the same commit.
+- `smith new`'s program (`templates/new`) is the example of idiomatic Smith. A change to the idiom (a library becoming a
+  module, a new rule) updates `templates/new` in the same commit, and `tests/new.sh` checks that the new project passes
+  `smith check`.
 - Small Conventional Commits.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 

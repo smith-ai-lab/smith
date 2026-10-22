@@ -241,7 +241,7 @@ int main(void) {
 EOF
 run bad_call.smith >"$work/errors"
 expect "the lowering's error is at the source, as written" "bad_call.smith:4:5: error: \`printf\` is a C name; write \`c::printf\` [clang-diagnostic-error]" \
-    "$(findings <"$work/errors" | head -n 1)"
+    "$(findings <"$work/errors" | grep clang-diagnostic | head -n 1)"
 
 # --- plain C is as it was ------------------------------------------------------------------------------------------------
 run plain.c >"$work/plain-alone"
