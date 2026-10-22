@@ -2455,7 +2455,10 @@ static const char *const smith_profile_debug[] = {"-g",
 // Release and fast compile to ThinLTO bitcode and link with it: the optimizer inlines across files, as a unity build
 // would, in parallel and with no source combined.
 static const char *const smith_profile_release[] = {"-O2", "-flto=thin", nullptr};
-static const char *const smith_profile_fast[] = {"-O2", "-DNDEBUG", "-flto=thin", nullptr};
+// With NDEBUG the asserts are gone, and a variable or helper only an assert reads is unused, which is no mistake.
+static const char *const smith_profile_fast[] = {
+    "-O2",        "-DNDEBUG", "-Wno-unused-variable", "-Wno-unused-but-set-variable", "-Wno-unused-function",
+    "-flto=thin", nullptr};
 
 constexpr size_t smith_app_files_max = 4096;
 constexpr size_t smith_app_roots_max = 64;

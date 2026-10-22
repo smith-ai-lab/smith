@@ -480,7 +480,7 @@ fast`). The flags are those `smith new` used to write into a build.c, moved into
 | all three | `-std=gnu2y -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror`, `-ffp-contract=off`, `-mcpu=apple-m1` on Darwin arm64, `-I . -I .smith/include`, then the project's `.flags`; Clang modules (`smith_modules` with no folders) |
 | debug | `-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern`; the link has `-fsanitize=address,undefined` |
 | release | `-O2 -flto=thin` (assertions on); the link has `-flto=thin` |
-| fast | `-O2 -DNDEBUG -flto=thin`; the link has `-flto=thin` |
+| fast | `-O2 -DNDEBUG -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -flto=thin` (a variable only an assert reads is unused once the asserts are gone); the link has `-flto=thin` |
 
 ThinLTO is how a project gets inlining across files without combining them into one translation unit (smith has no
 unity builds: Clang modules and their shared cache already parse each header once). On game, 12 duels per pairing of

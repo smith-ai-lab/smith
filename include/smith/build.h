@@ -385,8 +385,8 @@ const char *const *smith_objects(SmithBuild *b, const char *profile, const char 
 //               -Wstrict-prototypes -Wvla -Werror, -ffp-contract=off, -mcpu=apple-m1 (Darwin arm64 only),
 //               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
 //               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2
-//               -flto=thin; fast: -O2 -DNDEBUG -flto=thin), then build::defaults .flags, the .folders rows that
-//               cover the source, and .flags
+//               -flto=thin; fast: -O2 -DNDEBUG -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+//               -flto=thin), then build::defaults .flags, the .folders rows that cover the source, and .flags
 //   build::modules(b, &(build::Modules){});    // unless modules are already on or an object was already declared
 //   for P in debug, release, fast:
 //     for each source S found, and each library L used (an object another program made is the same object):

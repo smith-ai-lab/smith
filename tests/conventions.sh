@@ -479,7 +479,7 @@ capture smith build -t commands build/debug/main.o
 case $out in *FROM_BASE*) expect "multi: ... and no others" no yes ;; *) expect "multi: ... and no others" no no ;; esac
 expect_contains "multi: build::sources" "$(cat info.txt)" "sources: src/base/value.c"
 expect_contains "multi: build::objects" "$(cat info.txt)" "build/release/src/base/value.o"
-expect_contains "multi: build::profile_flags: the profile's own" "$(cat info.txt)" "-O2 -DNDEBUG -flto=thin -I src"
+expect_contains "multi: build::profile_flags: the profile's own" "$(cat info.txt)" "-O2 -DNDEBUG -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -flto=thin -I src"
 expect_contains "multi: build::profile_link_flags" "$(cat info.txt)" "link: -flto=thin -Wl,-headerpad,0x100"
 expect_contains "multi: build::source_flags: the folder's" "$(cat info.txt)" "-DFROM_BASE=1"
 capture smith test
