@@ -126,8 +126,8 @@ import <unistd.h>;
 // how the runner makes a real io for the test that takes one and for no other code.
 [[smith::c_name("SmithTestRunner")]] export typedef struct [[clang::annotate("smith::capability")]] {
     c::SmithIo *io;
-    c::SmithIo (*make_io)(int argc, char **argv);
-    int argc;
+    c::SmithIo (*make_io)(i32 argc, char **argv);
+    i32 argc;
     char **argv;
 } Runner;
 
@@ -257,27 +257,53 @@ constexpr i32 usage_status = 2;
     return (Value){.kind = Kind_Pointer, .type = "ptr", .pointer_value = (usize)value};
 }
 
-// The Value of a value of type T: the bridge from a generic check to the comparison below.
+[[smith::c_name("smith_test_value_i8")]] export [[nodiscard]] Value value_i8(i8 value) {
+    return value_signed((i64)value, 1);
+}
+
+[[smith::c_name("smith_test_value_i16")]] export [[nodiscard]] Value value_i16(i16 value) {
+    return value_signed((i64)value, 2);
+}
+
+[[smith::c_name("smith_test_value_i32")]] export [[nodiscard]] Value value_i32(i32 value) {
+    return value_signed((i64)value, 4);
+}
+
+[[smith::c_name("smith_test_value_i64")]] export [[nodiscard]] Value value_i64(i64 value) {
+    return value_signed((i64)value, 8);
+}
+
+[[smith::c_name("smith_test_value_isize")]] export [[nodiscard]] Value value_isize(isize value) {
+    return value_signed((i64)value, 8);
+}
+
+[[smith::c_name("smith_test_value_u8")]] export [[nodiscard]] Value value_u8(u8 value) {
+    return value_unsigned((u64)value, 1);
+}
+
+[[smith::c_name("smith_test_value_u16")]] export [[nodiscard]] Value value_u16(u16 value) {
+    return value_unsigned((u64)value, 2);
+}
+
+[[smith::c_name("smith_test_value_u32")]] export [[nodiscard]] Value value_u32(u32 value) {
+    return value_unsigned((u64)value, 4);
+}
+
+[[smith::c_name("smith_test_value_u64")]] export [[nodiscard]] Value value_u64(u64 value) {
+    return value_unsigned((u64)value, 8);
+}
+
+[[smith::c_name("smith_test_value_usize")]] export [[nodiscard]] Value value_usize(usize value) {
+    return value_unsigned((u64)value, 8);
+}
+
+// The Value of a value of type T: the bridge from a generic check to the comparison below. The type is chosen by
+// _Generic, which needs no compiler to lower, so a module's tests can call the checks too. bool, char, the sized
+// integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
 export [[nodiscard]] Value value_of(constexpr type T, T v) {
-    if constexpr (T == bool) {
-        return value_bool(v);
-    } else if constexpr (T == char) {
-        return value_char(v);
-    } else if constexpr (is_float(T)) {
-        if constexpr (sizeof(T) == 4) {
-            return value_f32((f32)v);
-        } else {
-            return value_f64((f64)v);
-        }
-    } else if constexpr (is_integer(T) && is_signed(T)) {
-        return value_signed((i64)v, sizeof(T));
-    } else if constexpr (is_integer(T) || is_enum(T)) {
-        return value_unsigned((u64)v, sizeof(T));
-    } else if constexpr (is_pointer(T)) {
-        return value_pointer((const volatile void *)v);
-    } else {
-        static_assert(false, "test: a check compares bool, char, integers, f32, f64 and pointers; cast the value");
-    }
+    return _Generic(v, bool: value_bool, char: value_char, i8: value_i8, i16: value_i16, i32: value_i32, i64: value_i64,
+                    isize: value_isize, u8: value_u8, u16: value_u16, u32: value_u32, u64: value_u64, usize: value_usize,
+                    f32: value_f32, f64: value_f64, default: value_pointer)(v);
 }
 
 constexpr i32 less = -1;
@@ -679,24 +705,12 @@ f64 distance_f64(f64 a, f64 b) {
 
 // |a - b| <= tolerance, for f32 or f64 (the type is inferred, and a literal adapts).
 export void check_near(constexpr type T, T a, T b, T tolerance) {
-    if constexpr (T == f32) {
-        check_near_f32(a, b, tolerance);
-    } else if constexpr (T == f64) {
-        check_near_f64(a, b, tolerance);
-    } else {
-        static_assert(false, "test::check_near compares f32 or f64");
-    }
+    _Generic(a, f32: check_near_f32, f64: check_near_f64)(a, b, tolerance);
 }
 
 // a and b are f32 or f64 with the same bits.
 export void check_same_bits(constexpr type T, T a, T b) {
-    if constexpr (T == f32) {
-        check_same_bits_f32(a, b);
-    } else if constexpr (T == f64) {
-        check_same_bits_f64(a, b);
-    } else {
-        static_assert(false, "test::check_same_bits compares f32 or f64");
-    }
+    _Generic(a, f32: check_same_bits_f32, f64: check_same_bits_f64)(a, b);
 }
 
 [[smith::c_name("smith_check_equal_bool")]] export void check_equal_bool(bool a, bool b) {
@@ -801,6 +815,7 @@ constexpr u64 seeds_default = 100;
 constexpr u64 seeds_max = 1'000'000'000;
 constexpr u64 seed_root = 0x5eed;      // the key the properties' seeds are drawn from
 constexpr usize commands_max = 1U << 30; // what a worker serves before it exits and is forked again
+constexpr usize rounds_max = (usize)1 << 40; // polls of the runner's loops: more than a run can make
 
 typedef enum : u8 {
     End_Passed,
@@ -925,7 +940,10 @@ void catch_signals(void) {
     constexpr usize signals_count = 6;
     const i32 signals[signals_count] = {sig_trap, sig_abrt, sig_ill, sig_segv, sig_bus, sig_fpe};
     // AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers.
-    usize caught = target::address_sanitizer ? 3 : signals_count;
+    usize caught = signals_count;
+    if constexpr (target::address_sanitizer) {
+        caught = 3;
+    }
     for (usize i = 0; i < caught; i++)
         c::sigaction(signals[i], &action, nullptr);
 }
@@ -1012,7 +1030,7 @@ u64 tap_word(const random::Tap *tap, u64 key, u64 n, u64 bits) {
     return word;
 }
 
-const random::Tap hooking_tap = {.word = tap_word};
+random::Tap hooking_tap; // its word is set in setup(), in the process that draws through it
 
 // Runs a property test on one key: it draws its inputs from the key, so the seed replays it.
 void run_key(const Test *test, const Options *options, u64 seed) {
@@ -1080,6 +1098,7 @@ void setup(Shared *block, i32 output) {
     shared = block;
     catch_signals();
     c::smith_failure_hook = on_failure;
+    hooking_tap.word = tap_word;
     active_tap = hooking ? &hooking_tap : nullptr;
     if (c::dup2(output, stdout_fd) < 0 || c::dup2(output, stderr_fd) < 0) c::_exit(usage_status);
     c::close(output);
@@ -1441,7 +1460,7 @@ bool service(const Options *options, usize slot, Run *run, i16 output_events, i1
 // Waits for the test in the slot to finish; nothing else runs meanwhile.
 void wait_for(const Options *options, usize slot, Run *run) {
     Process *process = &processes[slot];
-    for (;;) { // the test ends, or dies, or its alarm kills it
+    for (usize round = 0; round < rounds_max; round++) { // the test ends, or dies, or its alarm kills it
         struct c::pollfd polls[2] = {{.fd = process->output_eof ? -1 : process->output, .events = poll_in},
                                      {.fd = process->control, .events = poll_in}};
         if (c::poll(polls, 2, -1) < 0) {
@@ -1450,6 +1469,7 @@ void wait_for(const Options *options, usize slot, Run *run) {
         }
         if (service(options, slot, run, polls[0].revents, polls[1].revents)) return;
     }
+    contract::assert(false); // rounds_max polls and the test is neither over nor dead
 }
 
 // Ends the workers, which are idle: closing a socket ends its worker.
@@ -1823,7 +1843,7 @@ void run_all(Plan *plan) {
         plan->running[job] = idle;
     usize next = 0;
     usize printed = 0;
-    for (;;) { // each pass starts a test, finishes one or reads output, and there are finitely many tests
+    for (usize round = 0; round < rounds_max; round++) { // each pass starts a test, finishes one or reads output
         while (next < plan->count && launch(plan, &next)) {
         }
         if (any_running(plan)) pump(plan);
@@ -1833,6 +1853,7 @@ void run_all(Plan *plan) {
             printed += 1;
         }
         if (next == plan->count && !any_running(plan)) break;
+        contract::assert(round + 1 < rounds_max);
     }
     for (; printed < plan->count; printed++) { // nothing else is running now
         shrink_failure(plan->tests[printed], plan->options, &plan->runs[printed]);
@@ -1971,7 +1992,7 @@ bool parse_value(Options *options, const char *flag, const char *value) {
     return false;
 }
 
-bool parse_options(int argc, char **argv, Options *options) {
+bool parse_options(i32 argc, char **argv, Options *options) {
     for (i32 i = 1; i < argc; i++) {
         const char *flag = argv[i];
         if (c::strcmp(flag, "--list") == 0) {
@@ -2055,7 +2076,7 @@ void raise_files(usize jobs) {
 
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.
-[[smith::c_name("smith_test_run")]] export int run_tests(Runner *runner) {
+[[smith::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
     c::SmithIo *io = runner->io;
     const char *base = c::smith_args_env(&io->args, "TMPDIR");
     Options options = {
