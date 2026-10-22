@@ -220,8 +220,8 @@ path is settled.
 only (so a C name such as `throw` is a name, not C++'s keyword), `::` one token, and `module ...;` and `import ...;` lines at
 file scope kept whole, `import <sys/wait.h>;` included. Inside a function body, `import` and `module` are names, so
 `import value = c.x + c.y;` is an indented declaration of a type named `import`. Every C file formats the same as `.c` and as
-`.smith` (`tests/smith-fmt.sh`). `smith fmt` with no arguments formats the project's `.smith` files when its build.c lists them
-(`smith new` globs `**/*.smith`). clangd, which uses the same library, formats `.smith` files the same way; understanding the
+`.smith` (`tests/smith-fmt.sh`). `smith fmt` with no arguments formats the project's `.smith` files
+(every file git sees). clangd, which uses the same library, formats `.smith` files the same way; understanding the
 rest of a `.smith` file (hover, diagnostics, completion) is `smith lsp` (below).
 
 ## Names as written

@@ -1555,9 +1555,9 @@ fi
 fi
 
 if part flags; then
-# 11. The libraries compile clean under the flags `smith new` writes, in both C standards, and under the extra
+# 11. The libraries compile clean under the flags of the conventions (smith_profile_warnings), in both C standards, and under the extra
 # warnings game and learner add, since every project compiles them with its own flags.
-flags=$(awk '/build_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/templates/new/build.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
+flags=$(awk '/smith_profile_warnings\[\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "$repo/runtime/build_runtime.c" | grep -o '"-[^"]*"' | tr -d '"' | grep -v '^-std=')
 flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 -Wmissing-variable-declarations -Wcomma -Wunreachable-code"
 for standard in gnu2y gnu23; do
     for library in test random arena trace; do
@@ -1565,7 +1565,7 @@ for standard in gnu2y gnu23; do
         [ "$library" = random ] && source=$repo/lib/smith/random.smith # a .smith module
         # shellcheck disable=SC2086
         capture "$smith" cc -std=$standard $flags -I "$repo/include" -iquote "$repo/include/smith" -c "$source" -o "$work/$library.o"
-        expect "flags: ${source#"$repo"/} compiles clean under $standard with the template's warnings" 0 "$rc"
+        expect "flags: ${source#"$repo"/} compiles clean under $standard with the conventions' warnings" 0 "$rc"
         [ "$rc" -eq 0 ] || printf '%s\n%s\n' "$out" "$err"
     done
 done

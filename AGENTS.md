@@ -52,7 +52,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
   clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
   - **smith's defaults where a project has no file** (issue #43): a file with no `.clang-format` or `.clang-tidy` up its
-    tree (the tools' own lookup) gets smith's, embedded from `templates/new/` and written to `<data>/smith/defaults/`,
+    tree (the tools' own lookup) gets smith's, embedded from `templates/defaults/` and written to `<data>/smith/defaults/`,
     passed as `--style=file:` and `--config-file=` (`smith_defaults_apply`, smith.c). A project's file replaces them
     whole and an explicit `--style`, `--config` or `--config-file` wins. `--dump-config` is the tool's, so it prints the
     effective one and makes it the project's (`smith fmt --dump-config > .clang-format`). `smith cc` is untouched.
@@ -66,17 +66,34 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   and `$SMITH_LLDB_DAP`), with the system's debugserver (Apple signs it), no Python and no curses
   ([docs/debugging.md](docs/debugging.md); the skill is smith-debug). They add about 17 MB to smith and, because the
   frameworks lldb needs load with it, about 9 ms to the start of every smith process.
-- **smith never changes a default, so adopting it is trivial and each step is optional.**
-  1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
-     C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot
-     change.
-  2. **Replace the Makefile with a `build.c`.** It only describes the build, explicitly and across platforms, so it
-     changes nothing either.
-  3. **Run `smith new`.** It writes an explicit, opinionated starting point (C2y with `-std=gnu2y`, for `_Countof`;
-     strict warnings; three builds: debug with sanitizers, release with assertions on, fast without; `.clang-format`,
-     `.clang-tidy`, `.claude/settings.json` enabling the smith plugin, `AGENTS.md`, `knowledge/` and a docs skill, git on `main`, a first build), all in files the
-     project owns. smith's skills are not copied: they ship in the smith plugin. There is no house-style mechanism,
-     only those files; a project that never runs `smith new` gets none of it.
+- **Adopting smith is incremental from both ends, and every step is optional** (issue #43). `smith cc` never changes a
+  default; the defaults that exist apply only where a project has no file and runs a verb that uses one.
+  - **From an existing C project (configuration, as it is):**
+    1. **Use `smith cc` instead of clang** (`CC=smith-cc` in a Makefile, where one program path is needed). For C,
+       C++ and Objective-C it is a pure passthrough: smith never adds, removes or reorders flags, so the build cannot
+       change.
+    2. **Use the Makefile as a build file** (#44 translates it): a `build.c` that describes the same build explicitly
+       and across platforms, in smith's low-level API, so it changes nothing either.
+    3. **Rename `.c` files to `.smith` one at a time,** deciding module by module when to use smith's features.
+  - **From a new project (convention):**
+    1. **Follow the conventions and write no files.** There is no build file and no config file: `smith build`, `run`,
+       `test`, `fmt`, `lint`, `prove` and `check` do the right thing (C2y with `-std=gnu2y`, for `_Countof`; strict
+       warnings; three profiles: debug with sanitizers, release with assertions on, fast without).
+    2. **Generate the file you want to change.** `--dump-config` makes the implicit explicit: `smith fmt --dump-config
+       > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config` for the build file.
+    3. **Replace the high-level calls with low-level ones,** a piece at a time.
+  - **The two ends meet:** a dumped build file and a hand-written one are the same API at different levels.
+- **`smith new [--language smith|c] [<name>]` writes the program and what agents need, and no configuration**
+  (issue #43; `smith` is the default). The program is `main.smith`, `primes.smith` (a module; no header) and
+  `tests/test_primes.smith`, or with `--language c` `main.c`, `primes.c`, `primes.h` and `tests/test_primes.c`; with
+  `.gitignore`. For agents: `AGENTS.md`, `.claude/settings.json` (enables the smith plugin, so smith's skills are not
+  copied), `knowledge/` (an index and a first concept) and the docs skill `.agents/skills/<name>-docs` with the
+  `.claude/skills` link. The owner: "we have to assume the primary author is going to be Claude or some other agent."
+  - **No `build.c` or `build.smith`, no `.clang-format` or `.clang-tidy`, no root `compile_commands.json`:** smith's
+    defaults cover them (conventions for the build; the embedded style and checks for `smith fmt` and `smith lint`;
+    `.smith/compile_commands.json` for the editor). `--dump-config` makes any of them the project's.
+  - **Git on `main`, a first build and one commit** stay; a folder that already has its own build file, a `main`, or
+    another build system keeps its program, so `smith new` adds only what agents need.
 - **smith's top level is only verbs**, as zig's is: `smith cc` and `smith c++` compile (clang's arguments, unchanged);
   `build`, `new`, `fetch`, `cache`, `docs`, `version`, `fmt`, `lint`, `lsp`, `run`, `test` and `check` do the rest. The bare form `smith
   foo.c -o foo` is an error that says to run `smith cc foo.c -o foo`, so nothing is ambiguous. For what needs one
@@ -183,7 +200,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   writes and keeps its own state in `.smith/`; `SMITH_NINJA=<ninja>` runs the manifest with ninja instead. It is
   recognised only as the exact first argument. The header and runtime are embedded in smith with `#embed`, so the stage0 (smith without
   clang inside: no C++, no LLVM, it runs an external clang) still builds with one `cc` command. Design and API: [docs/build-c.md](docs/build-c.md).
-- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). `smith new` turns them on; [docs/build-c.md](docs/build-c.md) has the design.
+- **Clang modules are implicit, one module per header, and opt-in.** `smith_modules` in build.c writes the maps under `.smith/modules/`; clang keeps the cache in `$XDG_CACHE_HOME/smith/modules` (else `~/.cache/smith/modules`), one for every project and worktree, so the SDK's modules are built once per machine. One module per header (not an `umbrella` directory), because the depfile of an umbrella module lists every header in the folder and an edit would rebuild every source. compile_commands.json keeps the module flags (`smith lsp` builds them, with no `--query-driver`). the conventions turn them on; [docs/build-c.md](docs/build-c.md) has the design.
 - **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
@@ -258,9 +275,12 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
 - `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
   input) into the failing line and the call chain; it needs the full smith.
-- `smith new [<name>]` writes a ready project into `<name>` (or the current folder), never overwriting: `build.c`,
-  `main.c` and `primes.c` (a few lines of modern C, split so that a test can call them), a test in `tests/` that `smith test` runs (`smith_tests`), `.gitignore`, `.clang-format`, `.clang-tidy`, `AGENTS.md`, `knowledge/` (an index and a first concept), `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith plugin
-  and declares its marketplace), then builds once and commits on `main`. No skills are copied. `tests/new.sh` tests it.
+- `smith new [--language smith|c] [<name>]` writes a ready project into `<name>` (or the current folder), never
+  overwriting: `main.smith`, `primes.smith` and `tests/test_primes.smith` (or `main.c`, `primes.c`, `primes.h` and
+  `tests/test_primes.c`), `.gitignore`, `AGENTS.md`, `knowledge/` (an index and a first concept),
+  `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith
+  plugin and declares its marketplace), then builds once and commits on `main`. No build file, no config file, no
+  skills copied. `tests/new.sh` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
   a hash, fetched with smith's own HTTPS client and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`; no other

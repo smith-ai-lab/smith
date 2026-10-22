@@ -8,7 +8,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin" "$work/home"
-ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" # the generated build.c names smith-cc as its compiler
+ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH=$work/bin:$PATH
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
@@ -66,20 +66,108 @@ tree_sum() { # a checksum of every file and link in a folder, git's own data exc
 
 commits() { git -C "$1" rev-list --count HEAD 2>/dev/null || echo 0; }
 
-# 1. smith new hello.
+# The files of a new project, in git's order. smith builds by convention: no build file, no .clang-format or
+# .clang-tidy, and no compile_commands.json at the root.
+smith_files=".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md knowledge/program.md main.smith primes.smith tests/test_primes.smith"
+c_files=".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md knowledge/program.md main.c primes.c primes.h tests/test_primes.c"
+
+# The verbs on a new project, in the current folder: label, extension (smith or c), and the program's name.
+verbs_on_new_project() {
+    label=$1 ext=$2 prog=$3
+    case $ext in smith) main=main.smith ;; *) main=main.c ;; esac
+    cp "$main" "$main.orig"
+    if [ "$ext" = smith ]; then
+        printf 'import <stdio.h>;\n\nint main(int argc, char **argv) {\n    for (i32 i = 1; i < argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n' >"$main"
+    else
+        printf '#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n' >"$main"
+    fi
+    capture smith run a "b c" 'x;y' '5%' -- -Dkeep
+    expect "$label: smith run passes its arguments to the program, -D after --" "$(lines a 'b c' 'x;y' '5%' -Dkeep)" \
+        "$(printf '%s\n' "$out" | grep -v '^\[')"
+    capture smith run
+    expect "$label: smith run with none passes none" "" "$(printf '%s\n' "$out" | grep -v '^\[' | tr -d '\n')"
+    cp "$main.orig" "$main"
+    capture smith test
+    expect "$label: smith test passes out of the box" 0 "$rc"
+    expect_contains "$label: ... on the two tests of the template" "$out" "2 passed, 0 failed"
+    capture smith test --test no_primes
+    expect_contains "$label: smith test --test runs one test" "$out" "1 passed, 0 failed"
+    capture smith prove
+    expect "$label: smith prove succeeds with nothing to prove" 0 "$rc"
+    expect_contains "$label: ... and says so" "$out" "nothing to prove"
+    test_file=tests/test_primes.$ext
+    sed 's/sum(5), 28/sum(5), 27/' "$test_file" >"$test_file.new" && mv "$test_file.new" "$test_file"
+    capture smith test
+    expect "$label: a failing test fails smith test" 1 "$rc"
+    expect_contains "$label: ... and shows both values" "$out$err" "sum(5) = 28"
+    capture smith check
+    expect "$label: smith check fails when a test does" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+    git checkout -q -- "$test_file"
+    capture smith check x
+    expect_contains "$label: smith check takes no arguments" "$err" "takes no arguments"
+    capture smith build check
+    expect_contains "$label: smith build check is refused for the verb" "$err" "check is a verb, not a target of smith build; run \`smith check\`"
+    capture smith check
+    expect "$label: smith check passes on the new project" 0 "$rc"
+    if [ "$rc" -ne 0 ]; then echo "$err" | tail -n 30; fi
+    capture smith fmt --dry-run
+    expect "$label: smith fmt --dry-run is clean with smith's style" 0 "$rc"
+    capture smith lint
+    expect "$label: smith lint is clean with smith's checks" 0 "$rc"
+    printf 'int   misformatted;\n' >>"$main"
+    capture smith check
+    expect_contains "$label: smith check fails on a misformatted file" "$out$err" "misformatted"
+    expect "$label: ... with a nonzero status" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+    capture smith fmt
+    expect "$label: smith fmt rewrites the sources" 0 "$rc"
+    expect_contains "$label: ... to smith's style" "$(tail -n 1 "$main")" "int misformatted;"
+    cp "$main.orig" "$main"
+    rm "$main.orig"
+    printf 'int   BadName = 0;\n' >>"primes.$ext"
+    capture smith lint
+    expect "$label: smith lint fails on what clang-tidy finds" 1 "$rc"
+    expect_contains "$label: ... naming the check" "$out$err" "readability-identifier-naming"
+    git checkout -q -- "primes.$ext"
+    capture smith build # the log of the last build is the plain build's again
+    if "$smith" lsp --version >/dev/null 2>&1; then
+        capture "$smith" lsp --check="$main"
+        errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
+        expect "$label: clangd reports no errors in $main, from .smith/compile_commands.json" 0 "$errors"
+        expect "$label: ... with no compile_commands.json at the root" no "$(exists compile_commands.json)"
+    fi
+    capture smith build release fast
+    expect "$label: smith build release fast exits 0" 0 "$rc"
+    for mode in debug release fast; do
+        expect "$label: the $mode program exists" yes "$(exists build/$mode/$prog)"
+        expect "$label: the $mode program runs and prints its line" "hello from $prog" "$(build/$mode/$prog | tail -n 1)"
+    done
+    expect "$label: the commands are in .smith/compile_commands.json" yes "$(has "$(cat .smith/compile_commands.json)" "\"$main\"")"
+    capture smith build -t commands build/debug/main.o
+    expect_contains "$label: debug has the sanitizers" "$out" "-fsanitize=address,undefined"
+    expect_contains "$label: ... compiles with -std=gnu2y" "$out" "-std=gnu2y"
+    expect "$label: ... and has no -DNDEBUG" no "$(has "$out" "-DNDEBUG")"
+    capture smith build -t commands build/release/main.o
+    expect_contains "$label: release is -O2" "$out" " -O2 "
+    expect "$label: ... with assertions on" no "$(has "$out" "-DNDEBUG")"
+    expect "$label: ... and no sanitizers" no "$(has "$out" "-fsanitize")"
+    capture smith build -t commands build/fast/main.o
+    expect_contains "$label: fast has -DNDEBUG" "$out" "-DNDEBUG"
+}
+
+# 1. smith new hello: a .smith project, the default.
 cd "$work" || exit 1
 capture smith new hello
 expect "new hello: exits 0" 0 "$rc"
 new_out=$out
-for f in build.c main.c primes.c primes.h tests/test_primes.c .gitignore .clang-format .clang-tidy .claude/settings.json; do
+for f in main.smith primes.smith tests/test_primes.smith .gitignore .claude/settings.json AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hello-docs/SKILL.md; do
     expect "new hello: creates $f" yes "$(exists "hello/$f")"
 done
-expect_contains "new hello: build.c names the program" "$(cat hello/build.c)" "build/%s/hello"
-expect "new hello: build.c has no placeholder left" "" "$(grep -F '@NAME@' hello/build.c hello/main.c)"
-expect_contains "new hello: main.c names the program" "$(cat hello/main.c)" 'puts("hello from hello");'
+for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.c primes.c primes.h; do
+    expect "new hello: writes no $f" no "$(exists "hello/$f")"
+done
+expect_contains "new hello: main.smith names the program" "$(cat hello/main.smith)" 'c::puts("hello from hello");'
+expect "new hello: no placeholder is left" "" "$(grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith)"
 expect "new hello: .gitignore is the template" "$(cat "$here/templates/new/gitignore")" "$(cat hello/.gitignore)"
-expect "new hello: .clang-format is the template" "$(cat "$here/templates/new/clang-format")" "$(cat hello/.clang-format)"
-expect "new hello: .clang-tidy is the template" "$(cat "$here/templates/new/clang-tidy")" "$(cat hello/.clang-tidy)"
 expect "new hello: .claude/settings.json is the template" "$(cat "$here/templates/new/claude-settings.json")" \
     "$(cat hello/.claude/settings.json)"
 expect "new hello: .claude/settings.json is exactly the plugin settings" '{
@@ -95,149 +183,91 @@ expect "new hello: .claude/settings.json is exactly the plugin settings" '{
     }
   }
 }' "$(cat hello/.claude/settings.json)"
-for f in AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hello-docs/SKILL.md; do
-    expect "new hello: creates $f" yes "$(exists "hello/$f")"
-done
 expect "new hello: .claude/skills links to the skills" "../.agents/skills" "$(readlink hello/.claude/skills)"
 expect "new hello: no CLAUDE.md, Claude Code reads AGENTS.md" no "$(exists hello/CLAUDE.md)"
-expect "new hello: AGENTS.md, knowledge and the skill have no placeholder left" "" \
-    "$(grep -rF -e '@NAME@' -e '@KEBAB@' hello/AGENTS.md hello/knowledge hello/.agents hello/build.c)"
+expect_contains "new hello: AGENTS.md says there is no build file" "$(cat hello/AGENTS.md)" "There is no build file and no config file"
+expect_contains "new hello: ... and how to take over a default" "$(cat hello/AGENTS.md)" "smith fmt --dump-config > .clang-format"
+expect_contains "new hello: the concept describes the .smith program" "$(cat hello/knowledge/program.md)" "primes::sum"
 expect_contains "new hello: the summary names the plugin" "$new_out" "/plugin marketplace add adam-r-kowalski/smith"
 expect_contains "new hello: the summary names the install" "$new_out" "/plugin install smith@smith"
 expect "new hello: no missing-entry report" no "$(has "$new_out" 'lacks "smith@smith"')"
 expect "new hello: git is on main" main "$(git -C hello symbolic-ref --short HEAD)"
 expect "new hello: one commit" 1 "$(commits hello)"
 expect "new hello: the commit message" "chore: create hello with smith new" "$(git -C hello log -1 --format=%s)"
-expect "new hello: git tracks exactly the written files" \
-    ".agents/skills/hello-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md knowledge/program.md main.c primes.c primes.h tests/test_primes.c" \
-    "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
+expect "new hello: git tracks exactly the written files" "$smith_files" "$(git -C hello ls-files | tr '\n' ' ' | sed 's/ $//')"
 expect "new hello: the tree is clean after the commit" "" "$(git -C hello status --porcelain)"
 expect "new hello: the first build made the debug program" yes "$(exists hello/build/debug/hello)"
 expect "new hello: the summary names the next step" yes "$(has "$new_out" "smith run")"
 cd hello || exit 1
 capture smith run
 expect "new hello: smith run prints the greeting" "hello from hello" "$(echo "$out" | tail -n 1)"
-capture smith build release
-expect "new hello: smith build release exits 0" 0 "$rc"
-capture smith build fast
-expect "new hello: smith build fast exits 0" 0 "$rc"
-for mode in debug release fast; do
-    expect "new hello: the $mode program exists" yes "$(exists build/$mode/hello)"
-    expect "new hello: the $mode program runs and prints its line" "hello from hello" "$(build/$mode/hello | tail -n 1)"
-done
-expect "new hello: build.c turns modules on" yes "$(grep -q 'smith_modules(b' build.c && echo yes || echo no)"
-expect "new hello: the builds compile with modules" 3 \
-    "$(grep "fmodules-cache-path=$XDG_CACHE_HOME/smith/modules" .smith/build.ninja | grep -c ' -c main.c ')"
-expect "new hello: the module cache is the shared one" yes "$(exists "$XDG_CACHE_HOME/smith/modules/modules.timestamp")"
-expect "new hello: compile_commands.json has the module flags" yes "$(has "$(cat compile_commands.json)" "fmodule")"
-expect "new hello: compile_commands has main.c" yes "$(grep -q '"main.c"' compile_commands.json && echo yes || echo no)"
-expect "new hello: compile_commands has build.c" yes "$(grep -q '"build.c"' compile_commands.json && echo yes || echo no)"
-debug_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 1' compile_commands.json)
-release_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 2' compile_commands.json)
-fast_command=$(awk '/"file"/ { m = ($0 ~ /"file": "main.c"/); if (m) n++ } m && n == 3' compile_commands.json)
-expect "new hello: the first main.c command is the debug one" yes "$(has "$debug_command" "build/debug/main.o")"
-expect "new hello: the debug command has the sanitizers" yes "$(has "$debug_command" "-fsanitize=address,undefined")"
-expect "new hello: the second main.c command is the release one" yes "$(has "$release_command" "build/release/main.o")"
-expect "new hello: the third main.c command is the fast one" yes "$(has "$fast_command" "build/fast/main.o")"
-expect "new hello: debug has no -DNDEBUG" no "$(has "$debug_command" "-DNDEBUG")"
-expect "new hello: release has no -DNDEBUG" no "$(has "$release_command" "-DNDEBUG")"
-expect "new hello: fast has -DNDEBUG" yes "$(has "$fast_command" "-DNDEBUG")"
-expect "new hello: release is -O2" yes "$(has "$release_command" "-O2")"
-expect "new hello: fast is -O2" yes "$(has "$fast_command" "-O2")"
-expect "new hello: release has no sanitizers" no "$(has "$release_command" "-fsanitize")"
-for mode in debug release fast; do
-    eval "command=\$${mode}_command"
-    expect "new hello: $mode compiles with -std=gnu2y" yes "$(has "$command" "-std=gnu2y")"
-    expect "new hello: $mode does not use gnu23" no "$(has "$command" "-std=gnu23")"
-done
-expect "new hello: the build.c header lists release" yes "$(has "$(head -n 12 build.c)" "smith build release")"
-expect "new hello: the build.c header lists fast" yes "$(has "$(head -n 12 build.c)" "smith build fast")"
+expect "new hello: ... after the line of the sum" "the first 5 primes add up to 28" "$(echo "$out" | tail -n 2 | head -n 1)"
+verbs_on_new_project "new hello" smith hello
+cd "$work" || exit 1
 
-# The verbs run the tasks of their names. run takes arguments for the program, test finds no tests, check is the checks.
-cp main.c main.c.orig
-cat >main.c <<'C'
-#include <stdio.h>
-
-int main(int argc, char **argv) {
-    for (int i = 1; i < argc; i++)
-        puts(argv[i]);
-    return 0;
-}
-C
-capture smith run a "b c" 'x;y' '5%' -- -Dkeep
-expect "new hello: smith run passes its arguments to the program, -D after --" "$(lines a 'b c' 'x;y' '5%' -Dkeep)" \
-    "$(printf '%s\n' "$out" | grep -v '^\[')"
+# 1a. smith new --language c hellc: a C project, the same by convention.
+capture smith new --language c hellc
+expect "new --language c: exits 0" 0 "$rc"
+c_out=$out
+for f in main.c primes.c primes.h tests/test_primes.c .gitignore .claude/settings.json AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hellc-docs/SKILL.md; do
+    expect "new --language c: creates $f" yes "$(exists "hellc/$f")"
+done
+for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.smith primes.smith; do
+    expect "new --language c: writes no $f" no "$(exists "hellc/$f")"
+done
+expect_contains "new --language c: main.c names the program" "$(cat hellc/main.c)" 'puts("hello from hellc");'
+expect_contains "new --language c: the concept describes the C program" "$(cat hellc/knowledge/program.md)" "primes_sum"
+expect "new --language c: git tracks exactly the written files" "$c_files" "$(git -C hellc ls-files | tr '\n' ' ' | sed 's/ $//')"
+expect "new --language c: the tree is clean after the commit" "" "$(git -C hellc status --porcelain)"
+expect "new --language c: the first build made the debug program" yes "$(exists hellc/build/debug/hellc)"
+cd hellc || exit 1
 capture smith run
-expect "new hello: smith run with none passes none" "" "$(printf '%s\n' "$out" | grep -v '^\[' | tr -d '\n')"
-cp main.c.orig main.c
-capture smith test
-expect "new hello: smith test passes out of the box" 0 "$rc"
-expect_contains "new hello: ... on the two tests of the template" "$out" "2 passed, 0 failed"
-capture smith test --test no_primes
-expect_contains "new hello: smith test --test runs one test" "$out" "1 passed, 0 failed"
-capture smith prove
-expect "new hello: smith prove succeeds with nothing to prove" 0 "$rc"
-expect_contains "new hello: ... and says so" "$out" "nothing to prove"
-sed 's/primes_sum(5), 28/primes_sum(5), 27/' tests/test_primes.c >tests/test_primes.c.new && mv tests/test_primes.c.new tests/test_primes.c
-capture smith test
-expect "new hello: a failing test fails smith test" 1 "$rc"
-expect_contains "new hello: ... and shows both values" "$out$err" "primes_sum(5) = 28"
-capture smith check
-expect "new hello: smith check fails when a test does" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
-git checkout -q -- tests/test_primes.c
-capture smith check x
-expect_contains "new hello: smith check takes no arguments" "$err" "takes no arguments"
-capture smith build check
-expect_contains "new hello: smith build check is refused for the verb" "$err" "check is a verb, not a target of smith build; run \`smith check\`"
-capture smith check
-expect "new hello: smith check passes on the new project" 0 "$rc"
-if [ "$rc" -ne 0 ]; then echo "$err" | tail -n 30; fi
-printf 'int   misformatted;\n' >>main.c
-capture smith check
-expect_contains "new hello: smith check fails on a misformatted file" "$out$err" "misformatted"
-expect "new hello: ... with a nonzero status" yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
-capture smith fmt
-expect "new hello: smith fmt rewrites the sources" 0 "$rc"
-expect_contains "new hello: ... to the project's style" "$(tail -n 1 main.c)" "int misformatted;"
-cp main.c.orig main.c
-rm main.c.orig
-capture smith lint
-expect "new hello: smith lint runs clang-tidy on the new project" 0 "$rc"
-capture smith build # the log of the last build is the plain build's again
-
-# The generated project passes the tools with the configs smith new wrote.
-if "$smith" fmt --version >/dev/null 2>&1 && "$smith" lint --version >/dev/null 2>&1; then
-    capture "$smith" fmt --dry-run --Werror main.c build.c
-    expect "new hello: smith fmt passes on main.c and build.c" 0 "$rc"
-    sdk=
-    if [ "$(uname -s)" = Darwin ]; then sdk=$(xcrun --show-sdk-path); fi
-    capture "$smith" lint --quiet main.c -- -std=gnu2y ${sdk:+-isysroot "$sdk"}
-    expect "new hello: smith lint passes on main.c" 0 "$rc"
-else
-    echo "skip  new hello: smith fmt and smith lint (no clang-format and clang-tidy)"
-fi
-if "$smith" lsp --version >/dev/null 2>&1; then
-    capture "$smith" lsp --check=main.c
-    errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
-    expect "new hello: clangd reports no errors in main.c" 0 "$errors"
-fi
+expect "new --language c: smith run prints the greeting" "hello from hellc" "$(echo "$out" | tail -n 1)"
+verbs_on_new_project "new --language c" c hellc
+cd "$work" || exit 1
+mkdir langs
+cd langs || exit 1
+capture smith new --language=c eq
+expect "new --language=c: exits 0" 0 "$rc"
+expect "new --language=c: writes the C program" yes "$(exists eq/main.c)"
+capture smith new --language smith explicit
+expect "new --language smith: writes the .smith program" yes "$(exists explicit/main.smith)"
+capture smith new explicit_first --language c
+expect "new <name> --language c: the flag may follow the name" yes "$(exists explicit_first/main.c)"
+capture smith new --language rust bad
+expect "new --language rust: exit status" 2 "$rc"
+expect_contains "new --language rust: names both languages" "$err" "--language is smith or c, not"
+expect_contains "new --language rust: ... and the value" "$err" "rust"
+expect "new --language rust: creates nothing" no "$(exists bad)"
+capture smith new --language
+expect "new --language with no value: exit status" 2 "$rc"
+expect_contains "new --language with no value: says so" "$err" "--language needs a value: smith or c"
+capture smith new --help
+expect "new --help: exits 0" 0 "$rc"
+expect_contains "new --help: shows the flag" "$out" "--language smith|c"
 cd "$work" || exit 1
 
-# 1b. assert(false) stops debug and release and not fast, in a scratch copy of the generated project.
-mkdir abort && cp -R hello/build.c hello/primes.c hello/primes.h hello/tests abort/ && sed 's/assert(sum == 28);/assert(false);/' hello/main.c >abort/main.c
-cd abort || exit 1
-capture sh -c "smith build && smith build release fast"
-expect "assert(false): the three build" 0 "$rc"
-capture build/debug/hello
-expect "assert(false): debug stops" 134 "$rc"
-capture build/release/hello
-expect "assert(false): release stops" 134 "$rc"
-capture build/fast/hello
-expect "assert(false): fast does not stop" 0 "$rc"
-cd "$work" || exit 1
+# 1b. assert(false) stops debug and release and not fast, in a scratch copy of each generated project.
+for pair in "hello smith c::assert" "hellc c assert"; do
+    set -- $pair
+    dir=$1 ext=$2 macro=$3
+    mkdir "abort_$dir" && (cd "$dir" && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd "abort_$dir" && tar xf -)
+    sed "s/$macro(sum == 28);/$macro(false);/" "$dir/main.$ext" >"abort_$dir/main.$ext"
+    cd "abort_$dir" || exit 1
+    capture sh -c "smith build && smith build release fast"
+    expect "assert(false) in $ext: the three build" 0 "$rc"
+    capture build/debug/"abort_$dir"
+    expect "assert(false) in $ext: debug stops" 134 "$rc"
+    capture build/release/"abort_$dir"
+    expect "assert(false) in $ext: release stops" 134 "$rc"
+    capture build/fast/"abort_$dir"
+    expect "assert(false) in $ext: fast does not stop" 0 "$rc"
+    cd "$work" || exit 1
+done
 
-# 1c. smith's libraries build under the template's flags (gnu2y, every warning an error) in all three modes and run.
-mkdir libs && cp -R hello/primes.c hello/primes.h hello/tests libs/
+# 1c. smith's libraries build under the conventions' flags (gnu2y, every warning an error) in all three profiles and run,
+# found from the #include alone.
+mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/tests libs/
 cat >libs/main.c <<'C'
 #include <smith/arena.h>
 #include <smith/random.h>
@@ -255,32 +285,26 @@ int main(void) {
     return 0;
 }
 C
-# The template's own build.c, with the two libraries added to its sources and -I .smith/include to its flags.
-sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", ".smith/lib/arena.c", ".smith/lib/smith/random.smith", nullptr}|' \
-    -e 's|(const char \*\[\]){"-ffp-contract=off", nullptr}|(const char *[]){"-ffp-contract=off", "-I", ".smith/include", nullptr}|' \
-    hello/build.c >libs/build.c
 cd libs || exit 1
 capture sh -c "smith build && smith build release fast"
-expect "libraries: the three build under the template's flags" 0 "$rc"
+expect "libraries: the three build under the conventions' flags" 0 "$rc"
 if [ "$rc" -ne 0 ]; then echo "$err" | head -n 20; fi
 for mode in debug release fast; do
-    capture build/$mode/hello
+    capture build/$mode/libs
     expect "libraries: the $mode program runs" "libraries ok" "$out"
 done
 cd "$work" || exit 1
 
-# 1d. The verbs read what the build declares, in a git copy of the generated project: prove proves the contracts of the
+# 1d. The verbs read what the build compiles, in a git copy of the generated C project: prove proves the contracts of the
 # sources that are compiled, fmt formats what git sees (and leaves out .gitignore and .clang-format-ignore), lint reports
 # what clang-tidy finds, and check reports every part that fails.
 mkdir verbs
-(cd hello && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd verbs && tar xf -)
+(cd hellc && tar cf - --exclude .git --exclude build --exclude .smith .) | (cd verbs && tar xf -)
 cd verbs || exit 1
 git init -q -b main && git add -A && git commit -q -m first
 printf '#pragma once\n#include <stdint.h>\n\nint32_t clamp(int32_t x, int32_t low, int32_t high);\nint32_t draw_health(int32_t health, int32_t max_health);\nint32_t pinned(int32_t x);\n' >clamp.h
 { printf '#include "clamp.h"\n'; cat "$here/tests/prove/clamp.c"; } >clamp.c
-sed -e 's|{"main.c", "primes.c", nullptr}|{"main.c", "primes.c", "clamp.c", nullptr}|' \
-    -e 's|(const char \*\[\]){"-ffp-contract=off", nullptr}|(const char *[]){"-ffp-contract=off", "-I", ".smith/include", nullptr}|' \
-    build.c >build.c.new && mv build.c.new build.c
+sed 's|#include "primes.h"|#include "clamp.h"\n#include "primes.h"|' main.c >main.c.new && mv main.c.new main.c # clamp.c is found by the include
 capture smith prove
 if [ "$(has "$err" "has no prover")" = yes ]; then
     echo "skip  new verbs: smith prove (this smith has no prover)"
@@ -288,12 +312,13 @@ else
     expect "new verbs: smith prove proves the contracts of the compiled sources" 0 "$rc"
     expect_contains "new verbs: ... both functions" "$out" "2 proved, 0 failed"
     printf '#include "clamp.h"\n\nint32_t pinned(int32_t x) {\n    return clamp(x, 10, 5);\n}\n' >bad_caller.c
-    sed 's|"clamp.c", nullptr}|"clamp.c", "bad_caller.c", nullptr}|' build.c >build.c.new && mv build.c.new build.c
+    printf '#pragma once\n#include "clamp.h"\n' >bad_caller.h
+    sed 's|#include "clamp.h"|#include "bad_caller.h"\n#include "clamp.h"|' main.c >main.c.new && mv main.c.new main.c
     capture smith prove
     expect "new verbs: a caller that breaks a contract fails smith prove" 1 "$rc"
     expect_contains "new verbs: ... at the call" "$out" "bad_caller.c:4: the call of clamp may break smith_requires(low <= high)"
-    rm bad_caller.c
-    sed 's|, "bad_caller.c"||' build.c >build.c.new && mv build.c.new build.c
+    rm bad_caller.c bad_caller.h
+    sed '/#include "bad_caller.h"/d' main.c >main.c.new && mv main.c.new main.c
 fi
 capture smith fmt
 expect "new verbs: smith fmt formats the files of a tree" 0 "$rc"
@@ -325,7 +350,7 @@ printf 'int   BadName = 0;\n' >>primes.c
 capture smith lint
 expect "new verbs: smith lint fails on what clang-tidy finds" 1 "$rc"
 expect_contains "new verbs: ... naming the check" "$out$err" "readability-identifier-naming"
-expect_contains "new verbs: ... and how many files" "$err" "clang-tidy failed on 1 of 5 files"
+expect_contains "new verbs: ... and how many files" "$err" "clang-tidy failed on 1 of"
 capture smith check
 expect "new verbs: smith check fails when parts do" 1 "$rc"
 expect_contains "new verbs: ... names the parts that failed, in order" "$err" "smith check: failed: fmt lint"
@@ -382,7 +407,7 @@ expect "second run: changes no bytes" "$before" "$(tree_sum hello)"
 expect "second run: no new commit" 1 "$(commits hello)"
 expect_contains "second run: everything is kept" "$out" "0 created, 10 kept"
 
-# 3. No argument: the folder's name, and its own main.c kept.
+# 3. No argument: the folder's name, and its own main.c kept, with no program of the template beside it.
 mkdir demo && printf 'int main(void) { return 0; }\n' >demo/main.c
 cd demo || exit 1
 capture smith new
@@ -394,7 +419,13 @@ expect "no argument: no concept about a main.c it did not write" no "$(exists kn
 expect "no argument: the index lists no such concept" no "$(has "$(cat knowledge/index.md)" "program.md")"
 capture smith docs .
 expect "no argument: the docs pass" 0 "$rc"
+expect "no argument: writes no program beside the project's own" "" "$(ls primes.* main.smith tests 2>/dev/null)"
 cd "$work" || exit 1
+mkdir own_smith
+printf 'int main(void) {\n    return 0;\n}\n' >own_smith/main.smith
+capture smith new --language c own_smith
+expect "an own main.smith: exits 0" 0 "$rc"
+expect "an own main.smith: --language c writes no C program beside it" "" "$(ls own_smith/main.c own_smith/primes.* 2>/dev/null)"
 
 # 4. Inside an existing repository.
 mkdir outer && git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first
@@ -415,8 +446,8 @@ mkdir noid
     echo $? >"$work/noid.rc"
 )
 expect "no identity: exits 0" 0 "$(cat "$work/noid.rc")"
-expect "no identity: files written" yes "$(exists noid/proj/build.c)"
-expect "no identity: files staged" yes "$(git -C noid/proj diff --cached --name-only | grep -q '^build.c$' && echo yes || echo no)"
+expect "no identity: files written" yes "$(exists noid/proj/main.smith)"
+expect "no identity: files staged" yes "$(git -C noid/proj diff --cached --name-only | grep -q '^main.smith$' && echo yes || echo no)"
 expect "no identity: no commit" 0 "$(commits noid/proj)"
 expect_contains "no identity: the message says the commit was skipped" "$(cat "$work/noid.out")" "commit skipped"
 
@@ -431,14 +462,14 @@ cd 'bad name' || exit 1
 capture smith new
 expect "bad folder name: exit status" 2 "$rc"
 expect_contains "bad folder name: names the parent folder way" "$err" "smith new <name> from the parent folder picks another name"
-expect "bad folder name: writes nothing" no "$(exists build.c)"
+expect "bad folder name: writes nothing" no "$(exists main.smith)"
 cd "$work" || exit 1
 capture smith new one two
 expect "two arguments: exit status" 2 "$rc"
-expect_contains "two arguments: usage" "$err" "at most one argument"
+expect_contains "two arguments: usage" "$err" "at most one name"
 expect "two arguments: creates nothing" no "$(exists one)"
 
-# 9. An existing build.c is kept and gets no main.c; the first build is the project's own.
+# 9. An existing build.c is kept and gets no program; the first build is the project's own.
 mkdir has_build
 cat >has_build/build.c <<'BUILD'
 #include <smith/build.h>
@@ -456,45 +487,44 @@ before=$(cat has_build/build.c)
 capture smith new has_build
 expect "existing build.c: exits 0" 0 "$rc"
 expect "existing build.c: kept" "$before" "$(cat has_build/build.c)"
-expect "existing build.c: no main.c" no "$(exists has_build/main.c)"
-expect "existing build.c: the rules are written" yes "$(exists has_build/.clang-tidy)"
+expect "existing build.c: no main.smith" no "$(exists has_build/main.smith)"
+expect "existing build.c: no config is written" no "$(exists has_build/.clang-tidy)"
 expect "existing build.c: the project's own build ran" yes "$(exists has_build/own.stamp)"
 
-# 10. Another build system: build.c is a starting point, with no main.c and no first build.
+# 10. Another build system: no program, no build file and no first build.
 mkdir has_make
 printf 'all:\n\t@echo made\n' >has_make/Makefile
 printf 'int main(void) { return 0; }\n' >has_make/other.c
 capture smith new has_make
 expect "Makefile: exits 0" 0 "$rc"
-expect "Makefile: writes build.c" yes "$(exists has_make/build.c)"
-expect "Makefile: no main.c" no "$(exists has_make/main.c)"
+expect "Makefile: writes no build.c" no "$(exists has_make/build.c)"
+expect "Makefile: no main.smith" no "$(exists has_make/main.smith)"
 expect "Makefile: no first build" no "$(exists has_make/.smith)"
 expect "Makefile: no concept about the program" no "$(exists has_make/knowledge/program.md)"
 expect "Makefile: the index lists nothing but is there" "okf_version" \
     "$(sed -n 's/^\(okf_version\):.*/\1/p' has_make/knowledge/index.md)"
 expect "Makefile: the index ends with its text, not a dangling item" yes "$(has "$(tail -n 1 has_make/knowledge/index.md)" "Read only the concepts")"
-expect "Makefile: writes the rules" yes "$(exists has_make/.clang-format)"
+expect "Makefile: writes no rules" no "$(exists has_make/.clang-format)"
 expect "Makefile: writes the plugin settings" yes "$(exists has_make/.claude/settings.json)"
-expect_contains "Makefile: the message names the Makefile" "$out" "This project builds with a Makefile."
-expect_contains "Makefile: the message says to port it" "$out" "port the Makefile into it"
+expect_contains "Makefile: the message names the Makefile" "$out" "This project builds with a Makefile, so smith new wrote no program"
+expect_contains "Makefile: the message says to port it" "$out" "write a build.c that does what the Makefile does"
 expect_contains "Makefile: the message names the skill" "$out" "smith-build skill"
 expect "Makefile: commits only the files written" \
-    ".agents/skills/has-make-docs/SKILL.md .clang-format .clang-tidy .claude/settings.json .claude/skills .gitignore AGENTS.md build.c knowledge/index.md" \
+    ".agents/skills/has-make-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md" \
     "$(git -C has_make ls-files | tr '\n' ' ' | sed 's/ $//')"
 capture smith docs has_make
 expect "Makefile: the docs pass" 0 "$rc"
 mkdir has_cmake
 : >has_cmake/CMakeLists.txt
 capture smith new has_cmake
-expect_contains "CMakeLists.txt: the message names it" "$out" "This project builds with a CMakeLists.txt."
-expect "CMakeLists.txt: no main.c" no "$(exists has_cmake/main.c)"
+expect_contains "CMakeLists.txt: the message names it" "$out" "This project builds with a CMakeLists.txt, so smith new wrote no program"
+expect "CMakeLists.txt: no main.smith" no "$(exists has_cmake/main.smith)"
 
 # 11. An existing .gitignore is kept; the lines it lacks are reported.
 mkdir has_ignore
 printf '/build/  \nnode_modules/\n' >has_ignore/.gitignore
 capture smith new has_ignore
 expect "gitignore: kept untouched" "$(printf '/build/  \nnode_modules/')" "$(cat has_ignore/.gitignore)"
-expect_contains "gitignore: reports /compile_commands.json" "$out" "lacks /compile_commands.json"
 expect_contains "gitignore: reports /.cache/" "$out" "lacks /.cache/"
 expect "gitignore: does not report /build/ (trailing spaces ignored)" no \
     "$(has "$out" "lacks /build/")"
@@ -609,15 +639,15 @@ missing_rules() { # smith's file, the template: what the template lacks
     done
 }
 expect "rules: the template keeps every rule of smith's .clang-tidy" "" \
-    "$(missing_rules "$here/.clang-tidy" "$here/templates/new/clang-tidy")"
-grep -v 'readability-function-size.LineThreshold' "$here/templates/new/clang-tidy" >"$work/tidy-without"
+    "$(missing_rules "$here/.clang-tidy" "$here/templates/defaults/clang-tidy")"
+grep -v 'readability-function-size.LineThreshold' "$here/templates/defaults/clang-tidy" >"$work/tidy-without"
 expect_contains "rules: a missing option is caught" "$(missing_rules "$here/.clang-tidy" "$work/tidy-without")" \
     "readability-function-size.LineThreshold"
-grep -v 'misc-no-recursion' "$here/templates/new/clang-tidy" >"$work/tidy-without"
+grep -v 'misc-no-recursion' "$here/templates/defaults/clang-tidy" >"$work/tidy-without"
 expect_contains "rules: a missing check is caught" "$(missing_rules "$here/.clang-tidy" "$work/tidy-without")" \
     "misc-no-recursion"
 expect "rules: the template's .clang-format has smith's rules, comments aside" \
-    "$(grep -v '^#' "$here/.clang-format")" "$(grep -v '^#' "$here/templates/new/clang-format")"
+    "$(grep -v '^#' "$here/.clang-format")" "$(grep -v '^#' "$here/templates/defaults/clang-format")"
 
 echo
 echo "$total new checks, $failures failed"

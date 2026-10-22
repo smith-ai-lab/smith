@@ -219,6 +219,7 @@ expect "c: the tests pass" 0 "$rc"
 expect_contains "c: ... one of them" "$out$err" "1 passed, 0 failed"
 capture smith prove
 expect "c: smith prove runs on it" 0 "$rc"
+expect_contains "c: ... and says there is nothing to prove" "$out" "nothing to prove"
 cp "$here/.clang-tidy" "$here/.clang-format" .
 capture smith lint
 expect "c: smith lint reads the build's compiles" 0 "$rc"
@@ -333,7 +334,7 @@ printf 'all:\n\tcc -o app app.c\n' >Makefile
 capture smith build
 expect "error: a Makefile and no main: status 2" 2 "$rc"
 expect_contains "error: ... says what smith looked for" "$err" "smith: no build.c in this folder, and no main.smith or main.c to build by convention"
-expect_contains "error: ... and how to start a build file" "$err" "write a build.c (\`smith new\` writes one)"
+expect_contains "error: ... and how to start a build file" "$err" "Add a main.smith or main.c (\`smith new\` writes one)"
 expect_contains "error: ... and suggests smith cc for the Makefile" "$err" "A Makefile is here: \`CC = smith-cc\`"
 expect "error: ... and guesses nothing" no "$(exists .smith/program)"
 for verb in run test; do
