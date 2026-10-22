@@ -1789,49 +1789,49 @@ if part reports; then
 # The plain-function checks print no file and line themselves, so the runner on its own prints the raw trace; smith
 # symbolize (and smith test, which pipes the runner through it) reads the source.
 project "$work/reports"
-cat >tests/test_reports.c <<'C'
-#include <smith/test.h>
+cat >tests/test_reports.smith <<'C'
+import <assert.h>;
+import smith::random;
+import smith::test;
 
-#include <assert.h>
-
-[[gnu::always_inline]] static inline void check_positive(int value) {
-    smith_check(value > 0);
+[[gnu::always_inline]] static inline void check_positive(i32 value) {
+    test::check(value > 0);
 }
 
 void test_passes(void) {
-    smith_check(true);
-    smith_check_equal_u64(4, 4);
-    smith_check_equal_f64(0.5, 0.5);
-    smith_check_near_f32(1.0F, 1.0001F, 0.001F);
-    smith_check_same_bits_f64(-0.0, -0.0);
+    test::check(true);
+    test::check_equal(4, 4);
+    test::check_equal(0.5, 0.5);
+    test::check_near(1.0f, 1.0001f, 0.001f);
+    test::check_same_bits(-0.0, -0.0);
 }
 
 void test_check_fails(void) {
-    int moves = 0;
-    smith_check(moves > 0);
+    i32 moves = 0;
+    test::check(moves > 0);
 }
 
 void test_equal_fails(void) {
-    uint64_t count = 3;
-    uint64_t expected = 4;
-    smith_check_equal_u64(count, expected);
+    u64 count = 3;
+    u64 expected = 4;
+    test::check_equal(count, expected);
 }
 
 void test_near_fails(void) {
-    smith_check_near_f64(1.0, 1.5, 0.1);
+    test::check_near(1.0, 1.5, 0.1);
 }
 
 void test_same_bits_fails(void) {
-    smith_check_same_bits_f32(0.0F, -0.0F);
+    test::check_same_bits(0.0f, -0.0f);
 }
 
 void test_assert_fails(void) {
-    int moves = 1;
-    assert(moves == 2);
+    i32 moves = 1;
+    c::assert(moves == 2);
 }
 
 void test_segfault(void) {
-    volatile int *nothing = nullptr;
+    volatile i32 *nothing = nullptr;
     *nothing = 7;
 }
 
@@ -1839,14 +1839,15 @@ void test_inlined(void) {
     check_positive(-1);
 }
 
-void test_macro_fails(void) {
-    SMITH_CHECK(2 + 2, ==, 5);
+void test_ordering_fails(void) {
+    i32 total = 2 + 2;
+    test::check_less_equal(total, 3);
 }
 
-void test_prop_function(SmithKey key) {
-    int64_t x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    smith_test_note("x = %lld", (long long)x);
-    smith_check(x < 500);
+void test_prop_function(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::note("x = %lld", x);
+    test::check(x < 500);
 }
 C
 capture "$smith" build -DSAN=0
@@ -1854,7 +1855,7 @@ expect "reports: the runner builds" 0 "$rc"
 capture build/tests $iso --test passes --verbose
 expect_contains "reports: the plain-function checks pass" "$out" "PASS passes"
 
-# Without smith in the pipe, a failure prints the trace and the values, and a macro keeps its old report.
+# Without smith in the pipe, a failure prints the trace and the values.
 capture build/tests $iso --test check_fails
 expect_contains "raw: a failed smith_check prints a trace block" "$out" "  smith-trace begin check failed"
 expect_contains "raw: ... with frames" "$out" "  smith-trace frame 0x"
@@ -1862,19 +1863,14 @@ expect_contains "raw: ... and the image's UUID" "$out" "  smith-trace image "
 capture build/tests $iso --test equal_fails
 expect_contains "raw: a failed check_equal shows a" "$out" "    a = 3   (u64)"
 expect_contains "raw: ... and b" "$out" "    b = 4   (u64)"
-line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
-expect "raw: a macro keeps the report it had" "FAIL macro_fails
-  tests/test_reports.c:$line
-      SMITH_CHECK(2 + 2, ==, 5);
-    2 + 2 = 4   (int)
-    5           (int)
-
-0 passed, 1 failed" "$(build/tests $iso --test macro_fails 2>&1 | plain)"
+capture build/tests $iso --test ordering_fails
+expect_contains "raw: a failed ordering check shows a" "$out" "    a = 4   (i32)"
+expect_contains "raw: ... and b" "$out" "    b = 3   (i32)"
 capture build/tests $iso --test prop_function --shrink-seconds 3600
 expect_contains "raw: a property test's failed function check shrinks" "$out" "shrunk in"
 expect_contains "raw: ... to the smallest case" "$out" "    note: x = 500"
 capture build/tests $iso --test near_fails
-expect_contains "raw: a failed check_near shows the distance" "$out" "    distance  = 0.5 [0x1p-1]"
+expect_contains "raw: a failed check_near shows the distance" "$out" "= 0.5 [0x1p-1]"
 capture build/tests $iso --test same_bits_fails
 expect_contains "raw: a failed check_same_bits shows the bits" "$out" "    a = 0 [0x0p+0]"
 expect "reports: --list sees the new tests" yes "$(build/tests --list | grep -q segfault && echo yes)"
@@ -1884,51 +1880,51 @@ if "$smith" symbolize --available; then
         capture "$smith" test $iso -DSAN=0 --test "$1"
         printf '%s\n%s\n' "$out" "$err"
     }
-    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    line=$(line_of tests/test_reports.smith 'test::check(moves > 0);')
     report=$(sym check_fails)
-    expect_contains "report: a failed smith_check names the line" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... shows the source line" "$report" "$line |     smith_check(moves > 0);"
+    expect_contains "report: a failed test::check names the line" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... shows the source line" "$report" "$line |     test::check(moves > 0);"
     expect_contains "report: ... and the call chain" "$report" "  called from"
-    expect_contains "report: ... whose first frame is the test" "$report" "tests/test_reports.c:$line"
+    expect_contains "report: ... whose first frame is the test" "$report" "tests/test_reports.smith:$line"
     expect_contains "report: ... and whose last is the runner" "$report" "smith_test_execute"
-    expect_lacks "report: ... without smith's own check machinery" "$report" "smith_check "
+    expect_lacks "report: ... without the check machinery of smith::test" "$report" "smith::test::"
     expect_lacks "report: ... or the raw trace" "$report" "smith-trace"
 
-    line=$(line_of tests/test_reports.c 'smith_check_equal_u64(count, expected);')
+    line=$(line_of tests/test_reports.smith 'test::check_equal(count, expected);')
     report=$(sym equal_fails)
-    expect_contains "report: a failed check_equal names the line" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... and prints both values under the source line, named by their text" "$report" "$line |     smith_check_equal_u64(count, expected);
+    expect_contains "report: a failed check_equal names the line" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... and prints both values under the source line, named by their text" "$report" "$line |     test::check_equal(count, expected);
             count = 3, expected = 4   (u64)
   called from"
 
-    line=$(line_of tests/test_reports.c 'assert(moves == 2);')
+    line=$(line_of tests/test_reports.smith 'c::assert(moves == 2);')
     report=$(sym assert_fails)
-    expect_contains "report: an assert names the line" "$report" "  aborted at tests/test_reports.c:$line"
-    expect_contains "report: ... shows it" "$report" "$line |     assert(moves == 2);"
+    expect_contains "report: an assert names the line" "$report" "  aborted at tests/test_reports.smith:$line"
+    expect_contains "report: ... shows it" "$report" "$line |     c::assert(moves == 2);"
     expect_contains "report: ... and keeps assert's own message" "$report" "Assertion failed: (moves == 2)"
     expect_lacks "report: ... without libc's abort path" "$report" "pthread_kill"
 
-    line=$(line_of tests/test_reports.c '*nothing = 7;')
+    line=$(line_of tests/test_reports.smith '*nothing = 7;')
     report=$(sym segfault)
     expect_contains "report: a segfault names the line" "$report" "FAIL segfault: killed by SIGSEGV
-  crashed at tests/test_reports.c:$line"
+  crashed at tests/test_reports.smith:$line"
     expect_contains "report: ... shows it" "$report" "$line |     *nothing = 7;"
 
-    line=$(line_of tests/test_reports.c 'smith_check(value > 0);')
-    caller=$(line_of tests/test_reports.c 'check_positive(-1);')
+    line=$(line_of tests/test_reports.smith 'test::check(value > 0);')
+    caller=$(line_of tests/test_reports.smith 'check_positive(-1);')
     report=$(sym inlined)
-    expect_contains "report: an inlined check names the inlined line" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: an inlined check names the inlined line" "$report" "  check failed at tests/test_reports.smith:$line"
     expect_contains "report: ... and the chain has the inlined function" "$report" "check_positive"
-    expect_contains "report: ... and the function it was inlined into" "$report" "tests/test_reports.c:$caller"
+    expect_contains "report: ... and the function it was inlined into" "$report" "tests/test_reports.smith:$caller"
 
-    line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
-    report=$(sym macro_fails)
-    expect_contains "report: a macro's failure has the same report" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... and its values" "$report" "    2 + 2 = 4   (int)"
+    line=$(line_of tests/test_reports.smith 'test::check_less_equal(total, 3);')
+    report=$(sym ordering_fails)
+    expect_contains "report: an ordering check's failure has the same report" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... and its values" "$report" "    total = 4, 3   (i32)"
 
     # Objective-C frames and methods.
     project "$work/objc"
-    sed -e 's|tests/test_\*.c|tests/test_*.m|' -e 's|\.link_flags = .*|.link_flags = smith_list(b, "-framework", "Foundation", nullptr),|' build.c >build.c.new && mv build.c.new build.c
+    sed -e 's|tests/test_\*.c", "tests/test_\*.smith|tests/test_*.m|' -e 's|\.link_flags = .*|.link_flags = smith_list(b, "-framework", "Foundation", nullptr),|' build.c >build.c.new && mv build.c.new build.c
     cat >tests/test_objc.m <<'M'
 #import <Foundation/Foundation.h>
 
@@ -1958,34 +1954,34 @@ M
     cd "$work/reports" || exit 1
     # The Apple linker, in place of lld: the same debug map.
     rm -f build/tests
-    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    line=$(line_of tests/test_reports.smith 'test::check(moves > 0);')
     capture env SMITH_LINKER=/usr/bin/ld "$smith" test $iso -DSAN=0 --test check_fails
-    expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.smith:$line"
     rm -f build/tests
 
     # A trace saved from a run is symbolized later, given the program.
     capture "$smith" build -DSAN=0
     capture sh -c "build/tests $iso --test check_fails --trace >'$work/trace.txt' 2>&1"
     saved=$("$smith" symbolize "$work/trace.txt")
-    expect_contains "symbolize: a saved trace becomes a report" "$saved" "  check failed at tests/test_reports.c:$line"
+    expect_contains "symbolize: a saved trace becomes a report" "$saved" "  check failed at tests/test_reports.smith:$line"
     expect_contains "symbolize: ... from standard input too" "$("$smith" symbolize <"$work/trace.txt")" "called from"
     cp build/tests "$work/moved_tests"
     mv build/tests build/tests_gone
     capture "$smith" symbolize "$work/trace.txt"
     expect_contains "symbolize: a program that is gone is said so" "$out" "note: cannot read"
     capture "$smith" symbolize --binary "$work/moved_tests" "$work/trace.txt"
-    expect_contains "symbolize: --binary names it, and its UUID is checked" "$out" "  check failed at tests/test_reports.c:$line"
+    expect_contains "symbolize: --binary names it, and its UUID is checked" "$out" "  check failed at tests/test_reports.smith:$line"
     mv build/tests_gone build/tests
 
     # A source file newer than the program may have changed since: the report says so.
     sleep 1
-    touch tests/test_reports.c
+    touch tests/test_reports.smith
     capture sh -c "build/tests $iso --test check_fails --trace 2>&1 | '$smith' symbolize"
-    expect_contains "newer: a source newer than the program is noted" "$out" "note: tests/test_reports.c is newer than the program, so line $line may have changed"
+    expect_contains "newer: a source newer than the program is noted" "$out" "note: tests/test_reports.smith is newer than the program, so line $line may have changed"
 
     # A trace of another program: the UUID differs, and no line is made up.
-    printf '\n' >>tests/test_reports.c
-    printf 'void test_extra(void) {\n    smith_check(true);\n}\n' >>tests/test_reports.c
+    printf '\n' >>tests/test_reports.smith
+    printf 'void test_extra(void) {\n    test::check(true);\n}\n' >>tests/test_reports.smith
     capture "$smith" build -DSAN=0
     capture "$smith" symbolize "$work/trace.txt"
     expect_contains "symbolize: a program that is not the one that ran is noted" "$out" "is not the program that ran"
@@ -1996,7 +1992,7 @@ M
     ln -s "$smith" "$work/llvm-symbolizer"
     capture sh -c "printf 'CODE \"%s:arm64\" 0x%s\n' '$PWD/build/tests' '$address' | '$work/llvm-symbolizer' --demangle --inlines"
     expect_contains "protocol: a CODE request names the function" "$out" "test_check_fails"
-    expect_contains "protocol: ... and the file, line and column" "$out" "tests/test_reports.c:"
+    expect_contains "protocol: ... and the file, line and column" "$out" "tests/test_reports.smith:"
     capture sh -c "printf '\"%s\" 0x1\n' '/nonexistent' | '$work/llvm-symbolizer'"
     expect "protocol: an unknown module gives ?? and an empty line" "??
 ??:0:0
@@ -2105,7 +2101,7 @@ flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 
 for standard in gnu2y gnu23; do
     for library in test random arena trace; do
         source=$repo/lib/$library.c
-        case $library in random | arena) source=$repo/lib/smith/$library.smith ;; esac # .smith modules
+        case $library in random | arena | test) source=$repo/lib/smith/$library.smith ;; esac # .smith modules
         # shellcheck disable=SC2086
         capture "$smith" cc -std=$standard $flags -I "$repo/include" -c "$source" -o "$work/$library.o"
         expect "flags: ${source#"$repo"/} compiles clean under $standard with the conventions' warnings" 0 "$rc"
@@ -2119,51 +2115,50 @@ if part inprocess; then
 # 12. --in-process: every test in the runner's own process, no fork, so a debugger that does not follow forks (lldb on
 # macOS) stops inside a test. smith dbg is in the full smith only.
 project "$work/inprocess"
-cat >tests/test_inproc.c <<'C'
-#include <smith/test.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+cat >tests/test_inproc.smith <<'C'
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::test;
 
 void test_inproc_pass(void) {
-    printf("in-process output\n");
-    SMITH_CHECK(1 + 1, ==, 2);
+    c::printf("in-process output\n");
+    test::check_equal(1 + 1, 2);
 }
 
 void test_inproc_fail(void) {
-    int total = 40;
+    i32 total = 40;
     total += 2;
-    SMITH_CHECK(total, ==, 41);
+    test::check_equal(total, 41);
 }
 
 void test_inproc_local(void) {
-    int answer = 41;
+    i32 answer = 41;
     answer += 1;
-    SMITH_CHECK(answer, ==, 42);
+    test::check_equal(answer, 42);
 }
 
 void test_inproc_pid(void) {
-    printf("pid %d\n", (int)getpid());
+    c::printf("pid %d\n", (i32)c::getpid());
 }
 
 void test_inabort_abort(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 
 void test_inabort_trap(void) {
-    smith_test_expect_abort();
+    test::expect_abort();
     __builtin_trap();
 }
 
 void test_inabort_returns(void) {
-    smith_test_expect_abort();
+    test::expect_abort();
 }
 
 void test_inabort_check_after(void) {
-    smith_test_expect_abort();
-    SMITH_CHECK(1, ==, 2);
+    test::expect_abort();
+    test::check_equal(1, 2);
 }
 C
 capture "$smith" build
@@ -2185,10 +2180,10 @@ expect_contains "in-process: no fork" "$out" "forks: 0"
 capture build/tests --test inproc_pass --stats
 expect_contains "in-process: without the flag the runner forks a worker" "$out" "forks: 1"
 if "$smith" dbg --version >/dev/null 2>&1; then
-    line=$(line_of tests/test_inproc.c 'SMITH_CHECK(answer, ==, 42);')
-    capture "$smith" dbg -b -o "b test_inproc.c:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
+    line=$(line_of tests/test_inproc.smith 'test::check_equal(answer, 42);')
+    capture "$smith" dbg -b -o "b test_inproc.smith:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
     expect_contains "in-process: smith dbg stops at a breakpoint inside a test" "$out" "stop reason = breakpoint 1.1"
-    expect_contains "in-process: ... and shows its local" "$out" "(int) answer = 42"
+    expect_contains "in-process: ... and shows its local" "$out" "(i32) answer = 42"
 fi
 fi
 
