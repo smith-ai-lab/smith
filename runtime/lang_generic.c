@@ -355,7 +355,7 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
     }
     const char *problem = smith_lang_generic_problem(lang, terminator, name != nullptr);
     SmithLangGeneric *generic = &smith_lang_generics[lang->generics_count];
-    *generic = (SmithLangGeneric){0};
+    *generic = (SmithLangGeneric){};
     generic->first = smith_lang_gt.count;
     if (problem == nullptr) {
         if (!smith_lang_generic_push_head(lang, generic) || !smith_lang_generic_parens(generic)) {
@@ -423,7 +423,7 @@ static void smith_lang_generic_placeholder(SmithLang *lang, const SmithHost *hos
     char message[smith_lang_name_max * 2];
     snprintf(message, sizeof message, "\"%s::%s is a generic function: call it from a .smith module\"",
              smith_lang_str(generic->module), smith_lang_str(generic->member));
-    SmithToken like = smith_lang_synth(SmithTokenKind_Identifier, "", 0, &(SmithToken){0});
+    SmithToken like = smith_lang_synth(SmithTokenKind_Identifier, "", 0, &(SmithToken){});
     like.location = name->location;
     like.line_start = true;
     static const SmithLangPiece before[] = {
@@ -596,7 +596,7 @@ static bool smith_lang_generic_line_split(const char *line, size_t length, Smith
 // One token of a line: `i`, `P1`, `x`, `w`, `@line:column=text`.
 static bool smith_lang_generic_read_token(const char *word, size_t length, SmithLangGenToken *out, char *text,
                                           size_t capacity, size_t *text_length) {
-    *out = (SmithLangGenToken){0};
+    *out = (SmithLangGenToken){};
     out->location = UINT32_MAX;
     size_t at = 0;
     switch (word[at++]) {
@@ -694,9 +694,9 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
         size_t end = newline != nullptr ? (size_t)(newline - text) : length;
         if (end - at > marker && memcmp(text + at, smith_lang_generic_marker, marker) == 0 && lang->cap_frames == 0 &&
             lang->generics_count < smith_lang_generics_max) {
-            SmithLangGenericLine parsed = {0};
+            SmithLangGenericLine parsed = {};
             SmithLangGeneric *generic = &smith_lang_generics[lang->generics_count];
-            *generic = (SmithLangGeneric){0};
+            *generic = (SmithLangGeneric){};
             uint32_t mark = smith_lang_gt.count;
             uint32_t mark_text = smith_lang_gt.text_used;
             char words[4][smith_lang_name_max];
@@ -785,7 +785,7 @@ static void smith_lang_gen_note_break(SmithLang *lang) {
 // Writes a token of the lowering's own: no source has it, and `instance` says whose body it is in (0: none).
 static void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
                                uint32_t location, uint32_t instance) {
-    SmithToken token = {0};
+    SmithToken token = {};
     token.kind = kind;
     token.handle = smith_token_no_handle;
     token.text = text;
@@ -930,7 +930,7 @@ static void smith_lang_instance_names(const SmithLang *lang, const SmithHost *ho
     for (size_t k = 0; k < generic->type_count; k++) { // the type arguments
         smith_lang_it_spelling(first[k], count[k], names->spelling[k], sizeof names->spelling[k]);
         smith_lang_it_written(lang, first[k], count[k], names->written[k], sizeof names->written[k]);
-        SmithTypeQuery query = {0};
+        SmithTypeQuery query = {};
         if (host->type_query != nullptr &&
             host->type_query(host->context, names->spelling[k], (uint32_t)strlen(names->spelling[k]), &query) &&
             query.canonical_length < sizeof names->canonical[k]) {
@@ -984,7 +984,7 @@ static int smith_lang_instance_make(SmithLang *lang, uint32_t generic_index, con
                                     uint32_t location) {
     const SmithLangGeneric *generic = &smith_lang_generics[generic_index];
     SmithLangInstance *instance = &smith_lang_instances[lang->instances_count];
-    *instance = (SmithLangInstance){0};
+    *instance = (SmithLangInstance){};
     instance->generic = generic_index;
     for (size_t k = 0; k < generic->type_count; k++) { // the types
         instance->arg_first[k] = first[k];
@@ -1156,7 +1156,7 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location,
                            instance_id);
     } else {
-        SmithToken name = {0};
+        SmithToken name = {};
         name.kind = SmithTokenKind_Identifier;
         name.handle = smith_token_no_handle;
         name.text = smith_lang_str(instance->cname);
@@ -1331,7 +1331,7 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
         bool word = isalnum((unsigned char)c) || c == '_';
         while (word && (isalnum((unsigned char)written[end]) || written[end] == '_'))
             end += 1;
-        SmithLangGenToken token = {0};
+        SmithLangGenToken token = {};
         token.kind = word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator;
         token.location = location;
         if (at > 0) token.flags = (uint8_t)smith_lang_gen_flag_space;
@@ -1358,7 +1358,7 @@ static bool smith_lang_infer(SmithLang *lang, const SmithHost *host, const Smith
     const char *name = smith_lang_str(generic->member);
     for (size_t k = 0; k < generic->type_count; k++) { // each T
         const SmithLangGenToken *tname = &smith_lang_gt.tokens[generic->first + generic->type_token[k]];
-        SmithLangInferred best = {0};
+        SmithLangInferred best = {};
         for (size_t i = 0; i < count; i++) { // the parameters that say something about it
             int stars = params[i].type_index >= 0 ? -1 : smith_lang_infer_stars(&params[i], (unsigned)k);
             if (stars < 0) continue;
@@ -1415,7 +1415,7 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     const char *name = smith_lang_str(generic->member);
     bool infer = count != SIZE_MAX && generic->type_count > 0 && count + generic->type_count == generic->param_count;
     if (infer) { // the types are not written: the arguments take the places of the parameters that are no type
-        SmithLangSpan full[smith_lang_call_params_max] = {0};
+        SmithLangSpan full[smith_lang_call_params_max] = {};
         size_t next = 0;
         for (size_t i = 0; i < generic->param_count; i++) { // the parameters
             bool is_type = false;
@@ -1620,7 +1620,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     if (generic->is_inline) smith_lang_gen_puts(lang, host, inlined, sizeof inlined / sizeof inlined[0], location, id);
     smith_lang_gen_signature(lang, host, generic, instance, true, location, id);
     SmithLangReplay *replay = &smith_lang_replay;
-    *replay = (SmithLangReplay){0};
+    *replay = (SmithLangReplay){};
     replay->instance = instance;
     replay->instance_id = id;
     replay->generic = generic;
@@ -1670,7 +1670,7 @@ static bool smith_lang_generic_push_frame(SmithLang *lang, const SmithHost *host
 // Pushes a token of the lowering's own into the pool (a group's start or end).
 static void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
                                 uint32_t location) {
-    SmithLangGenToken token = {0};
+    SmithLangGenToken token = {};
     token.kind = SmithTokenKind_Identifier;
     token.special = (uint8_t)special;
     token.location = location;

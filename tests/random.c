@@ -34,7 +34,7 @@ typedef struct {
     uint32_t expected[4];
 } TestKnownAnswer;
 
-static const TestKnownAnswer test_known_answers[] = {
+static constexpr TestKnownAnswer test_known_answers[] = {
     {{0, 0, 0, 0}, {0, 0}, {0x6627e8d5, 0xe169c58d, 0xbc57ac4c, 0x9b00dbd8}},
     {{0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff},
      {0xffffffff, 0xffffffff},
@@ -117,7 +117,7 @@ static void test_keys(void) {
 
 static void test_uniform_int64(void) {
     SmithKey key = smith_key_make(test_seed);
-    size_t observed[10] = {0};
+    size_t observed[10] = {};
     for (uint64_t i = 0; i < test_draws; i++) {
         int64_t value = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){-3, 6});
         assert(value >= -3 && value <= 6);
@@ -364,7 +364,7 @@ static void test_categorical(void) {
     SmithCategorical categorical = smith_categorical_make(&arena, weights, count);
     assert(categorical.count == count && arena.scopes == 0);
     SmithKey key = smith_key_make(test_seed + 9);
-    size_t observed[count] = {0};
+    size_t observed[count] = {};
     for (uint64_t i = 0; i < test_draws; i++) {
         size_t index = smith_categorical_sample(smith_key_derive(key, i), categorical);
         assert(index < count);
@@ -394,7 +394,7 @@ static void test_categorical(void) {
 static void test_permutation(void) {
     SmithKey key = smith_key_make(test_seed + 10);
     size_t out[16];
-    smith_permutation_sample(key, (SmithPermutation){0}, nullptr); // writes nothing
+    smith_permutation_sample(key, (SmithPermutation){}, nullptr); // writes nothing
     smith_permutation_sample(key, (SmithPermutation){1}, out);
     assert(out[0] == 0);
     for (uint64_t i = 0; i < 1000; i++) {
@@ -405,7 +405,7 @@ static void test_permutation(void) {
             seen[out[j]] = true;
         }
     }
-    size_t orders[24] = {0};
+    size_t orders[24] = {};
     constexpr size_t draws = 240000;
     for (uint64_t i = 0; i < draws; i++) {
         smith_permutation_sample(smith_key_derive(key, i), (SmithPermutation){4}, out);
@@ -559,7 +559,7 @@ static void test_pin_distributions(TestPins *pins) {
         test_pin(pins, "permutation", order[i]);
 }
 
-static const uint64_t test_pinned_values[] = {
+static constexpr uint64_t test_pinned_values[] = {
     0xe169c58d6627e8d5ULL, // bits
     0x9b00dbd8bc57ac4cULL, // bits
     0x5cb200dbf8e4cca4ULL, // bits

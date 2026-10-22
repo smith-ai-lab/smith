@@ -160,7 +160,7 @@ static int test_mode_prefixes(const char *archive, const char *scratch) {
 static const char *const test_names[] = {"..",      "../x",         "/abs",      "a/../b", ".",    "//",
                                          "x/./y",   "a/b/../../..", "",          "dir/",   "link", "link/under",
                                          "escaped", "../escaped",   "box/out/z", "z"};
-static const char test_types[] = "0012255xgLK3467S";
+static constexpr char test_types[] = "0012255xgLK3467S";
 
 static void test_checksum_fix(uint8_t *block) {
     memset(block + 148, ' ', 8);

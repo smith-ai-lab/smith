@@ -418,12 +418,12 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
 // --------------------------------------------------------------------------------------------------
 
 static SmithLangLowered smith_lang_keep(void) {
-    SmithLangLowered kept = {0};
+    SmithLangLowered kept = {};
     return kept;
 }
 
 static SmithLangLowered smith_lang_prefix_name(SmithLang *lang, const char *name, size_t length, bool is_type) {
-    SmithLangLowered lowered = {0};
+    SmithLangLowered lowered = {};
     lowered.replaced = true;
     lowered.is_type = is_type;
     lowered.text = smith_lang_prefixed(lang, name, length);
@@ -450,7 +450,7 @@ static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost 
     if (host->lookup(host->context, name, (uint32_t)length, SmithLookup_Type).kind != SmithLookup_None) {
         return smith_lang_keep(); // the file has its own u32
     }
-    SmithLangLowered lowered = {0};
+    SmithLangLowered lowered = {};
     lowered.replaced = true;
     lowered.is_type = true;
     lowered.expand = true;

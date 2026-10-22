@@ -165,19 +165,19 @@ static TestCase test_begin(const char *name, bool has_adapter) {
                       .chunk = 200};
 }
 
-static const char test_source[] = "#include <stdio.h>\n"                  // 1
-                                  "\n"                                    // 2
-                                  "typedef struct { int x, y; } Point;\n" // 3
-                                  "\n"                                    // 4
-                                  "static int add(Point p) {\n"           // 5
-                                  "    int unused = 0;\n"                 // 6
-                                  "    (void)unused;\n"                   // 7
-                                  "    int total = 0;\n"                  // 8
-                                  "    for (int i = 0; i < 1; i++)\n"     // 9
-                                  "    int sum = p.x + p.y;\n"            // 10
-                                  "    total += sum;\n"                   // 11
-                                  "    return total;\n"                   // 12
-                                  "}\n";
+static constexpr char test_source[] = "#include <stdio.h>\n"                  // 1
+                                      "\n"                                    // 2
+                                      "typedef struct { int x, y; } Point;\n" // 3
+                                      "\n"                                    // 4
+                                      "static int add(Point p) {\n"           // 5
+                                      "    int unused = 0;\n"                 // 6
+                                      "    (void)unused;\n"                   // 7
+                                      "    int total = 0;\n"                  // 8
+                                      "    for (int i = 0; i < 1; i++)\n"     // 9
+                                      "    int sum = p.x + p.y;\n"            // 10
+                                      "    total += sum;\n"                   // 11
+                                      "    return total;\n"                   // 12
+                                      "}\n";
 
 // Runs the server on the case; the transcript is test_output, and the requests it sent the adapter test_sent. The
 // alarm ends a test that hangs, which a wrong script can make the server do (it waits for a reply that never comes).
@@ -369,7 +369,7 @@ static void test_no_session(void) {
 
 // --- a session ---------------------------------------------------------------------------------------------------
 
-static const char test_frame_add[] =
+static constexpr char test_frame_add[] =
     "{'stackFrames':[{'id':1000,'name':'add','source':{'name':'prog.c','path':'/p/prog.c'},'line':10,'column':9},"
     "{'id':1001,'name':'main','source':{'name':'prog.c','path':'/p/prog.c'},'line':20,'column':5}],'totalFrames':2}";
 
@@ -387,7 +387,7 @@ static void test_script_launch(TestBuffer *dap) {
     test_response(dap, 5, "stackTrace", test_frame_add);
 }
 
-static const char test_launch_arguments[] =
+static constexpr char test_launch_arguments[] =
     "{'program':'/p/prog','args':['one'],'cwd':'/p','breakpoints':[{'file':'prog.c','line':10}]}";
 
 static void test_launch_and_stack(void) {

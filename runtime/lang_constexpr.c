@@ -198,7 +198,7 @@ static bool smith_lang_cx_query(SmithLangCx *cx, uint32_t first, uint32_t last, 
     smith_lang_it_spelling(staged_first, staged_count, spelling, sizeof spelling);
     smith_lang_it.count = mark[0];
     smith_lang_it.text_used = mark[1];
-    *query = (SmithTypeQuery){0};
+    *query = (SmithTypeQuery){};
     if (!cx->host->type_query(cx->host->context, spelling, (uint32_t)strlen(spelling), query)) {
         return smith_lang_cx_fail(cx, "the compiler cannot read the type `%s`", spelling);
     }
@@ -273,7 +273,7 @@ static bool smith_lang_cx_apply_binary(SmithLangCx *cx, uint8_t op) {
     if (cx->value_count < 2) return smith_lang_cx_fail(cx, "an operator is missing an operand");
     SmithLangCxValue right = cx->values[--cx->value_count];
     SmithLangCxValue left = cx->values[--cx->value_count];
-    SmithLangCxValue result = {0};
+    SmithLangCxValue result = {};
     const char *text = smith_lang_cx_binary[op].text;
     if (strcmp(text, "==") == 0 && left.is_type) {
         if (!smith_lang_cx_compare_types(cx, &left, &right, true, &result)) return false;
@@ -352,7 +352,7 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
 // The operand at `at`: a number, a builtin question, or a type. Moves `at` past it.
 static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
-    *value = (SmithLangCxValue){0};
+    *value = (SmithLangCxValue){};
     if (token->kind == SmithTokenKind_Number) {
         char *end = nullptr;
         value->number = (int64_t)strtoull(smith_lang_gt_str(token), &end, 0);
