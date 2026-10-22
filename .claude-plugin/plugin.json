@@ -35,7 +35,15 @@
     "./.agents/skills/smith-lang-modules/",
     "./.agents/skills/smith-lang-generics/",
     "./.agents/skills/smith-lang-c-interop/",
-    "./.agents/skills/smith-lang-sized-types/"
+    "./.agents/skills/smith-lang-sized-types/",
+    "./.agents/skills/smith-adopt/",
+    "./.agents/skills/smith-build-levels/",
+    "./.agents/skills/smith-lsp/",
+    "./.agents/skills/smith-neovim/",
+    "./.agents/skills/smith-mcp/",
+    "./.agents/skills/smith-trace/",
+    "./.agents/skills/smith-packages/",
+    "./.agents/skills/smith-metal/"
   ],
   "lspServers": {
     "smith": {
