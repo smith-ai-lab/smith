@@ -72,8 +72,8 @@ assert(arena->used <= arena->capacity);
 return result;
 }
 [[noreturn]] static void smith_arena_stop_overflow(const SmithArena *arena, size_t size, size_t count) {
-fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n", count, size,
-arena->capacity);
+fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n", count,
+size, arena->capacity);
 fflush(stderr);
 abort();
 }
