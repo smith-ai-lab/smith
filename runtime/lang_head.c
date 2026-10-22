@@ -14,6 +14,7 @@ static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHe
     token.line_start = held->line_start;
     token.space_before = held->space_before;
     token.expand = held->expand;
+    token.via = held->via;
     token.name = held->role == SmithLangRole_Declared;
     token.location = held->location;
     token.handle = held->handle;
@@ -40,6 +41,7 @@ static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangR
     lang->carry_line_start = false;
     held->space_before = token->space_before;
     held->expand = token->expand;
+    held->via = token->via;
     held->after_member = context->after_member;
     held->after_tag = context->after_tag;
     held->typeish = context->typeish;

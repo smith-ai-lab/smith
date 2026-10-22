@@ -205,8 +205,10 @@ static void smith_lang_cond_emit(SmithLang *lang) {
     }
 }
 
-// A header the file includes (`#include` or `import <h>;`), for the generated header: its line, inside the conditionals
-// the source has it in, so that a module can choose between two spellings of an include.
+// An `import <h>;` or `import "h";`, for the generated header: its line, inside the conditionals the source has it in,
+// so that a module can choose between two spellings of a header. Whether the header keeps it is decided at the end
+// (smith_lang_resolve_imports): only an import that an exported declaration uses a name of reaches it. An `#include`
+// never does.
 static void smith_lang_add_include(SmithLang *lang, const char *text, size_t length, bool angled) {
     for (uint32_t i = 0; i < lang->cond_depth; i++) { // bounded by the table
         SmithLangCond *cond = &lang->conds[i];
@@ -219,6 +221,35 @@ static void smith_lang_add_include(SmithLang *lang, const char *text, size_t len
     int written =
         snprintf(line, sizeof line, "#include %c%.*s%c", angled ? '<' : '"', (int)length, text, angled ? '>' : '"');
     if (written > 0 && (size_t)written < sizeof line) smith_lang_include_append(lang, line, (size_t)written);
+    if (lang->cimports_count >= smith_lang_cimports_max) {
+        lang->broken = true;
+        return;
+    }
+    lang->cimport_text[lang->cimports_count] = smith_lang_store(lang, text, length);
+    lang->cimport_angled[lang->cimports_count] = angled;
+    lang->cimports_count += 1;
+}
+
+// An exported declaration (an export's head, an exported inline function's body, an exported generic) uses a name
+// written through the binding `via` (1 + its index): `a::Name` of an imported module, which the header must include,
+// or `c::Name`, which it needs from one of the C headers imported (`struct c::Name` is a tag).
+static void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name, size_t length, bool tag) {
+    if (via == 0 || via > lang->bindings_count) return;
+    SmithLangBinding *binding = &lang->bindings[via - 1];
+    binding->in_header = true;
+    if (!binding->is_c) return;
+    for (size_t i = 0; i < lang->c_uses_count; i++) { // each name once
+        const SmithLangCUse *use = &lang->c_uses[i];
+        if (use->tag == tag && use->name.length == length && memcmp(smith_lang_str(use->name), name, length) == 0)
+            return;
+    }
+    if (lang->c_uses_count >= smith_lang_cuses_max) {
+        lang->broken = true;
+        return;
+    }
+    lang->c_uses[lang->c_uses_count].name = smith_lang_store(lang, name, length);
+    lang->c_uses[lang->c_uses_count].tag = tag;
+    lang->c_uses_count += 1;
 }
 
 // ---- Applying the list
@@ -240,9 +271,8 @@ static void smith_lang_trivia_apply(SmithLang *lang, const SmithTrivia *entry) {
     } else if (entry->kind == SmithTrivia_Trailing) {
         if (active || lang->tail_open) smith_lang_header_comment(lang, entry);
     } else if (entry->kind == SmithTrivia_Include) {
-        lang->doc_from = nullptr;
+        lang->doc_from = nullptr; // an `#include` is no part of the header: only an `import` is (see above)
         lang->doc_to = nullptr;
-        smith_lang_add_include(lang, entry->text, entry->length, entry->angled);
     } else {
         lang->doc_from = nullptr;
         lang->doc_to = nullptr;

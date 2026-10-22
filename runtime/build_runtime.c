@@ -1682,10 +1682,45 @@ static bool smith_reads_module_headers(const SmithObject *object) {
     return false;
 }
 
+// The flags of a module's compile that decide where a C header is found and what it declares (-I, -D, -std, ...): the
+// header pass is given them, because it asks the compiler which of the module's imports declared a name its exports
+// use (docs/smith-lang.md, "The header").
+static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObject *object) {
+    static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U", nullptr};
+    static const char *const joined[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-std=", "-isysroot", "-F", nullptr};
+    size_t count = 0;
+    for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++)
+        count += 1;
+    const char **kept = smith_alloc((count + 1) * sizeof *kept);
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) { // bounded by the flags
+        const char *flag = object->flags[i];
+        bool pair = false;
+        for (size_t j = 0; separate[j] != nullptr; j++)
+            pair = pair || strcmp(flag, separate[j]) == 0;
+        if (pair && i + 1 < count) {
+            kept[used++] = flag;
+            kept[used++] = object->flags[++i];
+            continue;
+        }
+        for (size_t j = 0; joined[j] != nullptr; j++) {
+            if (strncmp(flag, joined[j], strlen(joined[j])) == 0) {
+                kept[used++] = flag;
+                break;
+            }
+        }
+    }
+    kept[used] = nullptr;
+    (void)b;
+    return kept;
+}
+
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
     SmithStep step = {
-        .command = smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
+        .command =
+            smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
+                      smith_header_pass_flags(b, object), nullptr),
         .inputs = smith_one(object->source),
         .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
         .outputs = smith_one(header),

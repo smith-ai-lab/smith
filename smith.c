@@ -1198,6 +1198,106 @@ static int smith_spawn_with(const char *program, char *const *args, const posix_
     return 128 + WTERMSIG(status);
 }
 
+// The question of the header pass (runtime/lang_stream.c, smith_lang_resolve_imports): a module that imports several C
+// headers has in its header only those one of whose names an export uses, and only the compiler knows which header
+// declared a name. So smith asks itself: `smith cc -fsyntax-only` on a file of nothing but the module's imports (the
+// hook, shim/hook.cpp, with SMITH_LANG_ASK_IMPORTS) writes, for each name, the import that declared it. A smith with no
+// clang inside cannot compile a .smith file; the answer is then no and the header keeps every import.
+static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings) {
+    char self[PATH_MAX];
+    if (!smith_self_path(self)) return false;
+    const char *temporary = getenv("TMPDIR");
+    char folder[PATH_MAX];
+    snprintf(folder, sizeof folder, "%s/smith-imports-XXXXXX",
+             temporary != nullptr && *temporary != 0 ? temporary : "/tmp");
+    if (mkdtemp(folder) == nullptr) return false;
+    char probe[PATH_MAX + 16];
+    char answers[PATH_MAX + 16];
+    snprintf(probe, sizeof probe, "%s/probe.smith", folder);
+    snprintf(answers, sizeof answers, "%s/answers", folder);
+    bool good = false;
+    static char names[smith_lang_cuses_max * (smith_lang_name_max + 8)];
+    FILE *file = fopen(probe, "w");
+    if (file != nullptr) {
+        for (size_t at = 0; at < lang->include_used;) { // the imports and the conditionals around them
+            size_t end = at;
+            while (end < lang->include_used && lang->include_body[end] != '\n')
+                end += 1;
+            const char *line = lang->include_body + at;
+            if (end - at > 9 && memcmp(line, "#include ", 9) == 0) {
+                fprintf(file, "import %.*s;\n", (int)(end - at - 9), line + 9);
+            } else {
+                fprintf(file, "%.*s\n", (int)(end - at), line);
+            }
+            at = end + 1;
+        }
+        fclose(file);
+        size_t used = 0;
+        for (size_t i = 0; i < lang->c_uses_count; i++) { // bounded by the table
+            int written = snprintf(names + used, sizeof names - used, "%s%s%s", i > 0 ? "," : "",
+                                   lang->c_uses[i].tag ? "struct " : "", smith_lang_str(lang->c_uses[i].name));
+            if (written <= 0 || used + (size_t)written >= sizeof names) break;
+            used += (size_t)written;
+        }
+        char source[PATH_MAX];
+        snprintf(source, sizeof source, "%s", smith_header_source != nullptr ? smith_header_source : ".");
+        char *slash = strrchr(source, '/');
+        if (slash != nullptr)
+            *slash = 0;
+        else
+            snprintf(source, sizeof source, ".");
+        char *args[smith_header_flags_max + 8];
+        size_t count = 0;
+        args[count++] = self;
+        args[count++] = (char *)"cc";
+        args[count++] = (char *)"-fsyntax-only";
+        args[count++] = (char *)"-w";
+        args[count++] = (char *)"-iquote";
+        args[count++] = source;
+        for (size_t i = 0; i < smith_header_flag_count; i++) // bounded by the flags
+            args[count++] = (char *)smith_header_flags[i];
+        args[count++] = probe;
+        args[count] = nullptr;
+        setenv("SMITH_LANG_ASK_IMPORTS", names, 1);
+        setenv("SMITH_LANG_IMPORTS_OUT", answers, 1);
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+        pid_t pid = 0;
+        int status = -1;
+        if (posix_spawn(&pid, self, &actions, nullptr, args, environ) == 0) {
+            int waited = -1;
+            for (int i = 0; i < 1000 && waited < 0; i++) // only a signal interrupts the wait
+                waited = waitpid(pid, &status, 0);
+        }
+        posix_spawn_file_actions_destroy(&actions);
+        unsetenv("SMITH_LANG_ASK_IMPORTS");
+        unsetenv("SMITH_LANG_IMPORTS_OUT");
+        static char spelled[smith_lang_cuses_max][smith_lang_name_max + 8];
+        FILE *result = WIFEXITED(status) && WEXITSTATUS(status) == 0 ? fopen(answers, "r") : nullptr;
+        if (result != nullptr) {
+            char line[2 * smith_lang_name_max];
+            size_t index = 0;
+            while (index < lang->c_uses_count && fgets(line, sizeof line, result) != nullptr) { // one line per name
+                char *tab = strchr(line, '\t');
+                line[strcspn(line, "\n")] = 0;
+                if (tab != nullptr && tab[1] != 0) {
+                    snprintf(spelled[index], sizeof spelled[index], "%s", tab + 1);
+                    spellings[index] = spelled[index];
+                }
+                index += 1;
+            }
+            good = index == lang->c_uses_count;
+            fclose(result);
+        }
+    }
+    unlink(probe);
+    unlink(answers);
+    rmdir(folder);
+    return good;
+}
+
 static int smith_build_spawn(const char *program, char *const *args) {
     return smith_spawn_with(program, args, nullptr);
 }

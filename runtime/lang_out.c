@@ -98,8 +98,12 @@ static bool smith_lang_capturing(const SmithLang *lang) {
 
 static void smith_lang_capture_mark(SmithLang *lang, uint32_t index);
 
+// runtime/lang_generic.c: the token is part of an exported generic's record
+static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token);
+
 // A token that would go to the parser is kept instead.
 static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
+    if (token->via != 0) smith_lang_generic_note_capture(lang, token);
     uint32_t index = smith_lang_pool_add(&smith_lang_gt, smith_lang_gt_from(token), token->text, token->length);
     if (index == UINT32_MAX) {
         lang->broken = true;
@@ -162,9 +166,29 @@ static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, con
 }
 
 static void smith_lang_trivia_to(SmithLang *lang, uint32_t location);
+// runtime/lang_trivia.c: an exported declaration uses a name written `x::name`
+static void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name, size_t length, bool tag);
+
+// Whether the last word of `text` is struct, union or enum: the name that follows it is a tag.
+static bool smith_lang_tag_before(const char *text, size_t used) {
+    while (used > 0 && (text[used - 1] == ' ' || text[used - 1] == '\n' || text[used - 1] == '\t'))
+        used -= 1;
+    size_t end = used;
+    while (used > 0 &&
+           ((text[used - 1] >= 'a' && text[used - 1] <= 'z') || (text[used - 1] >= 'A' && text[used - 1] <= 'Z') ||
+            (text[used - 1] >= '0' && text[used - 1] <= '9') || text[used - 1] == '_'))
+        used -= 1;
+    size_t length = end - used;
+    return smith_lang_equals(text + used, length, "struct") || smith_lang_equals(text + used, length, "union") ||
+           smith_lang_equals(text + used, length, "enum");
+}
 
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
     if (!lang->is_module || !lang->export_active || token->kind == SmithTokenKind_Eof) return;
+    if (token->via != 0) {
+        smith_lang_note_use(lang, token->via, token->text, token->length,
+                            smith_lang_tag_before(smith_lang_header_body, lang->header_used));
+    }
     smith_lang_trivia_to(lang, token->location); // the comments and directives before it
     const char *text = token->header_text != nullptr ? token->header_text : token->text;
     size_t length = token->header_text != nullptr ? token->header_length : token->length;
