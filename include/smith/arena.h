@@ -3,8 +3,8 @@
 // smith-module: smith::arena
 // smith-imports:
 // smith-names: align_max=smith_arena_align_max Arena=SmithArena Scope=SmithArenaScope make=smith_arena_make push_raw=smith_arena_push push_array_raw=smith_arena_push_array fits=smith_arena_fits push=smith_arena_push_type push_array=smith_arena_push_array_type carve=smith_arena_carve reset=smith_arena_reset scope_begin=smith_arena_scope_begin scope_end=smith_arena_scope_end
-// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@163:51=[ p@163:52=[ i@163:53=nodiscard p@163:62=] p@163:63=] iP1w@163:65=T pw@163:67=* i@163:68=smith_arena_push_type p@163:72=( i@163:73=SmithArena pw@163:79=* i@163:80=arena p@163:85=, iw@163:87=constexpr iw@163:97=type iP1w@163:102=T p@163:103=) pw@163:105={ iw@164:5=return pw@164:12=( iP1@164:13=T pw@164:15=* p@164:16=) i@164:17=smith_arena_push p@164:25=( i@164:26=arena p@164:31=, iw@164:33=sizeof p@164:39=( iP1@164:40=T p@164:41=) p@164:42=, iw@164:44=alignof p@164:51=( iP1@164:52=T p@164:53=) p@164:54=) p@164:55=; p@165:1=}
-// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@169:57=[ p@169:58=[ i@169:59=nodiscard p@169:68=] p@169:69=] iP1w@169:71=T pw@169:73=* i@169:74=smith_arena_push_array_type p@169:84=( i@169:85=SmithArena pw@169:91=* i@169:92=arena p@169:97=, iw@169:99=constexpr iw@169:109=type iP1w@169:114=T p@169:115=, iw@170:85=size_t iw@170:92=count p@170:97=) pw@170:99={ iw@171:5=return pw@171:12=( iP1@171:13=T pw@171:15=* p@171:16=) i@171:17=smith_arena_push_array p@171:31=( i@171:32=arena p@171:37=, iw@171:39=sizeof p@171:45=( iP1@171:46=T p@171:47=) p@171:48=, iw@171:50=count p@171:55=, iw@171:57=alignof p@171:64=( iP1@171:65=T p@171:66=) p@171:67=) p@171:68=; p@172:1=}
+// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@171:51=[ p@171:52=[ i@171:53=nodiscard p@171:62=] p@171:63=] iP1w@171:65=T pw@171:67=* i@171:68=smith_arena_push_type p@171:72=( i@171:73=SmithArena pw@171:79=* i@171:80=arena p@171:85=, iw@171:87=constexpr iw@171:97=type iP1w@171:102=T p@171:103=) pw@171:105={ iw@172:5=return pw@172:12=( iP1@172:13=T pw@172:15=* p@172:16=) i@172:17=smith_arena_push p@172:25=( i@172:26=arena p@172:31=, iw@172:33=sizeof p@172:39=( iP1@172:40=T p@172:41=) p@172:42=, iw@172:44=alignof p@172:51=( iP1@172:52=T p@172:53=) p@172:54=) p@172:55=; p@173:1=}
+// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@177:57=[ p@177:58=[ i@177:59=nodiscard p@177:68=] p@177:69=] iP1w@177:71=T pw@177:73=* i@177:74=smith_arena_push_array_type p@177:84=( i@177:85=SmithArena pw@177:91=* i@177:92=arena p@177:97=, iw@177:99=constexpr iw@177:109=type iP1w@177:114=T p@177:115=, ixw@178:85=__SIZE_TYPE__ iw@178:91=count p@178:96=) pw@178:98={ iw@179:5=return pw@179:12=( iP1@179:13=T pw@179:15=* p@179:16=) i@179:17=smith_arena_push_array p@179:31=( i@179:32=arena p@179:37=, iw@179:39=sizeof p@179:45=( iP1@179:46=T p@179:47=) p@179:48=, iw@179:50=count p@179:55=, iw@179:57=alignof p@179:64=( iP1@179:65=T p@179:66=) p@179:67=) p@179:68=; p@180:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
@@ -18,20 +18,26 @@ extern "C" {
 // The project compiles lib/smith/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
 // the project's own flags, sanitizers included.
 //
-// Typed pushes: C passes the type's size and alignment to the functions, which return a void *, converted with no cast:
-//   Foo *foo = smith_arena_push(arena, sizeof(Foo), alignof(Foo));
-//   Foo *foos = smith_arena_push_array(arena, sizeof(Foo), count, alignof(Foo));
-// A .smith file writes the type as an argument, so the size and the alignment cannot disagree and the result is typed:
+// Names. The module's names are short (arena::reset, arena::Arena); C calls them smith_arena_reset and SmithArena.
+// The raw pushes are arena::push_raw and arena::push_array_raw, which C calls smith_arena_push and
+// smith_arena_push_array; the generics arena::push and arena::push_array have no C spelling.
+//
+// Typed pushes. A .smith file writes the type as an argument, so the size and the alignment cannot disagree and the
+// result is typed:
 //   Foo *foo = arena::push(&arena, Foo);
 //   Foo *foos = arena::push_array(&arena, Foo, count);
-// (C and C++ cannot call a generic.)
+// C and C++ cannot call a generic. C passes the type's size and alignment to the functions that return a void *,
+// converted with no cast:
+//   Foo *foo = smith_arena_push(arena, sizeof(Foo), alignof(Foo));
+//   Foo *foos = smith_arena_push_array(arena, sizeof(Foo), count, alignof(Foo));
 //
 // The alignment an arena's memory must start at, and the largest a push may ask for. Pushes then lay out the same way
 // whatever the addresses, so a run is deterministic.
 constexpr size_t smith_arena_align_max = 64;
 
+// A block of memory and a cursor.
 typedef struct {
-    unsigned char *memory;
+    uint8_t *memory;
     size_t capacity;
     size_t used;
     size_t scopes;  // scopes begun and not yet ended
@@ -46,12 +52,12 @@ typedef struct {
     size_t depth; // the arena's scopes before this one began
 } SmithArenaScope;
 
-// memory must be aligned to smith_arena_align_max and hold capacity bytes.
+// An arena over memory, which must be aligned to align_max and hold capacity bytes.
 [[nodiscard]] SmithArena smith_arena_make(void *memory, size_t capacity);
 
-// Zeroed memory for size bytes at align (a power of two, at most smith_arena_align_max). Running out of capacity stops
-// the program with a message naming the request and the capacity, in every build: it is a single comparison, and
-// without it a build with NDEBUG would write past the memory.
+// Zeroed memory for size bytes at align (a power of two, at most align_max). Running out of capacity stops the program
+// with a message naming the request and the capacity, in every build: it is a single comparison, and without it a
+// build with NDEBUG would write past the memory.
 [[nodiscard]] void *smith_arena_push(SmithArena *arena, size_t size, size_t align);
 
 // count items of size bytes; an overflowing count * size is the same stop.
@@ -61,18 +67,20 @@ typedef struct {
 [[nodiscard]] bool smith_arena_fits(const SmithArena *arena, size_t size, size_t align);
 
 // A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,
-// aligned to smith_arena_align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so
-// when the parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages
-// only as it is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset
-// every frame, one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the
-// parent has no scope open, since the end of the scope would hand the carved memory back.
+// aligned to align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so when the
+// parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages only as it
+// is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset every frame,
+// one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the parent has no
+// scope open, since the end of the scope would hand the carved memory back.
 [[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, size_t capacity);
 
 // Frees everything. Asserts no scope is open.
 void smith_arena_reset(SmithArena *arena);
 
+// Begins a scope.
 [[nodiscard]] SmithArenaScope smith_arena_scope_begin(SmithArena *arena);
 
+// Ends a scope: frees what was pushed since it began.
 void smith_arena_scope_end(SmithArenaScope scope);
 #ifdef __cplusplus
 }

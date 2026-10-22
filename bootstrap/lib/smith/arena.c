@@ -2,107 +2,108 @@
 // NOLINTBEGIN
 #include "../../../include/smith/arena.h"
 #include <assert.h>
+#include <sanitizer/asan_interface.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #if __has_feature(address_sanitizer)
-extern void __asan_poison_memory_region(const volatile void *address, size_t size);
-extern void __asan_unpoison_memory_region(const volatile void *address, size_t size);
-static constexpr size_t smith_arena_poison_granule = 8;
-static constexpr size_t smith_arena_poison_gap = 16;
-static constexpr size_t smith_arena_poison_window = (size_t)64 << 10;
+static constexpr bool smith_arena_sanitized = true;
+#else
+static constexpr bool smith_arena_sanitized = false;
+#endif
+static constexpr __SIZE_TYPE__ smith_arena_poison_granule = 8;
+static constexpr __SIZE_TYPE__ smith_arena_poison_gap = 16;
+static constexpr __SIZE_TYPE__ smith_arena_poison_window = 64 << 10;
 static void smith_arena_poison_unused(const SmithArena *arena) {
 assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
 __asan_poison_memory_region(arena->memory + arena->used, arena->touched - arena->used);
 }
 static void smith_arena_poison_ahead(SmithArena *arena) {
-size_t room = arena->capacity - arena->used;
-size_t target = arena->used + (room < smith_arena_poison_window ? room : smith_arena_poison_window);
+__SIZE_TYPE__ room = arena->capacity - arena->used;
+__SIZE_TYPE__ target = arena->used + (room < smith_arena_poison_window ? room : smith_arena_poison_window);
 if (target <= arena->touched) return;
 __asan_poison_memory_region(arena->memory + arena->touched, target - arena->touched);
 arena->touched = target;
 }
-#endif
 static_assert((smith_arena_align_max & (smith_arena_align_max - 1)) == 0);
-[[maybe_unused]] static bool smith_arena_align_valid(size_t align) {
+[[maybe_unused]] static bool smith_arena_align_valid(__SIZE_TYPE__ align) {
 return align > 0 && align <= smith_arena_align_max && (align & (align - 1)) == 0;
 }
-static size_t smith_arena_effective_align(size_t align) {
-#if __has_feature(address_sanitizer)
-if (align < smith_arena_poison_granule) return smith_arena_poison_granule;
-#endif
+static __SIZE_TYPE__ smith_arena_effective_align(__SIZE_TYPE__ align) {
+if (smith_arena_sanitized && align < smith_arena_poison_granule) return smith_arena_poison_granule;
 return align;
 }
-static bool smith_arena_measure(const SmithArena *arena, size_t size, size_t align, size_t *padding) {
+static bool smith_arena_measure(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align, __SIZE_TYPE__ *padding) {
 assert(arena != nullptr);
 assert(arena->used <= arena->capacity);
 assert(smith_arena_align_valid(align));
 align = smith_arena_effective_align(align);
 *padding = (align - (arena->used & (align - 1))) & (align - 1);
-size_t room = arena->capacity - arena->used;
+__SIZE_TYPE__ room = arena->capacity - arena->used;
 return *padding <= room && size <= room - *padding;
 }
-[[noreturn]] static void smith_arena_stop(const SmithArena *arena, size_t size, size_t align) {
-fprintf(stderr, "smith: arena out of capacity: push of %zu bytes (align %zu) with %zu of %zu bytes used\n", size,
-align, arena->used, arena->capacity);
+[[noreturn]] static void smith_arena_stop(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align) {
+fprintf(stderr, "smith: arena out of capacity: push of %zu bytes (align %zu) with %zu of %zu bytes used\n",
+size, align, arena->used, arena->capacity);
 fflush(stderr);
 abort();
 }
-[[nodiscard]] SmithArena smith_arena_make(void *memory, size_t capacity);
-[[nodiscard]] SmithArena smith_arena_make(void *memory, size_t capacity) {
+[[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity);
+[[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity) {
 assert(memory != nullptr);
-assert(((uintptr_t)memory & (smith_arena_align_max - 1)) == 0);
+assert(((__SIZE_TYPE__)memory & (smith_arena_align_max - 1)) == 0);
 assert(capacity > 0);
 return (SmithArena){.memory = memory, .capacity = capacity};
 }
-[[nodiscard]] void *smith_arena_push(SmithArena *arena, size_t size, size_t align);
-[[nodiscard]] void *smith_arena_push(SmithArena *arena, size_t size, size_t align) {
-size_t padding = 0;
+[[nodiscard]] void *smith_arena_push(SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align);
+[[nodiscard]] void *smith_arena_push(SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align) {
+__SIZE_TYPE__ padding = 0;
 if (!smith_arena_measure(arena, size, align, &padding)) smith_arena_stop(arena, size, align);
-unsigned char *result = arena->memory + arena->used + padding;
+__UINT8_TYPE__ *result = arena->memory + arena->used + padding;
 arena->used += padding + size;
-#if __has_feature(address_sanitizer)
-size_t gap = arena->capacity - arena->used;
+if (smith_arena_sanitized) {
+__SIZE_TYPE__ gap = arena->capacity - arena->used;
 arena->used += gap < smith_arena_poison_gap ? gap : smith_arena_poison_gap;
 smith_arena_poison_ahead(arena);
 __asan_unpoison_memory_region(result, size);
-#endif
+}
 memset(result, 0, size);
 assert(arena->used <= arena->capacity);
 return result;
 }
-[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, size_t size,
-size_t count, size_t align);
-[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, size_t size,
-size_t count, size_t align) {
+[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
+__SIZE_TYPE__ count, __SIZE_TYPE__ align);
+[[nodiscard]] void *smith_arena_push_array(SmithArena *arena, __SIZE_TYPE__ size,
+__SIZE_TYPE__ count, __SIZE_TYPE__ align) {
 assert(arena != nullptr);
 if (size > 0 && count > SIZE_MAX / size) {
-fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n", count,
-size, arena->capacity);
+fprintf(stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n",
+count, size, arena->capacity);
 fflush(stderr);
 abort();
 }
 return smith_arena_push(arena, size * count, align);
 }
-[[nodiscard]] bool smith_arena_fits(const SmithArena *arena, size_t size, size_t align);
-[[nodiscard]] bool smith_arena_fits(const SmithArena *arena, size_t size, size_t align) {
-size_t padding = 0;
+[[nodiscard]] bool smith_arena_fits(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align);
+[[nodiscard]] bool smith_arena_fits(const SmithArena *arena, __SIZE_TYPE__ size, __SIZE_TYPE__ align) {
+__SIZE_TYPE__ padding = 0;
 return smith_arena_measure(arena, size, align, &padding);
 } [ [ clang :: unavailable ( "smith::arena::push is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_type ( void ) ; [ [ clang :: unavailable ( "smith::arena::push_array is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_array_type ( void ) ;
-[[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, size_t capacity);
-[[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, size_t capacity) {
+[[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, __SIZE_TYPE__ capacity);
+[[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, __SIZE_TYPE__ capacity) {
 assert(parent != nullptr && capacity > 0);
 assert(parent->scopes == 0);
-size_t start = (parent->used + smith_arena_align_max - 1) & ~(smith_arena_align_max - 1);
+__SIZE_TYPE__ start = (parent->used + smith_arena_align_max - 1) & ~(smith_arena_align_max - 1);
 if (start > parent->capacity || capacity > parent->capacity - start) smith_arena_stop(parent, capacity, smith_arena_align_max);
-unsigned char *memory = parent->memory + start;
+__UINT8_TYPE__ *memory = parent->memory + start;
 parent->used = start + capacity;
-#if __has_feature(address_sanitizer)
+if (smith_arena_sanitized) {
 if (parent->touched > start)
 __asan_unpoison_memory_region(memory,
 (parent->touched < parent->used ? parent->touched : parent->used) - start);
 if (parent->touched < parent->used) parent->touched = parent->used;
-#endif
+}
 return smith_arena_make(memory, capacity);
 }
 void smith_arena_reset(SmithArena *arena);
@@ -111,9 +112,7 @@ assert(arena != nullptr);
 assert(arena->used <= arena->capacity);
 assert(arena->scopes == 0);
 arena->used = 0;
-#if __has_feature(address_sanitizer)
-smith_arena_poison_unused(arena);
-#endif
+if (smith_arena_sanitized) smith_arena_poison_unused(arena);
 }
 [[nodiscard]] SmithArenaScope smith_arena_scope_begin(SmithArena *arena);
 [[nodiscard]] SmithArenaScope smith_arena_scope_begin(SmithArena *arena) {
@@ -132,8 +131,6 @@ assert(scope.depth == scope.arena->scopes - 1);
 assert(scope.used <= scope.arena->used);
 scope.arena->scopes -= 1;
 scope.arena->used = scope.used;
-#if __has_feature(address_sanitizer)
-smith_arena_poison_unused(scope.arena);
-#endif
+if (smith_arena_sanitized) smith_arena_poison_unused(scope.arena);
 }
 // NOLINTEND
