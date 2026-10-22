@@ -290,7 +290,7 @@ cd "$work" || exit 1
 cd "$work/shapes" || exit 1
 cp "$here/.clang-format" .
 # smith's own checks, but not smith-effects: this program prints with printf, and the lint here is about build.smith.
-sed 's/^  smith-effects$/  -smith-effects/' "$here/.clang-tidy" >.clang-tidy
+sed 's/^  smith-effects,$/  -smith-effects,/' "$here/.clang-tidy" >.clang-tidy
 capture smith lint
 expect "lint: a clean build.smith passes" 0 "$rc"
 printf '\nstatic int BadName(int x) {\n    return x;\n}\n' >>build.smith

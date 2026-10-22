@@ -1,7 +1,7 @@
 // @NAME@. `smith run` builds and runs it.
 import primes;
 
-import <assert.h>;
+import smith::contract;
 import <smith/io.h>;
 
 // A function takes only the capability it uses, so its signature says what it can do to the world.
@@ -15,7 +15,7 @@ static void report(c::SmithConsole *console, i32 sum) {
 int main(int argc, char **argv) {
     c::SmithIo io = c::smith_io_make(argc, argv);
     i32 sum = primes::sum(5);
-    c::assert(sum == 28);
+    contract::assert(sum == 28);
     report(&io.console, sum);
     c::smith_io_close(&io);
     return 0;
