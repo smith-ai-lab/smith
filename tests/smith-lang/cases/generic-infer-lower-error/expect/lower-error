@@ -1,1 +1,1 @@
-src/main.smith:5:23: cannot tell `T` from `big`: the compiler cannot say; write the type as the argument
+src/main.smith:5:30: cannot tell `T` from `big`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

@@ -1,0 +1,1 @@
+main.smith:5:45: use of undeclared identifier 'shapes::new_area'; did you mean 'shapes::old_area'?

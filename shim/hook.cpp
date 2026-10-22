@@ -115,10 +115,12 @@ struct PresenterLink {
     NameSource *source = nullptr;
     unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
+    std::map<unsigned, std::string> hints; // by place: a note for the error the compiler reports there
 };
 
 // The engine a tool reports its own findings from, which the next hook of this thread puts its Presenter in front of
 // (see smith::presentThrough), and the Presenter it made.
+bool inEditor = false;
 thread_local DiagnosticsEngine *toolEngine = nullptr;
 thread_local DiagnosticConsumer *toolConsumer = nullptr;
 
@@ -182,6 +184,12 @@ class Presenter final : public DiagnosticConsumer {
             if (instance &&
                 level != DiagnosticsEngine::Note) { // an error in an instance: where it was asked for follows
                 pendingNotes = std::move(chain);
+                engine = info.getDiags();
+            }
+            auto hint = level == DiagnosticsEngine::Error && at.isValid() ? link->hints.find(at.getRawEncoding())
+                                                                          : link->hints.end();
+            if (hint != link->hints.end()) { // the lowering knows why the name is not found
+                pendingNotes.insert(pendingNotes.begin(), {at, hint->second});
                 engine = info.getDiags();
             }
             if (origin.isValid()) at = origin;
@@ -338,6 +346,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
+        host.hint = &SmithHook::hintAt;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
         }
@@ -797,6 +806,18 @@ class SmithHook final : public TokenHook, public NameSource {
         return offset == 1 || !(isAlphanumeric(text[offset - 2]) || text[offset - 2] == '_');
     }
 
+    // Whether the name at `at` follows `.` or `->`: a member's name, which no macro can be the use of
+    // (`x.vector_length` where <simd/geometry.h> defines a macro of that name; the member is looked up in its struct).
+    bool afterMemberAccess(SourceLocation at) const {
+        StringRef text = SM.getBufferData(SM.getFileID(at));
+        size_t offset = SM.getFileOffset(at);
+        auto space = [&](size_t i) { return text[i] == ' ' || text[i] == '\t' || text[i] == '\n'; };
+        while (offset > 0 && space(offset - 1))
+            offset -= 1;
+        if (offset >= 2 && text[offset - 1] == '>' && text[offset - 2] == '-') return true;
+        return offset >= 1 && text[offset - 1] == '.' && !(offset >= 2 && text[offset - 2] == '.');
+    }
+
     // A macro of an imported header used where the source names it with no `c::` is an error, in a module or not.
     void macroUsed(const MacroDefinition &definition, SourceRange range) {
         SourceLocation at = range.getBegin();
@@ -812,7 +833,7 @@ class SmithHook final : public TokenHook, public NameSource {
         const char *start = SM.getCharacterData(at, &invalid);
         if (invalid) return;
         StringRef name(start, Lexer::MeasureTokenLength(at, SM, PP.getLangOpts()));
-        if (isStandardKeyword(name) || writtenAsC(at)) return;
+        if (isStandardKeyword(name) || writtenAsC(at) || afterMemberAccess(at)) return;
         std::string message = "`" + name.str() + "` is a C macro; write `c::" + name.str() + "`";
         PP.getDiagnostics().Report(at, diagnostic) << message;
     }
@@ -944,7 +965,7 @@ class SmithHook final : public TokenHook, public NameSource {
     QualType sizedType(StringRef macro) {
         ASTContext &ast = sema->getASTContext();
         const TargetInfo &target = ast.getTargetInfo();
-        if (macro == "__SIZE_TYPE__") return ast.getSizeType();
+        if (macro == "__SIZE_TYPE__") return ast.getCanonicalType(ast.getSizeType());
         if (macro == "__PTRDIFF_TYPE__") return ast.getCanonicalType(ast.getPointerDiffType());
         if (!macro.consume_front("__") || !macro.consume_back("_TYPE__")) return QualType();
         bool isSigned = macro.consume_front("INT");
@@ -1675,6 +1696,37 @@ class SmithHook final : public TokenHook, public NameSource {
         return decl->getType();
     }
 
+    // The lanes of an ext-vector, `v.x` or `v.yx`: the element type for one lane, else a vector of that many.
+    QualType laneType(const ExtVectorType *vector, const std::string &name) {
+        static const StringRef sets[] = {"xyzw", "rgba"};
+        bool known = false;
+        for (StringRef set : sets) {
+            known = !name.empty();
+            for (char c : name)
+                known = known && set.contains(c);
+            if (known) break;
+        }
+        if (!known) { // s0, hi, lo, even, odd and the like: the compiler's own names for lanes
+            typeWhy = "no lanes named `" + name + "`";
+            return QualType();
+        }
+        if (name.size() == 1) return vector->getElementType();
+        ASTContext &ast = sema->getASTContext();
+        QualType lanes = ast.getExtVectorType(vector->getElementType(), static_cast<unsigned>(name.size()));
+        // A vector type has no spelling a type argument can be written with (`__attribute__((ext_vector_type(2)))`
+        // does not read back as a type), so the vector is named by a typedef the program has for it.
+        QualType canonical = lanes.getCanonicalType();
+        for (const Decl *decl : ast.getTranslationUnitDecl()->decls()) {
+            const auto *typedefName = dyn_cast<TypedefNameDecl>(decl);
+            if (typedefName != nullptr && typedefName->getUnderlyingType().getCanonicalType() == canonical &&
+                !typedefName->getName().starts_with("__")) {
+                return ast.getTypedefType(ElaboratedTypeKeyword::None, /*Qualifier=*/std::nullopt, typedefName);
+            }
+        }
+        typeWhy = "no typedef names the vector of `." + name + "`; write the type as the argument";
+        return QualType();
+    }
+
     QualType memberType(QualType base, bool arrow, const std::string &name) {
         if (arrow) {
             if (!base->isPointerType()) {
@@ -1683,9 +1735,10 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             base = base->getPointeeType();
         }
+        if (const auto *vector = base->getAs<ExtVectorType>()) return laneType(vector, name);
         const RecordDecl *record = base->getAsRecordDecl();
         if (record == nullptr) {
-            typeWhy = "`." + name + "` needs a struct or union";
+            typeWhy = "`." + name + "` needs a struct, a union or a vector";
             return QualType();
         }
         for (const FieldDecl *field : record->fields()) {
@@ -1722,6 +1775,10 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         if (token == "true" || token == "false") return literalType(token);
         if (token == "nullptr") return sema->getASTContext().NullPtrTy;
+        if (token == "__extension__") { // how the lowering writes a call to a generic
+            typeWhy = "a call to a generic function is not typed";
+            return QualType();
+        }
         if (token == "sizeof" || token == "alignof" || token == "_Alignof" || token == "_Countof") {
             *next = begin + 1 < end && t[begin + 1] == "(" ? closingOf(t, begin + 1, end) + 1 : begin + 2;
             return sema->getASTContext().getCanonicalType(sema->getASTContext().getSizeType());
@@ -1826,6 +1883,7 @@ class SmithHook final : public TokenHook, public NameSource {
     // The type both operands of an arithmetic operator are converted to (C's usual arithmetic conversions).
     QualType usualArithmetic(QualType a, QualType b) {
         ASTContext &ast = sema->getASTContext();
+        if (a->isVectorType() || b->isVectorType()) return a->isVectorType() ? a : b; // a vector and its scalars
         if (a->isFloatingType() || b->isFloatingType()) {
             if (!a->isFloatingType()) return b;
             if (!b->isFloatingType()) return a;
@@ -2129,6 +2187,12 @@ class SmithHook final : public TokenHook, public NameSource {
         } else if (const char *spelling = tok::getPunctuatorSpelling(kind)) {
             token->text = spelling;
             token->length = spelling[1] == 0 ? 1 : spelling[2] == 0 ? 2 : 3;
+        } else if (kind == tok::annot_module_include || kind == tok::annot_module_begin ||
+                   kind == tok::annot_module_end) {
+            // With -fmodules an import's header is a module import: the token that stands where it was ends a
+            // declaration, as the `;` of the import did, so the next import is at the start of a declaration.
+            token->text = ";";
+            token->length = 1;
         } else if (const char *keyword = tok::getKeywordSpelling(kind)) {
             token->kind = SmithTokenKind_Identifier;
             token->text = keyword;
@@ -2142,7 +2206,10 @@ class SmithHook final : public TokenHook, public NameSource {
         auto *self = static_cast<SmithHook *>(context);
         if (self->sema == nullptr) return false;
         for (const Decl *decl : self->sema->getASTContext().getTranslationUnitDecl()->decls()) {
-            if (!decl->isImplicit() && self->SM.getFileID(self->SM.getFileLoc(decl->getLocation())) == self->MainFile) {
+            // (With -fmodules an import's header is a module import declaration at the import's own place; that is
+            // the import itself, not a declaration of the file.)
+            if (!decl->isImplicit() && !isa<ImportDecl>(decl) &&
+                self->SM.getFileID(self->SM.getFileLoc(decl->getLocation())) == self->MainFile) {
                 return true;
             }
         }
@@ -2419,6 +2486,11 @@ class SmithHook final : public TokenHook, public NameSource {
         static_cast<SmithHook *>(context)->link->suppressed.insert(location);
     }
 
+    // (Not in the editor: clangd shows a note in the file it is in as a diagnostic of its own, beside the error.)
+    static void hintAt(void *context, uint32_t location, const char *message) {
+        if (!inEditor) static_cast<SmithHook *>(context)->link->hints[location] = message;
+    }
+
     // ---- The names as written
     //
     // The diagnostics, and what a language server shows (shim/names.h), name things as the source does. The table is
@@ -2468,6 +2540,11 @@ class SmithHook final : public TokenHook, public NameSource {
             copyName(found, name);
             names->index[name.lowered] = names->names.size();
             names->names.push_back(std::move(name));
+        }
+        for (size_t i = 0, count = smith_lang_instance_count(lang); i < count; i++) {
+            SmithInstanceOrigin origin;
+            if (!smith_lang_instance_at(lang, i, &origin)) break;
+            names->instance_files[origin.name] = {absolute(origin.source), origin.exported};
         }
         for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
             SmithCallSite found;
@@ -2561,6 +2638,11 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
 }
 
 } // namespace
+
+// This process is the editor's (clangd).
+extern "C" void smith_hook_editor() {
+    inEditor = true;
+}
 
 // Makes every translation unit in this process offer its .smith main file to the lowering.
 extern "C" void smith_hook_install() {

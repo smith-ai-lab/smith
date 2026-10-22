@@ -1,0 +1,4 @@
+src/main.smith:9:38: cannot tell `T` from `a`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
+src/main.smith:9:51: cannot tell `T` from `f`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
+src/main.smith:9:64: cannot tell `T` from `p`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
+src/main.smith:9:77: cannot tell `T` from `7`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

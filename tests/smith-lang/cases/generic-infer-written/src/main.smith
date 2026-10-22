@@ -1,0 +1,12 @@
+import pick;
+
+int main(void) {
+    i32 a = 3;
+    // The argument is quoted as written, a nested call to a generic included, and the types with Smith's names.
+    i32 r = pick::larger(a, pick::larger(a, 3) + 1 + __builtin_abs(a));
+    i32 s = pick::larger(pick::zero(i32), pick::zero(f64));
+    u16 x = 1;
+    u32 y = 2;
+    i32 t = pick::larger(x, y);
+    return r + s + t;
+}

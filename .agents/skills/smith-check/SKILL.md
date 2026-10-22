@@ -49,6 +49,8 @@ smith's default `.clang-tidy` lists five more `smith-*` checks (issue #47), each
 | `smith-c23` | `.smith` and C | `NULL`, `_Bool`, `_Noreturn`, `_Static_assert`, `_Alignas`, `_Alignof`, `<stdbool.h>`, `{0}` as an initializer of a struct or array, and `__attribute__((noreturn))`, `unused`, `warn_unused_result`, `deprecated`, `fallthrough` | `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]` |
 | `smith-constexpr` | `.smith` and C | a file-scope `const` object (arithmetic, enum, or an array or struct of them; not a float, a pointer or an external one in C) with a constant initializer | `constexpr` |
 
+One more is off by default, because it is a style a project chooses (`Checks: smith-designated-init` turns it on): `smith-designated-init` (`.smith`) reports a positional initializer of two or more values for a struct that another file defines (`(text::Text){bytes, length}`, `{"src/base", fast}` for a `build::Folder`), which breaks, or shifts its values, when that struct gains a field. It says to name the fields: ``{.path = "src/base", .fast = fast}``. A struct the file defines itself, a system header's and a one-value initializer are left alone.
+
 `// NOLINT(smith-c23)` (or `NOLINTBEGIN`/`NOLINTEND`) opts a line out, and deleting a check from `Checks` opts a project out. The C checks read C files and `.smith`, never C++.
 
 ## `.smith` files

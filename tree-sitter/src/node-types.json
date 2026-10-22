@@ -1342,6 +1342,25 @@
     }
   },
   {
+    "type": "constexpr_condition",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        },
+        {
+          "type": "type_descriptor",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "continue_statement",
     "named": true,
     "fields": {}
@@ -2316,6 +2335,10 @@
         "multiple": false,
         "required": true,
         "types": [
+          {
+            "type": "constexpr_condition",
+            "named": true
+          },
           {
             "type": "parenthesized_expression",
             "named": true

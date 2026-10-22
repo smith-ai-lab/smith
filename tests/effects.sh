@@ -294,6 +294,13 @@ export void leak(const char *text) {
 export usize size(const char *text) {
     return c::strlen(text);
 }
+
+// An instance is compiled in the file that calls it, and is the code of this module: its raw call is the module's own.
+export void emit(constexpr type T, Dev *dev, T value) {
+    (void)dev;
+    (void)value;
+    c::fputs("x", c::stdout);
+}
 EOF
 cat >hw_main.smith <<'EOF'
 import <stdio.h>;
@@ -317,6 +324,7 @@ void other(void) {
     c::snprintf(nullptr, 0, "x");
     c::SmithIo again = c::smith_io_make(0, nullptr);
     (void)again;
+    dev::emit(global_dev, 5);
 }
 EOF
 run hw/dev.smith hw_main.smith >"$work/smith.out"
@@ -328,6 +336,9 @@ hw_main.smith:18:5: error: \`c::exit\` touches the world: return the status from
 hw_main.smith:20:24: error: \`c::smith_io_make\` makes a real capability and may be called only in main: take the capability as a parameter (a test makes a fake)" \
     "$(findings <"$work/smith.out")"
 expect ".smith: the lowering's names never appear" "0" "$(grep -c 'hw_dev_' "$work/smith.out")"
+# The instance of `emit` in hw_main.smith is the module's code: a finding there (it has no place in a file, so the
+# findings above do not list it) would say `fputs` touches the world.
+expect ".smith: an instance counts as its generic's module" "0" "$(grep -c 'fputs. touches the world' "$work/smith.out")"
 
 # --- the option CFiles ------------------------------------------------------------------------------------------------------
 printf 'Checks: "-*,smith-effects"\nWarningsAsErrors: "*"\nCheckOptions:\n  smith-effects.CFiles: false\n' >.clang-tidy

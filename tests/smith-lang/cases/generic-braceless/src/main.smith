@@ -1,0 +1,16 @@
+import twice;
+#include <stdio.h>
+
+int main(void) {
+    i32 a = 3;
+    i32 b = 2;
+    // The same shapes at a call site, in main.
+    if (a > b)
+        a = twice::bigger_twice(a, b);
+    if (a > b)
+        b = twice::bigger_twice(a, b);
+    for (i32 i = 0; i < 2; i++)
+        b += twice::bigger_twice(a, b);
+    printf("%d %d\n", a, b);
+    return 0;
+}

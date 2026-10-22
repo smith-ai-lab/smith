@@ -55,7 +55,7 @@ u32 helper(void) { … }                              // private
       header's `// smith-names:` line lists `Arena=SmithArena`, which is how the importer's lowering, its diagnostics
       and its editor know the pair. In the module itself the name is the C name in the generated code.
     - It goes on the export's first name (the tag, in `export typedef struct S {…} S;`, and the typedef of the same
-      name with it); an enumeration's constants keep the prefixed names. It is a string holding one C identifier.
+      name with it); an exported enumeration's constants are `<CType>_<Value>` in C, the C name of the enum (this one's, or its tag's, `mix_modes_Level_High`) and the constant, which is C's own naming rule (`MixMode_Fast`), while `.smith` importers write `modes::Fast`; an anonymous enum typedef without it keeps the prefixed names. It is a string holding one C identifier.
     - Errors: a C name another export already has chosen; one that the module's prefix gives another name (a private
       one included); a name declared later that the prefix would make the same; `[[smith::c_name]]` not followed by
       `export`; two on one export; an export that declares no typedef, tag, function or variable; a string that is no
@@ -505,12 +505,14 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   body: `T` is the instance's type), 32 deep and 4096 instances at most.
 - **Inference.** A call that leaves out all the type arguments has each `T` told from the arguments of the parameters
   that say it: `T x`, `const T *x`, `T *x`, `T x[]` (`*` and `[]` each dereference the argument's type once). The
-  compiler types a name, a field chain (`p.x`, `p->y`), `*e`, `&e`, `e[i]`, a call, a cast, `sizeof` and a literal, and
+  compiler types a name, a field chain (`p.x`, `p->y`), the lanes of an ext-vector (`v.x`, `v.yx`; several lanes are the
+  program's typedef for that vector), `*e`, `&e`, `e[i]`, a call, a cast, `sizeof` and a literal, and
   the binary operators and `?:` of C over them, by C's rules (`a + 1`, `x * 2`, `a > 0 ? a : b`; the usual arithmetic
   conversions, `int` for a comparison, the promoted left operand for a shift), in the scope the parser is in (a local
   declared by an earlier statement counts). A literal, or an expression of literals only (`2 + 2`), adapts to the
-  arguments that are not one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64";
-  an argument it cannot type (a `++`, a compound literal) is an error that says to write the type. Inside a generic's
+  arguments that are not one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64" (Smith's spellings,
+  at the second argument); an argument it cannot type (a `++`, a compound literal, a call to another generic) is an
+  error that quotes the argument as written and says to write the type. Inside a generic's
   body the locals of the instance are not yet known to the parser, so write the type there.
   The passes with no compiler treat a call whose type is not written differently: `--smith-header` writes declarations
   only, so it skips such a call in a body (a module's test can call `test::check_equal(a, 1)`), and `--smith-lower`, whose

@@ -138,11 +138,20 @@ module.exports = grammar(C, {
       prec.right(seq(
         'if',
         'constexpr',
-        field('condition', $.parenthesized_expression),
+        field('condition', choice($.parenthesized_expression, prec.dynamic(-2, $.constexpr_condition))),
         field('consequence', $.statement),
         optional(field('alternative', $.else_clause)),
       )),
     ),
+
+    // if constexpr (T == const c::V2 *): a condition that compares a type parameter with a type that is no expression.
+    constexpr_condition: $ => seq(
+      '(',
+      $._constexpr_term,
+      repeat1(seq(choice('==', '!=', '&&', '||'), $._constexpr_term)),
+      ')',
+    ),
+    _constexpr_term: $ => choice(prec.dynamic(1, $.expression), $.type_descriptor),
 
     // arena.push(&a, f32) and SMITH_CHECK(a, ==, b): a type or an operator where an argument goes (a macro's).
     argument_list: $ => seq(

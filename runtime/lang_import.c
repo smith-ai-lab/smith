@@ -216,6 +216,22 @@ static bool smith_lang_import_is_target(SmithLang *lang, const char *module, con
     return true;
 }
 
+// The header an `import a;` found is a C header, not the one smith writes for module `a` (it has no `// smith-module:`
+// line): a C header with the module's name is on the include path ahead of the module's. The import is the one error.
+static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, const SmithLangModuleName *name,
+                                       const char *bind, size_t bind_length, const char *header, const char *text,
+                                       uint32_t length) {
+    if (text == nullptr || length == 0 || memmem(text, length, "// smith-module:", 16) != nullptr) return false;
+    SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
+    if (failed != nullptr) failed->missing = true;
+    smith_lang_error(lang, host, name->location,
+                     "`import %s;` found `%s`, which is a C header, not the header smith writes for the module (it "
+                     "has no `// smith-module:` line): rename the C header or the module, or import the C header as "
+                     "`import \"%s\";`",
+                     name->colons, header, header);
+    return true;
+}
+
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
     if (!smith_lang_read_module_name(lang, host, &name)) {
@@ -270,6 +286,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
         }
         return;
     }
+    if (smith_lang_refuse_c_header(lang, host, &name, bind, bind_length, header, text, length)) return;
     char chain[smith_lang_message_max];
     if (lang->is_module && host->read_header != nullptr &&
         smith_lang_find_cycle(lang, host, name.colons, chain, sizeof chain)) {

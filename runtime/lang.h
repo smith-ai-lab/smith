@@ -204,6 +204,9 @@ typedef struct {
     // A name of a module that could not be imported is used here: the host keeps the diagnostics at that location out
     // of the way (the missing module is the one error).
     void (*suppress)(void *context, uint32_t location);
+    // A note for the error the compiler reports at this place (a name it will not find): the lowering knows why, and
+    // the compiler does not. A host without diagnostics leaves this null.
+    void (*hint)(void *context, uint32_t location, const char *message);
     // Which `import <h>;` or `import "h";` declared `name` (a declaration of that space, else a macro): the header as
     // that import spells it, `<stdio.h>` or `"mine.h"`, never an internal header the compiler found the name in. Null
     // when no import did. Asked by SMITH_LANG_ASK_IMPORTS; a host without a parser leaves it null.
@@ -354,6 +357,18 @@ typedef struct {
 
 size_t smith_lang_call_site_count(const SmithLang *lang);
 bool smith_lang_call_site_at(const SmithLang *lang, size_t index, SmithCallSite *out);
+
+// The instances the file made: the compiler's name of each and the source of the generic it came from (an instance is
+// compiled in the importer's file, but it is its generic's module's code: the checks that judge a module by its file
+// ask this).
+typedef struct {
+    char name[256];
+    char source[512];
+    bool exported; // the generic is an export of its module (else a private helper: its instances are no export)
+} SmithInstanceOrigin;
+
+size_t smith_lang_instance_count(const SmithLang *lang);
+bool smith_lang_instance_at(const SmithLang *lang, size_t index, SmithInstanceOrigin *out);
 
 size_t smith_lang_written_count(const SmithLang *lang);
 bool smith_lang_written_at(const SmithLang *lang, size_t index, SmithWrittenName *out);

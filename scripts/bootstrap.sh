@@ -34,6 +34,9 @@ trap 'rm -rf "$dir"' EXIT
             return text
         }
         function opens(line) { return line ~ /^typedef .*\{$/ }
+        # An exported inline function has its attributes before `static inline` ([[gnu::always_inline, maybe_unused]]):
+        # they are not part of the head that is compared.
+        function core(line) { sub(/^\[\[[^]]*\]\] /, "", line); return line }
         # The header names a module it imports relative to itself (#include "arena.h"); the lowering names it from the
         # include path (#include "smith/arena.h"). Both mean one file: the header spelling is joined to the folder of the module.
         function full(path,    parts, count, out, i, at) {
@@ -57,8 +60,8 @@ trap 'rm -rf "$dir"' EXIT
             }
             line = plain($0)
             if (line == "") next
-            if (line ~ /^static inline / && line !~ /[;{]$/) { getline rest; line = line " " plain(rest) } # the formatter may wrap the head
-            if (line ~ /^static inline .*\) \{$/) { match(line, /[A-Za-z_0-9]+\([^()]*\) \{$/); hinline[substr(line, RSTART, index(substr(line, RSTART), "(") - 1)] = 1 }
+            if (core(line) ~ /^static inline / && line !~ /[;{]$/) { getline rest; line = line " " plain(rest) } # the formatter may wrap the head
+            if (core(line) ~ /^static inline .*\) \{$/) { match(line, /[A-Za-z_0-9]+\([^()]*\) \{$/); hinline[substr(line, RSTART, index(substr(line, RSTART), "(") - 1)] = 1 }
             if (line ~ /^#include/) hinc[line] = 1
             if (line ~ /^#include "/) { rel = line; sub(/^#include "/, "", rel); sub(/"$/, "", rel); hinc["#include \"" full(rel) "\""] = 1 }
             if (collecting) {
@@ -68,9 +71,9 @@ trap 'rm -rf "$dir"' EXIT
             else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[norm(line)] = 1
             next
         }
-        /^static inline / && $0 !~ /[;{]$/ { head = $0; getline rest; $0 = head " " rest } # the lowering wraps long heads too
+        core($0) ~ /^static inline / && $0 !~ /[;{]$/ { head = $0; getline rest; $0 = head " " rest } # the lowering wraps long heads too
         skipping { if ($0 == "}" && previous == "") skipping = 0; previous = $0; next } # an inline function the header has: it ends with a } after a blank line
-        /^static inline .*\) \{$/ {
+        core($0) ~ /^static inline .*\) \{$/ {
             match($0, /[A-Za-z_0-9]+\([^()]*\) \{$/)
             if (substr($0, RSTART, index(substr($0, RSTART), "(") - 1) in hinline) { skipping = 1; previous = "x"; next }
         }

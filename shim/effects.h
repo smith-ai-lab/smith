@@ -381,6 +381,31 @@ class Effects final : public ClangTidyCheck {
         return extension == ".h" || extension == ".hpp" || extension == ".hh";
     }
 
+    // The file a function belongs to. An instance of a generic is compiled in the file that calls it, but it is the
+    // code of its generic's module: that module's file.
+    // `private_instance` is set for an instance of a generic that its module does not export: no export either.
+    std::string home_of(const FunctionDecl *fn, const SourceManager &sm, bool &private_instance) const {
+        private_instance = false;
+        std::string file = file_of(sm, fn->getLocation());
+        if (!in_smith_file(sm)) return file;
+        OptionalFileEntryRef main = sm.getFileEntryRefForID(sm.getMainFileID());
+        std::shared_ptr<const ::smith::FileNames> names = ::smith::namesOf(main->getName().str());
+        if (names == nullptr) return file;
+        auto found = names->instance_files.find(fn->getName().str());
+        if (found == names->instance_files.end()) return file;
+        private_instance = !found->second.exported;
+        return found->second.file;
+    }
+
+    // Whether a .smith module's file is the source of a generated header that defines a capability: the header
+    // `<root>/include/smith/io.h` is made from `smith/io.smith` somewhere else in the tree.
+    static bool generated_from(llvm::StringRef header, llvm::StringRef source) {
+        size_t include = header.rfind("/include/");
+        if (include == llvm::StringRef::npos || !header.ends_with(".h") || !source.ends_with(".smith")) return false;
+        std::string tail = "/" + header.drop_front(include + 9).drop_back(2).str() + ".smith";
+        return source.ends_with(tail);
+    }
+
     // The file of a function implements a capability when it defines the type itself (a .smith module), or is the
     // source beside the header that does: same stem, in the same folder or in lib/ or src/ with the header under the
     // include/ beside them.
@@ -388,7 +413,7 @@ class Effects final : public ClangTidyCheck {
         llvm::StringRef stem = llvm::sys::path::stem(file);
         llvm::StringRef folder = llvm::sys::path::parent_path(file);
         for (const std::string &defined : capability_files) {
-            if (defined == file) return true;
+            if (defined == file || generated_from(defined, file)) return true;
             if (is_header(file) || !is_header(defined) || llvm::sys::path::stem(defined) != stem) continue;
             llvm::StringRef beside = llvm::sys::path::parent_path(defined);
             if (beside == folder) return true;
@@ -530,14 +555,15 @@ class Effects final : public ClangTidyCheck {
         ASTContext &context = *Result.Context;
         const SourceManager &sm = *Result.SourceManager;
         scan(context, sm);
-        bool implementation = implements(file_of(sm, fn->getLocation()));
+        bool private_instance = false;
+        bool implementation = implements(home_of(fn, sm, private_instance));
         bool failure_path =
             is_failure_name(fn->getName()) || fn->isNoReturn(); // a function that stops the program may say why
         Info scratch{fn, {}, {}};
         Walker walker(*this, fn, context, implementation, failure_path, &scratch);
         walker.TraverseStmt(fn->getBody());
         if (!implementation || failure_path) return;
-        if (!fn->isExternallyVisible()) {
+        if (!fn->isExternallyVisible() || private_instance) {
             capability_functions[fn->getCanonicalDecl()] = std::move(scratch);
             return;
         }

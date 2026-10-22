@@ -132,6 +132,17 @@ static bool smith_lang_target_value(const SmithLang *lang, const SmithHost *host
     return host->target_fact != nullptr && host->target_fact(host->context, (SmithTarget)entry->fact, value);
 }
 
+static int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                         int64_t *value) {
+    for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) { // 15 facts
+        const SmithLangTargetEntry *entry = &smith_lang_target_table[i];
+        if (entry->macro != nullptr && smith_lang_equals(name, length, entry->macro)) {
+            return smith_lang_target_value(lang, host, entry, value) ? 1 : -1;
+        }
+    }
+    return 0;
+}
+
 // ---- `target::x` in code
 // ---------------------------------------------------------------------------------------------
 

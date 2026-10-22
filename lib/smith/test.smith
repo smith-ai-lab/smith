@@ -677,29 +677,53 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
 
 // a == b. The type is inferred from the arguments (a literal adapts); both values print with it.
 export void check_equal(constexpr type T, T a, T b) {
-    check_compare(op_equal, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a == b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_equal, value_of(T, a), value_of(T, b));
+    }
 }
 
 // a != b. A NaN is not equal to anything, so this passes for one.
 export void check_not_equal(constexpr type T, T a, T b) {
-    check_compare(op_not_equal, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a != b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_not_equal, value_of(T, a), value_of(T, b));
+    }
 }
 
 // a < b. A NaN is unordered, so this fails for one.
 export void check_less(constexpr type T, T a, T b) {
-    check_compare(op_less, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a < b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_less, value_of(T, a), value_of(T, b));
+    }
 }
 
 export void check_less_equal(constexpr type T, T a, T b) {
-    check_compare(op_less_equal, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a <= b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_less_equal, value_of(T, a), value_of(T, b));
+    }
 }
 
 export void check_greater(constexpr type T, T a, T b) {
-    check_compare(op_greater, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a > b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_greater, value_of(T, a), value_of(T, b));
+    }
 }
 
 export void check_greater_equal(constexpr type T, T a, T b) {
-    check_compare(op_greater_equal, value_of(T, a), value_of(T, b));
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(a >= b); // the analyzer cannot see what a failed check does: it is told what a pass means
+    } else {
+        check_compare(op_greater_equal, value_of(T, a), value_of(T, b));
+    }
 }
 
 f32 distance_f32(f32 a, f32 b) {

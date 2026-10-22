@@ -1,0 +1,7 @@
+import guard;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %g\n", guard::pick_one(i32, 3, 9), guard::pick_one(f64, 2.5, 1.5));
+    return 0;
+}

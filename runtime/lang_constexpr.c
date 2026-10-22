@@ -166,16 +166,21 @@ static bool smith_lang_cx_type_start(SmithLangCx *cx, uint32_t at) {
            SmithLookup_Type;
 }
 
-// The index after the type that begins at `at`: its words, a tag after struct/union/enum, and its `*`s.
-static uint32_t smith_lang_cx_type_end(uint32_t at, uint32_t last) {
+// The index after the type that begins at `at`: its words, a tag after struct/union/enum, its `*`s, and one name the
+// parser knows as a type (`c::V2`, a C struct or vector typedef).
+static uint32_t smith_lang_cx_type_end(SmithLangCx *cx, uint32_t at, uint32_t last) {
+    bool named = false;
     for (; at < last; at++) { // bounded by the condition
         const SmithLangGenToken *token = smith_lang_cx_token(at);
         bool tag = at > 0 && (smith_lang_cx_word(smith_lang_cx_token(at - 1), "struct") ||
                               smith_lang_cx_word(smith_lang_cx_token(at - 1), "union") ||
                               smith_lang_cx_word(smith_lang_cx_token(at - 1), "enum"));
-        bool part = smith_lang_cx_type_word(token) || smith_lang_gt_punct(token, "*") ||
-                    (tag && token->kind == SmithTokenKind_Identifier);
+        bool word = smith_lang_cx_type_word(token);
+        bool name = !named && !word && !tag && smith_lang_cx_type_start(cx, at);
+        bool part =
+            word || name || smith_lang_gt_punct(token, "*") || (tag && token->kind == SmithTokenKind_Identifier);
         if (!part) break;
+        named = named || name;
     }
     return at;
 }
@@ -349,6 +354,12 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
     return false;
 }
 
+// runtime/lang_target.c: the value of the fact whose macro the raw lowering wrote (`SMITH_TARGET_STATIC_ANALYZER`), as
+// the compiler says it: 1 with the value, 0 when `name` is no such macro, -1 when it is one the host cannot answer
+// (the raw lowering has no compiler).
+static int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                         int64_t *value);
+
 // The operand at `at`: a number, a builtin question, or a type. Moves `at` past it.
 static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
@@ -374,9 +385,22 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at += 1;
         return true;
     }
+    int fact =
+        token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain && token->param == 0
+            ? smith_lang_target_macro_value(cx->lang, cx->host, smith_lang_gt_str(token), token->length, &value->number)
+            : 0;
+    if (fact > 0) {
+        *at += 1; // `target::name` of a generic read from its header: the header says the macro, the compiler the value
+        return true;
+    }
+    if (fact < 0) {
+        return smith_lang_cx_fail(cx,
+                                  "a fact of the target in a generic's condition needs the compiler to answer it: a "
+                                  "raw lowering (a bootstrapped module, the stage0) cannot choose the branch");
+    }
     if (smith_lang_cx_is_builtin(token)) return smith_lang_cx_builtin(cx, at, last, value);
     if (smith_lang_cx_type_start(cx, *at)) {
-        uint32_t end = smith_lang_cx_type_end(*at, last);
+        uint32_t end = smith_lang_cx_type_end(cx, *at, last);
         SmithTypeQuery query;
         value->is_type = true;
         if (!smith_lang_cx_query(cx, *at, end, &query, &value->type)) return false;

@@ -257,6 +257,19 @@ static bool smith_lang_takes_c_name(const SmithLang *lang, SmithLangNameKind kin
     return exported && kind != SmithLangName_Constant && lang->decl.c_name.length > 0 && !lang->decl.c_name_used;
 }
 
+// The C name of an exported enum's constant: the enum's C name (the one [[smith::c_name]] chose for it or its tag's),
+// an underscore and the constant, `SmithTestKind_Equal`, which is what C's naming rule for enumeration constants asks.
+// False when the enum has no C name yet (an anonymous typedef without [[smith::c_name]]): the constant is prefixed.
+static bool smith_lang_enum_constant_name(const SmithLang *lang, SmithLangNameKind kind, bool exported,
+                                          const char *name, size_t length, char *out, size_t capacity) {
+    if (kind != SmithLangName_Constant || !exported) return false;
+    SmithLangText prefix = lang->decl.enum_prefix;
+    if (prefix.length == 0 && !lang->decl.c_name_used) prefix = lang->decl.c_name;
+    if (prefix.length == 0 || prefix.length + length + 2 > capacity) return false;
+    snprintf(out, capacity, "%s_%.*s", smith_lang_str(prefix), (int)length, name);
+    return true;
+}
+
 static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, SmithLangNameKind kind, bool exported) {
     bool chosen = smith_lang_takes_c_name(lang, kind, exported);
@@ -267,6 +280,9 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
         lang->decl.c_name_used = true;
         if (!smith_lang_c_name_free(lang, host, c_name, c_length, name, length, lang->decl.c_name_location))
             chosen = false;
+    } else if (smith_lang_enum_constant_name(lang, kind, exported, name, length, c_name, sizeof c_name)) {
+        c_length = strlen(c_name);
+        chosen = smith_lang_c_name_free(lang, host, c_name, c_length, name, length, location);
     } else if (lang->c_name_count > 0) {
         smith_lang_c_name_taken(lang, host, name, length, location);
     }
@@ -279,6 +295,9 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
         }
     }
     const char *lowered = smith_lang_prefixed(lang, name, length);
+    if (kind == SmithLangName_Tag && exported && lang->decl.last_tag_enum) { // its constants follow this C name
+        lang->decl.enum_prefix = smith_lang_store(lang, lowered, lang->tmp_length);
+    }
     smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, chosen ? 0 : strlen(lang->prefix),
                            lang->module_text, true, chosen ? name : nullptr, chosen ? length : 0);
     if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
@@ -330,6 +349,9 @@ static bool smith_lang_recording_exported(const SmithLang *lang);
 static void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                   const SmithToken *member, SmithToken *result, char *digits, size_t capacity);
 
+// runtime/lang_names.c: the export of an import (or a name written through one) with this C name, if the table has it
+static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const char *text, size_t length);
+
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------
 
@@ -341,6 +363,22 @@ static SmithToken smith_lang_made(const SmithToken *like, const char *text, size
 
 static void smith_lang_allow(SmithLang *lang, uint32_t location) {
     lang->allowed[lang->allowed_next++ % smith_lang_allowed_max] = location; // a ring: a macro expands at once
+}
+
+// `x::name` where the module's header lists its exports and `name` is not among them (`lang->tmp` holds the C name the
+// access makes): a typo, a private name, or a header from before the module had it. The compiler reports the name as
+// undeclared (with its own suggestion, if it has one); this is the note that follows that error, about the header.
+static void smith_lang_check_listed(SmithLang *lang, const SmithHost *host, const SmithLangBinding *binding,
+                                    const SmithToken *taken, size_t total) {
+    if (!binding->listed || host->hint == nullptr || smith_lang_written_lookup(lang, lang->tmp, total) != nullptr) {
+        return;
+    }
+    char message[smith_lang_message_max];
+    snprintf(message, sizeof message,
+             "the header of module `%s` lists no export `%.*s`; if the module has one, the header is stale: `smith "
+             "build` writes it again",
+             smith_lang_str(binding->module), (int)taken->length, taken->text);
+    host->hint(host->context, taken->location, message);
 }
 
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
@@ -402,6 +440,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         memcpy(lang->tmp + prefix_length, taken.text, taken.length);
         lang->tmp[total] = 0;
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
+        if (chosen == nullptr) smith_lang_check_listed(lang, host, binding, &taken, total);
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
@@ -517,6 +556,13 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
     SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Value);
     *is_type = found.kind == SmithLookup_Type;
     if (found.kind == SmithLookup_None || !found.from_import || found.in_main_file) return;
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+        if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(name, length, smith_lang_sized[i].header)) {
+            smith_lang_error(lang, host, location, "`%.*s` is a C type name; write `%s`", (int)length, name,
+                             smith_lang_sized[i].name);
+            return;
+        }
+    }
     smith_lang_error(lang, host, location, "`%.*s` is a C name; write `c::%.*s`", (int)length, name, (int)length, name);
 }
 

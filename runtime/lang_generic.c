@@ -655,6 +655,7 @@ static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, S
     const char *end = parsed->tokens + parsed->tokens_length;
     char text[1024];
     generic->first = smith_lang_gt.count;
+    uint32_t previous_line = UINT32_MAX;
     while (at < end) { // each token
         while (at < end && *at == ' ')
             at += 1;
@@ -664,10 +665,15 @@ static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, S
         if (at == start) break;
         SmithLangGenToken token;
         size_t length = 0;
-        if (!smith_lang_generic_read_token(start, (size_t)(at - start), &token, text, sizeof text, &length) ||
-            smith_lang_pool_add(&smith_lang_gt, token, text, length) == UINT32_MAX) {
+        if (!smith_lang_generic_read_token(start, (size_t)(at - start), &token, text, sizeof text, &length)) {
             return false;
         }
+        // The header says where each token was, not whether it began a line. The parser needs it (clang's
+        // -Wmisleading-indentation reads a token's start of line), so a token on a later line than the one before it
+        // begins one.
+        if (token.line > previous_line) token.flags |= (uint8_t)smith_lang_gen_flag_line_start;
+        previous_line = token.line;
+        if (smith_lang_pool_add(&smith_lang_gt, token, text, length) == UINT32_MAX) return false;
     }
     generic->count = smith_lang_gt.count - generic->first;
     return generic->count > 0;
@@ -828,7 +834,10 @@ static void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, con
     written.location = location;
     written.synthetic = !real;
     written.instance = instance;
-    written.line_start = false;
+    // An instance's tokens begin the lines the generic's did: the compiler reads it (-Wmisleading-indentation).
+    // (Only a host with a parser: the raw lowering is text, and lines in it would change the bootstrap's bytes.)
+    written.line_start =
+        instance != 0 && host->type_query != nullptr && (token->flags & smith_lang_gen_flag_line_start) != 0;
     written.space_before = smith_lang_gen_space(lang, (SmithTokenKind)token->kind, written.text, written.length);
     smith_lang_gen_note(lang, (SmithTokenKind)token->kind, written.text, written.length);
     smith_lang_emit_code(lang, host, written);
@@ -1176,6 +1185,7 @@ typedef struct {
     uint32_t pos; // [pos, end) of smith_lang_gt, or a punctuator to write
     uint32_t end;
     char literal;
+    uint32_t place; // of a punctuator to write (0: the call that asked for the instance)
 } SmithLangFrame;
 
 typedef struct {
@@ -1191,7 +1201,16 @@ static SmithLangReplay smith_lang_replay;
 
 static bool smith_lang_replay_push(SmithLangReplay *replay, uint32_t pos, uint32_t end, char literal) {
     if (replay->count >= smith_lang_replay_depth_max) return false;
-    replay->frames[replay->count++] = (SmithLangFrame){pos, end, literal};
+    replay->frames[replay->count++] = (SmithLangFrame){pos, end, literal, 0};
+    return true;
+}
+
+// A punctuator of the lowered call, written where the call is: in an instance that is a place of the generic, and
+// never the call that asked for the instance (a statement then seems to end at that line, which misleads the
+// compiler's -Wmisleading-indentation about the lines in between).
+static bool smith_lang_replay_literal(SmithLangReplay *replay, char literal, uint32_t place) {
+    if (!smith_lang_replay_push(replay, 0, 0, literal)) return false;
+    replay->frames[replay->count - 1].place = place;
     return true;
 }
 
@@ -1299,6 +1318,79 @@ static bool smith_lang_infer_literal(SmithLangSpan span) {
     return literal;
 }
 
+// The text of the calls to generics already lowered, as the source wrote them, for a message that quotes an argument
+// (`pick::larger(a, 3)` and not the statement expression it became). Made again at each outermost call.
+static char smith_lang_written_text[1 << 14];
+static uint32_t smith_lang_written_used;
+
+// The argument as the source wrote it (a nested call to a generic is still its own tokens here, not the lowered
+// statement expression), for a message.
+static void smith_lang_infer_written(SmithLangSpan span, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (uint32_t at = span.start; at < span.end; at++) { // the tokens
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (token->special == SmithLangGen_CallEnd) continue;
+        const char *text = smith_lang_gt_str(token);
+        size_t length = token->length;
+        for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+            if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(text, length, smith_lang_sized[i].standard)) {
+                text = smith_lang_sized[i].name; // the lowering wrote `__INT32_TYPE__` for `i32`
+                length = strlen(text);
+                break;
+            }
+        }
+        if (token->written != 0 && token->written <= smith_lang_written_used) { // a call already lowered
+            text = smith_lang_written_text + token->written - 1;
+            length = strlen(text);
+            at += token->covers > 0 ? token->covers - 1 : 0;
+        }
+        if (used + length + 2 >= capacity) {
+            snprintf(out + used, capacity - used, "...");
+            return;
+        }
+        if (used > 0 && (token->flags & smith_lang_gen_flag_space) != 0) out[used++] = ' ';
+        memcpy(out + used, text, length);
+        used += length;
+        out[used] = 0;
+    }
+}
+
+// A type as the parser wrote it, with the standard names a header gives the sized types spelled as Smith does
+// (`uint16_t u32 *` is `u16 u32 *`): the spelling the fix uses.
+static void smith_lang_smith_spelling(const char *written, char *out, size_t capacity) {
+    size_t used = 0;
+    for (size_t at = 0; written[at] != 0 && used + 2 < capacity;) { // words, and each other character
+        size_t end = at + 1;
+        bool word = isalnum((unsigned char)written[at]) || written[at] == '_';
+        while (word && (isalnum((unsigned char)written[end]) || written[end] == '_'))
+            end += 1;
+        const char *text = written + at;
+        size_t length = end - at;
+        for (size_t i = 0; word && i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+            if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(text, length, smith_lang_sized[i].header)) {
+                text = smith_lang_sized[i].name;
+                length = strlen(text);
+                break;
+            }
+        }
+        if (used + length + 1 >= capacity) break;
+        memcpy(out + used, text, length);
+        used += length;
+        at = end;
+    }
+    out[used] = 0;
+}
+
+// Where an argument is written, for an error about it: its first token, else the call.
+static uint32_t smith_lang_infer_place(const SmithHost *host, const SmithLangReplay *replay, SmithLangSpan span,
+                                       uint32_t call) {
+    if (span.start >= span.end) return call;
+    SmithLangGenToken *token = &smith_lang_gt.tokens[span.start];
+    if (replay->generic != nullptr) return smith_lang_gen_place(host, replay->generic, token, call);
+    return token->location != UINT32_MAX && token->location != 0 ? token->location : call;
+}
+
 // The argument's tokens, with the instance's types for T, separated by \x1f for the host's question.
 static bool smith_lang_infer_text(SmithLangSpan span, const SmithLangInstance *instance, uint32_t location, char *out,
                                   size_t capacity) {
@@ -1380,19 +1472,26 @@ static bool smith_lang_infer(SmithLang *lang, const SmithHost *host, const Smith
                 host->expr_type != nullptr &&
                 host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
             if (!answered) {
-                char shown[256] = "";
-                for (const char *c = tokens; *c != 0 && strlen(shown) + 2 < sizeof shown; c++)
-                    snprintf(shown + strlen(shown), 2, "%c", *c == '\x1f' ? ' ' : *c);
-                smith_lang_error(lang, host, location,
+                char shown[256];
+                smith_lang_infer_written(args[i], shown, sizeof shown);
+                const char *why = host->expr_type == nullptr
+                                      ? "the raw lowering has no compiler to type it (a bootstrapped module and the "
+                                        "stage0 write the types out)"
+                                      : (here.type.why != nullptr ? here.type.why : "the compiler cannot say");
+                smith_lang_error(lang, host, smith_lang_infer_place(host, replay, args[i], location),
                                  "cannot tell `%.*s` from `%s`: %s; write the type as the argument", (int)tname->length,
-                                 smith_lang_gt_str(tname), shown,
-                                 here.type.why != nullptr ? here.type.why : "the compiler cannot say");
+                                 smith_lang_gt_str(tname), shown, why);
                 return false;
             }
             here.found = true;
             if (best.found && strcmp(best.type.canonical, here.type.canonical) != 0 && best.literal == here.literal) {
-                smith_lang_error(lang, host, location, "conflicting types for `%.*s`: %s and %s", (int)tname->length,
-                                 smith_lang_gt_str(tname), best.type.written, here.type.written);
+                char first[256];
+                char second[256];
+                smith_lang_smith_spelling(best.type.written, first, sizeof first);
+                smith_lang_smith_spelling(here.type.written, second, sizeof second);
+                smith_lang_error(lang, host, smith_lang_infer_place(host, replay, args[i], location),
+                                 "conflicting types for `%.*s`: %s and %s; write the type as the argument",
+                                 (int)tname->length, smith_lang_gt_str(tname), first, second);
                 return false;
             }
             if (!best.found || (best.literal && !here.literal)) best = here; // a literal adapts to what is not one
@@ -1468,14 +1567,14 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     }
     static const char closers[] = {')', '}', ';', ')'}; // written in the reverse, last first
     for (size_t i = 0; i < sizeof closers; i++)         // the end of the statement expression
-        smith_lang_replay_push(replay, 0, 0, closers[i]);
+        smith_lang_replay_literal(replay, closers[i], location);
     bool more = false;
     for (size_t i = count; i > 0; i--) { // the arguments that are no type, last first
         bool is_type = false;
         for (size_t k = 0; k < generic->type_count; k++)
             is_type = is_type || generic->type_position[k] == i - 1;
         if (is_type) continue;
-        if (more) smith_lang_replay_push(replay, 0, 0, ',');
+        if (more) smith_lang_replay_literal(replay, ',', location);
         smith_lang_replay_push(replay, spans[i - 1].start, spans[i - 1].end, 0);
         more = true;
     }
@@ -1562,8 +1661,10 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         SmithLangFrame *frame = &replay->frames[replay->count - 1];
         if (frame->literal != 0) {
             char text[2] = {frame->literal, 0};
+            uint32_t frame_place = frame->place;
             replay->count -= 1;
-            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, text, replay->location, replay->instance_id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, text,
+                               frame_place != 0 ? frame_place : replay->location, replay->instance_id);
             continue;
         }
         if (frame->pos >= frame->end) {
@@ -1732,6 +1833,7 @@ static bool smith_lang_generic_direct_call(SmithLang *lang, const SmithHost *hos
                                            uint32_t location, uint32_t member_location) {
     if (!smith_lang_generic_push_frame(lang, host, false, generic_index, location, member_location)) return false;
     lang->cap_frames += 1;
+    if (lang->cap_frames == 1) smith_lang_written_used = 0; // the outermost call: its nested calls are kept anew
     lang->namespace_done = true;
     return true;
 }
@@ -1741,6 +1843,22 @@ static bool smith_lang_generic_direct_call(SmithLang *lang, const SmithHost *hos
 static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (host->suppress != nullptr) host->suppress(host->context, location);
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "smith_call_failed", location, 0);
+}
+
+// Keeps the call of `frame` as the source wrote it (`module::member`, then its tokens from `frame->count` up to
+// `top`), for an outer call's messages. Returns 1 + its offset, or 0 when there is no room.
+static uint32_t smith_lang_written_store(const SmithLangCallFrame *frame, uint32_t top) {
+    const SmithLangGeneric *generic = &smith_lang_generics[frame->generic_index];
+    char text[512];
+    int used = snprintf(text, sizeof text, "%s::%s", smith_lang_str(generic->module), smith_lang_str(generic->member));
+    if (used < 0 || (size_t)used + 2 >= sizeof text) return 0;
+    smith_lang_infer_written((SmithLangSpan){frame->count, top}, text + used, sizeof text - (size_t)used);
+    size_t length = strlen(text);
+    if (smith_lang_written_used + length + 1 > sizeof smith_lang_written_text) return 0;
+    uint32_t offset = smith_lang_written_used;
+    memcpy(smith_lang_written_text + offset, text, length + 1);
+    smith_lang_written_used += (uint32_t)length + 1;
+    return offset + 1;
 }
 
 // The call of `frame` has its `)`: it is written.
@@ -1767,9 +1885,15 @@ static void smith_lang_generic_finish_call(SmithLang *lang, const SmithHost *hos
         smith_lang_generic_call_state(lang);
         return;
     }
+    uint32_t kept = lang->cap_frames > 0 ? smith_lang_written_store(frame, top_count) : 0;
     smith_lang_replay_run(lang, host, replay);
     if (lang->cap_frames > 0) {
+        uint32_t covers = smith_lang_gt.count - top_count;
         smith_lang_gt_slide(frame->count, frame->text, top_count, top_text); // inside another call: where this one was
+        if (kept != 0 && covers > 0) {
+            smith_lang_gt.tokens[frame->count].written = kept;
+            smith_lang_gt.tokens[frame->count].covers = covers;
+        }
     } else {
         smith_lang_gt.count = frame->count;
         smith_lang_gt.text_used = frame->text;
@@ -1979,6 +2103,19 @@ static size_t smith_lang_generic_signature(const SmithLang *lang, const SmithLan
     }
     out[used] = 0;
     return used;
+}
+
+size_t smith_lang_instance_count(const SmithLang *lang) {
+    return lang->instances_count;
+}
+
+bool smith_lang_instance_at(const SmithLang *lang, size_t index, SmithInstanceOrigin *out) {
+    if (index >= lang->instances_count) return false;
+    const SmithLangInstance *instance = &smith_lang_instances[index];
+    snprintf(out->name, sizeof out->name, "%s", smith_lang_str(instance->cname));
+    snprintf(out->source, sizeof out->source, "%s", smith_lang_str(smith_lang_generics[instance->generic].source));
+    out->exported = smith_lang_generics[instance->generic].exported;
+    return true;
 }
 
 size_t smith_lang_call_site_count(const SmithLang *lang) {

@@ -149,6 +149,8 @@ typedef struct {
     uint32_t location; // the host's; UINT32_MAX when the token was read from a header and not placed yet
     uint32_t line;     // in the source of the generic, for a token read from a header (0: location is the host's)
     uint32_t column;
+    uint32_t written; // 1 + the offset of the text of a call this token begins, as the source wrote it (0: none)
+    uint32_t covers;  // with `written`: how many tokens, this one included, the lowered call took
 } SmithLangGenToken;
 
 typedef struct {
@@ -207,6 +209,7 @@ typedef struct {
     bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
     bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
+    bool listed;    // the module's header lists its exports (// smith-names:): a name it does not list is no export
 } SmithLangBinding;
 
 // A C name that an exported declaration uses, written `c::name` (`struct c::name` is a tag).
@@ -258,6 +261,7 @@ typedef struct {
     bool static_inserted; // `static` was written before the first token, so a later one is dropped
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
     SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled

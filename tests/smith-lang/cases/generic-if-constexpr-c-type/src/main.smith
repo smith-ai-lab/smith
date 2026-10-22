@@ -1,0 +1,11 @@
+import kind;
+import "shape.h";
+#include <stdio.h>
+
+int main(void) {
+    c::V2 a = {1, 2};
+    c::F4 f = {1, 2, 3, 4};
+    const c::V2 *p = &a;
+    printf("%d %d %d %d\n", kind::of(a), kind::of(f), kind::of(p), kind::of(7));
+    return 0;
+}

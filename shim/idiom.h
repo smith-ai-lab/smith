@@ -200,14 +200,20 @@ struct ModuleHeader {
     std::string module;
     std::string binding;
     std::map<std::string, std::string> c_names; // C name -> the module's name
+    std::set<std::string> generics;             // the module's generic functions
 };
 
 inline bool parse_module_header(llvm::StringRef text, ModuleHeader &out) {
     bool found = false;
-    for (int line = 0; line < 8 && !text.empty(); line++) {
+    for (int line = 0; line < 4096 && !text.empty(); line++) {
         llvm::StringRef current;
         std::tie(current, text) = text.split('\n');
-        if (current.consume_front("// smith-module: ")) {
+        if (line >= 8 && !current.starts_with("// smith-generic: ")) continue;
+        if (current.consume_front("// smith-generic: ")) {
+            std::istringstream words(current.str());
+            std::string module, member;
+            if (words >> module >> member) out.generics.insert(member);
+        } else if (current.consume_front("// smith-module: ")) {
             out.module = current.str();
             out.binding = current.substr(current.rfind(':') + 1).str();
             found = true;
@@ -293,13 +299,33 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
                 check.diag(token.getLocation(),
                            "`c::%0` is `%2::%3` of the module %1, reached through its C header: write `import %1;` "
                            "and `%2::%3`%4")
-                    << spelled << module.module << module.binding << found->second << example(module);
+                    << spelled << module.module << module.binding << found->second
+                    << (example(module) + generic_of(module, found->second));
                 return;
             }
         }
 
         static std::string example(const ModuleHeader &module) {
             if (module.module == "smith::arena") return " (a typed push is `arena::push(&a, T)`)";
+            return "";
+        }
+
+        // `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
+        // generic's, which infers the type from its arguments.
+        static std::string generic_of(const ModuleHeader &module, const std::string &name) {
+            static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32", "i64", "isize",   "u8",
+                                                "u16",  "u32",  "u64", "usize", "f32", "f64", "pointer", "ptr"};
+            for (const char *type : types) {
+                std::string suffix = std::string("_") + type;
+                if (name.size() <= suffix.size() ||
+                    name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
+                    continue;
+                std::string base = name.substr(0, name.size() - suffix.size());
+                if (module.generics.count(base) != 0) {
+                    return " (or, better, the generic `" + module.binding + "::" + base +
+                           "(a, b)`, which infers the type from its arguments)";
+                }
+            }
             return "";
         }
     };
@@ -557,6 +583,61 @@ class ConstexprCheck final : public ClangTidyCheck {
         }
         return false;
     }
+};
+
+// ---- smith-designated-init ------------------------------------------------------------------------------------------
+
+// `{"src/base", fast}` for a struct another module (or header) defines is positional: when the struct gains a field,
+// the values shift or the compiler warns at every such site. Naming the fields (`{.path = "src/base", .fast = fast}`)
+// is a change the other module cannot break. A struct the file defines itself, a system header's struct and an
+// initializer of one value are left alone.
+class DesignatedInitCheck final : public ClangTidyCheck {
+  public:
+    DesignatedInitCheck(llvm::StringRef Name, ClangTidyContext *Context) : ClangTidyCheck(Name, Context) {}
+
+    bool isLanguageVersionSupported(const LangOptions &options) const override {
+        return !options.CPlusPlus; // the check is for .smith
+    }
+
+    void registerMatchers(ast_matchers::MatchFinder *Finder) override {
+        using namespace ast_matchers;
+        Finder->addMatcher(initListExpr().bind("list"), this);
+    }
+
+    void check(const ast_matchers::MatchFinder::MatchResult &Result) override {
+        const SourceManager &sm = *Result.SourceManager;
+        if (!is_smith_file(sm, sm.getMainFileID())) return;
+        const auto *list = Result.Nodes.getNodeAs<InitListExpr>("list");
+        const InitListExpr *written =
+            list->isSemanticForm() && list->getSyntacticForm() != nullptr ? list->getSyntacticForm() : list;
+        if (written->getNumInits() < 2) return;
+        SourceLocation at = written->getBeginLoc();
+        if (!at.isValid() || at.isMacroID() || sm.getFileID(at) != sm.getMainFileID()) return;
+        for (const Expr *init : written->inits()) {
+            if (isa<DesignatedInitExpr>(init)) return;
+        }
+        const RecordDecl *record = list->getType().getCanonicalType()->getAsRecordDecl();
+        if (record == nullptr || !record->isStruct()) return;
+        SourceLocation defined = sm.getFileLoc(record->getLocation());
+        if (!defined.isValid() || sm.isInSystemHeader(defined) || sm.getFileID(defined) == sm.getMainFileID()) return;
+        if (!seen.insert(at.getRawEncoding()).second) return; // a generic's instances are copies of one source
+        std::string name = record->getName().str();
+        if (name.empty()) {
+            if (const TypedefNameDecl *typedef_name = record->getTypedefNameForAnonDecl()) {
+                name = typedef_name->getName().str();
+            }
+        }
+        diag(at, "this initializes `%0`, which another file defines, by position: name the fields (`{.field = value, "
+                 "...}`), so that a field added to it cannot shift the values")
+            << name;
+    }
+
+    void onEndOfTranslationUnit() override {
+        seen.clear();
+    }
+
+  private:
+    std::set<unsigned> seen;
 };
 
 } // namespace clang::tidy::smith_idiom

@@ -55,6 +55,13 @@ struct FileNames {
     std::vector<CallSite> calls;
     std::vector<WrittenName> names;
     std::unordered_map<std::string, size_t> index; // by lowered
+    // The generics' instances this file made, by the compiler's name: the file each is written in (absolute), and
+    // whether its generic is an export of its module.
+    struct InstanceHome {
+        std::string file;
+        bool exported = false;
+    };
+    std::unordered_map<std::string, InstanceHome> instance_files;
 
     const WrittenName *find(llvm::StringRef lowered) const {
         auto found = index.find(lowered.str());

@@ -1,0 +1,6 @@
+import shapes;
+
+// shapes.smith has `new_area` by now, but the header smith wrote for it was written before.
+i32 area(i32 side) {
+    return shapes::old_area(side) + shapes::new_area(side);
+}
