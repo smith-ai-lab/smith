@@ -162,8 +162,39 @@ module.exports = grammar(C, {
     ),
 
     // `enum Mode : unsigned char { ... }`
+    // C23 attributes after the keyword: typedef struct [[clang::annotate("smith::capability")]] SmithOp { ... } SmithOp;
+    struct_specifier: $ => prec.right(seq(
+      'struct',
+      optional($.attribute_specifier),
+      repeat($.attribute_declaration),
+      optional($.ms_declspec_modifier),
+      choice(
+        seq(
+          field('name', $._type_identifier),
+          field('body', optional($.field_declaration_list)),
+        ),
+        field('body', $.field_declaration_list),
+      ),
+      optional($.attribute_specifier),
+    )),
+
+    union_specifier: $ => prec.right(seq(
+      'union',
+      repeat($.attribute_declaration),
+      optional($.ms_declspec_modifier),
+      choice(
+        seq(
+          field('name', $._type_identifier),
+          field('body', optional($.field_declaration_list)),
+        ),
+        field('body', $.field_declaration_list),
+      ),
+      optional($.attribute_specifier),
+    )),
+
     enum_specifier: $ => seq(
       'enum',
+      repeat($.attribute_declaration),
       choice(
         seq(
           field('name', $._type_identifier),
