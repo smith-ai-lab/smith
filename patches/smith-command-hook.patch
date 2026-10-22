@@ -1,0 +1,71 @@
+diff --git a/clang/include/clang/Driver/CreateInvocationFromArgs.h b/clang/include/clang/Driver/CreateInvocationFromArgs.h
+--- a/clang/include/clang/Driver/CreateInvocationFromArgs.h
++++ b/clang/include/clang/Driver/CreateInvocationFromArgs.h
+@@ -49,6 +49,17 @@ struct CreateInvocationOptions {
+   std::vector<std::string> *CC1Args = nullptr;
+ };
+ 
++/// A front end for a language that is lowered to C may change a command before
++/// the tools below read it (a file extension the driver takes for a linker
++/// input is given a language, say). Called with the arguments of a command, the
++/// program first, by createInvocation and by the tooling library's
++/// getStripPluginsAdjuster; returns true and sets \param Out to the arguments
++/// that replace them (pointers into \param Args or static), or false to keep
++/// them. Null (the default) changes nothing.
++#define CLANG_HAS_COMMAND_HOOK 1
++extern bool (*CommandHook)(ArrayRef<const char *> Args,
++                           SmallVectorImpl<const char *> &Out);
++
+ /// Interpret clang arguments in preparation to parse a file.
+ ///
+ /// This simulates a number of steps Clang takes when its driver is invoked:
+diff --git a/clang/lib/Driver/CreateInvocationFromArgs.cpp b/clang/lib/Driver/CreateInvocationFromArgs.cpp
+--- a/clang/lib/Driver/CreateInvocationFromArgs.cpp
++++ b/clang/lib/Driver/CreateInvocationFromArgs.cpp
+@@ -29,6 +29,9 @@ using namespace llvm::opt;
+ 
+ namespace clang {
+ 
++bool (*CommandHook)(ArrayRef<const char *> Args,
++                    SmallVectorImpl<const char *> &Out) = nullptr;
++
+ std::unique_ptr<CompilerInvocation>
+ createInvocation(ArrayRef<const char *> ArgList, CreateInvocationOptions Opts) {
+   assert(!ArgList.empty());
+@@ -43,6 +46,9 @@ createInvocation(ArrayRef<const char *> ArgList, CreateInvocationOptions Opts) {
+   }
+ 
+   SmallVector<const char *, 16> Args(ArgList);
++  if (SmallVector<const char *, 16> Hooked;
++      CommandHook && CommandHook(ArgList, Hooked) && !Hooked.empty())
++    Args = std::move(Hooked);
+ 
+   // FIXME: Find a cleaner way to force the driver into restricted modes.
+   Args.insert(
+diff --git a/clang/lib/Tooling/ArgumentsAdjusters.cpp b/clang/lib/Tooling/ArgumentsAdjusters.cpp
+--- a/clang/lib/Tooling/ArgumentsAdjusters.cpp
++++ b/clang/lib/Tooling/ArgumentsAdjusters.cpp
+@@ -13,7 +13,9 @@
+ 
+ #include "clang/Tooling/ArgumentsAdjusters.h"
+ #include "clang/Basic/LLVM.h"
++#include "clang/Driver/CreateInvocationFromArgs.h"
+ #include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallVector.h"
+ #include "llvm/ADT/StringRef.h"
+ #include <cstddef>
+ #include <vector>
+@@ -167,6 +169,13 @@ ArgumentsAdjuster getStripPluginsAdjuster() {
+       }
+       AdjustedArgs.push_back(Args[I]);
+     }
++    if (CommandHook) {
++      SmallVector<const char *, 16> In, Out;
++      for (const std::string &Arg : AdjustedArgs)
++        In.push_back(Arg.c_str());
++      if (CommandHook(In, Out) && !Out.empty())
++        return CommandLineArguments(Out.begin(), Out.end());
++    }
+     return AdjustedArgs;
+   };
+ }
