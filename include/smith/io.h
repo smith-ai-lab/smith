@@ -25,6 +25,11 @@
 // If a signature wants four or more separate capabilities, take SmithIo * or define the struct. The pointers point into
 // the io in main, so keep that one in place for as long as they are used.
 //
+// The types of the capabilities are marked [[clang::annotate("smith::capability")]], and smith_io_make
+// [[clang::annotate("smith::main_only")]]: `smith lint` (the check smith-effects) reports a raw call such as fopen or
+// printf outside a capability's own implementation, and smith_io_make called anywhere but main. A project marks its own
+// capability (a window, a GPU) the same way; the smith-io skill has the rules.
+//
 // Errors are values. Every operation reports success or a SmithError with a message; nothing is printed behind your
 // back, and a function that can fail says so in its result. Only what the program cannot continue without stops it:
 // smith_io_make failing to reserve memory, and (as in the arena) a push past the arena's capacity.
