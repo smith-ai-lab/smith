@@ -1212,17 +1212,17 @@ fi
 if part misc; then
 # 5. SIGSEGV without the sanitizers is named.
 project "$work/plain"
-cat >tests/test_crash.c <<'C'
-#include <smith/test.h>
+cat >tests/test_crash.smith <<'C'
+import smith::test;
 
 void test_crash(void) {
-    volatile int *pointer = nullptr;
-    smith_test_note("about to crash");
+    volatile i32 *pointer = nullptr;
+    test::note("about to crash");
     *pointer = 1;
 }
 
 void test_survivor(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 C
 capture "$smith" build -DSAN=0
@@ -1232,11 +1232,9 @@ expect_contains "crash: a SIGSEGV is named" "$out" "FAIL crash: killed by SIGSEG
 expect_contains "crash: ... with the note" "$out" "    note: about to crash"
 expect_contains "crash: ... and the other test passed" "$out" "1 passed, 1 failed"
 
-# 6. Finding the tests.
+# 6. Finding the tests: in .smith and in C files, side by side.
 project "$work/finding"
-cat >tests/test_a.c <<'C'
-#include <smith/test.h>
-
+cat >tests/test_a.smith <<'C'
 void test_same(void) {
 }
 C
@@ -1248,25 +1246,21 @@ void test_same(void) {
 C
 capture "$smith" build
 expect "duplicate: a name defined twice fails the build" 1 "$rc"
-expect_contains "duplicate: ... naming both files" "$out$err" "smith: smith_tests: test_same is defined in tests/test_a.c and in tests/test_b.c"
+expect_contains "duplicate: ... naming both files, a .smith one and a C one" "$out$err" "smith: smith_tests: test_same is defined in tests/test_a.smith and in tests/test_b.c"
 rm tests/test_b.c
-cat >tests/test_b.c <<'C'
-#include <smith/test.h>
-
+cat >tests/test_b.smith <<'C'
 void test_odd (void) {
 }
 C
 capture "$smith" build
 expect "formatting: a test the scan missed fails to compile" 1 "$rc"
 expect_contains "formatting: ... with the missing prototype" "$out$err" "no previous prototype for function 'test_odd'"
-cat >tests/test_b.c <<'C'
-#include <smith/test.h>
-
-[[maybe_unused]] static int helper(int value) {
+cat >tests/test_b.smith <<'C'
+[[maybe_unused]] static i32 helper(i32 value) {
     return value + 1;
 }
 
-[[maybe_unused]] static int not_a_test(int value) {
+[[maybe_unused]] static i32 not_a_test(i32 value) {
     return helper(value);
 }
 C
@@ -1274,21 +1268,22 @@ capture "$smith" build
 expect "no tests: a file without tests is fine" 0 "$rc"
 capture build/tests $iso --list
 expect "no tests: ... and adds nothing" "same" "$out"
-rm tests/test_a.c
+rm tests/test_a.smith
 capture "$smith" build
 expect "no tests: a project with none builds" 0 "$rc"
 capture build/tests $iso
 expect_contains "no tests: ... and runs nothing" "$out" "0 passed, 0 failed"
 expect "no tests: ... with status 0" 0 "$rc"
 
-# 7. Conversions: a lossy comparison is a -Wconversion error.
+# 7. Conversions: a lossy comparison in C is a -Wconversion error (the C names take the type in their name). In .smith the
+# types of the two arguments must agree, which is checked in section 4a.
 project "$work/lossy"
 cat >tests/test_lossy.c <<'C'
 #include <smith/test.h>
 
 void test_lossy(void) {
     int count = 3;
-    SMITH_CHECK(count, ==, 3.5);
+    smith_check_equal_i32(count, 3.5);
 }
 C
 capture "$smith" build
@@ -1297,21 +1292,22 @@ expect_contains "conversion: ... with -Wconversion's message" "$out$err" "implic
 
 # 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects at all.
 project "$work/missing"
-cat >tests/test_x.c <<'C'
-#include <smith/test.h>
+cat >tests/test_x.smith <<'C'
+import smith::test;
 
 void test_x(void) {
+    test::check(true);
 }
 C
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    const char *const *flags = smith_list(b, "-std=gnu23", "-I", ".smith/include", nullptr);
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-I", ".smith/include", nullptr);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_x.c", nullptr),
+        .sources = smith_list(b, "tests/test_x.smith", nullptr),
         .objects = (const SmithObject *[]){&arena, nullptr},
         .flags = flags,
     };
@@ -1329,50 +1325,59 @@ expect "objects: no .objects at all builds" 0 "$rc"
 capture build/tests
 expect_contains "objects: ... and the test runs without them" "$out" "1 passed, 0 failed"
 
-# 8b. Full size, SMITH_CHECK_SAME_BITS and .inputs.
+# 8b. Full size, check_same_bits and .inputs.
 project "$work/extras"
-cat >tests/test_extras.c <<'C'
-#include <smith/test.h>
-
-#include <math.h>
-#include <stdio.h>
-#include <string.h>
+cat >tests/test_extras.smith <<'C'
+import smith::math;
+import smith::test;
 
 void test_size(void) {
-    size_t count = smith_test_full() ? 1000 : 10;
-    smith_test_note("count %zu", count);
-    SMITH_CHECK(count, ==, 10);
+    usize count = test::full() ? 1000 : 10;
+    test::note("count %zu", count);
+    test::check_equal(count, 10);
 }
 
 void test_bits_equal(void) {
-    SMITH_CHECK_SAME_BITS(0.1 + 0.2, 0.30000000000000004);
-    SMITH_CHECK_SAME_BITS(-0.0, -0.0);
-    SMITH_CHECK_SAME_BITS(1.5f, 1.5f);
-    SMITH_CHECK_SAME_BITS(__builtin_nan(""), __builtin_nan(""));
-    SMITH_CHECK_SAME_BITS(-INFINITY, -INFINITY);
+    test::check_same_bits(0.1 + 0.2, 0.30000000000000004);
+    test::check_same_bits(-0.0, -0.0);
+    test::check_same_bits(1.5f, 1.5f);
+    f64 not_a_number = math::nan(f64);
+    test::check_same_bits(not_a_number, not_a_number);
+    f64 minus_infinity = -math::infinity(f64);
+    test::check_same_bits(minus_infinity, minus_infinity);
 }
 
 void test_bits_zero(void) {
-    double zero = 0.0;
-    SMITH_CHECK_SAME_BITS(zero, -0.0);
+    f64 zero = 0.0;
+    test::check_same_bits(zero, -0.0);
 }
 
 void test_bits_nan(void) {
-    SMITH_CHECK_SAME_BITS(__builtin_nan("1"), __builtin_nan("2"));
+    f64 first = __builtin_nan("1");
+    f64 second = __builtin_nan("2");
+    test::check_same_bits(first, second);
 }
 
 void test_bits_float(void) {
-    SMITH_CHECK_SAME_BITS(1.0f, 1.0000001f);
+    f32 one = 1.0f;
+    f32 next = 1.0000001f;
+    test::check_same_bits(one, next);
 }
+C
+cat >tests/test_extras_c.c <<'C'
+#include <smith/test.h>
+
+#include <stdio.h>
+#include <string.h>
 
 void test_reads_input(void) {
     FILE *file = fopen("build/data.txt", "r");
-    SMITH_CHECK(file != nullptr);
+    smith_check(file != nullptr);
     char text[16] = "";
-    SMITH_CHECK(fgets(text, sizeof text, file) != nullptr);
+    smith_check(fgets(text, sizeof text, file) != nullptr);
     fclose(file);
     smith_test_note("data %s", text);
-    SMITH_CHECK(strcmp(text, "one\n"), ==, 0);
+    smith_check_equal_i32(strcmp(text, "one\n"), 0);
 }
 C
 cat >gen.sh <<'S'
@@ -1382,7 +1387,7 @@ cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
@@ -1395,7 +1400,7 @@ void build(SmithBuild *b) {
     };
     smith_step(b, &data);
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_extras.c", nullptr),
+        .sources = smith_list(b, "tests/test_extras.smith", "tests/test_extras_c.c", nullptr),
         .objects = (const SmithObject *[]){&arena, &random, nullptr},
         .flags = flags,
         .inputs = data.outputs,
@@ -1406,6 +1411,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "extras: the runner builds" 0 "$rc"
+if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
 run_extras() { # runner arguments
     "$work/extras/build/tests" $iso "$@" 2>&1 | plain
 }
@@ -1418,14 +1424,17 @@ capture "$smith" test $iso --test size
 expect_contains "full: ... and without it the test sees false" "$out$err" "1 passed, 0 failed"
 capture build/tests $iso --test bits_equal
 expect_contains "bits: equal bits pass, even a NaN and -0" "$out" "1 passed, 0 failed"
-line=$(line_of tests/test_extras.c 'SMITH_CHECK_SAME_BITS(zero, -0.0);')
-expect "bits: 0.0 against -0.0 fails, with both in hex" "FAIL bits_zero
-  tests/test_extras.c:$line
-      SMITH_CHECK_SAME_BITS(zero, -0.0);
-    zero = 0 [0x0p+0]     (double)
-    -0.0 = -0 [-0x0p+0]   (double)
+if [ -n "$have_symbolizer" ]; then
+    line=$(line_of tests/test_extras.smith 'test::check_same_bits(zero, -0.0);')
+    expect_report "bits: 0.0 against -0.0 fails, with both in hex" "FAIL bits_zero
+  check failed at tests/test_extras.smith:$line
+     $line |     test::check_same_bits(zero, -0.0);
+           zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)
+  called from
+    tests/test_extras.smith:$line test_bits_zero
 
-0 passed, 1 failed" "$(run_extras --test bits_zero)"
+0 passed, 1 failed" --test bits_zero
+fi
 capture build/tests $iso --test bits_nan
 expect_contains "bits: two NaN payloads fail" "$out" "FAIL bits_nan"
 expect_contains "bits: ... and the first NaN's bits show" "$out" "nan [0x7ff8000000000001]"
@@ -1439,6 +1448,7 @@ echo two >gen.sh.new && printf 'echo two >"$1"\n' >gen.sh && rm gen.sh.new
 capture "$smith" test $iso --test reads_input
 expect "inputs: touching the generator reruns the tests, which see the new file" 1 "$rc"
 expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
+expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
 
 fi
 
@@ -1447,196 +1457,203 @@ if part workers; then
 # prints the forks the run made, which tells the two apart. A group is chosen with --test <prefix> and runs on one worker
 # (--jobs 1); its tests run in the order written.
 project "$work/workers"
-cat >tests/test_workers.c <<'C'
-#include <smith/test.h>
-
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+cat >tests/test_workers.smith <<'C'
+import <assert.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::arena;
+import smith::random;
+import smith::test;
 
 void test_crash_1_before(void) {
-    SMITH_CHECK(1, ==, 1);
+    test::check_equal(1, 1);
 }
 
 void test_crash_2_dies(void) {
-    smith_test_note("about to abort");
-    abort();
+    test::note("about to abort");
+    c::abort();
 }
 
 void test_crash_3_after(void) {
-    SMITH_CHECK(2, ==, 2);
+    test::check_equal(2, 2);
 }
 
 void test_crash_4_after(void) {
-    SMITH_CHECK(3, ==, 3);
+    test::check_equal(3, 3);
 }
 
 void test_late_1_before(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_late_2_sleeps(void) {
-    sleep(30);
+    c::sleep(30);
 }
 
 void test_late_3_after(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_report_1_before(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_report_2_overflows(void) {
-    char *bytes = malloc(8);
-    volatile size_t index = 8;
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
     bytes[index] = 'x';
-    free(bytes);
+    c::free(bytes);
 }
 
 void test_report_3_prints_one(void) {
-    printf("AddressSanitizer: a test that only says so\n");
+    c::printf("AddressSanitizer: a test that only says so\n");
 }
 
 void test_report_4_after(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_aborts_1_assert(void) {
-    smith_test_expect_abort();
-    assert(false);
+    test::expect_abort();
+    c::assert(false);
 }
 
 void test_aborts_2_quiet(void) {
-    smith_test_expect_abort();
-    printf("hidden-by-the-check\n");
-    abort();
+    test::expect_abort();
+    c::printf("hidden-by-the-check\n");
+    c::abort();
 }
 
 void test_aborts_3_reads(void) {
-    char *bytes = malloc(8);
-    volatile size_t index = 8;
-    smith_test_expect_abort();
-    printf("before the read\n");
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    test::expect_abort();
+    c::printf("before the read\n");
     (void)bytes[index];
-    free(bytes);
+    c::free(bytes);
 }
 
 void test_aborts_4_after(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 
 void test_unwind_1_fails(void) {
-    SMITH_CHECK(1, ==, 2);
+    test::check_equal(1, 2);
 }
 
 void test_unwind_2_fails(void) {
-    SMITH_CHECK(3, ==, 4);
+    test::check_equal(3, 4);
 }
 
 void test_unwind_3_passes(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_out_1_fails(void) {
-    printf("from-1\n");
-    fprintf(stderr, "err-from-1\n");
-    SMITH_CHECK(1, ==, 2);
+    c::printf("from-1\n");
+    c::fprintf(c::stderr, "err-from-1\n");
+    test::check_equal(1, 2);
 }
 
 void test_out_2_passes(void) {
-    printf("from-2\n");
-    fprintf(stderr, "err-from-2\n");
+    c::printf("from-2\n");
+    c::fprintf(c::stderr, "err-from-2\n");
 }
 
 void test_out_3_fails(void) {
-    printf("from-3\n");
-    SMITH_CHECK(1, ==, 2);
+    c::printf("from-3\n");
+    test::check_equal(1, 2);
 }
 
 void test_out_4_buffers(void) {
     static char buffer[256];
-    setvbuf(stdout, buffer, _IOFBF, sizeof buffer);
-    printf("from-4\n"); // still in the test's own buffer when the test returns
+    c::setvbuf(c::stdout, buffer, c::_IOFBF, sizeof buffer);
+    c::printf("from-4\n"); // still in the test's own buffer when the test returns
 }
 
 void test_out_5_fails(void) {
-    SMITH_CHECK(1, ==, 2);
+    test::check_equal(1, 2);
 }
 
-static int dirty_death;
-static int dirty_failed;
+static i32 dirty_death;
+static i32 dirty_failed;
 
 void test_dirty_1_death(void) {
     dirty_death = 1;
-    smith_test_expect_abort(); // stands for the program ending: the worker ends with it
-    abort();
+    test::expect_abort(); // stands for the program ending: the worker ends with it
+    c::abort();
 }
 
 void test_dirty_2_fresh(void) {
-    SMITH_CHECK(dirty_death, ==, 0);
+    test::check_equal(dirty_death, 0);
 }
 
 void test_dirty_3_fails(void) {
     dirty_failed = 1;
-    SMITH_CHECK(1, ==, 2); // unwinds out of whatever it was doing: the worker ends
+    test::check_equal(1, 2); // unwinds out of whatever it was doing: the worker ends
 }
 
 void test_dirty_4_fresh(void) {
-    SMITH_CHECK(dirty_failed, ==, 0);
+    test::check_equal(dirty_failed, 0);
 }
 
 // A failure that depends on state: the first run in a process fails only for a large x, a later one always fails. Shrinking
 // reruns the key in one worker, so its smaller cases fail on the state its earlier attempts left, not on their own.
-static int leaky_runs;
+static i32 leaky_runs;
 
-void test_shrink_leaky(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+void test_shrink_leaky(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     leaky_runs += 1;
     bool fails = leaky_runs == 1 ? x >= 500 : true;
-    SMITH_CHECK(fails, ==, false);
+    test::check_equal(fails, false);
 }
 
 static void *fresh_base;
 
 void test_fresh_1_sets(void) {
-    smith_test_note("note from 1");
-    SmithArena arena = smith_test_arena(4096);
-    unsigned char *bytes = smith_arena_push(&arena, 100, 8);
+    test::note("note from 1");
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_array(&memory, u8, 100);
     fresh_base = bytes;
-    for (size_t i = 0; i < 100; i++)
+    for (usize i = 0; i < 100; i++) {
         bytes[i] = 0xAB;
+    }
 }
 
 void test_fresh_2_sees(void) {
-    SmithArena arena = smith_test_arena(4096);
-    unsigned char *bytes = smith_arena_push(&arena, 100, 8);
-    if (fresh_base != nullptr) SMITH_CHECK(bytes, ==, fresh_base); // given back: the same memory
-    for (size_t i = 0; i < 100; i++)
-        SMITH_CHECK(bytes[i], ==, 0);
-    SMITH_CHECK(1, ==, 2); // fails to show the note it was given: none
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_array(&memory, u8, 100);
+    if (fresh_base != nullptr) {
+        test::check_equal((void *)bytes, fresh_base); // given back: the same memory
+    }
+    for (usize i = 0; i < 100; i++) {
+        test::check_equal(bytes[i], 0);
+    }
+    test::check_equal(1, 2); // fails to show the note it was given: none
 }
 
 void test_fresh_3_big(void) {
-    SmithArena arena = smith_test_arena(200U << 20);
-    SMITH_CHECK(smith_arena_push(&arena, 8, 8) != nullptr);
+    arena::Arena memory = test::memory(200U << 20);
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
 }
 
 void test_fresh_4_big(void) {
-    SmithArena arena = smith_test_arena(200U << 20); // out of capacity if the last test's was not given back
-    SMITH_CHECK(smith_arena_push(&arena, 8, 8) != nullptr);
+    arena::Arena memory = test::memory(200U << 20); // out of capacity if the last test's was not given back
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
 }
 
-static int ran;
+static i32 ran;
 
 void test_order_a(void) {
     ran = 1;
 }
 
 void test_order_b(void) {
-    SMITH_CHECK(ran, ==, 1); // only if order_a ran first, in this process
+    test::check_equal(ran, 1); // only if order_a ran first, in this process
 }
 C
 capture "$smith" build
@@ -1731,9 +1748,9 @@ else
         case $out in *"FAIL order_b"*) found=$number; break ;; esac
     done
     expect "shuffle: some seed runs order_b before order_a, and the test fails" yes "$([ -n "$found" ] && echo yes)"
-    first=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain)
-    second=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain)
-    expect "shuffle: the same seed gives the same results" "$first" "$second"
+    first=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)')
+    second=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)')
+    expect "shuffle: the same seed gives the same results (the trace's addresses differ per run)" "$first" "$second"
     expect_contains "shuffle: ... reported in table order" "$first" "PASS order_a
 FAIL order_b"
     capture "$smith" test --test order_ --jobs 1 --shuffle "${found:-1}"
@@ -1743,12 +1760,11 @@ fi
 # Many jobs under a low descriptor limit: every job's worker holds two descriptors in the runner, which raises the limit.
 project "$work/many"
 {
-    echo '#include <smith/test.h>'
-    echo '#include <unistd.h>'
+    echo 'import <unistd.h>;'
     for number in $(seq 1 90); do
-        printf 'void test_many_%s(void) {\n    usleep(200000);\n}\n' "$number"
+        printf 'void test_many_%s(void) {\n    c::usleep(200000);\n}\n' "$number"
     done
-} >tests/test_many.c
+} >tests/test_many.smith
 capture "$smith" build -DSAN=0
 expect "many: the runner builds" 0 "$rc"
 capture sh -c "ulimit -S -n 100; build/tests $iso --jobs 90"
