@@ -1,6 +1,6 @@
 ---
 name: smith-debug
-description: "Debugging a C, Objective-C or C++ program with smith: smith dbg (lldb) at a terminal, smith dap (lldb-dap, the Debug Adapter Protocol) for editors such as VS Code, Neovim, Helix and Emacs. Load for debugging, smith mcp (the debugger as MCP tools for an agent), breakpoints, stepping, a backtrace, stopping at a line, lldb, lldb-dap, DAP, launch.json, debugserver, 'Not allowed to attach to process', get-task-allow, Developer Tools permission."
+description: "Debugging a C, Objective-C or C++ program with smith: smith dbg (lldb) at a terminal, smith dap (lldb-dap, the Debug Adapter Protocol) for editors such as VS Code, Neovim, Helix and Emacs (smith mcp, the debugger as tools for an agent, is smith-mcp). Load for debugging, breakpoints, stepping, a backtrace, stopping at a line, lldb, lldb-dap, DAP, launch.json, debugserver, 'Not allowed to attach to process', get-task-allow, Developer Tools permission."
 ---
 
 # Debug with smith
@@ -24,8 +24,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md`
 
 `smith dap` speaks DAP on stdin and stdout. An editor starts it as the debug adapter; the editor sends `launch` with `program`, `args`, `cwd`, then `setBreakpoints`.
 - **VS Code:** the LLDB DAP extension (`llvm-vs-code-extensions.lldb-dap`); set `"lldb-dap.executable-path"` to a wrapper (`#!/bin/sh` / `exec smith dap "$@"`), since the setting is one path. `launch.json`: `{"type": "lldb-dap", "request": "launch", "name": "debug", "program": "${workspaceFolder}/build/debug/app"}`.
-- **Neovim (nvim-dap):** `dap.adapters.smith = { type = 'executable', command = 'smith', args = { 'dap' } }`, and a `dap.configurations.c` entry with `type = 'smith'`, `request = 'launch'`, `program`. The smith repository's Neovim plugin (`plugin/smith.lua`, docs/neovim.md) registers the adapter and one configuration, "smith: launch", when nvim-dap is installed, so nothing asks which to use. Start a session (`:lua require('dap').continue()`) and it decides: with the cursor inside a function named `test_...` (in a `c` or `smith` buffer) it builds the project's test runner and launches it with `--test <name> --in-process` (`a::b::test_x` when the buffer has `module a::b;`), so a breakpoint in that test stops; anywhere else it runs `smith build` and launches the one program `smith_default` names, as `smith run` picks it. `cwd` is the project root; a failed build shows its output and aborts; it asks for a path only without a project or when the build names no single program. nvim-dap alone does not build, so a hand-written configuration launches a stale binary unless it builds first.
-- **Neovim (neotest):** the smith repository's `neotest-smith` adapter (`editors/neovim/lua/neotest-smith`) debugs the nearest test with neotest's `dap` strategy: it builds the runner and gives nvim-dap `type = 'smith'`, the runner's path, `args = { '--test', <name>, '--in-process' }`, `cwd` the project root. Add it with `require('neotest').setup({ adapters = { require('neotest-smith') } })`; docs/neovim.md.
+- **Neovim:** nvim-dap with the smith plugin's "smith: launch" configuration (it debugs the test under the cursor, or the program `smith_default` names), and the neotest adapter's dap strategy; load `smith-neovim`. By hand: `dap.adapters.smith = { type = 'executable', command = 'smith', args = { 'dap' } }` and a `dap.configurations.c` entry with `type = 'smith'`, `request = 'launch'`, `program`; nvim-dap alone does not build first.
 - **Helix:** in `languages.toml`, `[language.debugger]` with `name = "lldb-dap"`, `transport = "stdio"`, `command = "smith"`, `args = ["dap"]`, and a template with `request = "launch"`.
 - **Emacs (dape):** a `dape-configs` entry with `command "smith"`, `command-args ("dap")`, `:request "launch"`, `:program`.
 Only the protocol was exercised by a script (`tests/dap_client.c`); the editors' own settings above were not run.
@@ -38,21 +37,4 @@ Only the protocol was exercised by a script (`tests/dap_client.c`); the editors'
 
 ## Agents: smith mcp
 
-`smith mcp` is an MCP server over stdio with the debugger as tools (issue #22, [docs/mcp.md](../../../docs/mcp.md)); the
-smith plugin declares it, so with the plugin enabled an agent has `launch`, `breakpoint`, `continue`, `step_over`,
-`step_in`, `step_out`, `pause`, `stack`, `variables`, `evaluate` and `stop`. Without the plugin: `claude mcp add smith --
-smith mcp`. It needs the full smith (the stage0 says so), and the macOS permissions below.
-- Build the program with `-g -O0` first. `launch` with `program` (and `args`, `cwd`) runs it; with `test` it runs the
-  project's test runner (`build/tests`, `build/debug/tests`, `build/sanitize/tests`; `runner` names another) on that
-  test, `--in-process`, so a breakpoint in the test is hit. Give `breakpoints` `[{file, line, condition?}]` and it runs to
-  the first one; give none and it stops at the entry, then `breakpoint` and `continue`.
-- A result is text: where it stopped (`stopped: breakpoint (breakpoint 1)`, `#0 add prog.c:10`, the source line), the
-  program's output as `[stdout]`, and how it ended (`exited: the program exited with code 0`). Then `stack`, `variables`
-  (`frame`, `depth`, `scope`) and `evaluate` read the stopped program; `stop` ends the session and kills the program. The
-  program is also killed when the client goes away.
-- `evaluate` is read-only: an assignment, `++`, a call or a backtick is refused; pass `allow_side_effects: true` to run it.
-- Set a breakpoint on a line of a function's body, not its first line. A relative `file` is against the session's `cwd`.
-- A `step_out` that ends at a breakpoint leaves the next `continue` to stop once more as a `step`; call `continue` again.
-- `.smith` programs show their names as written (`geometry::box::area`). A long run needs a `timeout_ms` on the call that
-  waits (default 30 s): `still running after N ms` means call `continue` to wait again, or `pause`.
-- Without the plugin's server an agent runs `smith dbg -b` as above.
+An agent debugs with the tools of `smith mcp` (launch, breakpoint, continue, steps, stack, variables, evaluate, stop); load `smith-mcp`. Without its server an agent runs `smith dbg -b` as above.

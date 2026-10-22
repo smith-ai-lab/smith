@@ -960,6 +960,27 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/lang_lex.c"
 // The rule for the command of a .smith file, shared with `smith lsp`.
 #include "runtime/lang_command.c"
+// A Makefile read as GNU make reads it and written as a build.c: `smith build --dump-config` (issue #44).
+// (memory and text, the expander, the reader, the targets, then build.c; blank lines keep clang-format from sorting)
+#include "runtime/make.c"
+
+#include "runtime/make_expand.c"
+
+#include "runtime/make_read.c"
+
+#include "runtime/make_graph.c"
+
+#include "runtime/make_emit.c"
+
+#include "runtime/make_cc.c"
+
+#include "runtime/make_sub.c"
+
+#include "runtime/make_class.c"
+
+#include "runtime/make_print.c"
+
+#include "runtime/make_translate.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -1046,8 +1067,25 @@ static const char smith_conventions_source[] =
 // folder with neither). Both files at once, and a folder with no build file and no entry point, are errors.
 typedef enum { SmithBuildFile_C, SmithBuildFile_Smith, SmithBuildFile_Conventions } SmithBuildFile;
 
+// The Makefile make would read, by its exact name (macOS finds `makefile` for `Makefile`), or nullptr.
 static bool smith_has_makefile(void) {
-    return access("Makefile", F_OK) == 0 || access("makefile", F_OK) == 0 || access("GNUmakefile", F_OK) == 0;
+    return smith_make_find_makefile() != nullptr;
+}
+
+// A build file that has something in it: `smith build --dump-config > build.c` makes the file empty before it runs.
+static bool smith_has_build_file(const char *name) {
+    struct stat info;
+    return stat(name, &info) == 0 && info.st_size > 0;
+}
+
+// The folder has a Makefile and no build file: it is the project's build, so the conventions are not used behind it.
+[[noreturn]] static void smith_makefile_here(void) {
+    fprintf(stderr,
+            "smith: this folder has a %s and no build.c or build.smith, so smith does not build it by convention\n"
+            "Translate it with `smith build --dump-config > build.c` (docs/build-c.md, Translating a Makefile), or "
+            "delete it to build by convention.\n",
+            smith_make_find_makefile());
+    exit(smith_exit_usage);
 }
 
 // What smith looked for, and how to write a build file. The folder has no build file and no entry point.
@@ -1058,17 +1096,12 @@ static bool smith_has_makefile(void) {
           "and what they use (docs/build-c.md, Conventions). Add a main.smith or main.c (`smith new` writes one), or "
           "write a build.c.\n",
           stderr);
-    if (smith_has_makefile()) {
-        fputs("A Makefile is here: `CC = smith-cc` in it builds with smith unchanged (`smith cc` is a pure passthrough "
-              "for clang),\nand a build.c can replace it command for command (the smith-build skill).\n",
-              stderr);
-    }
     exit(smith_exit_usage);
 }
 
 static SmithBuildFile smith_build_file(void) {
-    bool has_c = access("build.c", F_OK) == 0;
-    bool has_smith = access("build.smith", F_OK) == 0;
+    bool has_c = smith_has_build_file("build.c");
+    bool has_smith = smith_has_build_file("build.smith");
     if (has_c && has_smith) {
         smith_die(smith_exit_usage, "both build.c and build.smith are here; a project has one build file, keep one",
                   nullptr);
@@ -1083,6 +1116,7 @@ static SmithBuildFile smith_build_file(void) {
 #endif
         return SmithBuildFile_Smith;
     }
+    if (smith_has_makefile()) smith_makefile_here();
     if (access("main.smith", F_OK) == 0 || access("main.c", F_OK) == 0) return SmithBuildFile_Conventions;
     smith_no_convention();
 }
@@ -1443,22 +1477,17 @@ static void smith_dump_c(void) {
     fputs("    smith_app_tests(b, &(SmithAppTests){.folder = \"tests\"});\n}\n", stdout);
 }
 
-// The translator of a Makefile into a build.c is issue #44's: until it is here, a folder with a Makefile and no main
-// says so.
-[[noreturn]] static void smith_dump_makefile(void) {
-    fputs("smith: --dump-config of a Makefile is not written yet (issue #44); this folder has a Makefile and no "
-          "main.smith or main.c\n",
-          stderr);
-    exit(smith_exit_usage);
-}
-
 // The one place that decides what a folder dumps. A project that has a build file is already explicit.
 static int smith_build_dump_config(void) {
-    bool has_c = access("build.c", F_OK) == 0;
-    bool has_smith = access("build.smith", F_OK) == 0;
+    bool has_c = smith_has_build_file("build.c");
+    bool has_smith = smith_has_build_file("build.smith");
     if (has_c || has_smith) {
         fprintf(stderr, "smith: %s is already this project's build file, so it is already explicit; nothing to dump\n",
                 has_c ? "build.c" : "build.smith");
+        return 0;
+    }
+    if (smith_has_makefile()) { // the project's real build, whether or not a main is here too (issue #44)
+        smith_make_translate(smith_make_find_makefile(), stdout);
         return 0;
     }
     bool main_smith = access("main.smith", F_OK) == 0;
@@ -1471,8 +1500,6 @@ static int smith_build_dump_config(void) {
         smith_dump_smith();
     } else if (main_c) {
         smith_dump_c();
-    } else if (smith_has_makefile()) {
-        smith_dump_makefile();
     } else {
         smith_no_convention();
     }
