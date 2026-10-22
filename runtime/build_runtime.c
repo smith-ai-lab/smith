@@ -2252,11 +2252,12 @@ constexpr size_t smith_tests_max = 65536;
 // <io> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...` (a private one is `static`,
 // which nothing can call), its key may be written `c::SmithKey` or, with `import smith::random;`, `random::Key`
 // (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
-// its io `c::SmithIo *`. *length is the name's length, test_ not counted; *kind is how the test is called.
+// its io `c::SmithIo *` or, with `import smith::io;`, `io::Io *` (`<alias>::Io` for an alias). *length is the name's
+// length, test_ not counted; *kind is how the test is called.
 typedef enum { SmithTestKind_Plain, SmithTestKind_Property, SmithTestKind_Io } SmithTestKind;
 
-static const char *smith_tests_match(const char *line, bool module, const char *key_type, size_t *length,
-                                     SmithTestKind *kind) {
+static const char *smith_tests_match(const char *line, bool module, const char *key_type, const char *io_type,
+                                     size_t *length, SmithTestKind *kind) {
     const char *prefix = "void test_";
     if (module) {
         if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
@@ -2284,6 +2285,10 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     } else if (strncmp(rest, "(c::SmithIo *", strlen("(c::SmithIo *")) == 0) {
         *kind = SmithTestKind_Io;
         rest += strlen("(c::SmithIo *");
+    } else if (io_type != nullptr && rest[0] == '(' && strncmp(rest + 1, io_type, strlen(io_type)) == 0 &&
+               strncmp(rest + 1 + strlen(io_type), " *", 2) == 0) {
+        *kind = SmithTestKind_Io;
+        rest += 3 + strlen(io_type);
     } else {
         return nullptr;
     }
@@ -2294,15 +2299,24 @@ static const char *smith_tests_match(const char *line, bool module, const char *
 
 // The spelling of smith::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
 // nullptr when the line is no such import.
-static const char *smith_tests_key_type(const char *line) {
-    const char *prefix = "import smith::random";
+static const char *smith_tests_type_of_import(const char *line, const char *module, const char *type) {
+    const char *prefix = smith_text("import smith::%s", module);
     if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
     const char *rest = line + strlen(prefix);
-    if (strcmp(rest, ";") == 0) return "random::Key";
+    if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
     if (strncmp(rest, " as ", 4) != 0) return nullptr;
     size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
     if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
-    return smith_text("%.*s::Key", (int)size, rest + 4);
+    return smith_text("%.*s::%s", (int)size, rest + 4, type);
+}
+
+static const char *smith_tests_key_type(const char *line) {
+    return smith_tests_type_of_import(line, "random", "Key");
+}
+
+// The spelling of smith::io's type a `.smith` file's import line gives, "io::Io" or "<alias>::Io", or nullptr.
+static const char *smith_tests_io_type(const char *line) {
+    return smith_tests_type_of_import(line, "io", "Io");
 }
 
 // The module a `.smith` file's line declares, `module a::b;`, as written ("a::b"), or nullptr.
@@ -2353,12 +2367,14 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
         bool in_smith = smith_tests_is_smith(run->inputs[i]);
         const char *module = nullptr;
         const char *key_type = nullptr;
+        const char *io_type = nullptr;
         for (size_t j = 0; lines[j] != nullptr; j++) { // bounded by smith_split_lines
             if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             if (in_smith && key_type == nullptr) key_type = smith_tests_key_type(lines[j]);
+            if (in_smith && io_type == nullptr) io_type = smith_tests_io_type(lines[j]);
             size_t length = 0;
             SmithTestKind kind = SmithTestKind_Plain;
-            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, &length, &kind);
+            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, io_type, &length, &kind);
             if (name == nullptr) continue;
             const char *test = smith_text("test_%.*s", (int)length, name);
             const char *symbol = smith_tests_symbol(module, test);
