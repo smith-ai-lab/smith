@@ -268,8 +268,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     Objective-C message to a system framework's class or object. `abort`, `assert`, `__builtin_trap` and smith's failure
     path are not effects.
   - **A capability is a record marked `[[clang::annotate("smith::capability")]]`** (SmithIo, SmithConsole, SmithFiles,
-    SmithClock, SmithProcesses, SmithNet, and the handles SmithOp, SmithCapture, SmithChild and SmithConnection; not
-    SmithKey, SmithArena or SmithArgs, which are values). Raw effects are allowed in its implementation: the `.smith`
+    SmithClock, SmithProcesses, SmithNet, SmithArgs (the live environment), and the handles SmithOp, SmithCapture,
+    SmithChild and SmithConnection; not SmithKey or SmithArena, which are values). Raw effects are allowed in its implementation: the `.smith`
     module that defines it, or the `.c` beside its header (`io.c` with `io.h`; `lib/io.c` with `include/.../io.h`). An
     exported function there that reaches a raw effect must take or return a capability. `smith_io_make` is marked
     `[[clang::annotate("smith::main_only")]]` and may be called only in `main`; no capability in static storage.

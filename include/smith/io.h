@@ -177,7 +177,7 @@ typedef struct [[clang::annotate("smith::capability")]] {
     SmithLoop *loop;
 } SmithNet;
 
-typedef struct {
+typedef struct [[clang::annotate("smith::capability")]] {
     size_t count;
     const char *const *values; // values[count] is nullptr
     const char *const
