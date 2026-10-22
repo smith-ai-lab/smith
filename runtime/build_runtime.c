@@ -104,8 +104,6 @@ static char smith_capture_buffer[smith_capture_max + 1];
 static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
 static char smith_command_buffer[smith_command_max + 1];
-static const char *smith_context; // "step x" or "task x" while one is being checked or written
-
 [[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
     fprintf(stderr, "smith: assertion failed: %s (%s:%d)\n", condition, file, line);
     fflush(stderr);
@@ -115,15 +113,68 @@ static const char *smith_context; // "step x" or "task x" while one is being che
 // The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file.
 #include "package.c"
 
-// A mistake in build.c, not in smith.
+// The project's own build file, and the words of the command that compiles it. A project built by convention has
+// none: the build program is smith's own (.smith/conventions.c), which the editor and the linter have no use for.
+static const char *smith_build_file_name(void) {
+    if (access("build.c", F_OK) == 0) return "build.c";
+    if (access("build.smith", F_OK) == 0) return "build.smith";
+    return nullptr;
+}
+
+// What a message calls the build file: the project's own, or "the build" when it runs by convention.
+static const char *smith_build_file_label(void) {
+    const char *name = smith_build_file_name();
+    return name != nullptr ? name : "the build";
+}
+
+// Mistakes that do not stop the build file from running: they are collected, so that one run reports every one of them
+// (a name that collides with another is such a mistake), and printed by smith_report_problems or by the next failure.
+constexpr size_t smith_problems_max = 32;
+constexpr size_t smith_problem_length = 512;
+static char smith_problems[smith_problems_max][smith_problem_length];
+static size_t smith_problem_count;
+static const char *smith_context; // "step x" or "task x" while one is being checked or written
+
+static void smith_print_problems(void) {
+    for (size_t i = 0; i < smith_problem_count; i++)
+        fprintf(stderr, "%s\n", smith_problems[i]);
+    smith_problem_count = 0;
+}
+
+// A mistake in the build file (build.c or build.smith), not in smith. A build by convention has no file to name.
 [[noreturn, gnu::format(printf, 1, 2)]] static void smith_fail(const char *format, ...) {
+    smith_print_problems();
     va_list args;
     va_start(args, format);
-    fputs("smith: build.c: ", stderr);
+    const char *file = smith_build_file_name();
+    fprintf(stderr, "smith: %s%s", file != nullptr ? file : "", file != nullptr ? ": " : "");
     if (smith_context != nullptr) fprintf(stderr, "%s: ", smith_context);
     vfprintf(stderr, format, args);
     va_end(args);
     fputc('\n', stderr);
+    exit(smith_exit_usage);
+}
+
+// Records a mistake like smith_fail's and goes on, so that the next mistake is found in the same run. The caller
+// leaves out whatever it was asked to make.
+[[gnu::format(printf, 1, 2)]] static void smith_problem(const char *format, ...) {
+    if (smith_problem_count >= smith_problems_max) smith_fail("too many mistakes to list; fix the ones above first");
+    const char *file = smith_build_file_name();
+    char *text = smith_problems[smith_problem_count++];
+    int used = snprintf(text, smith_problem_length, "smith: %s%s%s%s", file != nullptr ? file : "",
+                        file != nullptr ? ": " : "", smith_context != nullptr ? smith_context : "",
+                        smith_context != nullptr ? ": " : "");
+    va_list args;
+    va_start(args, format);
+    if (used > 0 && (size_t)used < smith_problem_length)
+        vsnprintf(text + used, smith_problem_length - (size_t)used, format, args);
+    va_end(args);
+}
+
+// Ends the run if mistakes were recorded.
+static void smith_report_problems(void) {
+    if (smith_problem_count == 0) return;
+    smith_print_problems();
     exit(smith_exit_usage);
 }
 
@@ -319,6 +370,8 @@ static uint64_t smith_hash_step(const SmithStep *step) {
 static void smith_name_step(const SmithStep *step) {
     const char *first = smith_count(step->outputs) > 0 ? step->outputs[0] : step->stamp;
     if (first == nullptr && step->command != nullptr) first = step->command[0];
+    if (first == nullptr) first = step->description;
+    if (first == nullptr && step->run != nullptr) first = "(a .run step with no .description)";
     smith_context = smith_text("step %s", first != nullptr ? first : "(empty)");
 }
 
@@ -385,6 +438,11 @@ void smith_step(SmithBuild *b, SmithStep *step) {
     const SmithEntry *earlier = smith_find_output(copy.outputs, &shared);
     if (earlier != nullptr) { // an identical step declared again changes nothing
         const char *field = smith_step_difference(&earlier->step, &copy);
+        if (field != nullptr && strncmp(shared, ".smith/stamp/", 13) == 0)
+            smith_fail("this step has no outputs and the same inputs as an earlier step, so both would write the stamp "
+                       "'%s', yet their %s differs; give one of them a distinct .stamp (for example .stamp = "
+                       "\".smith/stamp/<name>\")",
+                       shared, field);
         if (field != nullptr)
             smith_fail("the output '%s' is already made by an earlier step whose %s differs", shared, field);
         *step = earlier->step;
@@ -413,28 +471,39 @@ static void smith_check_task(const SmithStep *step) {
 static const char *const smith_verb_names[] = {"fmt", "lint", "docs", "prove", "check", "run", "test"};
 static bool smith_verb_task_allowed;
 
-static void smith_refuse_verb_name(const char *what, const char *name) {
-    if (smith_verb_task_allowed) return;
+// True when the name is a verb's and was recorded as a mistake; the caller then declares nothing.
+static bool smith_refuse_verb_name(const char *what, const char *name) {
+    if (smith_verb_task_allowed) return false;
     for (size_t i = 0; i < sizeof smith_verb_names / sizeof smith_verb_names[0]; i++) {
         if (strcmp(name, smith_verb_names[i]) != 0) continue;
-        smith_fail("%s '%s' is named after a verb; `smith %s` does the same thing in every project, so use it, or "
-                   "name %s another way and run it with `smith build <name>`",
-                   what, name, name, what);
+        smith_problem("%s '%s' is named after a verb; `smith %s` does the same thing in every project, so use it, or "
+                      "name %s another way and run it with `smith build <name>`",
+                      what, name, name, what);
+        return true;
     }
+    return false;
 }
 
 void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
     SMITH_ASSERT(b != nullptr && step != nullptr);
     smith_context = nullptr;
     smith_check_path_name("a task", name);
-    smith_refuse_verb_name("task", name);
+    if (smith_refuse_verb_name("task", name)) {
+        step->outputs = smith_one(smith_copy_string(name)); // so the rest of the build file runs and finds more
+        return;
+    }
     smith_context = smith_text("task %s", name);
     smith_check_task(step);
     SmithStep copy = smith_copy_step(step);
     copy.outputs = smith_one(smith_text(".smith/task/%s", name));
     SmithEntry *entry = smith_find_named(name);
     if (entry != nullptr) { // a task declared again, identical, changes nothing
-        if (entry->kind != SmithEntryKind_Task) smith_fail("the name is already used by an alias");
+        if (entry->kind != SmithEntryKind_Task) {
+            smith_problem("the name is already used by an alias; name the task another way");
+            smith_context = nullptr;
+            step->outputs = smith_one(entry->name);
+            return;
+        }
         const char *field = smith_step_difference(&entry->step, &copy);
         if (field != nullptr) smith_fail("the task is already declared and its %s differs", field);
         *step = entry->step;
@@ -454,12 +523,16 @@ void smith_alias(SmithBuild *b, const char *name, const char *const *targets) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     smith_check_path_name("an alias", name);
-    smith_refuse_verb_name("alias", name);
+    if (smith_refuse_verb_name("alias", name)) return;
     smith_context = smith_text("alias %s", name);
     if (targets == nullptr) smith_fail("the targets list is nullptr; use an empty list");
     SmithEntry *entry = smith_find_named(name);
     if (entry != nullptr) { // an alias declared again, with the same targets, changes nothing
-        if (entry->kind != SmithEntryKind_Alias) smith_fail("the name is already used by a task");
+        if (entry->kind != SmithEntryKind_Alias) {
+            smith_problem("the name is already used by a task; name the alias another way");
+            smith_context = nullptr;
+            return;
+        }
         if (!smith_same_list(entry->targets, targets))
             smith_fail("the alias is already declared and its targets differ");
         smith_context = nullptr;
@@ -589,13 +662,17 @@ static void smith_check_given(void) {
             known = known || strcmp(smith_declared[j].name, smith_given[i].name) == 0;
         if (known) continue;
         if (strcmp(smith_given[i].name, "SMITH_ARGS") == 0) {
-            fputs("smith: build.c: this verb was given arguments, but build.c does not read them; "
-                  "smith_args(b) gives them to a task\n",
-                  stderr);
+            fprintf(stderr,
+                    "smith: %s: this verb was given arguments, but %s does not read them; "
+                    "smith_args(b) gives them to a task\n",
+                    smith_build_file_label(), smith_build_file_label());
             exit(smith_exit_usage);
         }
-        fprintf(stderr, "smith: build.c: unknown option -D%s\n", smith_given[i].name);
-        fputs(smith_declared_count > 0 ? "declared options:\n" : "build.c declares no options\n", stderr);
+        fprintf(stderr, "smith: %s: unknown option -D%s\n", smith_build_file_label(), smith_given[i].name);
+        if (smith_declared_count > 0)
+            fputs("declared options:\n", stderr);
+        else
+            fprintf(stderr, "%s declares no options\n", smith_build_file_label());
         for (size_t j = 0; j < smith_declared_count; j++) {
             const SmithDeclared *option = &smith_declared[j];
             fprintf(stderr, "  -D%s%s  %s\n", option->name, option->flag ? "" : "=value", option->description);
@@ -1217,14 +1294,6 @@ static const char *const smith_build_c_words[] = {"smith-cc", "-std=gnu23",     
 // The same for a build.smith, which is compiled as a .smith file (C2y, the default of smith cc for one).
 static const char *const smith_build_smith_words[] = {"smith-cc",       "-g", "-O0",         "-Wall", "-Wextra", "-I",
                                                       ".smith/include", "-c", "build.smith", nullptr};
-
-// The project's own build file, and the words of the command that compiles it. A project built by convention has
-// none: the build program is smith's own (.smith/conventions.c), which the editor and the linter have no use for.
-static const char *smith_build_file_name(void) {
-    if (access("build.c", F_OK) == 0) return "build.c";
-    if (access("build.smith", F_OK) == 0) return "build.smith";
-    return nullptr;
-}
 
 static const char *const *smith_build_file_words(const char *name) {
     return strcmp(name, "build.c") == 0 ? smith_build_c_words : smith_build_smith_words;
@@ -3045,7 +3114,12 @@ static void smith_app_alias_add(SmithBuild *b, const char *name, const char *con
         smith_alias(b, name, targets);
         return;
     }
-    if (entry->kind != SmithEntryKind_Alias) smith_fail("smith_app: the name %s is used by a task", name);
+    if (entry->kind != SmithEntryKind_Alias) {
+        smith_problem("smith_app: the alias %s that every program adds to is the name of a task; name the task "
+                      "another way",
+                      name);
+        return;
+    }
     entry->targets = smith_cat(b, entry->targets, targets, nullptr);
 }
 
@@ -3860,6 +3934,7 @@ int main(int argc, char **argv) {
     smith_context = nullptr;
     smith_run_defers(&b);
     smith_lang_finish(&b);
+    smith_report_problems();
     // A -D that only a pending smith_defer callback reads is not known yet; stage 2 checks it.
     if (!smith_any_pending()) smith_check_given();
     if (!smith_default_called && !smith_any_pending()) smith_fail("no default; call smith_default");

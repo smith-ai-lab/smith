@@ -113,7 +113,8 @@ static char smith_info_text[smith_verbs_info_max + 1];
 // place.
 static const SmithInfo *smith_info_read(const char *verb) {
     FILE *file = fopen(".smith/build.info", "rb");
-    if (file == nullptr) smith_die(smith_exit_usage, verb, "the build left no .smith/build.info; is there a build.c?");
+    if (file == nullptr)
+        smith_die(smith_exit_usage, verb, "the build left no .smith/build.info; is there a build.c or build.smith?");
     size_t size = fread(smith_info_text, 1, smith_verbs_info_max, file);
     fclose(file);
     smith_info_text[size] = '\0';
@@ -585,7 +586,7 @@ static int smith_run_project(int count, char **args, const char *self) {
         }
     }
     if (named_count != 1) {
-        fprintf(stderr, "smith run: the default of build.c names %s program%s",
+        fprintf(stderr, "smith run: the default of %s names %s program%s", smith_project_build_file(),
                 named_count == 0 ? "no" : "more than one", named_count == 1 ? "" : "s");
         const char *separator = ": ";
         for (size_t i = 0; i < info->default_count; i++) {

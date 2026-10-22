@@ -2328,6 +2328,52 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     expect "modules: clangd reports no errors in a file that imports smith's headers" "" "$errors"
 fi
 
+# 13a. Name collisions are all reported in one run, with the fix; two steps with no outputs and equal inputs say to give
+# one a .stamp; a build by convention names no build.c (#47).
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+static int first(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+static int second(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep task = {.command = (const char *[]){"true", nullptr}};
+    SmithStep verb = task;
+    smith_task(b, "lint", &verb);
+    smith_task(b, "other", &task);
+    smith_alias(b, "other", task.outputs);
+    smith_alias(b, "docs", task.outputs);
+    SmithStep a = {.run = first, .description = "first check"};
+    SmithStep c = {.run = second, .description = "first check"};
+    smith_step(b, &a);
+    smith_step(b, &c);
+    smith_default(b, task.outputs);
+}
+C
+build
+expect_status "collisions: the build file fails" 2
+expect_contains "collisions: the task named after a verb" "$err" "smith: build.c: task 'lint' is named after a verb"
+expect_contains "collisions: the alias that is a task's name, in the same run" "$err" \
+    "smith: build.c: alias other: the name is already used by a task; name the alias another way"
+expect_contains "collisions: the alias named after a verb, in the same run" "$err" "alias 'docs' is named after a verb"
+expect_contains "collisions: two .run steps with equal inputs say what the step is" "$err" "step first check: this step has no outputs"
+expect_contains "collisions: and the fix" "$err" "give one of them a distinct .stamp"
+mkdir src
+printf 'int main(void) { return 0; }\n' >src/main.c
+rm build.c
+cp src/main.c main.c
+build -Dnope
+expect_contains "convention: an unknown option names no build file" "$err" "smith: the build: unknown option -Dnope"
+rm -f main.c
+
 # 13b. The verbs (issue #40): no task or alias is named after one, .test marks a project's tests, and every run of build.c
 # writes what the verbs read, .smith/build.info and .smith/compile_commands.json (docs/build-c.md).
 for verb in fmt lint docs prove check run test; do
