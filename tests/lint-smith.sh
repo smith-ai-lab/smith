@@ -505,6 +505,21 @@ expected="idiom/library.smith:3:1: error: \`import <smith/arena.h>;\` reads smit
 idiom/library.smith:5:20: error: \`c::SmithArena\` is \`arena::Arena\` of the module smith::arena, reached through its C header: write \`import smith::arena;\` and \`arena::Arena\` (a typed push is \`arena::push(&a, T)\`)
 idiom/library.smith:6:23: error: \`c::smith_arena_push\` is \`arena::push_raw\` of the module smith::arena, reached through its C header: write \`import smith::arena;\` and \`arena::push_raw\` (a typed push is \`arena::push(&a, T)\`)"
 expect "smith-module-library: the import of a module's header and its c:: names, with the module's call" "$expected" "$(idiom_findings <"$work/library.out")"
+cat >"$work/p/idiom/library_test.smith" <<'EOF2'
+module idiom::library_test;
+
+import <smith/test.h>;
+
+export void use(i32 a, i32 b) {
+    c::smith_check_equal_i32(a, b);
+    c::smith_check(a == b);
+}
+EOF2
+idiom smith-module-library idiom/library_test.smith >"$work/library-test.out"
+expected="idiom/library_test.smith:3:1: error: \`import <smith/test.h>;\` reads smith::test, a module, through its C header: write \`import smith::test;\` and call it as \`test::name(...)\`
+idiom/library_test.smith:6:8: error: \`c::smith_check_equal_i32\` is \`test::check_equal_i32\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check_equal_i32\` (or, better, the generic \`test::check_equal(a, b)\`, which infers the type from its arguments)
+idiom/library_test.smith:7:8: error: \`c::smith_check\` is \`test::check\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check\`"
+expect "smith-module-library: a named instance of a generic points to the generic" "$expected" "$(idiom_findings <"$work/library-test.out")"
 idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith >"$work/library-ok.out"
 expect "smith-module-library: import smith::arena is clean, and so is a C header that is no module" "" "$(idiom_findings <"$work/library-ok.out")"
 
