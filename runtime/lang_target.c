@@ -474,7 +474,7 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
     bool raw = host->target_fact == nullptr;
     int64_t taken = 0;
     char text[smith_lang_message_max];
-    SmithLangIfcError error = {0};
+    SmithLangIfcError error = {};
     bool good = smith_lang_ifc_read_group(lang, host);
     if (!good) {
         smith_lang_error(lang, host, token->location, "this `if constexpr` has a condition that never closes");
@@ -520,7 +520,7 @@ static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
         smith_lang_take(lang, host);
         uint32_t mark[2] = {smith_lang_gt.count, smith_lang_gt.text_used};
         char text[smith_lang_message_max];
-        SmithLangIfcError error = {0};
+        SmithLangIfcError error = {};
         int64_t taken = 0;
         uint32_t location = smith_lang_peek(lang, host, 0, false)->location;
         bool good = smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(");
@@ -582,7 +582,7 @@ static void smith_lang_ifc_constant(SmithLang *lang, const SmithHost *host) {
         staged = smith_lang_ifc_stage(smith_lang_peek(lang, host, i, false));
     int64_t value = 0;
     char text[smith_lang_message_max];
-    SmithLangIfcError error = {0};
+    SmithLangIfcError error = {};
     if (staged && smith_lang_ifc_resolve(lang, host, mark[0], name->location, &value, text, sizeof text, &error)) {
         char wrapped[smith_lang_message_max + 4];
         snprintf(wrapped, sizeof wrapped, "(%s)", text);

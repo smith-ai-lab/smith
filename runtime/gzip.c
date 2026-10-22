@@ -148,7 +148,7 @@ static bool smith_huffman_build(SmithHuffman *huffman, const uint8_t *lengths, s
         huffman->count[lengths[i]]++;
     huffman->count[0] = 0;
     int left = 1;
-    uint16_t offsets[16] = {0};
+    uint16_t offsets[16] = {};
     size_t used = 0;
     for (size_t length = 1; length < 16; length++) {
         left = left * 2 - huffman->count[length];
@@ -251,15 +251,15 @@ static bool smith_inflate_stored(SmithInflate *inflate) {
     return true;
 }
 
-static const uint16_t smith_inflate_length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
-                                                       31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-static const uint8_t smith_inflate_length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
-                                                       2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-static const uint16_t smith_inflate_distance_base[30] = {1,    2,    3,    4,    5,    7,    9,    13,    17,    25,
-                                                         33,   49,   65,   97,   129,  193,  257,  385,   513,   769,
-                                                         1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-static const uint8_t smith_inflate_distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
-                                                         6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
+static constexpr uint16_t smith_inflate_length_base[29] = {
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+static constexpr uint8_t smith_inflate_length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                                                           2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+static constexpr uint16_t smith_inflate_distance_base[30] = {
+    1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
+    193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+static constexpr uint8_t smith_inflate_distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
+                                                             6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
 // Copies `length` bytes from `distance` back, which may overlap what it writes.
 static bool smith_inflate_copy(SmithInflate *inflate, uint32_t length, uint32_t distance) {
@@ -363,7 +363,7 @@ static bool smith_inflate_dynamic(SmithInflate *inflate) {
     size_t distances = 1U + smith_bits_take(reader, 5);
     size_t codes = 4U + smith_bits_take(reader, 4);
     if (literals > 286 || distances > 30) return smith_inflate_fail(inflate, "a block declares too many codes");
-    uint8_t lengths[320] = {0};
+    uint8_t lengths[320] = {};
     for (size_t i = 0; i < codes; i++) {
         smith_bits_refill(reader);
         lengths[order[i]] = (uint8_t)smith_bits_take(reader, 3);

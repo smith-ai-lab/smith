@@ -15,12 +15,12 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
 
 1. **Sized types.** `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize`, `isize`, `f32`, `f64`, `bool`; `char` stays `char` (`smith-lang-sized-types`).
    - Not `uint32_t`, `size_t`, `ptrdiff_t`, `unsigned`, `float`, `double`.
-   - Enforced by: review and the counts. The compiler accepts both spellings, since they are the same types.
+   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-sized-types`, which reports each C spelling (`uint64_t`, `size_t`, `unsigned long`, `double`, `int`...) with the sized type to write; `char` stays and `int` is allowed in `main`'s signature only. The compiler accepts both spellings, since they are the same types.
 2. **Import C headers, never include them.** `import <math.h>;` and write `c::sqrt(x)`, `c::EOF`, `struct c::stat` (`smith-lang-c-interop`).
    - A `c::` name that is a C **macro** (`c::assert`, `c::SIZE_MAX`, `c::isfinite`, `c::INFINITY`) is the preprocessor too. The module that wraps the C API provides it as a function or a constant: `contract::assert(c)`, `math::max(usize)`, `math::is_finite(x)`, `math::infinity(f64)`, `math::nan(f32)`, `math::sqrt(x)` and `math::abs(x)` (`smith-contract`, `smith-math`). A macro of a library that has no module yet is written as the function the library has (`__builtin_memset`) or waits for the module. In the macOS SDK `c::memcpy`, `c::memmove`, `c::memset`, `c::snprintf` and `c::vsnprintf` are macros (the fortified versions): write `__builtin_memcpy`, `__builtin_snprintf` and the like; they are pure functions.
    - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-preprocessor` (rule 5), which reports an `#include` and every `c::` name that is a macro, with what to write; and the compiler for a bare name that an `import`ed header declared (`` `sqrtf` is a C name; write `c::sqrtf` ``).
 3. **Modules import modules.** A library that is a module is used with `import smith::arena;` and `arena::push(...)`, not with its C header (`smith-lang-modules`). A project's own `.smith` files are modules too: `module rolls;`, `export`, `import rolls;`, with no header written by hand (`smith build` writes it for C callers).
-   - Enforced by: the compiler for private names (`is private; export it`) and for import cycles; review for a module that includes a header of a library that is a module (`#include <smith/arena.h>` in a `.smith` file).
+   - Enforced by: the compiler for private names (`is private; export it`) and for import cycles; `smith lint` and the editor, through `smith-module-library`, for a library that is a module used through its C header (`import <smith/arena.h>;`, `c::smith_arena_push`, `c::SmithArena`), with `import smith::arena;` and the module's name to write.
 4. **Generics where C passes a type as `sizeof` and `alignof`.** `arena::push(&a, Foo)`, not `smith_arena_push(&a, sizeof(Foo), alignof(Foo))`; your own `export T *make(arena::Arena *a, constexpr type T)` when a function of yours takes a type (`smith-lang-generics`).
    - Enforced by: review and the `sizeof/alignof` count. The raw functions (`arena::push_raw`) exist for C, which cannot call a generic.
 5. **No `#define`; `constexpr` for constants.** `constexpr usize capacity = 1 << 20;`, and `export constexpr` when others use it. An enumeration or a function does what a macro of several lines did. Checks, contracts and `expect_abort` are functions (rule 8), never macros.
@@ -34,7 +34,11 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
    - Enforced by: the libraries: `smith::test` and `smith::contract` define no macros (the `SMITH_CHECK` macros are gone), and `smith-preprocessor` rejects one in a `.smith` file; review.
 9. **Module-local names are short, and `[[smith::c_name]]` only where a C API must stay.** Inside `module smith::arena` the type is `Arena` and the function is `push`; the module's name is the prefix, so `arena_push` in `arena.smith` is wrong. `[[smith::c_name("SmithArena")]] export typedef struct {...} Arena;` is for a library whose C callers must not change; a project's own module gets none.
    - Enforced by: review. `readability-identifier-naming` in `smith lint` judges the case of a name as written, not its length or a repeated prefix.
-10. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as `smith-development` asks of every agent.
+10. **Loops end.** A loop has a count to bound it, so no `for (;;)`, `while (true)` or `do ... while (1)` outside `main`; `main` owns the program's life and calls the rest each step.
+    - Enforced by: `smith lint` and the editor, through `smith-bounded-loop` (also in C).
+11. **C23 spellings.** `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]`, never `NULL`, `_Bool`, `<stdbool.h>`, `{0}` or `__attribute__((noreturn))`; a constant is `constexpr`, not a file-scope `const` with a constant initializer.
+    - Enforced by: `smith lint` and the editor, through `smith-c23` and `smith-constexpr` (also in C).
+12. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as `smith-development` asks of every agent.
 
 ## A C module, and the same as Smith
 

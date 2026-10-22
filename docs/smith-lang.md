@@ -349,6 +349,16 @@ given (`tests/lint-smith.sh`).
   alone. A line that must keep one says `// NOLINT(smith-preprocessor)`; the corpus of `tests/smith-lang` and
   `tests/smith-lang-c.sh` compile `.smith` files with the preprocessor on purpose and are not linted (they are not among
   the build's compiles). `tests/lint-smith.sh` tests it.
+- **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
+  `smith-sized-types` and `smith-module-library` read the `.smith` file's text with the raw lexer (a typedef's name is
+  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`int` in `main`'s
+  signature is C's own) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
+  module's, the `import <smith/arena.h>;` and every `c::` name of its `// smith-names:` pairs with the module's call.
+  `smith-bounded-loop` and `smith-constexpr` match the AST (a loop whose condition is absent or a true constant outside
+  `main`; a file-scope `const` of arithmetic, enum, or an array or record of them with a constant initializer, which a
+  float, a pointer and a C object with external linkage are not), and `smith-c23` reads tokens (`NULL`, `_Bool`,
+  `_Noreturn`, `<stdbool.h>`, `__attribute__((noreturn))`...) in every user file and the AST for `{0}`. The C checks
+  skip C++. `tests/lint-smith.sh` has a passing and a failing file for each.
 - **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
   system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
   constructor is named as the module writes it, and the rules about capabilities (a type marked

@@ -10,6 +10,7 @@
 #include "clang-tidy/ClangTidyModule.h"
 #include "clang-tidy/readability/IdentifierNamingCheck.h"
 #include "effects.h"
+#include "idiom.h"
 #include "names.h"
 #include "preprocessor.h"
 #endif
@@ -171,6 +172,26 @@ class SmithModule final : public ClangTidyModule {
         Factories.registerCheckFactory("smith-preprocessor", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<smith_preprocessor::PreprocessorCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-sized-types", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::SizedTypesCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-module-library", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::ModuleLibraryCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-bounded-loop", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::BoundedLoopCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-c23", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::C23Check>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-constexpr", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::ConstexprCheck>(Name, Context);
         });
         Factories.registerCheckFactory("readability-identifier-naming", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);

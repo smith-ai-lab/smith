@@ -383,7 +383,7 @@ static void smith_raw_next(void *context, SmithToken *token, bool unexpanded) {
         }
         break;
     }
-    *token = (SmithToken){0};
+    *token = (SmithToken){};
     token->trivia = raw->trivia_fresh;
     raw->trivia_fresh = nullptr;
     token->handle = smith_token_no_handle;
@@ -471,7 +471,7 @@ static SmithLookup smith_raw_lookup(void *context, const char *name, uint32_t le
     (void)name;
     (void)length;
     (void)space;
-    return (SmithLookup){0};
+    return (SmithLookup){};
 }
 
 static bool smith_raw_read_source(const char *path, size_t *length) {
@@ -673,7 +673,7 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .maybe_generic = true,
         .maybe_if_constexpr = true,
     };
-    SmithRawNames names = {0};
+    SmithRawNames names = {};
     raw.names = &names;
     smith_raw_cache_only = true;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
@@ -1037,7 +1037,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .maybe_generic = true,
         .maybe_if_constexpr = true,
     };
-    SmithRawNames names = {0};
+    SmithRawNames names = {};
     raw.names = &names;
     smith_header_source = path;
     smith_lang_import_asker = header_path != nullptr ? smith_lang_ask_compiler : nullptr;

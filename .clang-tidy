@@ -12,8 +12,13 @@ Checks: >
   misc-no-recursion,
   readability-function-size,
   readability-identifier-naming,
+  smith-bounded-loop,
+  smith-c23,
+  smith-constexpr,
   smith-effects,
-  smith-preprocessor
+  smith-module-library,
+  smith-preprocessor,
+  smith-sized-types
 WarningsAsErrors: '*'
 # Diagnostics come from smith's own files, never from system headers or the generated protocol code (runtime/protocol/
 # dap and mcp, which keep the schemas' names). A test that includes a source by tests/../ names it that way, and the

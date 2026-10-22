@@ -197,15 +197,15 @@ typedef struct {
 constexpr u32 infinity_bits = 0x7f800000;
 constexpr u64 double_infinity_bits = 0x7ff0000000000000;
 
-const Format float_format = {24, -149, 150, 255};
-const Format double_format = {53, -1074, 1075, 2047};
+constexpr Format float_format = {24, -149, 150, 255};
+constexpr Format double_format = {53, -1074, 1075, 2047};
 
 const f64 powers[fast_exponent_max + 1] = {
     1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
 
-const u32 powers_u32[chunk_digits + 1] = {
+constexpr u32 powers_u32[chunk_digits + 1] = {
     1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000,
 };
 

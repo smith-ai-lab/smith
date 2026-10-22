@@ -138,7 +138,8 @@ for skill in "$here"/.agents/skills/*/SKILL.md; do
         strict=-Wmissing-prototypes
         case $path in example-*) strict=-Wno-missing-prototypes ;; esac
         # shellcheck disable=SC2086
-        if smith cc -fsyntax-only -std=gnu2y $strict -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wstrict-prototypes -Wvla -Werror $flags "$dir/$path" >"$dir/out" 2>&1; then
+        if smith cc -fsyntax-only -std=gnu2y $strict -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wstrict-prototypes -Wvla -Werror $flags "$dir/$path" >"$dir/out" 2>&1 &&
+            smith lint --quiet --checks="-*,smith-preprocessor,smith-sized-types,smith-module-library,smith-bounded-loop,smith-c23,smith-constexpr" "$dir/$path" -- -std=gnu2y $flags >"$dir/out" 2>&1; then
             echo "ok    $name/SKILL.md:$((lineno - 1)) ($path)"
         else
             fail "$name/SKILL.md:$((lineno - 1)) ($path)" "$dir/out"

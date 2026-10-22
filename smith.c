@@ -825,23 +825,23 @@ static int smith_prove(int argc, char **argv, const char *self) {
 
 // The build program's header and runtime travel inside smith, so `smith build` needs nothing installed beside it and
 // `cc -std=gnu23 smith.c -o smith` still builds all of smith.
-static const unsigned char smith_build_header[] = {
+static constexpr unsigned char smith_build_header[] = {
 #embed "include/smith/build.h"
 };
-static const unsigned char smith_build_runtime[] = {
+static constexpr unsigned char smith_build_runtime[] = {
 #embed "runtime/build_runtime.c"
 };
 // The runtime includes this file, so it is written beside it.
-static const unsigned char smith_build_package[] = {
+static constexpr unsigned char smith_build_package[] = {
 #embed "runtime/package.c"
 };
-static const unsigned char smith_build_gzip[] = {
+static constexpr unsigned char smith_build_gzip[] = {
 #embed "runtime/gzip.c"
 };
-static const unsigned char smith_build_xz[] = {
+static constexpr unsigned char smith_build_xz[] = {
 #embed "runtime/xz.c"
 };
-static const unsigned char smith_build_untar[] = {
+static constexpr unsigned char smith_build_untar[] = {
 #embed "runtime/untar.c"
 };
 
@@ -854,86 +854,86 @@ static const unsigned char smith_build_untar[] = {
 // (`smith cc --smith-header`) and committed, because the stage0 has no hook, embeds the header as bytes and only a
 // smith with the hook compiles the module; `check` fails when regenerating it gives other bytes. Porting a library is
 // one change in each of two places below: its source's #embed path, and the `false` of its row in smith_libraries.
-static const unsigned char smith_arena_header[] = {
+static constexpr unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
-static const unsigned char smith_arena_source[] = {
+static constexpr unsigned char smith_arena_source[] = {
 #embed "lib/smith/arena.smith"
 };
 
-static const unsigned char smith_contract_header[] = {
+static constexpr unsigned char smith_contract_header[] = {
 #embed "include/smith/contract.h"
 };
-static const unsigned char smith_contract_source[] = {
+static constexpr unsigned char smith_contract_source[] = {
 #embed "lib/smith/contract.smith"
 };
 
-static const unsigned char smith_io_header[] = {
+static constexpr unsigned char smith_io_header[] = {
 #embed "include/smith/io.h"
 };
-static const unsigned char smith_io_source[] = {
+static constexpr unsigned char smith_io_source[] = {
 #embed "lib/io.c"
 };
 
-static const unsigned char smith_json_header[] = {
+static constexpr unsigned char smith_json_header[] = {
 #embed "include/smith/json.h"
 };
-static const unsigned char smith_json_source[] = {
+static constexpr unsigned char smith_json_source[] = {
 #embed "lib/json.c"
 };
 
-static const unsigned char smith_random_header[] = {
+static constexpr unsigned char smith_random_header[] = {
 #embed "include/smith/random.h"
 };
-static const unsigned char smith_random_source[] = {
+static constexpr unsigned char smith_random_source[] = {
 #embed "lib/smith/random.smith"
 };
 
-static const unsigned char smith_text_header[] = {
+static constexpr unsigned char smith_text_header[] = {
 #embed "include/smith/text.h"
 };
-static const unsigned char smith_text_source[] = {
+static constexpr unsigned char smith_text_source[] = {
 #embed "lib/smith/text.smith"
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
-static const unsigned char smith_math_header[] = {
+static constexpr unsigned char smith_math_header[] = {
 #embed "include/smith/math.h"
 };
-static const unsigned char smith_math_source[] = {
+static constexpr unsigned char smith_math_source[] = {
 #embed "lib/smith/math.smith"
 };
 
-static const unsigned char smith_embedded_http_header[] = {
+static constexpr unsigned char smith_embedded_http_header[] = {
 #embed "include/smith/http.h"
 };
-static const unsigned char smith_embedded_http_source[] = {
+static constexpr unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
 // The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
 // the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
 // .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
-static const unsigned char smith_embedded_contract_source[] = {
+static constexpr unsigned char smith_embedded_contract_source[] = {
 #embed "bootstrap/lib/smith/contract.c"
 };
-static const unsigned char smith_embedded_arena_source[] = {
+static constexpr unsigned char smith_embedded_arena_source[] = {
 #embed "bootstrap/lib/smith/arena.c"
 };
-static const unsigned char smith_embedded_random_source[] = {
+static constexpr unsigned char smith_embedded_random_source[] = {
 #embed "bootstrap/lib/smith/random.c"
 };
 
-static const unsigned char smith_test_header[] = {
+static constexpr unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
 };
-static const unsigned char smith_test_source[] = {
+static constexpr unsigned char smith_test_source[] = {
 #embed "lib/smith/test.smith"
 };
 
-static const unsigned char smith_trace_header[] = {
+static constexpr unsigned char smith_trace_header[] = {
 #embed "include/smith/trace.h"
 };
-static const unsigned char smith_trace_source[] = {
+static constexpr unsigned char smith_trace_source[] = {
 #embed "lib/trace.c"
 };
 
@@ -1073,8 +1073,8 @@ static void smith_quote_word(char *out, size_t capacity, const char *word) {
 
 // A project with no build file is built by convention (docs/build-c.md): the build program is the two calls of the
 // conventions with their defaults, compiled like any build.c, from this file.
-static const char smith_conventions_path[] = ".smith/conventions.c";
-static const char smith_conventions_source[] =
+static constexpr char smith_conventions_path[] = ".smith/conventions.c";
+static constexpr char smith_conventions_source[] =
     "// The build of a project that has no build file: smith's conventions, with their defaults (docs/build-c.md).\n"
     "#include <smith/build.h>\n"
     "\n"
@@ -1761,55 +1761,55 @@ static int smith_sha256_main(int count, char **args) {
 // The files a new project gets travel inside smith, so a project gets exactly what the installed smith ships. Agents
 // get smith's skills from the smith plugin, which .claude/settings.json enables. The dotfiles are stored without their
 // dot so that they do not act on smith's own repository.
-static const unsigned char smith_new_main_smith[] = {
+static constexpr unsigned char smith_new_main_smith[] = {
 #embed "templates/new/main.smith"
 };
-static const unsigned char smith_new_primes_smith[] = {
+static constexpr unsigned char smith_new_primes_smith[] = {
 #embed "templates/new/primes.smith"
 };
-static const unsigned char smith_new_test_primes_smith[] = {
+static constexpr unsigned char smith_new_test_primes_smith[] = {
 #embed "templates/new/test_primes.smith"
 };
-static const unsigned char smith_new_main_c[] = {
+static constexpr unsigned char smith_new_main_c[] = {
 #embed "templates/new/main.c"
 };
-static const unsigned char smith_new_primes_h[] = {
+static constexpr unsigned char smith_new_primes_h[] = {
 #embed "templates/new/primes.h"
 };
-static const unsigned char smith_new_primes_c[] = {
+static constexpr unsigned char smith_new_primes_c[] = {
 #embed "templates/new/primes.c"
 };
-static const unsigned char smith_new_test_primes_c[] = {
+static constexpr unsigned char smith_new_test_primes_c[] = {
 #embed "templates/new/test_primes.c"
 };
-static const unsigned char smith_new_gitignore[] = {
+static constexpr unsigned char smith_new_gitignore[] = {
 #embed "templates/new/gitignore"
 };
-static const unsigned char smith_new_claude_settings[] = {
+static constexpr unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
 };
-static const unsigned char smith_new_agents[] = {
+static constexpr unsigned char smith_new_agents[] = {
 #embed "templates/new/agents.md"
 };
-static const unsigned char smith_new_knowledge_index[] = {
+static constexpr unsigned char smith_new_knowledge_index[] = {
 #embed "templates/new/knowledge-index.md"
 };
-static const unsigned char smith_new_knowledge_program[] = {
+static constexpr unsigned char smith_new_knowledge_program[] = {
 #embed "templates/new/knowledge-program.md"
 };
-static const unsigned char smith_new_knowledge_program_c[] = {
+static constexpr unsigned char smith_new_knowledge_program_c[] = {
 #embed "templates/new/knowledge-program-c.md"
 };
-static const unsigned char smith_new_docs_skill[] = {
+static constexpr unsigned char smith_new_docs_skill[] = {
 #embed "templates/new/docs-skill.md"
 };
 
 // smith's own style and checks, which `smith fmt` and `smith lint` use where a project has no file
 // (smith_defaults_apply).
-static const unsigned char smith_defaults_clang_format[] = {
+static constexpr unsigned char smith_defaults_clang_format[] = {
 #embed "templates/defaults/clang-format"
 };
-static const unsigned char smith_defaults_clang_tidy[] = {
+static constexpr unsigned char smith_defaults_clang_tidy[] = {
 #embed "templates/defaults/clang-tidy"
 };
 

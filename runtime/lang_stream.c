@@ -128,7 +128,7 @@ static void smith_lang_stream(SmithLang *lang, const SmithHost *host, const Smit
 // ---------------------------------------------------------------------------------------------
 
 static void smith_lang_reset_declaration(SmithLang *lang) {
-    lang->decl = (SmithLangDecl){0};
+    lang->decl = (SmithLangDecl){};
     lang->decl.exported = lang->pending_export;
     lang->decl.checking = lang->pending_export;
     lang->decl.generic = lang->generic_next; // a generic is not written to the header: no comment or #if goes for it
@@ -531,7 +531,7 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
 // The lines of the header that an importer reads are held whole against a formatter (`// clang-format off` before
 // them, `on` after): `smith fmt` would reflow the long // smith-names: line. The readers of the first line
 // (shim/hook.cpp, smith.c) skip this one.
-static const char smith_clang_format_off[] = "// clang-format off\n";
+static constexpr char smith_clang_format_off[] = "// clang-format off\n";
 
 // The module's generated header: what C and C++ include to call it, and what importers read.
 static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
@@ -603,7 +603,7 @@ const char *smith_lang_header(const SmithLang *lang, size_t *length) {
 
 // `?const T *` in SMITH_LANG_ASK: what the parser says of a type written as tokens (type_query).
 static void smith_lang_ask_query(const SmithHost *host, const char *spelling, size_t length) {
-    SmithTypeQuery query = {0};
+    SmithTypeQuery query = {};
     if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)length, &query)) {
         fprintf(stderr, "query %.*s: unknown\n", (int)length, spelling);
         return;
@@ -681,7 +681,7 @@ static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
             }
         }
         size_t name_length = length - (size_t)(name - at);
-        SmithTypeInfo info = {0};
+        SmithTypeInfo info = {};
         if (!host->type_info(host->context, name, (uint32_t)name_length, space, &info)) {
             fprintf(stderr, "ask %.*s: unknown\n", (int)length, at);
         } else {

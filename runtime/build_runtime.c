@@ -278,12 +278,12 @@ static void smith_check_path_name(const char *what, const char *name) {
     if (*name == '/' || *name == '-') smith_fail("%s name '%s' may not start with '/' or '-'", what, name);
     if (name[strlen(name) - 1] == '/') smith_fail("%s name '%s' may not end with '/'", what, name);
     const char *start = name;
-    for (const char *c = name;; c++) {
+    const char *end = name + strlen(name); // the loop ends with the name's 0 byte
+    for (const char *c = name; c <= end; c++) {
         if (*c != '/' && *c != '\0') continue;
         size_t length = (size_t)(c - start);
         if (length == 0 || (length == 1 && start[0] == '.') || (length == 2 && start[0] == '.' && start[1] == '.'))
             smith_fail("%s name '%s' may not hold an empty, '.' or '..' component", what, name);
-        if (*c == '\0') break;
         start = c + 1;
     }
 }
@@ -342,10 +342,9 @@ static SmithStep smith_copy_step(const SmithStep *step) {
 // FNV-1a 64 over each word and its 0 byte, then a 1 byte so that ("a", "b") and ("a b") lists differ.
 static uint64_t smith_hash_list(uint64_t hash, const char *const *list) {
     for (size_t i = 0; list[i] != nullptr; i++) { // bounded by smith_copy_list
-        for (const char *c = list[i];; c++) {
-            hash = (hash ^ (unsigned char)*c) * UINT64_C(1099511628211);
-            if (*c == '\0') break;
-        }
+        size_t length = strlen(list[i]);
+        for (size_t at = 0; at <= length; at++) // the 0 byte too
+            hash = (hash ^ (unsigned char)list[i][at]) * UINT64_C(1099511628211);
     }
     return (hash ^ 1U) * UINT64_C(1099511628211);
 }
@@ -1057,7 +1056,8 @@ static void smith_check_write_path(const char *path) {
     if (path[strlen(path) - 1] == '/') smith_fail("smith_write: the path '%s' names a folder", path);
     const char *start = path;
     bool first = true;
-    for (const char *c = path;; c++) {
+    const char *end = path + strlen(path); // the loop ends with the path's 0 byte
+    for (const char *c = path; c <= end; c++) {
         if (*c != '/' && *c != '\0') continue;
         size_t length = (size_t)(c - start);
         if (length == 2 && start[0] == '.' && start[1] == '.')
@@ -1065,7 +1065,6 @@ static void smith_check_write_path(const char *path) {
         if (first && length == 6 && strncmp(start, ".smith", 6) == 0)
             smith_fail("smith_write: the path '%s' is under .smith/, which is smith's own", path);
         if (length > 0 && !(length == 1 && start[0] == '.')) first = false;
-        if (*c == '\0') break;
         start = c + 1;
     }
 }

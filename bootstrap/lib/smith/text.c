@@ -125,13 +125,13 @@ __INT64_TYPE__ field_infinity;
 } smith_text_Format;
 static constexpr __UINT32_TYPE__ smith_text_infinity_bits = 0x7f800000;
 static constexpr __UINT64_TYPE__ smith_text_double_infinity_bits = 0x7ff0000000000000;
-static const smith_text_Format smith_text_float_format = {24, -149, 150, 255};
-static const smith_text_Format smith_text_double_format = {53, -1074, 1075, 2047};
+static constexpr smith_text_Format smith_text_float_format = {24, -149, 150, 255};
+static constexpr smith_text_Format smith_text_double_format = {53, -1074, 1075, 2047};
 static const double smith_text_powers[smith_text_fast_exponent_max + 1] = {
 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
-static const __UINT32_TYPE__ smith_text_powers_u32[smith_text_chunk_digits + 1] = {
+static constexpr __UINT32_TYPE__ smith_text_powers_u32[smith_text_chunk_digits + 1] = {
 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000,
 };
 typedef struct {

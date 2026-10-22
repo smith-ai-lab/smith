@@ -9,7 +9,7 @@ typedef enum {
 } SmithLangForm;
 
 static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHeld *held) {
-    SmithToken token = {0};
+    SmithToken token = {};
     token.kind = held->kind;
     token.line_start = held->line_start;
     token.space_before = held->space_before;
@@ -331,7 +331,7 @@ static void smith_lang_end_declaration(SmithLang *lang) {
     lang->export_tail = false;
     lang->export_active = false;
     lang->state = SmithLangState_Start;
-    lang->decl = (SmithLangDecl){0};
+    lang->decl = (SmithLangDecl){};
     lang->pending_export = false;
     lang->init_top = false;
     lang->tail_declarator = false;

@@ -21,6 +21,15 @@
 # if constexpr with target::, contract::assert, math::max(usize)). A .c file is left alone; put // NOLINT(smith-preprocessor)
 # on a line that must keep one. Delete smith-preprocessor from Checks to opt out.
 #
+# The idiom checks (issue #47), each message naming the fix:
+#   smith-sized-types: a .smith file writes u32, usize, f64, never uint32_t, size_t, double, unsigned or long (int only in main).
+#   smith-module-library: a library that is a module is imported (import smith::arena;), never used through its C header.
+#   smith-bounded-loop: a loop has a count to end it; only main runs forever (for (;;), while (true), do ... while (1)).
+#   smith-c23: nullptr, bool, {} and [[noreturn]], never NULL, _Bool, <stdbool.h>, {0} or __attribute__((noreturn)).
+#   smith-constexpr: a file-scope const object with a constant initializer is constexpr.
+# smith-sized-types and smith-module-library read .smith files only; the others read .smith and C. Delete one from Checks to
+# opt out, or write // NOLINT(smith-c23) on a line.
+#
 # Tiger Style: a function fits on a screen, and nothing recurses, so the code's paths can be checked. Delete
 # misc-no-recursion and readability-function-size (and its LineThreshold below) to opt out.
 Checks: >
@@ -34,8 +43,13 @@ Checks: >
   misc-no-recursion,
   readability-function-size,
   readability-identifier-naming,
+  smith-bounded-loop,
+  smith-c23,
+  smith-constexpr,
   smith-effects,
-  smith-preprocessor
+  smith-module-library,
+  smith-preprocessor,
+  smith-sized-types
 WarningsAsErrors: '*'
 # Diagnostics come from the project's own files, never from system headers.
 HeaderFilterRegex: '.*'

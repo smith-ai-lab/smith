@@ -148,7 +148,7 @@ static void smith_lang_cond_open(SmithLang *lang, const SmithTrivia *entry) {
         return;
     }
     SmithLangCond *cond = &lang->conds[lang->cond_depth++];
-    *cond = (SmithLangCond){0};
+    *cond = (SmithLangCond){};
     if (entry->zero) {
         cond->zero = true;
     } else {
