@@ -562,6 +562,8 @@ size_t smith_lang_interface_capacity(void) {
     return sizeof smith_lang_header_full;
 }
 
+// Holds one saved state, not a stack: a second save before the restore overwrites the first, and the caller's tables
+// are lost. Read imported modules before setting the run aside (smith_raw_prefetch), never inside it.
 static void smith_lang_keep_aside(bool save) {
     if (save) {
         memcpy(&smith_lang_saved_instance, &smith_lang_instance, sizeof smith_lang_instance);

@@ -46,7 +46,7 @@ A project's build file can be `.smith` too: a root `build.smith` with `import sm
 
 A `.smith` file needs no `#if`. A fact of the target the file is compiled for is a constant of the module `target` (a module that is no file; `import target;` first), and a choice between code that may not compile on every target is `if constexpr`:
 
-```c
+```smith
 import target;
 
 constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
@@ -59,6 +59,10 @@ i32 opaque(i32 value) {
         __asm__("" : "+X"(value));
     }
     return value;
+}
+
+bool poisons_memory(void) {
+    return sanitized;
 }
 ```
 
