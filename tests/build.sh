@@ -3058,7 +3058,7 @@ fi
 # The helpers are under the compiler; the top level is only verbs.
 lang_project
 capture "$smith" cc --smith-header src/lib/text.smith -o header.h
-expect "modules: smith cc --smith-header writes a header" "0 // smith-module: lib::text" "$rc $(sed -n 2p header.h)"
+expect "modules: smith cc --smith-header writes a header" "0 // smith-module: lib::text" "$rc $(sed -n 3p header.h)"
 capture "$smith" cc --smith-header src/lib/text.smith -o header.h
 cp header.h header.copy
 touch -t 200001010000 header.h
