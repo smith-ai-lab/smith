@@ -80,8 +80,8 @@ import geometry::box;
 
 int main(void) {
     box::Box b = {2, 3};
-    int BadLocal = 4;
-    return (int)box::area(b) + BadLocal;
+    i32 BadLocal = 4;
+    return (i32)box::area(b) + BadLocal;
 }
 EOF
 # A module whose names all follow the template's rules, with the sized types the lowering makes: nothing to report.
@@ -270,7 +270,7 @@ void build(SmithBuild *b) {
 EOF
 cat >main.smith <<'EOF'
 int main(void) {
-    int BadLocal = 0;
+    i32 BadLocal = 0;
     return BadLocal;
 }
 EOF
@@ -397,6 +397,281 @@ smith lint --quiet pre/plain.c -- -std=gnu2y >"$work/pre-plain.out" 2>&1
 expect "smith-preprocessor: a .c file is left alone" "0" "$(grep -c 'smith-preprocessor' "$work/pre-plain.out")"
 run pre/good.smith >"$work/pre-good.out"
 expect "smith-preprocessor: a module with contract, math, target and constexpr is clean" "0" "$(grep -c 'smith-preprocessor' "$work/pre-good.out")"
+
+# --- the idiom checks (issue #47): sized types, libraries as modules, bounded loops, C23 spellings, constexpr ----------------
+# Each check alone (--checks), a failing file and a passing one, and the message that names the fix.
+mkdir -p "$work/p/idiom"
+idiom() { # check, files...
+    check=$1
+    shift
+    smith lint --quiet --checks="-*,$check" "$@" -- -std=gnu2y $flags -I"$here/include" 2>&1
+}
+idiom_findings() { # a finding as "file:line:col: message", without the check's name
+    findings | sed -e 's/ \[smith-[a-z0-9-]*,-warnings-as-errors\]$//'
+}
+
+cat >"$work/p/idiom/sized.smith" <<'EOF2'
+module idiom::sized;
+
+import <stddef.h>;
+import <stdint.h>;
+
+export c::uint64_t wide(c::size_t n, unsigned x, unsigned long long y, double d, float f) {
+    unsigned char byte = 1;
+    long count = 2;
+    int plain = 3;
+    short half = 4;
+    return n + x + y + (c::uint64_t)d + (c::uint64_t)f + byte + count + plain + half;
+}
+
+export char first(const char *text) {
+    return text[0];
+}
+
+int main(int argc, char **argv) {
+    return argc + (argv == nullptr);
+}
+EOF2
+cat >"$work/p/idiom/sized_ok.smith" <<'EOF2'
+module idiom::sized_ok;
+
+export u64 wide(usize n, u32 x, u64 y, f64 d, f32 f) {
+    u8 byte = 1;
+    i64 count = 2;
+    i32 plain = 3;
+    i16 half = 4;
+    char letter = 'a';
+    return n + x + y + (u64)d + (u64)f + byte + (u64)count + (u64)plain + (u64)half + (u64)letter;
+}
+
+int main(int argc, char **argv) {
+    return argc + (argv == nullptr);
+}
+EOF2
+idiom smith-sized-types idiom/sized.smith >"$work/sized.out"
+sized_short() { idiom_findings | sed -e 's/ (u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)$//'; }
+expected="idiom/sized.smith:6:11: error: \`uint64_t\` is a C type, and a .smith file has the sized types: write \`u64\`
+idiom/sized.smith:6:28: error: \`size_t\` is a C type, and a .smith file has the sized types: write \`usize\`
+idiom/sized.smith:6:38: error: \`unsigned\` is a C type, and a .smith file has the sized types: write \`u32\`
+idiom/sized.smith:6:50: error: \`unsigned long long\` is a C type, and a .smith file has the sized types: write \`u64\`
+idiom/sized.smith:6:72: error: \`double\` is a C type, and a .smith file has the sized types: write \`f64\`
+idiom/sized.smith:6:82: error: \`float\` is a C type, and a .smith file has the sized types: write \`f32\`
+idiom/sized.smith:7:5: error: \`unsigned char\` is a C type, and a .smith file has the sized types: write \`u8\`
+idiom/sized.smith:8:5: error: \`long\` is a C type, and a .smith file has the sized types: write \`i64\`
+idiom/sized.smith:9:5: error: \`int\` is a C type, and a .smith file has the sized types: write \`i32\`
+idiom/sized.smith:10:5: error: \`short\` is a C type, and a .smith file has the sized types: write \`i16\`
+idiom/sized.smith:11:28: error: \`uint64_t\` is a C type, and a .smith file has the sized types: write \`u64\`
+idiom/sized.smith:11:45: error: \`uint64_t\` is a C type, and a .smith file has the sized types: write \`u64\`"
+expect "smith-sized-types: every C type of a .smith file, at its place, with the sized type to write" "$expected" "$(sized_short <"$work/sized.out")"
+expect "smith-sized-types: char stays, and int is allowed in main's signature only" "0" "$(grep -c 'sized.smith:\(1[3-9]\|2[0-9]\)' "$work/sized.out")"
+expect "smith-sized-types: the message lists the sized types" "12" "$(grep -c '(u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)' "$work/sized.out")"
+idiom smith-sized-types idiom/sized_ok.smith >"$work/sized-ok.out"
+expect "smith-sized-types: sized types, char and main's int are clean" "" "$(idiom_findings <"$work/sized-ok.out")"
+printf 'unsigned f(unsigned long x) { return (unsigned)x; }\n' >idiom/sized_plain.c
+idiom smith-sized-types idiom/sized_plain.c >"$work/sized-plain.out"
+expect "smith-sized-types: a .c file is left alone" "" "$(idiom_findings <"$work/sized-plain.out")"
+
+cat >"$work/p/idiom/library.smith" <<'EOF2'
+module idiom::library;
+
+import <smith/arena.h>;
+
+export void use(c::SmithArena *arena) {
+    void *memory = c::smith_arena_push(arena, 8, 8);
+    (void)memory;
+}
+EOF2
+cat >"$work/p/idiom/library_ok.smith" <<'EOF2'
+module idiom::library_ok;
+
+import smith::arena;
+
+export void use(arena::Arena *arena) {
+    u64 *value = arena::push(arena, u64);
+    (void)value;
+}
+EOF2
+cat >"$work/p/idiom/library_c.smith" <<'EOF2'
+module idiom::library_c;
+
+import <string.h>;
+
+export void zero(void *memory, usize n) {
+    c::memset(memory, 0, n);
+}
+EOF2
+idiom smith-module-library idiom/library.smith >"$work/library.out"
+expected="idiom/library.smith:3:1: error: \`import <smith/arena.h>;\` reads smith::arena, a module, through its C header: write \`import smith::arena;\` and call it as \`arena::name(...)\` (a typed push is \`arena::push(&a, T)\`)
+idiom/library.smith:5:20: error: \`c::SmithArena\` is \`arena::Arena\` of the module smith::arena, reached through its C header: write \`import smith::arena;\` and \`arena::Arena\` (a typed push is \`arena::push(&a, T)\`)
+idiom/library.smith:6:23: error: \`c::smith_arena_push\` is \`arena::push_raw\` of the module smith::arena, reached through its C header: write \`import smith::arena;\` and \`arena::push_raw\` (a typed push is \`arena::push(&a, T)\`)"
+expect "smith-module-library: the import of a module's header and its c:: names, with the module's call" "$expected" "$(idiom_findings <"$work/library.out")"
+idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith >"$work/library-ok.out"
+expect "smith-module-library: import smith::arena is clean, and so is a C header that is no module" "" "$(idiom_findings <"$work/library-ok.out")"
+
+cat >"$work/p/idiom/loops.smith" <<'EOF2'
+module idiom::loops;
+
+export u32 forever(u32 n) {
+    for (;;) {
+        n++;
+        if (n > 8) break;
+    }
+    while (true) {
+        n++;
+        if (n > 9) break;
+    }
+    do {
+        n++;
+    } while (1);
+    return n;
+}
+
+export u32 bounded(u32 n) {
+    for (u32 i = 0; i < 4; i++) n += i;
+    while (n < 10) n++;
+    do {
+        n++;
+    } while (n < 20);
+    return n;
+}
+
+int main(void) {
+    for (;;) {
+    }
+    return 0;
+}
+EOF2
+cat >"$work/p/idiom/loops.c" <<'EOF2'
+int forever(int n) {
+    for (;;) {
+        if (++n > 8) return n;
+    }
+}
+
+int main(void) {
+    while (1) {
+    }
+}
+EOF2
+idiom smith-bounded-loop idiom/loops.smith idiom/loops.c >"$work/loops.out"
+expected="idiom/loops.c:2:5: error: \`for (;;)\` never ends on its own: bound the loop by a count (\`for (usize i = 0; i < limit; i++)\`); only \`main\` runs forever
+idiom/loops.smith:4:5: error: \`for (;;)\` never ends on its own: bound the loop by a count (\`for (usize i = 0; i < limit; i++)\`); only \`main\` runs forever
+idiom/loops.smith:8:5: error: a \`while\` with a constant condition never ends on its own: bound the loop by a count (\`for (usize i = 0; i < limit; i++)\`); only \`main\` runs forever
+idiom/loops.smith:12:5: error: a \`do ... while\` with a constant condition never ends on its own: bound the loop by a count (\`for (usize i = 0; i < limit; i++)\`); only \`main\` runs forever"
+expect "smith-bounded-loop: for (;;), while (true) and do while (1) outside main, in C and .smith, and what to write" "$expected" "$(idiom_findings <"$work/loops.out")"
+
+cat >"$work/p/idiom/c23.smith" <<'EOF2'
+module idiom::c23;
+
+import <stddef.h>;
+import <stdbool.h>;
+
+typedef struct {
+    u32 a;
+    u32 b;
+} Pair;
+
+[[noreturn]] void stop(void);
+__attribute__((noreturn)) void halt(void);
+
+export u32 f(const u8 *p) {
+    _Bool flag = p == c::NULL;
+    Pair pair = {0};
+    u8 bytes[4] = {0};
+    return pair.a + bytes[0] + flag;
+}
+EOF2
+cat >"$work/p/idiom/c23_ok.smith" <<'EOF2'
+module idiom::c23_ok;
+
+typedef struct {
+    u32 a;
+    u32 b;
+} Pair;
+
+[[noreturn]] void stop(void);
+[[nodiscard]] u32 compute(void);
+
+export u32 f(const u8 *p) {
+    bool flag = p == nullptr;
+    Pair pair = {};
+    Pair one = {1};
+    u8 bytes[4] = {};
+    return pair.a + one.a + bytes[0] + flag;
+}
+EOF2
+cat >"$work/p/idiom/c23.c" <<'EOF2'
+#include <stdbool.h>
+#include <stddef.h>
+
+__attribute__((noreturn)) void halt(void);
+__attribute__((unused, warn_unused_result)) static int compute(void) { return 0; }
+_Noreturn void quit(void);
+
+int f(const char *p) {
+    int values[3] = {0};
+    return (p == NULL) + values[0];
+}
+EOF2
+idiom smith-c23 idiom/c23.smith >"$work/c23.out"
+expected="idiom/c23.smith:4:9: error: \`<stdbool.h>\` is not needed: \`bool\`, \`true\` and \`false\` are keywords in C23
+idiom/c23.smith:12:16: error: \`__attribute__((noreturn))\` has a standard spelling: write \`[[noreturn]]\`
+idiom/c23.smith:15:5: error: \`_Bool\` is C99's spelling: write \`bool\`, a keyword in C23
+idiom/c23.smith:15:26: error: \`NULL\` is a macro: write \`nullptr\`
+idiom/c23.smith:16:17: error: \`{0}\` is C's way to zero a whole object: write \`{}\`
+idiom/c23.smith:17:19: error: \`{0}\` is C's way to zero a whole object: write \`{}\`"
+expect "smith-c23: NULL, _Bool, <stdbool.h>, {0} and __attribute__((noreturn)) in a .smith file, with the C23 spelling" "$expected" "$(idiom_findings <"$work/c23.out")"
+idiom smith-c23 idiom/c23_ok.smith >"$work/c23-ok.out"
+expect "smith-c23: nullptr, bool, {}, {1} and [[noreturn]] are clean" "" "$(idiom_findings <"$work/c23-ok.out")"
+idiom smith-c23 idiom/c23.c >"$work/c23-c.out"
+expected="idiom/c23.c:1:11: error: \`<stdbool.h>\` is not needed: \`bool\`, \`true\` and \`false\` are keywords in C23
+idiom/c23.c:4:16: error: \`__attribute__((noreturn))\` has a standard spelling: write \`[[noreturn]]\`
+idiom/c23.c:5:16: error: \`__attribute__((unused))\` has a standard spelling: write \`[[maybe_unused]]\`
+idiom/c23.c:5:24: error: \`__attribute__((warn_unused_result))\` has a standard spelling: write \`[[nodiscard]]\`
+idiom/c23.c:6:1: error: \`_Noreturn\` is C11's spelling: write \`[[noreturn]]\`
+idiom/c23.c:9:21: error: \`{0}\` is C's way to zero a whole object: write \`{}\`
+idiom/c23.c:10:18: error: \`NULL\` is a macro: write \`nullptr\`"
+expect "smith-c23: the same in a C file" "$expected" "$(idiom_findings <"$work/c23-c.out")"
+
+cat >"$work/p/idiom/consts.smith" <<'EOF2'
+module idiom::consts;
+
+const u32 limit = 4;
+const u8 table[] = {1, 2, 3};
+constexpr u32 fine = 5;
+const char *const name = "idiom";
+
+export u32 f(u32 n) {
+    const u32 local = 2;
+    return n + limit + table[0] + fine + local + (name != nullptr);
+}
+EOF2
+cat >"$work/p/idiom/consts.c" <<'EOF2'
+static const int limit = 4;
+static const unsigned char table[] = {1, 2, 3};
+static const double half = 0.5;
+static const char *const names[] = {"a", "b"};
+const int shared = 7;
+static constexpr int fine = 5;
+
+int f(int n) {
+    const int local = 2;
+    return n + limit + table[0] + (int)half + (names[0] != nullptr) + shared + fine + local;
+}
+EOF2
+idiom smith-constexpr idiom/consts.smith idiom/consts.c >"$work/consts.out"
+expected="idiom/consts.c:1:18: error: \`const\` object \`limit\` has a constant initializer: write \`constexpr\`
+idiom/consts.c:2:28: error: \`const\` array \`table\` has a constant initializer: write \`constexpr\`
+idiom/consts.smith:3:11: error: \`const\` object \`limit\` has a constant initializer: write \`constexpr\`
+idiom/consts.smith:4:10: error: \`const\` array \`table\` has a constant initializer: write \`constexpr\`"
+expect "smith-constexpr: a file-scope const with a constant initializer, in C and .smith; not a float, a pointer, an external, a local" "$expected" "$(idiom_findings <"$work/consts.out")"
+
+# The idiom checks are in the template's .clang-tidy, so a .smith file gets them by default.
+printf 'module idiom::all;\n\nexport usize f(usize n) {\n    return n + 1;\n}\n' >idiom/all.smith
+run idiom/all.smith >"$work/all-ok.out"
+expect "the idiom checks are on in smith's defaults, and a clean module passes them all" "" "$(findings <"$work/all-ok.out")"
+run idiom/sized.smith >"$work/all-sized.out"
+expect "... and report in a default run" "1" "$(findings <"$work/all-sized.out" | head -n 1 | grep -c 'smith-sized-types')"
 
 echo "lint-smith: $((total - failures)) of $total passed"
 [ $failures = 0 ]
