@@ -9,8 +9,12 @@ set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(pwd)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT INT TERM
+editor_work=$(mktemp -d)
+trap 'rm -rf "$work" "$editor_work"' EXIT INT TERM
 export XDG_DATA_HOME=$work/data
+# The projects below test the language, not smith's checks (which the editor runs in a project with no .clang-tidy): this
+# one, above all of them, turns the checks off. The editor's own tests are in a folder of their own, below.
+printf 'Checks: "-*"\n' >"$work/.clang-tidy"
 export XDG_CACHE_HOME=$work/cache
 mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 export PATH=$work/bin:$PATH
@@ -507,6 +511,28 @@ expect "smith dir: ... and nothing is reported" 0 "$(printf '%s\n' "$log" | grep
 log=$(client_in "$(cd rootwins && pwd -P)" open needs.c)
 expect "smith dir: a root compile_commands.json wins (the #error is reported)" 1 \
     "$(printf '%s\n' "$log" | grep -c '^diag needs.c:2:2: Needed')"
+# smith's defaults in the editor (issue #43): a project with no .clang-format is formatted in smith's style, and one
+# with no .clang-tidy is checked by smith's checks; a project's own file replaces smith's whole.
+cd "$(cd "$editor_work" && pwd -P)" || exit 1
+mkdir -p editor-none editor-own
+for dir in editor-none editor-own; do
+    printf 'int f(int x){return x?f(x-1):0;}\n' >"$dir/f.c"
+done
+printf 'BasedOnStyle: LLVM\nIndentWidth: 3\nAllowShortFunctionsOnASingleLine: None\n' >editor-own/.clang-format
+printf 'Checks: "-*,readability-function-size"\n' >editor-own/.clang-tidy
+# The edits are small ones: the one that starts a line is a newline and the indent.
+log=$(client_in "$(cd editor-none && pwd -P)" open f.c -- format f.c)
+expect "editor: with no .clang-format, smith's style (an indent of 4)" 1 \
+    "$(printf '%s\n' "$log" | grep -Fxc 'format-edit \n    ')"
+expect "editor: with no .clang-tidy, smith's checks report (misc-no-recursion)" 1 \
+    "$(printf '%s\n' "$log" | grep -c "^diag f.c:1:5: Function 'f' is within a recursive call chain")"
+log=$(client_in "$(cd editor-own && pwd -P)" open f.c -- format f.c)
+expect "editor: a project's .clang-format replaces smith's (an indent of 3)" 1 \
+    "$(printf '%s\n' "$log" | grep -Fxc 'format-edit \n   ')"
+expect "editor: ... and none of smith's indent" 0 "$(printf '%s\n' "$log" | grep -Fxc 'format-edit \n    ')"
+expect "editor: a project's .clang-tidy replaces smith's (no recursion finding)" 0 \
+    "$(printf '%s\n' "$log" | grep -c '^diag .*recursive')"
+
 echo
 echo "$total language server checks, $failures failed"
 [ "$failures" -eq 0 ]

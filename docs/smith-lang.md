@@ -252,10 +252,9 @@ arguments lints what the project's `lint` task lists; what follows is what clang
 given (`tests/lint-smith.sh`).
 
 - **The command.** clang-tidy builds the command of each file with clang's driver, not with `clang::createInvocation`, so
-  it is `shim/tidy.cpp` that applies `smith_lang_command` (`-x c`, and `-std=gnu2y` unless a standard is named): the file
-  is `clang/lib/Tooling/ArgumentsAdjusters.cpp` whole, with one call in `getStripPluginsAdjuster`, the last adjuster
-  clang-tidy appends. smith defines every symbol of that object, so the linker leaves the archive's out. A command with
-  no `.smith` input is returned as it was (clang-tidy runs each file with a command of its own, so a run of `.c` and
+  `getStripPluginsAdjuster`, the last adjuster clang-tidy appends, asks `clang::CommandHook`
+  (`patches/smith-command-hook.patch`), which `shim/tidy.cpp` sets to `smith_lang_command` (`-x c`, and `-std=gnu2y`
+  unless a standard is named). A command with no `.smith` input is returned as it was (clang-tidy runs each file with a command of its own, so a run of `.c` and
   `.smith` files is right for each), and a compile database's `-x c -std=gnu2y` is already the rule.
 - **The findings.** A check reports from an engine of its own, not the compiler's, so clang's diagnostics (the lowering's
   among them) went through the hook's consumer and a check's did not. When a check is created `shim/tidy.cpp` notes that
@@ -353,9 +352,9 @@ given (`tests/lint-smith.sh`).
   `.smith` parses in a clangd run one at a time. And clangd does not know the extension, so every command it compiles a
   `.smith` file with gets the rule `smith cc` applies (`smith_lang_command`, `runtime/lang_command.c`, one function
   that both call): `-x c` before the file (before the `--` of clangd's commands), and `-std=gnu2y` unless the command names
-  a standard. `smith lsp` applies it in `shim/clangd.cpp`, which defines `clang::createInvocation` (the one function that
-  turns clangd's command into a compiler invocation: for the open file, the preamble and the background index) as the
-  upstream function plus that call, so it holds for the fallback command of a folder with no `compile_commands.json`
+  a standard. `smith lsp` applies it through `clang::CommandHook`, which `clang::createInvocation` (the one function that
+  turns clangd's command into a compiler invocation: for the open file, the preamble and the background index) asks, so
+  it holds for the fallback command of a folder with no `compile_commands.json`
   (`clang main.smith`), a hand-written database without `-x c`, and a command borrowed from a `.c` entry
   (`-x c-header`). The `compile_commands.json` that `smith build` writes carries `-x c -std=gnu2y` already, so a project
   is read exactly as it is built. With no database at all, a single file or a few modules in one folder just work:

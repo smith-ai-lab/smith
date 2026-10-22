@@ -62,6 +62,8 @@ int smith_lld_main(int argc, char **argv);
 int smith_format_main(int argc, char **argv);
 int smith_tidy_main(int argc, char **argv);
 int smith_clangd_main(int argc, char **argv);
+// shim/clangd.cpp: the files clangd formats and runs its checks by in a project that has none (smith's defaults).
+void smith_clangd_defaults(const char *style, const char *tidy);
 #ifdef SMITH_LLDB
 constexpr bool smith_has_lldb = true;
 // shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
@@ -2343,6 +2345,20 @@ static bool smith_lsp_commands_option(int argc, char **argv) {
     return false;
 }
 
+#ifdef SMITH_IN_PROCESS
+// `smith lsp`, in process: clangd formats with smith's style and runs its checks by smith's tidy config where the
+// project has no .clang-format or .clang-tidy, as `smith fmt` and `smith lint` do
+// (patches/smith-editor-defaults.patch). A project's file wins whole, and clangd's own --fallback-style wins over
+// smith's style.
+static void smith_lsp_defaults(void) {
+    static char style[PATH_MAX];
+    static char tidy[PATH_MAX];
+    smith_defaults_path(smith_defaults_clang_format, sizeof smith_defaults_clang_format, "clang-format", style);
+    smith_defaults_path(smith_defaults_clang_tidy, sizeof smith_defaults_clang_tidy, "clang-tidy", tidy);
+    smith_clangd_defaults(style, tidy);
+}
+#endif
+
 // argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
 // arguments are unchanged.
 static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -2354,8 +2370,10 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
 #ifdef SMITH_IN_PROCESS
     const char *override = getenv(tool->override);
     bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
-    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb))
+    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb)) {
+        if (strcmp(tool->command, "lsp") == 0) smith_lsp_defaults();
         return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+    }
 #endif
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);

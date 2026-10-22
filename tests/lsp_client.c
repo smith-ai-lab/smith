@@ -15,6 +15,9 @@
 //   references FILE L C           "reference FILE:L:C" for each place, the declaration included
 //   highlight FILE L C            "highlight L:C" for each range
 //   rename FILE L C NAME          "rename FILE:L:C: FILE:L:C -> NAME" for each edit, or the server's refusal
+//   format FILE                   "format FILE: N edits" and a "format-edit TEXT" line for each (the replacement text,
+//   as
+//                                 JSON escapes it: a newline is \n), for the whole document
 // The files are sent as language "c": a .smith file is C to the editor's protocol, and the server knows the rest.
 // Exits 0 when the server answered every request, 1 otherwise.
 #include <poll.h>
@@ -373,6 +376,28 @@ static void lsp_command_symbols(const char *file) {
     }
 }
 
+// Formats the whole document: how many edits the server answers with, and the text of each.
+static void lsp_command_format(const char *file) {
+    char params[1024];
+    snprintf(params, sizeof params,
+             "{\"textDocument\":{\"uri\":\"file://%s/%s\"},\"options\":{\"tabSize\":8,\"insertSpaces\":true}}",
+             lsp_root, file);
+    lsp_request("textDocument/formatting", params);
+    int count = 0;
+    for (const char *at = lsp_message; (at = strstr(at, "\"newText\":\"")) != nullptr && count < 100; count++)
+        at += strlen("\"newText\":\"");
+    printf("format %s: %d edits\n", file, count);
+    const char *at = lsp_message;
+    for (int i = 0; i < count; i++) { // an edit each
+        at = strstr(at, "\"newText\":\"") + strlen("\"newText\":\"");
+        const char *end = at;
+        while (*end != '\0' && *end != '"')
+            end += *end == '\\' && end[1] != '\0' ? 2 : 1;
+        printf("format-edit %.*s\n", (int)(end - at), at);
+        at = end;
+    }
+}
+
 static void lsp_command_complete(const char *file, const char *line, const char *column) {
     char params[1024];
     lsp_position_params(params, sizeof params, file, line, column, "");
@@ -553,6 +578,10 @@ static int lsp_run_command(int argc, char **argv, int at) {
     if (strcmp(name, "rename") == 0 && rest >= 4) {
         lsp_command_rename(argv[at + 1], argv[at + 2], argv[at + 3], argv[at + 4]);
         return 5;
+    }
+    if (strcmp(name, "format") == 0 && rest >= 1) {
+        lsp_command_format(argv[at + 1]);
+        return 2;
     }
     if (strcmp(name, "complete") == 0 && rest >= 3) {
         lsp_command_complete(argv[at + 1], argv[at + 2], argv[at + 3]);
