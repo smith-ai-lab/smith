@@ -170,8 +170,9 @@ and `cc` with `-std=gnu23 -Wall -Wextra -Wpedantic -Werror`. Its code is the cod
 (same assembly at `-O2`), except for the line numbers `assert` prints, which are the lowered file's.
 
 The lowering keeps the module's preprocessor directives as written (see "Lowering"), so the compiler that builds the C
-decides them: a module may use `#pragma STDC FP_CONTRACT OFF` and `#if defined(__aarch64__)` chains (`smith::random`
-does), `#if __has_feature(address_sanitizer)` (`smith::arena`), `#error` and `#pragma clang diagnostic`. A module's own
+decides them: a module may use `#pragma STDC FP_CONTRACT OFF` (`smith::random` does, for now), `#error` and `#pragma clang
+diagnostic`, but not `#if`: a fact of the target is `target::` and a choice is `if constexpr`, and the raw lowering writes
+the `#if` for them ("The target, and `if constexpr` outside generics"). A module's own
 code needs none of them to say what it needs: it `import`s a C header and writes `c::name`, and `import`s a module
 (`import smith::arena;`), where the lowering writes the `#include`. Left out: comments (the
 `.smith` source keeps them), and the use of `::` or a sized type in a `#define` body, which is an error (use an inline
@@ -368,7 +369,12 @@ given (`tests/lint-smith.sh`).
     `smith cc --smith-header` does the same on its own tokens, so a bad module fails at its header.
   - **A module found by its source** is made in memory by `smith_lang_interface` (the header pass over a text; the
     lowering's tables are kept aside and put back, since an importer's own lowering is in the middle of its work). The
-    text becomes the contents the file manager has for the source file, which the include then reads. Unlike the header
+    text becomes the contents the file manager has for the source file, which the include then reads. The modules it
+    imports are read first, the deepest first (`smith_raw_prefetch`, by the text of the `import` lines, at most eight
+    modules, found among the files beside it as `--smith-header` finds them), because the interface borrows the tables of
+    the lowering that asked for it and cannot ask for a second; so an export that takes `core::Thing *` is written with
+    the `[[smith::c_name]]` that `core` chose (`CoreThing`), as the header `smith build` writes would, and
+    `smith cc main.smith rolls.smith core.smith` needs no `-I .smith/include`. Unlike the header
     on disk it keeps the module's lines: each declaration is on its line (the first line is `#pragma once`) and its name
     at its column where the text before allows, so a diagnostic that points into it is at the declaration in the module,
     `foo.smith:3:12`. The `#include` lines it needs are entered by the hook in front of it, its imports of other modules
@@ -486,7 +492,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   the operators of C), `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (canonical spellings), and the questions
   `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum` and `is_record`. A type is written as C
   writes one: `T`, a sized type, a typedef, `struct S`, qualifiers, `*`. Anywhere else a generic's constraint is a
-  `static_assert` in a final `else`. `if constexpr` outside a generic is not understood by the parser.
+  `static_assert` in a final `else`. `if constexpr` outside a generic is "The target, and `if constexpr` outside generics".
 - **Errors** point at the generic's source, with a note where the instance was asked for, chained when one generic
   asked for another: `num.smith:5:14: error: invalid operands to binary expression ('Point' and 'Point')`, then
   `main.smith:13:20: note: in instance num::add(Point), requested from here`. An error in a generic's head, a call that
@@ -499,7 +505,49 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   file, line and column, so a breakpoint, a listing and the arguments are those of the source.
 - **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),
   overloading, specialization, variadic type lists, constraints other than `if constexpr` and `static_assert`,
-  `if constexpr` outside a generic, pointers to a generic, and a type local to a function as `T`.
+  pointers to a generic, and a type local to a function as `T`.
+
+## The target, and `if constexpr` outside generics
+
+The goal is no preprocessor in `.smith` source (issue #46 is the first step): what a library asked the preprocessor, the
+file asks the language. `import target;` brings a module that is no file: its names are constants of the target the file
+is compiled for.
+
+| Name | Value |
+|---|---|
+| `target::arch` | `target::aarch64` (1), `target::x86_64` (2), or 0 |
+| `target::os` | `target::macos` (1), `target::linux` (2), or 0 |
+| `target::address_sanitizer`, `target::undefined_sanitizer`, `target::thread_sanitizer` | `true` when the compile has it (`__has_feature(address_sanitizer)`, `undefined_behavior_sanitizer`, `thread_sanitizer`) |
+| `target::assertions` | `true` unless `NDEBUG` is defined |
+| `target::float_radix`, `target::f32_mantissa_bits`, `target::f64_mantissa_bits`, `target::float_eval_method` | `__FLT_RADIX__`, `__FLT_MANT_DIG__`, `__DBL_MANT_DIG__`, `__FLT_EVAL_METHOD__` |
+
+- **A compile asks the preprocessor** (`SmithHost.target_fact`, `shim/hook.cpp`: `defined(__aarch64__)`, the language
+  options' sanitizers, `NDEBUG`, the predefined float macros), and `target::arch` is then the literal `1` (`true` or `false`
+  for the sanitizers and `assertions`). So a fact is a constant expression anywhere C wants one: `static_assert`, an array
+  size, a `constexpr` initializer. `target::float_eval_method` must not be negative (indeterminate). A name that is not a
+  fact is an error that lists them. The name `target` is reserved for this import, whatever its alias (`import target as t;`).
+- **The raw lowering has no preprocessor** (`smith cc --smith-lower` and `--smith-header`, which is how `bootstrap/` and
+  the stage0 get their C). It writes the equivalent into its output: a macro for each fact used
+  (`SMITH_TARGET_ARCH`), defined at the top of the output by an `#if` chain (`#if defined(__aarch64__)`, `#if
+  __has_feature(address_sanitizer)`, `#define SMITH_TARGET_F32_MANTISSA_BITS __FLT_MANT_DIG__`), and for an `if
+  constexpr` the branches between `#if`, `#else` and `#endif`. The preprocessor lives only in generated output. A fact
+  cannot be in an exported declaration (the header is written without a compiler, for every target).
+- **`if constexpr (condition) { ... } else if constexpr (...) { ... } else { ... }` in a function body.** The branches
+  are blocks. The condition is a constant expression of integers and `true` and `false`, the operators of C,
+  `target::` facts, and the `constexpr` constants of the file or the function (`constexpr bool sanitized =
+  target::address_sanitizer;`, then `if constexpr (sanitized)`). A compile asks the parser for a constant's value; the
+  raw lowering records the text of its initializer (the latest `constexpr` declaration of the name). The branch not taken
+  is read as tokens and dropped, never given to the parser: no diagnostic, no hover and no code, so it may be
+  an inline-asm constraint of another architecture. The branch taken is an ordinary block (it keeps its scope). Anything
+  else in a condition is an error at the offending name: ``in `if constexpr`: `n` is not a constant: ...``. The
+  `else` of a branch taken is dropped without being evaluated.
+- **Files that contain `if constexpr`** are offered every token of a function body by the compiler (a keyword is not an
+  identifier, which is all a sparse host is offered), so such a file lowers a little slower; others are not changed.
+- **Limits:** a `target::` fact in the `if constexpr` condition of a *generic* works in a compile (it is a literal in the
+  recorded body) and is an error in the raw lowering, which cannot evaluate a macro; an `if constexpr` condition about a
+  type (`sizeof(int) == 4`, `is_integer(T)`) is allowed in a compile and not in the raw lowering, outside a generic it is
+  better written with a `static_assert`; the branches must be blocks; `else if` after `if constexpr` must be `else if
+  constexpr`.
 
 ## Known limits
 

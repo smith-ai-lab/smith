@@ -1,0 +1,50 @@
+import target;
+import <stdio.h>;
+
+// Each fact of the target, against the answer of C's own preprocessor in facts.c (`#if` and the predefined macros).
+extern i32 c_arch(void);
+extern i32 c_os(void);
+extern i32 c_address_sanitizer(void);
+extern i32 c_undefined_sanitizer(void);
+extern i32 c_thread_sanitizer(void);
+extern i32 c_assertions(void);
+extern i32 c_float_radix(void);
+extern i32 c_f32_mantissa_bits(void);
+extern i32 c_f64_mantissa_bits(void);
+extern i32 c_float_eval_method(void);
+
+// A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
+static_assert(target::float_radix == 2);
+static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
+static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
+static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
+
+u8 mantissa[target::f32_mantissa_bits];
+constexpr i32 arch_copy = target::arch;
+constexpr bool sanitized = target::address_sanitizer;
+static_assert(_Countof(mantissa) == 24);
+
+static i32 check(const char *name, i32 smith, i32 compiler) {
+    if (smith != compiler) {
+        c::printf("%s: %d, and the compiler says %d\n", name, smith, compiler);
+        return 1;
+    }
+    c::printf("%s ok\n", name);
+    return 0;
+}
+
+int main(void) {
+    i32 bad = 0;
+    bad += check("arch", target::arch, c_arch());
+    bad += check("os", target::os, c_os());
+    bad += check("address_sanitizer", target::address_sanitizer, c_address_sanitizer());
+    bad += check("undefined_sanitizer", target::undefined_sanitizer, c_undefined_sanitizer());
+    bad += check("thread_sanitizer", target::thread_sanitizer, c_thread_sanitizer());
+    bad += check("assertions", target::assertions, c_assertions());
+    bad += check("float_radix", target::float_radix, c_float_radix());
+    bad += check("f32_mantissa_bits", target::f32_mantissa_bits, c_f32_mantissa_bits());
+    bad += check("f64_mantissa_bits", target::f64_mantissa_bits, c_f64_mantissa_bits());
+    bad += check("float_eval_method", target::float_eval_method, c_float_eval_method());
+    bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
+    return bad;
+}

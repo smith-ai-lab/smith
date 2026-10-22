@@ -1,0 +1,4 @@
+src/main.smith:11:54: in `if constexpr`: `n` is not a constant: an `if constexpr` condition is made of `target::` facts, `constexpr` constants and literals
+src/main.smith:14:5: the branches of `if constexpr` are blocks: write `{` after the condition
+src/main.smith:5:19: in `if constexpr`: `n` is not a constant: an `if constexpr` condition is made of `target::` facts, `constexpr` constants and literals
+src/main.smith:8:27: in `if constexpr`: `target::bogus` is not a fact of the target

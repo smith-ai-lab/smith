@@ -1,0 +1,1 @@
+../../target-facts/src/main.smith ../../target-facts/src/facts.c -fsanitize=address,undefined -o @OUT@/program

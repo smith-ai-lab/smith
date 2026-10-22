@@ -35,6 +35,8 @@ typedef struct {
     const SmithHost *host;
     const SmithLangInstance *instance;
     uint32_t location;
+    bool unknown_name; // the evaluation failed at a name that is no constant or type: `unknown_at` is its token
+    uint32_t unknown_at;
     char canonical[smith_lang_cx_types_max][smith_lang_cx_name_max];
     size_t canonical_count;
     char message[smith_lang_message_max];
@@ -381,6 +383,8 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at = end;
         return true;
     }
+    cx->unknown_name = true;
+    cx->unknown_at = *at;
     return smith_lang_cx_fail(cx, "`%s` is not a constant or a type", smith_lang_gt_str(token));
 }
 

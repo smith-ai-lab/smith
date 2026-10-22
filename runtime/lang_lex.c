@@ -624,6 +624,17 @@ static void smith_raw_next_named(void *context, SmithToken *token, bool unexpand
     smith_raw_names(raw, raw->names, token);
 }
 
+// The headers of the modules an interface imports are read as `smith cc --smith-header` reads them (below), so that the
+// names an imported module chose with [[smith::c_name]] are the ones its importer's interface writes. The cache of
+// modules read starts empty for each interface asked of the compiler (a long-lived editor process sees edits), and is
+// the run's own when an interface is asked by `--smith-header` or `--smith-lower`.
+static bool smith_raw_read_header(void *context, const char *relative, const char **text, uint32_t *length);
+static void smith_raw_interface_enter(void);
+static void smith_raw_prefetch(const char *file, const char *text, size_t length);
+static bool smith_lang_interface_work(const char *file, const char *text, size_t length, SmithInterface *result,
+                                      char *error, size_t error_capacity);
+static bool smith_raw_cache_only;
+
 // Lowers the module's source with the plain lexer. The tables are the run's when it returns, and smith_lang_keep_aside
 // has put the caller's away: the caller reads what it wants and then puts them back.
 static SmithLang *smith_lang_run_interface(const char *file, const char *text, size_t length, char *error,
@@ -647,25 +658,29 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .include = smith_raw_include,
         .error = smith_raw_error,
         .lookup = smith_raw_lookup,
+        .read_header = smith_raw_read_header,
         .main_file = file,
         .maybe_generic = true,
+        .maybe_if_constexpr = true,
     };
     SmithRawNames names = {0};
     raw.names = &names;
+    smith_raw_cache_only = true;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
         smith_raw_next_named(&raw, &token, false);
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
+    smith_raw_cache_only = false;
     lang->finished =
         true; // not smith_lang_finish: what it writes (SMITH_LANG_DUMP, SMITH_LANG_HEADER) is the importer's
     *clean = lang->errors == 0 && names.errors == 0 && lang->is_module;
     return lang;
 }
 
-bool smith_lang_interface(const char *file, const char *text, size_t length, SmithInterface *result, char *error,
-                          size_t error_capacity) {
+static bool smith_lang_interface_work(const char *file, const char *text, size_t length, SmithInterface *result,
+                                      char *error, size_t error_capacity) {
     if (length > smith_lang_source_max || result->text_capacity < sizeof smith_lang_header_full ||
         error_capacity == 0) {
         return false;
@@ -686,10 +701,19 @@ bool smith_lang_interface(const char *file, const char *text, size_t length, Smi
     return good;
 }
 
+bool smith_lang_interface(const char *file, const char *text, size_t length, SmithInterface *result, char *error,
+                          size_t error_capacity) {
+    smith_raw_interface_enter();
+    smith_raw_prefetch(file, text, length);
+    return smith_lang_interface_work(file, text, length, result, error, error_capacity);
+}
+
 size_t smith_lang_declarations(const char *file, const char *text, size_t length, char *out, size_t capacity) {
     if (length > smith_lang_source_max || capacity == 0) return 0;
     char error[512] = "";
     bool clean = false;
+    smith_raw_interface_enter();
+    smith_raw_prefetch(file, text, length);
     SmithLang *lang = smith_lang_run_interface(file, text, length, error, sizeof error, false, &clean);
     size_t used = 0;
     for (size_t i = 0; lang->is_module && i < lang->names_count; i++) { // the exports, in the order declared
@@ -730,6 +754,12 @@ static struct {
     size_t length;
 } smith_raw_modules[smith_raw_modules_max];
 static size_t smith_raw_modules_count;
+static bool smith_raw_run_active; // `--smith-header` or `--smith-lower` is lowering: its cache is its own
+
+static void smith_raw_interface_enter(void) {
+    if (!smith_raw_run_active) smith_raw_modules_count = 0;
+}
+
 static char smith_raw_module_text[smith_raw_modules_max][smith_raw_meta_max];
 static char smith_raw_saved_source[smith_lang_source_max + 1];
 static SmithTrivia smith_raw_saved_trivia[smith_raw_trivia_max];
@@ -764,6 +794,41 @@ static void smith_raw_root(const SmithLangRaw *raw, char *root, size_t capacity)
              slash != nullptr ? raw->file : ".");
 }
 
+// The root of a module's path, from the file and the text alone (no lowering has read its module line yet).
+static void smith_raw_text_root(const char *file, const char *text, size_t length, char *root, size_t capacity) {
+    char tail[smith_lang_name_max] = "";
+    for (size_t at = 0; at < length;) { // the `module a::b;` line
+        size_t end = at;
+        while (end < length && text[end] != '\n')
+            end += 1;
+        if (end - at > 7 && memcmp(text + at, "module ", 7) == 0) {
+            size_t used = 0;
+            for (size_t i = at + 7; i < end && text[i] != ';' && used + 8 < sizeof tail; i++) { // a::b is a/b
+                if (text[i] == ':' && i + 1 < end && text[i + 1] == ':') {
+                    tail[used++] = '/';
+                    i += 1;
+                } else if (text[i] != ' ') {
+                    tail[used++] = text[i];
+                }
+            }
+            memcpy(tail + used, ".smith", 7);
+            break;
+        }
+        at = end + 1;
+    }
+    size_t file_length = strlen(file);
+    size_t tail_length = strlen(tail);
+    if (tail_length > 0 && file_length >= tail_length && strcmp(file + file_length - tail_length, tail) == 0 &&
+        (file_length == tail_length || file[file_length - tail_length - 1] == '/')) {
+        size_t folder = file_length > tail_length ? file_length - tail_length - 1 : 0;
+        snprintf(root, capacity, "%.*s", (int)folder, file);
+        if (folder == 0) snprintf(root, capacity, ".");
+        return;
+    }
+    const char *slash = strrchr(file, '/');
+    snprintf(root, capacity, "%.*s", slash != nullptr ? (int)(slash - file) : 1, slash != nullptr ? file : ".");
+}
+
 static size_t smith_raw_read_file(const char *path, char *into, size_t capacity) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return SIZE_MAX;
@@ -773,76 +838,172 @@ static size_t smith_raw_read_file(const char *path, char *into, size_t capacity)
     return got;
 }
 
-// The interface of the module whose source is at `path`, as the comment lines of its header, into `into`.
+// The interface of the module whose source is `source`, from the file `path`: the comment lines of its header, into
+// `into`. The caller's own lowering is not touched here; smith_lang_interface_work keeps it aside.
+static size_t smith_raw_interface_work(const char *path, const char *source, size_t length, char *into,
+                                       size_t capacity) {
+    static char text[smith_lang_header_max + 4096];
+    static char includes[(size_t)1 << 16];
+    char error[512];
+    SmithInterface result = {text, sizeof text, 0, includes, sizeof includes, 0, into, capacity, 0};
+    if (!smith_lang_interface_work(path, source, length, &result, error, sizeof error)) return SIZE_MAX;
+    into[result.meta_used] = 0;
+    return result.meta_used;
+}
+
+// What the imports of a module that is not in the cache need, found by the text alone: the modules it imports, and the
+// ones they import, each once, nearest first.
+typedef struct {
+    char relative[smith_lang_name_max]; // a/b.h
+    char path[PATH_MAX];                // the source
+} SmithRawWanted;
+
+static void smith_raw_want(const char *file, const char *text, size_t length, SmithRawWanted *wanted, size_t *count) {
+    char root[PATH_MAX];
+    smith_raw_text_root(file, text, length, root, sizeof root);
+    for (size_t at = 0; at < length;) { // each line of the text
+        size_t end = at;
+        while (end < length && text[end] != '\n')
+            end += 1;
+        size_t cursor = at;
+        while (cursor < end && (text[cursor] == ' ' || text[cursor] == '\t'))
+            cursor += 1;
+        if (end - cursor > 7 && memcmp(text + cursor, "import ", 7) == 0) {
+            cursor += 7;
+            while (cursor < end && text[cursor] == ' ')
+                cursor += 1;
+            size_t name = cursor;
+            while (cursor < end && (smith_raw_is_name(text[cursor]) || text[cursor] == ':'))
+                cursor += 1;
+            char relative[smith_lang_name_max];
+            size_t used = 0;
+            for (size_t i = name; i < cursor && used + 4 < sizeof relative; i++) { // a::b is a/b.h
+                if (text[i] == ':' && i + 1 < cursor && text[i + 1] == ':') {
+                    relative[used++] = '/';
+                    i += 1;
+                } else {
+                    relative[used++] = text[i];
+                }
+            }
+            memcpy(relative + used, ".h", 3);
+            bool known = cursor == name || strcmp(relative, "target.h") != 0 ? false : true;
+            for (size_t i = 0; i < smith_raw_modules_count; i++) // read already
+                known = known || strcmp(smith_raw_modules[i].path, relative) == 0;
+            for (size_t i = 0; i < *count; i++) // wanted already
+                known = known || strcmp(wanted[i].relative, relative) == 0;
+            char path[PATH_MAX];
+            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(relative) - 2),
+                                         relative) < sizeof path;
+            if (!known && cursor > name && fits && *count < smith_raw_modules_max - smith_raw_modules_count) {
+                snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);
+                snprintf(wanted[*count].path, sizeof wanted[0].path, "%s", path);
+                *count += 1;
+            }
+        }
+        at = end + 1;
+    }
+}
+
+// Before an interface is made the modules it imports are read, and the ones they import, the deepest first, so that
+// the lowering finds each module's header in the cache and writes the names that module chose: it cannot read one
+// itself, because it has borrowed the tables of the lowering that asked for it and a second borrower would lose them.
+// A module not found is accepted unread, as in a run.
+static void smith_raw_prefetch(const char *file, const char *text, size_t length) {
+    static SmithRawWanted wanted[smith_raw_modules_max];
+    static char source[smith_lang_source_max + 1];
+    size_t count = 0;
+    smith_raw_want(file, text, length, wanted, &count);
+    for (size_t at = 0; at < count; at++) { // the imports of the modules found, which are found in turn
+        size_t got = smith_raw_read_file(wanted[at].path, source, sizeof source);
+        if (got != SIZE_MAX) smith_raw_want(wanted[at].path, source, got, wanted, &count);
+    }
+    for (size_t at = count; at > 0; at--) { // each after what it imports
+        if (smith_raw_modules_count >= smith_raw_modules_max) return;
+        size_t slot = smith_raw_modules_count++;
+        snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", wanted[at - 1].relative);
+        smith_raw_modules[slot].text = smith_raw_module_text[slot];
+        smith_raw_modules[slot].length = 0;
+        smith_raw_module_text[slot][0] = 0;
+        size_t got = smith_raw_read_file(wanted[at - 1].path, source, sizeof source);
+        if (got == SIZE_MAX) continue;
+        size_t meta =
+            smith_raw_interface_work(wanted[at - 1].path, source, got, smith_raw_module_text[slot], smith_raw_meta_max);
+        smith_raw_modules[slot].length = meta == SIZE_MAX ? 0 : meta;
+        if (meta == SIZE_MAX) smith_raw_module_text[slot][0] = 0;
+    }
+}
+
+// The interface of the module whose source is at `path`, for a run that is in the middle of its own source and
+// comments, which the interface borrows and puts back.
 static size_t smith_raw_interface_meta(SmithLangRaw *raw, const char *path, char *into, size_t capacity) {
     static char source[smith_lang_source_max + 1];
     size_t length = smith_raw_read_file(path, source, sizeof source);
     if (length == SIZE_MAX) return SIZE_MAX;
     memcpy(smith_raw_saved_source, smith_lang_source, raw->length + 1);
     memcpy(smith_raw_saved_trivia, smith_raw_trivia, raw->trivia_count * sizeof *smith_raw_trivia);
-    static char text[smith_lang_header_max + 4096];
-    static char includes[(size_t)1 << 16];
-    char error[512];
-    SmithInterface result = {text, sizeof text, 0, includes, sizeof includes, 0, into, capacity, 0};
-    bool good = smith_lang_interface(path, source, length, &result, error, sizeof error);
+    smith_raw_prefetch(path, source, length);
+    size_t got = smith_raw_interface_work(path, source, length, into, capacity);
     memcpy(smith_lang_source, smith_raw_saved_source, raw->length + 1);
     memcpy(smith_raw_trivia, smith_raw_saved_trivia, raw->trivia_count * sizeof *smith_raw_trivia);
     smith_lang_index_lines(raw->length);
-    if (!good) return SIZE_MAX;
-    into[result.meta_used] = 0;
-    return result.meta_used;
+    return got;
 }
 
 static bool smith_raw_read_header(void *context, const char *relative, const char **text, uint32_t *length) {
     SmithLangRaw *raw = context;
+    size_t slot = SIZE_MAX;
     for (size_t i = 0; i < smith_raw_modules_count; i++) { // the modules read already
-        if (strcmp(smith_raw_modules[i].path, relative) == 0) {
-            *text = smith_raw_modules[i].text;
-            *length = (uint32_t)smith_raw_modules[i].length;
-            return true;
-        }
+        if (strcmp(smith_raw_modules[i].path, relative) == 0) slot = i;
     }
-    if (smith_raw_modules_count >= smith_raw_modules_max) return false;
-    char *into = smith_raw_module_text[smith_raw_modules_count];
-    size_t got = SIZE_MAX;
-    for (size_t i = 0; i < smith_header_flag_count && got == SIZE_MAX; i++) { // the header on an include path
-        const char *flag = smith_header_flags[i];
-        const char *directory = nullptr;
-        if (strcmp(flag, "-I") == 0 && i + 1 < smith_header_flag_count) {
-            directory = smith_header_flags[++i];
-        } else if (strncmp(flag, "-I", 2) == 0) {
-            directory = flag + 2;
-        }
-        char path[PATH_MAX];
-        if (directory != nullptr && (size_t)snprintf(path, sizeof path, "%s/%s", directory, relative) < sizeof path) {
-            got = smith_raw_read_file(path, into, smith_raw_meta_max);
-        }
+    if (slot == SIZE_MAX && smith_raw_cache_only) { // an interface being made reads what was read before it began
+        *text = "";
+        *length = 0;
+        return true;
     }
-    if (got == SIZE_MAX) { // else the module's source
-        char root[PATH_MAX];
-        smith_raw_root(raw, root, sizeof root);
-        char path[PATH_MAX];
-        size_t stem = strlen(relative) - 2; // without the .h
-        if ((size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)stem, relative) < sizeof path) {
-            got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
-        }
-    }
-    if (got == SIZE_MAX) {
+    if (slot == SIZE_MAX) {
+        if (smith_raw_modules_count >= smith_raw_modules_max) return false;
+        slot = smith_raw_modules_count++;
+        char *into = smith_raw_module_text[slot];
+        snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", relative);
+        smith_raw_modules[slot].text = into;
+        smith_raw_modules[slot].length = 0;
         into[0] = 0;
-        got = 0;
+        size_t got = SIZE_MAX;
+        for (size_t i = 0; i < smith_header_flag_count && got == SIZE_MAX; i++) { // the header on an include path
+            const char *flag = smith_header_flags[i];
+            const char *directory = nullptr;
+            if (strcmp(flag, "-I") == 0 && i + 1 < smith_header_flag_count) {
+                directory = smith_header_flags[++i];
+            } else if (strncmp(flag, "-I", 2) == 0) {
+                directory = flag + 2;
+            }
+            char path[PATH_MAX];
+            if (directory != nullptr &&
+                (size_t)snprintf(path, sizeof path, "%s/%s", directory, relative) < sizeof path) {
+                got = smith_raw_read_file(path, into, smith_raw_meta_max);
+            }
+        }
+        if (got == SIZE_MAX) { // else the module's source
+            char root[PATH_MAX];
+            smith_raw_root(raw, root, sizeof root);
+            char path[PATH_MAX];
+            size_t stem = strlen(relative) - 2; // without the .h
+            if ((size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)stem, relative) < sizeof path) {
+                got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
+            }
+        }
+        smith_raw_modules[slot].length = got == SIZE_MAX ? 0 : got;
+        if (got == SIZE_MAX) into[0] = 0;
     }
-    snprintf(smith_raw_modules[smith_raw_modules_count].path, sizeof smith_raw_modules[0].path, "%s", relative);
-    smith_raw_modules[smith_raw_modules_count].text = into;
-    smith_raw_modules[smith_raw_modules_count].length = got;
-    smith_raw_modules_count += 1;
-    *text = into;
-    *length = (uint32_t)got;
+    *text = smith_raw_modules[slot].text;
+    *length = (uint32_t)smith_raw_modules[slot].length;
     return true;
 }
 
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true, .keep = print_lowered};
+    smith_raw_run_active = true;
     smith_raw_directives_count = 0;
     smith_raw_directives_next = 0;
     smith_raw_directive_pool_used = 0;
@@ -863,6 +1024,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .read_header = smith_raw_read_header,
         .main_file = path,
         .maybe_generic = true,
+        .maybe_if_constexpr = true,
     };
     SmithRawNames names = {0};
     raw.names = &names;
@@ -882,6 +1044,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     smith_lang_finish(lang);
     smith_lang_import_asker = nullptr;
     if (print_lowered) {
+        smith_lang_target_prelude(lang, stdout);
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
         fputc('\n', stdout);
     }

@@ -1,0 +1,16 @@
+import target;
+
+int main(void) {
+    int n = 3;
+    if constexpr (n > 2) {
+        return 1;
+    }
+    if constexpr (target::bogus) {
+        return 2;
+    }
+    if constexpr (target::arch == target::aarch64 || n) {
+        return 3;
+    }
+    if constexpr (1) return 4;
+    return 0;
+}
