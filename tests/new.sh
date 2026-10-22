@@ -94,7 +94,7 @@ verbs_on_new_project() {
     expect_contains "$label: smith test --test runs one test" "$out" "1 passed, 0 failed"
     capture smith prove
     expect "$label: smith prove succeeds with nothing to prove" 0 "$rc"
-    expect_contains "$label: ... and says so" "$out" "no work to do"
+    expect_contains "$label: ... and says so" "$out" "nothing to prove"
     test_file=tests/test_primes.$ext
     sed 's/sum(5), 28/sum(5), 27/' "$test_file" >"$test_file.new" && mv "$test_file.new" "$test_file"
     capture smith test

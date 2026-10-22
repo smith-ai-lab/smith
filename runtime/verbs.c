@@ -436,7 +436,10 @@ static void smith_prove_filter(char *flags) {
 }
 
 // Proves one group of sources that compile with the same flags: `smith prove <sources> -- <flags>`.
+static size_t smith_prove_groups_run; // the groups `smith prove` started, so that none can be said
+
 static int smith_prove_group(const char *self, const SmithInfo *info, const size_t *members, size_t member_count) {
+    smith_prove_groups_run++;
     size_t used = 0;
     smith_prove_argv[used++] = (char *)self;
     smith_prove_argv[used++] = (char *)"prove";
@@ -524,6 +527,9 @@ static int smith_prove_project(int count, char **args, const char *self) {
         if (repeated[i]) continue;
         int one = smith_prove_unit(self, info, (char *)info->units[i]);
         if (one != 0) status = one;
+    }
+    if (status == 0 && smith_prove_groups_run == 0) {
+        printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant\n");
     }
     return status;
 }
