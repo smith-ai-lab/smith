@@ -1,0 +1,9 @@
+import "c.h";
+import "d.h";
+#include <stdio.h>
+
+// With -fmodules a header is a module import, and the next import still starts a declaration.
+int main(void) {
+    printf("%d\n", c::c_value() + c::d_value());
+    return 0;
+}

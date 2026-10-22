@@ -1,0 +1,2 @@
+module c_header { header "c.h" export * }
+module d_header { header "d.h" export * }

@@ -2178,6 +2178,12 @@ class SmithHook final : public TokenHook, public NameSource {
         } else if (const char *spelling = tok::getPunctuatorSpelling(kind)) {
             token->text = spelling;
             token->length = spelling[1] == 0 ? 1 : spelling[2] == 0 ? 2 : 3;
+        } else if (kind == tok::annot_module_include || kind == tok::annot_module_begin ||
+                   kind == tok::annot_module_end) {
+            // With -fmodules an import's header is a module import: the token that stands where it was ends a
+            // declaration, as the `;` of the import did, so the next import is at the start of a declaration.
+            token->text = ";";
+            token->length = 1;
         } else if (const char *keyword = tok::getKeywordSpelling(kind)) {
             token->kind = SmithTokenKind_Identifier;
             token->text = keyword;
@@ -2191,7 +2197,10 @@ class SmithHook final : public TokenHook, public NameSource {
         auto *self = static_cast<SmithHook *>(context);
         if (self->sema == nullptr) return false;
         for (const Decl *decl : self->sema->getASTContext().getTranslationUnitDecl()->decls()) {
-            if (!decl->isImplicit() && self->SM.getFileID(self->SM.getFileLoc(decl->getLocation())) == self->MainFile) {
+            // (With -fmodules an import's header is a module import declaration at the import's own place; that is
+            // the import itself, not a declaration of the file.)
+            if (!decl->isImplicit() && !isa<ImportDecl>(decl) &&
+                self->SM.getFileID(self->SM.getFileLoc(decl->getLocation())) == self->MainFile) {
                 return true;
             }
         }
