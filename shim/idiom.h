@@ -122,7 +122,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
             if (!is_smith_file(sm, main)) return;
             Lexed lexed = lex(sm, pp.getLangOpts(), main);
             const std::vector<Token> &tokens = lexed.tokens;
-            std::set<size_t> allowed = main_signature(tokens);
             for (size_t i = 0; i < tokens.size(); i++) {
                 if (lexed.in_directive[i] || !tokens[i].is(tok::raw_identifier)) continue;
                 if (i > 0 && (tokens[i - 1].is(tok::period) || tokens[i - 1].is(tok::arrow))) continue;
@@ -141,8 +140,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
                 }
                 bool ok =
                     j < tokens.size() && is_name(tokens[j], "_BitInt"); // `unsigned _BitInt(128)` has no sized name
-                for (size_t k = i; k < j; k++)
-                    ok = ok || allowed.count(k) > 0;
                 std::string sized = sized_integer(run);
                 if (!sized.empty() && !ok) report(tokens[i], join(run), sized);
                 i = j - 1;
@@ -164,22 +161,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
             for (const std::string &word : words)
                 result += (result.empty() ? "" : " ") + word;
             return result;
-        }
-
-        // `int` is C's own spelling in `int main(int argc, char **argv)`: the return type and the parameters.
-        static std::set<size_t> main_signature(const std::vector<Token> &tokens) {
-            std::set<size_t> allowed;
-            for (size_t i = 1; i + 1 < tokens.size(); i++) {
-                if (!is_name(tokens[i], "main") || !tokens[i + 1].is(tok::l_paren)) continue;
-                if (is_name(tokens[i - 1], "int")) allowed.insert(i - 1);
-                int depth = 0;
-                for (size_t j = i + 1; j < tokens.size(); j++) {
-                    if (tokens[j].is(tok::l_paren)) depth++;
-                    if (tokens[j].is(tok::r_paren) && --depth == 0) break;
-                    allowed.insert(j);
-                }
-            }
-            return allowed;
         }
 
         void report(const Token &token, const std::string &spelled, const std::string &sized) {
