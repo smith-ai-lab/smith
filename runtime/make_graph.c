@@ -204,6 +204,10 @@ static void smith_make_append(const char ***list, size_t *count, const char *con
 }
 
 // The explicit rules of a target: the prerequisites of all, the recipe of the last that has one.
+static bool smith_make_same_guard(const char *a, const char *b) {
+    return (a == nullptr && b == nullptr) || (a != nullptr && b != nullptr && strcmp(a, b) == 0);
+}
+
 static void smith_make_node_explicit(SmithMakeNode *node, const SmithMakeTarget *target) {
     const SmithMakeReader *r = &smith_make_reader;
     node->phony = target->phony;
@@ -214,8 +218,13 @@ static void smith_make_node_explicit(SmithMakeNode *node, const SmithMakeTarget 
                           rule->prerequisite_count);
         smith_make_append(&node->order_only, &node->order_count, rule->order_only, rule->order_only_count);
         if (rule->stem != nullptr) node->stem = rule->stem;
-        if (rule->guard != nullptr) node->guard = rule->guard;
         if (smith_make_recipe_rule(rule)->recipe_count > 0) {
+            if (node->has_recipe && !smith_make_same_guard(node->guard, rule->guard))
+                smith_make_report_at(rule->where,
+                                     "%s has recipes under different tests of the platform or an "
+                                     "option; only the last is kept",
+                                     node->name);
+            node->guard = rule->guard;
             node->rule = (int64_t)(smith_make_recipe_rule(rule) - r->rules);
             node->where = rule->where;
             node->has_recipe = true;

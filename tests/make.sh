@@ -599,7 +599,44 @@ has "readable: and the other uses it" 'smith_cat(b, WARN, '
 has "readable: the compiler is smith-cc" '.compiler = "smith-cc"'
 has "readable: the header names the Makefile" '// build.c, translated from Makefile'
 
-# 15. Which Makefile, and when.
+# 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
+project
+cat >Makefile <<'MK'
+all: here.txt
+ifneq ($(shell uname -s),NotAnOs)
+here.txt:
+	echo here > $@
+endif
+ifeq ($(shell uname -s),NotAnOs)
+other.txt:
+	echo one > $@
+else
+other.txt:
+	echo two > $@
+endif
+MK
+translate
+has "guarded rule: the step is declared under the test" 'if ((strcmp(b->os, "NotAnOs") != 0)) {'
+contains "guarded rule: two recipes under different tests are reported" "$(cat dump.err)" "other.txt has recipes under different tests"
+"$smith" build >/dev/null 2>&1
+expect "guarded rule: and the build.c builds it" here "$(cat here.txt 2>/dev/null)"
+
+# A wildcard of a command-line variable is read at its default, and said so.
+project
+echo font >font.bdf
+cat >Makefile <<'MK'
+FONT ?= font.bdf
+FILES = $(wildcard $(FONT))
+out.txt: $(FILES)
+	cat $(FILES) > $@
+MK
+translate
+contains "wildcard of an option: reported" "$(cat dump.err)" '$(wildcard $(FONT)) was read now, with the option at its default (font.bdf)'
+has "wildcard of an option: its default is the file" '"font.bdf"'
+"$smith" build >/dev/null 2>&1
+expect "wildcard of an option: the build uses the file" font "$(cat out.txt 2>/dev/null)"
+
+# 16. Which Makefile, and when.
 project
 cat >Makefile <<'MK'
 a:

@@ -242,17 +242,21 @@ static void smith_make_emit_header(FILE *out, const char *path) {
         "// build.c, translated from %s by `smith build --dump-config` (the Makefile is read as GNU make reads it,\n"
         "// with the files that are here now: a $(wildcard) is the files it matched). Edit it freely.\n",
         path);
-    bool any = false;
+    size_t listed = 0;
+    size_t options = 0;
     for (size_t i = 0; i < smith_make.var_count; i++) {
         const SmithMakeVar *var = &smith_make.vars[i];
         if (!var->option) continue;
-        if (!any)
+        options++;
+        if (listed >= 16) continue;
+        if (listed == 0)
             fprintf(out, "//\n// Options the Makefile reads from the command line (`make NAME=value` is `smith build "
                          "-DNAME=value`):\n");
-        any = true;
+        listed++;
         fprintf(out, "//   -D%s=...  (Makefile:%u, default %s)\n", var->name, var->where.line,
                 smith_make_summary(var->source != nullptr && var->source[0] != '\0' ? var->source : "empty", 70));
     }
+    if (options > listed) fprintf(out, "//   and %zu more, declared at the top of build()\n", options - listed);
     smith_make_emit_report(out);
     fprintf(out, "#include <smith/build.h>\n#include <string.h>\n\n");
 }

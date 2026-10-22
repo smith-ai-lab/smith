@@ -80,7 +80,7 @@ static const SmithMakeFunction smith_make_functions[] = {
     {"basename", SmithMakeFn_Basename, 1, 1, false},
     {"addsuffix", SmithMakeFn_Addsuffix, 2, 2, true},
     {"addprefix", SmithMakeFn_Addprefix, 2, 2, true},
-    {"wildcard", SmithMakeFn_Wildcard, 1, 1, false},
+    {"wildcard", SmithMakeFn_Wildcard, 1, 1, true},
     {"abspath", SmithMakeFn_Abspath, 1, 1, false},
     {"realpath", SmithMakeFn_Realpath, 1, 1, false},
     {"shell", SmithMakeFn_Shell, 1, 1, false},
@@ -844,12 +844,79 @@ static void smith_make_fn_affix(const SmithMakeSpan *args, bool prefix, SmithMak
     }
 }
 
+// The variable whose option a hole reads, or nullptr.
+static const SmithMakeVar *smith_make_option_of(const char *expression) {
+    if (strncmp(expression, "option_", 7) != 0) return nullptr;
+    for (size_t v = 0; v < smith_make.var_count; v++) {
+        const SmithMakeVar *var = &smith_make.vars[v];
+        if (var->option && strcmp(expression + 7, smith_make_c_name(var->name)) == 0) return var;
+    }
+    return nullptr;
+}
+
+// The text as the Makefile wrote it, for a message: an option is $(NAME), any other hole is ?.
+static const char *smith_make_show(const char *text) {
+    size_t length = strlen(text);
+    SmithMakeBuffer out;
+    smith_make_buffer_init(&out, length * 4 + 64);
+    text = smith_make_unmark(text);
+    length = strlen(text);
+    for (size_t i = 0; i < length;) { // bounded by the length
+        if (text[i] != smith_make_hole_begin) {
+            smith_make_put_char(&out, text[i++]);
+            continue;
+        }
+        size_t number = 0;
+        i = smith_make_hole_at(text, length, i, &number);
+        const SmithMakeVar *option = smith_make_option_of(smith_make.holes[number].expression);
+        if (option != nullptr)
+            smith_make_put_format(&out, "$(%s)", option->name);
+        else
+            smith_make_put_char(&out, '?');
+    }
+    return smith_make_take(&out, 0);
+}
+
+// The text with each option in it taken at the Makefile's default for it; nullptr if a hole is no option with one.
+static const char *smith_make_at_defaults(const char *text) {
+    size_t length = strlen(text);
+    SmithMakeBuffer out;
+    smith_make_buffer_init(&out, length * 8 + 4096);
+    for (size_t i = 0; i < length;) { // bounded by the length
+        if (text[i] != smith_make_hole_begin) {
+            smith_make_put_char(&out, text[i++]);
+            continue;
+        }
+        size_t number = 0;
+        i = smith_make_hole_at(text, length, i, &number);
+        const SmithMakeVar *option = smith_make_option_of(smith_make.holes[number].expression);
+        if (option == nullptr || option->fallback == nullptr ||
+            smith_make_has_hole(option->fallback, strlen(option->fallback)))
+            return nullptr;
+        smith_make_put_text(&out, smith_make_unmark(option->fallback));
+    }
+    return smith_make_take(&out, 0);
+}
+
 static void smith_make_fn_wildcard(const SmithMakeSpan *args, SmithMakeBuffer *out) {
     size_t count = 0;
     SmithMakeWord *patterns = smith_make_arg_words(args[0], &count);
     for (size_t i = 0; i < count; i++) {
         glob_t found;
         const char *pattern = smith_make_word_text(patterns[i]);
+        if (smith_make_has_hole(pattern, strlen(pattern))) {
+            const char *fixed = smith_make_at_defaults(pattern);
+            if (fixed == nullptr) {
+                smith_make_report("$(wildcard %s) depends on the platform or an option, which it keeps as it is",
+                                  smith_make_show(pattern));
+                smith_make_put_word(out, pattern, strlen(pattern));
+                continue;
+            }
+            smith_make_report("$(wildcard %s) was read now, with the option at its default (%s): build.c does not "
+                              "look again",
+                              smith_make_show(pattern), fixed);
+            pattern = fixed;
+        }
         if (glob(pattern, 0, nullptr, &found) != 0) {
             globfree(&found);
             continue;
