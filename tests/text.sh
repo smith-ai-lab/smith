@@ -65,7 +65,7 @@ void build(SmithBuild *b) {
     const char *mode = smith_option_value(b, "MODE", "asan", "asan, fast or ndebug");
     bool sanitize = strcmp(mode, "asan") == 0;
     const char *const *flags = smith_cat(
-        b, smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-I", ".smith/include", nullptr),
+        b, smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-I", ".smith/include", nullptr),
         sanitize ? smith_list(b, "-O0", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", nullptr)
                  : smith_list(b, "-O2", nullptr),
         strcmp(mode, "ndebug") == 0 ? smith_list(b, "-DNDEBUG", nullptr) : smith_list(b, nullptr), nullptr);
