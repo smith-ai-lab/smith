@@ -1811,6 +1811,39 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
+# The analyzer: test::check(p != nullptr) is an assumption to it, as contract::assert is (target::static_analyzer), so the
+# null dereference after it is not reported; the same function without the check is.
+cat >analyzer.smith <<'C'
+import smith::test;
+
+typedef struct {
+    i32 x;
+} Box;
+
+Box *find(i32 key);
+void missing(void);
+
+static i32 checked(bool flag) {
+    Box *p = nullptr;
+    if (flag) p = find(1);
+    test::check(p != nullptr);
+    return p->x;
+}
+
+static i32 unchecked(bool flag) {
+    Box *p = nullptr;
+    if (flag) p = find(1);
+    if (p == nullptr) missing();
+    return p->x;
+}
+
+i32 analyzed(void) {
+    return checked(true) + unchecked(true);
+}
+C
+capture "$smith" lint --checks='-*,clang-analyzer-*' analyzer.smith -- -std=gnu2y -I.smith/include
+expect_contains "analyzer: a dereference after a plain test of null is reported" "$out" "analyzer.smith:21:12: warning: Access to field 'x' results in a dereference of a null pointer"
+expect_lacks "analyzer: ... and after test::check(p != nullptr) it is not" "$out" "analyzer.smith:14:12"
 fi
 
 if part reports; then

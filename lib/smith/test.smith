@@ -652,10 +652,23 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
 // ---------------------------------------------------------------------------------------------------------------
 // The checks.
 
-// Fails the test when the condition is false.
-[[smith::c_name("smith_check")]] export void check(bool condition) {
+// The failure of check, out of line: fails the test when the condition is false.
+[[smith::c_name("smith_test_check_condition")]] export void check_condition(bool condition) {
     if (!condition) fail_condition();
 }
+
+// Fails the test when the condition is false. To clang's static analyzer (target::static_analyzer, true only there) it
+// is an assumption, as contract::assert is, so `test::check(p != nullptr)` tells the analyzer that p is not null
+// afterwards; a failed check ends the test, so nothing runs past it.
+// NOLINTBEGIN(smith-c23)
+[[smith::c_name("smith_check")]] export inline __attribute__((always_inline, unused)) void check(bool condition) {
+    if constexpr (target::static_analyzer) {
+        __builtin_assume(condition);
+    } else {
+        check_condition(condition);
+    }
+}
+// NOLINTEND(smith-c23)
 
 // Fails the test unless the comparison holds, printing both values. The generic checks below make the Values.
 [[smith::c_name("smith_test_check_compare")]] export void check_compare(Op op, Value a, Value b) {

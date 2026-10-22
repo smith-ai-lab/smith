@@ -87,6 +87,7 @@ test::expect_abort()                        // from this call on the test must a
 - **One type for `a` and `b`.** `T` is told from both: a literal adapts (`check_equal(count, 3)` is the type of `count`; so is `2 + 2` or `nullptr` against a pointer), and arithmetic, comparisons and `?:` are typed by C's rules (`check_equal(x * 2, y + 1)`). Two arguments of different types (`u32` against `u64`, `usize` against `i32`) are the error ``conflicting types for `T`: u32 and u64``: cast one side, or write the type first, `test::check_equal(u64, a, b)`. A call to a generic or a builtin (`math::max(u64)`, `__builtin_nan("")`) is not typed: put it in a variable or write the type first.
 - Types print as Smith spells them: `i8` to `i64`, `u8` to `u64`, `f32`, `f64`, `bool`, `char`, `ptr`.
 - A failed check ends the test.
+- **`test::check(condition)` is an assumption to clang's static analyzer** (`smith lint`'s `clang-analyzer-*`, the editor), as `contract::assert` is: after `test::check(p != nullptr)` the analyzer knows `p` is not null, so it reports no null dereference past it and no `__builtin_assume` is needed. It is the one check that tells the analyzer, so write a null or bounds fact as `check(p != nullptr)`, not as `check_not_equal(p, nullptr)`.
 - `test::expect_abort()` is a plain function that says "from this call on, the test must abort". Call it, then run the code that aborts, as the test's last statements (`(void)expr;` where an unused result would warn):
 
   ```smith
