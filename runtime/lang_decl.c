@@ -365,6 +365,19 @@ static void smith_lang_allow(SmithLang *lang, uint32_t location) {
     lang->allowed[lang->allowed_next++ % smith_lang_allowed_max] = location; // a ring: a macro expands at once
 }
 
+// `x::name` where the module's header lists its exports and `name` is not among them (`lang->tmp` holds the C name the
+// access makes): a typo, a private name, or a header from before the module had it. The one error; clang's own
+// "undeclared identifier" at the place is kept out of the way.
+static void smith_lang_check_listed(SmithLang *lang, const SmithHost *host, const SmithLangBinding *binding,
+                                    const SmithToken *taken, size_t total) {
+    if (!binding->listed || smith_lang_written_lookup(lang, lang->tmp, total) != nullptr) return;
+    smith_lang_error(lang, host, taken->location,
+                     "module `%s` has no export `%.*s`; if it has one, the header smith wrote for it is stale: `smith "
+                     "build` writes it again",
+                     smith_lang_str(binding->module), (int)taken->length, taken->text);
+    if (host->suppress != nullptr) host->suppress(host->context, taken->location);
+}
+
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
@@ -424,13 +437,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         memcpy(lang->tmp + prefix_length, taken.text, taken.length);
         lang->tmp[total] = 0;
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
-        if (binding->listed && chosen == nullptr && smith_lang_written_lookup(lang, lang->tmp, total) == nullptr) {
-            smith_lang_error(lang, host, taken.location,
-                             "module `%s` has no export `%.*s`; if it has one, the header smith wrote for it is "
-                             "stale: `smith build` writes it again",
-                             smith_lang_str(binding->module), (int)taken.length, taken.text);
-            if (host->suppress != nullptr) host->suppress(host->context, taken.location);
-        }
+        if (chosen == nullptr) smith_lang_check_listed(lang, host, binding, &taken, total);
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);

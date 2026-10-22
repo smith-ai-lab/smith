@@ -361,6 +361,7 @@ bool smith_lang_call_site_at(const SmithLang *lang, size_t index, SmithCallSite 
 typedef struct {
     char name[256];
     char source[512];
+    bool exported; // the generic is an export of its module (else a private helper: its instances are no export)
 } SmithInstanceOrigin;
 
 size_t smith_lang_instance_count(const SmithLang *lang);

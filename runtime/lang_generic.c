@@ -2114,6 +2114,7 @@ bool smith_lang_instance_at(const SmithLang *lang, size_t index, SmithInstanceOr
     const SmithLangInstance *instance = &smith_lang_instances[index];
     snprintf(out->name, sizeof out->name, "%s", smith_lang_str(instance->cname));
     snprintf(out->source, sizeof out->source, "%s", smith_lang_str(smith_lang_generics[instance->generic].source));
+    out->exported = smith_lang_generics[instance->generic].exported;
     return true;
 }
 

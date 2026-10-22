@@ -2530,7 +2530,7 @@ class SmithHook final : public TokenHook, public NameSource {
         for (size_t i = 0, count = smith_lang_instance_count(lang); i < count; i++) {
             SmithInstanceOrigin origin;
             if (!smith_lang_instance_at(lang, i, &origin)) break;
-            names->instance_files[origin.name] = absolute(origin.source);
+            names->instance_files[origin.name] = {absolute(origin.source), origin.exported};
         }
         for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
             SmithCallSite found;

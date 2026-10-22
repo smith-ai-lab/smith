@@ -383,14 +383,18 @@ class Effects final : public ClangTidyCheck {
 
     // The file a function belongs to. An instance of a generic is compiled in the file that calls it, but it is the
     // code of its generic's module: that module's file.
-    std::string home_of(const FunctionDecl *fn, const SourceManager &sm) const {
+    // `private_instance` is set for an instance of a generic that its module does not export: no export either.
+    std::string home_of(const FunctionDecl *fn, const SourceManager &sm, bool &private_instance) const {
+        private_instance = false;
         std::string file = file_of(sm, fn->getLocation());
         if (!in_smith_file(sm)) return file;
         OptionalFileEntryRef main = sm.getFileEntryRefForID(sm.getMainFileID());
         std::shared_ptr<const ::smith::FileNames> names = ::smith::namesOf(main->getName().str());
         if (names == nullptr) return file;
         auto found = names->instance_files.find(fn->getName().str());
-        return found == names->instance_files.end() ? file : found->second;
+        if (found == names->instance_files.end()) return file;
+        private_instance = !found->second.exported;
+        return found->second.file;
     }
 
     // Whether a .smith module's file is the source of a generated header that defines a capability: the header
@@ -551,14 +555,15 @@ class Effects final : public ClangTidyCheck {
         ASTContext &context = *Result.Context;
         const SourceManager &sm = *Result.SourceManager;
         scan(context, sm);
-        bool implementation = implements(home_of(fn, sm));
+        bool private_instance = false;
+        bool implementation = implements(home_of(fn, sm, private_instance));
         bool failure_path =
             is_failure_name(fn->getName()) || fn->isNoReturn(); // a function that stops the program may say why
         Info scratch{fn, {}, {}};
         Walker walker(*this, fn, context, implementation, failure_path, &scratch);
         walker.TraverseStmt(fn->getBody());
         if (!implementation || failure_path) return;
-        if (!fn->isExternallyVisible()) {
+        if (!fn->isExternallyVisible() || private_instance) {
             capability_functions[fn->getCanonicalDecl()] = std::move(scratch);
             return;
         }
