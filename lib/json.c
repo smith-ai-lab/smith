@@ -562,7 +562,7 @@ typedef struct {
 static bool smith_json_measure(SmithText input, SmithJsonLimits limits, SmithJsonSize *size, SmithJsonError *error) {
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     size_t bytes = 0;
-    for (;;) {
+    for (size_t reads = 0; reads <= input.length; reads++) { // every token but the last takes a byte of the input
         SmithJsonToken token = smith_json_read(&reader);
         if (token == SmithJsonToken_Error) {
             *error = reader.error;

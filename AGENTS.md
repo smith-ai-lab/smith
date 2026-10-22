@@ -297,6 +297,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
+- **The idiom checks of issue #47 are clang-tidy checks, on in smith's default `.clang-tidy` and its own** (`shim/idiom.h`,
+  registered in `shim/tidy.cpp` beside the two above; the editor runs them; skill smith-check, smith-idiom). Each message
+  names the fix. `.smith` only: `smith-sized-types` (`uint32_t`, `size_t`, `double`, `unsigned`, `long`, `int` outside `main`'s
+  signature: write `u32`, `usize`, `f64`), `smith-module-library` (a library that is a module used through its C header: `import
+  smith::arena;`). `.smith` and C, not C++: `smith-bounded-loop` (no `for (;;)`, `while (true)`, `do ... while (1)` outside `main`),
+  `smith-c23` (`NULL`, `_Bool`, `_Static_assert`, `<stdbool.h>`, `{0}`, `__attribute__((noreturn))` and kin: `nullptr`, `bool`, `static_assert`, `{}`,
+  `[[noreturn]]`) and `smith-constexpr` (a file-scope `const` with a constant initializer, of arithmetic, enum, array or
+  record type, internal linkage in C: `constexpr`). smith's own C passes the C-side ones.
 - **`smith-effects` is a clang-tidy check that a program touches the world only through capabilities passed down from
   `main`** (`shim/effects.h`, registered in `shim/tidy.cpp` beside `SmithNaming`, so `smith lint` and `smith lsp` both
   run it, `.smith` names as written; skill smith-io). `main` makes `SmithIo io = smith_io_make(argc, argv)` and a function

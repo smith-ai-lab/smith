@@ -9,10 +9,10 @@
 // are read by name and written as a result with the extra members `protocolVersion`, `capabilities` and `serverInfo`.
 
 static const char *const smith_mcp_versions[] = {"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"};
-static const char smith_mcp_legacy_newest[] = "2025-11-25";
-static const char smith_mcp_name[] = "smith";
-static const char smith_mcp_version[] = "0.0";
-static const char smith_mcp_instructions[] =
+static constexpr char smith_mcp_legacy_newest[] = "2025-11-25";
+static constexpr char smith_mcp_name[] = "smith";
+static constexpr char smith_mcp_version[] = "0.0";
+static constexpr char smith_mcp_instructions[] =
     "A debugger for C, C++ and Objective-C programs (and .smith ones). launch a program, or a test of the project by "
     "name, with breakpoints; then continue, step_over, step_in or step_out; read the stack, variables and evaluate "
     "expressions while it is stopped; stop ends the session. The program must be built with -g. Output and exits come "

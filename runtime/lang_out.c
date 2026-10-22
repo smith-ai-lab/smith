@@ -72,7 +72,7 @@ static const char *smith_lang_pool_text(const SmithLangPool *pool, const SmithLa
 }
 
 static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
-    SmithLangGenToken kept = {0};
+    SmithLangGenToken kept = {};
     kept.kind = (uint8_t)token->kind;
     kept.flags =
         (uint8_t)((token->line_start ? smith_lang_gen_flag_line_start : 0) |
@@ -84,7 +84,7 @@ static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
 
 // The token back as the lowering writes it: not from the source (the parser has no token of it).
 static SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLangGenToken *kept) {
-    SmithToken token = {0};
+    SmithToken token = {};
     token.kind = (SmithTokenKind)kept->kind;
     token.handle = smith_token_no_handle;
     token.text = smith_lang_pool_text(pool, kept);
@@ -284,7 +284,7 @@ static void smith_lang_emit_kept(SmithLang *lang, const SmithHost *host, const S
 }
 
 static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like) {
-    SmithToken made = {0};
+    SmithToken made = {};
     made.kind = kind;
     made.line_start = like->line_start;
     made.space_before = like->space_before;

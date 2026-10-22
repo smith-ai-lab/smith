@@ -73,7 +73,7 @@ static bool smith_lang_path_matches(const char *file, const char *path) {
 }
 
 static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
-    SmithLangModuleName name = {0};
+    SmithLangModuleName name = {};
     bool good = smith_lang_read_module_name(lang, host, &name);
     if (!good) {
         smith_lang_skip_line(lang, host);
@@ -217,14 +217,14 @@ static bool smith_lang_import_is_target(SmithLang *lang, const char *module, con
 }
 
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
-    SmithLangModuleName name = {0};
+    SmithLangModuleName name = {};
     if (!smith_lang_read_module_name(lang, host, &name)) {
         smith_lang_skip_line(lang, host);
         return;
     }
     const char *bind = name.last;
     size_t bind_length = strlen(name.last);
-    SmithToken alias = {0};
+    SmithToken alias = {};
     if (smith_lang_ident(smith_lang_peek(lang, host, 0, false), "as")) {
         smith_lang_take(lang, host);
         alias = smith_lang_take(lang, host);
