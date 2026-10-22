@@ -2,14 +2,14 @@
 import primes;
 
 import smith::contract;
-import <smith/io.h>;
+import smith::io;
 
 // main makes the program's io once, and only main may: it passes down the parts each function needs.
 int main(int argc, char **argv) {
-    c::SmithIo io = c::smith_io_make(argc, argv);
+    io::Io io = io::make(argc, argv);
     i32 sum = primes::sum(5);
     contract::assert(sum == 28);
     primes::report(&io.console, sum);
-    c::smith_io_close(&io);
+    io::close(&io);
     return 0;
 }

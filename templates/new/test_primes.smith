@@ -1,9 +1,9 @@
 // The tests of @NAME@, run by `smith test`. A test is a function named test_<name>, defined as below, and its signature
-// says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, `(c::SmithIo *io)` gets a real io.
+// says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, `(io::Io *io)` gets a real io.
 import primes;
 import smith::arena;
+import smith::io;
 import smith::test;
-import <smith/io.h>;
 import <string.h>;
 
 void test_the_first_five_primes_add_up_to_28(void) {
@@ -23,9 +23,8 @@ void test_six_primes_are_one_too_many(void) {
 // report prints through the console it is given, so a test gives it the fake one and reads what it printed.
 void test_report_prints_the_sum(void) {
     arena::Arena memory = test::memory(1 << 20);
-    c::SmithIo io =
-        c::smith_io_make_test((c::SmithIoTest){.memory = memory.memory, .capacity = memory.capacity, .seed = 1});
+    io::Io io = io::make_test((io::Test){.memory = memory.memory, .capacity = memory.capacity, .seed = 1});
     primes::report(&io.console, 28);
-    const char *printed = c::smith_io_test_output(&io);
+    const char *printed = io::test_output(&io);
     test::check_equal(c::strcmp(printed, "the first 5 primes add up to 28\nhello from @NAME@\n"), 0);
 }

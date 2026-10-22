@@ -11,10 +11,11 @@ you commit: it checks the formatting, the lint and these documents (`smith docs`
   program, named for the folder; what it imports or includes is compiled with it; the files under `tests/` are the tests.
   `smith build` is the debug profile (sanitizers on), `smith build release` keeps assertions on, `smith build fast`
   turns them off. `smith fmt` and `smith lint` use smith's own style and checks.
-- **Effects come through parameters from `main`.** `main` makes `SmithIo io = smith_io_make(argc, argv)`, and a function
-  that touches the world takes the part it needs (`SmithFiles *`, `SmithConsole *`, `SmithClock *`...), so its signature
-  says what it can do and a test passes a fake (`smith_io_make_test`). `smith lint` reports a raw call (`printf`,
-  `fopen`) with the capability to take instead; the smith-io skill has the rules.
+- **Effects come through parameters from `main`.** `main` makes the io, `io::Io io = io::make(argc, argv)` in `.smith`
+  (`SmithIo io = smith_io_make(argc, argv)` in C), and a function that touches the world takes the part it needs
+  (`io::Files *`, `io::Console *`, `io::Clock *`...; `SmithFiles *` in C), so its signature says what it can do and a
+  test passes a fake (`io::make_test`; `smith_io_make_test` in C). `smith lint` reports a raw call (`printf`, `fopen`)
+  with the capability to take instead; the smith-io skill has the rules.
 - **The verbs do the work:** `smith run`, `smith test`, `smith fmt`, `smith lint`, `smith docs`, `smith prove` and `smith
   check`. The skills of the smith plugin, which `.claude/settings.json` enables, say how.
 - **To change a default, write it down first.** `smith fmt --dump-config > .clang-format` and `smith lint --dump-config >
