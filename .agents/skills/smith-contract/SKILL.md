@@ -30,7 +30,6 @@ for (uint8_t square = 0; square < squares; square++) {
 | `smith_requires(c)` | the start of a function | a caller must make `c` true |
 | `smith_ensures(c)` | just before a `return` (one return, after one `smith_ensures` per promise) | the function makes `c` true |
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass |
-| `SMITH_CONTRACT_FOR(Type, spec)` | file scope | a macro, since it declares: records that the function pointer type `Type` has the contract `spec`, a function whose only statements are contracts; it only records the pair |
 
 - An old value is a `const` local saved at the top: `const uint8_t old = moves->len;`. The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
