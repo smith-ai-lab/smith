@@ -77,11 +77,8 @@ import <smith/trace.h>;
 // nothing, at run time or anywhere else.
 [[smith::c_name("smith_contract_trusted")]] export void check_trusted(void) {}
 
-// The five wrappers below keep `__attribute__((unused))`: the lowering writes an exported inline function static in
-// this file, which -Wunused-function reports, and [[maybe_unused]] is not accepted beside [[smith::c_name]] here.
-// NOLINTBEGIN(smith-c23)
 
-[[smith::c_name("smith_requires")]] export inline __attribute__((always_inline, unused)) void requires(bool condition) {
+[[smith::c_name("smith_requires")]] export [[gnu::always_inline, maybe_unused]] inline void requires(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -91,7 +88,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_ensures")]] export inline __attribute__((always_inline, unused)) void ensures(bool condition) {
+[[smith::c_name("smith_ensures")]] export [[gnu::always_inline, maybe_unused]] inline void ensures(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -101,7 +98,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_invariant")]] export inline __attribute__((always_inline, unused)) void
+[[smith::c_name("smith_invariant")]] export [[gnu::always_inline, maybe_unused]] inline void
 invariant(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
@@ -112,7 +109,7 @@ invariant(bool condition) {
     }
 }
 
-[[smith::c_name("smith_assert")]] export inline __attribute__((always_inline, unused)) void assert(bool condition) {
+[[smith::c_name("smith_assert")]] export [[gnu::always_inline, maybe_unused]] inline void assert(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -122,10 +119,9 @@ invariant(bool condition) {
     }
 }
 
-[[smith::c_name("smith_trusted")]] export inline __attribute__((always_inline, unused)) void trusted(void) {
+[[smith::c_name("smith_trusted")]] export [[gnu::always_inline, maybe_unused]] inline void trusted(void) {
     if constexpr (target::static_analyzer) {
     } else if constexpr (target::assertions) {
         check_trusted();
     }
 }
-// NOLINTEND(smith-c23)

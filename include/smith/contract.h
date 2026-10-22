@@ -86,7 +86,7 @@ void smith_contract_assert(bool condition);
 // nothing, at run time or anywhere else.
 void smith_contract_trusted(void);
 
-static inline __attribute__((always_inline, unused)) void smith_requires(bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_requires(bool condition) {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
         __builtin_assume(condition);
@@ -102,7 +102,7 @@ static inline __attribute__((always_inline, unused)) void smith_requires(bool co
 #endif
 }
 
-static inline __attribute__((always_inline, unused)) void smith_ensures(bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_ensures(bool condition) {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
         __builtin_assume(condition);
@@ -118,7 +118,7 @@ static inline __attribute__((always_inline, unused)) void smith_ensures(bool con
 #endif
 }
 
-static inline __attribute__((always_inline, unused)) void smith_invariant(bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_invariant(bool condition) {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
         __builtin_assume(condition);
@@ -134,7 +134,7 @@ static inline __attribute__((always_inline, unused)) void smith_invariant(bool c
 #endif
 }
 
-static inline __attribute__((always_inline, unused)) void smith_assert(bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_assert(bool condition) {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
         __builtin_assume(condition);
@@ -150,7 +150,7 @@ static inline __attribute__((always_inline, unused)) void smith_assert(bool cond
 #endif
 }
 
-static inline __attribute__((always_inline, unused)) void smith_trusted(void) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_trusted(void) {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
     }

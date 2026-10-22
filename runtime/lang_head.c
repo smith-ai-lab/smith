@@ -407,11 +407,17 @@ static void smith_lang_after_head(SmithLang *lang, const SmithHost *host, const 
 // (the includer's compiler inlines it, or makes its own copy), and its body goes to the header with the head.
 static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) {
     lang->decl.inline_header = true;
-    SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
+    // After the attributes the head begins with ([[maybe_unused]] static inline ...): one that follows a storage class
+    // belongs to the type, and the compiler refuses it before `inline`.
+    size_t at = smith_lang_head_after_attributes(lang);
+    SmithToken first = smith_lang_held_token(lang, &lang->head[at]);
+    for (size_t i = 0; i < at; i++) // the attributes
+        smith_lang_emit_held(lang, host, i, true);
     smith_lang_emit(lang, host, smith_lang_static_keyword(&first));
-    lang->head[0].line_start = false;
-    lang->head[0].space_before = true;
-    smith_lang_emit_head(lang, host, true, false);
+    lang->head[at].line_start = false;
+    lang->head[at].space_before = true;
+    for (size_t i = at; i < lang->head_count; i++) // bounded by the head
+        smith_lang_emit_held(lang, host, i, true);
 }
 
 // runtime/lang_generic.c
