@@ -185,11 +185,11 @@ static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, cons
     const char *text = nullptr;
     uint32_t length = 0;
     if (host->read_header != nullptr && host->read_header(host->context, header, &text, &length)) {
-        smith_lang_written_import(lang, host, text, length, module, bound);
         SmithLangBinding *binding = smith_lang_binding_find(lang, bind, bind_length);
         if (binding != nullptr && length > 0 && memmem(text, length, "// smith-names:", 15) != nullptr) {
-            binding->listed = true;
+            binding->listed = true; // (before the reads below: the host keeps its buffer only until the next one)
         }
+        smith_lang_written_import(lang, host, text, length, module, bound);
     }
 }
 

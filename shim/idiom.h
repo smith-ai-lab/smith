@@ -585,4 +585,60 @@ class ConstexprCheck final : public ClangTidyCheck {
     }
 };
 
+// ---- smith-designated-init ------------------------------------------------------------------------------------------
+
+// `{"src/base", fast}` for a struct another module (or header) defines is positional: when the struct gains a field,
+// the values shift or the compiler warns at every such site. Naming the fields (`{.path = "src/base", .fast = fast}`)
+// is a change the other module cannot break. A struct the file defines itself, a system header's struct and an
+// initializer of one value are left alone.
+class DesignatedInitCheck final : public ClangTidyCheck {
+  public:
+    DesignatedInitCheck(llvm::StringRef Name, ClangTidyContext *Context) : ClangTidyCheck(Name, Context) {}
+
+    bool isLanguageVersionSupported(const LangOptions &options) const override {
+        return !options.CPlusPlus; // the check is for .smith
+    }
+
+    void registerMatchers(ast_matchers::MatchFinder *Finder) override {
+        using namespace ast_matchers;
+        Finder->addMatcher(initListExpr().bind("list"), this);
+    }
+
+    void check(const ast_matchers::MatchFinder::MatchResult &Result) override {
+        const SourceManager &sm = *Result.SourceManager;
+        if (!is_smith_file(sm, sm.getMainFileID())) return;
+        const auto *list = Result.Nodes.getNodeAs<InitListExpr>("list");
+        const InitListExpr *written = list->isSemanticForm() && list->getSyntacticForm() != nullptr
+                                          ? list->getSyntacticForm()
+                                          : list;
+        if (written->getNumInits() < 2) return;
+        SourceLocation at = written->getBeginLoc();
+        if (!at.isValid() || at.isMacroID() || sm.getFileID(at) != sm.getMainFileID()) return;
+        for (const Expr *init : written->inits()) {
+            if (isa<DesignatedInitExpr>(init)) return;
+        }
+        const RecordDecl *record = list->getType().getCanonicalType()->getAsRecordDecl();
+        if (record == nullptr || !record->isStruct()) return;
+        SourceLocation defined = sm.getFileLoc(record->getLocation());
+        if (!defined.isValid() || sm.isInSystemHeader(defined) || sm.getFileID(defined) == sm.getMainFileID()) return;
+        if (!seen.insert(at.getRawEncoding()).second) return; // a generic's instances are copies of one source
+        std::string name = record->getName().str();
+        if (name.empty()) {
+            if (const TypedefNameDecl *typedef_name = record->getTypedefNameForAnonDecl()) {
+                name = typedef_name->getName().str();
+            }
+        }
+        diag(at, "this initializes `%0`, which another file defines, by position: name the fields (`{.field = value, "
+                 "...}`), so that a field added to it cannot shift the values")
+            << name;
+    }
+
+    void onEndOfTranslationUnit() override {
+        seen.clear();
+    }
+
+  private:
+    std::set<unsigned> seen;
+};
+
 } // namespace clang::tidy::smith_idiom

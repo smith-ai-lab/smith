@@ -520,6 +520,42 @@ expected="idiom/library_test.smith:3:1: error: \`import <smith/test.h>;\` reads 
 idiom/library_test.smith:6:8: error: \`c::smith_check_equal_i32\` is \`test::check_equal_i32\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check_equal_i32\` (or, better, the generic \`test::check_equal(a, b)\`, which infers the type from its arguments)
 idiom/library_test.smith:7:8: error: \`c::smith_check\` is \`test::check\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check\`"
 expect "smith-module-library: a named instance of a generic points to the generic" "$expected" "$(idiom_findings <"$work/library-test.out")"
+cat >"$work/p/idiom/shape.h" <<'EOF2'
+#pragma once
+typedef struct {
+    int width;
+    int height;
+} Shape;
+EOF2
+cat >"$work/p/idiom/designated.smith" <<'EOF2'
+module idiom::designated;
+
+import "shape.h";
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Mine;
+
+export void use(void) {
+    c::Shape by_position = {3, 4};
+    c::Shape by_name = {.width = 3, .height = 4};
+    c::Shape one = {3};
+    c::Shape none = {};
+    Mine own = {1, 2};
+    c::Shape *made = &(c::Shape){5, 6};
+    (void)by_position;
+    (void)by_name;
+    (void)one;
+    (void)none;
+    (void)own;
+    (void)made;
+}
+EOF2
+idiom smith-designated-init idiom/designated.smith >"$work/designated.out"
+expected="idiom/designated.smith:11:28: error: this initializes \`Shape\`, which another file defines, by position: name the fields (\`{.field = value, ...}\`), so that a field added to it cannot shift the values
+idiom/designated.smith:16:33: error: this initializes \`Shape\`, which another file defines, by position: name the fields (\`{.field = value, ...}\`), so that a field added to it cannot shift the values"
+expect "smith-designated-init: a positional initializer of another file's struct, and nothing else" "$expected" "$(idiom_findings <"$work/designated.out")"
 idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith >"$work/library-ok.out"
 expect "smith-module-library: import smith::arena is clean, and so is a C header that is no module" "" "$(idiom_findings <"$work/library-ok.out")"
 
