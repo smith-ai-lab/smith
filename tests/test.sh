@@ -129,7 +129,7 @@ run_plain() { # runner arguments
 # The spaces are squeezed on both sides, because the columns of the chain follow the longest path in it.
 have_symbolizer=$("$smith" symbolize --available && echo yes)
 report() { # runner arguments
-    build/tests $iso --trace "$@" 2>&1 | "$smith" symbolize 2>&1 | plain | sed '/smith_test_execute/d'
+    build/tests $iso --trace "$@" 2>&1 | "$smith" symbolize 2>&1 | plain | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d'
 }
 expect_report() { # name, expected report, runner arguments
     name=$1
@@ -1047,32 +1047,33 @@ fi
 # 4b. Shrinking, in three parts (each runs the same test file in a project of its own).
 if part shrink_int shrink_list shrink_normal; then
 project "$work/shrink"
-cat >tests/test_shrink.c <<'C'
-#include <smith/test.h>
+cat >tests/test_shrink.smith <<'C'
+import smith::random;
+import smith::test;
 
-void test_shrink_int(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <, 500);
+void test_shrink_int(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
 }
 
-void test_shrink_list(SmithKey key) {
-    long long length = smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 8});
-    for (long long i = 0; i < length; i++) {
-        long long item = smith_uniform_int64_sample(smith_key_derive(key, (uint64_t)i + 1), (SmithUniformInt64){.low = 0, .high = 100});
-        smith_test_note("length %lld, item %lld", length, i);
-        SMITH_CHECK(item, <=, 90);
+void test_shrink_list(random::Key key) {
+    i64 length = random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 8});
+    for (i64 i = 0; i < length; i++) {
+        i64 item = random::uniform_int64_sample(random::key_derive(key, (u64)i + 1), (random::UniformInt64){.low = 0, .high = 100});
+        test::note("length %lld, item %lld", length, i);
+        test::check_less_equal(item, 90);
     }
 }
 
-void test_shrink_normal(SmithKey key) {
-    double z = smith_normal_double_sample(key, (SmithNormalDouble){.mean = 0, .deviation = 1});
-    SMITH_CHECK(z, <, 3.0);
+void test_shrink_normal(random::Key key) {
+    f64 z = random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
+    test::check_less(z, 3.0);
 }
 
-void test_shrink_moves(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <, 500);
-    SMITH_CHECK(x, !=, 0); // the failure that shrinking to 0 would move to
+void test_shrink_moves(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
+    test::check_not_equal(x, 0); // the failure that shrinking to 0 would move to
 }
 C
 capture "$smith" build
@@ -1080,53 +1081,62 @@ expect "shrink: the runner builds" 0 "$rc"
 fi
 
 if part shrink_int; then
-line=$(line_of tests/test_shrink.c 'SMITH_CHECK(x, <, 500);')
-capture build/tests $iso --test shrink_int --shrink-seconds 3600
-seed=$(printf '%s' "$out" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
-expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
-  tests/test_shrink.c:$line
-      SMITH_CHECK(x, <, 500);
-    x = 500   (long long)
-    500       (long long)
-    rerun: smith test --test shrink_int --seed $seed
+line=$(line_of tests/test_shrink.smith 'test::check_less(x, 500);')
+shrunk=$(report --test shrink_int --shrink-seconds 3600)
+seed=$(printf '%s' "$shrunk" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
+runs=$(printf '%s' "$shrunk" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+if [ -n "$have_symbolizer" ]; then
+    expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
+ check failed at tests/test_shrink.smith:$line
+ $line | test::check_less(x, 500);
+ x = 500, 500 (i64)
+ called from
+ tests/test_shrink.smith:$line test_shrink_int
+ rerun: smith test --test shrink_int --seed $seed
 
-0 passed, 1 failed" "$(printf '%s' "$out" | plain | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/')"
-runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+0 passed, 1 failed" "$(printf '%s' "$shrunk" | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/' | tr -s ' ')"
+fi
+capture build/tests $iso --test shrink_int --shrink-seconds 3600
+expect_contains "shrink: the runner on its own shows 500 and 500" "$out" "    a = 500   (i64)
+    b = 500   (i64)"
 expect "shrink: ... in at most 1000 runs" yes "$([ -n "$runs" ] && [ "$runs" -le 1000 ] && echo yes)"
 
 capture build/tests $iso --test shrink_int --shrink 0
-unshrunk=$(printf '%s' "$out" | sed -n 's/^    x = \([0-9]*\) .*/\1/p')
+unshrunk=$(printf '%s' "$out" | sed -n 's/^    a = \([0-9]*\) .*/\1/p')
 expect "shrink: --shrink 0 shows the unshrunk failure" yes "$([ "$unshrunk" -gt 500 ] && echo yes)"
 expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
 
 capture "$smith" test $iso --test shrink_int --seed "$seed"
-expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
+expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500, 500   (i64)"
 fi
 
 if part shrink_list; then
-# The same command twice, side by side: it takes a minute under --isolate.
-(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-first") &
-(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-second") &
+# The same command twice, side by side: it takes a minute under --isolate. The addresses of the trace differ per run.
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)' >"$work/shrink-first") &
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)' >"$work/shrink-second") &
 wait
 first=$(cat "$work/shrink-first")
 expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
-expect_contains "shrink: ... of 91" "$first" "    item = 91   (long long)"
+expect_contains "shrink: ... of 91" "$first" "    a = 91   (i64)"
 second=$(cat "$work/shrink-second")
 expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
 fi
 
 if part shrink_normal; then
 capture build/tests $iso --test shrink_normal --shrink-seconds 3600 --seeds 5000
-z=$(printf '%s' "$out" | sed -n 's/^    z *= \([0-9.e+-]*\) .*/\1/p')
+z=$(printf '%s' "$out" | sed -n 's/^    a = \([0-9.e+-]*\) .*/\1/p')
 expect_contains "shrink: a normal with z < 3 shrinks" "$out" "FAIL shrink_normal with seed"
 expect "shrink: ... to the z nearest 3 from above" yes "$(awk -v z="$z" 'BEGIN { print (z >= 3 && z < 3.0000001) ? "yes" : "no" }')"
 fi
 
 if part shrink_int; then
-line=$(grep -n -F 'SMITH_CHECK(x, <, 500);' tests/test_shrink.c | sed -n 2p | cut -d: -f1)
 capture build/tests $iso --test shrink_moves --shrink-seconds 3600
-expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
-expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
+expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    a = 500   (i64)"
+if [ -n "$have_symbolizer" ]; then
+    line=$(grep -n -F 'test::check_less(x, 500);' tests/test_shrink.smith | sed -n 2p | cut -d: -f1)
+    capture sh -c "build/tests $iso --test shrink_moves --shrink-seconds 3600 --trace 2>&1 | '$smith' symbolize"
+    expect_contains "shrink: ... and it is the first check" "$out" "  check failed at tests/test_shrink.smith:$line"
+fi
 
 fi
 
@@ -1134,29 +1144,35 @@ if part alongside; then
 # Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes more
 # than 64 KiB, waits a second and writes more, still passes with --timeout 2.
 project "$work/alongside"
-cat >tests/test_alongside.c <<'C'
-#include <smith/test.h>
+cat >tests/test_alongside.smith <<'C'
+import <stdio.h>;
+import <unistd.h>;
+import smith::random;
+import smith::test;
 
-#include <stdio.h>
-
-void test_a_shrinks_slowly(SmithKey key) {
-    usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
-    long long smallest = 1000000000;
-    for (uint64_t i = 0; i < 200; i++) {
-        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
-        if (v < smallest) smallest = v;
+void test_a_shrinks_slowly(random::Key key) {
+    c::usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
+    i64 smallest = 1000000000;
+    for (u64 i = 0; i < 200; i++) {
+        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) {
+            smallest = v;
+        }
     }
-    SMITH_CHECK(smallest, <, 1000);
+    test::check_less(smallest, 1000);
 }
 
 void test_b_writes_a_lot(void) {
-    for (int i = 0; i < 1000; i++) printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
-    usleep(1000000);                                      // while the runner shrinks the other test
-    for (int i = 0; i < 3000; i++) printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
-    printf("done\n");
+    for (i32 i = 0; i < 1000; i++) {
+        c::printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
+    }
+    c::usleep(1000000); // while the runner shrinks the other test
+    for (i32 i = 0; i < 3000; i++) {
+        c::printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
+    }
+    c::printf("done\n");
 }
 C
-sed -i.bak 's/#include <stdio.h>/#include <stdio.h>\n#include <unistd.h>/' tests/test_alongside.c && rm tests/test_alongside.c.bak
 capture "$smith" build -DSAN=0
 expect "alongside: the runner builds" 0 "$rc"
 capture build/tests $iso --timeout 2 --jobs 2
@@ -1168,16 +1184,19 @@ fi
 if part budget; then
 # The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds.
 project "$work/budget"
-cat >tests/test_budget.c <<'C'
-#include <smith/test.h>
+cat >tests/test_budget.smith <<'C'
+import smith::random;
+import smith::test;
 
-void test_budget(SmithKey key) {
-    long long smallest = 1000000000;
-    for (uint64_t i = 0; i < 200; i++) {
-        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
-        if (v < smallest) smallest = v;
+void test_budget(random::Key key) {
+    i64 smallest = 1000000000;
+    for (u64 i = 0; i < 200; i++) {
+        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) {
+            smallest = v;
+        }
     }
-    SMITH_CHECK(smallest, <, 1000);
+    test::check_less(smallest, 1000);
 }
 C
 capture "$smith" build -DSAN=0
