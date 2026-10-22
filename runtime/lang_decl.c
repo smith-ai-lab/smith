@@ -323,6 +323,9 @@ static void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
     if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
 
+// runtime/lang_generic.c: the body of an exported generic is being recorded
+static bool smith_lang_recording_exported(const SmithLang *lang);
+
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------
 
@@ -360,10 +363,14 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
     smith_lang_take(lang, host);
     SmithToken taken = smith_lang_take(lang, host);
     if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);
+    if (!binding->is_c && smith_lang_recording_exported(lang)) { // a call to a generic, say, which has no `via` token
+        lang->bindings[binding - lang->bindings].in_header = true;
+    }
     if (binding->is_c) {
         smith_lang_allow(lang, taken.location);
         *result = smith_lang_made(name, taken.text, taken.length, true);
         result->location = taken.location;
+        result->via = (uint16_t)(binding - lang->bindings + 1);
     } else if (smith_lang_generic_call(lang, host, name, binding, &taken)) {
         lang->namespace_done = true; // the call, with its arguments, is written
     } else {
@@ -384,6 +391,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         }
         *result = smith_lang_made(name, lang->tmp, total, false);
         result->location = taken.location;
+        result->via = (uint16_t)(binding - lang->bindings + 1);
         smith_lang_written_access(lang, binding, total, taken.text, taken.length);
     }
     return true;

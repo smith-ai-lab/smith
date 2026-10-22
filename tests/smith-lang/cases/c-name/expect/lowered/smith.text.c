@@ -1,3 +1,5 @@
+#include "smith/arena.h"
+
 __UINT64_TYPE__ smith_text_fill(__UINT64_TYPE__ capacity) __asm__("_smith::text::fill");
 __UINT64_TYPE__ smith_text_fill(__UINT64_TYPE__ capacity) {
 smith_arena_Arena a = smith_arena_make(capacity);

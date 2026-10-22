@@ -7,9 +7,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include "arena.h"
-#include "list.h"
-#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

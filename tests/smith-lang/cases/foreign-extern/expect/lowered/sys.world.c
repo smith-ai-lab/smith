@@ -1,3 +1,5 @@
+#include <string.h>
+
 extern char **environ;
 extern __UINT32_TYPE__ foreign_counter;
 extern __UINT32_TYPE__ foreign_triple(__UINT32_TYPE__ x);

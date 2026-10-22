@@ -7,7 +7,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

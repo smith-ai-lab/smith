@@ -7,8 +7,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include "shape/box.h"
-#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -1,3 +1,8 @@
+#include <math.h>
+#include <sys/wait.h>
+#include <stdio.h>
+#include "local.h"
+
 int main(void) {
 float root = sqrtf(81.0f);
 int status = 256 * 3;

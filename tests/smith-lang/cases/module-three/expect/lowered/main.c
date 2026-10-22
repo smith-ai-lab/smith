@@ -1,3 +1,8 @@
+#include "game/replay.h"
+#include "lib/text.h"
+#include <stdio.h>
+#include <math.h>
+
 int main(void) {
 game_replay_Handle handle = {.fd = 5};
 game_replay_Replay replay = game_replay_open(&handle, "last.replay");

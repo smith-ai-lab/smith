@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 typedef int (*kit_things_Callback)(int value);
 typedef union { __UINT32_TYPE__ whole; __UINT8_TYPE__ bytes[4]; } kit_things_Word;
 typedef struct kit_things_Node {

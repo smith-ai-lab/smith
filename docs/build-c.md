@@ -745,11 +745,11 @@ A source that ends in `.smith` in `smith_object` is a module (its first line is 
 file ([smith-lang.md](smith-lang.md)). Nothing else in build.c changes: the manifest gets
 
 - for each module, a **header step**: `<compiler> --smith-header <source> -o .smith/include/a/b.h` (the compiler is the
-  object's, `smith-cc`, which runs the helper in `smith cc --smith-header` without compiling). The step is `.restat`
+  object's, `smith-cc`, which runs the helper in `smith cc --smith-header` without compiling; the object's `-I`, `-D`, `-std=` and similar flags follow, for the question of which of several C imports an export's name comes from). The step is `.restat`
   and the header is written only when its bytes differ, so an edit to a module's body leaves it alone. A module's
   name is read from its `module` line when build.c runs, and its path must end in `a/b.smith` (an error from
   `smith_object` otherwise, once). Two sources that declare one module are an error; one source compiled twice with
-  other flags shares its header step.
+  other flags shares its header step (the first compile's flags are the ones it is given).
 - one **check step** (`.smith/imports.stamp`, a `.run` step, described "check the imports of the modules") that reads
   every header's `// smith-module:` and `// smith-imports:` lines and fails, naming the cycle (`import cycle: a::x ->
   a::y -> a::x`), when the modules import each other in a circle.

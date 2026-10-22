@@ -1,3 +1,5 @@
+#include <string.h>
+
 typedef struct { const char *data; __SIZE_TYPE__ length; } lib_text_Text;
 lib_text_Text lib_text_make(const char *data) __asm__("_lib::text::make");
 lib_text_Text lib_text_make(const char *data) {

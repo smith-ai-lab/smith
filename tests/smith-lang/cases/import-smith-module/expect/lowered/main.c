@@ -1,3 +1,5 @@
+#include "lib/text.h"
+#include "lib/util.h"
 #include <stdio.h>
 int main(void) {
 lib_text_Text t = lib_text_make("hello");

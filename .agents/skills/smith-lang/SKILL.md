@@ -47,8 +47,8 @@ A project's build file can be `.smith` too: a root `build.smith` with `import sm
 
 ## Two commands under the compiler
 
-- `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
-- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written): how to see what a rule does.
+- `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it. The header includes only what the exports use: `<stddef.h>`, `<stdint.h>`, the imported modules and `import <h>;` headers whose names (`x::name`, `c::name`) an export writes, never an `#include` or an import only a body uses (see `smith-lang-c-interop`).
+- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written, and an `import` is written as the `#include` it stands for): how to see what a rule does.
 
 ## In the editor
 
