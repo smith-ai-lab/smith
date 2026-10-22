@@ -531,7 +531,9 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
         }
     }
     names->after_sized = names->after_sized > 1 && word == SmithLangWord_Qualifier ? names->after_sized - 1 : 0;
-    if (smith_lang_find_sized(token->text, token->length) != nullptr && !after_member) names->after_sized = 8;
+    bool type = smith_lang_find_sized(token->text, token->length) != nullptr ||
+                (raw->lang != nullptr && smith_lang_type_name(raw->lang, token->text, token->length));
+    if (type && !after_member) names->after_sized = 8;
     names->before = *token;
 }
 

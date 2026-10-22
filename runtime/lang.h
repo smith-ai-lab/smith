@@ -209,6 +209,9 @@ bool smith_lang_body_sparse(const SmithLang *lang);
 // Whether `name` is a parameter of the function whose body is being read, and so is no name of the module even when
 // the module exports one by that name (the host must leave it as written).
 bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length);
+// Whether `name` is a typedef the module declares (the lowering's own table, no question to the parser): a keyword that
+// follows it is used as a name.
+bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length);
 // A brace of such a body that changes nothing but the nesting: done, and the token goes on unchanged. False for the
 // function's own closing brace and for a struct, union or enum, which the full path reads.
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open);

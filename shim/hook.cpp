@@ -429,7 +429,10 @@ class SmithHook final : public TokenHook, public NameSource {
             return offerLowered(tok);
         }
         if (afterSized > 0 && !look(tok)) return false;
-        bool sized = tok.is(tok::identifier) && sizedNames.find(tok.getIdentifierInfo()) != sizedNames.end();
+        // A sized type name, or a typedef of the module: a keyword after it is a name (`Box double`).
+        bool sized = tok.is(tok::identifier) && (sizedNames.find(tok.getIdentifierInfo()) != sizedNames.end() ||
+                                                 smith_lang_type_name(lang, tok.getIdentifierInfo()->getNameStart(),
+                                                                      tok.getIdentifierInfo()->getLength()));
         if (sized) {
             const IdentifierInfo *beforeInfo = nullptr;
             tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);

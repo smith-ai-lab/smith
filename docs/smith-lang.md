@@ -86,11 +86,12 @@ u32 helper(void) { … }                              // private
     include paths, no `foo.smith` among the input files, and nothing at the path the name implies (`src/foo.smith`)``),
     and the uses of its names (`foo::f`) report nothing more. The same for a cycle and for a module whose source has an
     error.
-  - **A keyword where a name goes**: after a sized type name (and `*` or a qualifier), a C keyword that cannot continue
+  - **A keyword where a name goes**: after a sized type name or a typedef of the module (and `*` or a qualifier), a C keyword that cannot continue
     the type is the name of something. ``foo.smith:3:12: error: `double` is a C keyword; it cannot name a function``,
     and likewise a variable, parameter, field or type. The name is then read as an identifier, so clang adds no cascade
     (a later use of the misnamed thing in an expression, `return int;`, is still clang's "expected expression"). A
-    keyword after another type (`Point double(...)`) is clang's own message.
+    keyword after a typedef of the module (`Box double`) is reported the same way, as one error; after any other type
+    (`Point double(...)` with a typedef from a header) it is clang's own message.
 - **Not yet:** selective imports, re-exports, a module over several files.
 
 ## One command

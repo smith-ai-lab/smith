@@ -310,6 +310,12 @@ bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t lengt
     return lang->in_function && smith_lang_is_param(lang, name, length);
 }
 
+bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length) {
+    if (!lang->is_module) return false;
+    const SmithLangName *known = smith_lang_name_find(lang, name, length);
+    return known != nullptr && known->kind == SmithLangName_Type;
+}
+
 bool smith_lang_body_sparse(const SmithLang *lang) {
     return lang->body_sparse && !lang->broken;
 }
