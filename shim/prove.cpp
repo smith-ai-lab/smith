@@ -7,6 +7,7 @@
 // (shim/prove_alive.cpp). The results print like a test run.
 #include "prove.hpp"
 
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
@@ -38,6 +39,9 @@ extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+// Bump when a change to the prover can change what a function proves or how it fails.
+#define SMITH_PROVER_VERSION "2"
 
 // The checks of UBSan that become explicit branches to a trap in the IR. null, alignment and object-size are left to
 // Alive2's memory model, which treats an invalid access as undefined behaviour itself; pointer-overflow, bool and enum
@@ -234,7 +238,10 @@ std::string cache_path(const std::string &key) {
     if (directory.empty()) return "";
     llvm::SHA256 hash;
     hash.update(key);
-    hash.update(std::string("smith-prove-cache-1 ") + __DATE__ + " " + __TIME__);
+    // The prover's identity: LLVM's version, which decides the IR and Alive2's reading of it, and a version bumped by
+    // hand when a change here or in prove_ir.cpp can change a proof's outcome. The build time is not part of it, so a
+    // rebuild of smith with the same prover keeps every cached proof.
+    hash.update(std::string("smith-prove-cache-" SMITH_PROVER_VERSION " llvm-") + LLVM_VERSION_STRING);
     std::array<uint8_t, 32> digest = hash.final();
     static const char *const hex = "0123456789abcdef";
     std::string name;
@@ -570,6 +577,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         bitcode.push_back(output);
     }
     prove::Program loaded;
+    loaded.verbose = arguments.options.verbose;
     std::string error;
     int result = 0;
     if (status != 0) {
