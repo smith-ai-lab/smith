@@ -89,7 +89,8 @@ verbs_on_new_project() {
     cp "$main.orig" "$main"
     capture smith test
     expect "$label: smith test passes out of the box" 0 "$rc"
-    expect_contains "$label: ... on the two tests of the template" "$out" "2 passed, 0 failed"
+    case $ext in smith) template_tests=4 ;; *) template_tests=2 ;; esac
+    expect_contains "$label: ... on the tests of the template" "$out" "$template_tests passed, 0 failed"
     capture smith test --test no_primes
     expect_contains "$label: smith test --test runs one test" "$out" "1 passed, 0 failed"
     capture smith prove
@@ -165,7 +166,7 @@ done
 for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.c primes.c primes.h; do
     expect "new hello: writes no $f" no "$(exists "hello/$f")"
 done
-expect_contains "new hello: main.smith names the program" "$(cat hello/main.smith)" 'c::smith_console_print(console, "hello from hello\n");'
+expect_contains "new hello: primes.smith names the program" "$(cat hello/primes.smith)" 'c::smith_console_print(console, "hello from hello\n");'
 expect "new hello: no placeholder is left" "" "$(grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith)"
 expect "new hello: .gitignore is the template" "$(cat "$here/templates/new/gitignore")" "$(cat hello/.gitignore)"
 expect "new hello: .claude/settings.json is the template" "$(cat "$here/templates/new/claude-settings.json")" \

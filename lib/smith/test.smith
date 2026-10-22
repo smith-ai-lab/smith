@@ -191,15 +191,14 @@ constexpr i32 usage_status = 2;
 // Values: what a check compares and prints.
 
 // How a Value is read: the member that holds it.
-[[smith::c_name("SmithTestKind")]] export typedef enum : u8 {
-    Kind_Unsigned,
-    Kind_Signed,
-    Kind_F32,
-    Kind_F64,
-    Kind_Bool,
-    Kind_Char,
-    Kind_Pointer,
-} Kind;
+[[smith::c_name("SmithTestKind")]] export typedef u8 Kind;
+export constexpr Kind kind_unsigned = 0;
+export constexpr Kind kind_signed = 1;
+export constexpr Kind kind_f32 = 2;
+export constexpr Kind kind_f64 = 3;
+export constexpr Kind kind_bool = 4;
+export constexpr Kind kind_char = 5;
+export constexpr Kind kind_pointer = 6;
 
 // A value of any type a check takes, with the name of its type.
 [[smith::c_name("SmithTestValue")]] export typedef struct {
@@ -217,44 +216,43 @@ constexpr i32 usage_status = 2;
 } Value;
 
 // The comparisons of the checks.
-[[smith::c_name("SmithTestOp")]] export typedef enum : u8 {
-    Op_Equal,
-    Op_NotEqual,
-    Op_Less,
-    Op_LessEqual,
-    Op_Greater,
-    Op_GreaterEqual,
-} Op;
+[[smith::c_name("SmithTestOp")]] export typedef u8 Op;
+export constexpr Op op_equal = 0;
+export constexpr Op op_not_equal = 1;
+export constexpr Op op_less = 2;
+export constexpr Op op_less_equal = 3;
+export constexpr Op op_greater = 4;
+export constexpr Op op_greater_equal = 5;
 
 // The Value of an integer of `size` bytes, named as the sized types are (i8 to i64, u8 to u64).
 [[smith::c_name("smith_test_value_signed")]] export [[nodiscard]] Value value_signed(i64 value, usize size) {
     const char *name = size == 1 ? "i8" : size == 2 ? "i16" : size == 4 ? "i32" : "i64";
-    return (Value){.kind = Kind_Signed, .type = name, .signed_value = value};
+    return (Value){.kind = kind_signed, .type = name, .signed_value = value};
 }
 
 [[smith::c_name("smith_test_value_unsigned")]] export [[nodiscard]] Value value_unsigned(u64 value, usize size) {
     const char *name = size == 1 ? "u8" : size == 2 ? "u16" : size == 4 ? "u32" : "u64";
-    return (Value){.kind = Kind_Unsigned, .type = name, .unsigned_value = value};
+    return (Value){.kind = kind_unsigned, .type = name, .unsigned_value = value};
 }
 
 [[smith::c_name("smith_test_value_f32")]] export [[nodiscard]] Value value_f32(f32 value) {
-    return (Value){.kind = Kind_F32, .type = "f32", .f32_value = value};
+    return (Value){.kind = kind_f32, .type = "f32", .f32_value = value};
 }
 
 [[smith::c_name("smith_test_value_f64")]] export [[nodiscard]] Value value_f64(f64 value) {
-    return (Value){.kind = Kind_F64, .type = "f64", .f64_value = value};
+    return (Value){.kind = kind_f64, .type = "f64", .f64_value = value};
 }
 
 [[smith::c_name("smith_test_value_bool")]] export [[nodiscard]] Value value_bool(bool value) {
-    return (Value){.kind = Kind_Bool, .type = "bool", .bool_value = value};
+    return (Value){.kind = kind_bool, .type = "bool", .bool_value = value};
 }
 
 [[smith::c_name("smith_test_value_char")]] export [[nodiscard]] Value value_char(char value) {
-    return (Value){.kind = Kind_Char, .type = "char", .char_value = value};
+    return (Value){.kind = kind_char, .type = "char", .char_value = value};
 }
 
 [[smith::c_name("smith_test_value_pointer")]] export [[nodiscard]] Value value_pointer(const volatile void *value) {
-    return (Value){.kind = Kind_Pointer, .type = "ptr", .pointer_value = (usize)value};
+    return (Value){.kind = kind_pointer, .type = "ptr", .pointer_value = (usize)value};
 }
 
 [[smith::c_name("smith_test_value_i8")]] export [[nodiscard]] Value value_i8(i8 value) {
@@ -328,19 +326,19 @@ i32 order_real(f64 a, f64 b) {
 i32 order(Value a, Value b) {
     contract::assert(a.kind == b.kind);
     switch (a.kind) {
-    case Kind_Unsigned:
+    case kind_unsigned:
         return order_unsigned(a.unsigned_value, b.unsigned_value);
-    case Kind_Signed:
+    case kind_signed:
         return order_signed(a.signed_value, b.signed_value);
-    case Kind_F32:
+    case kind_f32:
         return order_real((f64)a.f32_value, (f64)b.f32_value);
-    case Kind_F64:
+    case kind_f64:
         return order_real(a.f64_value, b.f64_value);
-    case Kind_Bool:
+    case kind_bool:
         return order_unsigned(a.bool_value ? 1 : 0, b.bool_value ? 1 : 0);
-    case Kind_Char:
+    case kind_char:
         return order_signed(a.char_value, b.char_value);
-    case Kind_Pointer:
+    case kind_pointer:
         return order_unsigned(a.pointer_value, b.pointer_value);
     }
     return unordered;
@@ -348,25 +346,26 @@ i32 order(Value a, Value b) {
 
 bool holds(Op op, i32 result) {
     switch (op) {
-    case Op_Equal:
+    case op_equal:
         return result == equal;
-    case Op_NotEqual:
+    case op_not_equal:
         return result != equal;
-    case Op_Less:
+    case op_less:
         return result == less;
-    case Op_LessEqual:
+    case op_less_equal:
         return result == less || result == equal;
-    case Op_Greater:
+    case op_greater:
         return result == greater;
-    case Op_GreaterEqual:
+    case op_greater_equal:
         return result == greater || result == equal;
+    default:
+        return false;
     }
-    return false;
 }
 
 u64 raw_bits(Value value) {
-    contract::assert(value.kind == Kind_F32 || value.kind == Kind_F64);
-    if (value.kind == Kind_F32) return __builtin_bit_cast(u32, value.f32_value);
+    contract::assert(value.kind == kind_f32 || value.kind == kind_f64);
+    if (value.kind == kind_f32) return __builtin_bit_cast(u32, value.f32_value);
     return __builtin_bit_cast(u64, value.f64_value);
 }
 
@@ -390,28 +389,28 @@ void format_real(f64 value, bool single, char *text, usize capacity) {
 void format_value(Value value, char *text, usize capacity) {
     contract::assert(text != nullptr && capacity == text_capacity);
     switch (value.kind) {
-    case Kind_Unsigned:
+    case kind_unsigned:
         __builtin_snprintf(text, capacity, "%llu", value.unsigned_value);
         return;
-    case Kind_Signed:
+    case kind_signed:
         __builtin_snprintf(text, capacity, "%lld", value.signed_value);
         return;
-    case Kind_F32:
+    case kind_f32:
         format_real((f64)value.f32_value, true, text, capacity);
         return;
-    case Kind_F64:
+    case kind_f64:
         format_real(value.f64_value, false, text, capacity);
         return;
-    case Kind_Bool:
+    case kind_bool:
         __builtin_snprintf(text, capacity, "%s", value.bool_value ? "true" : "false");
         return;
-    case Kind_Char:
+    case kind_char:
         if (value.char_value >= ' ' && value.char_value <= '~')
             __builtin_snprintf(text, capacity, "'%c'", value.char_value);
         else
             __builtin_snprintf(text, capacity, "%d", value.char_value);
         return;
-    case Kind_Pointer:
+    case kind_pointer:
         if (value.pointer_value == 0)
             __builtin_snprintf(text, capacity, "nullptr");
         else
@@ -421,8 +420,8 @@ void format_value(Value value, char *text, usize capacity) {
 }
 
 bool finite(Value value) {
-    if (value.kind == Kind_F32) return math::is_finite(f32, value.f32_value);
-    if (value.kind == Kind_F64) return math::is_finite(f64, value.f64_value);
+    if (value.kind == kind_f32) return math::is_finite(f32, value.f32_value);
+    if (value.kind == kind_f64) return math::is_finite(f64, value.f64_value);
     return true;
 }
 
@@ -558,7 +557,7 @@ void write_values(Line *lines, usize count) {
         format_value(lines[i].value, lines[i].formatted, text_capacity);
         if (lines[i].bits && !finite(lines[i].value)) {
             usize length = c::strlen(lines[i].formatted);
-            i32 digits = lines[i].value.kind == Kind_F32 ? 8 : 16;
+            i32 digits = lines[i].value.kind == kind_f32 ? 8 : 16;
             __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*llx]", digits, raw_bits(lines[i].value));
         }
         usize formatted_length = c::strlen(lines[i].formatted);
@@ -644,29 +643,29 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
 
 // a == b. The type is inferred from the arguments (a literal adapts); both values print with it.
 export void check_equal(constexpr type T, T a, T b) {
-    check_compare(Op_Equal, value_of(T, a), value_of(T, b));
+    check_compare(op_equal, value_of(T, a), value_of(T, b));
 }
 
 // a != b. A NaN is not equal to anything, so this passes for one.
 export void check_not_equal(constexpr type T, T a, T b) {
-    check_compare(Op_NotEqual, value_of(T, a), value_of(T, b));
+    check_compare(op_not_equal, value_of(T, a), value_of(T, b));
 }
 
 // a < b. A NaN is unordered, so this fails for one.
 export void check_less(constexpr type T, T a, T b) {
-    check_compare(Op_Less, value_of(T, a), value_of(T, b));
+    check_compare(op_less, value_of(T, a), value_of(T, b));
 }
 
 export void check_less_equal(constexpr type T, T a, T b) {
-    check_compare(Op_LessEqual, value_of(T, a), value_of(T, b));
+    check_compare(op_less_equal, value_of(T, a), value_of(T, b));
 }
 
 export void check_greater(constexpr type T, T a, T b) {
-    check_compare(Op_Greater, value_of(T, a), value_of(T, b));
+    check_compare(op_greater, value_of(T, a), value_of(T, b));
 }
 
 export void check_greater_equal(constexpr type T, T a, T b) {
-    check_compare(Op_GreaterEqual, value_of(T, a), value_of(T, b));
+    check_compare(op_greater_equal, value_of(T, a), value_of(T, b));
 }
 
 f32 distance_f32(f32 a, f32 b) {
@@ -714,55 +713,55 @@ export void check_same_bits(constexpr type T, T a, T b) {
 }
 
 [[smith::c_name("smith_check_equal_bool")]] export void check_equal_bool(bool a, bool b) {
-    check_compare(Op_Equal, value_bool(a), value_bool(b));
+    check_compare(op_equal, value_bool(a), value_bool(b));
 }
 
 [[smith::c_name("smith_check_equal_char")]] export void check_equal_char(char a, char b) {
-    check_compare(Op_Equal, value_char(a), value_char(b));
+    check_compare(op_equal, value_char(a), value_char(b));
 }
 
 [[smith::c_name("smith_check_equal_i8")]] export void check_equal_i8(i8 a, i8 b) {
-    check_compare(Op_Equal, value_signed(a, 1), value_signed(b, 1));
+    check_compare(op_equal, value_signed(a, 1), value_signed(b, 1));
 }
 
 [[smith::c_name("smith_check_equal_i16")]] export void check_equal_i16(i16 a, i16 b) {
-    check_compare(Op_Equal, value_signed(a, 2), value_signed(b, 2));
+    check_compare(op_equal, value_signed(a, 2), value_signed(b, 2));
 }
 
 [[smith::c_name("smith_check_equal_i32")]] export void check_equal_i32(i32 a, i32 b) {
-    check_compare(Op_Equal, value_signed(a, 4), value_signed(b, 4));
+    check_compare(op_equal, value_signed(a, 4), value_signed(b, 4));
 }
 
 [[smith::c_name("smith_check_equal_i64")]] export void check_equal_i64(i64 a, i64 b) {
-    check_compare(Op_Equal, value_signed(a, 8), value_signed(b, 8));
+    check_compare(op_equal, value_signed(a, 8), value_signed(b, 8));
 }
 
 [[smith::c_name("smith_check_equal_u8")]] export void check_equal_u8(u8 a, u8 b) {
-    check_compare(Op_Equal, value_unsigned(a, 1), value_unsigned(b, 1));
+    check_compare(op_equal, value_unsigned(a, 1), value_unsigned(b, 1));
 }
 
 [[smith::c_name("smith_check_equal_u16")]] export void check_equal_u16(u16 a, u16 b) {
-    check_compare(Op_Equal, value_unsigned(a, 2), value_unsigned(b, 2));
+    check_compare(op_equal, value_unsigned(a, 2), value_unsigned(b, 2));
 }
 
 [[smith::c_name("smith_check_equal_u32")]] export void check_equal_u32(u32 a, u32 b) {
-    check_compare(Op_Equal, value_unsigned(a, 4), value_unsigned(b, 4));
+    check_compare(op_equal, value_unsigned(a, 4), value_unsigned(b, 4));
 }
 
 [[smith::c_name("smith_check_equal_u64")]] export void check_equal_u64(u64 a, u64 b) {
-    check_compare(Op_Equal, value_unsigned(a, 8), value_unsigned(b, 8));
+    check_compare(op_equal, value_unsigned(a, 8), value_unsigned(b, 8));
 }
 
 [[smith::c_name("smith_check_equal_f32")]] export void check_equal_f32(f32 a, f32 b) {
-    check_compare(Op_Equal, value_f32(a), value_f32(b));
+    check_compare(op_equal, value_f32(a), value_f32(b));
 }
 
 [[smith::c_name("smith_check_equal_f64")]] export void check_equal_f64(f64 a, f64 b) {
-    check_compare(Op_Equal, value_f64(a), value_f64(b));
+    check_compare(op_equal, value_f64(a), value_f64(b));
 }
 
 [[smith::c_name("smith_check_equal_ptr")]] export void check_equal_ptr(const volatile void *a, const volatile void *b) {
-    check_compare(Op_Equal, value_pointer(a), value_pointer(b));
+    check_compare(op_equal, value_pointer(a), value_pointer(b));
 }
 
 // smith_test_expect_abort. From the call on, the test must abort, and the runner judges how it ended: in a worker or in

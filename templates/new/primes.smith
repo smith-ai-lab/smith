@@ -2,6 +2,7 @@
 module primes;
 
 import smith::contract;
+import <smith/io.h>;
 
 // The sum of the first `count` primes, which is at most five.
 export i32 sum(usize count) {
@@ -12,4 +13,11 @@ export i32 sum(usize count) {
         total += first[i];
     }
     return total;
+}
+
+// A function takes only the capability it uses, so its signature says what it can do to the world.
+// smith lint (smith-effects) reports a call like c::printf anywhere but in a capability's own module.
+export void report(c::SmithConsole *console, i32 sum) {
+    (void)c::smith_console_printf(console, "the first 5 primes add up to %d\n", sum);
+    (void)c::smith_console_print(console, "hello from @NAME@\n");
 }
