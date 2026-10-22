@@ -100,11 +100,15 @@ static int build_protocol_run(SmithRun *run) {
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. text is the module smith::text, compiled from its lowering in bootstrap/.
 static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c", "bootstrap/lib/smith/arena.c", "bootstrap/lib/smith/text.c",
-                                   "lib/json.c"};
-    SmithObject objects[4] = {};
-    const SmithObject *linked[5] = {};
-    for (size_t i = 0; i < 4; i++) {
+    const char *const sources[] = {"scripts/protocol.c",
+                                   "bootstrap/lib/smith/arena.c",
+                                   "bootstrap/lib/smith/contract.c",
+                                   "bootstrap/lib/smith/text.c",
+                                   "lib/json.c",
+                                   "lib/trace.c"};
+    SmithObject objects[6] = {};
+    const SmithObject *linked[7] = {};
+    for (size_t i = 0; i < 6; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],
