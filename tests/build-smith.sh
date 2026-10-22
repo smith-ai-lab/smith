@@ -63,7 +63,7 @@ module main;
 import geometry::box;
 import <stdio.h>;
 
-int main(void) {
+i32 main(void) {
     i32 x = box::area(3, 4);
     c::printf("%d\n", x);
     return 0;
