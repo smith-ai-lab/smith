@@ -1,0 +1,9 @@
+module chain00;
+
+export i32 value(void) {
+    return 0;
+}
+
+export i32 depth(void) {
+    return 1;
+}

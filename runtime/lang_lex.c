@@ -65,6 +65,12 @@ static bool smith_raw_is_name(char c) {
 }
 
 static void smith_raw_error(void *context, uint32_t location, const char *message);
+// The message for an import the module cap refused (the host's read_problem), so the error names limit and module.
+static char smith_raw_problem[512];
+static const char *smith_raw_read_problem(void *context) {
+    (void)context;
+    return smith_raw_problem[0] != 0 ? smith_raw_problem : nullptr;
+}
 
 // Whether a blank line follows `at` before the next thing that is not white space.
 static bool smith_raw_blank_after(const SmithLangRaw *raw, size_t at) {
@@ -728,6 +734,7 @@ size_t smith_lang_declarations(const char *file, const char *text, size_t length
     size_t used = 0;
     for (size_t i = 0; lang->is_module && i < lang->names_count; i++) { // the exports, in the order declared
         const SmithLangName *name = &lang->names[i];
+        .read_problem = smith_raw_read_problem,
         if (!name->exported) continue;
         used = smith_lang_append(out, capacity, used, "%s %zu %zu\n", smith_lang_str(name->name),
                                  smith_lang_line_of(name->location), smith_lang_column_of(name->location));
@@ -755,7 +762,13 @@ static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spelling
 // it). A module found neither way is accepted unread, as before, so its names are lowered by the prefix rule alone.
 // The nested read borrows the tables the run is in the middle of (the source, the comments), so they are kept aside.
 
-constexpr size_t smith_raw_modules_max = 8;
+constexpr size_t smith_raw_modules_max = 256; // modules one header run reads: its imports, and theirs, smith's included
+static void smith_raw_over_cap(const char *relative) {
+    snprintf(smith_raw_problem, sizeof smith_raw_problem,
+             "cannot import `%s`: one run reads at most %zu modules (smith_raw_modules_max in runtime/lang_lex.c), "
+             "and this module's imports, and theirs, cross it here",
+             relative, smith_raw_modules_max);
+}
 constexpr size_t smith_raw_meta_max = (size_t)1 << 17;
 
 static struct {
@@ -767,7 +780,10 @@ static size_t smith_raw_modules_count;
 static bool smith_raw_run_active; // `--smith-header` or `--smith-lower` is lowering: its cache is its own
 
 static void smith_raw_interface_enter(void) {
-    if (!smith_raw_run_active) smith_raw_modules_count = 0;
+    if (!smith_raw_run_active) {
+        smith_raw_modules_count = 0;
+        smith_raw_problem[0] = 0;
+    }
 }
 
 static char smith_raw_module_text[smith_raw_modules_max][smith_raw_meta_max];
@@ -904,7 +920,9 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
             char path[PATH_MAX];
             bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(relative) - 2),
                                          relative) < sizeof path;
-            if (!known && cursor > name && fits && *count < smith_raw_modules_max - smith_raw_modules_count) {
+            if (!known && cursor > name && fits && *count >= smith_raw_modules_max - smith_raw_modules_count) {
+                smith_raw_over_cap(relative);
+            } else if (!known && cursor > name && fits) {
                 snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);
                 snprintf(wanted[*count].path, sizeof wanted[0].path, "%s", path);
                 *count += 1;
@@ -928,7 +946,10 @@ static void smith_raw_prefetch(const char *file, const char *text, size_t length
         if (got != SIZE_MAX) smith_raw_want(wanted[at].path, source, got, wanted, &count);
     }
     for (size_t at = count; at > 0; at--) { // each after what it imports
-        if (smith_raw_modules_count >= smith_raw_modules_max) return;
+        if (smith_raw_modules_count >= smith_raw_modules_max) {
+            smith_raw_over_cap(wanted[at - 1].relative);
+            return;
+        }
         size_t slot = smith_raw_modules_count++;
         snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", wanted[at - 1].relative);
         smith_raw_modules[slot].text = smith_raw_module_text[slot];
@@ -971,7 +992,10 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
         return true;
     }
     if (slot == SIZE_MAX) {
-        if (smith_raw_modules_count >= smith_raw_modules_max) return false;
+        if (smith_raw_modules_count >= smith_raw_modules_max) {
+            smith_raw_over_cap(relative);
+            return false;
+        }
         slot = smith_raw_modules_count++;
         char *into = smith_raw_module_text[slot];
         snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", relative);
@@ -1046,6 +1070,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         smith_raw_next_named(&raw, &token, false);
         if (guard == 0 && header_path != nullptr && !smith_lang_ident(&token, "module")) {
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
+        if (smith_raw_problem[0] != 0) return false; // the cap kept it out
             return 1;
         }
         smith_lang_feed(lang, &host, &token);
@@ -1101,3 +1126,4 @@ static int smith_lang_main(int count, char **args, bool header) {
     }
     return smith_lang_run_raw(file, header ? output : nullptr, !header);
 }
+        .read_problem = smith_raw_read_problem,

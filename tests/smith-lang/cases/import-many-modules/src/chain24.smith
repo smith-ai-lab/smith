@@ -1,0 +1,12 @@
+module chain24;
+
+import chain23 as a;
+import chain22 as b;
+
+export i32 value(void) {
+    return 24;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}

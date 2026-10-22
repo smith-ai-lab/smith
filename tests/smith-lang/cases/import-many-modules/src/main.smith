@@ -1,0 +1,11 @@
+module main;
+
+import chain39 as top;
+import chain10 as mid;
+import <stdio.h>;
+
+// Forty modules, each importing the two before it: one run of a header reads all the ones under it.
+int main(void) {
+    c::printf("%d %d\n", top::depth(), mid::depth());
+    return 0;
+}
