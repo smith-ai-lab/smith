@@ -9,7 +9,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lang-generics/S
 
 A function of a module with `constexpr type T` parameters is written once and compiled for each type it is called with. `constexpr` in a parameter list means compile-time: the parameter is in no generated function. A bare `type T` is an error (``a type parameter is compile-time: write `constexpr type T` ``).
 
-```c
+```smith fragment
 module arena;
 export T *push(Arena *a, constexpr type T) {              // T is usable in the signature and the body
     usize aligned = (a->used + alignof(T) - 1) & ~(alignof(T) - 1);
