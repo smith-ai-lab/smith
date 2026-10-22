@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests of <smith/json.h>, with real clang and ninja. Usage: sh tests/json.sh path/to/smith
-# The checks are tests/json.c, built as a scratch project's test file with smith_tests (smith's own test library), in
+# The checks are tests/json.smith, built as a scratch project's test file with smith_tests (smith's own test library), in
 # three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. JSONTestSuite is fetched as a package
 # pinned by hash (into $SMITH_JSON_SUITE_CACHE, else ~/.cache/smith-tests, so that it is downloaded once; with no
 # network the conformance test says so and is skipped). The asan build also runs the fuzz tests on many more keys.
@@ -57,9 +57,9 @@ else
     echo "      conformance is skipped"
 fi
 
-# The scratch project: smith's json library and what it needs, and the runner built from tests/json.c.
+# The scratch project: smith's json library and what it needs, and the runner built from tests/json.smith.
 mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/json.c" tests/test_json.c
+cp "$here/tests/json.smith" tests/test_json.smith
 cat >build.c <<'C'
 #include <smith/build.h>
 
@@ -81,7 +81,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_json.c", nullptr),
+        .sources = smith_list(b, "tests/test_json.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], &objects[3], nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -91,7 +91,7 @@ void build(SmithBuild *b) {
 }
 C
 
-count=$(grep -c '^void test_' "$here/tests/json.c")
+count=$(grep -c '^void test_' "$here/tests/json.smith")
 for mode in asan fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"
