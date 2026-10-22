@@ -2493,9 +2493,11 @@ static struct {
 static void smith_app_found_reset(void) {
     const char *roots[smith_app_roots_max];
     size_t root_count = smith_app_found.root_count;
-    memcpy(roots, smith_app_found.roots, sizeof roots);
+    for (size_t i = 0; i < root_count; i++)
+        roots[i] = smith_app_found.roots[i];
     memset(&smith_app_found, 0, sizeof smith_app_found);
-    memcpy(smith_app_found.roots, roots, sizeof roots);
+    for (size_t i = 0; i < root_count; i++)
+        smith_app_found.roots[i] = roots[i];
     smith_app_found.root_count = root_count;
 }
 
