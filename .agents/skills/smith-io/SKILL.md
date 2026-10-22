@@ -9,14 +9,17 @@ This skill ships in the smith plugin, from `.agents/skills/smith-io/SKILL.md` in
 
 Everything a program does to the world outside it is a value you hold and pass on. The header is `.smith/include/smith/io.h`; read it first. It runs on macOS, on kqueue; operations complete in `SmithOp`s the caller owns.
 
+**io is C today, and a `.smith` file uses it as C: `import <smith/io.h>;` and every name under `c::`** (`c::SmithIo`, `c::smith_console_printf`). It becomes a module (`io::Io`, `io::console::printf`...) later; the capabilities and what they do stay. Where the library is already a module, use the module: the arena is `arena::Arena` (`import smith::arena;`), the key `random::Key`. The prose below names functions by their C names (`smith_files_read`); in a `.smith` file write `c::` before each. The C form is under "From C". The io library compiles with a smith that has clang inside, as the other libraries do.
+
 ## One io in main
 
-```c
-#include <smith/io.h>
+```smith
+import <smith/io.h>;
 
 int main(int argc, char **argv) {
-    SmithIo io = smith_io_make(argc, argv);
-    ...
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    (void)c::smith_console_printf(&io.console, "seed %llu\n", io.seed);
+    return 0;
 }
 ```
 
@@ -24,14 +27,14 @@ int main(int argc, char **argv) {
 
 | Field | What it is |
 | --- | --- |
-| `io.arena` | a `SmithArena` over a 64 GiB `mmap` reservation: address space, so only touched pages cost memory (AddressSanitizer poisons lazily, so its shadow grows with use tooitted) |
-| `io.key`, `io.seed` | the key from `getentropy`, or from `SMITH_SEED` (decimal or `0x`) to replay a run; print `io.seed` when a run fails |
+| `io.arena` | a `arena::Arena` over a 64 GiB `mmap` reservation: address space, so only touched pages cost memory (AddressSanitizer poisons lazily, so its shadow grows with use too) |
+| `io.key`, `io.seed` | the `random::Key` from `getentropy`, or from `SMITH_SEED` (decimal or `0x`) to replay a run; print `io.seed` when a run fails |
 | `io.console` | stdin, stdout, stderr |
 | `io.files` | the file system: any path the program is given, absolute or relative |
 | `io.clock` | monotonic and wall time |
 | `io.processes` | spawn, wait, run and capture |
 | `io.net` | TLS connections (Network.framework) |
-| `io.args` | `count`, `values` and the environment (`smith_args_env`) |
+| `io.args` | `count`, `values` and the environment (`c::smith_args_env`) |
 
 There are no options.
 
@@ -39,27 +42,50 @@ There are no options.
 
 main hands each function the narrowest thing that covers what it uses, so a function that takes no clock cannot depend on time and one that takes no files cannot touch the disk.
 
-- One or two capabilities: those alone.
+```smith
+import smith::arena;
+import <smith/io.h>;
 
-  ```c
-  Mesh mesh_load(SmithFiles *files, SmithArena *arena, const char *path);
-  Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
-  ```
+typedef struct {
+    usize vertices;
+} Mesh;
 
-- Most of io: the whole of it.
+// One or two capabilities: those alone.
+Mesh mesh_load(c::SmithFiles *files, arena::Arena *a, const char *path) {
+    c::SmithRead text = c::smith_files_read(files, a, path);
+    return (Mesh){.vertices = text.error.code == 0 ? text.size : 0};
+}
 
-  ```c
-  void game_run(SmithIo *io);
-  ```
+// Most of io: the whole of it.
+void game_run(c::SmithIo *io) {
+    (void)c::smith_console_printf(&io->console, "running\n");
+}
 
-- A bundle several functions share: a struct the project defines, with what that group needs.
+// A bundle several functions share: a struct the project defines, with what that group needs.
+typedef struct {
+    c::SmithFiles *files;
+    c::SmithConsole *console;
+    arena::Arena *arena;
+} Editor;
 
-  ```c
-  typedef struct { SmithFiles *files; SmithConsole *console; SmithArena *arena; } Editor;
-  Editor editor = {&io.files, &io.console, &io.arena};
-  editor_open(&editor, path);
-  editor_save(&editor, path);
-  ```
+void editor_open(Editor *editor, const char *path) {
+    Mesh mesh = mesh_load(editor->files, editor->arena, path);
+    (void)c::smith_console_printf(editor->console, "%zu\n", mesh.vertices);
+}
+
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
+    Editor editor = {&io.files, &io.console, &io.arena};
+    editor_open(&editor, "cube.obj");
+    game_run(&io);
+    return mesh.vertices == 0 ? 0 : 1;
+}
+```
+
+- One or two capabilities: those alone (`mesh_load`).
+- Most of io: the whole of it (`game_run`).
+- A bundle several functions share: a struct the project defines (`Editor`).
 
 If a signature wants four or more separate capabilities, pass `SmithIo *` or define the struct. A random key is passed alone (`io.key`; derive one per use, see smith-random).
 
@@ -77,14 +103,27 @@ The rules:
 
 One option, `smith-effects.CFiles` (default true): `false` makes the check skip `.c` and `.m` files and read `.smith` only (smith's own `.clang-tidy` does this while its C is ported).
 
-**Marking a project's own capability** (a window, a GPU device), in a header or `.smith` module:
+**Marking a project's own capability** (a window, a GPU device), in a `.smith` module (a C header is under "From C"):
 
-```c
-typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;          // C
-export typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;   // .smith
+```smith
+module window;
+
+export typedef struct [[clang::annotate("smith::capability")]] {
+    void *handle;
+} Window;
+
+// Raw calls into the platform go here, in the module, and every exported function takes a Window *.
+export bool is_open(const Window *window) {
+    return window->handle != nullptr;
+}
+
+// A constructor that may be called only in main.
+export [[nodiscard, clang::annotate("smith::main_only")]] Window make(void) {
+    return (Window){.handle = nullptr};
+}
 ```
 
-Raw calls into the platform then go in `window.c` beside `window.h` (or in the `.smith` module), every exported function there takes a `Window *`, and the rest of the program takes a `Window *` like any other capability. A project's constructor that must be called only in main: `[[nodiscard, clang::annotate("smith::main_only")]] Window window_make(...)`.
+The rest of the program takes a `window::Window *` like any other capability.
 
 **Fixing a finding:**
 
@@ -106,14 +145,20 @@ Raw calls into the platform then go in `window.c` beside `window.h` (or in the `
 
 ## Errors are values
 
-Every operation reports success or a `SmithError`: `code` is 0 or an errno value, `message` says what failed (`open config.txt: No such file or directory`). Nothing is printed behind your back. Only what the program cannot continue without stops it: failing to reserve the arena, a bad `SMITH_SEED`, and the arena's capacity stop.
+Every operation reports success or a `c::SmithError`: `code` is 0 or an errno value, `message` says what failed (`open config.txt: No such file or directory`). Nothing is printed behind your back. Only what the program cannot continue without stops it: failing to reserve the arena, a bad `SMITH_SEED`, and the arena's capacity stop.
 
-```c
-SmithRead text = smith_files_read(&io.files, &io.arena, "config.txt"); // data is NUL-terminated
-if (text.error.code != 0) {
-    SmithError printed = smith_console_print_error(&io.console, text.error.message);
-    (void)printed;
-    return 1;
+```smith
+import <smith/io.h>;
+
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    c::SmithRead text = c::smith_files_read(&io.files, &io.arena, "config.txt"); // data is NUL-terminated
+    if (text.error.code != 0) {
+        c::SmithError printed = c::smith_console_print_error(&io.console, text.error.message);
+        (void)printed;
+        return 1;
+    }
+    return 0;
 }
 ```
 
@@ -125,11 +170,17 @@ For simple code: `smith_files_read(files, arena, path)`, `smith_files_write(file
 
 Reading lines to the end of input is a loop with a bound and an end check, which the fake console makes testable:
 
-```c
-for (size_t turn = 0; turn < turn_max; turn++) {
-    SmithRead line = smith_console_read_line(&io.console, &io.arena);
-    if (line.error.code != 0 || line.end) break;   // line.end: the input is over
-    ...
+```smith
+import <smith/io.h>;
+
+constexpr usize turn_max = 1000;
+
+void play(c::SmithIo *io) {
+    for (usize turn = 0; turn < turn_max; turn++) {
+        c::SmithRead line = c::smith_console_read_line(&io->console, &io->arena);
+        if (line.error.code != 0 || line.end) break; // line.end: the input is over
+        (void)c::smith_console_printf(&io->console, "%s\n", line.data);
+    }
 }
 ```
 
@@ -169,16 +220,22 @@ For a program that drives another (a server holding debugger children that speak
 - `smith_child_close_input(&child)` closes its stdin, so it sees the end of input (`cat` exits). `smith_child_kill(&child, signal)` signals the whole group (`ESRCH` if there is none). `smith_child_wait_async(&child, &op)` waits for the exit; once that op is done the child's id is free for another program, so `smith_child_kill` returns `ESRCH` and sends nothing (wait with `smith_processes_wait_async(&io.processes, &op, child.process)` and the kill cannot know: then never kill an id after its wait). The same holds for `smith_capture_stop(&capture, signal)`, which signals a capture's group only while its process has not been waited for. `smith_child_close(&child)` closes the pipes still open, once, after the last op is done and the child has exited.
 - One write, one read and one wait may be pending on a child at once; several children, the program's own stdin (`smith_console_read_async`), timers and exits all wait in the same `smith_io_run`.
 
-```c
-const char *const argv[] = {"smith", "dap", nullptr};
-SmithChild child = {};
-SmithError error = smith_processes_start_piped(&io.processes, argv, &child);
-SmithOp write = {}, read = {}, wait = {};
-char buffer[4096];
-smith_child_write_async(&child, &write, request, request_size);
-smith_child_read_async(&child, &read, buffer, sizeof buffer);
-smith_child_wait_async(&child, &wait);
-// loop on smith_io_run; resubmit read when read.done and !read.end; finish when wait.done
+```smith
+import <smith/io.h>;
+
+void drive(c::SmithIo *io, const char *request, usize request_size) {
+    const char *const argv[] = {"smith", "dap", nullptr};
+    c::SmithChild child = {};
+    c::SmithError error = c::smith_processes_start_piped(&io->processes, argv, &child);
+    if (error.code != 0) return;
+    c::SmithOp write = {}, read = {}, wait = {};
+    char buffer[4096];
+    c::smith_child_write_async(&child, &write, request, request_size);
+    c::smith_child_read_async(&child, &read, buffer, sizeof buffer);
+    c::smith_child_wait_async(&child, &wait);
+    // loop on c::smith_io_run; resubmit read when read.done and !read.end; finish when wait.done
+    c::smith_child_close(&child);
+}
 ```
 
 In the fake, script the child first: `smith_io_test_add_child(&io, (SmithChildScript){.program = "smith", .output = "Content-Length: 2\r\n\r\n{}", .chunk = 8, .exit_on = SmithChildExit_InputClosed, .status = 0})`. The first unused script of the program is the child started. It writes its output from the start (in pieces of `chunk` bytes if set); a read with nothing left waits, and ends once the child has exited. `exit_on` says when it exits: `SmithChildExit_Never` (only a kill ends it, with that signal), `_Start` (at once, like `true`: a write is `EPIPE`), `_InputClosed` (like `cat`) or `_OutputRead`. What the program wrote to its stdin is `smith_io_test_child_input(&io, n)` for the n-th script added (8 KiB kept). Up to 16 children.
@@ -187,12 +244,18 @@ In the fake, script the child first: `smith_io_test_add_child(&io, (SmithChildSc
 
 To wait on several things in one loop, submit operations in `SmithOp`s you own and run the loop:
 
-```c
-SmithOp timer = {}, wait = {};
-smith_clock_timeout_async(&io.clock, &timer, 2'000'000'000);
-smith_processes_wait_async(&io.processes, &wait, child);
-for (size_t round = 0; round < round_max && !(timer.done && wait.done); round++)
-    (void)smith_io_run(&io, smith_io_forever);   // or a timeout in ns; 0 only polls
+```smith
+import <smith/io.h>;
+
+constexpr usize round_max = 1000;
+
+void wait_for(c::SmithIo *io, c::SmithProcess child) {
+    c::SmithOp timer = {}, wait = {};
+    c::smith_clock_timeout_async(&io->clock, &timer, 2'000'000'000);
+    c::smith_processes_wait_async(&io->processes, &wait, child);
+    for (usize round = 0; round < round_max && !(timer.done && wait.done); round++)
+        (void)c::smith_io_run(io, c::smith_io_forever); // or a timeout in ns; 0 only polls
+}
 ```
 
 `smith_files_read_async`, `smith_files_write_async`, `smith_console_read_async`, `smith_clock_timeout_async`, `smith_processes_wait_async`, `smith_child_write_async` and `smith_child_read_async` submit; `smith_io_run` completes what is ready and sets `op.done`, with `op.error`, `op.data`/`op.size`/`op.end` (reads) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
@@ -203,12 +266,19 @@ macOS has no asynchronous file IO, so file operations run synchronously, in subm
 
 `io.net` makes TLS connections with the platform's stack (Network.framework, loaded with `dlopen` on the first connection, so a program that never connects pays nothing at start). A `SmithConnection` is a struct you own and keep in place until its close is done. Everything is an op, with a blocking form:
 
-```c
-SmithConnection connection = {};
-SmithError error = smith_net_connect(&io.net, &connection, "example.com", 443, true);   // tls
-error = smith_net_send(&io.net, &connection, request, request_size);
-SmithRead read = smith_net_receive(&io.net, &connection, buffer, sizeof buffer);       // read.size bytes, or read.end
-error = smith_net_close(&io.net, &connection);
+```smith
+import <smith/io.h>;
+
+void fetch(c::SmithIo *io, const char *request, usize request_size) {
+    c::SmithConnection connection = {};
+    c::SmithError error = c::smith_net_connect(&io->net, &connection, "example.com", 443, true); // tls
+    error = c::smith_net_send(&io->net, &connection, request, request_size);
+    char buffer[4096];
+    c::SmithRead read = c::smith_net_receive(&io->net, &connection, buffer, sizeof buffer); // read.size bytes, or read.end
+    (void)read;
+    error = c::smith_net_close(&io->net, &connection);
+    (void)error;
+}
 ```
 
 `smith_net_connect_async`, `smith_net_send_async`, `smith_net_receive_async` and `smith_net_close_async` take a `SmithOp` like the other async calls. One send and one receive may be pending on a connection at once. A receive completes with whatever has arrived (at least one byte, at most `capacity`, not NUL-terminated), or `end` when the peer is done. Close completes what is still pending with `ECANCELED` and is the last thing to touch the connection, so free it only after the close is done; a connection that failed is closed like one that worked.
@@ -217,17 +287,46 @@ Failures are values: `ECONNREFUSED` and the other errnos of the system, `ENOENT`
 
 ## The test io
 
-```c
-alignas(smith_arena_align_max) static unsigned char memory[1 << 20];
-SmithIo io = smith_io_make_test((SmithIoTest){
-    .memory = memory, .capacity = sizeof memory, .seed = 7, .input = "A3 B4\nC5 D6\n"});
-smith_io_test_add_file(&io, "config.txt", "volume=3\n");
-smith_io_test_add_program(&io, "git", "main\n", 0);
+```smith
+import smith::arena;
+import <smith/io.h>;
+
+int main(void) {
+    alignas(arena::align_max) static u8 memory[1 << 20];
+    c::SmithIo io = c::smith_io_make_test((c::SmithIoTest){
+        .memory = memory, .capacity = sizeof memory, .seed = 7, .input = "A3 B4\nC5 D6\n"});
+    (void)c::smith_io_test_add_file(&io, "config.txt", "volume=3\n");
+    (void)c::smith_io_test_add_program(&io, "git", "main\n", 0);
+    return 0;
+}
 ```
 
 It is the same `SmithIo`, so code under test cannot tell it from the real one: files are in memory (writes land there too), the console reads the scripted `.input` then reports the end, output is captured (`smith_io_test_output(&io)`, `smith_io_test_errors(&io)`), the clock moves only when `smith_clock_advance(&io.clock, ns)` says so (and `smith_clock_sleep` of a non-zero time is `EDEADLK`, since nothing can wake it), the key comes from `.seed`, programs are scripted, and its memory is your buffer (a quarter holds file contents). `smith_io_test_add_server(&io, (SmithNetServer){.host, .port, .response, .response_size, ...})` scripts a server of the network: the first connection to `host:port` that no connection has used gets the response (`.chunk` bytes at a time if set), then a clean end or, with `.error`, that errno; `.tls_failure` makes the connect fail with `EAUTH` and that message; a host with no server is `ECONNREFUSED`; `smith_io_test_request(&io, host, port, n)` is what the n-th connection sent. Adding a server to the real io scripts its network only (files, console and clock stay real), which is how code that downloads is tested on a real disk. `SmithIoTest.environment` (`"NAME=value"` entries) and `.cores` give it an environment and a core count; folders exist as soon as a file is under them, or `smith_files_make_folder` made them (a write into a folder that was never made still succeeds, where the real io says `ENOENT`). `smith_io_run` on it never waits: it completes what is ready now. Errors have the same codes and messages as the real io.
 
 Write the function once against capabilities, call it with `&io.files` from main and with the fake's in a test, and compare. The scripted console drives a line loop to completion including the end of input, which is the bug a program that spins on EOF has.
+
+## From C
+
+C includes the header and uses the names as they are:
+
+```c
+#include <smith/io.h>
+
+typedef struct { SmithFiles *files; SmithConsole *console; SmithArena *arena; } Editor;
+
+Mesh mesh_load(SmithFiles *files, SmithArena *arena, const char *path);
+
+int main(int argc, char **argv) {
+    SmithIo io = smith_io_make(argc, argv);
+    Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
+    Editor editor = {&io.files, &io.console, &io.arena};
+    SmithRead text = smith_files_read(&io.files, &io.arena, "config.txt");
+    if (text.error.code != 0) return 1;
+    ...
+}
+```
+
+A project's own capability in a C header: `typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;`, its raw calls in `window.c` beside `window.h`, and `[[nodiscard, clang::annotate("smith::main_only")]] Window window_make(...)` for a constructor that only `main` may call. The fake io in C: `alignas(smith_arena_align_max) static unsigned char memory[1 << 20]; SmithIo io = smith_io_make_test((SmithIoTest){.memory = memory, .capacity = sizeof memory, .seed = 7});`.
 
 ## Get the library in build.c
 

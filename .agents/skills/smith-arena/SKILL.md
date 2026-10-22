@@ -11,38 +11,75 @@ An arena is a fixed block of memory with a cursor. Nothing is freed on its own: 
 
 ## Use it
 
+In a `.smith` file the arena is a module (`lib/smith/arena.smith`, `module smith::arena;`) and the type is an argument, so size and alignment cannot disagree and the result is typed (`smith-lang-generics`):
+
+```smith
+import smith::arena;
+
+typedef struct {
+    f32 x, y;
+} Point;
+
+// Memory is passed in, never malloc'd: a function that needs some takes an arena.
+Point *make_line(arena::Arena *a, usize count) {
+    Point *points = arena::push_array(a, Point, count); // zeroed, count * size checked for overflow
+    for (usize i = 0; i < count; i++) points[i] = (Point){.x = (f32)i, .y = 0};
+    return points;
+}
+
+int main(void) {
+    alignas(arena::align_max) static u8 memory[1 << 20]; // aligned, so layouts never depend on addresses
+    arena::Arena a = arena::make(memory, sizeof memory);
+    Point *origin = arena::push(&a, Point); // zeroed
+    Point *line = make_line(&a, 10);
+    return origin->x == 0 && line[3].x == 3 ? 0 : 1;
+}
+```
+
+In a program the arena is `io.arena` (`smith-io`), made in `main` and passed down; the static block above is for a program without io.
+
+- `arena::push(&a, T)` and `arena::push_array(&a, T, count)` are the calls to write. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
+- The module's names: `arena::make`, `fits`, `push`, `push_array`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library.
+- `arena::fits(&a, size, align)` asks whether a push would fit. `align` of the raw calls is a power of two, at most `arena::align_max` (64).
+- A scope gives back what a stretch of work pushed, and scopes end in reverse order of beginning:
+
+```smith
+import smith::arena;
+
+usize scratch_sum(arena::Arena *a, usize count) {
+    arena::Scope scope = arena::scope_begin(a);
+    usize *items = arena::push_array(a, usize, count);
+    usize sum = 0;
+    for (usize i = 0; i < count; i++) {
+        items[i] = i;
+        sum += items[i];
+    }
+    arena::scope_end(scope); // items is given back
+    return sum;
+}
+```
+
+`arena::reset(&a)` is allowed only with no scope open; both are `assert`s.
+
+## From C
+
+C and C++ cannot call a generic, so they pass `sizeof` and `alignof` to the functions that return a `void *` (converted with no cast in C). The header is `.smith/include/smith/arena.h`; smith's libraries define no macros.
+
 ```c
 #include <smith/arena.h>
 
-alignas(smith_arena_align_max) static unsigned char memory[1 << 20]; // aligned, so layouts never depend on addresses
+alignas(smith_arena_align_max) static unsigned char memory[1 << 20];
 SmithArena arena = smith_arena_make(memory, sizeof memory);
 
-Foo *foo = smith_arena_push(&arena, sizeof(Foo), alignof(Foo));                  // zeroed; void * needs no cast in C
+Foo *foo = smith_arena_push(&arena, sizeof(Foo), alignof(Foo));                  // zeroed
 Foo *foos = smith_arena_push_array(&arena, sizeof(Foo), count, alignof(Foo));    // zeroed, count * size checked for overflow
 ```
 
-In a `.smith` file the type is an argument (a generic, `smith-lang-generics`), and the result is typed the same way:
-
-```c
-import smith::arena;
-
-alignas(arena::align_max) static u8 memory[1 << 20];
-arena::Arena a = arena::make(memory, sizeof memory);
-
-Foo *foo = arena::push(&a, Foo);                // zeroed
-Foo *foos = arena::push_array(&a, Foo, count);  // zeroed, count * size checked for overflow
-```
-
-The module is `smith::arena` (`lib/smith/arena.smith`), and its C API is the generated header: `arena::make`, `fits`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. C and C++ cannot call a generic, so they pass `sizeof` and `alignof` to the functions; smith's libraries define no macros. A `.smith` project needs a smith with clang inside to compile the library.
-
-- In `.smith` prefer `arena::push` and `arena::push_array`: the type is written once, so size and alignment cannot disagree, and the result is typed. In C write `sizeof(T)` and `alignof(T)` from the same `T`.
-- The functions are `smith_arena_push(&arena, size, align)` and `smith_arena_push_array(&arena, size, count, align)` (`arena::push_raw` and `push_array_raw` in `.smith`). `align` is a power of two, at most `smith_arena_align_max` (64).
-- `smith_arena_fits(&arena, size, align)` asks whether a push would fit.
-- A scope gives back what a stretch of work pushed: `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);`. Scopes end in reverse order of beginning, and `smith_arena_reset(&arena)` is allowed only with none open; both are `assert`s.
+Write `sizeof(T)` and `alignof(T)` from the same `T`. `smith_arena_fits(&arena, size, align)` asks whether a push would fit; a scope is `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);` and `smith_arena_reset(&arena)`.
 
 ## Carve arenas out of a reservation
 
-`SmithArena frame = smith_arena_carve(&parent, capacity);` takes the next `capacity` bytes after the parent's cursor (aligned to `smith_arena_align_max`) as an arena of its own, and moves the parent's cursor past them. Nothing is touched or poisoned, so out of a big reservation (the 64 GiB arena of `smith_io_make`) a program carves several arenas with different lifetimes at start, such as one for the run, one per level and one reset every frame, and pages are committed only as each is used. Under AddressSanitizer each carved arena poisons lazily for itself and catches the same overflows and stale reads as any arena. Carving past the parent's capacity is the same stop as a push; a scope open on the parent is an `assert`, since ending it would hand the carved memory back. Do not reset the parent after carving.
+`arena::Arena frame = arena::carve(&parent, capacity);` (C: `SmithArena frame = smith_arena_carve(&parent, capacity);`) takes the next `capacity` bytes after the parent's cursor (aligned to `smith_arena_align_max`) as an arena of its own, and moves the parent's cursor past them. Nothing is touched or poisoned, so out of a big reservation (the 64 GiB arena of `smith_io_make`) a program carves several arenas with different lifetimes at start, such as one for the run, one per level and one reset every frame, and pages are committed only as each is used. Under AddressSanitizer each carved arena poisons lazily for itself and catches the same overflows and stale reads as any arena. Carving past the parent's capacity is the same stop as a push; a scope open on the parent is an `assert`, since ending it would hand the carved memory back. Do not reset the parent after carving.
 
 ## Get the library in build.c
 

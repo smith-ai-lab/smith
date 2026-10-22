@@ -24,7 +24,7 @@ smith build --dump-config > build.smith      # a main.smith project; build.c for
 
 It prints exactly what level 0 does and changes nothing (on a project that has a build file it says so on stderr and prints nothing):
 
-```c
+```smith
 // build.smith
 import smith::build;
 
@@ -62,7 +62,7 @@ A task may not be named after a verb (`run`, `test`, `check`, `fmt`, `lint`, `do
 
 When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:
 
-```c
+```smith
 import smith::build;
 
 void build(build::Build *b) {
