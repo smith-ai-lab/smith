@@ -277,3 +277,56 @@ void smith_tests(SmithBuild *b, SmithTests *tests);
 // then every smith_compile_command, plus one entry for build.c itself with the command smith compiles it with. Call it
 // last.
 void smith_compile_commands(SmithBuild *b, const char *path);
+
+// Builds by convention (docs/build-c.md, "Conventions"). A project that follows them has no build file: `smith build`
+// runs a build program of exactly these two calls with their defaults. Each call is documented as the low-level calls
+// it expands to, so a project that needs control replaces the call with its expansion.
+
+// The program, in the three profiles. The entry point (main.smith, else main.c, at the root) is followed through the
+// files it uses: for .smith, every `import a::b;` to a/b.smith (found as the compiler finds an import's source: under
+// the root of the importing module); for C, every quoted `#include "foo.h"` to the foo.c beside the header (the
+// including file's folder, then the project's root), transitively. The scan is lexical: a conditional include is
+// followed anyway, a macro-built include is missed, and a .c that no header of the program names is not compiled (a
+// project with such a file writes a build file). Smith's libraries the sources use (`import smith::io;`,
+// `#include <smith/io.h>`, and the libraries those need) are compiled and linked in. Expands to, with
+//   flags(P)  = -std=gnu2y -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes
+//               -Wstrict-prototypes -Wvla -Werror, -ffp-contract=off, -mcpu=apple-m1 (Darwin arm64 only),
+//               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
+//               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2; fast:
+//               -O2 -DNDEBUG), then .flags
+//   smith_modules(b, &(SmithModules){});    // unless modules are already on or an object was already declared
+//   for P in debug, release, fast:
+//     for each source S found, and each library L used:
+//       smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = S,    // L: smith_library(b, "L")
+//                                      .output = "build/P/<S without its extension>.o", .flags = flags(P)});
+//                                       // L's object is build/P/smith/<L>.o
+//     smith_program(b, &(SmithProgram){.linker = "smith-cc", .output = "build/P/<name>",
+//                                      .flags = [-fsanitize=address,undefined for debug] + .link_flags,
+//                                      .objects = those objects, .libraries = .libraries});
+//   smith_alias(b, "release", the release program); smith_alias(b, "fast", the fast program);
+//   smith_default(b, the debug program);
+// The compile commands go to .smith/ on every build (the verbs read them); a root compile_commands.json is the
+// project's to ask for with smith_compile_commands.
+typedef struct {
+    const char *entry;                 // "main.smith" or "main.c"; by default the one the root holds
+    const char *name;                  // the program's name; by default the project's folder
+    const char *const *flags;          // added to every profile's compiles, after the profile's own
+    const char *const *link_flags;     // added to every profile's link
+    const char *const *libraries;      // after the objects: -lm, -framework Metal
+    const SmithObject *const *objects; // set: the debug objects of everything but the entry, the code under test
+    SmithStep step;                    // set: the debug program, the default target
+} SmithApp;
+void smith_app(SmithBuild *b, SmithApp *app);
+
+// The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
+// file below the folder (tests are found by smith_tests's rules). Call it after smith_app. The code under test is the
+// program's objects but the entry's, plus what only the tests reach by include or import. Expands to
+//   smith_tests(b, &(SmithTests){.sources = smith_glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
+//                                .objects = app.objects + what only the tests reach (compiled with flags(debug)),
+//                                .flags = flags(debug), .link_flags = [-fsanitize=address,undefined] + .link_flags});
+// With no test file there is no task, and `smith test` says so.
+typedef struct {
+    const char *folder; // by default "tests"
+    SmithStep step;     // set: the task test
+} SmithAppTests;
+void smith_app_tests(SmithBuild *b, SmithAppTests *tests);

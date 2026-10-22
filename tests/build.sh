@@ -345,7 +345,7 @@ expect "always: reruns the step every build" 2 "$(lines ticks)"
 project
 build
 expect_status "errors: no build.c fails" 2
-expect "errors: no build.c message" "smith: no build.c in this folder" "$err"
+expect "errors: no build.c message" "smith: no build.c in this folder, and no main.smith or main.c to build by convention" "$(printf '%s\n' "$err" | head -1)"
 
 project
 cat >build.c <<'C'

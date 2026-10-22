@@ -299,7 +299,8 @@ expect "the name clang++ acts as smith c++" "$(lines "clang++ argv0=$work/bin/cl
 mkdir "$work/empty"
 for verb in lint run test; do
     capture sh -c "cd '$work/empty' && '$smith' $verb -DX=1"
-    expect "$verb -DX=1: the project's verb, which needs a build.c" "smith: no build.c in this folder" "$err"
+    expect "$verb -DX=1: the project's verb, which needs a build.c" "smith: no build.c in this folder, and no main.smith or main.c to build by convention" \
+        "$(printf '%s\n' "$err" | head -1)"
 done
 # fmt lists the files git sees, and the folder is no repository.
 capture sh -c "cd '$work/empty' && GIT_CEILING_DIRECTORIES='$work' '$smith' fmt"

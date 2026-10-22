@@ -107,7 +107,7 @@ How each verb uses it:
 - **check** runs fmt, docs, lint, test and prove in that order, cheapest first, and does not stop at a failure: each part
   prints `smith check: <part> ok` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or
   `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
-  without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c.
+  without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c, main.smith or main.c.
 
 **The verbs are not targets of `smith build`.** `smith build run`, `test`, `check`, `fmt`, `lint`, `docs` and `prove` are
 refused with a pointer to the verb (`smith: test is a verb, not a target of smith build; run `smith test``). The
@@ -416,6 +416,123 @@ build.c has two layers, and a project may use either or both.
 - A missing required field is an error naming it; so is an object in `.objects` that was never passed to `smith_object`.
   A program's step lists the objects' outputs as inputs and the libraries that are files (a path with `/`, or ending in
   `.a`, `.dylib` or `.so`, and not starting with `-`) as implicit inputs; `-framework X` is not a file.
+
+## Builds by convention: `smith_app` and `smith_app_tests`
+
+A third layer sits above the high level, and a project that follows its conventions needs no build file (issue #43).
+When the root has no `build.c` but has a `main.smith` or `main.c`, `smith build` and every verb (`run`, `test`, `lint`,
+`prove`, `check`) run an embedded build program, `.smith/conventions.c`, which is nothing but the two calls below with
+their defaults. It is compiled and run like any build.c (in `.smith/`, by the stage0 too, since a C project needs no
+`.smith` compiler), and writes `.smith/build.info` and `.smith/compile_commands.json` as any build does, so the verbs
+cannot tell it from a hand-written file. A hand-written build.c that calls the same two calls, or their expansions,
+builds the same commands.
+
+```c
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_app(b, &(SmithApp){});
+    smith_app_tests(b, &(SmithAppTests){});
+}
+```
+
+**The conventions.**
+- **Entry point:** `main.smith` or `main.c` at the root (both is an error). The program is named after the folder and
+  built to `build/<profile>/<name>`; each source's object is `build/<profile>/<source without its extension>.o`.
+- **`.smith`:** the program is `main.smith` and every module it imports, transitively. An `import a::b;` is found at
+  `a/b.smith` under the root of the importing module, as the compiler finds an import's source (for `module main;` in
+  `main.smith` the root is the project's, and for `geometry::box` in `geometry/box.smith` it is too). A module
+  nothing imports is not compiled, and its header is not written.
+- **C:** every quoted `#include "foo.h"`, transitively from `main.c`, is resolved as the compiler resolves it (the
+  including file's folder, then the project's root, which is `-I .`); the `foo.c` beside `foo.h` is compiled, and
+  `foo.h` is read in turn. Includes in `.smith` files (`#include "x.h"`, `import "x.h";`) follow the same rule.
+- **What the scan misses.** It is lexical, line by line, with `//` and `/* */` comments dropped. A conditional include
+  is followed anyway (harmless: the compiler decides), an include built by a macro is missed, a `.c` file nothing
+  includes by its header's name is not compiled, an include of a `.c` file (a unity build) is read and not compiled
+  again, and a C file that includes a `.smith` module's header does not make that module part of the program. A project
+  with such a file writes a build file, or renames to `.smith`.
+- **smith's libraries** need no declaration: `import smith::text;` or `#include <smith/io.h>` (`import <smith/io.h>;`
+  in `.smith`) compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
+  and random: its header and source are scanned the same way). `import smith::io;` is not possible yet: io is a C
+  library, importable as the header only. `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
+- **Tests:** every `.smith` file and every `test_*.c` below `tests/`, built with the debug flags. The code under test is
+  the program's debug objects but the entry's, so there are no second compiles of it; what only a test includes or
+  imports is compiled for the tests, and so is a library only they use. No test file means no task.
+- **Packages** have no convention (`smith_package` takes a URL and a hash): a project that needs one writes a build
+  file.
+- **A folder that follows no convention** (no `build.c`, no `main.smith`, no `main.c`) is an error that says what
+  `smith build` looked for and how to start a build file, and when a Makefile is beside it, that `CC = smith-cc` builds it
+  unchanged. It never guesses. A `build.smith` is refused for now.
+
+**The profiles.** `debug` is the default target; `release` and `fast` are aliases (`smith build release`, `smith build
+fast`). The flags are those `smith new` wrote before there was a convention, moved into smith:
+
+| | flags |
+|---|---|
+| all three | `-std=gnu2y -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror`, `-ffp-contract=off`, `-mcpu=apple-m1` on Darwin arm64, `-I . -I .smith/include`, then the project's `.flags`; Clang modules (`smith_modules` with no folders) |
+| debug | `-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern`; the link has `-fsanitize=address,undefined` |
+| release | `-O2` (assertions on) |
+| fast | `-O2 -DNDEBUG` |
+
+### `smith_app`: the program
+
+```c
+typedef struct {
+    const char *entry;                 // "main.smith" or "main.c"; by default the one the root holds
+    const char *name;                  // the program's name; by default the project's folder
+    const char *const *flags;          // added to every profile's compiles, after the profile's own
+    const char *const *link_flags;     // added to every profile's link
+    const char *const *libraries;      // after the objects: -lm, -framework Metal
+    const SmithObject *const *objects; // set: the debug objects of everything but the entry, the code under test
+    SmithStep step;                    // set: the debug program, the default target
+} SmithApp;
+void smith_app(SmithBuild *b, SmithApp *app);
+```
+
+Expands to (`flags(P)` is the table above for profile P):
+
+```c
+smith_modules(b, &(SmithModules){});   // unless modules are already on or an object was already declared
+// for P in debug, release, fast (debug first, so the editor reads the debug flags), for each source S found
+// (S followed from the entry), and each library L used (smith_library(b, "L"); its object is build/P/smith/L.o):
+smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = S,
+                               .output = "build/P/<S without its extension>.o", .flags = flags(P)});
+smith_program(b, &(SmithProgram){.linker = "smith-cc", .output = "build/P/<name>",
+                                 .flags = <the debug link flag, for P = debug> + .link_flags,
+                                 .objects = the objects above, .libraries = .libraries});
+smith_alias(b, "release", release program);
+smith_alias(b, "fast", fast program);
+smith_default(b, debug program);
+```
+
+It writes no root `compile_commands.json`: the compile commands are in `.smith/` on every build, and a project that wants
+the root file for another tool calls `smith_compile_commands(b, "compile_commands.json")` after these calls.
+
+### `smith_app_tests`: the tests
+
+```c
+typedef struct {
+    const char *folder; // by default "tests"
+    SmithStep step;     // set: the task test
+} SmithAppTests;
+void smith_app_tests(SmithBuild *b, SmithAppTests *tests);
+```
+
+Call it after `smith_app`. Expands to:
+
+```c
+smith_tests(b, &(SmithTests){
+    .sources = smith_glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
+    .objects = app.objects + (what only the tests include or import, and libraries only they use, each compiled with
+               the debug flags as build/debug/<source>.o),
+    .flags = flags(debug), .link_flags = <the debug link flag> + app.link_flags});
+```
+
+The debug objects of the program are shared with the tests (one compile of each source). The tests' libraries that
+`smith_tests` compiles itself (arena, random, trace, contract) are skipped when the program already links them.
+
+`smith build --dump-config` (issue #43, not yet written) prints exactly this program, with the defaults as fields, and a
+file that has it builds the same commands as no file.
 
 ## Packages: `smith_package`
 

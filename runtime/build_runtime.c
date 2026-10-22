@@ -1213,6 +1213,12 @@ static size_t smith_command_row_count;
 static const char *const smith_build_c_words[] = {"smith-cc", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
                                                   "-I",       ".smith/include", "-c", "build.c", nullptr};
 
+// A project built by convention has no build.c: the build program is smith's own (.smith/conventions.c), which the
+// editor and the linter have no use for.
+static bool smith_has_build_c(void) {
+    return access("build.c", F_OK) == 0;
+}
+
 // Clang modules (smith_modules): a module map per header folder, one module per header, and the flags that use them.
 
 constexpr char smith_modules_library_folder[] = ".smith/include/smith";
@@ -1852,7 +1858,7 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool firs
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr, smith_command_rows[i].arguments);
         fputs(",\n", out);
     }
-    smith_json_entry(out, b->root, "build.c", nullptr, smith_build_c_words);
+    if (smith_has_build_c()) smith_json_entry(out, b->root, "build.c", nullptr, smith_build_c_words);
     fputs("\n]\n", out);
 }
 
@@ -1975,10 +1981,12 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
             fprintf(out, "\t%s", row->arguments[j]);
         fputc('\n', out);
     }
-    fputs("compile\tbuild.c", out); // build.c itself, with the flags smith compiles it with
-    for (size_t j = 1; smith_build_c_words[j] != nullptr; j++)
-        fprintf(out, "\t%s", smith_build_c_words[j]);
-    fputc('\n', out);
+    if (smith_has_build_c()) { // build.c itself, with the flags smith compiles it with
+        fputs("compile\tbuild.c", out);
+        for (size_t j = 1; smith_build_c_words[j] != nullptr; j++)
+            fprintf(out, "\t%s", smith_build_c_words[j]);
+        fputc('\n', out);
+    }
     const char *const *tests = smith_test_tasks(b);
     for (size_t i = 0; tests[i] != nullptr; i++)
         fprintf(out, "test\t%s\n", tests[i]);
@@ -2264,6 +2272,508 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     smith_task(b, name, &task);
     smith_verb_task_allowed = false;
     copy.step = task;
+    *tests = copy;
+}
+
+// Builds by convention: smith_app and smith_app_tests (docs/build-c.md, "Conventions"). A project that follows the
+// conventions has no build file, and `smith build` then runs a build program of these two calls with their defaults.
+
+// The flags every profile shares: the template of `smith new`, moved here. C2y (for _Countof) with every warning, and
+// warnings as errors; GNU mode keeps POSIX functions declared on Linux.
+static const char *const smith_profile_warnings[] = {"-std=gnu2y",
+                                                     "-Wall",
+                                                     "-Wextra",
+                                                     "-Wpedantic",
+                                                     "-Wshadow",
+                                                     "-Wconversion",
+                                                     "-Wimplicit-fallthrough",
+                                                     "-Wmissing-prototypes",
+                                                     "-Wstrict-prototypes",
+                                                     "-Wvla",
+                                                     "-Werror",
+                                                     nullptr};
+// Debug information, no optimization, the sanitizers, and a pattern in what was never initialized.
+static const char *const smith_profile_debug[] = {"-g",
+                                                  "-O0",
+                                                  "-fsanitize=address,undefined",
+                                                  "-fno-sanitize-recover=all",
+                                                  "-fno-omit-frame-pointer",
+                                                  "-ftrivial-auto-var-init=pattern",
+                                                  nullptr};
+static const char *const smith_profile_release[] = {"-O2", nullptr};
+static const char *const smith_profile_fast[] = {"-O2", "-DNDEBUG", nullptr};
+
+constexpr size_t smith_app_files_max = 4096;
+constexpr size_t smith_app_libraries_max = 32;
+constexpr size_t smith_app_roots_max = 64;
+constexpr size_t smith_app_line_max = 4096;
+constexpr size_t smith_app_depth_max = 64;
+
+typedef struct {
+    const char *path;
+    bool compile; // a source the program compiles; a header is read for what it includes and is not compiled
+} SmithAppFile;
+
+// What a lexical scan of the sources found. A file is scanned once, in the order it was found (a queue), so the order
+// of the sources is the order of the includes and imports.
+static struct {
+    SmithAppFile files[smith_app_files_max];
+    size_t file_count;
+    size_t scanned;                                 // files[0..scanned) have been read
+    const char *libraries[smith_app_libraries_max]; // smith's libraries the sources use, then those they use
+    size_t library_count;
+    size_t libraries_scanned;
+    const char *roots[smith_app_roots_max]; // where a module's path starts (the folder above a/b.smith for a::b)
+    size_t root_count;
+} smith_app_found;
+
+// What the program and the tests share.
+static struct {
+    bool made;
+    const char *const *flags;      // the debug profile's compile flags, which the tests use
+    const char *const *link_flags; // and its link flags
+    const SmithObject **objects;   // the debug objects of the code under test
+    size_t object_count;
+} smith_app_state;
+
+static size_t smith_read_file(const char *path, char **text);
+
+static bool smith_app_is_file(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISREG(info.st_mode);
+}
+
+// The path with its "." parts dropped and ".." folded in. False when it leaves the project or does not fit.
+static bool smith_app_normal(const char *path, char *out, size_t capacity) {
+    const char *parts[smith_app_depth_max];
+    size_t lengths[smith_app_depth_max];
+    size_t count = 0;
+    const char *at = path;
+    for (size_t guard = 0; *at != '\0' && guard < strlen(path) + 1; guard++) { // each pass takes one part
+        size_t length = strcspn(at, "/");
+        if (length == 2 && at[0] == '.' && at[1] == '.') {
+            if (count == 0) return false;
+            count -= 1;
+        } else if (length > 0 && !(length == 1 && at[0] == '.')) {
+            if (count >= smith_app_depth_max) return false;
+            parts[count] = at;
+            lengths[count++] = length;
+        }
+        at += length + (at[length] == '/' ? 1 : 0);
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (used + lengths[i] + 2 > capacity) return false;
+        if (i > 0) out[used++] = '/';
+        memcpy(out + used, parts[i], lengths[i]);
+        used += lengths[i];
+    }
+    out[used] = '\0';
+    return used > 0;
+}
+
+// Adds a file to the queue once. A file first met as a header that is later a source to compile becomes one.
+static void smith_app_add(const char *path, bool compile) {
+    for (size_t i = 0; i < smith_app_found.file_count; i++) {
+        if (strcmp(smith_app_found.files[i].path, path) != 0) continue;
+        smith_app_found.files[i].compile = smith_app_found.files[i].compile || compile;
+        return;
+    }
+    if (smith_app_found.file_count >= smith_app_files_max) smith_too_many("files in the program", smith_app_files_max);
+    smith_app_found.files[smith_app_found.file_count++] = (SmithAppFile){smith_copy_string(path), compile};
+}
+
+static bool smith_app_plain_name(const char *name, size_t length) {
+    if (length == 0) return false;
+    for (size_t i = 0; i < length; i++) {
+        bool plain = (name[i] >= 'a' && name[i] <= 'z') || (name[i] >= '0' && name[i] <= '9') || name[i] == '_';
+        if (!plain) return false;
+    }
+    return true;
+}
+
+// A library of smith's, by name, to compile and link. `test` is left out: smith_tests compiles it. A name that is no
+// library is ignored (the compile says what it cannot find).
+static void smith_app_library(const char *name, size_t length) {
+    if (!smith_app_plain_name(name, length) || (length == 4 && memcmp(name, "test", 4) == 0)) return;
+    char *copy = smith_alloc(length + 1);
+    memcpy(copy, name, length);
+    copy[length] = '\0';
+    bool known = smith_app_is_file(smith_text(".smith/lib/%s.c", copy)) ||
+                 smith_app_is_file(smith_text(".smith/lib/smith/%s.smith", copy));
+    if (!known) return;
+    for (size_t i = 0; i < smith_app_found.library_count; i++) {
+        if (strcmp(smith_app_found.libraries[i], copy) == 0) return;
+    }
+    if (smith_app_found.library_count >= smith_app_libraries_max) smith_too_many("libraries", smith_app_libraries_max);
+    smith_app_found.libraries[smith_app_found.library_count++] = copy;
+}
+
+// The file a quoted include names, found as the compiler finds it: beside the including file, then at the project's
+// root (the convention's -I .). False when neither exists: a system header, or one the build writes.
+static bool smith_app_resolve(const char *from, const char *name, char *out, size_t capacity) {
+    char joined[PATH_MAX];
+    const char *slash = strrchr(from, '/');
+    if (slash != nullptr) {
+        int written = snprintf(joined, sizeof joined, "%.*s%s", (int)(slash - from + 1), from, name);
+        if (written > 0 && (size_t)written < sizeof joined && smith_app_normal(joined, out, capacity) &&
+            smith_app_is_file(out))
+            return true;
+    }
+    return smith_app_normal(name, out, capacity) && smith_app_is_file(out);
+}
+
+// A quoted include: the header joins the queue, and the .c file beside it is a source to compile. A quoted include of a
+// .c file (a unity build) is read and not compiled again.
+static void smith_app_quoted(const char *from, const char *name, bool libraries_only) {
+    if (libraries_only) { // inside smith's own libraries: "arena.h" is the library arena
+        const char *base = strrchr(name, '/');
+        base = base != nullptr ? base + 1 : name;
+        size_t length = strlen(base);
+        if (length > 2 && strcmp(base + length - 2, ".h") == 0 &&
+            smith_app_is_file(smith_text(".smith/include/smith/%s", base)))
+            smith_app_library(base, length - 2);
+        return;
+    }
+    char path[PATH_MAX];
+    if (!smith_app_resolve(from, name, path, sizeof path)) return;
+    size_t length = strlen(path);
+    smith_app_add(path, false);
+    if (length < 3 || strcmp(path + length - 2, ".h") != 0) return;
+    path[length - 1] = 'c';
+    if (smith_app_is_file(path)) smith_app_add(path, true);
+}
+
+// `<smith/io.h>` uses the library io.
+static void smith_app_angled(const char *name, size_t length) {
+    size_t folder = strlen("smith/");
+    if (length > folder + 2 && strncmp(name, "smith/", folder) == 0 && strcmp(name + length - 2, ".h") == 0)
+        smith_app_library(name + folder, length - folder - 2);
+}
+
+// The header an include or import names, after the directive: "name" or <name>.
+static void smith_app_header(const char *from, const char *rest, bool libraries_only) {
+    while (*rest == ' ' || *rest == '\t')
+        rest += 1;
+    char closing = '\0';
+    if (*rest == '"') closing = '"';
+    if (*rest == '<') closing = '>';
+    if (closing == '\0') return;
+    const char *end = strchr(rest + 1, closing);
+    if (end == nullptr || end == rest + 1 || (size_t)(end - rest) > PATH_MAX - 2) return;
+    char name[PATH_MAX];
+    memcpy(name, rest + 1, (size_t)(end - rest - 1));
+    name[end - rest - 1] = '\0';
+    if (closing == '>')
+        smith_app_angled(name, strlen(name));
+    else
+        smith_app_quoted(from, name, libraries_only);
+}
+
+static bool smith_app_name_byte(char c) {
+    return smith_lang_word_byte(c) || c == ':';
+}
+
+// `import a::b::c [as x]`: smith::<library> is a library of smith's, anything else a module found by its source at
+// a/b/c.smith under a root (the importing module's, as the compiler looks). Not finding one is the compile's to report.
+static void smith_app_module(const char *rest, bool libraries_only) {
+    size_t length = 0;
+    while (smith_app_name_byte(rest[length]))
+        length += 1;
+    if (length == 0) return;
+    size_t folder = strlen("smith::");
+    if (length > folder && strncmp(rest, "smith::", folder) == 0) {
+        smith_app_library(rest + folder, length - folder);
+        return;
+    }
+    if (libraries_only) return;
+    const char *slashed = smith_lang_slashed(smith_text("%.*s", (int)length, rest));
+    for (size_t i = 0; i < smith_app_found.root_count; i++) {
+        const char *root = smith_app_found.roots[i];
+        char path[PATH_MAX];
+        int written = snprintf(path, sizeof path, "%s%s%s.smith", root, *root != '\0' ? "/" : "", slashed);
+        if (written > 0 && (size_t)written < sizeof path && smith_app_is_file(path)) {
+            smith_app_add(path, true);
+            return;
+        }
+    }
+}
+
+// The folder a module's path starts at: for a::b in x/a/b.smith, x; for a file with no module line, its own folder.
+static void smith_app_root(const char *path) {
+    const char *module = smith_lang_module_of(path);
+    const char *tail = module != nullptr ? smith_text("%s.smith", smith_lang_slashed(module)) : nullptr;
+    const char *root = nullptr;
+    if (tail != nullptr && smith_ends_with(path, tail)) {
+        size_t before = strlen(path) - strlen(tail);
+        root = smith_text("%.*s", (int)(before > 0 ? before - 1 : 0), path);
+    } else {
+        const char *slash = strrchr(path, '/');
+        root = slash != nullptr ? smith_text("%.*s", (int)(slash - path), path) : "";
+    }
+    for (size_t i = 0; i < smith_app_found.root_count; i++) {
+        if (strcmp(smith_app_found.roots[i], root) == 0) return;
+    }
+    if (smith_app_found.root_count >= smith_app_roots_max) smith_too_many("module roots", smith_app_roots_max);
+    smith_app_found.roots[smith_app_found.root_count++] = root;
+}
+
+// The line without its comments (`/* */` may span lines: *in_block carries it), strings kept whole.
+static void smith_app_clean(const char *line, bool *in_block, char *out, size_t capacity) {
+    size_t used = 0;
+    char quote = '\0';
+    for (size_t i = 0; line[i] != '\0' && used + 2 < capacity; i++) {
+        if (*in_block) {
+            if (line[i] == '*' && line[i + 1] == '/') {
+                *in_block = false;
+                i += 1;
+            }
+        } else if (quote != '\0') {
+            out[used++] = line[i];
+            if (line[i] == '\\' && line[i + 1] != '\0')
+                out[used++] = line[++i];
+            else if (line[i] == quote)
+                quote = '\0';
+        } else if (line[i] == '/' && line[i + 1] == '/') {
+            break;
+        } else if (line[i] == '/' && line[i + 1] == '*') {
+            *in_block = true;
+            i += 1;
+        } else {
+            if (line[i] == '"') quote = '"';
+            out[used++] = line[i];
+        }
+    }
+    out[used] = '\0';
+}
+
+static bool smith_app_word(const char *text, const char *word) {
+    size_t length = strlen(word);
+    return strncmp(text, word, length) == 0 && !smith_lang_word_byte(text[length]);
+}
+
+static const char *smith_app_blanks(const char *text) {
+    while (*text == ' ' || *text == '\t')
+        text += 1;
+    return text;
+}
+
+// One statement of a cleaned line: `#include`, `#import` or, in a .smith file, `import`.
+static void smith_app_statement(const char *from, const char *statement, bool smith_file, bool libraries_only) {
+    statement = smith_app_blanks(statement);
+    if (*statement == '#') {
+        statement = smith_app_blanks(statement + 1);
+        if (smith_app_word(statement, "include")) smith_app_header(from, statement + strlen("include"), libraries_only);
+        if (smith_app_word(statement, "import")) smith_app_header(from, statement + strlen("import"), libraries_only);
+    } else if (smith_file && smith_app_word(statement, "import")) {
+        const char *rest = smith_app_blanks(statement + strlen("import"));
+        if (*rest == '<' || *rest == '"')
+            smith_app_header(from, rest, libraries_only);
+        else
+            smith_app_module(rest, libraries_only);
+    }
+}
+
+// Reads one file for what it includes and imports.
+static void smith_app_scan(const char *path, bool libraries_only) {
+    char *text = nullptr;
+    smith_read_file(path, &text);
+    bool smith_file = smith_ends_with(path, ".smith");
+    if (smith_file && !libraries_only) smith_app_root(path);
+    bool in_block = false;
+    char *line = text;
+    for (size_t guard = 0; *line != '\0' && guard < smith_lines_file_max; guard++) { // one line a pass
+        char *end = strchr(line, '\n');
+        if (end != nullptr) *end = '\0';
+        char clean[smith_app_line_max];
+        smith_app_clean(line, &in_block, clean, sizeof clean);
+        char *rest = clean;
+        for (size_t statements = 0; rest != nullptr && statements < smith_app_line_max; statements++) {
+            char *semicolon = smith_file ? strchr(rest, ';') : nullptr;
+            if (semicolon != nullptr) *semicolon = '\0';
+            smith_app_statement(path, rest, smith_file, libraries_only);
+            rest = semicolon != nullptr ? semicolon + 1 : nullptr;
+        }
+        if (end == nullptr) break;
+        line = end + 1;
+    }
+}
+
+// Reads every queued file, and then smith's libraries that those use (and the headers they include), until nothing
+// new turns up.
+static void smith_app_follow(SmithBuild *b) {
+    for (size_t round = 0; round < smith_app_files_max + smith_app_libraries_max; round++) {
+        if (smith_app_found.scanned < smith_app_found.file_count) {
+            smith_app_scan(smith_app_found.files[smith_app_found.scanned++].path, false);
+        } else if (smith_app_found.libraries_scanned < smith_app_found.library_count) {
+            const char *name = smith_app_found.libraries[smith_app_found.libraries_scanned++];
+            const char *header = smith_text(".smith/include/smith/%s.h", name);
+            if (smith_app_is_file(header)) smith_app_scan(header, true);
+            smith_app_scan(smith_library(b, name), true);
+        } else {
+            return;
+        }
+    }
+    smith_fail("the program's files and libraries are too many to follow");
+}
+
+// The entry point: the one given, else main.smith or main.c at the root.
+static const char *smith_app_entry(const char *given) {
+    if (given != nullptr) {
+        if (!smith_app_is_file(given)) smith_fail("smith_app: the entry point %s is not a file", given);
+        return smith_copy_string(given);
+    }
+    bool lang = smith_app_is_file("main.smith");
+    bool plain = smith_app_is_file("main.c");
+    if (lang && plain) smith_fail("smith_app: both main.smith and main.c are here; name one as .entry");
+    if (!lang && !plain) smith_fail("smith_app: no main.smith or main.c here; name the entry point as .entry");
+    return lang ? "main.smith" : "main.c";
+}
+
+// The object of a source in a profile: build/<profile>/<source without its extension>.o. A library of smith's is
+// build/<profile>/smith/<library>.o.
+static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const char *source, const char *const *flags) {
+    const char *library = ".smith/lib/";
+    const char *under = source;
+    if (strncmp(source, library, strlen(library)) == 0) {
+        under = source + strlen(library);
+        if (strncmp(under, "smith/", strlen("smith/")) != 0) under = smith_text("smith/%s", under);
+    }
+    SmithObject *object = smith_alloc(sizeof *object);
+    *object = (SmithObject){
+        .compiler = "smith-cc",
+        .source = source,
+        .output = smith_replace_extension(b, smith_text("build/%s/%s", profile, under), ".o"),
+        .flags = flags,
+    };
+    smith_object(b, object);
+    return object;
+}
+
+// The compile flags of a profile: the shared ones, the profile's own, then the project's.
+static const char *const *smith_app_flags(SmithBuild *b, const char *profile, const char *const *more) {
+    bool apple_silicon = strcmp(b->os, "Darwin") == 0 && strcmp(b->arch, "arm64") == 0;
+    const char *const *own = strcmp(profile, "debug") == 0     ? smith_profile_debug
+                             : strcmp(profile, "release") == 0 ? smith_profile_release
+                                                               : smith_profile_fast;
+    return smith_cat(b, smith_profile_warnings, smith_list(b, "-ffp-contract=off", nullptr),
+                     smith_when(b, apple_silicon, smith_list(b, "-mcpu=apple-m1", nullptr)),
+                     smith_list(b, "-I", ".", "-I", ".smith/include", nullptr), own, more, nullptr);
+}
+
+static const char *const *smith_app_link_flags(SmithBuild *b, const char *profile, const char *const *more) {
+    bool sanitized = strcmp(profile, "debug") == 0;
+    return smith_cat(b, smith_when(b, sanitized, smith_list(b, "-fsanitize=address,undefined", nullptr)), more,
+                     nullptr);
+}
+
+// One profile's program: every compiled source and library as an object, linked into build/<profile>/<name>. The
+// debug profile's objects but the entry's are kept for the tests.
+static SmithStep smith_app_program(SmithBuild *b, const SmithApp *app, const char *profile) {
+    const char *const *flags = smith_app_flags(b, profile, app->flags);
+    size_t total = smith_app_found.file_count + smith_app_found.library_count;
+    const SmithObject **linked = (const SmithObject **)smith_new_list(total);
+    size_t used = 0;
+    for (size_t i = 0; i < smith_app_found.file_count; i++) {
+        if (smith_app_found.files[i].compile)
+            linked[used++] = smith_app_object(b, profile, smith_app_found.files[i].path, flags);
+    }
+    for (size_t i = 0; i < smith_app_found.library_count; i++)
+        linked[used++] = smith_app_object(b, profile, smith_library(b, smith_app_found.libraries[i]), flags);
+    if (strcmp(profile, "debug") == 0) {
+        smith_app_state.flags = flags;
+        smith_app_state.link_flags = smith_app_link_flags(b, profile, app->link_flags);
+        smith_app_state.objects = (const SmithObject **)smith_new_list(used);
+        for (size_t i = 0; i < used; i++) {
+            if (strcmp(linked[i]->source, app->entry) != 0)
+                smith_app_state.objects[smith_app_state.object_count++] = linked[i];
+        }
+    }
+    SmithProgram program = {
+        .linker = "smith-cc",
+        .output = smith_text("build/%s/%s", profile, app->name),
+        .flags = smith_app_link_flags(b, profile, app->link_flags),
+        .objects = (const SmithObject *const *)linked,
+        .libraries = app->libraries,
+    };
+    smith_program(b, &program);
+    return program.step;
+}
+
+void smith_app(SmithBuild *b, SmithApp *app) {
+    SMITH_ASSERT(b != nullptr && app != nullptr);
+    smith_context = nullptr;
+    if (smith_app_state.made) smith_fail("smith_app is called twice");
+    SmithApp copy = *app;
+    copy.entry = smith_app_entry(app->entry);
+    const char *slash = strrchr(b->root, '/');
+    copy.name = smith_copy_string(app->name != nullptr ? app->name : slash != nullptr ? slash + 1 : b->root);
+    copy.flags = smith_copy_list(app->flags);
+    copy.link_flags = smith_copy_list(app->link_flags);
+    copy.libraries = smith_copy_list(app->libraries);
+    smith_app_add(copy.entry, true);
+    smith_app_follow(b);
+    if (smith_modules_flags == nullptr && smith_object_row_count == 0) smith_modules(b, &(SmithModules){});
+    SmithStep debug = smith_app_program(b, &copy, "debug"); // first, so the editor reads the debug flags
+    SmithStep release = smith_app_program(b, &copy, "release");
+    SmithStep fast = smith_app_program(b, &copy, "fast");
+    smith_alias(b, "release", release.outputs);
+    smith_alias(b, "fast", fast.outputs);
+    smith_default(b, debug.outputs);
+    smith_app_state.made = true;
+    copy.objects = (const SmithObject *const *)smith_app_state.objects;
+    copy.step = debug;
+    *app = copy;
+}
+
+static bool smith_app_listed(const char *const *list, const char *path) {
+    for (size_t i = 0; list[i] != nullptr; i++) {
+        if (strcmp(list[i], path) == 0) return true;
+    }
+    return false;
+}
+
+void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
+    SMITH_ASSERT(b != nullptr && tests != nullptr);
+    smith_context = nullptr;
+    if (!smith_app_state.made) smith_fail("smith_app_tests: call smith_app first, for the code under test");
+    SmithAppTests copy = *tests;
+    copy.folder = smith_copy_string(tests->folder != nullptr ? tests->folder : "tests");
+    // The .smith modules and the test_*.c files below the folder, sorted.
+    const char *const *files = smith_glob(
+        b, smith_list(b, smith_text("%s/**/*.smith", copy.folder), smith_text("%s/**/test_*.c", copy.folder), nullptr));
+    if (smith_count(files) == 0) {
+        *tests = copy;
+        return; // no tests, no task: `smith test` says so
+    }
+    // What the tests reach that the program does not (a module only a test imports) is compiled with the debug flags,
+    // and so is any library of smith's that only they use.
+    size_t before_files = smith_app_found.file_count;
+    size_t before_libraries = smith_app_found.library_count;
+    for (size_t i = 0; files[i] != nullptr; i++)
+        smith_app_add(files[i], false);
+    smith_app_follow(b);
+    size_t room = smith_app_state.object_count + smith_app_found.file_count + smith_app_found.library_count;
+    const SmithObject **objects = (const SmithObject **)smith_new_list(room);
+    size_t used = 0;
+    for (size_t i = 0; i < smith_app_state.object_count; i++)
+        objects[used++] = smith_app_state.objects[i];
+    for (size_t i = before_files; i < smith_app_found.file_count; i++) {
+        const SmithAppFile *file = &smith_app_found.files[i];
+        if (file->compile && !smith_app_listed(files, file->path))
+            objects[used++] = smith_app_object(b, "debug", file->path, smith_app_state.flags);
+    }
+    for (size_t i = before_libraries; i < smith_app_found.library_count; i++)
+        objects[used++] =
+            smith_app_object(b, "debug", smith_library(b, smith_app_found.libraries[i]), smith_app_state.flags);
+    SmithTests run = {
+        .sources = files,
+        .objects = (const SmithObject *const *)objects,
+        .flags = smith_app_state.flags,
+        .link_flags = smith_app_state.link_flags,
+    };
+    smith_tests(b, &run);
+    copy.step = run.step;
     *tests = copy;
 }
 
