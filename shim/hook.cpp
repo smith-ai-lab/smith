@@ -797,8 +797,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return offset == 1 || !(isAlphanumeric(text[offset - 2]) || text[offset - 2] == '_');
     }
 
-    // Whether the name at `at` follows `.` or `->`: a member's name, which no macro can be the use of (`x.vector_length`
-    // where <simd/geometry.h> defines a macro of that name; the member is looked up in its struct).
+    // Whether the name at `at` follows `.` or `->`: a member's name, which no macro can be the use of
+    // (`x.vector_length` where <simd/geometry.h> defines a macro of that name; the member is looked up in its struct).
     bool afterMemberAccess(SourceLocation at) const {
         StringRef text = SM.getBufferData(SM.getFileID(at));
         size_t offset = SM.getFileOffset(at);

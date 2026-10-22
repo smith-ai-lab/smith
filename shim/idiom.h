@@ -313,7 +313,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
         // `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
         // generic's, which infers the type from its arguments.
         static std::string generic_of(const ModuleHeader &module, const std::string &name) {
-            static const char *const types[] = {"bool", "char", "i8",  "i16", "i32", "i64",    "isize", "u8",
+            static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32", "i64", "isize",   "u8",
                                                 "u16",  "u32",  "u64", "usize", "f32", "f64", "pointer", "ptr"};
             for (const char *type : types) {
                 std::string suffix = std::string("_") + type;
@@ -608,9 +608,8 @@ class DesignatedInitCheck final : public ClangTidyCheck {
         const SourceManager &sm = *Result.SourceManager;
         if (!is_smith_file(sm, sm.getMainFileID())) return;
         const auto *list = Result.Nodes.getNodeAs<InitListExpr>("list");
-        const InitListExpr *written = list->isSemanticForm() && list->getSyntacticForm() != nullptr
-                                          ? list->getSyntacticForm()
-                                          : list;
+        const InitListExpr *written =
+            list->isSemanticForm() && list->getSyntacticForm() != nullptr ? list->getSyntacticForm() : list;
         if (written->getNumInits() < 2) return;
         SourceLocation at = written->getBeginLoc();
         if (!at.isValid() || at.isMacroID() || sm.getFileID(at) != sm.getMainFileID()) return;
