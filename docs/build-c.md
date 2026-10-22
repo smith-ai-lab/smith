@@ -44,7 +44,7 @@ own (issue #40):
 | `smith fmt` | formats every C, C++, Objective-C and `.smith` file git sees (tracked, and untracked but not ignored; `.c .h .m .mm .cpp .cc .cxx .hpp .hh .smith .metal`) to `.clang-format` (smith's own, embedded, where the file is not found up the tree; `--dump-config` prints the effective one); what `.clang-format-ignore` names is left alone | clang-format, with its arguments unchanged; options alone (`--dry-run`, `-n`, `--Werror`, `-i`) are the project verb, never standard input |
 | `smith lint` | builds what the compiles read (generated headers), then runs clang-tidy, with `.clang-tidy` (smith's own where none is found; `--dump-config` prints it), on the project's own sources among the build's compiles, side by side | clang-tidy, with its arguments unchanged; `--quiet` alone is the project verb |
 | `smith docs` | checks AGENTS.md, `knowledge/` and `.agents/skills/` of the nearest folder at or above the current one that has an AGENTS.md (up to the repository's root; else the current folder), with the types and fields `knowledge/index.md` declares | the check's options (`--type`, `--require`, `--depfile`, a root) |
-| `smith prove` | proves the contracts of the build's C sources, with the flags of their compiles | the prover, with its arguments |
+| `smith prove` | proves the contracts of the build's C and `.smith` sources, with the flags of their compiles: every function with a contract, minus the trusted ones (`smith_trusted()`) | the prover, with its arguments; `-v`, `--budget=`, `--emit-ir=` and `--no-cache` alone are the project verb |
 | `smith test` | builds and runs the tests `smith_tests` declares | the arguments are the test runner's options |
 | `smith run` | builds `smith_default`, then runs the one program it names | the arguments go to the program |
 | `smith check` | fmt (clang-format's dry run), docs, lint, test and prove, each reported | refused |
@@ -95,7 +95,7 @@ How each verb uses it:
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
   findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
   lints the first compile of a source, so a program built in three variants is checked once, with the first's flags. The checks are the project's `.clang-tidy`, or smith's defaults, which include `smith-effects` (a raw call such as `printf` or `fopen` outside a capability's implementation; skill smith-io).
-- **prove** proves each program's C sources together, as the program links them (`unit<TAB>source...` in the info; the
+- **prove** proves each program's C and `.smith` sources together, as the program links them (`unit<TAB>source...` in the info; the
   tests' runner is left out, and so is a source the build compiles into no program), with the flags of their first
   compiles less what only instruments or caches (`-fsanitize`, modules, frame pointers, pattern initialization, the
   depfile): sources of a program with the same flags go in one `smith prove a.c b.c -- flags`, and programs with the same
@@ -745,11 +745,11 @@ A source that ends in `.smith` in `smith_object` is a module (its first line is 
 file ([smith-lang.md](smith-lang.md)). Nothing else in build.c changes: the manifest gets
 
 - for each module, a **header step**: `<compiler> --smith-header <source> -o .smith/include/a/b.h` (the compiler is the
-  object's, `smith-cc`, which runs the helper in `smith cc --smith-header` without compiling). The step is `.restat`
+  object's, `smith-cc`, which runs the helper in `smith cc --smith-header` without compiling; the object's `-I`, `-D`, `-std=` and similar flags follow, for the question of which of several C imports an export's name comes from). The step is `.restat`
   and the header is written only when its bytes differ, so an edit to a module's body leaves it alone. A module's
   name is read from its `module` line when build.c runs, and its path must end in `a/b.smith` (an error from
   `smith_object` otherwise, once). Two sources that declare one module are an error; one source compiled twice with
-  other flags shares its header step.
+  other flags shares its header step (the first compile's flags are the ones it is given).
 - one **check step** (`.smith/imports.stamp`, a `.run` step, described "check the imports of the modules") that reads
   every header's `// smith-module:` and `// smith-imports:` lines and fails, naming the cycle (`import cycle: a::x ->
   a::y -> a::x`), when the modules import each other in a circle.

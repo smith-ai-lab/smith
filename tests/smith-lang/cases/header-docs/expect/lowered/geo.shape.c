@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 typedef struct {
 __UINT32_TYPE__ x;
 __UINT32_TYPE__ y;

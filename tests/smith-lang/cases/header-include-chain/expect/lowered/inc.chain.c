@@ -12,6 +12,7 @@
 #ifdef UNRELATED
 #define NOTHING 1
 #endif
+#include <math.h>
 #if __has_include("chain_extra.h")
 #include "chain_extra.h"
 #endif

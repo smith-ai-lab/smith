@@ -62,6 +62,8 @@ typedef struct {
     uint32_t location; // the host's source location, kept by every token derived from this one
     uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
     uint32_t length;
+    uint16_t
+        via; // emitted: 1 + the import binding whose `x::` this name was written with (0: none); the header's includes
     const char *text;
     const char *header_text; // emitted: the spelling in a generated header, when it differs (uint64_t for u64)
     uint32_t header_length;
@@ -172,6 +174,10 @@ typedef struct {
     // A name of a module that could not be imported is used here: the host keeps the diagnostics at that location out
     // of the way (the missing module is the one error).
     void (*suppress)(void *context, uint32_t location);
+    // Which `import <h>;` or `import "h";` declared `name` (a declaration of that space, else a macro): the header as
+    // that import spells it, `<stdio.h>` or `"mine.h"`, never an internal header the compiler found the name in. Null
+    // when no import did. Asked by SMITH_LANG_ASK_IMPORTS; a host without a parser leaves it null.
+    const char *(*declared_by)(void *context, const char *name, uint32_t length, SmithLookupKind space);
 } SmithHost;
 
 typedef struct SmithLang SmithLang;

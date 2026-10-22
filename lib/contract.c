@@ -17,3 +17,7 @@ void smith_contract_ensures(bool condition) {
 void smith_contract_invariant(bool condition) {
     if (!condition) smith_failure(SmithFailure_Invariant);
 }
+
+// A marker for `smith prove`, which reads the call in the IR: a trusted function is assumed, not proved. It checks
+// nothing, at run time or anywhere else.
+void smith_contract_trusted(void) {}

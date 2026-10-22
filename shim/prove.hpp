@@ -6,6 +6,7 @@
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
 
 #include <map>
 #include <memory>
@@ -44,8 +45,30 @@ struct CallSite {
     std::string callee;
     std::string file;
     unsigned line = 0;
-    std::vector<llvm::Value *> arguments; // in the function being proved
-    std::vector<std::string> parameters;  // the callee's names for them
+    // in the function being proved; a handle, because the clean-up passes after the call is replaced delete and replace
+    // values (a null handle is a value that is gone)
+    std::vector<llvm::WeakTrackingVH> arguments;
+    std::vector<std::string> parameters; // the callee's names for them
+};
+
+// A loop the prover unrolled: where it is and how many passes it has (0: not a constant LLVM could read before
+// unrolling, which is an error unless unrolling still finds one).
+struct UnrolledLoop {
+    std::string file;
+    unsigned line = 0;
+    unsigned passes = 0;
+};
+
+// Something in the code being proved that makes a query costly for the solver, with the line it comes from. Facts of
+// the IR the solver is given, never guesses: a division by a variable, a multiplication of two variables, a loop that
+// was unrolled, the loads and stores of a source line, a copy of a large object.
+struct Cost {
+    std::string what; // "64-bit unsigned remainder by a variable"
+    std::string file;
+    unsigned line = 0;
+    unsigned count = 1;
+    unsigned weight = 0;                                 // 3: arithmetic that blows up, 2: memory, 1: a loop
+    std::vector<const llvm::Instruction *> instructions; // for "feeds this query"
 };
 
 // A function being proved, with everything the report needs about it.
@@ -56,6 +79,9 @@ struct Unit {
     std::vector<Point> points;
     std::vector<CallSite> call_sites;
     std::vector<std::string> notes;
+    std::vector<UnrolledLoop> loops;
+    std::vector<Cost> costs;                          // filled once the function is prepared
+    unsigned instructions = 0, loads = 0, stores = 0; // of the prepared function
     std::vector<std::pair<unsigned, unsigned>>
         distinct_pointers; // parameters whose pointees cannot be the same object // where LLVM's memory attributes were
                            // not enough to say what a callee leaves alone
@@ -87,6 +113,9 @@ struct Options {
     bool verbose = false;
     std::vector<std::string> only; // function names; empty: every function with a contract
     bool dump = false;             // print the IR each function is proved from
+    std::string emit_ir;           // a file that gets the IR of each function, as it is checked (--emit-ir)
+    bool emit_ir_append = false;   // the file is not emptied first (the project verb proves several groups)
+    bool no_cache = false;         // prove again what a cached proof has proved
 };
 
 // ---- shim/prove_ir.cpp ----
@@ -104,9 +133,22 @@ struct Program {
 // `error` when the files cannot be read.
 bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error);
 
-// The functions that are proved, in the order the files define them: the ones that carry a contract, and the ones no
-// function of the program calls that call a function with an smith_ensures, since nothing else checks what they pass.
+// The functions that are proved, in the order the files define them: the ones that carry a contract (smith_requires,
+// smith_ensures or smith_invariant) and are not trusted. A function with no contract is not proved, nor is main; calls
+// in the ones that are proved still use the contracts of their callees.
 std::vector<std::string> program_units(const Program &program);
+
+// A function marked smith_trusted(): its contract is assumed by callers and its body is not read.
+struct Trusted {
+    std::string name; // as the source writes it
+    std::string file;
+    unsigned line = 0;
+    unsigned requires_count = 0, ensures_count = 0;
+};
+std::vector<Trusted> program_trusted(const Program &program);
+
+// Whether a function (by its name in the module) is trusted.
+bool program_is_trusted(const Program &program, const std::string &name);
 
 // The name of a function as the source writes it (the module may have renamed a static one).
 std::string program_label(const Program &program, const std::string &name);
@@ -120,6 +162,18 @@ struct Prepared {
     std::unique_ptr<Unprovable> unprovable;
 };
 Prepared program_prepare(Program &program, const std::string &name);
+
+// What a proof of this prepared function costs the solver, by the line (Unit::costs, Unit::loops are filled by
+// program_prepare); the instructions whose value `root` depends on, through operands only.
+std::set<const llvm::Instruction *> data_cone(const llvm::Instruction *root);
+
+// The IR of a prepared function as the prover checks it, with the proof points listed in comments.
+std::string program_ir_text(const Prepared &prepared);
+
+// A key for a proof of the prepared function: the text of its IR without debug information or the numbering of
+// attribute groups, the globals and declarations it uses, and the proof points. Two functions with the same key have
+// the same proof.
+std::string program_proof_key(const Prepared &prepared);
 
 // ---- shim/prove_bitwuzla.cpp ----
 
@@ -144,8 +198,23 @@ struct Finding {
     std::vector<std::pair<std::string, std::string>> values; // name = value at the counterexample
 };
 
+// One query of a proof and what it took.
+struct QueryTime {
+    std::string what; // "smith_ensures(q * y + r == x)", or the instruction that may have undefined behaviour
+    std::string file;
+    unsigned line = 0;
+    double cpu = 0;
+    bool ran_out = false;      // the budget ended while it ran
+    std::vector<size_t> feeds; // indexes of Unit::costs whose operations its value depends on
+};
+
 struct Outcome {
     enum Status { Proved, Failed, Timeout, Error } status = Proved;
+    std::vector<QueryTime> queries; // the slowest first, at most a few
+    unsigned query_count = 0;
+    double execution_seconds = 0; // CPU time before the first query: Alive2's symbolic execution of the function
+    unsigned queries_written = 0;
+    std::vector<std::pair<std::string, double>> phases; // where the charged time went, in order
     std::vector<Finding> findings;
     std::string error;      // for Error
     double seconds = 0;     // wall time

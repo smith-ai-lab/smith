@@ -327,6 +327,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.watch_imports = &SmithHook::watchImports;
         host.rename = &SmithHook::renameName;
         host.lookup = &SmithHook::lookupName;
+        host.declared_by = &SmithHook::declaredBy;
         host.type_info = &SmithHook::typeInfo;
         host.type_query = &SmithHook::typeQuery;
         host.expr_type = &SmithHook::exprType;
@@ -718,7 +719,8 @@ class SmithHook final : public TokenHook, public NameSource {
     std::vector<std::string> outText;  // per token of `out` in an instance: its spelling
     std::vector<Action> actions;
     llvm::BumpPtrAllocator texts;
-    llvm::DenseSet<unsigned> importFiles; // the FileIDs of the buffers that stand for `import <h>;`
+    llvm::DenseSet<unsigned> importFiles;                 // the FileIDs of the buffers that stand for `import <h>;`
+    llvm::DenseMap<unsigned, std::string> importSpelling; // and how each imports its header: <stdio.h>, "mine.h"
     std::string fieldName;
     std::string fieldType;
     struct SizedName {
@@ -1264,6 +1266,7 @@ class SmithHook final : public TokenHook, public NameSource {
         auto buffer = llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-import>");
         FileID id = SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0, action.at);
         importFiles.insert(id.getHashValue());
+        importSpelling[id.getHashValue()] = (action.angled ? "<" : "\"") + action.header + (action.angled ? ">" : "\"");
         PP.EnterSourceFile(id, nullptr, action.at);
     }
 
@@ -1862,6 +1865,33 @@ class SmithHook final : public TokenHook, public NameSource {
             }
         }
         return false;
+    }
+
+    // The import (as its header is spelled in it) that brought the file in, or null.
+    const char *importOf(FileID id) {
+        for (int depth = 0; depth < 64 && id.isValid(); depth++) { // include chains are short
+            auto found = importSpelling.find(id.getHashValue());
+            if (found != importSpelling.end()) return keep(found->second);
+            id = SM.getFileID(SM.getIncludeLoc(id));
+        }
+        return nullptr;
+    }
+
+    // Which `import <h>;` declared the name (a declaration of that space, else a macro), for SMITH_LANG_ASK_IMPORTS:
+    // the import the module wrote, never the internal header the compiler found the name in.
+    static const char *declaredBy(void *context, const char *name, uint32_t length, SmithLookupKind space) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (NamedDecl *decl = self->findDecl(name, length, space)) {
+            if (const char *by = self->importOf(self->SM.getFileID(self->SM.getFileLoc(decl->getLocation())))) {
+                return by;
+            }
+        }
+        if (space == SmithLookup_Tag) return nullptr;
+        IdentifierInfo *info = &self->PP.getIdentifierTable().get(StringRef(name, length));
+        if (const MacroInfo *macro = self->PP.getMacroInfo(info)) {
+            return self->importOf(self->SM.getFileID(macro->getDefinitionLoc()));
+        }
+        return nullptr;
     }
 
     static SmithLookup lookupName(void *context, const char *name, uint32_t length, SmithLookupKind space) {

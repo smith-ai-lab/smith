@@ -253,6 +253,22 @@ static bool smith_lang_held_is_inline(const SmithLangHeld *held) {
                                                        smith_lang_equals(text, held->text.length, "__inline__"));
 }
 
+static bool smith_lang_recording_exported(const SmithLang *lang) {
+    return lang->recording && !lang->recording_skip && smith_lang_generics[lang->recording_generic].exported;
+}
+
+// A name written `x::name` is part of the body of the generic being recorded, whose record the module's header holds
+// (and its importers compile): the header must have what it names.
+static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token) {
+    if (!smith_lang_recording_exported(lang)) return;
+    bool tag = false;
+    if (smith_lang_gt.count > 0) {
+        const SmithLangGenToken *before = &smith_lang_gt.tokens[smith_lang_gt.count - 1];
+        tag = smith_lang_tag_before(smith_lang_gt_str(before), before->length);
+    }
+    smith_lang_note_use(lang, token->via, token->text, token->length, tag);
+}
+
 // Pushes the head's tokens into the pool; false when it is full.
 static bool smith_lang_generic_push_head(SmithLang *lang, SmithLangGeneric *generic) {
     uint32_t pushed = 0;
@@ -261,6 +277,11 @@ static bool smith_lang_generic_push_head(SmithLang *lang, SmithLangGeneric *gene
         if (smith_lang_held_is_inline(held)) continue;
         if (i == lang->decl.last_name) generic->name_index = pushed;
         SmithToken token = smith_lang_held_token(lang, held);
+        if (held->via != 0 && lang->decl.exported) { // the head of an exported generic is in its header's record
+            bool tag = i > 0 && smith_lang_tag_before(smith_lang_scratch_str(lang->head[i - 1].text),
+                                                      lang->head[i - 1].text.length);
+            smith_lang_note_use(lang, held->via, token.text, token.length, tag);
+        }
         if (smith_lang_pool_add(&smith_lang_gt, smith_lang_gt_from(&token), token.text, token.length) == UINT32_MAX) {
             return false;
         }

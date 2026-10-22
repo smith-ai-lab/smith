@@ -311,12 +311,12 @@ if [ "$(has "$err" "has no prover")" = yes ]; then
 else
     expect "new verbs: smith prove proves the contracts of the compiled sources" 0 "$rc"
     expect_contains "new verbs: ... both functions" "$out" "2 proved, 0 failed"
-    printf '#include "clamp.h"\n\nint32_t pinned(int32_t x) {\n    return clamp(x, 10, 5);\n}\n' >bad_caller.c
+    printf '#include <smith/contract.h>\n\n#include "clamp.h"\n\nint32_t pinned(int32_t x) {\n    smith_requires(x >= 0);\n    return clamp(x, 10, 5);\n}\n' >bad_caller.c
     printf '#pragma once\n#include "clamp.h"\n' >bad_caller.h
     sed 's|#include "clamp.h"|#include "bad_caller.h"\n#include "clamp.h"|' main.c >main.c.new && mv main.c.new main.c
     capture smith prove
     expect "new verbs: a caller that breaks a contract fails smith prove" 1 "$rc"
-    expect_contains "new verbs: ... at the call" "$out" "bad_caller.c:4: the call of clamp may break smith_requires(low <= high)"
+    expect_contains "new verbs: ... at the call" "$out" "bad_caller.c:7: the call of clamp may break smith_requires(low <= high)"
     rm bad_caller.c bad_caller.h
     sed '/#include "bad_caller.h"/d' main.c >main.c.new && mv main.c.new main.c
 fi

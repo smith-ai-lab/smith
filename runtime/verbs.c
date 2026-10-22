@@ -405,9 +405,11 @@ static bool smith_prove_drops(const char *word, bool *skip_next) {
     return false;
 }
 
-// The sources `smith prove` reads: C files, not build.c (which is a program that writes the manifest).
+// The sources `smith prove` reads: C files and .smith modules, not build.c or build.smith (which are programs that
+// write the manifest).
 static bool smith_proves(const char *source) {
-    return smith_ends_with(source, ".c") && strcmp(source, "build.c") != 0;
+    if (strcmp(source, "build.c") == 0 || strcmp(source, "build.smith") == 0) return false;
+    return smith_ends_with(source, ".c") || smith_ends_with(source, ".smith");
 }
 
 static char *smith_prove_argv[smith_verbs_lines_max + smith_verbs_words_max + 8];
@@ -438,11 +440,30 @@ static void smith_prove_filter(char *flags) {
 // Proves one group of sources that compile with the same flags: `smith prove <sources> -- <flags>`.
 static size_t smith_prove_groups_run; // the groups `smith prove` started, so that none can be said
 
+// The prover's own options of the command line (-v, --budget=, --emit-ir=, --no-cache), which every group gets. The
+// groups write one file: the first empties it and the others add to it.
+static const SmithVerbArgs *smith_prove_options;
+
+static void smith_prove_pass_options(size_t *used) {
+    static char append[PATH_MAX + 32];
+    for (size_t i = 0; smith_prove_options != nullptr && i < smith_prove_options->own_count; i++) { // bounded by args
+        const char *option = smith_prove_options->own[i];
+        constexpr char emit[] = "--emit-ir=";
+        if (strncmp(option, emit, sizeof emit - 1) == 0 && smith_prove_groups_run > 1) {
+            snprintf(append, sizeof append, "--emit-ir-append=%s", option + sizeof emit - 1);
+            option = append;
+        }
+        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
+            smith_prove_argv[(*used)++] = (char *)option;
+    }
+}
+
 static int smith_prove_group(const char *self, const SmithInfo *info, const size_t *members, size_t member_count) {
     smith_prove_groups_run++;
     size_t used = 0;
     smith_prove_argv[used++] = (char *)self;
     smith_prove_argv[used++] = (char *)"prove";
+    smith_prove_pass_options(&used);
     for (size_t i = 0; i < member_count; i++)
         smith_prove_argv[used++] = (char *)info->compiles[members[i]];
     smith_prove_argv[used++] = (char *)"--";
@@ -510,6 +531,7 @@ static int smith_prove_project(int count, char **args, const char *self) {
                   "smith build llvm, then smith build");
     }
     SmithVerbArgs *split = smith_verb_split(count, args);
+    smith_prove_options = split;
     const char *const targets[] = {"smith_needs", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;

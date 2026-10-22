@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdarg.h>
+
 static [[gnu::format(printf, 1, 2)]] int log_fmt_private_say(const char *format, ...) {
 va_list args;
 va_start(args, format);

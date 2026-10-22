@@ -7,12 +7,8 @@
 // smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@169:57=[ p@169:58=[ i@169:59=nodiscard p@169:68=] p@169:69=] iP1w@169:71=T pw@169:73=* i@169:74=smith_arena_push_array_type p@169:84=( i@169:85=SmithArena pw@169:91=* i@169:92=arena p@169:97=, iw@169:99=constexpr iw@169:109=type iP1w@169:114=T p@169:115=, iw@170:85=size_t iw@170:92=count p@170:97=) pw@170:99={ iw@171:5=return pw@171:12=( iP1@171:13=T pw@171:15=* p@171:16=) i@171:17=smith_arena_push_array p@171:31=( i@171:32=arena p@171:37=, iw@171:39=sizeof p@171:45=( iP1@171:46=T p@171:47=) p@171:48=, iw@171:50=count p@171:55=, iw@171:57=alignof p@171:64=( iP1@171:65=T p@171:66=) p@171:67=) p@171:68=; p@172:1=}
 // clang-format on
 #pragma once
-#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

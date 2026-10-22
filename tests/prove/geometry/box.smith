@@ -22,5 +22,6 @@ export i32 add_unchecked(i32 a, i32 b) {
 }
 
 export i32 caller(i32 x) {
+    c::smith_requires(x >= 0);
     return clamp(x, 10, 5);
 }

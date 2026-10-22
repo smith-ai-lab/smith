@@ -115,7 +115,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `.clang-format-ignore` names is left alone); `smith lint` is clang-tidy on the project's own sources among the build's
   compiles, in parallel; `smith docs` checks AGENTS.md, `knowledge/` and `.agents/skills/` (the concept types and
   required fields are declared in `knowledge/index.md`'s frontmatter); `smith prove` proves the contracts of the
-  C sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
+  C and `.smith` sources of each program the build links; `smith test` runs what `smith_tests` declares (its arguments go to the runner); `smith run` runs the program
   that `smith_default` names, when it names exactly one (its arguments go to the program); `smith check` runs fmt (the dry
   run), docs, lint, test and prove, reports every part and fails if any did. With arguments `fmt`, `lint` and `prove`
   are clang-format, clang-tidy and the prover, as before. `smith_task` and `smith_alias` refuse a name that is a verb. A
@@ -157,7 +157,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   module's source (among the command's `.smith` files, else at the path its name implies under the importing module's
   root) and makes its interface in memory, writing nothing; `smith build` still writes the headers and they win. The
   sized types (`u32`, `f64`, ...) are typedefs, made when a file first uses one it does not declare itself, so a
-  diagnostic reads `'i32' (aka 'int')`; a generated C header still says the standard C types. The lowering reports a C
+  diagnostic reads `'i32' (aka 'int')`; a generated C header still says the standard C types. **A module's generated header includes exactly what its exported declarations need**: `<stddef.h>`, `<stdint.h>`, an imported module an export writes `x::Name` of, and a C header (`import <h>;`) an export writes `c::name` of (with several imports smith asks the compiler which declares it; a stage0 keeps them all); an `#include`, and an import only a body uses, never reach it, so a module whose exports use a header's types `import`s it (`tests/headers.sh`). The lowering reports a C
   keyword used as a name (`i32 double(i32 x)`) itself, at the name. A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
@@ -232,8 +232,20 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   out): a proof is charged what it would take on 8 idle cores, a constant on every machine (`Options::solver_threads`):
   the CPU time of what runs one thing after another, plus for the queries Bitwuzla runs side by side the longest of
   them or all of them divided by 8, whichever is more. The child process has the kernel's CPU limit as a backstop and a
-  large wall-clock limit for one that is blocked. `smith prove -v` shows wall, CPU and charged time. Proofs are cached
-  by content, and only what changed is proved again.
+  large wall-clock limit for one that is blocked. `smith prove -v` lists every function with wall, CPU and charged time (a
+  cached one marked cached, with the time it took), the slowest query of each and, for one that took a second or
+  ran out, what made it costly: the IR's divisions by a variable, products of variables, loads and stores by line, copies
+  of large objects and unrolled loops. Proofs are cached by content (`$XDG_CACHE_HOME/smith/proofs`, a hash of the IR the
+  prover checks, 31 days unused removed), and only what changed is proved again; `--no-cache` proves again.
+- **The prover's boundary is `smith_trusted()`, and there is no list** (issue #42, owner's decision: no proof file or
+  function list in build.c). `smith prove` proves every function with a contract of its own, minus the trusted ones;
+  `main` and functions with no contract are not proved. A function whose first statement is `smith_trusted()` (a call, so
+  it reads from the IR and works in C and `.smith` alike) is assumed: callers prove its `smith_requires` and assume its
+  `smith_ensures`, its body is never read, and it is memory-assumed to write only through the pointers it is given. The
+  report lists it as `trusted` and counts it apart from `proved`. A proved function that calls io, inline assembly or a
+  libc function with no contract fails with a message that names the call and the function to mark. Errors name their
+  cause (a `smith_requires` that reads after a write names both lines), and `--emit-ir=FILE` writes the IR the prover
+  checks. Skill: smith-contract.
 - **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
   the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
   `parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.

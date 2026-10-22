@@ -1,3 +1,4 @@
+#include "shapes/area.h"
 #include <stdio.h>
 int main(void) {
 shapes_area_Rect r = {3.0, 4.0};
