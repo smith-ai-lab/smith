@@ -11,11 +11,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#if __has_include("arena.h")
 #include "arena.h"
+#else
+#include <smith/arena.h>
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Beside this module's header (include/smith); a compile of the module adds -iquote for that folder.
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
 // state and no generator that advances, so nothing can interleave, and a test that fails once fails every time.

@@ -31,12 +31,14 @@ typedef enum {
     SmithTrivia_Open,     // #if, #ifdef or #ifndef
     SmithTrivia_Branch,   // #elif, #elifdef, #elifndef or #else
     SmithTrivia_Close,    // #endif
+    SmithTrivia_Include,  // #include "h" or #include <h>: the header's name is the text, `angled` says which
 } SmithTriviaKind;
 
 typedef struct SmithTrivia {
     SmithTriviaKind kind;
     bool zero;        // Open: `#if 0`, whose text the lexer skips
     bool blank_after; // a comment followed by a blank line (before the next comment, directive or token)
+    bool angled;      // Include: <h>, not "h"
     uint32_t location;
     uint32_t length;
     const char *text; // the comment, or the directive line from the `#`

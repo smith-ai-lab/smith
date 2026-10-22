@@ -323,7 +323,8 @@ static void smith_raw_directive(SmithLangRaw *raw) {
         while (closing != 0 && close < line_end && s[close] != closing)
             close += 1;
         if (closing != 0 && close < line_end) {
-            smith_lang_add_include(raw->lang, s + open + 1, close - open - 1, closing == '>');
+            SmithTrivia *entry = smith_raw_note(raw, SmithTrivia_Include, open + 1, close);
+            if (entry != nullptr) entry->angled = closing == '>';
         }
     }
     raw->position = line_end;

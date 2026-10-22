@@ -21,10 +21,22 @@ trap 'rm -rf "$dir"' EXIT
     awk '
         function plain(line) { sub(/[ \t]*\/\/.*$/, "", line); return line }
         function opens(line) { return line ~ /^typedef .*\{$/ }
+        function directive(line) { return line ~ /^#[ \t]*(if|ifdef|ifndef|elif|else|endif|include)([ \t(<"]|$)/ }
         FNR == 1 { second = (FILENAME != header_file) }
         !second {
             line = plain($0)
             if (line == "") next
+            if (chain_on) { # a conditional chain: kept when it holds includes only
+                chain = chain "\n" line
+                if (!directive(line)) chain_ok = 0
+                if (line ~ /^#[ \t]*if/) depth++
+                if (line ~ /^#[ \t]*endif/ && --depth == 0) {
+                    chain_on = 0
+                    if (chain_ok) hchain[chain] = 1
+                }
+                next
+            }
+            if (line ~ /^#[ \t]*if/ && !collecting) { chain_on = 1; chain = line; chain_ok = 1; depth = 1; next }
             if (collecting) {
                 block = block "\n" line
                 if (line ~ /^\}.*;$/) { collecting = 0; hblock[block] = 1 }
@@ -33,16 +45,25 @@ trap 'rm -rf "$dir"' EXIT
             else if (line ~ /^#include/) hinclude[line] = 1
             next
         }
+        chain_on { # the lowering: a chain of includes that the header already says is left out
+            chain = chain "\n" $0
+            if (!directive($0)) chain_ok = 0
+            if ($0 ~ /^#[ \t]*if/) depth++
+            if ($0 ~ /^#[ \t]*endif/ && --depth == 0) {
+                chain_on = 0
+                if (!(chain_ok && (chain in hchain))) print chain
+            }
+            next
+        }
         collecting {
             block = block "\n" $0
             if ($0 ~ /^\}.*;$/) { collecting = 0; if (!(block in hblock)) print block }
             next
         }
-        /^#if/ { depth++ }
-        /^#endif/ { depth-- }
-        depth == 0 && opens($0) { collecting = 1; block = $0; next }
-        depth == 0 && /^#include/ && ($0 in hinclude) { next }
-        depth == 0 && /^(constexpr|extern|typedef) .*;$/ && ($0 in hline) { next }
+        /^#[ \t]*if/ { chain_on = 1; chain = $0; chain_ok = 1; depth = 1; next }
+        opens($0) { collecting = 1; block = $0; next }
+        /^#include/ && ($0 in hinclude) { next }
+        /^(constexpr|extern|typedef) .*;$/ && ($0 in hline) { next }
         { print }
     ' header_file="$dir/header.h" "$dir/header.h" "$dir/low.c"
     echo '// NOLINTEND'

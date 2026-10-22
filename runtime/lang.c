@@ -38,6 +38,7 @@ constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 constexpr size_t smith_lang_transitive_max = 32;
 constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
+constexpr size_t smith_lang_include_max = 16384;      // the header's include lines
 constexpr size_t smith_lang_cond_lines_max = 32;      // lines of one chain: #if, #elif..., #else
 constexpr size_t smith_lang_cnames_max = 1024;        // exports of imported modules that have a C name of their own
 constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
@@ -180,6 +181,7 @@ typedef struct {
     const SmithTrivia *lines[smith_lang_cond_lines_max];
     uint8_t count;
     bool emitted;     // the lines so far are in the header, and so are the rest as they come
+    bool inc_emitted; // the lines so far are in the header's includes, and so are the rest as they come
     bool zero;        // `#if 0`, no branch of it live yet
     bool transparent; // `#if 0 ... #else`: the live branch is plain text, and the header has no conditional for it
     bool first_open;  // lines[0] is an #elif that stands for the #if of the chain (after `#if 0`)
@@ -381,9 +383,8 @@ struct SmithLang {
     // Generated header and dump.
     size_t imports_count;
     SmithLangText smith_imports[smith_lang_imports_max];
-    SmithLangText c_imports[smith_lang_imports_max];
-    bool c_import_angled[smith_lang_imports_max];
-    size_t c_imports_count;
+    char include_body[smith_lang_include_max]; // the `#include` lines of the header, with the conditionals around them
+    size_t include_used;
     bool export_active;
     bool emit_synthetic;   // everything emitted is a copy with no token of its own in the source (a prototype)
     bool aligned;          // the header body keeps the source's lines (an interface read in memory, runtime/lang_lex.c)

@@ -327,11 +327,7 @@ static size_t smith_lang_assemble_includes(const SmithLang *lang, char *out, siz
         smith_lang_module_to_path(smith_lang_str(lang->smith_imports[i]), path, sizeof path);
         used = smith_lang_append(out, capacity, used, "#include \"%s\"\n", path);
     }
-    for (size_t i = 0; i < lang->c_imports_count; i++) { // bounded by the table
-        bool angled = lang->c_import_angled[i];
-        used = smith_lang_append(out, capacity, used, "#include %c%s%c\n", angled ? '<' : '"',
-                                 smith_lang_str(lang->c_imports[i]), angled ? '>' : '"');
-    }
+    used = smith_lang_append(out, capacity, used, "%.*s", (int)lang->include_used, lang->include_body);
     return used;
 }
 
