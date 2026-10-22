@@ -31,12 +31,14 @@ typedef enum {
     SmithTrivia_Open,     // #if, #ifdef or #ifndef
     SmithTrivia_Branch,   // #elif, #elifdef, #elifndef or #else
     SmithTrivia_Close,    // #endif
+    SmithTrivia_Include,  // #include "h" or #include <h>: the header's name is the text, `angled` says which
 } SmithTriviaKind;
 
 typedef struct SmithTrivia {
     SmithTriviaKind kind;
     bool zero;        // Open: `#if 0`, whose text the lexer skips
     bool blank_after; // a comment followed by a blank line (before the next comment, directive or token)
+    bool angled;      // Include: <h>, not "h"
     uint32_t location;
     uint32_t length;
     const char *text; // the comment, or the directive line from the `#`
@@ -60,6 +62,8 @@ typedef struct {
     uint32_t location; // the host's source location, kept by every token derived from this one
     uint32_t handle;   // the host's own token, to re-emit unchanged (smith_token_no_handle: make one from the text)
     uint32_t length;
+    uint16_t
+        via; // emitted: 1 + the import binding whose `x::` this name was written with (0: none); the header's includes
     const char *text;
     const char *header_text; // emitted: the spelling in a generated header, when it differs (uint64_t for u64)
     uint32_t header_length;
@@ -170,6 +174,10 @@ typedef struct {
     // A name of a module that could not be imported is used here: the host keeps the diagnostics at that location out
     // of the way (the missing module is the one error).
     void (*suppress)(void *context, uint32_t location);
+    // Which `import <h>;` or `import "h";` declared `name` (a declaration of that space, else a macro): the header as
+    // that import spells it, `<stdio.h>` or `"mine.h"`, never an internal header the compiler found the name in. Null
+    // when no import did. Asked by SMITH_LANG_ASK_IMPORTS; a host without a parser leaves it null.
+    const char *(*declared_by)(void *context, const char *name, uint32_t length, SmithLookupKind space);
 } SmithHost;
 
 typedef struct SmithLang SmithLang;
@@ -204,6 +212,12 @@ bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location);
 bool smith_lang_is_module(const SmithLang *lang);
 // In a module's function body, whether the host offers only braces and the names it watches (the host's fast paths).
 bool smith_lang_body_sparse(const SmithLang *lang);
+// Whether `name` is a parameter of the function whose body is being read, and so is no name of the module even when
+// the module exports one by that name (the host must leave it as written).
+bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length);
+// Whether `name` is a typedef the module declares (the lowering's own table, no question to the parser): a keyword that
+// follows it is used as a name.
+bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length);
 // A brace of such a body that changes nothing but the nesting: done, and the token goes on unchanged. False for the
 // function's own closing brace and for a struct, union or enum, which the full path reads.
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open);

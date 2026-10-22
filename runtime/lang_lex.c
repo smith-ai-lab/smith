@@ -323,7 +323,8 @@ static void smith_raw_directive(SmithLangRaw *raw) {
         while (closing != 0 && close < line_end && s[close] != closing)
             close += 1;
         if (closing != 0 && close < line_end) {
-            smith_lang_add_include(raw->lang, s + open + 1, close - open - 1, closing == '>');
+            SmithTrivia *entry = smith_raw_note(raw, SmithTrivia_Include, open + 1, close);
+            if (entry != nullptr) entry->angled = closing == '>';
         }
     }
     raw->position = line_end;
@@ -430,10 +431,20 @@ static void smith_raw_emit(void *context, const SmithToken *token) {
     (void)token;
 }
 
+// An import is an `#include` in the lowered text (`smith cc --smith-lower`): the module's bodies need what it imports,
+// and the header, which has only what the exports need, no longer has it for them (scripts/bootstrap.sh).
 static void smith_raw_include(void *context, const char *header, bool angled) {
-    (void)context;
-    (void)header;
-    (void)angled;
+    SmithLangRaw *raw = context;
+    SmithLang *lang = raw->lang;
+    if (lang == nullptr || !lang->dump_enabled) return;
+    smith_lang_dump_directives(lang, (uint32_t)raw->position);
+    char line[smith_lang_name_max + 16];
+    int length = snprintf(line, sizeof line, angled ? "#include <%s>" : "#include \"%s\"", header);
+    if (length <= 0 || lang->dump_used + (size_t)length + 2 > smith_lang_dump_max) return;
+    if (lang->dump_used > 0 && smith_lang_dump[lang->dump_used - 1] != '\n') smith_lang_dump[lang->dump_used++] = '\n';
+    memcpy(smith_lang_dump + lang->dump_used, line, (size_t)length);
+    lang->dump_used += (size_t)length;
+    smith_lang_dump[lang->dump_used++] = '\n';
 }
 
 static void smith_raw_error(void *context, uint32_t location, const char *message) {
@@ -530,7 +541,9 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
         }
     }
     names->after_sized = names->after_sized > 1 && word == SmithLangWord_Qualifier ? names->after_sized - 1 : 0;
-    if (smith_lang_find_sized(token->text, token->length) != nullptr && !after_member) names->after_sized = 8;
+    bool type = smith_lang_find_sized(token->text, token->length) != nullptr ||
+                (raw->lang != nullptr && smith_lang_type_name(raw->lang, token->text, token->length));
+    if (type && !after_member) names->after_sized = 8;
     names->before = *token;
 }
 
@@ -689,6 +702,16 @@ size_t smith_lang_declarations(const char *file, const char *text, size_t length
     return used;
 }
 
+// The compile flags the header pass was given beside the file (`smith cc --smith-header f.smith -o f.h -I x -DY`): the
+// ones that decide which header a name is found in. Only the question of smith_lang_ask_compiler uses them.
+constexpr size_t smith_header_flags_max = 64;
+static const char *smith_header_flags[smith_header_flags_max];
+static size_t smith_header_flag_count;
+static const char *smith_header_source;
+
+// smith.c: asks a compile of the module's imports alone which import declared each C name the exports use.
+static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings);
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true, .keep = print_lowered};
@@ -715,6 +738,8 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     };
     SmithRawNames names = {0};
     raw.names = &names;
+    smith_header_source = path;
+    smith_lang_import_asker = header_path != nullptr ? smith_lang_ask_compiler : nullptr;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
         smith_raw_next_named(&raw, &token, false);
@@ -727,6 +752,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     }
     if (print_lowered) smith_lang_dump_directives(lang, UINT32_MAX); // those after the last token
     smith_lang_finish(lang);
+    smith_lang_import_asker = nullptr;
     if (print_lowered) {
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
         fputc('\n', stdout);
@@ -743,13 +769,22 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
 
 // smith cc --smith-header file.smith [-o header.h] and smith cc --smith-lower file.smith
 static int smith_lang_main(int count, char **args, bool header) {
-    const char *usage =
-        header ? "usage: smith cc --smith-header file.smith [-o header.h]" : "usage: smith cc --smith-lower file.smith";
+    const char *usage = header ? "usage: smith cc --smith-header file.smith [-o header.h] [compile flags]"
+                               : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;
     const char *output = nullptr;
     for (int i = 0; i < count; i++) { // bounded by the arguments
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             output = args[++i];
+        } else if (header && args[i][0] == '-') { // a compile flag: -I dir, -Dname, -std=...
+            static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
+            bool pair = false;
+            for (size_t j = 0; j < sizeof separate / sizeof separate[0]; j++)
+                pair = pair || strcmp(args[i], separate[j]) == 0;
+            size_t need = pair && i + 1 < count ? 2 : 1;
+            if (smith_header_flag_count + need > smith_header_flags_max) smith_die(smith_exit_usage, usage, nullptr);
+            smith_header_flags[smith_header_flag_count++] = args[i];
+            if (need == 2) smith_header_flags[smith_header_flag_count++] = args[++i];
         } else if (file == nullptr) {
             file = args[i];
         } else {

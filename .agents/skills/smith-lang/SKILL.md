@@ -47,8 +47,8 @@ A project's build file can be `.smith` too: a root `build.smith` with `import sm
 
 ## Two commands under the compiler
 
-- `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it.
-- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written): how to see what a rule does.
+- `smith cc --smith-header src/a/b.smith -o .smith/include/a/b.h` writes a module's generated C header from its tokens alone (no compile, so all headers can be written first); `smith build` runs it. The header includes only what the exports use: `<stddef.h>`, `<stdint.h>`, the imported modules and `import <h>;` headers whose names (`x::name`, `c::name`) an export writes, never an `#include` or an import only a body uses (see `smith-lang-c-interop`).
+- `smith cc --smith-lower x.smith` prints the C the file lowers to, with no macros and no parser (comments are dropped; `#include`, `#define`, `#pragma`, `#error` and the `#if` chains stay as written, and an `import` is written as the `#include` it stands for): how to see what a rule does.
 
 ## In the editor
 
@@ -56,4 +56,4 @@ A project's build file can be `.smith` too: a root `build.smith` with `import sm
 
 ## Errors
 
-Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it. A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.
+Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``, `Box double` for a typedef of the module) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it (after a typedef from a C header, clang's own message). A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.

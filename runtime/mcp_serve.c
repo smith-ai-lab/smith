@@ -129,8 +129,9 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
     SmithJsonLimits limits = {.depth = 16, .string_length = (size_t)1 << 14, .count = (size_t)1 << 12};
     bool ok = smith_json_parse(&server->scratch, smith_text_make(entry->schema), limits, &schema, &error);
     SMITH_ASSERT(ok && schema->kind == SmithJsonKind_Object);
-    SmithText *keys = SMITH_ARENA_PUSH_ARRAY(&server->scratch, SmithText, schema->count);
-    SmithProtocolAny *values = SMITH_ARENA_PUSH_ARRAY(&server->scratch, SmithProtocolAny, schema->count);
+    SmithText *keys = smith_arena_push_array(&server->scratch, sizeof(SmithText), schema->count, alignof(SmithText));
+    SmithProtocolAny *values = (SmithProtocolAny *)smith_arena_push_array(&server->scratch, sizeof(SmithProtocolAny),
+                                                                          schema->count, alignof(SmithProtocolAny));
     SMITH_ASSERT(keys != nullptr && values != nullptr);
     size_t count = 0;
     for (size_t i = 0; i < schema->count; i++) {                    // bounded by the schema's members
@@ -150,7 +151,8 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
 }
 
 static void smith_mcp_send_tools(SmithMcpServer *server, const SmithMcpRequestId *id) {
-    SmithMcpTool *tools = SMITH_ARENA_PUSH_ARRAY(&server->scratch, SmithMcpTool, smith_mcp_tool_count);
+    SmithMcpTool *tools =
+        smith_arena_push_array(&server->scratch, sizeof(SmithMcpTool), smith_mcp_tool_count, alignof(SmithMcpTool));
     SMITH_ASSERT(tools != nullptr);
     for (size_t i = 0; i < smith_mcp_tool_count; i++)
         smith_mcp_tool_make(server, &smith_mcp_tool_table[i], &tools[i]);
@@ -283,7 +285,8 @@ int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
     server.input_arena = smith_arena_carve(&io->arena, (size_t)1 << 17);
     server.line = smith_arena_push(&io->arena, smith_mcp_line_max + ((size_t)1 << 16) + 1, 1);
     server.request = smith_arena_push(&io->arena, smith_mcp_line_max + 1, 1);
-    server.sessions = SMITH_ARENA_PUSH_ARRAY(&io->arena, SmithMcpSession, smith_mcp_sessions_max);
+    server.sessions =
+        smith_arena_push_array(&io->arena, sizeof(SmithMcpSession), smith_mcp_sessions_max, alignof(SmithMcpSession));
     SMITH_ASSERT(server.line != nullptr && server.request != nullptr && server.sessions != nullptr);
     for (size_t i = 0; i < smith_mcp_sessions_max; i++)
         server.sessions[i].used = false;

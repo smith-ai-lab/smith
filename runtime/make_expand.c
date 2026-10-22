@@ -266,9 +266,43 @@ static const char *smith_make_c_name(const char *name) {
     return out;
 }
 
+// The C name of a Makefile variable in build.c (an option's variable or a named array): build_ and the name in lower
+// case, as smith's naming rules ask (CFLAGS is build_cflags), and the same name each time it is asked for. Two
+// variables whose names differ only in case, or a name another variable took, get a number.
+constexpr size_t smith_make_idents_max = 8192;
+static struct {
+    const char *names[smith_make_idents_max]; // the Makefile's names
+    const char *idents[smith_make_idents_max];
+    size_t count;
+} smith_make_idents;
+
+static const char *smith_make_ident(const char *name) {
+    for (size_t i = 0; i < smith_make_idents.count; i++) {
+        if (strcmp(smith_make_idents.names[i], name) == 0) return smith_make_idents.idents[i];
+    }
+    SMITH_ASSERT(smith_make_idents.count < smith_make_idents_max);
+    const char *plain = smith_make_c_name(name);
+    size_t length = strlen(plain);
+    char *lower = smith_make_alloc(length + 1);
+    for (size_t i = 0; i < length; i++)
+        lower[i] = (char)((plain[i] >= 'A' && plain[i] <= 'Z') ? plain[i] - 'A' + 'a' : plain[i]);
+    lower[length] = '\0';
+    const char *ident = smith_make_format("build_%s", lower);
+    for (size_t number = 2; number < smith_make_idents_max; number++) { // bounded: one name each at the most
+        bool taken = false;
+        for (size_t i = 0; i < smith_make_idents.count; i++)
+            taken = taken || strcmp(smith_make_idents.idents[i], ident) == 0;
+        if (!taken) break;
+        ident = smith_make_format("build_%s_%zu", lower, number);
+    }
+    smith_make_idents.names[smith_make_idents.count] = name;
+    smith_make_idents.idents[smith_make_idents.count++] = ident;
+    return ident;
+}
+
 // Makes the variable a knob whose option is -DNAME: its value is the hole for the option's C variable.
 static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
-    const char *text = smith_make_hole_text(smith_make_format("option_%s", smith_make_c_name(var->name)));
+    const char *text = smith_make_hole_text(smith_make_ident(var->name));
     var->knob = true;
     var->option = true;
     var->fallback = fallback;
@@ -851,10 +885,10 @@ static void smith_make_fn_affix(const SmithMakeSpan *args, bool prefix, SmithMak
 
 // The variable whose option a hole reads, or nullptr.
 static const SmithMakeVar *smith_make_option_of(const char *expression) {
-    if (strncmp(expression, "option_", 7) != 0) return nullptr;
+    if (strncmp(expression, "build_", 6) != 0) return nullptr;
     for (size_t v = 0; v < smith_make.var_count; v++) {
         const SmithMakeVar *var = &smith_make.vars[v];
-        if (var->option && strcmp(expression + 7, smith_make_c_name(var->name)) == 0) return var;
+        if (var->option && strcmp(expression, smith_make_ident(var->name)) == 0) return var;
     }
     return nullptr;
 }

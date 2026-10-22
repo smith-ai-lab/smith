@@ -147,7 +147,8 @@ for child in $children; do
 done
 [ -n "$children" ] && expect "orphan: a proof was running when its parent was killed" yes yes || expect "orphan: a proof was running" yes "no child"
 expect "orphan: the proof's process ends with its parent" "" "$alive"
-for child in $alive; do kill -9 "$child" 2>/dev/null; done
+# A leftover is never killed here: once its parent is gone it is launchd's, and its pid can already be another
+# process's (another test's compile). A proof also ends by its own deadline (its alarm), so it cannot run on for ever.
 
 # 7c. A caller assumes the callee's smith_ensures about the memory the callee wrote (issue #41), and nothing else.
 for function in five set_five three_then_bump bump two push two_through_a_pointer uses_bump_twice_read bump_twice_read; do

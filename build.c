@@ -100,7 +100,8 @@ static int build_protocol_run(SmithRun *run) {
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. text is the module smith::text, compiled from its lowering in bootstrap/.
 static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c", "lib/arena.c", "bootstrap/lib/smith/text.c", "lib/json.c"};
+    const char *const sources[] = {"scripts/protocol.c", "bootstrap/lib/smith/arena.c", "bootstrap/lib/smith/text.c",
+                                   "lib/json.c"};
     SmithObject objects[4] = {};
     const SmithObject *linked[5] = {};
     for (size_t i = 0; i < 4; i++) {
@@ -139,7 +140,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"build", "random", "text", nullptr};
+static const char *const build_generated_headers[] = {"arena", "build", "random", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -179,7 +180,8 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // is generated, so `smith lint` leaves it alone, and it ends with `// NOLINTEND`), an include of the module's generated
 // header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
 // It needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The bootstrap").
-static const char *const build_bootstrap_sources[] = {"lib/smith/random.smith", "lib/smith/text.smith", nullptr};
+static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith", "lib/smith/random.smith",
+                                                      "lib/smith/text.smith", nullptr};
 
 // Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
 static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -458,7 +460,8 @@ static const char *const build_smith_inputs[] = {
     "runtime/protocol/mcp.h",
     "runtime/protocol/mcp.c",
     "include/smith/arena.h",
-    "lib/arena.c",
+    "lib/smith/arena.smith",
+    "bootstrap/lib/smith/arena.c",
     "include/smith/io.h",
     "lib/io.c",
     "include/smith/random.h",
@@ -589,8 +592,8 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         smith_compile_command(b, config->cc, sources[i], flags);
     }
     // The text library is a module, linted as written.
-    smith_compile_command(b, config->cc, "lib/smith/random.smith",
-                          smith_cat(b, flags, smith_list(b, "-iquote", "include/smith", nullptr), nullptr));
+    smith_compile_command(b, config->cc, "lib/smith/arena.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
@@ -628,6 +631,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"defaults", "defaults", nullptr, nullptr, 0},
     {"defer", "defer", nullptr, nullptr, 0},
     {"docs", "docs", nullptr, nullptr, 0},
+    {"headers", "headers", nullptr, nullptr, 0},
     {"http", "http", nullptr, nullptr, 0},
     {"io", "io", nullptr, nullptr, 0},
     {"json", "json", nullptr, nullptr, 0},
@@ -726,11 +730,11 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
-// needs them), the token hook (#11), and the prover's libraries beside it. r2 is the second configuration;
-// scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
+// needs them), the token hook (#11), and the prover's libraries beside it. r3 is the third configuration
+// (patches/*.patch); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r2"));
+    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r3"));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {
@@ -831,9 +835,12 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
-        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh",
-                                   "scripts/prove-libs.sh", "scripts/bitwuzla.sh", "patches/clang-token-hook.patch",
-                                   "patches/clang-debug-name.patch", nullptr},
+        .inputs =
+            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh", "scripts/prove-libs.sh",
+                             "scripts/bitwuzla.sh", "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
+                             "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
+                             "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
+                             "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
@@ -847,6 +854,14 @@ static bool build_has_hook(SmithBuild *b, const char *llvm) {
     return strcmp(smith_capture(b, (const char *[]){"sh", "-c", script, llvm, nullptr}), "yes") == 0;
 }
 
+// Whether the LLVM install has the command hook (patches/smith-command-hook.patch), which the shims of clangd and
+// clang-tidy install: an install made before r3 has none.
+static bool build_has_command_hook(SmithBuild *b, const char *llvm) {
+    const char *script = "grep -q 'CLANG_HAS_COMMAND_HOOK' \"$0/include/clang/Driver/CreateInvocationFromArgs.h\" && "
+                         "echo yes || echo no";
+    return strcmp(smith_capture(b, (const char *[]){"sh", "-c", script, llvm, nullptr}), "yes") == 0;
+}
+
 // The LLVM install that `smith build llvm` makes, which smith links clang from; "" when there is none (and on other
 // systems than macOS, where it is not built), so that the plain smith, which runs an external clang, is built instead.
 static const char *build_llvm_install(SmithBuild *b) {
@@ -854,7 +869,7 @@ static const char *build_llvm_install(SmithBuild *b) {
         build_variable(b, "LLVM", smith_fmt(b, "%s/install", build_llvm_folder(b)),
                        "the LLVM install smith links clang from; empty: a smith that runs an external clang");
     if (strcmp(b->os, "Darwin") != 0) return "";
-    bool linkable = access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+    bool linkable = build_has_command_hook(b, llvm) && access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;

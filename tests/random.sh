@@ -47,14 +47,14 @@ expect_contains() { # name, text, needle
 # The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
 expected_digest=4a2e897669d609ac
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/random.c $here/lib/arena.c"
+sources="$here/tests/random.c $here/bootstrap/lib/smith/arena.c"
 
 # The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
 hook=yes
 printf 'int main(void) { return 0; }\n' >"$work/probe.smith"
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/random.smith"
-mflags="-I $here/include -iquote $here/include/smith"
+mflags="-I $here/include"
 
 # 1. The checks, in two builds: -O0 under AddressSanitizer and UBSan, and -O2.
 $cc -std=gnu23 $warn -I "$here/include" -O0 -g -fsanitize=address,undefined $sources -o "$work/asan" || exit 1

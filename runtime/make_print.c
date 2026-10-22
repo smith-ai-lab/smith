@@ -173,7 +173,8 @@ static void smith_make_emit_object(const SmithMakeNode *node, const SmithMakeInf
     if (cc.dropped_dependency_flags) note = "(-MMD and -MP are dropped: smith_object writes the depfile itself)";
     if (order_count > 0) note = "(its order-only prerequisites are implicit inputs: smith_object has no other kind)";
     smith_make_comment(node, note);
-    smith_make_put_format(out, "    SmithObject %s = {\n", info->c_name);
+    smith_make_put_decl(out, "SmithObject", info->c_name, false);
+    smith_make_put_text(out, "{\n");
     smith_make_put_format(out, "        .compiler = \"%s\",\n", cc.compiler);
     smith_make_put_format(out, "        .source = %s,\n", smith_make_render(source, strlen(source)));
     smith_make_put_format(out, "        .output = %s,\n", smith_make_render(node->name, strlen(node->name)));
@@ -217,6 +218,7 @@ static void smith_make_emit_program(const SmithMakeNode *node, const SmithMakeIn
 }
 
 static void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo *info) {
+    smith_make_unit_begin(smith_make_unit_list);
     switch (info->kind) {
     case SmithMakeKind_Object:
         smith_make_emit_object(node, info);
@@ -235,4 +237,5 @@ static void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo 
         if (info->note != nullptr && !info->directory) smith_make_comment(node, info->note);
         break;
     }
+    smith_make_unit_end();
 }

@@ -62,6 +62,8 @@ int smith_lld_main(int argc, char **argv);
 int smith_format_main(int argc, char **argv);
 int smith_tidy_main(int argc, char **argv);
 int smith_clangd_main(int argc, char **argv);
+// shim/clangd.cpp: the files clangd formats and runs its checks by in a project that has none (smith's defaults).
+void smith_clangd_defaults(const char *style, const char *tidy);
 #ifdef SMITH_LLDB
 constexpr bool smith_has_lldb = true;
 // shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
@@ -856,7 +858,7 @@ static const unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
 static const unsigned char smith_arena_source[] = {
-#embed "lib/arena.c"
+#embed "lib/smith/arena.smith"
 };
 
 static const unsigned char smith_contract_header[] = {
@@ -901,9 +903,12 @@ static const unsigned char smith_embedded_http_header[] = {
 static const unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
-// The runtime's package.c compiles in one translation unit with io, which needs the random library, and the stage0
-// knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
+// The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
+// the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
 // .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
+static const unsigned char smith_embedded_arena_source[] = {
+#embed "bootstrap/lib/smith/arena.c"
+};
 static const unsigned char smith_embedded_random_source[] = {
 #embed "bootstrap/lib/smith/random.c"
 };
@@ -941,7 +946,7 @@ typedef struct {
      is_lang}
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, false), SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(arena, true),  SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(random, true), SMITH_LIBRARY(test, false),     SMITH_LIBRARY(text, true), SMITH_LIBRARY(trace, false),
 };
 
@@ -1193,6 +1198,120 @@ static int smith_spawn_with(const char *program, char *const *args, const posix_
     return 128 + WTERMSIG(status);
 }
 
+// The question of the header pass (runtime/lang_stream.c, smith_lang_resolve_imports): a module that imports several C
+// headers has in its header only those one of whose names an export uses, and only the compiler knows which header
+// declared a name. So smith asks itself: `smith cc -fsyntax-only` on a file of nothing but the module's imports (the
+// hook, shim/hook.cpp, with SMITH_LANG_ASK_IMPORTS) writes, for each name, the import that declared it. A smith with no
+// clang inside cannot compile a .smith file; the answer is then no and the header keeps every import.
+// The probe: the module's imports and the conditionals around them, as a .smith file.
+static bool smith_lang_write_probe(const SmithLang *lang, const char *path) {
+    FILE *file = fopen(path, "w");
+    if (file == nullptr) return false;
+    for (size_t at = 0; at < lang->include_used;) { // each line
+        size_t end = at;
+        while (end < lang->include_used && lang->include_body[end] != '\n')
+            end += 1;
+        const char *line = lang->include_body + at;
+        if (end - at > 9 && memcmp(line, "#include ", 9) == 0) {
+            fprintf(file, "import %.*s;\n", (int)(end - at - 9), line + 9);
+        } else {
+            fprintf(file, "%.*s\n", (int)(end - at), line);
+        }
+        at = end + 1;
+    }
+    return fclose(file) == 0;
+}
+
+// Runs `smith cc -fsyntax-only` on the probe, which writes its answers to `answers`; true if it succeeded.
+static bool smith_lang_run_probe(const SmithLang *lang, const char *probe, const char *answers) {
+    static char names[smith_lang_cuses_max * (smith_lang_name_max + 8)];
+    size_t used = 0;
+    for (size_t i = 0; i < lang->c_uses_count; i++) { // bounded by the table
+        int written = snprintf(names + used, sizeof names - used, "%s%s%s", i > 0 ? "," : "",
+                               lang->c_uses[i].tag ? "struct " : "", smith_lang_str(lang->c_uses[i].name));
+        if (written <= 0 || used + (size_t)written >= sizeof names) return false;
+        used += (size_t)written;
+    }
+    char self[PATH_MAX];
+    char source[PATH_MAX];
+    if (!smith_self_path(self)) return false;
+    snprintf(source, sizeof source, "%s", smith_header_source != nullptr ? smith_header_source : ".");
+    char *slash = strrchr(source, '/');
+    if (slash != nullptr) {
+        *slash = 0;
+    } else {
+        snprintf(source, sizeof source, ".");
+    }
+    char *args[smith_header_flags_max + 8];
+    size_t count = 0;
+    args[count++] = self;
+    args[count++] = (char *)"cc";
+    args[count++] = (char *)"-fsyntax-only";
+    args[count++] = (char *)"-w";
+    args[count++] = (char *)"-iquote";
+    args[count++] = source;
+    for (size_t i = 0; i < smith_header_flag_count; i++) // bounded by the flags
+        args[count++] = (char *)smith_header_flags[i];
+    args[count++] = (char *)probe;
+    args[count] = nullptr;
+    setenv("SMITH_LANG_ASK_IMPORTS", names, 1);
+    setenv("SMITH_LANG_IMPORTS_OUT", answers, 1);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid = 0;
+    int status = -1;
+    if (posix_spawn(&pid, self, &actions, nullptr, args, environ) == 0) {
+        int waited = -1;
+        for (int i = 0; i < 1000 && waited < 0; i++) // only a signal interrupts the wait
+            waited = waitpid(pid, &status, 0);
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    unsetenv("SMITH_LANG_ASK_IMPORTS");
+    unsetenv("SMITH_LANG_IMPORTS_OUT");
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+// The answers: a line `name<TAB>spelling` for each name asked, in order (the spelling empty when no import declared
+// it).
+static bool smith_lang_read_answers(const SmithLang *lang, const char *answers, const char **spellings) {
+    static char spelled[smith_lang_cuses_max][smith_lang_name_max + 8];
+    FILE *result = fopen(answers, "r");
+    if (result == nullptr) return false;
+    char line[2 * smith_lang_name_max];
+    size_t index = 0;
+    while (index < lang->c_uses_count && fgets(line, sizeof line, result) != nullptr) { // one line per name
+        char *tab = strchr(line, '\t');
+        line[strcspn(line, "\n")] = 0;
+        if (tab != nullptr && tab[1] != 0) {
+            snprintf(spelled[index], sizeof spelled[index], "%s", tab + 1);
+            spellings[index] = spelled[index];
+        }
+        index += 1;
+    }
+    fclose(result);
+    return index == lang->c_uses_count;
+}
+
+static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings) {
+    const char *temporary = getenv("TMPDIR");
+    char folder[PATH_MAX];
+    snprintf(folder, sizeof folder, "%s/smith-imports-XXXXXX",
+             temporary != nullptr && *temporary != 0 ? temporary : "/tmp");
+    if (mkdtemp(folder) == nullptr) return false;
+    char probe[PATH_MAX + 16];
+    char answers[PATH_MAX + 16];
+    snprintf(probe, sizeof probe, "%s/probe.smith", folder);
+    snprintf(answers, sizeof answers, "%s/answers", folder);
+    bool good = smith_lang_write_probe(lang, probe) && smith_lang_run_probe(lang, probe, answers) &&
+                smith_lang_read_answers(lang, answers, spellings);
+    unlink(probe);
+    unlink(answers);
+    rmdir(folder);
+    return good;
+}
+
 static int smith_build_spawn(const char *program, char *const *args) {
     return smith_spawn_with(program, args, nullptr);
 }
@@ -1295,6 +1414,8 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/arena.c", smith_embedded_arena_source,
+                           sizeof smith_embedded_arena_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
                            sizeof smith_embedded_random_source);
     if (file == SmithBuildFile_Conventions)
@@ -1475,6 +1596,30 @@ static void smith_dump_c(void) {
     fputs("    smith_app_tests(b, &(SmithAppTests){.folder = \"tests\"});\n}\n", stdout);
 }
 
+// Copies a file to standard output from its start.
+static void smith_copy_to_stdout(FILE *from) {
+    char chunk[65536];
+    SMITH_ASSERT(fseek(from, 0, SEEK_SET) == 0);
+    for (size_t n = fread(chunk, 1, sizeof chunk, from); n > 0; n = fread(chunk, 1, sizeof chunk, from))
+        fwrite(chunk, 1, n, stdout);
+}
+
+// The translation of a Makefile, formatted by `smith fmt` (smith's .clang-format, or the project's) so that the
+// build.c it makes passes `smith fmt --dry-run`. Where the formatter cannot run, the text as it is written.
+static void smith_make_dump(const char *makefile) {
+    FILE *raw = tmpfile();
+    FILE *formatted = tmpfile();
+    if (raw == nullptr || formatted == nullptr) {
+        smith_make_translate(makefile, stdout);
+        return;
+    }
+    smith_make_translate(makefile, raw);
+    bool formatted_ok = smith_make_format_files(raw, formatted);
+    smith_copy_to_stdout(formatted_ok ? formatted : raw);
+    fclose(raw);
+    fclose(formatted);
+}
+
 // The one place that decides what a folder dumps. A project that has a build file is already explicit.
 static int smith_build_dump_config(void) {
     bool has_c = smith_has_build_file("build.c");
@@ -1485,7 +1630,7 @@ static int smith_build_dump_config(void) {
         return 0;
     }
     if (smith_has_makefile()) { // the project's real build, whether or not a main is here too (issue #44)
-        smith_make_translate(smith_make_find_makefile(), stdout);
+        smith_make_dump(smith_make_find_makefile());
         return 0;
     }
     bool main_smith = access("main.smith", F_OK) == 0;
@@ -2370,6 +2515,20 @@ static bool smith_lsp_commands_option(int argc, char **argv) {
     return false;
 }
 
+#ifdef SMITH_IN_PROCESS
+// `smith lsp`, in process: clangd formats with smith's style and runs its checks by smith's tidy config where the
+// project has no .clang-format or .clang-tidy, as `smith fmt` and `smith lint` do
+// (patches/smith-editor-defaults.patch). A project's file wins whole, and clangd's own --fallback-style wins over
+// smith's style.
+static void smith_lsp_defaults(void) {
+    static char style[PATH_MAX];
+    static char tidy[PATH_MAX];
+    smith_defaults_path(smith_defaults_clang_format, sizeof smith_defaults_clang_format, "clang-format", style);
+    smith_defaults_path(smith_defaults_clang_tidy, sizeof smith_defaults_clang_tidy, "clang-tidy", tidy);
+    smith_clangd_defaults(style, tidy);
+}
+#endif
+
 // argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
 // arguments are unchanged.
 static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -2381,8 +2540,10 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
 #ifdef SMITH_IN_PROCESS
     const char *override = getenv(tool->override);
     bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
-    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb))
+    if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb)) {
+        if (strcmp(tool->command, "lsp") == 0) smith_lsp_defaults();
         return smith_tool_in_process(tool, argc - 1, argv + 1, self);
+    }
 #endif
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);

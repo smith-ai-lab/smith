@@ -290,6 +290,10 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
     bool name = !token->foreign && token->kind == SmithTokenKind_Identifier && !smith_lang_sparse_member(lang, host);
     const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
+    if (known != nullptr && smith_lang_is_param(lang, token->text, token->length)) {
+        smith_lang_emit_kept(lang, host, token);
+        return;
+    }
     if (known != nullptr) {
         const char *prefixed = smith_lang_prefixed(lang, token->text, token->length);
         smith_lang_emit(lang, host, smith_lang_synth(SmithTokenKind_Identifier, prefixed, lang->tmp_length, token));
@@ -300,6 +304,16 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
         return;
     }
     smith_lang_sparse_ident(lang, host, token);
+}
+
+bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length) {
+    return lang->in_function && smith_lang_is_param(lang, name, length);
+}
+
+bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length) {
+    if (!lang->is_module) return false;
+    const SmithLangName *known = smith_lang_name_find(lang, name, length);
+    return known != nullptr && known->kind == SmithLangName_Type;
 }
 
 bool smith_lang_body_sparse(const SmithLang *lang) {

@@ -12,5 +12,6 @@ if (arena->used + size > arena->capacity) return 0;
 arena->used += size;
 return arena->used;
 }
+extern __UINT64_TYPE__ smith_arena_limit;
 __UINT64_TYPE__ smith_arena_limit = 4096;
 __UINT64_TYPE__ smith_arena_checksum(const __UINT8_TYPE__ *data, __SIZE_TYPE__ size);

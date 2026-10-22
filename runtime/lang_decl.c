@@ -83,6 +83,31 @@ static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, siz
     return name;
 }
 
+// ---- Parameters
+// A parameter is not the export that has its name: `void step(Step *step)` keeps `step` in the header, and the body of
+// the function reads it as the parameter (C's own scope), so the parameter is kept as written wherever it is used.
+
+static bool smith_lang_is_param(const SmithLang *lang, const char *name, size_t length) {
+    for (uint32_t i = 0; i < lang->params_count; i++) { // at most 16
+        if (strlen(lang->params[i]) == length && memcmp(lang->params[i], name, length) == 0) return true;
+    }
+    return false;
+}
+
+// A name of the module in a function's parameter list, outside brackets (`char a[N]` uses N), that is no type: the
+// parameter's own name (a function pointer's, `int (*width)(Box *box)`, too). Remembered, so that the body keeps it.
+static bool smith_lang_param_here(SmithLang *lang, const SmithLangName *known, const char *name, size_t length) {
+    if (!lang->decl.in_params || lang->paren_depth == 0 || lang->bracket_depth != 0) return false;
+    if (known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag) return false;
+    if (length < smith_lang_param_max && lang->params_count < smith_lang_params_max &&
+        !smith_lang_is_param(lang, name, length)) {
+        memcpy(lang->params[lang->params_count], name, length);
+        lang->params[lang->params_count][length] = 0;
+        lang->params_count += 1;
+    }
+    return true;
+}
+
 static SmithLangBinding *smith_lang_binding_find(SmithLang *lang, const char *text, size_t length) {
     for (size_t i = 0; i < lang->bindings_count; i++) { // bounded by the table
         SmithLangBinding *binding = &lang->bindings[i];
@@ -298,6 +323,9 @@ static void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
     if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
 
+// runtime/lang_generic.c: the body of an exported generic is being recorded
+static bool smith_lang_recording_exported(const SmithLang *lang);
+
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------
 
@@ -335,10 +363,14 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
     smith_lang_take(lang, host);
     SmithToken taken = smith_lang_take(lang, host);
     if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);
+    if (!binding->is_c && smith_lang_recording_exported(lang)) { // a call to a generic, say, which has no `via` token
+        lang->bindings[binding - lang->bindings].in_header = true;
+    }
     if (binding->is_c) {
         smith_lang_allow(lang, taken.location);
         *result = smith_lang_made(name, taken.text, taken.length, true);
         result->location = taken.location;
+        result->via = (uint16_t)(binding - lang->bindings + 1);
     } else if (smith_lang_generic_call(lang, host, name, binding, &taken)) {
         lang->namespace_done = true; // the call, with its arguments, is written
     } else {
@@ -359,6 +391,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         }
         *result = smith_lang_made(name, lang->tmp, total, false);
         result->location = taken.location;
+        result->via = (uint16_t)(binding - lang->bindings + 1);
         smith_lang_written_access(lang, binding, total, taken.text, taken.length);
     }
     return true;
@@ -484,6 +517,8 @@ static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host,
         return param;
     }
     SmithLangName *known = lang->is_module ? smith_lang_name_find(lang, name, length) : nullptr;
+    if (known != nullptr && lang->in_function && smith_lang_is_param(lang, name, length)) return smith_lang_keep();
+    if (known != nullptr && smith_lang_param_here(lang, known, name, length)) return smith_lang_keep();
     if (known != nullptr) {
         if (lang->recording) smith_lang_generic_private_name(lang, host, known, name, length, location);
         if (lang->decl.checking && !known->exported &&

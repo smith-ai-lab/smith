@@ -10,8 +10,14 @@ module smith::random;
 #include <stdint.h>
 #include <string.h>
 
-// Beside this module's header (include/smith); a compile of the module adds -iquote for that folder.
-#include "arena.h"
+// The header has the arena's, because an export takes an arena (the other includes are only for the bodies). Beside
+// this module's header (include/smith) when the header finds it there, which is how smith's own build, with no include
+// path, finds it; the module's own compile finds it by the include path.
+#if __has_include("arena.h")
+import "arena.h";
+#else
+import <smith/arena.h>;
+#endif
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -69,11 +75,8 @@ module smith::random;
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-[[smith::c_name("SmithRandomHook")]] export typedef __typeof__(uint64_t) (*Hook)(Key key, uint64_t n, uint64_t bits);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-variable-declarations"
+[[smith::c_name("SmithRandomHook")]] export typedef uint64_t (*Hook)(Key key, uint64_t n, uint64_t bits);
 [[smith::c_name("smith_random_hook")]] export Hook hook = nullptr;
-#pragma clang diagnostic pop
 
 // [low, high)
 [[smith::c_name("SmithUniformFloat")]] export typedef struct {
@@ -760,7 +763,7 @@ static void alias_build(double *probability, size_t *alias, size_t *small, size_
 // 1). Construction is deterministic, so the same weights give the same table everywhere. Its worklists live in a scope
 // that ends before this returns.
 [[smith::c_name("smith_categorical_make")]] export [[nodiscard]] Categorical
-categorical_make(SmithArena *arena, const double *weights, size_t count) {
+categorical_make(c::SmithArena *arena, const double *weights, size_t count) {
     assert(arena != nullptr && weights != nullptr && count >= 1);
     double sum = 0.0;
     for (size_t i = 0; i < count; i++) {
@@ -768,17 +771,17 @@ categorical_make(SmithArena *arena, const double *weights, size_t count) {
         sum += weights[i];
     }
     assert(isfinite(sum) && sum > 0.0);
-    double *probability = SMITH_ARENA_PUSH_ARRAY(arena, double, count);
-    size_t *alias = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
+    double *probability = c::smith_arena_push_array(arena, sizeof(double), count, alignof(double));
+    size_t *alias = c::smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
     for (size_t i = 0; i < count; i++) {
         probability[i] = weights[i] * (double)count / sum;
         alias[i] = i;
     }
-    SmithArenaScope scope = smith_arena_scope_begin(arena);
-    size_t *small = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
-    size_t *large = SMITH_ARENA_PUSH_ARRAY(arena, size_t, count);
+    c::SmithArenaScope scope = c::smith_arena_scope_begin(arena);
+    size_t *small = c::smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
+    size_t *large = c::smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
     alias_build(probability, alias, small, large, count);
-    smith_arena_scope_end(scope);
+    c::smith_arena_scope_end(scope);
     return (Categorical){.probability = probability, .alias = alias, .count = count};
 }
 

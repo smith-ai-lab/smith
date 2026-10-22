@@ -57,8 +57,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     whole and an explicit `--style`, `--config` or `--config-file` wins. `--dump-config` is the tool's, so it prints the
     effective one and makes it the project's (`smith fmt --dump-config > .clang-format`). `smith cc` is untouched.
   - **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
-    the project has no root or `build/` one. clangd has no fallback file for formatting or clang-tidy, so the editor
-    uses smith's defaults only after `--dump-config` makes them the project's (an LLVM change would be needed).
+    the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):
+    `smith lsp` sets clangd's default fallback style to `file:<smith's .clang-format>` (a fallback style may now be
+    written `file:<path>`, LLVM's style with that file on top) and gives its clang-tidy provider a fallback config
+    (`clang::clangd::FallbackTidyConfigFile`, used when no `.clang-tidy` governs a file). A project's file wins whole,
+    and clangd's own `--fallback-style` wins over smith's style; a stage0 runs Homebrew's clangd and has neither.
   - **`.smith` is C to clang-format** (issue #25; `patches/clang-format-smith.patch`, about 100 lines): C's keywords
     only, `::` one token, and `module ...;` and `import ...;` lines at file scope kept whole (`import <sys/wait.h>;`).
     Inside a function `import` and `module` are names, as in C. clangd formats `.smith` the same way (same library).
@@ -136,7 +139,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
   the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
   40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
-  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; `SMITH_CHECK_ABORTS` stays a macro.
+  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; a test that must abort calls
+  `smith_test_expect_abort()`.
 - **`.smith` files are C with modules, lowered to C as clang reads them** ([docs/smith-lang.md](docs/smith-lang.md), issue
   #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 100
   lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
@@ -153,11 +157,11 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   module's source (among the command's `.smith` files, else at the path its name implies under the importing module's
   root) and makes its interface in memory, writing nothing; `smith build` still writes the headers and they win. The
   sized types (`u32`, `f64`, ...) are typedefs, made when a file first uses one it does not declare itself, so a
-  diagnostic reads `'i32' (aka 'int')`; a generated C header still says the standard C types. The lowering reports a C
+  diagnostic reads `'i32' (aka 'int')`; a generated C header still says the standard C types. **A module's generated header includes exactly what its exported declarations need**: `<stddef.h>`, `<stdint.h>`, an imported module an export writes `x::Name` of, and a C header (`import <h>;`) an export writes `c::name` of (with several imports smith asks the compiler which declares it; a stage0 keeps them all); an `#include`, and an import only a body uses, never reach it, so a module whose exports use a header's types `import`s it (`tests/headers.sh`). The lowering reports a C
   keyword used as a name (`i32 double(i32 x)`) itself, at the name. A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
-  modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
+  modules itself: a header step per module, and every `.smith` compile, and every C compile that names a header of `.smith/include` as an input or puts that folder on its include path, waits for all of them (docs/build-c.md).
 - **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
   Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
   called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
@@ -169,10 +173,10 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **`smith lsp` lowers `.smith` files too.** `smith_clangd_main` installs the same token hook, so a parse of a `.smith`
   file in clangd is lowered as a compile's is and positions are those of the source; no LLVM change. The lowering is
   C with static tables, so a hook holds it from its making to the end of its file and clangd's `.smith` parses take
-  turns. clangd does not know the extension, so `shim/clangd.cpp` defines `clang::createInvocation` (the upstream function)
-  with the one rule of `smith cc` for `.smith` inputs (`smith_lang_command`, `runtime/lang_command.c`): `-x c`, and
-  `-std=gnu2y` unless a standard is named, for every command clangd uses, a folder with no compile database included
-  (a single file or a few modules need no build.c); no LLVM change. Names are shown as written (`box::area`, `area` in
+  turns. clangd does not know the extension, so `shim/tool.h` sets `clang::CommandHook` (`patches/smith-command-hook.patch`,
+  asked by `createInvocation`) to the one rule of `smith cc` for `.smith` inputs (`smith_lang_command`,
+  `runtime/lang_command.c`): `-x c`, and `-std=gnu2y` unless a standard is named, for every command clangd uses, a
+  folder with no compile database included (a single file or a few modules need no build.c). Names are shown as written (`box::area`, `area` in
   the module), never guessed from underscores: the lowering keeps a table of the names it made, a diagnostic consumer in
   the hook rewrites messages, notes and fix-its (`smith cc` too) and sends a note into a generated header to the
   declaration in the module's `.smith`, and a layer between the editor and clangd (`shim/lsp.cpp`, in process, pipes on
@@ -182,10 +186,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
   hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
   writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
-- **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`; no LLVM change). clang-tidy builds each file's
-  command with the driver, not `createInvocation`, so `shim/tidy.cpp` carries `ArgumentsAdjusters.cpp` whole with
-  `smith_lang_command` called in `getStripPluginsAdjuster` (the last adjuster; same rule as `smith cc`), and installs the
-  token hook. A check reports from an engine of its own, so the hook puts the same consumer in front of it
+- **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`). clang-tidy builds each file's command with the
+  driver, not `createInvocation`, so `getStripPluginsAdjuster` (the last adjuster) asks the same `clang::CommandHook`
+  (`patches/smith-command-hook.patch`; same rule as `smith cc`), and the shim installs the token hook. A check reports from an engine of its own, so the hook puts the same consumer in front of it
   (`smith::presentThrough`): names, notes and fix-its as written, a prototype's lowering copy moved to the definition's
   name, a finding in a generated or in-memory interface dropped (the module's own file is linted as itself).
   `readability-identifier-naming` judges the written name: a wrapper module, registered after clang-tidy's, replaces that
@@ -193,7 +196,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
   because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
   it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
-  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+  spelling still sees the lowered one. `smith lsp` registers the same module (clangd makes its built-in checks from the same registry), without `presentThrough` (its findings go through the lsp layer), so the editor judges names as written too (`tests/lint-smith.sh`, `tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
@@ -214,7 +217,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   check bounds at run time; contracts will prove them.
 - **`smith prove` checks LLVM IR with Alive2, Bitwuzla and Z3, linked into every full smith.** Contracts are
   the calls `smith_requires`, `smith_ensures` and `smith_invariant` of `<smith/contract.h>`. There is one LLVM configuration
-  (`~/.cache/smith/llvm/23.1.3-r2`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27); the compiler's
+  (`~/.cache/smith/llvm/23.1.3-r3`): RTTI and exceptions on, which Alive2 needs, and the patches (`patches/*.patch`: the token hook #11, clang-format for `.smith` #25, debug names #27, XNU fast mmap, the editor's defaults (`smith-editor-defaults`), `.smith` as a source file in clang-format's main-include rule (`smith-format-source-extension`), the command hook for clangd and clang-tidy (`smith-command-hook`)); the compiler's
   output is byte-identical with and without RTTI and exceptions (only the install path in debug info differs). `smith build
   llvm` also builds, static and from packages pinned by hash, with nothing from Homebrew (Ninja, GMP, MPFR, Meson, CaDiCaL
   and symfpu are among them): Z3 5.3.1, Alive2 (commit 01a5ec4, the newest that builds against 23.1.3) and Bitwuzla 0.9.1
@@ -252,15 +255,19 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   - **What one looks like:**
     - It does one thing and is named for it, so there is no "base" or "utils".
     - It uses standard types: `<stdint.h>`, `size_t`, `float` and `double`, with no aliases.
-    - It uses the standard `assert`, and macros only where a function cannot do the job, such as capturing a check's
-      expression text.
+    - It uses the standard `assert` and defines no macros: a library's API is functions (and, in `.smith`, generics).
+      The check macros of `<smith/test.h>` are the last ones, and leave when test becomes a module (#45). The reason
+      for them, capturing a check's expression text, is gone: a failure's report reads the failing line from the call
+      stack.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
   - **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
     or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
     `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
     bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text` is the first (issue #39).
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random` and `arena` are `.smith` (issue #39; #45 step 2). C passes `sizeof` and
+    `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
+    `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 
@@ -290,7 +297,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
 - `smith build llvm` builds LLVM 23.1.3 (clang, clang-tools-extra, lld, compiler-rt; AArch64; static; no dylibs outside
   `/usr/lib` and `/System`) from the pinned source, with a pinned CMake and Python, into
-  `~/.cache/smith/llvm/23.1.3-r2/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
+  `~/.cache/smith/llvm/23.1.3-r3/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
   build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
   install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
   which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.

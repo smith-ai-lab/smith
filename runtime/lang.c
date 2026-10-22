@@ -30,12 +30,17 @@ constexpr size_t smith_lang_header_max = (size_t)1 << 20;
 constexpr size_t smith_lang_dump_max = (size_t)1 << 22;
 constexpr size_t smith_lang_allowed_max = 16; // the macro names c::X lets expand, until they have
 constexpr size_t smith_lang_name_max = 256;
+constexpr size_t smith_lang_params_max = 16;
+constexpr size_t smith_lang_param_max = 64;
 constexpr size_t smith_lang_message_max = 512;
 constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 constexpr size_t smith_lang_transitive_max = 32;
 constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
+constexpr size_t smith_lang_include_max = 16384;      // the header's include lines
+constexpr size_t smith_lang_cimports_max = 64;        // `import <h>;` lines of one module
+constexpr size_t smith_lang_cuses_max = 512;          // the C names (`c::X`) that exported declarations use
 constexpr size_t smith_lang_cond_lines_max = 32;      // lines of one chain: #if, #elif..., #else
 constexpr size_t smith_lang_cnames_max = 1024;        // exports of imported modules that have a C name of their own
 constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
@@ -178,6 +183,7 @@ typedef struct {
     const SmithTrivia *lines[smith_lang_cond_lines_max];
     uint8_t count;
     bool emitted;     // the lines so far are in the header, and so are the rest as they come
+    bool inc_emitted; // the lines so far are in the header's includes, and so are the rest as they come
     bool zero;        // `#if 0`, no branch of it live yet
     bool transparent; // `#if 0 ... #else`: the live branch is plain text, and the header has no conditional for it
     bool first_open;  // lines[0] is an #elif that stands for the #if of the chain (after `#if 0`)
@@ -195,8 +201,15 @@ typedef struct {
     SmithLangText prefix; // game_replay_
     SmithLangText module; // game::replay
     bool is_c;
-    bool missing; // the module could not be imported: its names are not checked, the import was the one error
+    bool missing;   // the module could not be imported: its names are not checked, the import was the one error
+    bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
 } SmithLangBinding;
+
+// A C name that an exported declaration uses, written `c::name` (`struct c::name` is a tag).
+typedef struct {
+    SmithLangText name;
+    bool tag;
+} SmithLangCUse;
 
 // A token of a declaration head, held until the declaration is known.
 typedef struct {
@@ -208,7 +221,8 @@ typedef struct {
     bool after_member;
     bool after_tag;
     bool typeish;
-    char before; // the first character of the token before, when that was a punctuator
+    char before;  // the first character of the token before, when that was a punctuator
+    uint16_t via; // the binding the name was written through, 1 + its index (0: none)
     uint32_t location;
     uint32_t handle; // the host's token, kept while the head is held; none once the text is changed
     uint32_t paren_depth;
@@ -325,7 +339,9 @@ struct SmithLang {
     bool imports_watched; // the host watches the names the imported headers declared
     bool body_sparse;     // inside a function body the host offers only braces and watched names
     bool in_function;     // inside a function body: nothing declared here is the module's
-    bool agg_pending;     // struct, union or enum seen, `{` not yet
+    char params[smith_lang_params_max][smith_lang_param_max]; // the parameters of the function being declared whose
+    uint32_t params_count;                                    // names are the module's: kept as written, not prefixed
+    bool agg_pending;                                         // struct, union or enum seen, `{` not yet
     bool enum_pending;
     bool init_top;             // an initializer at file scope is being read
     bool tail_declarator;      // after an aggregate's `}` or a comma: names are declarators
@@ -377,9 +393,16 @@ struct SmithLang {
     // Generated header and dump.
     size_t imports_count;
     SmithLangText smith_imports[smith_lang_imports_max];
-    SmithLangText c_imports[smith_lang_imports_max];
-    bool c_import_angled[smith_lang_imports_max];
-    size_t c_imports_count;
+    char include_body[smith_lang_include_max]; // the `#include` lines of the header (the C imports), with the
+                                               // conditionals around them
+    size_t include_used;
+    SmithLangText cimport_text[smith_lang_cimports_max]; // each `import <h>;`, in order: the name of the header
+    bool cimport_angled[smith_lang_cimports_max];
+    bool cimport_keep[smith_lang_cimports_max]; // whether the header has it (smith_lang_resolve_imports)
+    size_t cimports_count;
+    SmithLangCUse c_uses[smith_lang_cuses_max];
+    size_t c_uses_count;
+    bool imports_resolved;
     bool export_active;
     bool emit_synthetic;   // everything emitted is a copy with no token of its own in the source (a prototype)
     bool aligned;          // the header body keeps the source's lines (an interface read in memory, runtime/lang_lex.c)

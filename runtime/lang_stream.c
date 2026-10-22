@@ -318,21 +318,166 @@ static size_t smith_lang_append(char *buffer, size_t capacity, size_t used, cons
     return written > 0 && used + (size_t)written < capacity ? used + (size_t)written : used;
 }
 
-// The `#include` lines a module's interface needs: the standard headers, the modules it imports and the C headers it
-// imports.
-static size_t smith_lang_assemble_includes(const SmithLang *lang, char *out, size_t capacity) {
-    size_t used = smith_lang_append(out, capacity, 0, "#include <stddef.h>\n#include <stdint.h>\n");
-    for (size_t i = 0; i < lang->imports_count; i++) { // bounded by the table
-        char path[smith_lang_name_max];
-        smith_lang_module_to_path(smith_lang_str(lang->smith_imports[i]), path, sizeof path);
-        used = smith_lang_append(out, capacity, used, "#include \"%s\"\n", path);
+// The question to the compiler, answered by the program that runs the lowering when it can (smith.c, the header pass
+// of a smith with clang inside): for each C name an export uses (lang->c_uses), the import that declared it as the
+// module spells it (`<stdio.h>`), or null. False when it cannot be asked or the imports did not compile.
+static bool (*smith_lang_import_asker)(const SmithLang *lang, const char **spellings) = nullptr;
+
+// ---- What the header includes
+//
+// A module's header includes exactly what its exported declarations need, and nothing else: `<stddef.h>` and
+// `<stdint.h>` (for the sized types), the imported modules whose names an export uses (`x::Name`), and the C headers
+// imported (`import <h>;`) one of whose names an export uses (`c::Name`). An `#include`, and an import that only the
+// bodies use, never reach it: a module whose exports need a C header's names `import`s it.
+
+// The lines of the include body: the imports, and the conditional directives around them.
+typedef enum { SmithLangLine_Import, SmithLangLine_Open, SmithLangLine_Branch, SmithLangLine_Close } SmithLangLineKind;
+
+typedef struct {
+    size_t start;
+    size_t length;
+    SmithLangLineKind kind;
+    size_t
+        chain; // Open: its own index; Branch and Close: the Open's; Import: the outermost chain it is in (or SIZE_MAX)
+    size_t import;
+} SmithLangLine;
+
+constexpr size_t smith_lang_include_lines_max = 1024;
+
+static size_t smith_lang_include_lines(const SmithLang *lang, SmithLangLine *lines) {
+    size_t count = 0;
+    size_t stack[smith_lang_cond_depth_max];
+    size_t depth = 0;
+    size_t import = 0;
+    for (size_t at = 0; at < lang->include_used && count < smith_lang_include_lines_max;) { // each line
+        size_t end = at;
+        while (end < lang->include_used && lang->include_body[end] != '\n')
+            end += 1;
+        const char *text = lang->include_body + at;
+        SmithLangLine *line = &lines[count++];
+        *line = (SmithLangLine){.start = at, .length = end - at, .chain = SIZE_MAX};
+        at = end + 1;
+        if (line->length >= 8 && smith_lang_equals(text, 8, "#include")) {
+            line->kind = SmithLangLine_Import;
+            line->import = import++;
+            line->chain = depth > 0 ? stack[0] : SIZE_MAX;
+            continue;
+        }
+        size_t word = 1; // a directive: `#` and its word
+        while (word < line->length && (text[word] == ' ' || text[word] == '\t'))
+            word += 1;
+        size_t stop = word;
+        while (stop < line->length && text[stop] >= 'a' && text[stop] <= 'z')
+            stop += 1;
+        const char *name = text + word;
+        size_t length = stop - word;
+        if (smith_lang_equals(name, length, "endif")) {
+            line->kind = SmithLangLine_Close;
+            line->chain = depth > 0 ? stack[--depth] : SIZE_MAX;
+        } else if (smith_lang_equals(name, length, "else") || smith_lang_equals(name, length, "elif") ||
+                   smith_lang_equals(name, length, "elifdef") || smith_lang_equals(name, length, "elifndef")) {
+            line->kind = SmithLangLine_Branch;
+            line->chain = depth > 0 ? stack[depth - 1] : SIZE_MAX;
+        } else {
+            line->kind = SmithLangLine_Open;
+            line->chain = count - 1;
+            if (depth < smith_lang_cond_depth_max) stack[depth++] = count - 1;
+        }
     }
-    for (size_t i = 0; i < lang->c_imports_count; i++) { // bounded by the table
-        bool angled = lang->c_import_angled[i];
-        used = smith_lang_append(out, capacity, used, "#include %c%s%c\n", angled ? '<' : '"',
-                                 smith_lang_str(lang->c_imports[i]), angled ? '>' : '"');
+    return count;
+}
+
+// Which of the module's C imports the header keeps. None if no export uses a C name. If all the imports stand in one
+// place (one import, or the spellings of one header in the branches of a conditional) the header has them all.
+// Otherwise the compiler is asked which import declared each name (the host program's asker, when it has one: the
+// header pass of a smith with clang inside); an import that declared a name is kept, with the others of its
+// conditional chain (they are other spellings of it). Without an answer every import is kept: more than needed, and
+// always sound.
+static void smith_lang_resolve_imports(SmithLang *lang) {
+    if (lang->imports_resolved) return;
+    lang->imports_resolved = true;
+    size_t count = lang->cimports_count;
+    for (size_t i = 0; i < count; i++)
+        lang->cimport_keep[i] = false;
+    if (count == 0 || lang->c_uses_count == 0) return;
+    static SmithLangLine lines[smith_lang_include_lines_max];
+    size_t line_count = smith_lang_include_lines(lang, lines);
+    size_t group[smith_lang_cimports_max]; // per import: its outermost chain, or its own line
+    size_t groups = 0;
+    for (size_t i = 0; i < line_count; i++) { // the imports
+        if (lines[i].kind != SmithLangLine_Import || lines[i].import >= count) continue;
+        size_t mine = lines[i].chain != SIZE_MAX ? lines[i].chain : i;
+        group[lines[i].import] = mine;
+        bool seen = false;
+        for (size_t j = 0; j < lines[i].import; j++)
+            seen = seen || group[j] == mine;
+        if (!seen) groups += 1;
+    }
+    const char *spellings[smith_lang_cuses_max] = {nullptr};
+    if (groups > 1 && smith_lang_import_asker != nullptr && smith_lang_import_asker(lang, spellings)) {
+        for (size_t use = 0; use < lang->c_uses_count; use++) { // the imports that declared a name
+            if (spellings[use] == nullptr) continue;
+            for (size_t i = 0; i < count; i++) {
+                char spelled[smith_lang_name_max + 4];
+                snprintf(spelled, sizeof spelled, lang->cimport_angled[i] ? "<%s>" : "\"%s\"",
+                         smith_lang_str(lang->cimport_text[i]));
+                if (strcmp(spelled, spellings[use]) != 0) continue;
+                for (size_t j = 0; j < count; j++)
+                    lang->cimport_keep[j] = lang->cimport_keep[j] || group[j] == group[i];
+            }
+        }
+        return;
+    }
+    for (size_t i = 0; i < count; i++)
+        lang->cimport_keep[i] = true;
+}
+
+// The include lines of the header: the kept imports, and the conditionals that still hold one.
+static size_t smith_lang_kept_includes(SmithLang *lang, char *out, size_t capacity, size_t used) {
+    smith_lang_resolve_imports(lang);
+    static SmithLangLine lines[smith_lang_include_lines_max];
+    size_t line_count = smith_lang_include_lines(lang, lines);
+    bool chain_kept[smith_lang_include_lines_max] = {false};
+    size_t open[smith_lang_cond_depth_max];
+    size_t depth = 0;
+    for (size_t i = 0; i < line_count; i++) { // a chain is kept if a kept import lies in it, at any depth
+        if (lines[i].kind == SmithLangLine_Open && depth < smith_lang_cond_depth_max) open[depth++] = i;
+        if (lines[i].kind == SmithLangLine_Close && depth > 0) depth -= 1;
+        if (lines[i].kind == SmithLangLine_Import && lines[i].import < lang->cimports_count &&
+            lang->cimport_keep[lines[i].import]) {
+            for (size_t j = 0; j < depth; j++)
+                chain_kept[open[j]] = true;
+        }
+    }
+    for (size_t i = 0; i < line_count; i++) {
+        bool keep = lines[i].kind == SmithLangLine_Import
+                        ? lines[i].import < lang->cimports_count && lang->cimport_keep[lines[i].import]
+                        : lines[i].chain != SIZE_MAX && chain_kept[lines[i].chain];
+        if (keep) {
+            used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lines[i].length,
+                                     lang->include_body + lines[i].start);
+        }
     }
     return used;
+}
+
+// The `#include` lines a module's interface needs.
+static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t capacity) {
+    size_t used = smith_lang_append(out, capacity, 0, "#include <stddef.h>\n#include <stdint.h>\n");
+    for (size_t i = 0; i < lang->imports_count; i++) { // bounded by the table: the modules an export names
+        const char *module = smith_lang_str(lang->smith_imports[i]);
+        bool named = false;
+        for (size_t j = 0; j < lang->bindings_count; j++) {
+            const SmithLangBinding *binding = &lang->bindings[j];
+            named =
+                named || (!binding->is_c && binding->in_header && strcmp(smith_lang_str(binding->module), module) == 0);
+        }
+        if (!named) continue;
+        char path[smith_lang_name_max];
+        smith_lang_module_to_path(module, path, sizeof path);
+        used = smith_lang_append(out, capacity, used, "#include \"%s\"\n", path);
+    }
+    return smith_lang_kept_includes(lang, out, capacity, used);
 }
 
 // What an importer reads of a module without reading its declarations: the module's name, the modules it imports
@@ -435,7 +580,42 @@ static void smith_lang_ask_query(const SmithHost *host, const char *spelling, si
 
 // SMITH_LANG_ASK=Name,struct Tag: at the end of the file, what the parser says of those types (their size, alignment
 // and fields). It exercises the questions that reflection will ask, and tests them.
+// SMITH_LANG_ASK_IMPORTS=FILE,struct stat,EOF and SMITH_LANG_IMPORTS_OUT=path: at the end of the file, which `import`
+// declared each name (the header as the import spells it, `<stdio.h>`), one `name<TAB>spelling` line each, to the
+// path. The header pass asks this of a compile of the imports alone, to keep in a module's header only the imports its
+// exports use (smith_lang_resolve_imports).
+static void smith_lang_ask_imports(const SmithHost *host) {
+    const char *list = getenv("SMITH_LANG_ASK_IMPORTS");
+    const char *path = getenv("SMITH_LANG_IMPORTS_OUT");
+    if (list == nullptr || path == nullptr || host->declared_by == nullptr) return;
+    FILE *file = fopen(path, "w");
+    if (file == nullptr) return;
+    for (const char *at = list; *at != 0;) { // each entry
+        const char *end = strchr(at, ',');
+        size_t length = end != nullptr ? (size_t)(end - at) : strlen(at);
+        const char *name = at;
+        size_t name_length = length;
+        SmithLookupKind space = SmithLookup_Value;
+        static const char *const tags[] = {"struct ", "union ", "enum "};
+        for (size_t i = 0; i < sizeof tags / sizeof tags[0]; i++) { // 3 entries
+            size_t tag_length = strlen(tags[i]);
+            if (length > tag_length && memcmp(at, tags[i], tag_length) == 0) {
+                space = SmithLookup_Tag;
+                name = at + tag_length;
+                name_length = length - tag_length;
+            }
+        }
+        const char *by = host->declared_by(host->context, name, (uint32_t)name_length, space);
+        if (by == nullptr && space == SmithLookup_Value)
+            by = host->declared_by(host->context, name, (uint32_t)name_length, SmithLookup_Type);
+        fprintf(file, "%.*s\t%s\n", (int)length, at, by != nullptr ? by : "");
+        at = end != nullptr ? end + 1 : at + length;
+    }
+    fclose(file);
+}
+
 static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
+    smith_lang_ask_imports(host);
     const char *list = getenv("SMITH_LANG_ASK");
     if (list == nullptr || host->type_info == nullptr) return;
     for (const char *at = list; *at != 0;) { // each entry

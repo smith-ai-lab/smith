@@ -5,17 +5,16 @@
 // smith-names: Key=SmithKey Hook=SmithRandomHook hook=smith_random_hook UniformFloat=SmithUniformFloat UniformDouble=SmithUniformDouble UniformInt64=SmithUniformInt64 NormalFloat=SmithNormalFloat NormalDouble=SmithNormalDouble Bernoulli=SmithBernoulli Categorical=SmithCategorical Permutation=SmithPermutation key_make=smith_key_make key_derive=smith_key_derive key_bits=smith_key_bits key_unit_float=smith_key_unit_float key_unit_double=smith_key_unit_double log_double=smith_log_double log_float=smith_log_float uniform_int64_sample=smith_uniform_int64_sample uniform_float_sample=smith_uniform_float_sample uniform_double_sample=smith_uniform_double_sample normal_double_sample=smith_normal_double_sample normal_float_sample=smith_normal_float_sample bernoulli_sample=smith_bernoulli_sample categorical_make=smith_categorical_make categorical_sample=smith_categorical_sample permutation_sample=smith_permutation_sample
 // clang-format on
 #pragma once
-#include <assert.h>
-#include <float.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
+#if __has_include("arena.h")
 #include "arena.h"
+#else
+#include <smith/arena.h>
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Beside this module's header (include/smith); a compile of the module adds -iquote for that folder.
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
 // state and no generator that advances, so nothing can interleave, and a test that fails once fails every time.
@@ -72,7 +71,7 @@ typedef struct {
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-typedef __typeof__(uint64_t) (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
+typedef uint64_t (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
 
 extern SmithRandomHook smith_random_hook;
 

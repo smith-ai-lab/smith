@@ -3,9 +3,12 @@
 # (docs/smith-lang.md, "The bootstrap"). Usage: sh scripts/bootstrap.sh path/to/smith lib/smith/<name>.smith out.c
 # The file is a first line saying where it is from, `// NOLINTBEGIN`, an include of the module's generated header
 # (include/smith/<name>.h, committed), and `smith cc --smith-lower` of the source with what the header already says
-# left out, since a translation unit may include both: the `#include`s, the `typedef struct {...} Name;` blocks and the
-# `constexpr` and one-line `typedef` declarations of the header (comments aside). It needs no compiler, so the stage0
-# writes the same bytes.
+# left out, since a translation unit may include both: the `typedef struct {...} Name;` blocks and the `constexpr`,
+# `extern` and one-line `typedef` declarations of the header (comments aside). The `#include`s and imports of the
+# module stay (the lowering writes an import as an `#include`) except the ones the header has: it has only what the
+# exports need, and the bodies need the rest. Two anonymous structs of one translation unit are two types, so
+# the blocks cannot be repeated; C has no way to say they are one. It needs no compiler, so the stage0 writes the same
+# bytes.
 set -eu
 smith=$1
 src=$2
@@ -21,16 +24,27 @@ trap 'rm -rf "$dir"' EXIT
     awk '
         function plain(line) { sub(/[ \t]*\/\/.*$/, "", line); return line }
         function opens(line) { return line ~ /^typedef .*\{$/ }
+        function include_only(line) { return line ~ /^#[ \t]*(if|ifdef|ifndef|elif|else|endif)([ \t(<"]|$)/ || (line ~ /^#include/ && (line in hinc)) }
         FNR == 1 { second = (FILENAME != header_file) }
         !second {
             line = plain($0)
             if (line == "") next
+            if (line ~ /^#include/) hinc[line] = 1
             if (collecting) {
                 block = block "\n" line
                 if (line ~ /^\}.*;$/) { collecting = 0; hblock[block] = 1 }
             } else if (opens(line)) { collecting = 1; block = line }
-            else if (line ~ /^(constexpr|typedef) .*;$/) hline[line] = 1
-            else if (line ~ /^#include/) hinclude[line] = 1
+            else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[line] = 1
+            next
+        }
+        chain_on { # a conditional chain: left out when it holds nothing but the header'"'"'s includes
+            chain = chain "\n" $0
+            if (!include_only($0)) chain_ok = 0
+            if ($0 ~ /^#[ \t]*if/) depth++
+            if ($0 ~ /^#[ \t]*endif/ && --depth == 0) {
+                chain_on = 0
+                if (!chain_ok) print chain
+            }
             next
         }
         collecting {
@@ -38,11 +52,10 @@ trap 'rm -rf "$dir"' EXIT
             if ($0 ~ /^\}.*;$/) { collecting = 0; if (!(block in hblock)) print block }
             next
         }
-        /^#if/ { depth++ }
-        /^#endif/ { depth-- }
-        depth == 0 && opens($0) { collecting = 1; block = $0; next }
-        depth == 0 && /^#include/ && ($0 in hinclude) { next }
-        depth == 0 && /^(constexpr|typedef) .*;$/ && ($0 in hline) { next }
+        /^#[ \t]*if/ { chain_on = 1; chain = $0; chain_ok = 1; depth = 1; next }
+        opens($0) { collecting = 1; block = $0; next }
+        /^#include/ && ($0 in hinc) { next }
+        /^(constexpr|extern|typedef) .*;$/ && ($0 in hline) { next }
         { print }
     ' header_file="$dir/header.h" "$dir/header.h" "$dir/low.c"
     echo '// NOLINTEND'

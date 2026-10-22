@@ -17,10 +17,6 @@
 // smith_ensures(c)    just before a `return`: the function makes c true. An old value is a `const` local saved at the
 //                     top, and the result is the variable about to be returned.
 // smith_invariant(c)  the first statement of a loop body: c is true on every pass.
-// SMITH_CONTRACT_FOR(Type, spec)
-//                     a function pointer type's contract is the body-less spec function `spec`, whose only statements
-//                     are contracts. It declares something rather than checking a value, so it is a macro; today it
-//                     records the pair and nothing else.
 // smith_trusted()    the first statement of a function at the program's edge (io, inline assembly, a library with no
 //                     source): `smith prove` does not prove it. Its smith_requires is proved at each call and its
 //                     smith_ensures assumed, as for any function with a contract, but nothing in its body is read, and
@@ -41,13 +37,6 @@
 // failed check, the failing line and the call chain. Where and what come from the stack and the source line, not from
 // the library, which links with the trace library (smith_library(b, "trace")).
 #pragma once
-
-// What SMITH_CONTRACT_FOR records: the name of the function pointer type and the spec function, as `smith prove` reads
-// them from the IR, in the global smith_contract_for_<Type>.
-typedef struct {
-    const char *type;
-    void (*spec)(void);
-} SmithContractFor;
 
 void smith_contract_requires(bool condition);
 void smith_contract_ensures(bool condition);
@@ -93,7 +82,3 @@ void smith_contract_trusted(void);
     smith_contract_trusted();
 }
 #endif
-
-// Always present, NDEBUG included: it is data, not a check. `used` keeps it in the object, where the checker looks.
-#define SMITH_CONTRACT_FOR(Type, spec) \
-    [[gnu::used]] static const SmithContractFor smith_contract_for_##Type = {#Type, (void (*)(void))(spec)}
