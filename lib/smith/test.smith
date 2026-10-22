@@ -2224,7 +2224,7 @@ void raise_files(usize jobs) {
     return failed == 0 ? 0 : 1;
 }
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     Runner runner = {.io = &io, .make_io = io::make, .argc = argc, .argv = argv};
     return run_tests(&runner);

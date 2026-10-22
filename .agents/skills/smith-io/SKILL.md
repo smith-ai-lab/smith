@@ -30,7 +30,7 @@ Nested modules do not exist, so a capability's functions are `io::<capability>_<
 ```smith
 import smith::io;
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     (void)io::console_printf(&io.console, "seed %llu\n", io.seed);
     return 0;
@@ -87,7 +87,7 @@ void editor_open(Editor *editor, const char *path) {
     (void)io::console_printf(editor->console, "%zu\n", mesh.vertices);
 }
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
     Editor editor = {&io.files, &io.console, &io.arena};
@@ -164,7 +164,7 @@ Every operation reports success or an `io::Error`: `code` is 0 or an errno value
 ```smith
 import smith::io;
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     io::Read text = io::files_read(&io.files, &io.arena, "config.txt"); // data is NUL-terminated
     if (text.error.code != 0) {
@@ -307,7 +307,7 @@ A test that takes `io::Io *io` (`test_x(io::Io *io)`, smith-test) gets a real io
 import smith::arena;
 import smith::io;
 
-int main(void) {
+i32 main(void) {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io io = io::make_test((io::Test){
         .memory = memory, .capacity = sizeof memory, .seed = 7, .input = "A3 B4\nC5 D6\n"});

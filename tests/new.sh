@@ -77,7 +77,7 @@ verbs_on_new_project() {
     case $ext in smith) main=main.smith ;; *) main=main.c ;; esac
     cp "$main" "$main.orig"
     if [ "$ext" = smith ]; then
-        printf 'import <stdio.h>;\n\nint main(int argc, char **argv) {\n    for (i32 i = 1; i < argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n' >"$main"
+        printf 'import <stdio.h>;\n\ni32 main(i32 argc, char *argv[]) {\n    for (i32 i = 1; i < argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n' >"$main"
     else
         printf '#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n' >"$main"
     fi

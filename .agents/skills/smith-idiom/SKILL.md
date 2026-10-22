@@ -15,7 +15,7 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
 
 1. **Sized types.** `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize`, `isize`, `f32`, `f64`, `bool`; `char` stays `char` (`smith-lang-sized-types`).
    - Not `uint32_t`, `size_t`, `ptrdiff_t`, `unsigned`, `float`, `double`.
-   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-sized-types`, which reports each C spelling (`uint64_t`, `size_t`, `unsigned long`, `double`, `int`...) with the sized type to write; `char` stays and `int` is allowed in `main`'s signature only. The compiler accepts both spellings, since they are the same types.
+   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-sized-types`, which reports each C spelling (`uint64_t`, `size_t`, `unsigned long`, `double`, `int`...) with the sized type to write; `char` stays, and `main` is `i32 main(i32 argc, char *argv[])`, with no exception. The compiler accepts both spellings, so a `.c` file renamed to `.smith` with `int main(int argc, char **argv)` still builds and the check reports it, since they are the same types.
 2. **Import C headers, never include them.** `import <math.h>;` and write `c::sqrt(x)`, `c::EOF`, `struct c::stat` (`smith-lang-c-interop`).
    - A `c::` name that is a C **macro** (`c::assert`, `c::SIZE_MAX`, `c::isfinite`, `c::INFINITY`) is the preprocessor too. The module that wraps the C API provides it as a function or a constant: `contract::assert(c)`, `math::max(usize)`, `math::is_finite(x)`, `math::infinity(f64)`, `math::nan(f32)`, `math::sqrt(x)` and `math::abs(x)` (`smith-contract`, `smith-math`). A macro of a library that has no module yet is written as the function the library has (`__builtin_memset`) or waits for the module. In the macOS SDK `c::memcpy`, `c::memmove`, `c::memset`, `c::snprintf` and `c::vsnprintf` are macros (the fortified versions): write `__builtin_memcpy`, `__builtin_snprintf` and the like; they are pure functions.
    - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-preprocessor` (rule 5), which reports an `#include` and every `c::` name that is a macro, with what to write; and the compiler for a bare name that an `import`ed header declared (`` `sqrtf` is a C name; write `c::sqrtf` ``).
@@ -144,7 +144,7 @@ module main;
 import rolls;
 import smith::io;
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     rolls::Rolls dice = rolls::make(&io.arena, io.key, 10);
     rolls::print(&io.console, &dice);

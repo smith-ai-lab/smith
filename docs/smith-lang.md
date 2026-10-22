@@ -351,8 +351,7 @@ given (`tests/lint-smith.sh`).
   the build's compiles). `tests/lint-smith.sh` tests it.
 - **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
   `smith-sized-types` and `smith-module-library` read the `.smith` file's text with the raw lexer (a typedef's name is
-  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`int` in `main`'s
-  signature is C's own) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
+  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`main` included: `i32 main(i32 argc, char *argv[])`) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
   module's, the `import <smith/arena.h>;` and every `c::` name of its `// smith-names:` pairs with the module's call.
   `smith-bounded-loop` and `smith-constexpr` match the AST (a loop whose condition is absent or a true constant outside
   `main`; a file-scope `const` of arithmetic, enum, or an array or record of them with a constant initializer, which a

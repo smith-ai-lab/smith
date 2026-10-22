@@ -43,7 +43,7 @@ smith's default `.clang-tidy` lists five more `smith-*` checks (issue #47), each
 
 | Check | Files | Reports | Says |
 |---|---|---|---|
-| `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `int` stays in `main`'s signature, as C requires) | the sized type: ``write `u64` `` |
+| `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `main` too: `i32 main(i32 argc, char *argv[])`; a renamed `int main(int argc, char **argv)` compiles and is reported) | the sized type: ``write `u64` `` |
 | `smith-module-library` | `.smith` | a library that is a module, used through its C header: `import <smith/arena.h>;`, `c::smith_arena_push(...)`, `c::SmithArena` (the generated header's `// smith-module:` line says it is one) | `import smith::arena;` and the module's name, `arena::push_raw`, `arena::Arena` |
 | `smith-bounded-loop` | `.smith` and C | a loop with no condition or a constant one (`for (;;)`, `while (true)`, `do ... while (1)`) outside `main` | bound it by a count; only `main` runs forever |
 | `smith-c23` | `.smith` and C | `NULL`, `_Bool`, `_Noreturn`, `_Static_assert`, `_Alignas`, `_Alignof`, `<stdbool.h>`, `{0}` as an initializer of a struct or array, and `__attribute__((noreturn))`, `unused`, `warn_unused_result`, `deprecated`, `fallthrough` | `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]` |

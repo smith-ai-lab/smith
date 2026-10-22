@@ -30,3 +30,5 @@ A file that declares its own `u32` (a typedef, a variable, a field named `u8`) k
 A diagnostic names the type as written, with what it is: ``initializing 'i32' (aka 'int') with an expression of type 'char[6]'``, with no "expanded from macro" notes.
 
 A C keyword used as a name after a sized type, `i32 double(i32 x)`, is ``double` is a C keyword; it cannot name a function`` (likewise a variable, parameter, field or type), at the name.
+
+`main` is spelled with them too: `i32 main(i32 argc, char *argv[])`, or `i32 main(void)`. `i32` is a typedef of `int`, so the compiler takes both spellings and a `.c` file renamed to `.smith` still builds; `smith lint` reports the `int`s (`smith-sized-types`).
