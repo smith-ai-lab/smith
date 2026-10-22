@@ -2222,51 +2222,64 @@ export u64 area(u64 width, u64 height) {
 C
     cat >src/smith/test/helpers.smith <<'C'
 module smith::test::helpers;
-import <smith/test.h>;
+import smith::test;
 
 // A check of a library written as a module under smith::test: its frames are machinery, never the failing line.
 export void require(bool condition) {
-    c::smith_check(condition);
+    test::check(condition);
 }
 C
     cat >tests/test_plain.smith <<'C'
-import <smith/test.h>;
+import smith::random;
+import smith::test;
 
 void test_plain_works(void) {
-    c::smith_check_equal_u64(2 + 2, 4);
+    test::check_equal(2 + 2, 4);
 }
 
 void test_plain_fails(void) {
     u64 n = 3;
-    c::smith_check_equal_u64(n, 4);
+    test::check_equal(n, 4);
 }
 
-void test_plain_property(c::SmithKey key) {
-    c::smith_check(c::smith_key_bits(key, 0) == c::smith_key_bits(key, 0));
+void test_plain_property(random::Key key) {
+    test::check_equal(random::key_bits(key, 0), random::key_bits(key, 0));
+}
+C
+    cat >tests/test_c_header.smith <<'C'
+import <smith/test.h>;
+
+// The C header of the library imported as a C header: the names under c:: and the C spelling of the key are found too.
+void test_c_header_key(c::SmithKey key) {
+    c::smith_check_equal_u64(c::smith_key_bits(key, 0), c::smith_key_bits(key, 0));
 }
 C
     cat >tests/geometry/box_test.smith <<'C'
 module geometry::box_test;
-import <smith/test.h>;
 import geometry::box;
+import smith::random;
+import smith::test;
 import smith::test::helpers as helpers;
 
 export void test_area(void) {
-    c::smith_check_equal_u64(box::area(2, 3), 6);
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, 6); // the named instance: the header pass of a module cannot lower a generic call
 }
 
 export void test_area_fails(void) {
     u64 expected = 7;
-    c::smith_check_equal_u64(box::area(2, 3), expected);
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, expected);
 }
 
 export void test_area_through_a_library(void) {
     helpers::require(box::area(2, 3) == 7);
 }
 
-export void test_area_property(c::SmithKey key) {
-    u64 side = c::smith_key_bits(key, 0) % 1000;
-    c::smith_check_equal_u64(box::area(side, 1), side);
+export void test_area_property(random::Key key) {
+    u64 side = random::key_bits(key, 0) % 1000;
+    u64 area = box::area(side, 1);
+    test::check_equal_u64(area, side);
 }
 
 // Not exported: private to the module, nothing can call it, so it is not a test.
@@ -2281,6 +2294,7 @@ C
 geometry::box_test::area_fails
 geometry::box_test::area_through_a_library
 geometry::box_test::area_property
+c_header_key
 plain_works
 plain_fails
 plain_property" "$out"
@@ -2310,19 +2324,169 @@ plain_property" "$out"
 
     if "$smith" symbolize --available; then
         capture "$smith" test --test geometry::box_test::area_fails
-        line=$(line_of tests/geometry/box_test.smith 'c::smith_check_equal_u64(box::area(2, 3), expected);')
+        line=$(line_of tests/geometry/box_test.smith 'test::check_equal_u64(area, expected);')
         expect_contains "smith tests: a failing check names the .smith line" "$out" "check failed at tests/geometry/box_test.smith:$line"
-        expect_contains "smith tests: ... its source" "$out" "c::smith_check_equal_u64(box::area(2, 3), expected);"
-        expect_contains "smith tests: ... the function as written, in the chain" "$out" "tests/geometry/box_test.smith:$line     geometry::box_test::test_area_fails"
+        expect_contains "smith tests: ... its source" "$out" "test::check_equal_u64(area, expected);"
+        expect_contains "smith tests: ... the function as written, in the chain (the columns follow the longest path)" "$(printf '%s' "$out" | tr -s ' ')" "tests/geometry/box_test.smith:$line geometry::box_test::test_area_fails"
         capture "$smith" test --test geometry::box_test::area_through_a_library
         line=$(line_of tests/geometry/box_test.smith 'helpers::require(box::area(2, 3) == 7);')
         expect_contains "smith tests: a frame of the module smith::test is not the failing line" "$out" "check failed at tests/geometry/box_test.smith:$line"
         expect_lacks "smith tests: ... nor in the chain" "$out" "smith::test::"
         capture "$smith" test --test plain_fails
-        line=$(line_of tests/test_plain.smith 'c::smith_check_equal_u64(n, 4);')
-        expect_contains "smith tests: a test of a file with no module is named as written" "$out" "tests/test_plain.smith:$line      test_plain_fails"
+        line=$(line_of tests/test_plain.smith 'test::check_equal(n, 4);')
+        expect_contains "smith tests: a test of a file with no module is named as written" "$(printf '%s' "$out" | tr -s ' ')" "tests/test_plain.smith:$line test_plain_fails"
         capture "$smith" test --test geometry::box_test::test_area_property
         expect_contains "smith tests: smith test passes the written name through" "$out" "1 passed, 0 failed"
+    fi
+
+    # 14. A test that takes an io: `void test_x(c::SmithIo *io)` gets a real io made for it alone, on the run's seed, with a
+    # scratch folder of its own (also $TMPDIR), removed when the test passes and kept, with its path printed, when it fails.
+    # The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks below read.
+    project "$work/iotests"
+    mkdir "$work/probe" && probe_folder=$work/probe
+    echo hello >tests/fixture.txt
+    cat >tests/test_io.smith <<'C'
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+import smith::arena;
+import smith::test;
+
+// Writes text to $SMITH_TEST_PROBE/name, where the script that runs the tests reads it.
+static void probe(const char *name, const char *text) {
+    const char *folder = c::getenv("SMITH_TEST_PROBE");
+    test::check_not_equal(folder, nullptr);
+    char path[1024];
+    c::snprintf(path, sizeof path, "%s/%s", folder, name);
+    c::FILE *file = c::fopen(path, "w");
+    test::check_not_equal(file, nullptr);
+    c::fputs(text, file);
+    c::fclose(file);
+}
+
+static bool exists(const char *path) {
+    return c::access(path, c::F_OK) == 0;
+}
+
+void test_io_real(c::SmithIo *io) {
+    const char *scratch = test::scratch(io);
+    test::check_not_equal(scratch, nullptr);
+    struct c::stat info;
+    test::check_equal(c::stat(scratch, &info), 0);
+    test::check(c::S_ISDIR(info.st_mode));
+    const char *tmp = c::getenv("TMPDIR");
+    test::check_not_equal(tmp, nullptr);
+    test::check_equal(c::strcmp(tmp, scratch), 0);
+    u64 *cell = arena::push(&io->arena, u64); // the io's arena is real memory
+    test::check_not_equal(cell, nullptr);
+    char marker[1024];
+    c::snprintf(marker, sizeof marker, "%s/marker.txt", scratch);
+    probe("real", scratch);
+    c::FILE *file = c::fopen(marker, "w");
+    test::check_not_equal(file, nullptr);
+    c::fclose(file);
+    test::check(exists(marker));
+}
+
+void test_io_fails(c::SmithIo *io) {
+    const char *scratch = test::scratch(io);
+    probe("fails", scratch);
+    char marker[1024];
+    c::snprintf(marker, sizeof marker, "%s/marker.txt", scratch);
+    c::FILE *file = c::fopen(marker, "w");
+    test::check_not_equal(file, nullptr);
+    c::fclose(file);
+    test::check_equal(1, 2);
+}
+
+void test_io_seed(c::SmithIo *io) {
+    char text[128];
+    c::snprintf(text, sizeof text, "%llu %llu", io->seed, io->key.bits);
+    probe("seed", text);
+    test::check_equal(io->key.bits, io->seed);
+}
+
+void test_io_fixture(c::SmithIo *io) {
+    c::FILE *file = c::fopen("tests/fixture.txt", "r");
+    test::check_not_equal(file, nullptr);
+    char text[16] = "";
+    test::check_not_equal(c::fgets(text, sizeof text, file), nullptr);
+    c::fclose(file);
+    test::check_equal(c::strcmp(text, "hello\n"), 0);
+    char directory[1024];
+    test::check_not_equal(c::getcwd(directory, sizeof directory), nullptr);
+    probe("cwd", directory);
+    test::check_not_equal(test::scratch(io), nullptr);
+}
+
+// Two io tests that wait for each other: each can finish only while the other is running, so they run side by side.
+static void wait_for(const char *name) {
+    const char *folder = c::getenv("SMITH_TEST_PROBE");
+    char path[1024];
+    c::snprintf(path, sizeof path, "%s/%s", folder, name);
+    for (i32 i = 0; i < 300 && !exists(path); i++) {
+        c::usleep(10000);
+    }
+    test::check(exists(path));
+}
+
+void test_io_parallel_a(c::SmithIo *io) {
+    probe("a", test::scratch(io));
+    wait_for("b");
+}
+
+void test_io_parallel_b(c::SmithIo *io) {
+    probe("b", test::scratch(io));
+    wait_for("a");
+}
+C
+    capture "$smith" build
+    expect "io tests: the runner builds" 0 "$rc"
+    if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
+    capture build/tests $iso --list
+    expect_contains "io tests: an io test is found beside the others" "$out" "io_real"
+    here=$(pwd -P)
+    io_run() { # runner arguments
+        capture env SMITH_TEST_PROBE="$probe_folder" build/tests $iso "$@"
+    }
+
+    io_run --test io_real --verbose
+    expect_contains "io tests: a test gets a real io, with a scratch folder that is its TMPDIR" "$out" "PASS io_real"
+    scratch=$(cat "$probe_folder/real" 2>/dev/null)
+    expect "io tests: ... the folder is removed after a pass" "gone" "$([ -n "$scratch" ] && [ ! -e "$scratch" ] && echo gone)"
+
+    io_run --test io_fails
+    scratch=$(cat "$probe_folder/fails" 2>/dev/null)
+    expect_contains "io tests: a failure prints the folder it kept" "$out" "scratch folder (kept): $scratch"
+    expect "io tests: ... which exists, with what the test wrote" "yes" "$([ -n "$scratch" ] && [ -f "$scratch/marker.txt" ] && echo yes)"
+    expect_contains "io tests: ... and the failure names the seed to replay" "$out" "rerun: smith test --test io_fails --seed "
+    [ -n "$scratch" ] && rm -rf "$scratch"
+
+    io_run --test io_seed --seed 12345 --verbose
+    expect_contains "io tests: --seed N runs an io test on N" "$out" "PASS io_seed (seed 12345)"
+    expect "io tests: ... its seed is N and so are the bits of its key" "12345 12345" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    rm -f "$probe_folder/seed"
+    io_run --test io_seed --seed 12345
+    expect "io tests: ... and again, the same" "12345 12345" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    io_run --test io_seed --seed 6
+    expect "io tests: ... another seed, another key" "6 6" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    io_run --test io_seed
+    seeds=$(cat "$probe_folder/seed" 2>/dev/null)
+    expect "io tests: ... without --seed the key still comes from the seed" "yes" "$([ "${seeds% *}" = "${seeds#* }" ] && [ -n "$seeds" ] && echo yes)"
+
+    io_run --test io_fixture
+    expect_contains "io tests: the working directory is the project root, so a fixture resolves" "$out" "1 passed, 0 failed"
+    expect "io tests: ... the root itself" "$here" "$(cat "$probe_folder/cwd" 2>/dev/null)"
+
+    rm -f "$probe_folder/a" "$probe_folder/b"
+    io_run --test io_parallel --jobs 2
+    expect_contains "io tests: two io tests run side by side" "$out" "2 passed, 0 failed"
+    expect "io tests: ... each in a folder of its own" "different" "$([ -n "$(cat "$probe_folder/a")" ] && [ "$(cat "$probe_folder/a")" != "$(cat "$probe_folder/b")" ] && echo different)"
+    if [ -n "$have_symbolizer" ]; then
+        capture env SMITH_TEST_PROBE="$probe_folder" "$smith" test $iso --test io_fixture
+        expect "io tests: smith test runs an io test too" 0 "$rc"
     fi
 fi
 fi
