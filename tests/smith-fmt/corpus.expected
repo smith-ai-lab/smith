@@ -299,6 +299,24 @@ int main(void) {
 ==> error-import-self/src/me.smith <==
 module me;
 import me;
+==> error-keyword-after-type/src/shapes.smith <==
+module shapes;
+
+export typedef struct {
+    i32 width;
+} Box;
+
+// A keyword after the module's own Box is a name too: one error each, at the name, with nothing from the compiler.
+export i32 area(Box double, i32 b) {
+    return b;
+}
+export i32 grow(i32 x, const Box *restrict while);
+i32 shrink(Box long, i32 b) {
+    return b;
+}
+export i32 plain(i32 a, i32 for) {
+    return a;
+}
 ==> error-keyword-function/src/foo.smith <==
 module foo;
 
@@ -392,6 +410,32 @@ export inline u32 clamp_twice(u32 x) {
 export u32 regular(u32 x) {
     return twice(x) + 1;
 }
+==> exported-variable-declared/src/counter/state.smith <==
+module counter::state;
+
+// An exported variable is declared before its definition in the module's own compile, as a C file that includes its own
+// header would, so -Wmissing-variable-declarations -Werror (the flags of this case) has nothing to say.
+export u32 total = 3;
+export u32 spare;
+export const char *const names[2] = {"low", "high"};
+[[smith::c_name("counter_state_chosen")]] export u64 chosen = 9;
+export constexpr u32 limit = 4;
+u32 hidden = 2;
+
+export u32 sum(void) {
+    return total + spare + limit + hidden;
+}
+==> exported-variable-declared/src/main.smith <==
+module main;
+
+import counter::state as state;
+import <stdio.h>;
+
+i32 main(void) {
+    state::total = 5;
+    c::printf("%u %s %llu\n", state::sum(), state::names[1], (unsigned long long)state::chosen);
+    return 0;
+}
 ==> foreign-extern/src/sys/world.smith <==
 module sys::world;
 
@@ -415,6 +459,55 @@ export u32 counter_times_three(void) {
 
 // An exported extern is still the module's own symbol, defined in C by its C name.
 export extern u32 owned;
+==> function-pointer-typedef-result/src/hook/table.smith <==
+module hook::table;
+
+#include <stdint.h>
+
+// A function pointer whose result type is a typedef name: the name in `(*Name)` is the declaration, as with
+// `unsigned long`.
+[[smith::c_name("HookFn")]] export typedef uint64_t (*Hook)(uint64_t bits);
+export typedef uint64_t (*Plain)(uint64_t bits);
+export typedef u32 (*Sized)(u32 bits);
+export typedef unsigned long (*Builtin)(uint64_t bits);
+typedef uint64_t (*Private)(uint64_t bits);
+
+export typedef struct {
+    u32 v;
+} Box;
+export typedef Box (*Make)(u32 v);
+
+static uint64_t twice(uint64_t bits) {
+    return bits * 2;
+}
+
+uint64_t (*chosen)(uint64_t bits) = twice;
+[[smith::c_name("hook_table_hook")]] export uint64_t (*hook)(uint64_t bits) = twice;
+
+export Plain plain(void) {
+    Private private_twice = twice;
+    return private_twice;
+}
+
+export uint64_t call(Hook fn, uint64_t bits) {
+    return fn(bits);
+}
+
+export uint64_t chosen_value(uint64_t bits) {
+    return chosen(bits);
+}
+==> function-pointer-typedef-result/src/main.smith <==
+module main;
+
+import hook::table as table;
+import <stdio.h>;
+
+i32 main(void) {
+    table::Plain plain = table::plain();
+    c::printf("%llu %llu %llu %llu\n", (unsigned long long)plain(21), (unsigned long long)table::call(plain, 4),
+              (unsigned long long)table::chosen_value(5), (unsigned long long)table::hook(8));
+    return 0;
+}
 ==> generic-bare-type-then-code/src/num.smith <==
 module num;
 
@@ -980,6 +1073,49 @@ import <stdio.h>;
 
 int main(void) {
     c::printf("%u %u\n", lib::cost(3), lib::twice(3));
+    return 0;
+}
+==> header-include-chain/src/inc/chain.smith <==
+module inc::chain;
+
+// The header keeps the conditionals around the includes, so the includer's flags choose a spelling.
+#include <stdint.h>
+#if defined(INC_FIRST)
+#include <stdio.h>
+#elif defined(INC_SECOND)
+#include <stdlib.h>
+#if defined(INC_DEEP)
+#include <ctype.h>
+#endif
+#else
+#include <string.h>
+#endif
+#if 0
+#include <never.h>
+#endif
+#ifdef UNRELATED
+#define NOTHING 1
+#endif
+import <math.h>;
+#if __has_include("chain_extra.h")
+#include "chain_extra.h"
+#endif
+
+export u32 length(const char *text) {
+    return (u32)strlen(text);
+}
+
+export f64 root(f64 value) {
+    return c::sqrt(value);
+}
+==> header-include-chain/src/main.smith <==
+module main;
+
+import inc::chain;
+import <stdio.h>;
+
+i32 main(void) {
+    c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
 ==> import-c-header/src/main.smith <==
@@ -1562,6 +1698,53 @@ module units;
 export constexpr u32 centimeters_per_meter = 100;
 export u32 to_centimeters(u32 meters) {
     return meters * centimeters_per_meter;
+}
+==> param-names/src/main.smith <==
+module main;
+
+import shape::box;
+import <stdio.h>;
+
+i32 main(void) {
+    box::Box b = {.width = 3, .height = 4};
+    c::printf("%d %d %d %d %d %d\n", box::area(&b, 5), box::scaled(2, 3, 4), box::apply(box::width, &b),
+              box::combined(10), box::height(&b), box::larger(i32, 3, 9));
+    return 0;
+}
+==> param-names/src/shape/box.smith <==
+module shape::box;
+
+export typedef struct {
+    i32 width;
+    i32 height;
+} Box;
+
+// A parameter is not the export that shares its name: the header keeps it.
+export i32 width(Box *box);
+export i32 height(Box *box) {
+    return box->height;
+}
+export i32 area(Box *width, i32 height) {
+    return width->width * height;
+}
+export i32 scaled(i32 area, i32 width, i32 height) {
+    return area * width + height;
+}
+export i32 apply(i32 (*width)(Box *box), Box *box) {
+    return width(box);
+}
+i32 helper(i32 area, i32 height);
+i32 helper(i32 area, i32 height) {
+    return area + height + width(&(Box){.width = 1, .height = 2});
+}
+export i32 combined(i32 x) {
+    return helper(x, height(&(Box){.width = 1, .height = 2}));
+}
+export i32 width(Box *box) {
+    return box->width;
+}
+export T larger(constexpr type T, T width, T height) {
+    return width > height ? width : height;
 }
 ==> plain-hello/src/main.smith <==
 #include <stdio.h>
