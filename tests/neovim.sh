@@ -27,8 +27,9 @@ printf 'int main(void) { u32 x = 1; return (int)x - missing; }\n' >"$work/projec
 printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c","-c","main.smith"]}]\n' "$work/project" \
     >"$work/project/compile_commands.json"
 # A folder with a .smith file and nothing else: no build.c, no compile_commands.json, no .git.
-# It makes no effect (smith-effects would report a printf here), so the one diagnostic is the undefined name.
-mkdir "$work/alone" && printf '#include <string.h>\n\nint main() {\n  (void)strlen("hello world");\n  return zzz;\n}\n' >"$work/alone/main.smith"
+# It makes no effect and has no preprocessor (smith-effects and smith-preprocessor would report them), so the one
+# diagnostic is the undefined name.
+mkdir "$work/alone" && printf '// one error, the undefined name\n\nint main() {\n  (void)42;\n  return zzz;\n}\n' >"$work/alone/main.smith"
 # Projects made by smith new, which writes no build file (the plugin finds them by their main): a C one that builds, a C
 # one whose main.c does not compile, and one of the default language, .smith.
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
