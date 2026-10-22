@@ -65,7 +65,7 @@ expect_contains "clamp: ... both functions" "$out" "2 proved, 0 failed"
 # 2. A caller that breaks the contract fails, with the line and the values.
 prove "$cases/clamp.c" "$cases/bad_caller.c"
 expect "caller: fails" 1 "$rc"
-expect_contains "caller: ... at the call, with the contract it breaks" "$out" "bad_caller.c:7: the call of clamp may break smith_requires(low <= high)"
+expect_contains "caller: ... at the call, with the contract it breaks" "$out" "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)"
 expect_contains "caller: ... and the values of the call" "$out" "clamp.low = 10 clamp.high = 5"
 
 # 3. Undefined behaviour is a proof obligation, and a counterexample prints its values.
@@ -103,6 +103,7 @@ expect "assembly: what the contract does not give fails" 1 "$rc"
 expect_contains "assembly: ... with the value" "$out" "percent = "
 prove --function=sensor_percent "$cases/assembly.c"
 expect_contains "assembly: the callee itself cannot be proved" "$out" "inline assembly cannot be proved"
+expect_contains "assembly: ... and says to mark the function trusted" "$out" "put smith_trusted() as the first statement of sensor_percent"
 
 # 6. Each construct that cannot be proved is an error that says where and what to do.
 prove "$cases/recursion.c"
@@ -112,6 +113,7 @@ prove "$cases/pointer.c"
 expect_contains "function pointer: is an error" "$out" "pointer.c:10: cannot be proved: a call through a function pointer"
 prove "$cases/nobody.c"
 expect_contains "no body: is an error" "$out" "nobody.c:10: cannot be proved: a call of lookup, which has neither a body nor a contract"
+expect_contains "no body: ... that suggests a trusted boundary" "$out" "this is the edge of the program: put smith_trusted() as the first statement of"
 prove "$cases/unbounded.c"
 expect_contains "loop: with no bound is an error" "$out" "unbounded.c:8: cannot be proved: a loop with no constant bound"
 prove "$cases/message.m"
@@ -123,6 +125,12 @@ prove --budget=2 "$cases/division.c"
 expect "budget: fails" 1 "$rc"
 expect_contains "budget: ... as a budget of CPU time" "$out" "over its budget of 2 s of CPU time"
 expect_contains "budget: ... that says what it used" "$out" "having used 2."
+expect_contains "budget: ... which query was slow, with its line" "$out" "CPU  smith_ensures(q * y + r == x)  ("
+expect_contains "budget: ... and that it was the one the budget ended in" "$out" "<- the budget ended here"
+expect_contains "budget: ... and the division it depends on, with its line" "$out" "its value depends on a 64-bit unsigned division by a variable at "
+expect_contains "budget: ... and the remainder" "$out" "64-bit unsigned remainder by a variable"
+expect_contains "budget: ... and the whole list of costly operations of the code" "$out" "division.c:8: 64-bit unsigned division by a variable"
+expect_contains "budget: ... and where the time went" "$out" "where the time went (CPU, as charged):"
 
 # 7b. A proof's process ends with its parent: kill the parent (a timeout around the command, a closed terminal) while a
 # proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
@@ -246,9 +254,140 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
     expect_contains "smith module: ... and the values by their written names" "$out" "geometry::box::clamp.low = 10 geometry::box::clamp.high = 5"
     prove "$box"
     expect_contains "smith module: all of them" "$out" "1 proved, 3 failed"
+
+    # 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
+    # a module and a trusted function written with c::smith_trusted().
+    proj=$work/smithproj
+    mkdir -p "$proj"
+    cat >"$proj/main.smith" <<'EOF'
+import primes;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", primes::shown_sum(3));
+    return 0;
+}
+EOF
+    cat >"$proj/primes.smith" <<'EOF'
+module primes;
+
+import <stdio.h>;
+import <smith/contract.h>;
+
+export i32 show(i32 value) {
+    c::smith_trusted();
+    c::smith_requires(value >= 0);
+    c::printf("%d\n", value);
+    c::smith_ensures(value >= 0);
+    return value;
+}
+
+export i32 sum(usize count) {
+    constexpr i32 first[] = {2, 3, 5, 7, 11};
+    c::smith_requires(count <= _Countof(first));
+    i32 total = 0;
+    for (usize i = 0; i < count; i++) {
+        total += first[i];
+    }
+    c::smith_ensures(total >= 0 && total <= 28);
+    return total;
+}
+
+export i32 shown_sum(usize count) {
+    c::smith_requires(count <= 5);
+    i32 total = sum(count);
+    i32 shown = show(total);
+    c::smith_ensures(shown >= 0);
+    return shown;
+}
+EOF
+    cd "$proj" && capture "$smith" prove -v --emit-ir="$work/project-ir.ll"; cd "$here"
+    expect "project: a .smith project's contracts are proved" 0 "$rc"
+    expect_contains "project: ... as written" "$out" "ok    primes::sum  (primes.smith:14)"
+    expect_contains "project: ... through a trusted function's contract" "$out" "ok    primes::shown_sum  ("
+    expect_contains "project: ... the trusted function is listed" "$out" "trusted  primes::show  (primes.smith:6)"
+    expect_contains "project: ... with the counts" "$out" "2 proved, 0 failed, 1 trusted"
+    case $out in *"nothing to prove"*) expect "project: a .smith project is not nothing to prove" "proved" "$out" ;; *) expect "project: a .smith project is not nothing to prove" "proved" "proved" ;; esac
+    ir=$(cat "$work/project-ir.ll")
+    expect_contains "project: --emit-ir writes the IR of every function" "$ir" "; primes::shown_sum ("
+    expect_contains "project: ... and of the first" "$ir" "; primes::sum ("
+    sed 's/total <= 28/total <= 27/' "$proj/primes.smith" >"$proj/primes.next" && mv "$proj/primes.next" "$proj/primes.smith"
+    cd "$proj" && capture "$smith" prove; cd "$here"
+    expect "project: a wrong contract in a .smith module is refuted" 1 "$rc"
+    expect_contains "project: ... at the .smith line, with the values" "$out" "primes.smith:21: smith_ensures(total >= 0 && total <= 27) may be false"
+    expect_contains "project: ... counterexample" "$out" "counterexample: count = 5"
+    cd "$proj" && capture "$smith" prove --budget=30 -v; cd "$here"
+    expect_contains "project: the prover's options are the project's too (-v, --budget=)" "$out" "ok    primes::shown_sum"
 else
     echo "skipped: this smith's clang has no token hook, so no .smith proofs"
 fi
+
+
+# 12. Trusted boundaries (issue #42): a function marked smith_trusted() is assumed by its callers and not proved, and the
+# report lists it as trusted. The default set is every function with a contract, minus the trusted ones: main and a
+# function with no contract are not proved.
+prove -v "$cases/trusted.c"
+expect "trusted: a proved function that is wrong still fails" 1 "$rc"
+expect_contains "trusted: ... the edge function is listed as trusted" "$out" "trusted  sensor_percent  ("
+expect_contains "trusted: ... with the contract it gives callers" "$out" "not proved; callers prove its 0 smith_requires and assume its 1 smith_ensures"
+expect_contains "trusted: ... one with no contract at all too" "$out" "trusted  announce  ("
+expect_contains "trusted: ... the callers are proved from its contract" "$out" "ok    scaled  ("
+expect_contains "trusted: ... the one that wants more than the contract gives fails" "$out" "FAIL  scaled_too_far  ("
+expect_contains "trusted: ... with the value the contract allows" "$out" "percent = "
+expect_contains "trusted: ... and the counts say so" "$out" "2 proved, 1 failed, 2 trusted"
+case $out in *"inline assembly"*) expect "trusted: the body of a trusted function is not read" "no error" "$out" ;; *) expect "trusted: the body of a trusted function is not read" "no error" "no error" ;; esac
+case $out in *"ok    sensor_percent"* | *"ok    announce"*) expect "trusted: a trusted function is never listed as proved" "not proved" "$out" ;; *) expect "trusted: a trusted function is never listed as proved" "not proved" "not proved" ;; esac
+case $out in *"main"* | *"ok    helper"* | *"FAIL  helper"*) expect "default set: main and a function with no contract are not proved" "neither" "$out" ;; *) expect "default set: main and a function with no contract are not proved" "neither" "neither" ;; esac
+prove --function=after_announce "$cases/trusted.c"
+expect "trusted: a caller of a trusted function with no contract is proved, reading the function with no contract" 0 "$rc"
+prove --function=sensor_percent "$cases/trusted.c"
+expect "trusted: --function of a trusted function is refused" 1 "$rc"
+expect_contains "trusted: ... saying it is assumed, not proved" "$out" "the function is marked smith_trusted(), so its contract is assumed and nothing of it is proved"
+prove --function=helper "$cases/trusted.c"
+expect "default set: --function of a function with no contract is refused" 1 "$rc"
+expect_contains "default set: ... saying it has no contract" "$out" "a function with no contract is not proved"
+prove "$cases/edge.c"
+expect "boundary: a proved function that reaches a library call fails" 1 "$rc"
+expect_contains "boundary: ... naming the call" "$out" "edge.c:9: cannot be proved: a call of printf, which has neither a body nor a contract"
+expect_contains "boundary: ... and the function to mark, the helper that makes the call" "$out" "put smith_trusted() as the first statement of show, so that its callers use its smith_requires and smith_ensures"
+
+# 13. An error at its cause (issue #42): a smith_requires after a write names the write and the read, each with its line.
+prove "$cases/cause.c"
+expect "cause: callers of a contract that reads after a write fail" 1 "$rc"
+expect_contains "cause: ... the error is at the call" "$out" "cause.c:22: cannot be proved: cannot use the contract of swap_halves: its smith_requires reads memory at "
+expect_contains "cause: ... names the read, with its line and instruction" "$out" "cause.c:15: \`"
+expect_contains "cause: ... and the write, with its line and instruction" "$out" "after the function has written, at "
+expect_contains "cause: ... the store" "$out" "cause.c:14: \`store i32"
+expect_contains "cause: ... and what to do" "$out" "put every smith_requires before the first write"
+prove "$cases/zero_init.c"
+expect "cause: a struct zero-initialized first is a write of a local, not of the caller's memory" 0 "$rc"
+
+# 14. --emit-ir writes the IR the prover checks, with the proof points listed.
+prove --emit-ir="$work/ir.ll" --function=draw_health "$cases/clamp.c"
+expect "emit-ir: the proof still runs" 0 "$rc"
+ir=$(cat "$work/ir.ll")
+expect_contains "emit-ir: names the function" "$ir" "; draw_health ("
+expect_contains "emit-ir: lists the proof points" "$ir" ";   point 0: smith_requires, assumed: 0 <= max_health && max_health <= 1000"
+expect_contains "emit-ir: ... the one that proves a callee's smith_requires at the call" "$ir" "smith_requires of a callee, proved at the call: low <= high"
+expect_contains "emit-ir: ... and the promise" "$ir" "smith_ensures, proved: 0 <= pixels && pixels <= 4 * max_health"
+expect_contains "emit-ir: has the function" "$ir" "define "
+expect_contains "emit-ir: ... with the contracts as points" "$ir" "call void @smith_point(i32 "
+
+# 15. -v lists every function, and a function proved before is cached, with the time it took then.
+export XDG_CACHE_HOME=$work/xdg-proofs
+prove -v "$cases/clamp.c"
+expect_contains "cached: the first run proves" "$out" "ok    clamp  ("
+case $out in *cached*) expect "cached: the first run is not cached" "no" "$out" ;; *) expect "cached: the first run is not cached" "no" "no" ;; esac
+prove -v "$cases/clamp.c"
+expect_contains "cached: the second run lists clamp, marked cached" "$out" "ok    clamp  ("
+expect_contains "cached: ... with the time it took when it was proved" "$out" "cached: proved before in "
+expect_contains "cached: ... and draw_health, which uses its contract" "$out" "ok    draw_health  ("
+expect_contains "cached: ... and the count" "$out" "2 proved, 0 failed, 2 cached"
+prove -v --no-cache "$cases/clamp.c"
+case $out in *cached*) expect "cached: --no-cache proves again" "no" "$out" ;; *) expect "cached: --no-cache proves again" "no" "no" ;; esac
+prove "$cases/bad_caller.c" "$cases/clamp.c"
+expect_contains "cached: a function that fails is never cached" "$out" "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)"
+export XDG_CACHE_HOME=$work/xdg-cache
 
 echo
 echo "$total prove checks, $failures failed"

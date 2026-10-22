@@ -8,18 +8,25 @@
 #include "prove.hpp"
 
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
 
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -50,7 +57,10 @@ struct Arguments {
     std::fprintf(stderr, "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
                          "  --function=NAME   prove only this function (repeatable)\n"
                          "  --budget=SECONDS  the time one function may take (default 10)\n"
-                         "  -v                print the functions that are proved too, with their time\n");
+                         "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
+                         "  --no-cache        prove again what a cached proof already proved\n"
+                         "  -v                print the functions that are proved too, with their time, the slowest\n"
+                         "                    query of each and, when it took a second, what made it costly\n");
     std::exit(2);
 }
 
@@ -65,6 +75,13 @@ Arguments parse(int argc, char **argv) {
             flags = true;
         } else if (argument == "-v") {
             arguments.options.verbose = true;
+        } else if (argument.rfind("--emit-ir=", 0) == 0) {
+            arguments.options.emit_ir = argument.substr(10);
+        } else if (argument.rfind("--emit-ir-append=", 0) == 0) {
+            arguments.options.emit_ir = argument.substr(17);
+            arguments.options.emit_ir_append = true;
+        } else if (argument == "--no-cache") {
+            arguments.options.no_cache = true;
         } else if (argument.rfind("--function=", 0) == 0) {
             arguments.options.only.push_back(argument.substr(11));
         } else if (argument.rfind("--budget=", 0) == 0) {
@@ -192,10 +209,146 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
     }
 }
 
-// Proves one function and prints what there is to say about it. Returns 0 when it is proved, else 1.
+// ---- the cache: a proof is kept by the content of what was proved ----
+
+// A function whose prepared IR (see prove::program_proof_key) is the same as one proved before is proved: the proof
+// depends on nothing else. Only a proof that succeeded is kept, as the time it took, so that -v can say what a cached
+// proof cost. An entry unused for 31 days is removed, checked at most once a week.
+struct Recorded {
+    double wall = 0, cpu = 0, charged = 0;
+};
+
+std::string cache_directory() {
+    const char *base = std::getenv("XDG_CACHE_HOME");
+    std::string root = base != nullptr && *base != '\0' ? base : "";
+    if (root.empty()) {
+        const char *home = std::getenv("HOME");
+        if (home == nullptr || *home == '\0') return "";
+        root = std::string(home) + "/.cache";
+    }
+    return root + "/smith/proofs";
+}
+
+std::string cache_path(const std::string &key) {
+    std::string directory = cache_directory();
+    if (directory.empty()) return "";
+    llvm::SHA256 hash;
+    hash.update(key);
+    hash.update(std::string("smith-prove-cache-1 ") + __DATE__ + " " + __TIME__);
+    std::array<uint8_t, 32> digest = hash.final();
+    static const char *const hex = "0123456789abcdef";
+    std::string name;
+    for (uint8_t byte : digest) {
+        name += hex[byte >> 4];
+        name += hex[byte & 15];
+    }
+    return directory + "/" + name;
+}
+
+bool cache_lookup(const std::string &path, Recorded &recorded) {
+    if (path.empty()) return false;
+    std::ifstream file(path);
+    std::string word;
+    if (!(file >> word >> recorded.wall >> recorded.cpu >> recorded.charged) || word != "proved") return false;
+    utimes(path.c_str(), nullptr); // used now
+    return true;
+}
+
+void cache_prune(const std::string &directory) {
+    std::string stamp = directory + "/prune.timestamp";
+    struct stat info{};
+    time_t now = time(nullptr);
+    if (stat(stamp.c_str(), &info) == 0 && now - info.st_mtime < 7L * 24 * 3600) return;
+    std::error_code ignored;
+    for (const auto &entry : std::filesystem::directory_iterator(directory, ignored)) {
+        struct stat file{};
+        if (entry.path().filename() == "prune.timestamp") continue;
+        if (stat(entry.path().c_str(), &file) == 0 && now - file.st_mtime > 31L * 24 * 3600)
+            std::filesystem::remove(entry.path(), ignored);
+    }
+    std::ofstream(stamp) << "pruned\n";
+}
+
+void cache_store(const std::string &path, const prove::Outcome &outcome) {
+    if (path.empty()) return;
+    std::string directory = path.substr(0, path.rfind('/'));
+    std::error_code ignored;
+    std::filesystem::create_directories(directory, ignored);
+    std::string temporary = path + ".tmp" + std::to_string(getpid());
+    {
+        std::ofstream file(temporary);
+        file << "proved " << outcome.seconds << " " << outcome.cpu_seconds << " " << outcome.charged << "\n";
+    }
+    std::filesystem::rename(temporary, path, ignored);
+    cache_prune(directory);
+}
+
+// ---- what the report says about time ----
+
+// The queries that took the time, each with the costly operations its value depends on.
+void print_queries(const prove::Unit &unit, const prove::Outcome &outcome, size_t limit) {
+    for (size_t i = 0; i < outcome.queries.size() && i < limit; i++) {
+        const prove::QueryTime &query = outcome.queries[i];
+        std::printf("      %5.2f s CPU  %s%s%s\n", query.cpu, query.what.c_str(),
+                    query.line != 0 ? ("  (" + at(query.file, query.line) + ")").c_str() : "",
+                    query.ran_out ? "  <- the budget ended here" : "");
+        for (size_t feed : query.feeds) {
+            const prove::Cost &cost = unit.costs[feed];
+            std::printf("                    its value depends on a %s at %s\n", cost.what.c_str(),
+                        at(cost.file, cost.line).c_str());
+        }
+    }
+}
+
+// What the IR the solver is given holds that makes queries costly, by line.
+void print_costs(const prove::Unit &unit, size_t limit) {
+    std::printf(
+        "  the code the solver is given: %u instructions, %u loads, %u stores; what makes queries costly in it:\n",
+        unit.instructions, unit.loads, unit.stores);
+    size_t shown = 0;
+    for (const prove::Cost &cost : unit.costs) {
+        if (shown++ >= limit) break;
+        std::printf("      %s: %s", at(cost.file, cost.line).c_str(), cost.what.c_str());
+        if (cost.weight == 3 && cost.count > 1) std::printf(" (%u times)", cost.count);
+        if (cost.weight == 2 && cost.count > 1 && cost.what[0] == 'l') std::printf(" (%u of them)", cost.count);
+        std::printf("\n");
+    }
+    if (unit.costs.empty()) std::printf("      nothing stands out: many small operations\n");
+}
+
+// Under a proof that took long enough to matter (or one that ran out), or with -v for all of them.
+void print_time_report(const prove::Unit &unit, const prove::Outcome &outcome, const prove::Options &options) {
+    bool slow = outcome.charged >= 1.0 || outcome.status == prove::Outcome::Timeout;
+    if (!options.verbose && !slow) return;
+    if (slow && !outcome.phases.empty()) {
+        std::printf("  where the time went (CPU, as charged):");
+        for (const auto &[what, seconds] : outcome.phases) {
+            if (seconds >= 0.005) std::printf("\n      %6.2f s  %s", seconds, what.c_str());
+        }
+        std::printf("\n");
+    }
+    if (outcome.queries.empty()) {
+        if (slow) std::printf("  no query was solved\n");
+    } else {
+        std::printf("  the slowest of %u queries (CPU time, side by side on up to %u threads):\n", outcome.query_count,
+                    prove::Options::solver_threads);
+        print_queries(unit, outcome, slow ? 4 : 1);
+    }
+    if (slow) print_costs(unit, 8);
+}
+
+void emit_ir(const prove::Prepared &prepared, const prove::Options &options) {
+    if (options.emit_ir.empty()) return;
+    std::ofstream file(options.emit_ir, std::ios::app);
+    file << prove::program_ir_text(prepared);
+}
+
+// Proves one function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not, and 2
+// when it is proved by a cached proof.
 int prove_unit(prove::Program &loaded, const std::string &name, const prove::Options &options) {
     prove::Prepared prepared = prove::program_prepare(loaded, name);
     std::string label = prepared.unit.name + "  (" + at(prepared.unit.file, prepared.unit.line) + ")";
+    emit_ir(prepared, options);
     if (prepared.unprovable != nullptr) {
         const prove::Unprovable &failure = *prepared.unprovable;
         std::printf("FAIL  %s\n  %s: cannot be proved: %s\n", label.c_str(), at(failure.file, failure.line).c_str(),
@@ -205,32 +358,34 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     }
     if (options.dump) {
         prepared.function->print(llvm::errs());
-        unsigned instructions = 0, loads = 0, stores = 0, blocks = 0;
-        for (const llvm::BasicBlock &block : *prepared.function) {
-            blocks++;
-            for (const llvm::Instruction &instruction : block) {
-                instructions++;
-                loads += llvm::isa<llvm::LoadInst>(instruction);
-                stores += llvm::isa<llvm::StoreInst>(instruction);
-            }
-        }
-        std::fprintf(stderr, "ir of %s: %u blocks, %u instructions, %u loads, %u stores\n", prepared.unit.name.c_str(),
-                     blocks, instructions, loads, stores);
+        std::fprintf(stderr, "ir of %s: %u instructions, %u loads, %u stores\n", prepared.unit.name.c_str(),
+                     prepared.unit.instructions, prepared.unit.loads, prepared.unit.stores);
+    }
+    std::string path = options.no_cache ? "" : cache_path(prove::program_proof_key(prepared));
+    Recorded recorded;
+    if (cache_lookup(path, recorded)) {
+        if (options.verbose)
+            std::printf("ok    %s  cached: proved before in %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(),
+                        recorded.wall, recorded.cpu, recorded.charged);
+        return 2;
     }
     prove::Outcome outcome = prove::alive_prove(prepared, options);
     int status = 1;
     switch (outcome.status) {
     case prove::Outcome::Proved:
         status = 0;
+        cache_store(path, outcome);
         if (options.verbose)
             std::printf("ok    %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
                         outcome.cpu_seconds, outcome.charged);
+        print_time_report(prepared.unit, outcome, options);
         break;
     case prove::Outcome::Failed:
         std::printf("FAIL  %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
                     outcome.cpu_seconds, outcome.charged);
         for (const prove::Finding &finding : outcome.findings)
             print_finding(prepared.unit, finding);
+        print_time_report(prepared.unit, outcome, options);
         break;
     case prove::Outcome::Timeout:
         std::printf(
@@ -240,6 +395,7 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
             "body\n",
             label.c_str(), options.budget_seconds, prove::Options::solver_threads, outcome.charged, outcome.cpu_seconds,
             outcome.seconds);
+        print_time_report(prepared.unit, outcome, options);
         break;
     case prove::Outcome::Error:
         std::printf("FAIL  %s\n  %s\n", label.c_str(), outcome.error.c_str());
@@ -289,20 +445,31 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
     for (const std::string &name : only) {
         bool defined = false;
         bool unit = false;
+        bool trusted = false;
         for (const llvm::Function &function : *loaded.module) { // bounded by the functions of the module
             if (function.isDeclaration()) continue;
             std::string function_name = function.getName().str();
             if (prove::program_label(loaded, function_name) != name) continue;
             defined = true;
+            if (prove::program_is_trusted(loaded, function_name)) {
+                std::fprintf(stderr,
+                             "smith: prove: --function=%s: the function is marked smith_trusted(), so its contract "
+                             "is assumed and nothing of it is proved\n",
+                             name.c_str());
+                trusted = true;
+            }
             for (const std::string &candidate : units)
                 unit = unit || candidate == function_name;
         }
         if (unit) continue;
         ok = false;
-        if (defined)
+        if (trusted)
+            continue;
+        else if (defined)
             std::fprintf(stderr,
                          "smith: prove: --function=%s: the function has no smith_requires, smith_ensures or "
-                         "smith_invariant, and calls none that has one, so there is nothing to prove\n",
+                         "smith_invariant, so there is nothing to prove (a function with no contract is not proved; "
+                         "give it one)\n",
                          name.c_str());
         else
             std::fprintf(stderr,
@@ -316,7 +483,7 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
 
 // Proves each function in a process of its own, so that a crash or a function that will not finish is a failure of that
 // function and nothing more, and the budget is a clock the prover cannot overrun. Returns 0 for a proof, 1 for a
-// failure.
+// failure, 2 for a proof that was cached.
 int prove_in_child(prove::Program &loaded, const std::string &name, const std::string &label,
                    const prove::Options &options) {
     std::fflush(nullptr);
@@ -327,7 +494,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
         end_with_parent_or_budget(parent, options);
         int status = prove_unit(loaded, name, options);
         std::fflush(nullptr);
-        _exit(status);
+        _exit(status == 2 ? 4 : status); // 4: proved, by a cached proof
     }
     Clock::time_point begin = Clock::now();
     double allowed = wall_backstop(options);
@@ -347,7 +514,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
         }
         usleep(2000);
     }
-    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0 ? 0 : 1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0 ? 0 : WEXITSTATUS(status) == 4 ? 2 : 1;
     if (WIFSIGNALED(status) && WTERMSIG(status) == SIGXCPU) {
         std::printf(
             "FAIL  %s\n  over its budget of %.0f s of CPU time (counted as on %u idle cores): it has used "
@@ -416,19 +583,39 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     if (result != 0) return result;
 
     if (!check_wanted_functions(loaded, arguments.options.only)) return 1;
+    if (!arguments.options.emit_ir.empty() && !arguments.options.emit_ir_append) {
+        std::ofstream(arguments.options.emit_ir, std::ios::trunc); // the children append their functions
+    }
     unsigned proved = 0;
     unsigned failed = 0;
-    for (const std::string &name : prove::program_units(loaded)) {
-        std::string source_name = prove::program_label(loaded, name);
-        if (!arguments.options.only.empty()) {
-            bool wanted = false;
-            for (const std::string &only : arguments.options.only)
-                wanted = wanted || only == source_name;
-            if (!wanted) continue;
+    unsigned cached = 0;
+    unsigned trusted = 0;
+    auto wanted_name = [&](const std::string &source_name) {
+        if (arguments.options.only.empty()) return true;
+        for (const std::string &only : arguments.options.only) {
+            if (only == source_name) return true;
         }
-        (prove_in_child(loaded, name, source_name, arguments.options) == 0 ? proved : failed)++;
+        return false;
+    };
+    for (const prove::Trusted &function : prove::program_trusted(loaded)) {
+        if (!wanted_name(function.name)) continue;
+        trusted++;
+        std::printf("trusted  %s  (%s)  not proved; callers prove its %u smith_requires and assume its %u "
+                    "smith_ensures\n",
+                    function.name.c_str(), at(function.file, function.line).c_str(), function.requires_count,
+                    function.ensures_count);
     }
-    if (proved + failed == 0) {
+    for (const std::string &name : prove::program_units(loaded)) {
+        if (!wanted_name(prove::program_label(loaded, name))) continue;
+        int one = prove_in_child(loaded, name, prove::program_label(loaded, name), arguments.options);
+        if (one == 1) {
+            failed++;
+        } else {
+            proved++;
+            cached += one == 2;
+        }
+    }
+    if (proved + failed + trusted == 0) {
         // A project that has written no contract yet has nothing to prove, which is not a failure (a --function that
         // names nothing was refused above).
         std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or "
@@ -436,6 +623,9 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         return 0;
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
-    std::printf("%u proved, %u failed in %.2f s\n", proved, failed, seconds);
+    std::printf("%u proved, %u failed", proved, failed);
+    if (trusted > 0) std::printf(", %u trusted", trusted);
+    if (cached > 0) std::printf(", %u cached", cached);
+    std::printf(" in %.2f s\n", seconds);
     return failed == 0 ? 0 : 1;
 }
