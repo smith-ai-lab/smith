@@ -102,7 +102,7 @@ $ smith check
 ...
 2 passed, 0 failed in 0.08 s
 smith docs: 1 concepts, 0 problems
-[4/4] smith lint --quiet -p . main.c primes.c tests/test_primes.c
+[4/4] smith lint --quiet -p . main.smith primes.smith tests/test_primes.smith
 ...
 ```
 
@@ -115,15 +115,15 @@ arguments they run the project's tasks. With arguments they are clang-format and
 `smith dbg` is lldb, from smith's own LLVM:
 
 ```
-$ smith dbg -b -o 'b primes.c:10' -o run -o 'frame variable' -o kill build/debug/hello
-Breakpoint 1: where = hello`primes_sum + 436 at primes.c:10:23, address = 0x0000000100000aec
-Process 34952 stopped
+$ smith dbg -b -o 'b primes.smith:12' -o run -o 'frame variable' -o kill build/debug/hello
+Breakpoint 1: where = hello`primes::sum + 436 at primes.smith:12:24, address = 0x0000000100000aec
+Process 46027 stopped
 * thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
--> 10  	        sum += primes[i];
-(size_t) count = 5
-(const int32_t[5]) primes = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
-(int32_t) sum = 0
-(size_t) i = 0
+-> 12  	        total += first[i];
+(usize) count = 5
+(const i32[5]) first = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
+(i32) total = 0
+(usize) i = 0
 ```
 
 `smith dap` is lldb-dap for editors. Debugging needs Developer mode on the Mac; see the
@@ -133,7 +133,7 @@ Process 34952 stopped
 
 ```
 $ smith prove
-smith: no work to do.
+smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant
 ```
 
 A contract is a call, `smith_requires`, `smith_ensures` or `smith_invariant`, that stops
