@@ -293,6 +293,11 @@ given (`tests/lint-smith.sh`).
 - **Not done.** Checks that look at a name (a function, a variable) in a message are shown the written one, but a check
   that compares names in the lowered form (a length or a reserved-name check, say) still sees
   `geometry_box_x`; `readability-identifier-naming` is the one that has been made to see the written name.
+- **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
+  system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
+  constructor is named as the module writes it, and the rules about capabilities (a type marked
+  `[[clang::annotate("smith::capability")]]`; the module that defines it may make raw calls) read the module's file as
+  its implementation. The skill smith-io has the rules and how to fix each finding.
 
 ## How it works
 
