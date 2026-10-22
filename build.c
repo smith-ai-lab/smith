@@ -144,7 +144,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena",  "build", "contract", "math",
+static const char *const build_generated_headers[] = {"arena",  "build", "contract", "io",   "math",
                                                       "random", "test",  "text",     nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
@@ -186,7 +186,8 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
 // It needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The bootstrap").
 static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith", "lib/smith/contract.smith",
-                                                      "lib/smith/random.smith", "lib/smith/text.smith", nullptr};
+                                                      "lib/smith/io.smith",    "lib/smith/random.smith",
+                                                      "lib/smith/text.smith",  nullptr};
 
 // Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
 static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -468,7 +469,8 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/arena.smith",
     "bootstrap/lib/smith/arena.c",
     "include/smith/io.h",
-    "lib/io.c",
+    "lib/smith/io.smith",
+    "bootstrap/lib/smith/io.c",
     "include/smith/random.h",
     "lib/smith/random.smith",
     "bootstrap/lib/smith/random.c",
@@ -603,6 +605,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     const char *const *smith_flags = smith_cat(b, flags, smith_list(b, "-std=gnu2y", nullptr), nullptr);
     smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);

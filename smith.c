@@ -872,7 +872,7 @@ static constexpr unsigned char smith_io_header[] = {
 #embed "include/smith/io.h"
 };
 static constexpr unsigned char smith_io_source[] = {
-#embed "lib/io.c"
+#embed "lib/smith/io.smith"
 };
 
 static constexpr unsigned char smith_json_header[] = {
@@ -922,6 +922,9 @@ static constexpr unsigned char smith_embedded_arena_source[] = {
 static constexpr unsigned char smith_embedded_random_source[] = {
 #embed "bootstrap/lib/smith/random.c"
 };
+static constexpr unsigned char smith_embedded_io_source[] = {
+#embed "bootstrap/lib/smith/io.c"
+};
 
 static constexpr unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
@@ -961,7 +964,7 @@ typedef struct {
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, false),
+    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false), SMITH_LIBRARY(math, true),     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(test, true),  SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
 };
@@ -1446,6 +1449,8 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
                            sizeof smith_embedded_arena_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
                            sizeof smith_embedded_random_source);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/io.c", smith_embedded_io_source,
+                           sizeof smith_embedded_io_source);
     if (file == SmithBuildFile_Conventions)
         smith_write_if_changed(smith_conventions_path, (const unsigned char *)smith_conventions_source,
                                sizeof smith_conventions_source - 1);

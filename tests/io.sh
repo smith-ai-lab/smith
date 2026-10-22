@@ -45,7 +45,7 @@ expect_contains() { # name, text, needle
 }
 
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/io.c $here/lib/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
+sources="$here/tests/io.c $here/bootstrap/lib/smith/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
 mkdir "$work/run" "$work/bin"
 cd "$work/run" || exit 1
 
@@ -60,18 +60,32 @@ capture "$work/bin/fast"
 expect "checks: pass at -O2" "0 io: all checks passed" "$rc $out"
 expect "checks: ... and nothing was printed to stderr" "" "$err"
 
-# 2. The library compiles as -std=gnu23 and -std=gnu2y with the warnings of smith new.
-for std in gnu23 gnu2y; do
-    capture $cc -std=$std $warn -I "$here/include" -c "$here/lib/io.c" -o "$work/io.o"
-    expect "library: compiles as -std=$std with the new project's warnings" 0 "$rc"
-done
+# 2. The library compiles as -std=gnu23 and -std=gnu2y with the warnings of smith new. The module itself is compiled by a
+# smith whose clang has the token hook, and its lowering (bootstrap/, what smith's own build and a stage0 compile) by
+# $cc, which is all a stage0 can do.
+hook=yes
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
+module="$here/lib/smith/io.smith"
+lowering="$here/bootstrap/lib/smith/io.c"
 game="-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 -Wmissing-variable-declarations -Wcomma -Wunreachable-code"
 for std in gnu23 gnu2y; do
-    capture $cc -std=$std $warn $game -I "$here/include" -c "$here/lib/io.c" -o "$work/io.o"
-    expect "library: compiles as -std=$std under the extra warnings game and learner add" 0 "$rc"
+    capture $cc -std=$std $warn -I "$here/include" -c "$lowering" -o "$work/io.o"
+    expect "library: the lowering compiles as -std=$std with the new project's warnings" 0 "$rc"
+    capture $cc -std=$std $warn $game -I "$here/include" -c "$lowering" -o "$work/io.o"
+    expect "library: ... and under the extra warnings game and learner add" 0 "$rc"
+    if [ $hook = yes ]; then
+        capture "$smith" cc -std=$std $warn -I "$here/include" -c "$module" -o "$work/io.o"
+        expect "library: the module compiles as -std=$std with the new project's warnings" 0 "$rc"
+        capture "$smith" cc -std=$std $warn $game -I "$here/include" -c "$module" -o "$work/io.o"
+        expect "library: ... and under the extra warnings game and learner add" 0 "$rc"
+    fi
 done
-capture $cc -std=gnu23 $warn -O2 -DNDEBUG -I "$here/include" -c "$here/lib/io.c" -o "$work/io.o"
-expect "library: compiles with NDEBUG and the same warnings" 0 "$rc"
+capture $cc -std=gnu23 $warn -O2 -DNDEBUG -I "$here/include" -c "$lowering" -o "$work/io.o"
+expect "library: the lowering compiles with NDEBUG and the same warnings" 0 "$rc"
+if [ $hook = yes ]; then
+    capture "$smith" cc -std=gnu23 $warn -O2 -DNDEBUG -I "$here/include" -c "$module" -o "$work/io.o"
+    expect "library: the module compiles with NDEBUG and the same warnings" 0 "$rc"
+fi
 
 # 3. The arena is a reservation: making the io commits nothing, touching memory commits what is touched.
 capture "$work/bin/fast" memory
@@ -181,7 +195,7 @@ PATH="$work/bin2:$PATH"
 capture "$smith" build
 expect "project: the build succeeds" 0 "$rc"
 expect "project: the header is written" yes "$([ -f .smith/include/smith/io.h ] && echo yes)"
-expect "project: the source is written" yes "$([ -f .smith/lib/io.c ] && echo yes)"
+expect "project: the source is written" yes "$([ -f .smith/lib/smith/io.smith ] && echo yes)"
 capture build/app
 expect "project: the program runs" "0 write 0, words 4, seed 1" "$rc $out"
 if "$smith" lsp --version >/dev/null 2>&1; then

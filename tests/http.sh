@@ -31,7 +31,7 @@ expect() { # name, expected, actual
 }
 
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/http.c $here/lib/http.c $here/lib/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
+sources="$here/tests/http.c $here/lib/http.c $here/bootstrap/lib/smith/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
 mkdir "$work/run" "$work/bin"
 cd "$work/run" || exit 1
 

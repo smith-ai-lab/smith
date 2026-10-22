@@ -30,19 +30,19 @@
 #include <unistd.h>
 
 #ifdef __APPLE__
-#if __has_include("lib/io.c")
+#if __has_include("bootstrap/lib/smith/io.c")
 #include "bootstrap/lib/smith/arena.c"
 #include "bootstrap/lib/smith/contract.c"
+#include "bootstrap/lib/smith/io.c"
 #include "bootstrap/lib/smith/random.c"
 #include "internal/http.c"
-#include "lib/io.c"
 #include "lib/trace.c"
 #else
 #include "../bootstrap/lib/smith/arena.c"
 #include "../bootstrap/lib/smith/contract.c"
+#include "../bootstrap/lib/smith/io.c"
 #include "../bootstrap/lib/smith/random.c"
 #include "../lib/http.c"
-#include "../lib/io.c"
 #include "../lib/trace.c"
 #endif
 #else

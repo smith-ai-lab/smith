@@ -4,12 +4,12 @@
 // integer comes back exactly); fuzzing (damaged documents never crash, hang or read outside the input, and the pull
 // parser and the tree agree on which are valid); and JSONTestSuite's cases when tests/json.sh gives their folder.
 import smith::arena;
+import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
 import smith::text;
 import <smith/json.h>;
-import <smith/io.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
@@ -1332,15 +1332,15 @@ constexpr usize test_json_listing_capacity = 1 << 17;
 // Runs every file of the suite's test_parsing folder. The folder and where to list what was done with each case come
 // from the environment of the io (tests/json.sh fetches the package and sets them); the files are read through the
 // io's files. Prints nothing when it passes; a failure names the file.
-void test_json_conformance_with_jsontestsuite(c::SmithIo *io) {
-    const char *folder = c::smith_args_env(&io->args, "SMITH_JSON_SUITE");
+void test_json_conformance_with_jsontestsuite(io::Io *io) {
+    const char *folder = io::args_env(&io->args, "SMITH_JSON_SUITE");
     if (folder == nullptr || folder[0] == '\0') return; // not fetched: tests/json.sh says so
-    const char *listing_path = c::smith_args_env(&io->args, "SMITH_JSON_LISTING");
+    const char *listing_path = io::args_env(&io->args, "SMITH_JSON_LISTING");
     bool listing = listing_path != nullptr && listing_path[0] != '\0';
     char *report = arena::push_array(&io->arena, char, test_json_listing_capacity);
     usize reported = 0;
     TestJsonConformance totals = {};
-    c::SmithFileList names = c::smith_files_list(&io->files, &io->arena, folder);
+    io::FileList names = io::files_list(&io->files, &io->arena, folder);
     test::check_equal(names.error.code, 0);
     for (usize i = 0; i < names.count; i++) {
         const char *name = names.entries[i].name;
@@ -1350,7 +1350,7 @@ void test_json_conformance_with_jsontestsuite(c::SmithIo *io) {
         __builtin_snprintf(path, sizeof path, "%s/%s", folder, name);
         test::note("file %s", name);
         arena::Scope scope = arena::scope_begin(&io->arena);
-        c::SmithRead file = c::smith_files_read(&io->files, &io->arena, path);
+        io::Read file = io::files_read(&io->files, &io->arena, path);
         test::check_equal(file.error.code, 0);
         bool accepted = test_json_suite_accepts(&io->arena, (text::Text){file.data, file.size});
         arena::scope_end(scope);
@@ -1378,8 +1378,7 @@ void test_json_conformance_with_jsontestsuite(c::SmithIo *io) {
             report + reported, test_json_listing_capacity - reported,
             "y_: %zu of %zu accepted; n_: %zu of %zu refused; i_: %zu of %zu as listed\n", totals.y_accepted,
             totals.y_total, totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
-        test::check_equal(c::smith_files_write(&io->files, listing_path, report, reported, c::SmithWrite_Replace).code,
-                          0);
+        test::check_equal(io::files_write(&io->files, listing_path, report, reported, io::Replace).code, 0);
     }
     test::note("y %zu/%zu accepted, n %zu/%zu refused, i %zu/%zu as listed", totals.y_accepted, totals.y_total,
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);

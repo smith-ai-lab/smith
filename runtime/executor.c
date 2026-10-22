@@ -1,8 +1,8 @@
 // The build executor: `smith build` runs the manifest that build.c's program wrote (.smith/build.ninja) itself, with no
 // ninja. It reads the subset of ninja's language that smith writes, decides what is out of date the way ninja does
 // (mtimes, the command's hash, the depfiles' contents, restat), and runs the jobs on smith's own io: one kqueue loop
-// waits on every job's process and pipe. It is included by smith.c, after lib/io.c. The design and what it drops
-// compared with ninja are in docs/build-c.md.
+// waits on every job's process and pipe. It is included by smith.c, after the lowering of lib/smith/io.smith
+// (bootstrap/). The design and what it drops compared with ninja are in docs/build-c.md.
 //
 // Memory: the graph and everything else lives in io.arena, which is address space reserved up front, so there is no
 // malloc. A reload of the manifest or a finished job leaves its memory behind; a build is a short-lived process.
@@ -167,6 +167,35 @@ typedef struct {
     const char *deps_path;
     bool ready;
 } SmithState;
+
+// A block in the arena that doubles when full (the old block stays behind), for output of unknown size: the logs the
+// executor writes and the output it holds back for the terminal. The io library has one of its own, which is private.
+typedef struct {
+    SmithArena *arena;
+    unsigned char *data;
+    size_t size;
+    size_t capacity;
+} SmithGrow;
+
+// Makes room for at least `extra` more bytes and a NUL.
+static void smith_grow_reserve(SmithGrow *grow, size_t extra) {
+    SMITH_ASSERT(grow->arena != nullptr && grow->size <= grow->capacity);
+    if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
+    size_t wanted = grow->capacity * 2;
+    if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
+    if (wanted < 256) wanted = 256;
+    unsigned char *bigger = smith_arena_push(grow->arena, wanted, 1);
+    if (grow->size > 0) memcpy(bigger, grow->data, grow->size);
+    grow->data = bigger;
+    grow->capacity = wanted;
+}
+
+static void smith_grow_append(SmithGrow *grow, const void *bytes, size_t size) {
+    smith_grow_reserve(grow, size);
+    if (size > 0) memcpy(grow->data + grow->size, bytes, size);
+    grow->size += size;
+    grow->data[grow->size] = 0;
+}
 
 typedef struct SmithJob SmithJob;
 typedef struct SmithExec SmithExec;
