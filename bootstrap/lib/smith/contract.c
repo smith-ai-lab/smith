@@ -15,7 +15,7 @@
 #define SMITH_TARGET_STATIC_ANALYZER 0
 #endif
 #endif
-#include <smith/trace.h>
+#include "../../../include/smith/trace.h"
 
 void smith_contract_requires(bool condition);
 void smith_contract_requires(bool condition) {
@@ -35,79 +35,4 @@ if (!condition) smith_failure(SmithFailure_Assert);
 }
 void smith_contract_trusted(void);
 void smith_contract_trusted(void) {}
-static inline __attribute__((always_inline)) void smith_requires(bool condition) {
-#if SMITH_TARGET_STATIC_ANALYZER
- {
-__builtin_assume(condition);
-}
-#elif SMITH_TARGET_ASSERTIONS
- {
-smith_contract_requires(condition);
-}
-#else
- {
-(void)condition;
-}
-#endif
-
-}
-static inline __attribute__((always_inline)) void smith_ensures(bool condition) {
-#if SMITH_TARGET_STATIC_ANALYZER
- {
-__builtin_assume(condition);
-}
-#elif SMITH_TARGET_ASSERTIONS
- {
-smith_contract_ensures(condition);
-}
-#else
- {
-(void)condition;
-}
-#endif
-
-}
-static inline __attribute__((always_inline)) void smith_invariant(bool condition) {
-#if SMITH_TARGET_STATIC_ANALYZER
- {
-__builtin_assume(condition);
-}
-#elif SMITH_TARGET_ASSERTIONS
- {
-smith_contract_invariant(condition);
-}
-#else
- {
-(void)condition;
-}
-#endif
-
-}
-static inline __attribute__((always_inline)) void smith_assert(bool condition) {
-#if SMITH_TARGET_STATIC_ANALYZER
- {
-__builtin_assume(condition);
-}
-#elif SMITH_TARGET_ASSERTIONS
- {
-smith_contract_assert(condition);
-}
-#else
- {
-(void)condition;
-}
-#endif
-
-}
-static inline __attribute__((always_inline)) void smith_trusted(void) {
-#if SMITH_TARGET_STATIC_ANALYZER
- {
-}
-#elif SMITH_TARGET_ASSERTIONS
- {
-smith_contract_trusted();
-}
-#endif
-
-}
 // NOLINTEND

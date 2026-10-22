@@ -47,7 +47,7 @@ expect_contains() { # name, text, needle
 # The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
 expected_digest=4a2e897669d609ac
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/random.c $here/bootstrap/lib/smith/arena.c"
+sources="$here/tests/random.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
 
 # The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
 hook=yes
@@ -107,7 +107,8 @@ if [ $hook = yes ]; then
 fi
 capture "$work/fast" assert
 expect "refusal: a normal with deviation 0 aborts" 134 "$rc"
-expect_contains "refusal: ... naming the assertion" "$err" "normal.deviation > 0"
+expect_contains "refusal: ... a failed assert, as a contract fails" "$err" "smith-trace begin assert failed"
+expect_contains "refusal: ... in the function that asked" "$err" "smith_normal_double_sample"
 
 # 5. A project gets random and the arena with smith_library (the library is a .smith module: it needs the hook).
 if [ $hook = no ]; then

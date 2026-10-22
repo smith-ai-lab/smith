@@ -76,7 +76,7 @@ import <smith/trace.h>;
 // nothing, at run time or anywhere else.
 [[smith::c_name("smith_contract_trusted")]] export void check_trusted(void) {}
 
-[[smith::c_name("smith_requires")]] export inline __attribute__((always_inline)) void requires(bool condition) {
+[[smith::c_name("smith_requires")]] export inline __attribute__((always_inline, unused)) void requires(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -86,7 +86,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_ensures")]] export inline __attribute__((always_inline)) void ensures(bool condition) {
+[[smith::c_name("smith_ensures")]] export inline __attribute__((always_inline, unused)) void ensures(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -96,7 +96,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_invariant")]] export inline __attribute__((always_inline)) void invariant(bool condition) {
+[[smith::c_name("smith_invariant")]] export inline __attribute__((always_inline, unused)) void invariant(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -106,7 +106,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_assert")]] export inline __attribute__((always_inline)) void assert(bool condition) {
+[[smith::c_name("smith_assert")]] export inline __attribute__((always_inline, unused)) void assert(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
     } else if constexpr (target::assertions) {
@@ -116,7 +116,7 @@ import <smith/trace.h>;
     }
 }
 
-[[smith::c_name("smith_trusted")]] export inline __attribute__((always_inline)) void trusted(void) {
+[[smith::c_name("smith_trusted")]] export inline __attribute__((always_inline, unused)) void trusted(void) {
     if constexpr (target::static_analyzer) {
     } else if constexpr (target::assertions) {
         check_trusted();

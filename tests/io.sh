@@ -45,7 +45,7 @@ expect_contains() { # name, text, needle
 }
 
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/io.c $here/lib/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c"
+sources="$here/tests/io.c $here/lib/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
 mkdir "$work/run" "$work/bin"
 cd "$work/run" || exit 1
 

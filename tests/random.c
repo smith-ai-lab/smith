@@ -6,7 +6,9 @@
 //   stats    print the measured worst errors
 #include "../bootstrap/lib/smith/random.c"
 
+#include <assert.h>
 #include <float.h>
+#include <math.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>

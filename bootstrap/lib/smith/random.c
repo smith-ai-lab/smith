@@ -22,8 +22,8 @@
 #ifndef SMITH_TARGET_FLOAT_EVAL_METHOD
 #define SMITH_TARGET_FLOAT_EVAL_METHOD __FLT_EVAL_METHOD__
 #endif
-#include "smith/contract.h"
-#include "smith/math.h"
+#include "../../../include/smith/contract.h"
+#include "../../../include/smith/math.h"
 
 SmithRandomHook smith_random_hook = nullptr;
 static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "

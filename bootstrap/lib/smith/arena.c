@@ -8,10 +8,10 @@
 #define SMITH_TARGET_ADDRESS_SANITIZER 0
 #endif
 #endif
-#include "smith/contract.h"
-#include "smith/math.h"
+#include "../../../include/smith/contract.h"
+#include "../../../include/smith/math.h"
 #include <sanitizer/asan_interface.h>
-#include <smith/trace.h>
+#include "../../../include/smith/trace.h"
 #include <stdio.h>
 #include <string.h>
 
