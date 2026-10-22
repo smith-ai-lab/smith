@@ -91,7 +91,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
         const NamedDecl *judged = definitionOf(Decl);
         auto *mutableDecl = const_cast<NamedDecl *>(judged);
         const DeclarationName lowered = mutableDecl->getDeclName();
-        mutableDecl->setDeclName(DeclarationName(&Decl->getASTContext().Idents.get(written->member)));
+        mutableDecl->setDeclName(DeclarationName(&Decl->getASTContext().Idents.get(judgedName(written->member))));
         std::optional<FailureInfo> failure = (inner.*reach(DeclFn{}))(judged, SM);
         mutableDecl->setDeclName(lowered);
         return failure;
@@ -105,13 +105,18 @@ class SmithNaming final : public RenamerClangTidyCheck {
         std::string name = ID.second.str();
         if (names != nullptr) {
             const smith::WrittenName *written = names->find(ID.second);
-            if (written != nullptr && !written->member.empty()) name = written->member;
+            if (written != nullptr && !written->member.empty()) name = judgedName(written->member);
         }
         return DiagInfo{"invalid case style for %0 '%1'",
                         [kind = Failure.Info.KindName, name](DiagnosticBuilder &Diag) { Diag << kind << name; }};
     }
 
   private:
+    // A generic instance is written `push_array<f64>`; the name the rules judge is the generic's, `push_array`.
+    static StringRef judgedName(StringRef member) {
+        return member.substr(0, member.find('<'));
+    }
+
     static const NamedDecl *definitionOf(const NamedDecl *Decl) {
         if (const auto *function = dyn_cast<FunctionDecl>(Decl)) {
             if (const FunctionDecl *definition = function->getDefinition()) return definition;
