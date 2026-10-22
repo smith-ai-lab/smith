@@ -1,0 +1,1 @@
+main.smith:1:8: `import vector_check;` found `vector_check.h`, which is a C header, not the header smith writes for the module (it has no `// smith-module:` line): rename the C header or the module, or import the C header as `import "vector_check.h";`

@@ -271,6 +271,18 @@ import broken;
 i32 main() {
     return broken::f();
 }
+==> error-import-c-header-named-like-module/src/main.smith <==
+import vector_check;
+
+i32 twice(i32 x) {
+    return vector_check::sum(x, x);
+}
+==> error-import-c-header-named-like-module/src/vector_check.smith <==
+module vector_check;
+
+export i32 sum(i32 a, i32 b) {
+    return a + b;
+}
 ==> error-import-cycle/src/cycle/a.smith <==
 module cycle::a;
 import cycle::b;
@@ -420,6 +432,13 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
+==> error-stale-header/src/main.smith <==
+import shapes;
+
+// shapes.smith has `new_area` by now, but the header smith wrote for it was written before.
+i32 area(i32 side) {
+    return shapes::old_area(side) + shapes::new_area(side);
+}
 ==> error-standard-type/src/main.smith <==
 import <stddef.h>;
 import <stdint.h>;
@@ -435,6 +454,26 @@ import target;
 export constexpr i32 wide = target::f32_mantissa_bits;
 i32 oops = target::nothing;
 i32 module_name = target;
+==> export-inline-attributes/src/hint.smith <==
+module hint;
+
+// Attributes after `export` stay before `static inline` in the module and in the header, beside [[smith::c_name]]: an
+// inline function nothing calls is not an unused function, and always_inline needs no __attribute__ spelling.
+[[smith::c_name("hint_first")]] export [[gnu::always_inline, maybe_unused]] inline void first(bool condition) {
+    (void)condition;
+}
+
+export [[maybe_unused]] inline i32 second(i32 x) {
+    return x + 1;
+}
+
+export [[nodiscard]] inline i32 third(i32 x) {
+    return x + 2;
+}
+
+export i32 used(i32 x) {
+    return third(x);
+}
 ==> export-inline/src/math/small.smith <==
 module math::small;
 
@@ -1071,28 +1110,12 @@ int main(void) {
 ==> generic-infer-written/src/pick.smith <==
 module pick;
 
-// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
 export T larger(constexpr type T, T a, T b) {
     return a > b ? a : b;
 }
 
-export T first_of(constexpr type T, const T *values, usize count) {
-    return count > 0 ? values[0] : (T){0};
-}
-
-export void set(constexpr type T, T *out, T value) {
-    *out = value;
-}
-
-export usize size_of_value(constexpr type T, T value) {
-    (void)value;
-    return sizeof(T);
-}
-
-// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
-// type, so a call there says it).
-export T twice(constexpr type T, T value) {
-    return larger(T, value, value);
+export T zero(constexpr type T) {
+    return (T){0};
 }
 ==> generic-infer/src/main.smith <==
 import pick;
@@ -1595,6 +1618,16 @@ import lib::util as u;
 int main(void) {
     text::Text t = text::make("hello");
     printf("%zu %d\n", text::length(t), u::twice(21));
+    return 0;
+}
+==> import-two-headers-with-modules/src/main.smith <==
+import "c.h";
+import "d.h";
+#include <stdio.h>
+
+// With -fmodules a header is a module import, and the next import still starts a declaration.
+int main(void) {
+    printf("%d\n", c::c_value() + c::d_value());
     return 0;
 }
 ==> in-memory-imported-c-names/src/core.smith <==

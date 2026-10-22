@@ -270,6 +270,16 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
         }
         return;
     }
+    if (text != nullptr && length > 0 && memmem(text, length, "// smith-module:", 16) == nullptr) {
+        SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
+        if (failed != nullptr) failed->missing = true;
+        smith_lang_error(lang, host, name.location,
+                         "`import %s;` found `%s`, which is a C header, not the header smith writes for the module "
+                         "(it has no `// smith-module:` line): rename the C header or the module, or import the C "
+                         "header as `import \"%s\";`",
+                         name.colons, header, header);
+        return;
+    }
     char chain[smith_lang_message_max];
     if (lang->is_module && host->read_header != nullptr &&
         smith_lang_find_cycle(lang, host, name.colons, chain, sizeof chain)) {

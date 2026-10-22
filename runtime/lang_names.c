@@ -186,6 +186,10 @@ static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, cons
     uint32_t length = 0;
     if (host->read_header != nullptr && host->read_header(host->context, header, &text, &length)) {
         smith_lang_written_import(lang, host, text, length, module, bound);
+        SmithLangBinding *binding = smith_lang_binding_find(lang, bind, bind_length);
+        if (binding != nullptr && length > 0 && memmem(text, length, "// smith-names:", 15) != nullptr) {
+            binding->listed = true;
+        }
     }
 }
 

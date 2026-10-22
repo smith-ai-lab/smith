@@ -349,6 +349,9 @@ static bool smith_lang_recording_exported(const SmithLang *lang);
 static void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                   const SmithToken *member, SmithToken *result, char *digits, size_t capacity);
 
+// runtime/lang_names.c: the export of an import (or a name written through one) with this C name, if the table has it
+static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const char *text, size_t length);
+
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------
 
@@ -421,6 +424,13 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         memcpy(lang->tmp + prefix_length, taken.text, taken.length);
         lang->tmp[total] = 0;
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
+        if (binding->listed && chosen == nullptr && smith_lang_written_lookup(lang, lang->tmp, total) == nullptr) {
+            smith_lang_error(lang, host, taken.location,
+                             "module `%s` has no export `%.*s`; if it has one, the header smith wrote for it is "
+                             "stale: `smith build` writes it again",
+                             smith_lang_str(binding->module), (int)taken.length, taken.text);
+            if (host->suppress != nullptr) host->suppress(host->context, taken.location);
+        }
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);

@@ -209,6 +209,7 @@ typedef struct {
     bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
     bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
+    bool listed;    // the module's header lists its exports (// smith-names:): a name it does not list is no export
 } SmithLangBinding;
 
 // A C name that an exported declaration uses, written `c::name` (`struct c::name` is a tag).

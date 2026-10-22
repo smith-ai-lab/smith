@@ -1,0 +1,4 @@
+main.smith:5:45: error: module `shapes` has no export `new_area`; if it has one, the header smith wrote for it is stale: `smith build` writes it again
+    5 |     return shapes::old_area(side) + shapes::new_area(side);
+      |                                             ^
+1 error generated.
