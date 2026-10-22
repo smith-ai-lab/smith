@@ -37,6 +37,20 @@ smith's default `.clang-tidy` lists the check `smith-effects` beside bugprone, m
 
 smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file has no preprocessor.** In a `.smith` file it reports every directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`, `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead: `#include` becomes `import`, `#define` of a constant `constexpr`, `#if` `if constexpr` with `target::`, `#pragma` a flag the library declares, `#error` `static_assert(false, ...)`; `c::assert` becomes `contract::assert`, `c::isfinite` `math::is_finite`, `c::SIZE_MAX` `math::max(usize)`, `c::INFINITY` and `c::NAN` `math::infinity(f64)` and `math::nan(f32)`; any other macro is the module that wraps the C API's to provide (`smith-lang-c-interop`). A `.c` file is left alone. The directives are read from the file's text, so those in a branch the compiler did not take count, and the `c::` names are the macros the file's imports defined (the lowering's own test, so `c::memset` is a macro in a fortified SDK: write `__builtin_memset`). The editor shows it too. A line that must keep one says `// NOLINT(smith-preprocessor)` (or `NOLINTBEGIN`/`NOLINTEND`); deleting `smith-preprocessor` from `Checks` opts a project out.
 
+## The idiom checks
+
+smith's default `.clang-tidy` lists five more `smith-*` checks (issue #47), each message naming the fix; the editor shows them too. They are how `smith check` steers a first draft to idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md) has the rules and a port):
+
+| Check | Files | Reports | Says |
+|---|---|---|---|
+| `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `int` stays in `main`'s signature, as C requires) | the sized type: ``write `u64` `` |
+| `smith-module-library` | `.smith` | a library that is a module, used through its C header: `import <smith/arena.h>;`, `c::smith_arena_push(...)`, `c::SmithArena` (the generated header's `// smith-module:` line says it is one) | `import smith::arena;` and the module's name, `arena::push_raw`, `arena::Arena` |
+| `smith-bounded-loop` | `.smith` and C | a loop with no condition or a constant one (`for (;;)`, `while (true)`, `do ... while (1)`) outside `main` | bound it by a count; only `main` runs forever |
+| `smith-c23` | `.smith` and C | `NULL`, `_Bool`, `_Noreturn`, `<stdbool.h>`, `{0}` as an initializer of a struct or array, and `__attribute__((noreturn))`, `unused`, `warn_unused_result`, `deprecated`, `fallthrough` | `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]` |
+| `smith-constexpr` | `.smith` and C | a file-scope `const` object (arithmetic, enum, or an array or struct of them; not a float, a pointer or an external one in C) with a constant initializer | `constexpr` |
+
+`// NOLINT(smith-c23)` (or `NOLINTBEGIN`/`NOLINTEND`) opts a line out, and deleting a check from `Checks` opts a project out. The C checks read C files and `.smith`, never C++.
+
 ## `.smith` files
 
 `smith fmt x.smith` (and `-i`, `--dry-run`, standard input with `--assume-filename=x.smith`) formats a `.smith` file as C, with its `::` paths, `module a::b;` and `import a::b as x;` lines and `import <sys/wait.h>;` kept whole; `smith fmt` with no arguments formats the project's `.smith` files too (git sees them). `import` and `module` inside a function are names, as in C. Needs a smith whose clang-format has the `.smith` patch (a stage0 runs Homebrew's, which reads `.smith` as C++ and so misreads C names that are C++ keywords, such as `throw`). clangd formats `.smith` files the same way.
