@@ -75,7 +75,6 @@ done
 for name in arena io http text untar; do
     compare "test_$name" "tests/$name.c" ""
 done
-compare templates_build templates/new/build.c "-std=gnu2y"
 compare templates_main templates/new/main.c "-std=gnu2y"
 
 echo "smith-lang-c: $((total - failures)) of $total identical"

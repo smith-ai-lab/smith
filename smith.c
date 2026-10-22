@@ -15,7 +15,7 @@
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
 // runs ninja. See docs/build-c.md. `smith fetch <url>` puts a package in the cache and `smith cache` shows and cleans
-// the caches. `smith new` writes a ready project: build.c, main.c, the rules and the plugin settings.
+// the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents need.
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -1050,8 +1050,8 @@ static bool smith_build_by_convention(void) {
     fputs(
         "smith: no build.c in this folder, and no main.smith or main.c to build by convention\n"
         "smith build runs the build.c of the project's root; without one it builds main.smith or main.c and what they\n"
-        "use (docs/build-c.md, Conventions). Add a main.smith or main.c, or write a build.c (`smith new` writes "
-        "one).\n",
+        "use (docs/build-c.md, Conventions). Add a main.smith or main.c (`smith new` writes one), or write a "
+        "build.c.\n",
         stderr);
     if (access("Makefile", F_OK) == 0 || access("makefile", F_OK) == 0 || access("GNUmakefile", F_OK) == 0) {
         fputs("A Makefile is here: `CC = smith-cc` in it builds with smith unchanged (`smith cc` is a pure passthrough "
@@ -1429,8 +1429,14 @@ static int smith_sha256_main(int count, char **args) {
 // The files a new project gets travel inside smith, so a project gets exactly what the installed smith ships. Agents
 // get smith's skills from the smith plugin, which .claude/settings.json enables. The dotfiles are stored without their
 // dot so that they do not act on smith's own repository.
-static const unsigned char smith_new_build_c[] = {
-#embed "templates/new/build.c"
+static const unsigned char smith_new_main_smith[] = {
+#embed "templates/new/main.smith"
+};
+static const unsigned char smith_new_primes_smith[] = {
+#embed "templates/new/primes.smith"
+};
+static const unsigned char smith_new_test_primes_smith[] = {
+#embed "templates/new/test_primes.smith"
 };
 static const unsigned char smith_new_main_c[] = {
 #embed "templates/new/main.c"
@@ -1447,12 +1453,6 @@ static const unsigned char smith_new_test_primes_c[] = {
 static const unsigned char smith_new_gitignore[] = {
 #embed "templates/new/gitignore"
 };
-static const unsigned char smith_new_clang_format[] = {
-#embed "templates/new/clang-format"
-};
-static const unsigned char smith_new_clang_tidy[] = {
-#embed "templates/new/clang-tidy"
-};
 static const unsigned char smith_new_claude_settings[] = {
 #embed "templates/new/claude-settings.json"
 };
@@ -1465,38 +1465,58 @@ static const unsigned char smith_new_knowledge_index[] = {
 static const unsigned char smith_new_knowledge_program[] = {
 #embed "templates/new/knowledge-program.md"
 };
+static const unsigned char smith_new_knowledge_program_c[] = {
+#embed "templates/new/knowledge-program-c.md"
+};
 static const unsigned char smith_new_docs_skill[] = {
 #embed "templates/new/docs-skill.md"
 };
+
+// smith's own style and checks, which `smith fmt` and `smith lint` use where a project has no file (smith_defaults_apply).
+static const unsigned char smith_defaults_clang_format[] = {
+#embed "templates/defaults/clang-format"
+};
+static const unsigned char smith_defaults_clang_tidy[] = {
+#embed "templates/defaults/clang-tidy"
+};
+
+typedef enum { SmithNewLanguage_Smith, SmithNewLanguage_C } SmithNewLanguage;
 
 typedef struct {
     const char *path;
     const unsigned char *bytes;
     size_t size;
     bool named;       // @NAME@ is replaced by the program's name, and @KEBAB@ by the same in kebab-case
-    bool about_main;  // describes main.c, so a project that keeps its own sources does not get it
-    bool lists_main;  // its last line lists what describes main.c, which that project does not get either
+    bool about_main;  // describes main, so a project that keeps its own sources does not get it
+    bool lists_main;  // its last line lists what describes main, which that project does not get either
+    bool any;         // written for both languages; else only for `language`
+    SmithNewLanguage language;
     const char *link; // not a file: a symbolic link to this
 } SmithNewFile;
 
+#define SMITH_NEW_FILE(path, bytes, named, about_main, lists_main) \
+    {path, bytes, sizeof bytes, named, about_main, lists_main, true, SmithNewLanguage_Smith, nullptr}
+#define SMITH_NEW_ONLY(path, bytes, language, about_main) \
+    {path, bytes, sizeof bytes, true, about_main, false, false, language, nullptr}
+
+// The program's files, then what every project gets. No build file and no .clang-format or .clang-tidy: smith builds by
+// convention and has defaults for both (issue #43).
 static const SmithNewFile smith_new_files[] = {
-    {"build.c", smith_new_build_c, sizeof smith_new_build_c, true, false, false, nullptr},
-    {"main.c", smith_new_main_c, sizeof smith_new_main_c, true, false, false, nullptr},
-    {"primes.h", smith_new_primes_h, sizeof smith_new_primes_h, true, false, false, nullptr},
-    {"primes.c", smith_new_primes_c, sizeof smith_new_primes_c, true, false, false, nullptr},
-    {"tests/test_primes.c", smith_new_test_primes_c, sizeof smith_new_test_primes_c, true, false, false, nullptr},
-    {".gitignore", smith_new_gitignore, sizeof smith_new_gitignore, false, false, false, nullptr},
-    {".clang-format", smith_new_clang_format, sizeof smith_new_clang_format, false, false, false, nullptr},
-    {".clang-tidy", smith_new_clang_tidy, sizeof smith_new_clang_tidy, false, false, false, nullptr},
-    {".claude/settings.json", smith_new_claude_settings, sizeof smith_new_claude_settings, false, false, false,
-     nullptr},
-    {"AGENTS.md", smith_new_agents, sizeof smith_new_agents, true, false, false, nullptr},
-    {"knowledge/index.md", smith_new_knowledge_index, sizeof smith_new_knowledge_index, true, false, true, nullptr},
-    {"knowledge/program.md", smith_new_knowledge_program, sizeof smith_new_knowledge_program, true, true, false,
-     nullptr},
-    {".agents/skills/@KEBAB@-docs/SKILL.md", smith_new_docs_skill, sizeof smith_new_docs_skill, true, false, false,
-     nullptr},
-    {".claude/skills", nullptr, 0, false, false, false, "../.agents/skills"},
+    SMITH_NEW_ONLY("main.smith", smith_new_main_smith, SmithNewLanguage_Smith, false),
+    SMITH_NEW_ONLY("primes.smith", smith_new_primes_smith, SmithNewLanguage_Smith, false),
+    SMITH_NEW_ONLY("tests/test_primes.smith", smith_new_test_primes_smith, SmithNewLanguage_Smith, false),
+    SMITH_NEW_ONLY("main.c", smith_new_main_c, SmithNewLanguage_C, false),
+    SMITH_NEW_ONLY("primes.h", smith_new_primes_h, SmithNewLanguage_C, false),
+    SMITH_NEW_ONLY("primes.c", smith_new_primes_c, SmithNewLanguage_C, false),
+    SMITH_NEW_ONLY("tests/test_primes.c", smith_new_test_primes_c, SmithNewLanguage_C, false),
+    SMITH_NEW_FILE(".gitignore", smith_new_gitignore, false, false, false),
+    SMITH_NEW_FILE(".claude/settings.json", smith_new_claude_settings, false, false, false),
+    SMITH_NEW_FILE("AGENTS.md", smith_new_agents, true, false, false),
+    SMITH_NEW_FILE("knowledge/index.md", smith_new_knowledge_index, true, false, true),
+    SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program, SmithNewLanguage_Smith, true),
+    SMITH_NEW_ONLY("knowledge/program.md", smith_new_knowledge_program_c, SmithNewLanguage_C, true),
+    SMITH_NEW_FILE(".agents/skills/@KEBAB@-docs/SKILL.md", smith_new_docs_skill, true, false, false),
+    {".claude/skills", nullptr, 0, false, false, false, true, SmithNewLanguage_Smith, "../.agents/skills"},
 };
 
 constexpr size_t smith_new_name_max = 200;
@@ -1656,21 +1676,23 @@ static void smith_new_count(SmithNewCounts *counts, const char *path, bool exist
     memcpy(counts->written[counts->written_count++], path, strlen(path) + 1);
 }
 
-// The sources of the template's program: main.c and what it calls and tests.
-static bool smith_new_is_source(const char *path) {
-    return strcmp(path, "main.c") == 0 || strcmp(path, "primes.c") == 0 || strcmp(path, "primes.h") == 0 ||
-           strcmp(path, "tests/test_primes.c") == 0;
+// The sources of the template's program: the main and what it calls and tests (a file of one language that no concept
+// describes).
+static bool smith_new_is_source(const SmithNewFile *file) {
+    return !file->any && !file->about_main;
 }
 
-// Each file is written only if nothing exists at its path. The sources (main.c and the files that go with it) are left
-// out when the project has its own: a build.c already there, or another build system. What describes main.c is left
-// out too, and when main.c was there before this run.
-static void smith_new_files_write(const char *name, bool skip_main, bool skip_about, SmithNewCounts *counts) {
+// Each file is written only if nothing exists at its path. Only the files of the language asked for are written. The
+// sources (main and the files that go with it) are left out when the project has its own: a build file already there,
+// or another build system. What describes main is left out too, and when a main was there before this run.
+static void smith_new_files_write(const char *name, SmithNewLanguage language, bool skip_main, bool skip_about,
+                                  SmithNewCounts *counts) {
     SmithNewNames names = {.name = name};
     smith_new_kebab(name, names.kebab);
     for (size_t i = 0; i < sizeof smith_new_files / sizeof smith_new_files[0]; i++) {
         const SmithNewFile *file = &smith_new_files[i];
-        if (skip_main && smith_new_is_source(file->path)) continue;
+        if (!file->any && file->language != language) continue;
+        if (skip_main && smith_new_is_source(file)) continue;
         char path[smith_new_path_max];
         smith_new_expand(path, sizeof path, (const unsigned char *)file->path, strlen(file->path), &names);
         bool exists = smith_new_exists(path);
@@ -1686,7 +1708,7 @@ static void smith_new_files_write(const char *name, bool skip_main, bool skip_ab
 // The lines of smith's .gitignore that an existing one lacks, said so that the user can add them. A line is present
 // only if it matches exactly, ignoring trailing spaces.
 static void smith_new_gitignore_missing(void) {
-    static const char *const wanted[] = {"/build/", "/compile_commands.json", "/.cache/"};
+    static const char *const wanted[] = {"/build/", "/.cache/"};
     bool present[sizeof wanted / sizeof wanted[0]] = {};
     FILE *file = fopen(".gitignore", "r");
     if (file == nullptr) return;
@@ -1763,12 +1785,12 @@ static const char *smith_new_commit(const char *self, const char *name, const Sm
 
 // Moves into the folder of the project, making it if needed, and returns its name. With no argument the folder is the
 // current one and its own name is the program's.
-static const char *smith_new_enter(int count, char **args, char *folder_name) {
-    if (count == 1) {
-        if (!smith_new_is_name(args[0])) smith_new_bad_name(args[0], false);
-        smith_make_folder(args[0]);
-        if (chdir(args[0]) != 0) smith_die(smith_exit_usage, "cannot enter", args[0]);
-        return args[0];
+static const char *smith_new_enter(const char *argument, char *folder_name) {
+    if (argument != nullptr) {
+        if (!smith_new_is_name(argument)) smith_new_bad_name(argument, false);
+        smith_make_folder(argument);
+        if (chdir(argument) != 0) smith_die(smith_exit_usage, "cannot enter", argument);
+        return argument;
     }
     char here[PATH_MAX];
     if (getcwd(here, sizeof here) == nullptr) smith_die(smith_exit_usage, "cannot find the current folder", nullptr);
@@ -1778,22 +1800,60 @@ static const char *smith_new_enter(int count, char **args, char *folder_name) {
     return folder_name;
 }
 
+constexpr char smith_new_usage[] = "usage: smith new [--language smith|c] [<name>]";
+
+// The arguments of `smith new`: --language smith|c (also --language=<value>), and at most one name. Returns the name,
+// or nullptr for the current folder. `--help` prints the usage and exits.
+static const char *smith_new_parse(int count, char **args, SmithNewLanguage *language) {
+    const char *name = nullptr;
+    *language = SmithNewLanguage_Smith;
+    for (int i = 0; i < count; i++) {
+        const char *value = nullptr;
+        if (strcmp(args[i], "--help") == 0 || strcmp(args[i], "-h") == 0) {
+            printf("%s\n\n  --language smith|c   the language of the program: smith (the default) or c\n"
+                   "  <name>               the folder and the program's name; with none, the current folder\n",
+                   smith_new_usage);
+            exit(0);
+        }
+        if (strcmp(args[i], "--language") == 0) {
+            if (i + 1 >= count) smith_die(smith_exit_usage, "--language needs a value: smith or c", smith_new_usage);
+            value = args[++i];
+        } else if (strncmp(args[i], "--language=", 11) == 0) {
+            value = args[i] + 11;
+        }
+        if (value == nullptr) {
+            if (name != nullptr) smith_die(smith_exit_usage, "new takes at most one name", smith_new_usage);
+            name = args[i];
+        } else if (strcmp(value, "smith") == 0) {
+            *language = SmithNewLanguage_Smith;
+        } else if (strcmp(value, "c") == 0) {
+            *language = SmithNewLanguage_C;
+        } else {
+            smith_die(smith_exit_usage, "--language is smith or c, not", value);
+        }
+    }
+    return name;
+}
+
 static int smith_new_main(int count, char **args, const char *self) {
     SMITH_ASSERT(count >= 0);
-    if (count > 1) smith_die(smith_exit_usage, "new takes at most one argument", "smith new [<name>]");
+    SmithNewLanguage language = SmithNewLanguage_Smith;
+    const char *argument = smith_new_parse(count, args, &language);
     char folder_name[PATH_MAX];
-    const char *name = smith_new_enter(count, args, folder_name);
+    const char *name = smith_new_enter(argument, folder_name);
     printf("smith new: %s\n", name);
-    bool has_build_c = smith_new_exists("build.c");
-    const char *other = has_build_c ? nullptr : smith_new_other_build();
-    bool had_main = smith_new_exists("main.c");
+    bool has_build = smith_new_exists("build.c") || smith_new_exists("build.smith");
+    const char *other = has_build ? nullptr : smith_new_other_build();
+    bool had_main = smith_new_exists("main.c") || smith_new_exists("main.smith");
     bool had_gitignore = smith_new_exists(".gitignore");
     bool had_settings = smith_new_exists(".claude/settings.json");
     SmithNewCounts counts = {};
-    bool skip_main = has_build_c || other != nullptr;
-    smith_new_files_write(name, skip_main, skip_main || had_main, &counts);
+    // A main in the other language is the project's own program.
+    bool own_main = had_main && !smith_new_exists(language == SmithNewLanguage_Smith ? "main.smith" : "main.c");
+    bool skip_main = has_build || other != nullptr || own_main;
+    smith_new_files_write(name, language, skip_main, skip_main || had_main, &counts);
     fflush(stdout);
-    // The template compiles a main.c that a project with another build system does not have, so it is not built.
+    // The program is not built beside another build system, which the project builds with.
     if (other == nullptr) {
         char *build_argv[] = {(char *)self, (char *)"build", nullptr};
         if (smith_build_spawn(self, build_argv) != 0) {
@@ -1808,14 +1868,14 @@ static int smith_new_main(int count, char **args, const char *self) {
     printf("\nAgents get smith's skills from the smith plugin. If it is not installed:\n"
            "  /plugin marketplace add adam-r-kowalski/smith\n  /plugin install smith@smith\n");
     if (other != nullptr) {
-        printf("\nThis project builds with a %s. build.c is a starting point: port the %s into it, following the\n"
-               "smith-build skill, and remove the %s once smith build gives\n"
-               "the same results.\n",
+        printf("\nThis project builds with a %s, so smith new wrote no program and did not build. To build it with\n"
+               "smith, write a build.c that does what the %s does, following the smith-build skill, and remove the\n"
+               "%s once smith build gives the same results.\n",
                other, other, other);
         return 0;
     }
     printf("\nNext:\n");
-    if (count == 1) printf("  cd %s\n", name);
+    if (argument != nullptr) printf("  cd %s\n", name);
     printf("  smith run\n");
     return 0;
 }
@@ -1902,7 +1962,7 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 
 // ---- smith's defaults for a project with no config file (issue #43, part 1)
 //
-// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/new, embedded) for a file the
+// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/defaults, embedded) for a file the
 // tool would find none for: clang-format's lookup (`.clang-format` or `_clang-format`, in the file's folder and each
 // folder above) and clang-tidy's (`.clang-tidy`, the same walk). They are written to <data>/smith/defaults/ (named by
 // their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
@@ -2089,9 +2149,9 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     if (scan->explicit_option || scan->missing_count == 0) return -1;
     char path[PATH_MAX];
     if (fmt)
-        smith_defaults_path(smith_new_clang_format, sizeof smith_new_clang_format, "clang-format", path);
+        smith_defaults_path(smith_defaults_clang_format, sizeof smith_defaults_clang_format, "clang-format", path);
     else
-        smith_defaults_path(smith_new_clang_tidy, sizeof smith_new_clang_tidy, "clang-tidy", path);
+        smith_defaults_path(smith_defaults_clang_tidy, sizeof smith_defaults_clang_tidy, "clang-tidy", path);
     int written = snprintf(smith_defaults_option, sizeof smith_defaults_option,
                            fmt ? "--style=file:%s" : "--config-file=%s", path);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof smith_defaults_option);

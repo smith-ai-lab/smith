@@ -52,7 +52,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   Point an editor at `smith lsp` with no `--query-driver`: with it clangd puts the SDK's include paths ahead of
   clang's own headers, and Apple's SDK module map refuses that order, so it fails on modules.
   - **smith's defaults where a project has no file** (issue #43): a file with no `.clang-format` or `.clang-tidy` up its
-    tree (the tools' own lookup) gets smith's, embedded from `templates/new/` and written to `<data>/smith/defaults/`,
+    tree (the tools' own lookup) gets smith's, embedded from `templates/defaults/` and written to `<data>/smith/defaults/`,
     passed as `--style=file:` and `--config-file=` (`smith_defaults_apply`, smith.c). A project's file replaces them
     whole and an explicit `--style`, `--config` or `--config-file` wins. `--dump-config` is the tool's, so it prints the
     effective one and makes it the project's (`smith fmt --dump-config > .clang-format`). `smith cc` is untouched.

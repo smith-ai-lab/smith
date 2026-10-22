@@ -31,7 +31,7 @@ mkdir "$work/alone" && printf '#include <stdio.h>\n\nint main() {\n  printf("hel
 # Projects made by smith new: one that builds, one whose main.c does not compile.
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 mkdir "$work/home" "$work/new"
-(cd "$work/new" && "$smith" new hello >/dev/null 2>&1 && "$smith" new broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c)
+(cd "$work/new" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c)
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {}, ABORT = setmetatable({}, { __tostring = function() return "ABORT" end }) }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.
