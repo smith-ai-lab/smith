@@ -363,7 +363,8 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     }
     std::string path = options.no_cache ? "" : cache_path(prove::program_proof_key(prepared));
     Recorded recorded;
-    if (cache_lookup(path, recorded)) {
+    // a proof that took longer than this run's budget allows is proved again, to see whether it still fits
+    if (cache_lookup(path, recorded) && recorded.charged <= options.budget_seconds) {
         if (options.verbose)
             std::printf("ok    %s  cached: proved before in %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(),
                         recorded.wall, recorded.cpu, recorded.charged);

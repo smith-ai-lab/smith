@@ -350,6 +350,12 @@ prove "$cases/edge.c"
 expect "boundary: a proved function that reaches a library call fails" 1 "$rc"
 expect_contains "boundary: ... naming the call" "$out" "edge.c:9: cannot be proved: a call of printf, which has neither a body nor a contract"
 expect_contains "boundary: ... and the function to mark, the helper that makes the call" "$out" "put smith_trusted() as the first statement of show, so that its callers use its smith_requires and smith_ensures"
+prove "$cases/edge_trusted.c"
+expect "boundary: marking the helper trusted cuts it, and the callers are proved from its contract" 1 "$rc"
+expect_contains "boundary: ... the one that passes what the contract refuses fails at the call" "$out" "edge_trusted.c:25: the call of show may break smith_requires(value >= 0)"
+expect_contains "boundary: ... the other is proved, the helper is trusted" "$out" "1 proved, 1 failed, 1 trusted"
+prove --function=shown_twice "$cases/edge_trusted.c"
+expect "boundary: ... shown_twice alone is proved" 0 "$rc"
 
 # 13. An error at its cause (issue #42): a smith_requires after a write names the write and the read, each with its line.
 prove "$cases/cause.c"
