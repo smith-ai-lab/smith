@@ -30,6 +30,8 @@ i32 big = pick::larger(x, y);                              // or left out: T is 
 - Calls may nest (16 deep), and a generic may call generics: `list::make(a, T)` in a body uses the instance's `T`. A generic is not a value: ``is a generic function: it can only be called, with its type``.
 - C and C++ cannot call a generic (the header has a `[[clang::unavailable]]` placeholder and a `// smith-generic:` line for importing modules); give C a typed wrapper with `[[smith::c_name]]`.
 
+- **Without a compiler.** `smith cc --smith-header` (the header step of `smith build`) writes declarations only and skips a call in a body whose type it cannot tell, so a module's body may call `test::check_equal(a, 1)`; `smith cc --smith-lower` (bootstrap/, the stage0) reports it as the error above, so a bootstrapped module writes its types out (`arena::push_array(arena, f64, count)`).
+
 ## Instances
 
 One function per distinct list of types, compared by the parser's canonical spelling (`u32` and `uint32_t` are one). It is a weak, hidden definition written at the end of the file (`always_inline` for an `inline` generic), named `pick_larger__i32`, with the symbol `_pick::larger(int)`, so copies from other files fold at link time. The debugger calls it `pick::larger<i32>` and shows the generic's own file and lines.

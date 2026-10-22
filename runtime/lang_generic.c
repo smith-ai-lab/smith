@@ -1373,16 +1373,12 @@ static bool smith_lang_infer(SmithLang *lang, const SmithHost *host, const Smith
                 return false;
             }
             SmithLangInferred here = {.literal = smith_lang_infer_literal(args[i])};
-            // Without a compiler (the header pass, `--smith-lower`) nothing can be typed, and the lowering is read for
-            // its declarations only: a call takes `int` for T, which no output keeps.
-            bool answered = host->expr_type == nullptr;
-            if (answered) {
-                snprintf(here.type.written, sizeof here.type.written, "int");
-                snprintf(here.type.canonical, sizeof here.type.canonical, "int");
-            } else {
-                answered =
-                    host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
-            }
+            // The header pass writes declarations only: a body is not its business, so a call whose type nothing can
+            // tell is skipped, with no error and no guess. The raw lowering keeps the error: its output is compiled.
+            if (host->expr_type == nullptr && host->declarations_only) return false;
+            bool answered =
+                host->expr_type != nullptr &&
+                host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
             if (!answered) {
                 char shown[256] = "";
                 for (const char *c = tokens; *c != 0 && strlen(shown) + 2 < sizeof shown; c++)

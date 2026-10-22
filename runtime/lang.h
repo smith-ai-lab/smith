@@ -195,6 +195,9 @@ typedef struct {
     // Whether the file being lowered has declared anything yet (an import must come first).
     bool (*declared)(void *context);
     const char *main_file; // the path of the file being lowered
+    // The lowering is read for the module's declarations only (the header pass, which has no compiler): what a function
+    // body would need a compiler for, such as the type of a generic call's arguments, is skipped without an error.
+    bool declarations_only;
     // After read_header said no: the whole message for the import (the host looked for the module's source too and
     // knows what it tried), or null for the default one.
     const char *(*read_problem)(void *context);

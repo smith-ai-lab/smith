@@ -7,6 +7,8 @@
 # A case is a folder:
 #   src/             the sources; module a.b is src/a/b.smith; src/main.smith (or main.c, main.cpp), if there, is linked with
 #                    the other .smith files and any .c or .cpp beside them (C++ as C++20), and run
+#   expect/lower-error  the errors `smith cc --smith-lower` reports (it has no compiler, so a generic call whose type
+#                    nothing writes is one); only a case with this file is checked
 #   expect/stdout    what the program prints
 #   expect/error     the errors the build must report, as `file:line:column: message`, one per line (the build must fail)
 #   expect/lowered/  the C each file is lowered to (a.b.c), by `smith cc --smith-lower`: the lowering of the text as written,
@@ -81,7 +83,7 @@ build_case() { # out
     for file in $sources; do
         module=$(echo "${file%.smith}" | tr / .)
         SMITH_LANG_GENERICS="$out/generics/$module.c" SMITH_LANG_ASK=$ask "$smith" cc $flags -c "src/$file" -o "$out/obj/$module.o" 2>>"$out/stderr" || status=1
-        "$smith" cc --smith-lower "src/$file" >"$out/lowered/$module.c" 2>/dev/null
+        "$smith" cc --smith-lower "src/$file" >"$out/lowered/$module.c" 2>>"$out/lower-stderr"
         objects="$objects $out/obj/$module.o"
     done
     linker=cc # the verb that links: C++ needs smith c++
@@ -144,6 +146,11 @@ run_case() { # name
     else
         total=$((total + 1))
         echo "ok    $name: it builds"
+    fi
+    if [ -f expect/lower-error ] || { [ "${UPDATE:-}" = 1 ] && [ -f "$out/lower-stderr" ] && grep -q ': error: ' "$out/lower-stderr"; }; then
+        # The raw lowering (what bootstrap/ and the stage0 compile) has no compiler to type a generic call: it says so.
+        sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' "$out/lower-stderr" | LC_ALL=C sort -u >"$out/lower-error"
+        check "$name: the lowering's errors" expect/lower-error "$out/lower-error"
     fi
     if [ -f expect/stderr ] || { [ "${UPDATE:-}" = 1 ] && [ -f cmd ] && [ -s "$out/stderr" ]; }; then
         check "$name: the diagnostics" expect/stderr "$out/stderr"

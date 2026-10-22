@@ -502,6 +502,9 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   arguments that are not one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64";
   an argument it cannot type (a `++`, a compound literal) is an error that says to write the type. Inside a generic's
   body the locals of the instance are not yet known to the parser, so write the type there.
+  The passes with no compiler treat a call whose type is not written differently: `--smith-header` writes declarations
+  only, so it skips such a call in a body (a module's test can call `test::check_equal(a, 1)`), and `--smith-lower`, whose
+  output is compiled (bootstrap/, the stage0), reports it as an error, "cannot tell `T` from ...": write the type there.
 - **`if constexpr`** in a generic's body is chosen for each instance; the branch not taken is never given to the parser,
   so it may name what `T` has not (`value.x`). The condition is a constant expression of integers (`true`, `false`,
   the operators of C), `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (canonical spellings), and the questions
