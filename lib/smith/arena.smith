@@ -4,6 +4,7 @@
 // the header's doc comments, so they name the Smith names; the first one says how a C name follows from them.
 module smith::arena;
 
+import target;
 import <assert.h>;
 import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_REGION is one of them
 import <stdint.h>;
@@ -61,13 +62,10 @@ import <string.h>;
 // of the arena lands in poison unless it runs more than 64 KiB past the last push, which is longer than the overruns
 // that come from off-by-one, off-by-a-row and short-array mistakes, while the shadow it costs is 8 KiB.
 //
-// Whether this build has the sanitizer is the one question the preprocessor answers. Everything below is ordinary code
-// guarded by it, so a build without the sanitizer type-checks the poisoning too and the compiler drops it.
-#if __has_feature(address_sanitizer)
-constexpr bool sanitized = true;
-#else
-constexpr bool sanitized = false;
-#endif
+// Whether this build has the sanitizer is a fact of the target (target::address_sanitizer, which the compiler's
+// preprocessor answers). Everything below is ordinary code guarded by it, so a build without the sanitizer
+// type-checks the poisoning too and the compiler drops it.
+constexpr bool sanitized = target::address_sanitizer;
 
 constexpr usize poison_granule = 8;       // ASan tracks memory in 8-byte granules
 constexpr usize poison_gap = 16;          // poisoned bytes left after each push

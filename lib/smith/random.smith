@@ -5,8 +5,8 @@
 module smith::random;
 
 import smith::arena;
+import target;
 import <assert.h>;
-import <float.h>;
 import <math.h>;
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
@@ -127,32 +127,29 @@ import <math.h>;
 static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
                                      "giving the same numbers; compile lib/smith/random.smith without it");
 
-static_assert(c::FLT_RADIX == 2 && c::FLT_MANT_DIG == 24 && c::DBL_MANT_DIG == 53, "f32 and f64 must be IEEE");
-static_assert(c::FLT_EVAL_METHOD == 0, "f32 arithmetic must happen in f32");
+static_assert(target::float_radix == 2 && target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53,
+              "f32 and f64 must be IEEE");
+static_assert(target::float_eval_method == 0, "f32 arithmetic must happen in f32");
 
 // A value the compiler cannot see through, so a product is not fused into a following addition. The register class
 // keeps it out of memory on the architecture that is tested; "X" is correct everywhere, if slower.
-#if defined(__aarch64__)
 inline f64 opaque_double(f64 value) {
-    __asm__("" : "+w"(value));
+    if constexpr (target::arch == target::aarch64) {
+        __asm__("" : "+w"(value));
+    } else {
+        __asm__("" : "+X"(value));
+    }
     return value;
 }
 
 inline f32 opaque_float(f32 value) {
-    __asm__("" : "+w"(value));
+    if constexpr (target::arch == target::aarch64) {
+        __asm__("" : "+w"(value));
+    } else {
+        __asm__("" : "+X"(value));
+    }
     return value;
 }
-#else
-inline f64 opaque_double(f64 value) {
-    __asm__("" : "+X"(value));
-    return value;
-}
-
-inline f32 opaque_float(f32 value) {
-    __asm__("" : "+X"(value));
-    return value;
-}
-#endif
 
 // A value passed through an empty asm is opaque to the optimizer, which then cannot fold it into immediates: the Philox
 // constants stay in registers (left alone the key schedule becomes ten immediates, three instructions each, where an
