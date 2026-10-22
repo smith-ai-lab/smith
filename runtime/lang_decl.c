@@ -517,6 +517,13 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
     SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Value);
     *is_type = found.kind == SmithLookup_Type;
     if (found.kind == SmithLookup_None || !found.from_import || found.in_main_file) return;
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+        if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(name, length, smith_lang_sized[i].header)) {
+            smith_lang_error(lang, host, location, "`%.*s` is a C type name; write `%s`", (int)length, name,
+                             smith_lang_sized[i].name);
+            return;
+        }
+    }
     smith_lang_error(lang, host, location, "`%.*s` is a C name; write `c::%.*s`", (int)length, name, (int)length, name);
 }
 
