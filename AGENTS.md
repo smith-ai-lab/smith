@@ -250,7 +250,9 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
     `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
     bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text` is the first (issue #39).
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random` and `arena` are `.smith` (issue #39; #45 step 2). `arena` offers
+    C its typed pushes as the macros of `include/smith/arena_typed.h` (a module cannot define a macro; its generated header
+    includes that file), and `.smith` the generics `arena::push(&a, T)` and `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
     console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
 

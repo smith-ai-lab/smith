@@ -21,8 +21,22 @@ Foo *foo = SMITH_ARENA_PUSH(&arena, Foo);                // zeroed
 Foo *foos = SMITH_ARENA_PUSH_ARRAY(&arena, Foo, count);  // zeroed, count * size checked for overflow
 ```
 
-- Prefer the macros: the type is written once, so size and alignment cannot disagree, and `Bar *bar = SMITH_ARENA_PUSH(&arena, Foo);` is a compile error.
-- When the type is not known at the call site, use the functions: `smith_arena_push(&arena, size, align)` and `smith_arena_push_array(&arena, size, count, align)`. `align` is a power of two, at most `smith_arena_align_max` (64).
+In a `.smith` file the type is an argument (a generic, `smith-lang-generics`), and the result is typed the same way:
+
+```c
+import smith::arena;
+
+alignas(arena::align_max) static u8 memory[1 << 20];
+arena::Arena a = arena::make(memory, sizeof memory);
+
+Foo *foo = arena::push(&a, Foo);                // zeroed
+Foo *foos = arena::push_array(&a, Foo, count);  // zeroed, count * size checked for overflow
+```
+
+The module is `smith::arena` (`lib/smith/arena.smith`), and its C API is the generated header: `arena::make`, `fits`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. C and C++ cannot call a generic, so they keep the macros, which `<smith/arena.h>` takes from `<smith/arena_typed.h>`. A `.smith` project needs a smith with clang inside to compile the library.
+
+- Prefer the macros (in `.smith`, `arena::push` and `arena::push_array`): the type is written once, so size and alignment cannot disagree, and `Bar *bar = SMITH_ARENA_PUSH(&arena, Foo);` is a compile error.
+- When the type is not known at the call site, use the functions (`arena::push_raw(&a, size, align)` in `.smith`): `smith_arena_push(&arena, size, align)` and `smith_arena_push_array(&arena, size, count, align)`. `align` is a power of two, at most `smith_arena_align_max` (64).
 - `smith_arena_fits(&arena, size, align)` asks whether a push would fit.
 - A scope gives back what a stretch of work pushed: `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);`. Scopes end in reverse order of beginning, and `smith_arena_reset(&arena)` is allowed only with none open; both are `assert`s.
 

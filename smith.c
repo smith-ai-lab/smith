@@ -858,7 +858,11 @@ static const unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
 static const unsigned char smith_arena_source[] = {
-#embed "lib/arena.c"
+#embed "lib/smith/arena.smith"
+};
+// The typed-push macros of C, which the generated header includes (a module cannot define a macro): written beside it.
+static const unsigned char smith_embedded_arena_typed_header[] = {
+#embed "include/smith/arena_typed.h"
 };
 
 static const unsigned char smith_contract_header[] = {
@@ -903,9 +907,12 @@ static const unsigned char smith_embedded_http_header[] = {
 static const unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
-// The runtime's package.c compiles in one translation unit with io, which needs the random library, and the stage0
-// knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
+// The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
+// the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
 // .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
+static const unsigned char smith_embedded_arena_source[] = {
+#embed "bootstrap/lib/smith/arena.c"
+};
 static const unsigned char smith_embedded_random_source[] = {
 #embed "bootstrap/lib/smith/random.c"
 };
@@ -943,7 +950,7 @@ typedef struct {
      is_lang}
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, false), SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(arena, true),  SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(random, true), SMITH_LIBRARY(test, false),     SMITH_LIBRARY(text, true), SMITH_LIBRARY(trace, false),
 };
 
@@ -1297,6 +1304,10 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
+    smith_write_if_changed(".smith/include/smith/arena_typed.h", smith_embedded_arena_typed_header,
+                           sizeof smith_embedded_arena_typed_header);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/arena.c", smith_embedded_arena_source,
+                           sizeof smith_embedded_arena_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
                            sizeof smith_embedded_random_source);
     if (file == SmithBuildFile_Conventions)

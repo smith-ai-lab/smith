@@ -47,16 +47,21 @@ expect_contains() { # name, text, needle
 
 flags="-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I $here/include"
 
+# The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
+hook=yes
+if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
+module="$here/lib/smith/arena.smith"
+
 # 1. The checks, plain and under AddressSanitizer (which lays pushes out on granules).
-$cc $flags "$here/tests/arena.c" "$here/lib/arena.c" -o "$work/plain" || exit 1
+$cc $flags "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/plain" || exit 1
 capture "$work/plain"
 expect "library: the checks pass" "0 arena: all checks passed" "$rc $out"
-$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/lib/arena.c" -o "$work/asan" || exit 1
+$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/asan" || exit 1
 capture "$work/asan"
 expect "library: the checks pass under ASan and UBSan" "0 arena: all checks passed" "$rc $out"
 
 # 2. The capacity stop is on in every build, NDEBUG included.
-$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/lib/arena.c" -o "$work/fast" || exit 1
+$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" -o "$work/fast" || exit 1
 capture "$work/fast" stop
 expect "stop: the status is abort's" 134 "$rc"
 expect_contains "stop: the message names the request" "$err" "push of 100 bytes"
@@ -115,6 +120,21 @@ capture $cc $flags -c "$work/wrong.c" -o "$work/wrong.o"
 expect "macro: a push of Foo assigned to a Bar pointer fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
 expect_contains "macro: ... because of the pointer types" "$err" "incompatible pointer types"
 
+# 3c. The module compiles as C23 and C2y with the warnings of smith new.
+for std in gnu23 gnu2y; do
+    [ $hook = yes ] || break
+    capture "$smith" cc -std=$std -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I "$here/include" -iquote "$here/include/smith" -c "$module" -o "$work/a.o"
+    expect "library: compiles as -std=$std with the new project's warnings" 0 "$rc"
+done
+
+if [ $hook = no ]; then
+    echo "skip  project: this smith has no clang with the token hook inside"
+    echo
+    echo "$total arena checks, $failures failed"
+    [ "$failures" -eq 0 ]
+    exit
+fi
+
 # 4. A project gets the library with smith_library.
 mkdir "$work/project" && cd "$work/project" || exit 1
 cat >build.c <<'C'
@@ -161,14 +181,14 @@ PATH="$work/bin:$PATH"
 capture "$smith" build
 expect "project: the build succeeds" 0 "$rc"
 expect "project: the header is written" yes "$([ -f .smith/include/smith/arena.h ] && echo yes)"
-expect "project: the source is written" yes "$([ -f .smith/lib/arena.c ] && echo yes)"
+expect "project: the source is written" yes "$([ -f .smith/lib/smith/arena.smith ] && echo yes)"
 capture build/app
 expect_contains "project: the program runs" "$out" "item 7"
 expect "project: the program exits 0" 0 "$rc"
-before=$(stat -f %m .smith/lib/arena.c 2>/dev/null || stat -c %Y .smith/lib/arena.c)
+before=$(stat -f %m .smith/lib/smith/arena.smith 2>/dev/null || stat -c %Y .smith/lib/smith/arena.smith)
 sleep 1
 capture "$smith" build
-after=$(stat -f %m .smith/lib/arena.c 2>/dev/null || stat -c %Y .smith/lib/arena.c)
+after=$(stat -f %m .smith/lib/smith/arena.smith 2>/dev/null || stat -c %Y .smith/lib/smith/arena.smith)
 expect "project: an unchanged library is not rewritten" "$before" "$after"
 entry=$(grep -A12 '"file": "main.c"' compile_commands.json | tr -d '\n')
 expect_contains "project: compile_commands.json gives main.c the include flag" "$entry" '"-I"'
@@ -178,6 +198,67 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "project: clangd reports no errors in main.c" 0 "$errors"
 fi
+
+# 4b. A .smith file uses the library with types as arguments: arena::push(&a, Point) and arena::push_array(&a, i32, n),
+# beside the C file of 4 (one header, one object). A count that overflows is refused with the C message.
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-fsanitize=address", "-I", ".smith/include", nullptr);
+    SmithObject typed = {.compiler = "smith-cc", .source = "typed.smith", .output = "build/typed.o", .flags = flags};
+    smith_object(b, &typed);
+    SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
+    smith_object(b, &arena);
+    SmithProgram program = {
+        .linker = "smith-cc",
+        .output = "build/typed",
+        .flags = smith_list(b, "-fsanitize=address", nullptr),
+        .objects = (const SmithObject *[]){&typed, &arena, nullptr},
+    };
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+}
+C
+cat >typed.smith <<'S'
+import <stdio.h>;
+import <stdlib.h>;
+import smith::arena;
+
+typedef struct {
+    i32 id;
+    f64 weight;
+} Point;
+
+i32 main(i32 argc, char **argv) {
+    alignas(arena::align_max) static u8 memory[4096];
+    arena::Arena a = arena::make(memory, sizeof memory);
+    Point *point = arena::push(&a, Point);
+    point->id = 3;
+    Point *points = arena::push_array(&a, Point, 4);
+    points[3].id = 9;
+    i32 *ints = arena::push_array(&a, i32, 10);
+    ints[9] = 5;
+    c::printf("%d %d %d zeroed %d, %zu used\n", point->id, points[3].id, ints[9], (i32)(points[0].weight == 0 && ints[0] == 0),
+              a.used);
+    if (argc > 1) {
+        usize count = c::strtoull(argv[1], nullptr, 10);
+        Point *too_many = arena::push_array(&a, Point, count);
+        c::printf("not reached %p\n", (void *)too_many);
+    }
+    return 0;
+}
+S
+capture "$smith" build
+expect "typed: a .smith file using arena::push and arena::push_array builds" 0 "$rc"
+capture build/typed
+expect "typed: push and push_array give zeroed, usable memory" "0 3 9 5 zeroed 1" "$rc $(echo "$out" | cut -d, -f1)"
+capture build/typed 18446744073709551615
+expect "typed: a count that overflows size_t is refused" 134 "$rc"
+expect_contains "typed: ... with the C message" "$err" "items of 16 bytes overflow size_t"
+capture build/typed 1000000
+expect "typed: a count past the capacity is refused" 134 "$rc"
+expect_contains "typed: ... naming the request" "$err" "push of 16000000 bytes (align 8)"
 
 # 5. An unknown library is an error that lists the known names.
 cat >build.c <<'C'
@@ -190,7 +271,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "unknown: the build fails with status 2" 2 "$rc"
-expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: arena, contract, io, json, test, trace, random, text'
+expect_contains "unknown: the message names the library" "$err" 'smith: build.c: smith_library: unknown library "nope"; known: contract, io, json, test, trace, arena, random, text'
 
 echo
 echo "$total arena checks, $failures failed"
