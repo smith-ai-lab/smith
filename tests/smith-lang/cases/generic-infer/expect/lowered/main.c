@@ -22,6 +22,9 @@ printf("%d %g %zu\n",smith_call_failed,smith_call_failed,smith_call_failed);
 printf("%d %zu\n",smith_call_failed,smith_call_failed);
 __INT32_TYPE__ slot = 0;smith_call_failed;
 printf("%d %d\n", slot,__extension__({extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value)__asm__("_pick::twice(__INT32_TYPE__)");pick_twice__i32(slot);}));
+__UINT64_TYPE__ big = 5;
+printf("%d %g %d %d\n",smith_call_failed,smith_call_failed,smith_call_failed,smith_call_failed);
+printf("%llu %d\n",smith_call_failed,smith_call_failed);
 return 0;
 }
 extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value)__asm__("_pick::twice(__INT32_TYPE__)");

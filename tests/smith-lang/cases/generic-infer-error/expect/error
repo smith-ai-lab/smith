@@ -2,4 +2,4 @@ src/main.smith:10:19: cannot tell `T` from `missing`: `missing` is not a name th
 src/main.smith:6:21: conflicting types for `T`: i32 and f64
 src/main.smith:7:20: cannot tell `T` from the arguments of `alloc`: no parameter has the form `T x`; write the type as an argument
 src/main.smith:8:19: cannot tell `T` from the arguments of `zero`: no parameter has the form `T x`; write the type as an argument
-src/main.smith:9:19: cannot tell `T` from `a + 1`: `+` is not understood in this expression; write the type as the argument
+src/main.smith:9:19: cannot tell `T` from `a ++`: `++` is not understood in this expression; write the type as the argument

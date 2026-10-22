@@ -495,10 +495,12 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   body: `T` is the instance's type), 32 deep and 4096 instances at most.
 - **Inference.** A call that leaves out all the type arguments has each `T` told from the arguments of the parameters
   that say it: `T x`, `const T *x`, `T *x`, `T x[]` (`*` and `[]` each dereference the argument's type once). The
-  compiler types a name, a field chain (`p.x`, `p->y`), `*e`, `&e`, `e[i]`, a call, a cast and a literal, in the scope
-  the parser is in (a local declared by an earlier statement counts). A literal adapts to the arguments that are not
-  one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64";
-  an argument it cannot type (arithmetic, a conditional) is an error that says to write the type. Inside a generic's
+  compiler types a name, a field chain (`p.x`, `p->y`), `*e`, `&e`, `e[i]`, a call, a cast, `sizeof` and a literal, and
+  the binary operators and `?:` of C over them, by C's rules (`a + 1`, `x * 2`, `a > 0 ? a : b`; the usual arithmetic
+  conversions, `int` for a comparison, the promoted left operand for a shift), in the scope the parser is in (a local
+  declared by an earlier statement counts). A literal, or an expression of literals only (`2 + 2`), adapts to the
+  arguments that are not one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64";
+  an argument it cannot type (a `++`, a compound literal) is an error that says to write the type. Inside a generic's
   body the locals of the instance are not yet known to the parser, so write the type there.
 - **`if constexpr`** in a generic's body is chosen for each instance; the branch not taken is never given to the parser,
   so it may name what `T` has not (`value.x`). The condition is a constant expression of integers (`true`, `false`,
