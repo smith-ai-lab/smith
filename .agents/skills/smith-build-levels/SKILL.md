@@ -47,6 +47,20 @@ Edit the fields; each applies to all three profiles:
 | `.flags` | added to every compile, after the profile's own (`-DX=1`, `-I vendor`, `-Wno-...`) |
 | `.link_flags` | added to every link |
 | `.libraries` | after the objects: `-lm`, `-framework Metal` |
+| `.tool` | a program `smith build` does not build by default (`smith build tools`, `release`, `fast` do) |
+
+A second program is a second `build::app` with its own `.entry` and `.name`; a source both reach is compiled once per profile. Flags every program and test shares, and flags for a folder, go in one call before them:
+
+```c
+build::defaults(b, &(build::Defaults){
+    .flags = build::list(b, "-I", "src", nullptr),                       // "base/math.h" is src/base/math.h; the scan follows -I
+    .folder_flags = (const build::FolderFlags[]){{"src/base", build::list(b, "-O2", nullptr)}, {}},
+    .link_flags = build::list(b, "-mmacosx-version-min=26.0", nullptr),
+});
+build::app(b, &(build::App){.entry = "src/main.c", .name = "game"});
+build::app(b, &(build::App){.entry = "tools/report.c", .name = "report", .tool = true});
+build::app_tests(b, &(build::AppTests){.inputs = build::list(b, "build/meshes", nullptr)});   // helpers in tests/ are linked too
+```
 
 `build::AppTests` has `.folder`. A list ends in `nullptr`: `build::list(b, "-DX=1", "-O3", nullptr)`.
 
@@ -60,7 +74,7 @@ A task may not be named after a verb (`run`, `test`, `check`, `fmt`, `lint`, `do
 
 ## Level 2: the low-level API, replacing one call by its expansion
 
-When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:
+When you need a step the high level has no field for (a shader, a data-baking step), add it beside the calls: `build::profile_flags(b, "debug")` and `build::source_flags` give the conventions' flags to add yours to, and `build::sources(b, folder)` / `build::objects(b, "debug", folder)` list what the programs compile. When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:
 
 ```c
 import smith::build;

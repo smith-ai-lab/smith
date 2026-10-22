@@ -374,6 +374,181 @@ capture env PATH="$work/zero/bin:$PATH" "$work/stage0" run
 expect "stage0: smith run runs it" "42" "$(last "$out")"
 cd "$work" || exit 1
 
+# 6. Several programs, the defaults every program shares, folders' flags, includes found through -I, helpers in the tests.
+mkdir -p "$work/multi" && cd "$work/multi" || exit 1
+mkdir -p src/base tools tests
+cat >src/base/value.h <<'EOF'
+#pragma once
+int base_value(void);
+EOF
+cat >src/base/value.c <<'EOF'
+#include "base/value.h"
+
+int base_value(void) {
+    return 21;
+}
+EOF
+cat >main.c <<'EOF'
+#include <stdio.h>
+
+#include "base/value.h"
+
+int main(void) {
+    printf("%d\n", base_value());
+    return 0;
+}
+EOF
+cat >tools/tool.c <<'EOF'
+#include <stdio.h>
+
+#include "base/value.h"
+
+int main(void) {
+    printf("tool %d\n", 2 * base_value());
+    return 0;
+}
+EOF
+cat >tests/test_value.c <<'EOF'
+#include <smith/test.h>
+
+#include "base/value.h"
+#include "tests/helper.h"
+
+void test_value(void) {
+    smith_check_equal_i32(base_value(), helper_twenty_one());
+}
+EOF
+cat >tests/helper.h <<'EOF'
+#pragma once
+int helper_twenty_one(void);
+EOF
+cat >tests/helper.c <<'EOF'
+#include "tests/helper.h"
+
+int helper_twenty_one(void) {
+    return 21;
+}
+EOF
+printf 'int lonely_helper(void);\nint lonely_helper(void) {\n    return 1;\n}\n' >tests/lonely.c
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_defaults(b, &(SmithDefaults){
+                          .flags = smith_list(b, "-I", "src", nullptr),
+                          .folder_flags = (const SmithFolderFlags[]){{"src/base", smith_list(b, "-DFROM_BASE=1", nullptr)}, {}},
+                          .link_flags = smith_list(b, "-Wl,-headerpad,0x100", nullptr),
+                      });
+    smith_app(b, &(SmithApp){});
+    smith_app(b, &(SmithApp){.entry = "tools/tool.c", .name = "tool", .tool = true});
+    smith_app_tests(b, &(SmithAppTests){});
+    smith_write(b, "info.txt",
+                smith_fmt(b, "sources: %s\nobjects: %s\nflags: %s\nlink: %s\nsource flags: %s\n",
+                          smith_join(b, smith_sources(b, "src/base"), " "),
+                          smith_join(b, smith_objects(b, "release", ""), " "),
+                          smith_join(b, smith_profile_flags(b, "fast"), " "),
+                          smith_join(b, smith_profile_link_flags(b, "release"), " "),
+                          smith_join(b, smith_source_flags(b, "debug", "src/base/value.c"), " ")));
+}
+EOF
+capture smith build
+expect "multi: smith build" 0 "$rc"
+expect "multi: builds the project's program" yes "$(exists build/debug/multi)"
+expect "multi: ... and not the tool" no "$(exists build/debug/tool)"
+capture smith run
+expect "multi: smith run runs the program, found through -I" 21 "$(last "$out")"
+capture smith build tools
+expect "multi: smith build tools builds the tool" yes "$(exists build/debug/tool)"
+capture smith build release fast
+expect "multi: release and fast build every program" yes "$(exists build/release/tool)"
+expect "multi: ... the fast one too" yes "$(exists build/fast/tool)"
+capture smith build -t commands build/release/src/base/value.o
+expect_contains "multi: release compiles to ThinLTO" "$out" "-flto=thin"
+capture smith build -t commands build/release/multi
+expect_contains "multi: ... and links with it" "$out" "-flto=thin"
+expect_contains "multi: ... and with the defaults' link flags" "$out" "-Wl,-headerpad,0x100"
+capture smith build -t commands build/debug/src/base/value.o
+expect_contains "multi: a folder's flags reach its sources" "$out" "-DFROM_BASE=1"
+capture smith build -t commands build/debug/main.o
+case $out in *FROM_BASE*) expect "multi: ... and no others" no yes ;; *) expect "multi: ... and no others" no no ;; esac
+expect_contains "multi: build::sources" "$(cat info.txt)" "sources: src/base/value.c"
+expect_contains "multi: build::objects" "$(cat info.txt)" "build/release/src/base/value.o"
+expect_contains "multi: build::profile_flags: the profile's own" "$(cat info.txt)" "-O2 -DNDEBUG -flto=thin -I src"
+expect_contains "multi: build::profile_link_flags" "$(cat info.txt)" "link: -flto=thin -Wl,-headerpad,0x100"
+expect_contains "multi: build::source_flags: the folder's" "$(cat info.txt)" "-DFROM_BASE=1"
+capture smith test
+expect "multi: smith test passes" 0 "$rc"
+expect_contains "multi: ... the helper a test includes is linked" "$out" "1 passed"
+expect "multi: ... and a helper nothing includes is compiled" yes "$(exists build/debug/tests/lonely.o)"
+# Two programs may share a source only with the same flags.
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_defaults(b, &(SmithDefaults){.flags = smith_list(b, "-I", "src", nullptr)});
+    smith_app(b, &(SmithApp){});
+    smith_app(b, &(SmithApp){.entry = "tools/tool.c", .name = "tool", .flags = smith_list(b, "-DX=1", nullptr)});
+}
+EOF
+capture smith build
+expect "multi: the same source with different flags: status 2" 2 "$rc"
+expect_contains "multi: ... names the source" "$err" "src/base/value.c is compiled twice with different flags"
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_app(b, &(SmithApp){});
+    smith_defaults(b, &(SmithDefaults){});
+}
+EOF
+capture smith build
+expect_contains "multi: smith_defaults after smith_app is refused" "$err" "smith_defaults comes before smith_app"
+cd "$work" || exit 1
+
+# 7. Property tests in a .smith file: the key is written c::SmithKey, random::Key or through an alias.
+mkdir -p "$work/keys/tests" && cd "$work/keys" || exit 1
+cat >main.smith <<'EOF'
+module main;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("hi\n");
+    return 0;
+}
+EOF
+cat >tests/key_test.smith <<'EOF'
+module key_test;
+import <smith/test.h>;
+import smith::random;
+
+export void test_plain(random::Key key) {
+    (void)key;
+    c::smith_check(true);
+}
+
+static i32 helper(i32 x) {
+    return x;
+}
+
+export void test_helper(void) {
+    c::smith_check_equal_i32(helper(2), 2);
+}
+EOF
+cat >tests/alias_test.smith <<'EOF'
+module alias_test;
+import <smith/test.h>;
+import smith::random as rng;
+
+export void test_aliased(rng::Key key) {
+    (void)key;
+    c::smith_check(true);
+}
+EOF
+capture smith test
+expect "keys: random::Key and an alias's Key are property tests: smith test passes" 0 "$rc"
+expect_contains "keys: ... all three tests ran" "$out" "3 passed"
+cd "$work" || exit 1
+
 echo
 echo "$total conventions checks, $failures failed"
 [ "$failures" -eq 0 ]
