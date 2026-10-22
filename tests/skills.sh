@@ -133,8 +133,12 @@ for skill in "$here"/.agents/skills/*/SKILL.md; do
 
     while read -r path lineno; do
         total=$((total + 1))
+        # A file with no `module` line is a program's file or a test's: smith build declares the tests there, and a
+        # `main` needs no prototype, so only a module's own functions are held to -Wmissing-prototypes.
+        strict=-Wmissing-prototypes
+        case $path in example-*) strict=-Wno-missing-prototypes ;; esac
         # shellcheck disable=SC2086
-        if smith cc -fsyntax-only -std=gnu2y -Wall -Wextra -Wshadow -Wconversion -Werror $flags "$dir/$path" >"$dir/out" 2>&1; then
+        if smith cc -fsyntax-only -std=gnu2y $strict -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wstrict-prototypes -Wvla -Werror $flags "$dir/$path" >"$dir/out" 2>&1; then
             echo "ok    $name/SKILL.md:$((lineno - 1)) ($path)"
         else
             fail "$name/SKILL.md:$((lineno - 1)) ($path)" "$dir/out"
