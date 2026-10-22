@@ -4,6 +4,12 @@
 # Excluded bugprone checks:
 #   easily-swappable-parameters: flags every pair like (size, align); too noisy for C.
 #   switch-missing-default-case: an enum switch leaves out default so -Wswitch names a missing case.
+# Excluded analyzer checks (measured on game, learner and smith: 616 findings, of which these two are 546):
+#   security.insecureAPI.DeprecatedOrUnsafeBufferHandling: flags every memcpy and memset (524 findings, 85%), though the
+#     C11 Annex K functions it asks for are not in the C library on macOS or Linux. strcpy, gets and the rest of the
+#     insecureAPI family stay on.
+#   optin.performance.Padding: a struct's padding is a layout choice, and the order of fields is already the programmer's
+#     (22 findings, none acted on).
 #
 # smith-effects: a program touches the world only through capabilities (SmithIo and its parts) that main passes down, so a
 # function's signature says what it can do. A call into a system header that is not pure is reported: take a
@@ -18,6 +24,8 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -bugprone-switch-missing-default-case,
   clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-optin.performance.Padding,
   misc-no-recursion,
   readability-function-size,
   readability-identifier-naming,

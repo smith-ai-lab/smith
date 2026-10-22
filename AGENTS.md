@@ -83,10 +83,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   - **From a new project (convention):**
     1. **Follow the conventions and write no files.** There is no build file and no config file: `smith build`, `run`,
        `test`, `fmt`, `lint`, `prove` and `check` do the right thing (C2y with `-std=gnu2y`, for `_Countof`; strict
-       warnings; three profiles: debug with sanitizers, release with assertions on, fast without).
+       warnings; three profiles: debug with sanitizers, release with assertions on and ThinLTO, fast without assertions and
+       with ThinLTO; no unity builds, since Clang modules and their cache parse a header once and ThinLTO inlines across files).
     2. **Generate the file you want to change.** `--dump-config` makes the implicit explicit: `smith fmt --dump-config
        > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config` for the build file.
-    3. **Replace the high-level calls with low-level ones,** a piece at a time.
+    3. **Replace the high-level calls with low-level ones,** a piece at a time. A real project needs no more than the
+     high level: one `build::app` per program (`.tool` for the ones `smith build` leaves out), `build::defaults` for
+     the flags and per-folder flags every program and test shares, and low-level steps only for what is truly custom
+     (Metal shaders, data-baking steps); `build::profile_flags`, `build::source_flags`, `build::sources` and
+     `build::objects` let those steps start from the conventions (game and learner are the examples).
   - **The two ends meet:** a dumped build file and a hand-written one are the same API at different levels.
 - **`smith new [--language smith|c] [<name>]` writes the program and what agents need, and no configuration**
   (issue #43; `smith` is the default). The program is `main.smith`, `primes.smith` (a module; no header) and

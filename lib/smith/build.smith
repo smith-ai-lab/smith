@@ -304,53 +304,107 @@ module smith::build;
 [[smith::c_name("smith_compile_commands")]] export void compile_commands(Build *b, const char *path);
 
 // Builds by convention (docs/build-c.md, "Conventions"). A project that follows them has no build file: `smith build`
-// runs a build program of exactly these two calls with their defaults. Each call is documented as the low-level calls
-// it expands to, so a project that needs control replaces the call with its expansion.
-// The program, in the three profiles. The entry point (main.smith, else main.c, at the root) is followed through the
+// runs a build program of exactly these calls with their defaults. Each call is documented as the low-level calls it
+// expands to, so a project that needs control replaces the call with its expansion.
+
+// A folder's own settings: every source below `path` (a path from the project's root, such as "src/base", or one file)
+// is compiled with `flags` too, after the project's, and its compile waits for `inputs` (files the build makes and the
+// source embeds or includes, such as a baked table; the file is a dependency of the object).
+[[smith::c_name("SmithFolder")]] export typedef struct {
+    const char *path;
+    const char *const *flags;
+    const char *const *inputs;
+} Folder;
+
+// What every program and every test of the project shares, declared once, before the first build::app. Everything is
+// optional. smith's own libraries are the sources under ".smith/lib", so a folder row for it flags them.
+[[smith::c_name("SmithDefaults")]] export typedef struct {
+    const char *const *flags;      // added to every compile of every profile, after the profile's own
+    const Folder *folders;         // settings for the sources below a folder; a row with a nullptr path ends the list
+    const char *const *link_flags; // added to every link
+} Defaults;
+[[smith::c_name("smith_defaults")]] export void defaults(Build *b, const Defaults *defaults);
+
+// The flags the conventions give the compiles of a profile ("debug", "release" or "fast"): the warnings, the standard,
+// -ffp-contract=off, -mcpu on Apple silicon, -I . -I .smith/include, the profile's own, then the project's
+// build::defaults .flags. For a low-level build that starts from the conventions and adds its own:
+//   build::object(b, &(build::Object){..., .flags = build::cat(b, build::profile_flags(b, "debug"), mine, nullptr)});
+[[smith::c_name("smith_profile_flags")]] export const char *const *profile_flags(Build *b, const char *profile);
+// The flags the conventions give the links of a profile: the sanitizers in debug, ThinLTO in release and fast, then the
+// project's build::defaults .link_flags.
+[[smith::c_name("smith_profile_link_flags")]] export const char *const *profile_link_flags(Build *b,
+                                                                                           const char *profile);
+// The flags the profile's build compiles `source` with: build::profile_flags and the build::defaults folder rows that
+// cover `source`, then the first program's .flags. For a check that must see a source as the build does.
+[[smith::c_name("smith_source_flags")]] export const char *const *source_flags(Build *b, const char *profile,
+                                                                               const char *source);
+// The sources the programs compile that lie below `folder` ("" for all), such as "src/base", in the order they were
+// found; smith's libraries are not among them. Call it after build::app.
+[[smith::c_name("smith_sources")]] export const char *const *sources(Build *b, const char *folder);
+// The objects the programs make of those sources in the profile, build/<profile>/<source without its extension>.o.
+[[smith::c_name("smith_objects")]] export const char *const *objects(Build *b, const char *profile, const char *folder);
+
+// A program, in the three profiles. The entry point (main.smith, else main.c, at the root) is followed through the
 // files it uses: for .smith, every `import a::b;` to a/b.smith (found as the compiler finds an import's source: under
-// the root of the importing module); for C, every quoted `#include "foo.h"` to the foo.c beside the header (the
-// including file's folder, then the project's root), transitively. The scan is lexical: a conditional include is
-// followed anyway, a macro-built include is missed, and a .c that no header of the program names is not compiled (a
-// project with such a file writes a build file). Smith's libraries the sources use (`import smith::io;`,
-// `#include <smith/io.h>`, and the libraries those need) are compiled and linked in. Expands to, with
+// the root of the importing module); for C and Objective-C, every quoted `#include "foo.h"` or `#import "foo.h"` to the
+// foo.c (else foo.m) beside the header, transitively. A quoted header is found beside the including file, then at the
+// project's root, then in the folders of the -I and -iquote flags of build::defaults and .flags (`-I src` finds
+// "base/math.h" at src/base/math.h). The scan is lexical: a conditional include is followed anyway, a macro-built
+// include is missed, and a .c that no header of the program names is not compiled (a project with such a file writes a
+// build file). Smith's libraries the sources use (`import smith::io;`, `#include <smith/io.h>`, and the libraries those
+// need) are compiled and linked in.
+// A project calls build::app once for each program. Each finds its own sources; a source two programs share, and a
+// library, is compiled once in each profile and linked into each, with the same flags (build::app stops and names the
+// source when two programs would compile it differently). `smith build` builds the debug program of every program that
+// is not a .tool, and `smith run` runs the one it names; a .tool is built when asked for (`smith build
+// build/debug/<name>`), with the alias `tools`, and by release and fast. Each call expands to, with
 //   flags(P)  = -std=gnu2y -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes
 //               -Wstrict-prototypes -Wvla -Werror, -ffp-contract=off, -mcpu=apple-m1 (Darwin arm64 only),
 //               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
-//               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2; fast:
-//               -O2 -DNDEBUG), then .flags
+//               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2
+//               -flto=thin; fast: -O2 -DNDEBUG -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+//               -flto=thin), then build::defaults .flags, the .folders rows that cover the source, and .flags
 //   build::modules(b, &(build::Modules){});    // unless modules are already on or an object was already declared
 //   for P in debug, release, fast:
-//     for each source S found, and each library L used:
+//     for each source S found, and each library L used (an object another program made is the same object):
 //       build::object(b, &(build::Object){.compiler = "smith-cc", .source = S,    // L: build::library(b, "L")
 //                                      .output = "build/P/<S without its extension>.o", .flags = flags(P)});
 //                                       // L's object is build/P/smith/<L>.o
 //     build::program(b, &(build::Program){.linker = "smith-cc", .output = "build/P/<name>",
-//                                      .flags = [-fsanitize=address,undefined for debug] + .link_flags,
+//                                      .flags = [-fsanitize=address,undefined for debug, -flto=thin for release and
+//                                      fast] + build::defaults .link_flags + .link_flags,
 //                                      .objects = those objects, .libraries = .libraries});
-//   build::alias(b, "release", the release program); build::alias(b, "fast", the fast program);
-//   build::default_targets(b, the debug program);
+//   build::alias(b, "tools", the debug programs of the .tool ones);
+//   build::alias(b, "release", the release programs); build::alias(b, "fast", the fast programs);
+//   build::default_targets(b, the debug programs that are not .tool);
 // The compile commands go to .smith/ on every build (the verbs read them); a root compile_commands.json is the
 // project's to ask for with build::compile_commands.
 [[smith::c_name("SmithApp")]] export typedef struct {
     const char *entry;             // "main.smith" or "main.c"; by default the one the root holds
     const char *name;              // the program's name; by default the project's folder
-    const char *const *flags;      // added to every profile's compiles, after the profile's own
+    const char *const *flags;      // added to every profile's compiles, after the profile's own and the defaults'
     const char *const *link_flags; // added to every profile's link
     const char *const *libraries;  // after the objects: -lm, -framework Metal
-    const Object *const *objects;  // set: the debug objects of everything but the entry, the code under test
-    Step step;                     // set: the debug program, the default target
+    bool tool;                     // not built by default: `smith build tools`, release and fast build it
+    const Object *const *objects;  // set: the debug objects of everything but the entry
+    Step step;                     // set: the debug program
 } App;
 [[smith::c_name("smith_app")]] export void app(Build *b, App *app);
 
 // The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
-// file below the folder (tests are found by build::tests's rules). Call it after build::app. The code under test is the
-// program's objects but the entry's, plus what only the tests reach by include or import. Expands to
+// file below the folder (tests are found by build::tests's rules), and every other .c file directly in the folder, a
+// helper that is linked into the runner. Call it after build::app. The code under test is what the tests and helpers
+// reach by include or import, compiled once in the debug profile with the flags of the programs. Expands to
 //   build::tests(b, &(build::Tests){.sources = build::glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
-//                                .objects = app.objects + what only the tests reach (compiled with flags(debug)),
-//                                .flags = flags(debug), .link_flags = [-fsanitize=address,undefined] + .link_flags});
+//                                .objects = what the sources and helpers reach, and the helpers (compiled with
+//                                flags(debug)), .flags = flags(debug), .inputs = .inputs,
+//                                .link_flags = [-fsanitize=address,undefined] + build::defaults .link_flags +
+//                                .link_flags});
 // With no test file there is no task, and `smith test` says so.
 [[smith::c_name("SmithAppTests")]] export typedef struct {
-    const char *folder; // by default "tests"
-    Step step;          // set: the task test
+    const char *folder;            // by default "tests"
+    const char *const *inputs;     // files the tests read when they run, such as compiled shaders; built first
+    const char *const *link_flags; // added to the runner's link, such as -framework Metal
+    Step step;                     // set: the task test
 } AppTests;
 [[smith::c_name("smith_app_tests")]] export void app_tests(Build *b, AppTests *tests);
