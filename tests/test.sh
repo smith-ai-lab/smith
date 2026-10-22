@@ -2401,7 +2401,7 @@ plain_property" "$out"
         expect_contains "smith tests: smith test passes the written name through" "$out" "1 passed, 0 failed"
     fi
 
-    # 14. A test that takes an io: `void test_x(c::SmithIo *io)` gets a real io made for it alone, on the run's seed, with a
+    # 14. A test that takes an io: `void test_x(c::SmithIo *io)` (or `io::Io *io`) gets a real io made for it alone, on the run's seed, with a
     # scratch folder of its own (also $TMPDIR), removed when the test passes and kept, with its path printed, when it fails.
     # The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks below read.
     project "$work/iotests"
@@ -2414,6 +2414,7 @@ import <string.h>;
 import <sys/stat.h>;
 import <unistd.h>;
 import smith::arena;
+import smith::io;
 import smith::test;
 
 // Writes text to $SMITH_TEST_PROBE/name, where the script that runs the tests reads it.
@@ -2503,12 +2504,19 @@ void test_io_parallel_b(c::SmithIo *io) {
     probe("b", test::scratch(io));
     wait_for("a");
 }
+
+// The same test written with the module's own name for the type, which import smith::io; gives.
+void test_io_module_name(io::Io *io) {
+    probe("module_name", test::scratch(io));
+    test::check_not_equal(test::scratch(io), nullptr);
+}
 C
     capture "$smith" build
     expect "io tests: the runner builds" 0 "$rc"
     if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
     capture build/tests $iso --list
     expect_contains "io tests: an io test is found beside the others" "$out" "io_real"
+    expect_contains "io tests: ... one written io::Io *io (import smith::io;) too" "$out" "io_module_name"
     here=$(pwd -P)
     io_run() { # runner arguments
         capture env SMITH_TEST_PROBE="$probe_folder" build/tests $iso "$@"
@@ -2537,6 +2545,10 @@ C
     io_run --test io_seed
     seeds=$(cat "$probe_folder/seed" 2>/dev/null)
     expect "io tests: ... without --seed the key still comes from the seed" "yes" "$([ "${seeds% *}" = "${seeds#* }" ] && [ -n "$seeds" ] && echo yes)"
+
+    io_run --test io_module_name
+    expect_contains "io tests: a test that takes io::Io * gets a real io" "$out" "1 passed, 0 failed"
+    expect "io tests: ... with a scratch folder of its own" "yes" "$([ -n "$(cat "$probe_folder/module_name" 2>/dev/null)" ] && echo yes)"
 
     io_run --test io_fixture
     expect_contains "io tests: the working directory is the project root, so a fixture resolves" "$out" "1 passed, 0 failed"
