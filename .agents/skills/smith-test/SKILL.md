@@ -1,6 +1,6 @@
 ---
 name: smith-test
-description: "Using <smith/test.h> and smith_tests, smith's tests: checks that print both values, workers that run the tests, property tests on keys. Load when code includes <smith/test.h>, when a build.c calls smith_tests, when running smith test, or on a question about writing, running or debugging a C test."
+description: "Using <smith/test.h> and smith_tests, smith's tests: checks that print both values, workers that run the tests, property-based tests on keys with seeds and shrinking. Load when code includes <smith/test.h>, when a build.c calls smith_tests, when running smith test, or on a question about writing, running, replaying (--seed) or debugging a C or .smith test, property-based testing, shrinking or flaky tests."
 ---
 
 # Tests: smith's test library
