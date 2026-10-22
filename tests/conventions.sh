@@ -237,6 +237,27 @@ capture smith build
 expect "c: includes in comments are not followed" no "$(exists build/debug/stray.o)"
 cd "$work" || exit 1
 
+# The same two calls in a build.c are the same build: the same commands for every target.
+mkdir -p "$work/explicit" && cp -R "$work/calc" "$work/explicit/calc" && cd "$work/explicit/calc" || exit 1
+rm -rf .smith build
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_app(b, &(SmithApp){});
+    smith_app_tests(b, &(SmithAppTests){});
+}
+EOF
+capture smith build -t commands build/debug/calc build/release/calc build/fast/calc build/tests
+explicit_commands=$out
+capture smith test
+expect "explicit: the two calls in a build.c: smith test passes" 0 "$rc"
+rm build.c
+rm -rf .smith build
+capture smith build -t commands build/debug/calc build/release/calc build/fast/calc build/tests
+expect "explicit: ... give the commands of no build file" "$explicit_commands" "$out"
+cd "$work" || exit 1
+
 # 3. smith's libraries need no declaration.
 mkdir "$work/ioc" && cd "$work/ioc" || exit 1
 cat >main.c <<'EOF'
