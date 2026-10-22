@@ -12,7 +12,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-build-levels/SK
 A folder with `main.smith` or `main.c` at the root (never both) and no `build.c` or `build.smith` builds, runs and tests as it is. `smith new [--language c] [name]` writes such a project. Nothing to write; read `.smith/conventions.c` to see what ran.
 
 - Debug is the default (`smith build`, `smith run`): `build/debug/<folder name>`, `-g -O0`, address and undefined sanitizers, assertions on. `smith build release`: `build/release/`, `-O2`, assertions on. `smith build fast`: `build/fast/`, `-O2 -DNDEBUG`. All three: `-std=gnu2y` with strict warnings and `-Werror`, `-ffp-contract=off`, `-mcpu=apple-m1` on Apple silicon, Clang modules.
-- What is compiled is what `main` reaches: `.smith` by `import a::b;` to `a/b.smith`, C by quoted `#include "foo.h"` to the `foo.c` beside it. smith's libraries need no declaration: `#include <smith/io.h>` or `import smith::text;` compiles and links them.
+- What is compiled is what `main` reaches: `.smith` by `import a::b;` to `a/b.smith`, C by quoted `#include "foo.h"` to the `foo.c` beside it. smith's libraries need no declaration: `#include <smith/io.h>` or `import smith::io;` compiles and links them.
 - Tests: every `.smith` file and `test_*.c` under `tests/`, run by `smith test`.
 - It does not cover: packages, a source that no header names, other flags or libraries (`-lm`, `-framework`), extra tasks, shaders. Those need level 1 or 2.
 

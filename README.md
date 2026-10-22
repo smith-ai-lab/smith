@@ -80,7 +80,7 @@ void test_the_first_five_primes_add_up_to_28(void) {
 }
 ```
 
-A test's signature says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, and `(c::SmithIo *io)`
+A test's signature says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, and `(io::Io *io)`
 gets a real io in a scratch folder of its own.
 
 ```

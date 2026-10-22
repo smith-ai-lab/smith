@@ -266,8 +266,8 @@ Generator rules:
 
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
-`smith.c` includes after `lib/io.c`, so `cc -std=gnu23 smith.c -o smith` still builds all of smith. It uses
-`<smith/io.h>` (so it is macOS only until io has another backend): the manifest and the graph live in `io.arena`, the
+`smith.c` includes after the lowering of `lib/smith/io.smith` (`bootstrap/lib/smith/io.c`), so `cc -std=gnu23 smith.c -o smith` still builds all of smith. It uses
+`smith::io` (`<smith/io.h>`; so it is macOS only until io has another backend): the manifest and the graph live in `io.arena`, the
 files are read and written through `io.files`, and one kqueue loop waits for every job's process and pipe.
 
 ### Who runs the graph
@@ -453,10 +453,9 @@ void build(SmithBuild *b) {
   includes by its header's name is not compiled, an include of a `.c` file (a unity build) is read and not compiled
   again, and a C file that includes a `.smith` module's header does not make that module part of the program. A project
   with such a file writes a build file, or renames to `.smith`.
-- **smith's libraries** need no declaration: `import smith::text;` or `#include <smith/io.h>` (`import <smith/io.h>;`
-  in `.smith`) compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
-  and random: its header and source are scanned the same way). `import smith::io;` is not possible yet: io is a C
-  library, importable as the header only. `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
+- **smith's libraries** need no declaration: `import smith::text;` or `import smith::io;` (`#include <smith/io.h>` in C)
+  compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
+  and random: its header and source are scanned the same way). `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
   The same resolver serves `smith_library`: `smith_program` links, beside the objects it is given, the libraries that
   the libraries among them need (found by scanning their header and source, `smith_library_needs`), so naming
   `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random; arena brings contract, math and trace).
@@ -855,9 +854,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
 ```
 
 - **A test's signature says what it may touch.** `void test_x(void)` is pure; `void test_x(random::Key key)` (`SmithKey`
-  in C) is a property test, with the key from the run's seed; `void test_x(c::SmithIo *io)` (`SmithIo *io` in C) gets a
-  real io made for that one test by the runner (below). A test makes fakes (`smith_io_make_test`) anywhere, but never a
-  real io: `smith-effects` allows `smith_io_make` only in `main`, so the runner can always seed, sandbox and clean up
+  in C) is a property test, with the key from the run's seed; `void test_x(io::Io *io)` (`SmithIo *io` in C) gets a
+  real io made for that one test by the runner (below). A test makes fakes (`io::make_test`) anywhere, but never a
+  real io: `smith-effects` allows `io::make` only in `main`, so the runner can always seed, sandbox and clean up
   after a test.
 - **Checks are generic functions.** A failure shows the line that called the check and the call chain, read from the
   call stack and the source file (see "Failure reports"), so a check needs no macro to capture its text or its place.
@@ -886,8 +885,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
   - **Tests in `.smith` files** (name the files in `.sources`, `tests/**/*_test.smith`): in a file with no `module` line
     the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
     `export void test_<name>(void) {`, `export void test_<name>(random::Key key) {` or
-    `export void test_<name>(c::SmithIo *io) {` (`c::SmithKey` is the same type as `random::Key` for a file that imports
-    `<smith/test.h>` or `<smith/random.h>`); an `export` is needed, since a private function is `static` and nothing can
+    `export void test_<name>(io::Io *io) {` (`c::SmithKey` is the same type as `random::Key` for a file that imports
+    `<smith/test.h>` or `<smith/random.h>`, and `c::SmithIo` the same as `io::Io`; with `import smith::io as sio;` the
+    type is `sio::Io`); an `export` is needed, since a private function is `static` and nothing can
     call it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
     `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
     as written: `geometry::box_test::area` (the written `geometry::box_test::test_area`, `test_` of the last part dropped as
@@ -900,9 +900,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `$TMPDIR` (else `/tmp`) and also set as `$TMPDIR` and `$SMITH_TEST_SCRATCH` while the test runs. The runner removes
   the folder (with `rm -rf`, through its io's `processes`) when the test passed and keeps it, printing
   `scratch folder (kept): <path>` under the failure, when it failed. The working directory stays the project root, so
-  fixtures resolve. The runner can make the io because `main` hands it `smith_io_make` as a value (`Runner.make_io`).
+  fixtures resolve. The runner can make the io because `main` hands it `io::make` as a value (`Runner.make_io`).
 - **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it makes its io once
-  (`smith_io_make`, in `main`) and hands `run_tests` a `Runner` (`smith_test_run`), a type marked as a capability
+  (`io::make`, in `main`) and hands `run_tests` a `Runner` (`smith_test_run`), a type marked as a capability
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
   memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
   every exported function that reaches one takes the `Runner`. What io has a part in goes through it: the runner's
@@ -1347,7 +1347,7 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // as an input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/io.c" (a library written in .smith, "text" or "arena", is a module,
+// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "text", "arena" or "io", is a module,
 // ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless

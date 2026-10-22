@@ -147,7 +147,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `llvm-symbolizer` serves the sanitizers. The checks are the generic functions of `smith::test` (`test::check_equal(a, b)`, `check_less`, `check_near`, ...; the
   `SMITH_CHECK` macros are gone), and a test that must abort calls `test::expect_abort()`. **A test's signature says what it
   may touch** (issue #45): `void test_x(void)` is pure, `void test_x(random::Key key)` a property test (the key from the
-  run's seed), `void test_x(c::SmithIo *io)` gets a real io the runner makes for it alone (its key from the run's seed, a
+  run's seed), `void test_x(io::Io *io)` gets a real io the runner makes for it alone (its key from the run's seed, a
   scratch folder removed when it passes and kept, named, when it fails, the working directory still the project root);
   a test makes fakes anywhere and never a real io (`smith-effects`). The runner is `smith::test`'s `main`; its own
   effects (forked workers, pipes, signals, shared memory) are calls in the module, which defines the `Runner` capability,
@@ -299,11 +299,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
     `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
     bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random`, `arena` and `test` are `.smith` (issue #39; #45). C passes `sizeof` and
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random`, `arena`, `test` and `io` are `.smith` (issue #39; #45). C passes `sizeof` and
     `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
     `arena::push_array(&a, T, n)`.
-  - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,
-    console, files, clock, processes, the network), each platform behind it on its best API (kqueue and Network.framework on macOS).
+  - **Talking to the OS:** `smith::io` (`import smith::io;`, `<smith/io.h>` from C) is the one way a program touches the
+    world outside it (memory, randomness, console, files, clock, processes, the network), each platform behind it on its
+    best API (kqueue and Network.framework on macOS). Its module names are the C names without the prefix (`io::Io` is
+    `SmithIo`, `io::console_printf` is `smith_console_printf`); no nested modules, so a capability's functions are
+    `io::<capability>_<name>`.
 - **The idiom checks of issue #47 are clang-tidy checks, on in smith's default `.clang-tidy` and its own** (`shim/idiom.h`,
   registered in `shim/tidy.cpp` beside the two above; the editor runs them; skill smith-check, smith-idiom). Each message
   names the fix. `.smith` only: `smith-sized-types` (`uint32_t`, `size_t`, `double`, `unsigned`, `long`, `int` outside `main`'s
@@ -314,18 +317,18 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   record type, internal linkage in C: `constexpr`). smith's own C passes the C-side ones.
 - **`smith-effects` is a clang-tidy check that a program touches the world only through capabilities passed down from
   `main`** (`shim/effects.h`, registered in `shim/tidy.cpp` beside `SmithNaming`, so `smith lint` and `smith lsp` both
-  run it, `.smith` names as written; skill smith-io). `main` makes `SmithIo io = smith_io_make(argc, argv)` and a function
+  run it, `.smith` names as written; skill smith-io). `main` makes `io::Io io = io::make(argc, argv)` (`SmithIo io = smith_io_make(argc, argv)` in C) and a function
   takes the part it needs, so its signature says what it can do. Decided function by function from the source, with no
   lists of files:
   - **A raw effect is a call into a system header that is not on the pure allow list** (in `shim/effects.h`, each
     entry with its reason: `<string.h>`, `<math.h>`, `<ctype.h>`, the `strto*` family, `snprintf`, `qsort`...), or an
     Objective-C message to a system framework's class or object. `abort`, `assert`, `__builtin_trap` and smith's failure
     path are not effects.
-  - **A capability is a record marked `[[clang::annotate("smith::capability")]]`** (SmithIo, SmithConsole, SmithFiles,
-    SmithClock, SmithProcesses, SmithNet, SmithArgs (the live environment), and the handles SmithOp, SmithCapture,
-    SmithChild and SmithConnection; not SmithKey or SmithArena, which are values). Raw effects are allowed in its implementation: the `.smith`
-    module that defines it, or the `.c` beside its header (`io.c` with `io.h`; `lib/io.c` with `include/.../io.h`). An
-    exported function there that reaches a raw effect must take or return a capability. `smith_io_make` is marked
+  - **A capability is a record marked `[[clang::annotate("smith::capability")]]`** (`io::Io`, `io::Console`, `io::Files`,
+    `io::Clock`, `io::Processes`, `io::Net`, `io::Args` (the live environment), and the handles `io::Op`, `io::Capture`,
+    `io::Child` and `io::Connection`, C's SmithIo and the like; not `random::Key` or `arena::Arena`, which are values). Raw effects are allowed in its implementation: the `.smith`
+    module that defines it, or the `.c` beside its header (`io.c` with `io.h`; `lib/io.c` with `include/.../io.h`); `smith::io` is itself such a `.smith` module. An
+    exported function there that reaches a raw effect must take or return a capability. `io::make` (`smith_io_make`) is marked
     `[[clang::annotate("smith::main_only")]]` and may be called only in `main`; no capability in static storage.
   - **Default on, `smith-effects.CFiles` true;** smith's own `.clang-tidy` sets it false, because smith's C is being
     ported to `.smith` (issue #45) and each ported module must be clean from the day it lands. The editor runs it

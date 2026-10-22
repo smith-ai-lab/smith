@@ -130,7 +130,7 @@ compiler as written ("make it a function"). The compiler's own run needs none of
 
 ## The bootstrap
 
-smith's own build compiles some `.smith` sources (the library `smith::text` today; the others follow as they are ported),
+smith's own build compiles some `.smith` sources (the libraries `smith::arena`, `contract`, `io`, `random` and `text` today; the others follow as they are ported),
 and a fresh clone has only a C23 compiler: no hook, no installed smith that knows the newest language. So the build
 compiles their lowering instead, committed in `bootstrap/` at the path of the source (`lib/smith/text.smith` is
 `bootstrap/lib/smith/text.c`), with `config->cc`, a plain `cc` included. `build.c` lists the sources in
@@ -147,7 +147,7 @@ file, which also finds the same file when smith writes it to `.smith/bootstrap/l
 the source (an `import <h>;` is written as the `#include` it stands for, since the header has only what the exports need and the bodies need the rest) less what the header already says (an `#include` it has, and a conditional chain that holds only includes it has; `typedef
 struct {...} Name;` blocks and one-line `constexpr`, `extern` and `typedef` declarations), because one translation unit may
 include both (two anonymous structs of one translation unit are two types, and C has no way to say they are one, so the
-lowering cannot repeat the header's blocks; a fix in the lowering would have to know the header's text, as the script does): smith's own runtime compiles `io`,
+lowering cannot repeat the header's blocks; a fix in the lowering would have to know the header's text, as the script does; the block ends at its own closing brace, so a struct inside it, as in `io`'s `SmithOp`, is part of the block): smith's own runtime compiles `io`,
 which includes `<smith/random.h>`, together with the library. `scripts/bootstrap.sh` writes it. It needs no compiler, so the
 stage0 writes the same bytes, and it asks nothing of the machine: the lowering's questions to the parser (`lookup`,
 `type_info`, `field` in `smith_lang_run_raw`) are all unanswered, sized types become the compiler's

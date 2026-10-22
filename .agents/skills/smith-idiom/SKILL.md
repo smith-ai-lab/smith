@@ -20,14 +20,14 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
    - A `c::` name that is a C **macro** (`c::assert`, `c::SIZE_MAX`, `c::isfinite`, `c::INFINITY`) is the preprocessor too. The module that wraps the C API provides it as a function or a constant: `contract::assert(c)`, `math::max(usize)`, `math::is_finite(x)`, `math::infinity(f64)`, `math::nan(f32)`, `math::sqrt(x)` and `math::abs(x)` (`smith-contract`, `smith-math`). A macro of a library that has no module yet is written as the function the library has (`__builtin_memset`) or waits for the module. In the macOS SDK `c::memcpy`, `c::memmove`, `c::memset`, `c::snprintf` and `c::vsnprintf` are macros (the fortified versions): write `__builtin_memcpy`, `__builtin_snprintf` and the like; they are pure functions.
    - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-preprocessor` (rule 5), which reports an `#include` and every `c::` name that is a macro, with what to write; and the compiler for a bare name that an `import`ed header declared (`` `sqrtf` is a C name; write `c::sqrtf` ``).
 3. **Modules import modules.** A library that is a module is used with `import smith::arena;` and `arena::push(...)`, not with its C header (`smith-lang-modules`). A project's own `.smith` files are modules too: `module rolls;`, `export`, `import rolls;`, with no header written by hand (`smith build` writes it for C callers).
-   - Enforced by: the compiler for private names (`is private; export it`) and for import cycles; `smith lint` and the editor, through `smith-module-library`, for a library that is a module used through its C header (`import <smith/arena.h>;`, `c::smith_arena_push`, `c::SmithArena`), with `import smith::arena;` and the module's name to write (a named instance of a generic, `c::smith_check_equal_i32`, also points to the generic: `test::check_equal(a, b)`).
+   - Enforced by: the compiler for private names (`is private; export it`) and for import cycles; `smith lint` and the editor, through `smith-module-library`, for a library that is a module used through its C header (`import <smith/arena.h>;`, `c::smith_arena_push`, `c::SmithArena`, `import <smith/io.h>;`, `c::SmithIo`), with `import smith::arena;` and the module's name to write (a named instance of a generic, `c::smith_check_equal_i32`, also points to the generic: `test::check_equal(a, b)`).
 4. **Generics where C passes a type as `sizeof` and `alignof`.** `arena::push(&a, Foo)`, not `smith_arena_push(&a, sizeof(Foo), alignof(Foo))`; your own `export T *make(arena::Arena *a, constexpr type T)` when a function of yours takes a type (`smith-lang-generics`).
    - Enforced by: review and the `sizeof/alignof` count. The raw functions (`arena::push_raw`) exist for C, which cannot call a generic.
 5. **No `#define`; `constexpr` for constants.** `constexpr usize capacity = 1 << 20;`, and `export constexpr` when others use it. An enumeration or a function does what a macro of several lines did. Checks, contracts and `expect_abort` are functions (rule 8), never macros.
    - **No preprocessor at all:** no `#if` (a fact of the target is `target::`, a choice is `if constexpr`; `arena.smith` shows the way: ordinary code behind a `constexpr bool`, so every branch type-checks), no `#pragma` (a flag a library needs is declared by its row of `smith_libraries` and added by the build), no `#error` (`static_assert(false, ...)`), no `#line`, no `#embed`, no `_Pragma`.
    - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-preprocessor`, which reports every directive and `_Pragma` of a `.smith` file with what to write instead; it is in smith's default `.clang-tidy` and in `smith check`. A `.c` file is left alone, and a line that must keep one says `// NOLINT(smith-preprocessor)`.
-6. **Effects come only through capabilities passed down from `main`.** A function that prints takes a `c::SmithConsole *`; one that reads a file takes `c::SmithFiles *`; one that needs memory takes an `arena::Arena *`; randomness is a `random::Key` passed in. Take the part of `SmithIo` the function needs, not all of it, so the signature says what it can do (`smith-io`).
-   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-effects`: a raw call such as `c::printf` or `c::fopen` outside a capability's own module is reported, with the capability to take instead; `smith_io_make` outside `main` is reported; so is a capability in static storage. It is in smith's default `.clang-tidy` and in `smith check`.
+6. **Effects come only through capabilities passed down from `main`.** A function that prints takes an `io::Console *`; one that reads a file takes `io::Files *`; one that needs memory takes an `arena::Arena *`; randomness is a `random::Key` passed in. Take the part of `io::Io` the function needs, not all of it, so the signature says what it can do (`smith-io`).
+   - Enforced by: `smith lint` and the editor, through the clang-tidy check `smith-effects`: a raw call such as `c::printf` or `c::fopen` outside a capability's own module is reported, with the capability to take instead; `io::make` outside `main` is reported; so is a capability in static storage. It is in smith's default `.clang-tidy` and in `smith check`.
 7. **No globals, no `malloc`.** Memory is an arena passed in (`smith-arena`); state is a value passed in.
    - Enforced by: `smith-effects` reports `malloc` and `free`; review for a mutable global the check does not know about.
 8. **Checks, contracts and `expect_abort` are plain functions.** `test::check_equal(a, b)`, `contract::requires(low <= high)`, `test::expect_abort()`: a failure's report is read from the call stack, which is why they are not macros (`smith-test`, `smith-contract`, `smith-trace`). Write a check you need as a function too.
@@ -105,8 +105,8 @@ Renamed to `rolls.smith` this compiles, and it has 13 standard C types, 7 `#incl
 module rolls;
 
 import smith::arena;
+import smith::io;
 import smith::random;
-import <smith/io.h>;
 
 constexpr i64 sides = 6;
 
@@ -131,9 +131,9 @@ export f64 mean(const Rolls *rolls) {
     return rolls->count == 0 ? 0 : (f64)sum / (f64)rolls->count;
 }
 
-export void print(c::SmithConsole *console, const Rolls *rolls) {
-    for (usize i = 0; i < rolls->count; i++) c::smith_console_printf(console, "%u ", rolls->faces[i]);
-    c::smith_console_printf(console, "(mean %.2f)\n", mean(rolls));
+export void print(io::Console *console, const Rolls *rolls) {
+    for (usize i = 0; i < rolls->count; i++) (void)io::console_printf(console, "%u ", rolls->faces[i]);
+    (void)io::console_printf(console, "(mean %.2f)\n", mean(rolls));
 }
 ```
 
@@ -142,10 +142,10 @@ export void print(c::SmithConsole *console, const Rolls *rolls) {
 module main;
 
 import rolls;
-import <smith/io.h>;
+import smith::io;
 
 int main(int argc, char **argv) {
-    c::SmithIo io = c::smith_io_make(argc, argv);
+    io::Io io = io::make(argc, argv);
     rolls::Rolls dice = rolls::make(&io.arena, io.key, 10);
     rolls::print(&io.console, &dice);
     return 0;
@@ -154,11 +154,11 @@ int main(int argc, char **argv) {
 
 What changed, by rule:
 - 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `u32`, `usize`, `u64`, `f64`.
-- 2: `<smith/io.h>` is imported and its names are `c::SmithConsole`, `c::smith_console_printf`, `c::SmithIo`, `c::smith_io_make`. Until io is a module (it is C today), this is its honest form.
-- 3: `rolls.h` is gone; `import smith::arena;` and `import smith::random;` replace two includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`). `main` imports `rolls`.
+- 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import smith::io;`, `io::Console`, `io::console_printf`, `io::Io`, `io::make`); `<smith/io.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
+- 3: `rolls.h` is gone; `import smith::arena;`, `import smith::io;` and `import smith::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`, `SmithConsole` is `io::Console`). `main` imports `rolls`.
 - 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_array(arena, u32, count)`: the size and alignment cannot disagree, and the result is typed.
 - 5: `ROLLS_SIDES` is `constexpr i64 sides`.
-- 6: `print` takes the `SmithConsole` and nothing more; `make` takes the arena and the key; only `main` makes the io. `smith lint` would report `c::printf` here.
+- 6: `print` takes the `io::Console` and nothing more; `make` takes the arena and the key; only `main` makes the io. `smith lint` would report `c::printf` here.
 - 9: `rolls_make` is `rolls::make`; the module name is the prefix.
 
 `smith build` (no build file needed: `main.smith` and `rolls.smith` in a folder) built it with the strict warnings and `smith run` printed `6 1 4 6 3 6 4 5 2 6 (mean 4.30)`; the seed is random unless `SMITH_SEED` is set.
@@ -179,7 +179,7 @@ echo "c:: names         $(n 'c::')"
 echo "raw calls         $(n 'c::(f?printf|puts|f?open|fread|fwrite|fclose|malloc|calloc|free|memcpy|memset|time|exit|rand)\(')"
 ```
 
-Set `files` to one path to count one file. The counts are lines, comments included. For the example above `rolls.c` and `rolls.h` together have 13, 7, 1, 2, 1, 0, 0 and the Smith has 0, 0, 0, 0, 0, 4, 0.
+Set `files` to one path to count one file. The counts are lines, comments included. For the example above `rolls.c` and `rolls.h` together have 13, 7, 1, 2, 1, 0, 0 and the Smith has 0, 0, 0, 0, 0, 0, 0.
 
 - **Standard C types, `#include`, `#define`, `sizeof`/`alignof`: 0.** A `sizeof` that stays measures something that is not a type argument (`sizeof memory` of an array).
 - **`#if`: only the questions the compiler answers,** each with a comment saying which.

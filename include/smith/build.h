@@ -132,8 +132,8 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // as an input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/io.c" (a library written in .smith, "text" or "arena", is a
-// module,
+// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "text", "arena" or
+// "io", is a module,
 // ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (build::object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
