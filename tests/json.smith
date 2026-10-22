@@ -47,7 +47,7 @@ void test_json_reader_tokens_of_a_document(void) {
         {c::SmithJsonToken_ObjectBegin, 34}, {c::SmithJsonToken_ObjectEnd, 35}, {c::SmithJsonToken_ObjectEnd, 36},
         {c::SmithJsonToken_End, 37},
     };
-    for (usize i = 0; i < sizeof expected / sizeof expected[0]; i++) {
+    for (usize i = 0; i < _Countof expected; i++) {
         c::SmithJsonToken token = c::smith_json_read(&reader);
         test::note("step %zu", i);
         test::check(token == expected[i].token);
@@ -169,7 +169,7 @@ void test_json_structure_errors(void) {
         {"[1]\x01", c::SmithJsonReason_TrailingContent, 3},
         {"[\"a\"\n\"b\"]", c::SmithJsonReason_UnexpectedCharacter, 5},
     };
-    test_json_check_errors(cases, sizeof cases / sizeof cases[0]);
+    test_json_check_errors(cases, _Countof cases);
 }
 
 void test_json_string_errors(void) {
@@ -199,7 +199,7 @@ void test_json_string_errors(void) {
         {"\"\xe2\x82", c::SmithJsonReason_BadUtf8, 1},            // truncated by the end of the input
         {"{\"\\ud800\": 1}", c::SmithJsonReason_BadSurrogate, 2}, // a key is a string
     };
-    test_json_check_errors(cases, sizeof cases / sizeof cases[0]);
+    test_json_check_errors(cases, _Countof cases);
 }
 
 void test_json_number_errors(void) {
@@ -223,7 +223,7 @@ void test_json_number_errors(void) {
         {"-Infinity", c::SmithJsonReason_BadNumber, 1},
         {"[1,2,3,0.5e]", c::SmithJsonReason_BadNumber, 11},
     };
-    test_json_check_errors(cases, sizeof cases / sizeof cases[0]);
+    test_json_check_errors(cases, _Countof cases);
 }
 
 void test_json_accepts_the_grammar(void) {
@@ -271,7 +271,7 @@ void test_json_accepts_the_grammar(void) {
         "\n\n{ \"k\" : [ 1 , 2 ] }\n",
     };
     arena::Arena arena = test::memory(1 << 16);
-    for (usize i = 0; i < sizeof good / sizeof good[0]; i++) {
+    for (usize i = 0; i < _Countof good; i++) {
         test::note("input \"%s\"", good[i]);
         const c::SmithJsonValue *root = nullptr;
         c::SmithJsonError error = {};
@@ -604,7 +604,7 @@ void test_json_writer_escapes(void) {
 
 void test_json_writer_refuses_invalid_utf8(void) {
     const char *bad[] = {"\xff", "\xc0\x80", "\xed\xa0\x80", "\xe2\x82", "ok\x80"};
-    for (usize i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+    for (usize i = 0; i < _Countof bad; i++) {
         char buffer[64];
         c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
         c::smith_json_write_string(&writer, test_json_text(bad[i]));
@@ -632,7 +632,7 @@ void test_json_writer_numbers(void) {
 
 void test_json_writer_refuses_nan_and_infinity(void) {
     f64 values[] = {__builtin_inf(), -__builtin_inf(), __builtin_nan("")};
-    for (usize i = 0; i < sizeof values / sizeof values[0]; i++) {
+    for (usize i = 0; i < _Countof values; i++) {
         char buffer[64];
         c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
         c::smith_json_write_array_begin(&writer);
@@ -1321,7 +1321,7 @@ static bool test_json_suite_accepts(arena::Arena *arena, text::Text bytes) {
 }
 
 static const TestJsonImplementationDefined *test_json_find_listed(const char *name) {
-    for (usize i = 0; i < sizeof test_json_implementation_defined / sizeof test_json_implementation_defined[0]; i++) {
+    for (usize i = 0; i < _Countof test_json_implementation_defined; i++) {
         if (c::strcmp(test_json_implementation_defined[i].name, name) == 0) return &test_json_implementation_defined[i];
     }
     return nullptr;
@@ -1385,7 +1385,7 @@ void test_json_conformance_with_jsontestsuite(c::SmithIo *io) {
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
     test::check_equal(totals.y_total, totals.y_accepted);
     test::check_equal(totals.n_total, totals.n_refused);
-    usize listed_count = sizeof test_json_implementation_defined / sizeof test_json_implementation_defined[0];
+    usize listed_count = _Countof test_json_implementation_defined;
     test::check_equal(totals.i_total, listed_count);
     test::check_greater_equal(totals.y_total, 95);
     test::check_greater_equal(totals.n_total, 188);
