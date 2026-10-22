@@ -380,6 +380,21 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
     return chain;
 }
 
+// A generic check may be given its type first, `test::check_equal(u64, a, b)`: that argument names no value.
+static size_t smith_sym_drop_type(char arguments[smith_sym_arguments_max][128], size_t count) {
+    static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32",      "i64",    "isize", "u8",
+                                        "u16",  "u32",  "u64", "usize", "f32",      "f64",    "int",   "long",
+                                        "short", "float", "double", "size_t", "ptrdiff_t", "uint8_t"};
+    if (count < 2) return count;
+    bool type = strchr(arguments[0], '*') != nullptr || strncmp(arguments[0], "const ", 6) == 0;
+    for (size_t i = 0; !type && i < sizeof types / sizeof types[0]; i++)
+        type = strcmp(arguments[0], types[i]) == 0;
+    if (!type) return count;
+    for (size_t i = 1; i < count; i++)
+        memcpy(arguments[i - 1], arguments[i], sizeof arguments[0]);
+    return count - 1;
+}
+
 // The arguments of the check call (smith_check_equal_u64 in C, test::check_equal in .smith) on the source line: the texts between the top-level commas of its parentheses.
 // Returns how many (at most smith_sym_arguments_max); each is a copy with its blanks trimmed.
 static size_t smith_sym_arguments(const char *source, char arguments[smith_sym_arguments_max][128]) {
@@ -407,7 +422,7 @@ static size_t smith_sym_arguments(const char *source, char arguments[smith_sym_a
         used = 0;
         if (*c == ')') break;
     }
-    return count;
+    return smith_sym_drop_type(arguments, count);
 }
 
 // A value line `label = value   (type)` split in place: the label, the value and the type's text. False for any other
@@ -470,6 +485,9 @@ static void smith_sym_print_values(FILE *out, const char *indent, const SmithSym
             fprintf(out, "%s%s\n", indent, trace->details[i]);
             continue;
         }
+        size_t label_length = strlen(labels[i]);
+        while (label_length > 0 && labels[i][label_length - 1] == ' ') // the labels are padded to one width
+            labels[i][--label_length] = '\0';
         smith_sym_named(named, sizeof named, smith_sym_name(labels[i], arguments, argument_count), values[i]);
         fprintf(out, "%s%s   %s\n", indent, named, types[i]);
     }
