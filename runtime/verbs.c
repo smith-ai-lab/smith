@@ -543,7 +543,7 @@ static int smith_test_project(int count, char **args, const char *self) {
     int status = smith_verb_build(self, split, targets, true);
     if (status != 0) return status;
     if (smith_info_read("smith test")->test_count == 0) {
-        fprintf(stderr, "smith test: build.c declares no tests; smith_tests (<smith/build.h>) declares them\n");
+        fprintf(stderr, "smith test: the build declares no tests; smith_tests (<smith/build.h>) declares them\n");
     }
     return 0;
 }

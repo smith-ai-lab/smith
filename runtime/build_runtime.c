@@ -1695,7 +1695,10 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     bool lang = smith_ends_with(copy.source, ".smith");
     if (lang) {
         const char *header = nullptr;
-        if (smith_lang_register(copy.source, &header) != nullptr) smith_lang_header_step(b, &copy, header);
+        // A smith library's header is the formatted one smith wrote with its source (.smith/include/smith/): a step
+        // would write it again as the generator makes it, unformatted, and the two would take turns
+        bool library = strncmp(copy.source, ".smith/lib/smith/", 17) == 0;
+        if (smith_lang_register(copy.source, &header) != nullptr && !library) smith_lang_header_step(b, &copy, header);
         smith_lang_sources_used = true;
     }
     copy.step = (SmithStep){

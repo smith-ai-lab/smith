@@ -1195,7 +1195,10 @@ static void smith_write_library_header(const char *path, const SmithLibrary *lib
     written = snprintf(to, sizeof to, " from .smith/lib/smith/%s.smith.", library->name);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof to);
     const char *header = (const char *)library->header;
-    const char *line_end = memchr(header, '\n', library->header_size);
+    static const char off[] =
+        "// clang-format off\n"; // the generator's first line holds the rest whole for a formatter
+    size_t skip = library->header_size > sizeof off && memcmp(header, off, sizeof off - 1) == 0 ? sizeof off - 1 : 0;
+    const char *line_end = memchr(header + skip, '\n', library->header_size - skip);
     SMITH_ASSERT(line_end != nullptr);
     const char *found = memmem(header, (size_t)(line_end - header), from, strlen(from));
     SMITH_ASSERT(found != nullptr); // not a header generated from its module: run smith build headers

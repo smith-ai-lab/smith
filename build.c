@@ -136,7 +136,9 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // The libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>): their C headers,
 // include/smith/<name>.h, are generated and committed, because the stage0 has no hook and embeds them as bytes. Porting
 // a library adds its name here. `smith build headers` regenerates them; `check-headers` (a test, so part of `smith
-// check`) fails when a committed header differs from what its module generates.
+// check`) fails when a committed header differs from what its module generates. The header is written as the generator
+// makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
+// clang-format, the same version), so it reads like one written by hand.
 static const char *const build_generated_headers[] = {"build", "random", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
@@ -148,6 +150,7 @@ static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, con
                                         "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
                                         "for name in %s; do "
                                         "\"$0\" cc --smith-header lib/smith/$name.smith -o \"$dir/$name.h\" || exit 1; "
+                                        "\"$0\" fmt --style=file:.clang-format -i \"$dir/$name.h\" || exit 1; "
                                         "%s; done; exit $status",
                                         names, action),
                               config->binary, nullptr),
