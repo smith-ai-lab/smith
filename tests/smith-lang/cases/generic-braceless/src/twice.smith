@@ -1,0 +1,16 @@
+module twice;
+
+import pick;
+
+// Braceless statements in a generic: the instance keeps the lines of the generic, so the compiler's
+// -Wmisleading-indentation (the case's flags make it an error) has nothing to say.
+export T bigger_twice(constexpr type T, T a, T b) {
+    T r = a;
+    if (a > b)
+        r = pick::larger(a, b);
+    if (a > b)
+        r += 1;
+    for (i32 i = 0; i < 2; i++)
+        r += pick::larger(a, b);
+    return r;
+}

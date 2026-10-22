@@ -1,0 +1,14 @@
+import "lens.h";
+#include <stdio.h>
+
+typedef struct {
+    i32 vector_length;
+} Lens;
+
+int main(void) {
+    Lens lens = {.vector_length = 3};
+    Lens *p = &lens;
+    // A member after `.` or `->` is a field, never a use of the macro of the same name.
+    printf("%d %d\n", lens.vector_length, p->vector_length);
+    return 0;
+}

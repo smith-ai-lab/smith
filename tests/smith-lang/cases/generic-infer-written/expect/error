@@ -1,0 +1,3 @@
+src/main.smith:10:29: conflicting types for `T`: u16 and u32; write the type as the argument
+src/main.smith:6:35: cannot tell `T` from `pick::larger(a, 3) + 1 + __builtin_abs(a)`: a call to a generic function is not typed; write the type as the argument
+src/main.smith:7:32: cannot tell `T` from `pick::zero(i32)`: `pick::zero` is not a name the compiler knows here; write the type as the argument

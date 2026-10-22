@@ -149,6 +149,8 @@ typedef struct {
     uint32_t location; // the host's; UINT32_MAX when the token was read from a header and not placed yet
     uint32_t line;     // in the source of the generic, for a token read from a header (0: location is the host's)
     uint32_t column;
+    uint32_t written; // 1 + the offset of the text of a call this token begins, as the source wrote it (0: none)
+    uint32_t covers;  // with `written`: how many tokens, this one included, the lowered call took
 } SmithLangGenToken;
 
 typedef struct {

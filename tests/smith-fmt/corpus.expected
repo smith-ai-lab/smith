@@ -420,6 +420,13 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
+==> error-standard-type/src/main.smith <==
+import <stddef.h>;
+import <stdint.h>;
+
+u64 widen(uint32_t x, size_t n, ptrdiff_t d) {
+    return x + n + d;
+}
 ==> error-target-fact/src/bad.smith <==
 module bad;
 
@@ -573,6 +580,62 @@ module num;
 export T add(type T, T a, T b) {
     return a + b;
 }
+==> generic-braceless/src/main.smith <==
+import twice;
+#include <stdio.h>
+
+int main(void) {
+    i32 a = 3;
+    i32 b = 2;
+    // The same shapes at a call site, in main.
+    if (a > b) a = twice::bigger_twice(a, b);
+    if (a > b) b = twice::bigger_twice(a, b);
+    for (i32 i = 0; i < 2; i++)
+        b += twice::bigger_twice(a, b);
+    printf("%d %d\n", a, b);
+    return 0;
+}
+==> generic-braceless/src/pick.smith <==
+module pick;
+
+// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
+export T larger(constexpr type T, T a, T b) {
+    return a > b ? a : b;
+}
+
+export T first_of(constexpr type T, const T *values, usize count) {
+    return count > 0 ? values[0] : (T){0};
+}
+
+export void set(constexpr type T, T *out, T value) {
+    *out = value;
+}
+
+export usize size_of_value(constexpr type T, T value) {
+    (void)value;
+    return sizeof(T);
+}
+
+// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
+// type, so a call there says it).
+export T twice(constexpr type T, T value) {
+    return larger(T, value, value);
+}
+==> generic-braceless/src/twice.smith <==
+module twice;
+
+import pick;
+
+// Braceless statements in a generic: the instance keeps the lines of the generic, so the compiler's
+// -Wmisleading-indentation (the case's flags make it an error) has nothing to say.
+export T bigger_twice(constexpr type T, T a, T b) {
+    T r = a;
+    if (a > b) r = pick::larger(a, b);
+    if (a > b) r += 1;
+    for (i32 i = 0; i < 2; i++)
+        r += pick::larger(a, b);
+    return r;
+}
 ==> generic-call-too-deep/src/main.smith <==
 import num;
 
@@ -702,6 +765,36 @@ module num;
 export T add(constexpr type T, T a, T b) {
     return a + b;
 }
+==> generic-if-constexpr-c-type/src/kind.smith <==
+module kind;
+
+import "shape.h";
+
+// T names a struct and a vector of a C header, which `if constexpr` reads like any type.
+export i32 of(constexpr type T, T value) {
+    (void)value;
+    if constexpr (T == c::V2) {
+        return 2;
+    } else if constexpr (T == c::F4) {
+        return 4;
+    } else if constexpr (T == const c::V2 *) {
+        return 20;
+    } else {
+        return 0;
+    }
+}
+==> generic-if-constexpr-c-type/src/main.smith <==
+import kind;
+import "shape.h";
+#include <stdio.h>
+
+int main(void) {
+    c::V2 a = {1, 2};
+    c::F4 f = {1, 2, 3, 4};
+    const c::V2 *p = &a;
+    printf("%d %d %d %d\n", kind::of(a), kind::of(f), kind::of(p), kind::of(7));
+    return 0;
+}
 ==> generic-if-constexpr-error/src/main.smith <==
 import num;
 
@@ -722,6 +815,31 @@ export i32 sign(constexpr type T, T value) {
 export i32 many(constexpr type T) {
     if constexpr (sizeof(T) == 4 && T == i32 / 0) return 1;
     return 2;
+}
+==> generic-if-constexpr-target/src/guard.smith <==
+module guard;
+
+import target;
+
+// A fact of the target in a generic's `if constexpr`, with a fact of T: asked of the compiler when an instance is made.
+export T pick_one(constexpr type T, T a, T b) {
+    if constexpr (target::static_analyzer) {
+        return a;
+    } else if constexpr (target::arch == target::aarch64 && sizeof(T) == 4) {
+        return b;
+    } else if constexpr (target::os == target::macos || target::assertions) {
+        return a > b ? a : b;
+    } else {
+        return a;
+    }
+}
+==> generic-if-constexpr-target/src/main.smith <==
+import guard;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %g\n", guard::pick_one(i32, 3, 9), guard::pick_one(f64, 2.5, 1.5));
+    return 0;
 }
 ==> generic-if-constexpr/src/kind.smith <==
 module kind;
@@ -774,6 +892,45 @@ int main(void) {
     printf("%d %d %d\n", kind::describe(i32, small), kind::floats_only(f32, f), kind::floats_only(i32, small));
     printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
     return 0;
+}
+==> generic-infer-cast/src/main.smith <==
+import pick;
+#include <stdio.h>
+
+int main(void) {
+    i32 x = 0;
+    i32 *p = &x;
+    usize m = (usize)p % 64;
+    // A cast to a sized type is the type: usize, u8, u16 and the rest.
+    printf("%d %d %d\n", pick::larger((usize)p % 64, 0) == m, pick::larger((u8)200, (u8)7), pick::larger((u16)3, 9));
+    printf("%d\n", pick::larger((isize)-4, 2) == 2);
+    return 0;
+}
+==> generic-infer-cast/src/pick.smith <==
+module pick;
+
+// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
+export T larger(constexpr type T, T a, T b) {
+    return a > b ? a : b;
+}
+
+export T first_of(constexpr type T, const T *values, usize count) {
+    return count > 0 ? values[0] : (T){0};
+}
+
+export void set(constexpr type T, T *out, T value) {
+    *out = value;
+}
+
+export usize size_of_value(constexpr type T, T value) {
+    (void)value;
+    return sizeof(T);
+}
+
+// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
+// type, so a call there says it).
+export T twice(constexpr type T, T value) {
+    return larger(T, value, value);
 }
 ==> generic-infer-error/src/main.smith <==
 import pick;
@@ -857,6 +1014,85 @@ export T *alloc(i32 bytes, constexpr type T) {
 
 export T zero(constexpr type T) {
     return (T){0};
+}
+==> generic-infer-vector/src/main.smith <==
+import pick;
+import "v2.h";
+#include <stdio.h>
+
+int main(void) {
+    c::F4 v = {1, 2, 3, 4};
+    c::F2 w = {5, 6};
+    // The lanes of an ext-vector: one lane is its element, several are a vector.
+    printf("%g %g\n", pick::larger(v.x, v.w), pick::larger(v.r, 0.5f));
+    c::F2 both = pick::larger(v.yx, w);
+    printf("%g %g\n", both.x, both.y);
+    return 0;
+}
+==> generic-infer-vector/src/pick.smith <==
+module pick;
+
+// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
+export T larger(constexpr type T, T a, T b) {
+    return a > b ? a : b;
+}
+
+export T first_of(constexpr type T, const T *values, usize count) {
+    return count > 0 ? values[0] : (T){0};
+}
+
+export void set(constexpr type T, T *out, T value) {
+    *out = value;
+}
+
+export usize size_of_value(constexpr type T, T value) {
+    (void)value;
+    return sizeof(T);
+}
+
+// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
+// type, so a call there says it).
+export T twice(constexpr type T, T value) {
+    return larger(T, value, value);
+}
+==> generic-infer-written/src/main.smith <==
+import pick;
+
+int main(void) {
+    i32 a = 3;
+    // The argument is quoted as written, a nested call to a generic included, and the types with Smith's names.
+    i32 r = pick::larger(a, pick::larger(a, 3) + 1 + __builtin_abs(a));
+    i32 s = pick::larger(pick::zero(i32), pick::zero(f64));
+    u16 x = 1;
+    u32 y = 2;
+    i32 t = pick::larger(x, y);
+    return r + s + t;
+}
+==> generic-infer-written/src/pick.smith <==
+module pick;
+
+// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
+export T larger(constexpr type T, T a, T b) {
+    return a > b ? a : b;
+}
+
+export T first_of(constexpr type T, const T *values, usize count) {
+    return count > 0 ? values[0] : (T){0};
+}
+
+export void set(constexpr type T, T *out, T value) {
+    *out = value;
+}
+
+export usize size_of_value(constexpr type T, T value) {
+    (void)value;
+    return sizeof(T);
+}
+
+// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
+// type, so a call there says it).
+export T twice(constexpr type T, T value) {
+    return larger(T, value, value);
 }
 ==> generic-infer/src/main.smith <==
 import pick;
@@ -1569,6 +1805,21 @@ export u32 pair(u32 a, u32 b) {
 
 export usize name_length(void) {
     return strlen(machine);
+}
+==> member-after-dot-is-not-a-macro/src/main.smith <==
+import "lens.h";
+#include <stdio.h>
+
+typedef struct {
+    i32 vector_length;
+} Lens;
+
+int main(void) {
+    Lens lens = {.vector_length = 3};
+    Lens *p = &lens;
+    // A member after `.` or `->` is a field, never a use of the macro of the same name.
+    printf("%d %d\n", lens.vector_length, p->vector_length);
+    return 0;
 }
 ==> module-basic/src/main.smith <==
 import shapes::area as area;
