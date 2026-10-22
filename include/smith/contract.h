@@ -21,6 +21,10 @@
 //                     a function pointer type's contract is the body-less spec function `spec`, whose only statements
 //                     are contracts. It declares something rather than checking a value, so it is a macro; today it
 //                     records the pair and nothing else.
+// smith_trusted()    the first statement of a function at the program's edge (io, inline assembly, a library with no
+//                     source): `smith prove` does not prove it. Its smith_requires is proved at each call and its
+//                     smith_ensures assumed, as for any function with a contract, but nothing in its body is read, and
+//                     the report lists it as trusted, never as proved. It checks nothing at run time.
 //
 // A condition must be free of side effects: it is evaluated by the check, and not at all with NDEBUG.
 //
@@ -31,6 +35,7 @@
 //   void smith_contract_requires(bool condition);
 //   void smith_contract_ensures(bool condition);
 //   void smith_contract_invariant(bool condition);
+//   void smith_contract_trusted(void);
 // A failed check is smith_failure(kind) (<smith/trace.h>): it records the stack and writes `smith-trace begin requires
 // failed` and the frames to standard error, then calls abort(); in a test it fails the test with the same report as a
 // failed check, the failing line and the call chain. Where and what come from the stack and the source line, not from
@@ -47,6 +52,7 @@ typedef struct {
 void smith_contract_requires(bool condition);
 void smith_contract_ensures(bool condition);
 void smith_contract_invariant(bool condition);
+void smith_contract_trusted(void);
 
 // clang's static analyzer (clang-tidy's clang-analyzer-*, `smith lint`) cannot see what a call means, so without help
 // it reports every index a contract bounds. Under __clang_analyzer__ (defined only there) each is an assumption, as the
@@ -61,6 +67,7 @@ void smith_contract_invariant(bool condition);
 [[gnu::always_inline]] static inline void smith_invariant(bool condition) {
     __builtin_assume(condition);
 }
+[[gnu::always_inline]] static inline void smith_trusted(void) {}
 #elifdef NDEBUG
 [[gnu::always_inline]] static inline void smith_requires(bool condition) {
     (void)condition;
@@ -71,6 +78,7 @@ void smith_contract_invariant(bool condition);
 [[gnu::always_inline]] static inline void smith_invariant(bool condition) {
     (void)condition;
 }
+[[gnu::always_inline]] static inline void smith_trusted(void) {}
 #else
 [[gnu::always_inline]] static inline void smith_requires(bool condition) {
     smith_contract_requires(condition);
@@ -80,6 +88,9 @@ void smith_contract_invariant(bool condition);
 }
 [[gnu::always_inline]] static inline void smith_invariant(bool condition) {
     smith_contract_invariant(condition);
+}
+[[gnu::always_inline]] static inline void smith_trusted(void) {
+    smith_contract_trusted();
 }
 #endif
 
