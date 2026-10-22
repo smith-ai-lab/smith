@@ -7172,6 +7172,10 @@
           ]
         },
         {
+          "type": "SYMBOL",
+          "name": "scoped_identifier"
+        },
+        {
           "type": "ALIAS",
           "content": {
             "type": "CHOICE",

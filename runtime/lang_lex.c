@@ -323,7 +323,8 @@ static void smith_raw_directive(SmithLangRaw *raw) {
         while (closing != 0 && close < line_end && s[close] != closing)
             close += 1;
         if (closing != 0 && close < line_end) {
-            smith_lang_add_include(raw->lang, s + open + 1, close - open - 1, closing == '>');
+            SmithTrivia *entry = smith_raw_note(raw, SmithTrivia_Include, open + 1, close);
+            if (entry != nullptr) entry->angled = closing == '>';
         }
     }
     raw->position = line_end;
@@ -530,7 +531,9 @@ static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken 
         }
     }
     names->after_sized = names->after_sized > 1 && word == SmithLangWord_Qualifier ? names->after_sized - 1 : 0;
-    if (smith_lang_find_sized(token->text, token->length) != nullptr && !after_member) names->after_sized = 8;
+    bool type = smith_lang_find_sized(token->text, token->length) != nullptr ||
+                (raw->lang != nullptr && smith_lang_type_name(raw->lang, token->text, token->length));
+    if (type && !after_member) names->after_sized = 8;
     names->before = *token;
 }
 

@@ -11,11 +11,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#if __has_include("arena.h")
 #include "arena.h"
+#else
+#include <smith/arena.h>
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Beside this module's header (include/smith); a compile of the module adds -iquote for that folder.
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
 // state and no generator that advances, so nothing can interleave, and a test that fails once fails every time.
@@ -72,7 +75,7 @@ typedef struct {
 // can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
-typedef __typeof__(uint64_t) (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
+typedef uint64_t (*SmithRandomHook)(SmithKey key, uint64_t n, uint64_t bits);
 
 extern SmithRandomHook smith_random_hook;
 

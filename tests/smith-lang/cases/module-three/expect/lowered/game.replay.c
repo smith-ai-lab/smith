@@ -1,5 +1,6 @@
 typedef struct { __UINT64_TYPE__ frames; lib_text_Text name; } game_replay_Replay;
 constexpr __UINT32_TYPE__ game_replay_version = 3;
+extern __UINT32_TYPE__ game_replay_counter __asm__("_game::replay::counter");
 __UINT32_TYPE__ game_replay_counter __asm__("_game::replay::counter") = 7;
 typedef struct game_replay_Handle { __INT32_TYPE__ fd; } game_replay_Handle;
 enum game_replay_Mode { game_replay_Fast, game_replay_Slow };

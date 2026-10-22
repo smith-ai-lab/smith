@@ -192,6 +192,7 @@ static void smith_lang_head_punctuator(SmithLang *lang, const SmithHost *host, c
         if (decl->name_found && lang->paren_depth == 0 && lang->bracket_depth == 0) {
             decl->in_params = true;
             decl->is_function = true;
+            lang->params_count = 0;
         }
         lang->paren_depth += 1;
     } else if (c == ')') {
@@ -272,6 +273,7 @@ static SmithLangAct smith_lang_head_name(SmithLang *lang, const SmithHost *host,
         token->watched && !decl->prev_tag ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known == nullptr) return smith_lang_head_other_name(lang, host, token, may_peek);
     decl->prev_star = false;
+    if (smith_lang_param_here(lang, known, token->text, token->length)) return smith_lang_act(SmithLangAct_Keep);
     if ((known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag) && lang->paren_depth == 0 &&
         lang->bracket_depth == 0) {
         decl->saw_type = true;
@@ -499,6 +501,9 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
             return smith_lang_act(SmithLangAct_Keep);
         }
         const SmithLangName *known = smith_lang_name_find(lang, token->text, token->length);
+        if (known != nullptr && smith_lang_is_param(lang, token->text, token->length)) {
+            return smith_lang_act(SmithLangAct_Keep); // the function's parameter, not the module's name
+        }
         if (known != nullptr && known->generic != 0) return smith_lang_act(SmithLangAct_Slow); // a call: not a rename
         if (known != nullptr) {
             const char *prefixed = smith_lang_prefixed(lang, token->text, token->length);
