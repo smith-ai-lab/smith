@@ -17,7 +17,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.
 
 `smith test [<options>]` builds the test runner and runs it. The options are the runner's own:
 - `--test <substring>` runs one test, or every test whose name contains it (a test in a `.smith` module is named as written, `geometry::box_test::area`, and `--test geometry::box_test` runs the module's tests; the source's `test_area` works as well); `--seed <n>` runs a property test on that one seed; `--seeds <n>` sets the keys per property test (100).
-- `--jobs <n>` (default: the cores; `--jobs 1` is easier to follow), `--timeout <seconds>` (10), `--shrink 0|1`, `--shuffle <seed>`, `--isolate` (a process per test), `--in-process` (no fork at all, for `smith dbg build/tests -- --test name --in-process`), `--full` (heavy checks at full size), `--trace`, `--color`, `--list`, `--verbose`, `--stats`.
+- `--jobs <n>` (default: the cores; `--jobs 1` is easier to follow), `--timeout <seconds>` (10 of CPU time per test, so load never fails a test), `--wall-timeout <seconds>` (the backstop for a blocked test, 10 times `--timeout`), `--shrink 0|1`, `--shuffle <seed>`, `--isolate` (a process per test), `--in-process` (no fork at all, for `smith dbg build/tests -- --test name --in-process`), `--full` (heavy checks at full size), `--trace`, `--color`, `--list`, `--verbose`, `--stats`.
 - A failure ends with the line to rerun it, such as `rerun: smith test --test name --seed 123`.
 
 To debug one test: `smith dbg -- build/tests --test <name> --in-process` (the runner is the `runner` line of `.smith/build.info`; in Neovim with nvim-dap, start a session with the cursor in the test function; skill smith-debug).
