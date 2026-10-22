@@ -1,0 +1,10 @@
+module main;
+
+import counter::state as state;
+import <stdio.h>;
+
+i32 main(void) {
+    state::total = 5;
+    c::printf("%u %s %llu\n", state::sum(), state::names[1], (unsigned long long)state::chosen);
+    return 0;
+}

@@ -4,8 +4,8 @@
 # The file is a first line saying where it is from, `// NOLINTBEGIN`, an include of the module's generated header
 # (include/smith/<name>.h, committed), and `smith cc --smith-lower` of the source with what the header already says
 # left out, since a translation unit may include both: the `#include`s, the `typedef struct {...} Name;` blocks and the
-# `constexpr` and one-line `typedef` declarations of the header (comments aside). It needs no compiler, so the stage0
-# writes the same bytes.
+# `constexpr`, `extern` and one-line `typedef` declarations of the header (comments aside). It needs no compiler, so
+# the stage0 writes the same bytes.
 set -eu
 smith=$1
 src=$2
@@ -29,7 +29,7 @@ trap 'rm -rf "$dir"' EXIT
                 block = block "\n" line
                 if (line ~ /^\}.*;$/) { collecting = 0; hblock[block] = 1 }
             } else if (opens(line)) { collecting = 1; block = line }
-            else if (line ~ /^(constexpr|typedef) .*;$/) hline[line] = 1
+            else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[line] = 1
             else if (line ~ /^#include/) hinclude[line] = 1
             next
         }
@@ -42,7 +42,7 @@ trap 'rm -rf "$dir"' EXIT
         /^#endif/ { depth-- }
         depth == 0 && opens($0) { collecting = 1; block = $0; next }
         depth == 0 && /^#include/ && ($0 in hinclude) { next }
-        depth == 0 && /^(constexpr|typedef) .*;$/ && ($0 in hline) { next }
+        depth == 0 && /^(constexpr|extern|typedef) .*;$/ && ($0 in hline) { next }
         { print }
     ' header_file="$dir/header.h" "$dir/header.h" "$dir/low.c"
     echo '// NOLINTEND'

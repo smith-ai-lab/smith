@@ -70,10 +70,7 @@ module smith::random;
 // pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
 // runs. smith_key_derive is not hooked, so keys stay the same and only words change.
 [[smith::c_name("SmithRandomHook")]] export typedef uint64_t (*Hook)(Key key, uint64_t n, uint64_t bits);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-variable-declarations"
 [[smith::c_name("smith_random_hook")]] export Hook hook = nullptr;
-#pragma clang diagnostic pop
 
 // [low, high)
 [[smith::c_name("SmithUniformFloat")]] export typedef struct {

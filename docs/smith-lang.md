@@ -41,6 +41,9 @@ u32 helper(void) { … }                              // private
   - `export` applies to functions, typedefs, struct, union and enum tags, enum constants, `constexpr` constants and
     globals. An export has the symbol `game::replay::open` (an `__asm__` label), so no C name can collide with it.
     `main` stays `main`.
+    An exported variable is declared before its definition in the module's own compile (`extern T name __asm__(…);`,
+    what its header says), as a C file that includes its own header has it, so a `-Werror` project with
+    `-Wmissing-variable-declarations` compiles a module with no pragma.
   - **`[[smith::c_name("Name")]]` before `export` chooses the C name** of the export, for a library that keeps its C
     API when it becomes a module (`[[smith::c_name("SmithArena")]] export typedef struct {…} Arena;`,
     `[[smith::c_name("smith_text_parse_f64")]] export bool parse_f64(…)`).
