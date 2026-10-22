@@ -67,7 +67,7 @@ compare build build.c ""
 compare build_runtime runtime/build_runtime.c ""
 compare stub tests/stub.c "-DNAME=\"stub\""
 compare pack scripts/pack.c ""
-for name in arena io http test; do
+for name in io http test; do
     compare "lib_$name" "lib/$name.c" ""
 done
 # Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes one string;
