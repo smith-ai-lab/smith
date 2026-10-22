@@ -5,17 +5,24 @@ description: "Modules in .smith files: `module a::b;`, `import a::b::c as x;`, `
 
 # Modules
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang-modules/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`.
+This skill ships in the smith plugin, from `.agents/skills/smith-lang-modules/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`. What to write in a module, and how to port C into one: `smith-idiom`.
 
-```c
+```smith
 // src/game/replay.smith
 module game::replay;                 // the path must end in game/replay.smith
-import lib::text as tx;              // binds `tx`; `import lib::text;` binds `text`
-export typedef struct { u64 frames; tx::Text name; } Replay;
+import smith::text as tx;            // binds `tx`; `import smith::text;` binds `text`
+export typedef struct {
+    u64 frames;
+    tx::Text name;
+} Replay;
 export constexpr u32 version = 3;
-export Replay open(const char *path) { … tx::make(path) … }
-export u64 checksum(const u8 *data, usize size);   // no body: defined in C or C++
-u32 helper(void) { … }                              // private
+u32 helper(void) { // private
+    return 1;
+}
+export Replay open(const char *path) {
+    return (Replay){.frames = version + helper(), .name = tx::make(path)};
+}
+export u64 checksum(const u8 *data, usize size); // no body: defined in C or C++
 ```
 
 ## The rules

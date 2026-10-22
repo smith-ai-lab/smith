@@ -14,7 +14,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 - Adopting smith in an existing C project (Makefile, CMake, plain `.c` files): `smith-adopt`, the ladder: `CC=smith-cc`, then `smith build --dump-config > build.c`, then tests, contracts and proofs, then `.c` to `.smith` one module at a time.
 - Starting a project: `smith new [--language smith|c] [name]` (a `.smith` one by default, with no build file and no config file). Then `smith run`, `smith test`, `smith check`.
 - Changing what the build does: `smith-build-levels` (conventions, `--dump-config`, fields, tasks, the low-level API), then `smith-build` (every call).
-- Writing code: `.smith` is `smith-lang`; the libraries are below.
+- Writing, editing, reviewing or porting a `.smith` file: **`smith-idiom` first** (sized types, `import` and `c::`, modules that import modules, generics, no preprocessor, capabilities; a porting checklist with counts), then `smith-lang` for the language. A `.smith` file that is C renamed is not done. The libraries are below; each leads with its `.smith` use.
 
 ## Every verb
 
@@ -29,7 +29,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 - `smith symbolize`, `<smith/trace.h>`, a log with `smith-trace` lines, sanitizer reports: `smith-trace`.
 - `smith fetch`, `smith cache`, `smith_package`: packages and the caches: `smith-packages`.
 - `smith new`: above. `smith version`: prints the version and, after `commit`, the commit smith was built from.
-- `.smith` files, C with modules (`module a::b;`, `import`, `export`, `c::printf`, `u32`): load `smith-lang`, then `smith-lang-modules`, `smith-lang-c-interop`, `smith-lang-sized-types` or `smith-lang-generics` (`constexpr type T`, `if constexpr`).
-- Libraries: `smith-arena`, `smith-io`, `smith-random`, `smith-text`, `smith-json`, `smith-test`, `smith-contract`, `smith-trace`. The build API as a module (`import smith::build;`) is in `smith-build`.
+- `.smith` files, C with modules; what to write in them is `smith-idiom` (load it first). The language (`module a::b;`, `import`, `export`, `c::printf`, `u32`): load `smith-lang`, then `smith-lang-modules`, `smith-lang-c-interop`, `smith-lang-sized-types` or `smith-lang-generics` (`constexpr type T`, `if constexpr`).
+- Libraries (each shows `.smith` first, C under "From C"): `smith-arena`, `smith-io`, `smith-random`, `smith-text`, `smith-json`, `smith-test`, `smith-contract`, `smith-trace`. The build API as a module (`import smith::build;`) is in `smith-build`.
 
 If smith is missing from PATH or seems broken, stop and tell the owner. Never swap in another compiler to get around a problem; rerun with `SMITH_VERBOSE=1` and report the command and its output.

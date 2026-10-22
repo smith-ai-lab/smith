@@ -5,9 +5,22 @@ description: "C and C++ with .smith: `import <math.h>;`, `c::printf`, `c::EOF`, 
 
 # C and C++ beside `.smith`
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang-c-interop/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`.
+This skill ships in the smith plugin, from `.agents/skills/smith-lang-c-interop/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`. `import <h>;` with `c::` names, never `#include`, is a rule of `smith-idiom`; a library that is a module (`import smith::arena;`) is used as a module, not through its C header.
 
 ## C headers into smith
+
+```smith
+import <math.h>;
+import <stdio.h>; // printf and the like are raw effects: take a capability instead (smith-io)
+
+f32 length(f32 x, f32 y) {
+    return c::sqrtf(x * x + y * y);
+}
+
+bool at_end(i32 ch) {
+    return ch == c::EOF; // a C macro, reached with c::
+}
+```
 
 `import <h>;` (or `import "h";`, looked for beside the file first) includes the header and binds `c`: `c::sqrtf(x)`, `c::EOF`, `c::WIFEXITED(s)`, `struct c::stat`. Macros work. `c::` names C only in a file that imports a header; otherwise `c` is any identifier.
 
@@ -30,7 +43,7 @@ C and C++ include it (`-I .smith/include`, with the header in the compile's `.im
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
 - The header keeps what C needs of the source: the comments directly above an `export` (a doc comment), the comments inside an exported declaration and after its last token on its line, and the `#if`/`#ifdef`/`#elif`/`#else`/`#endif` lines around exports, verbatim. The header is never preprocessed, so the includer's `-D` flags choose the branch; the module is compiled with its own flags. A blank line between a comment and the `export` makes it no doc comment.
 - `export inline T f(...) { ... }` is `static inline game_replay_f` in the header with its body, and the module defines it the same way: no symbol, so C, C++ and `.smith` importers each compile it. Its body may use only the module's other exports, its imports and C, never a private name.
-- **The header includes what the exports need and nothing else**: `<stddef.h>` and `<stdint.h>`; an imported module (`import smith::arena;`) when an export writes `arena::Name`, included relative to the header (`#include "arena.h"` beside it, `"../lib/text.h"` from another folder), so the headers of one tree find each other with no include path; a C header (`import <stdio.h>;`, `import "mine.h";`) when an export writes a name of it, `c::FILE` or `struct c::stat`. An import only a body uses stays out, so a C file that includes the header does not get stdio. With several C imports smith asks the compiler which one declares the name (a stage0 cannot, and keeps them all). An `#include` of the module never reaches the header: a module whose exports use a header's types `import`s it and writes `c::SmithArena`, not `SmithArena`. A conditional around imports (`#if __has_include("arena.h") import "arena.h"; #else import <smith/arena.h>; #endif`) is kept with them. An exported variable is declared (`extern`, with its label) before its definition in the module's own compile, so `-Wmissing-variable-declarations -Werror` needs no pragma.
+- **The header includes what the exports need and nothing else**: `<stddef.h>` and `<stdint.h>`; an imported module (`import smith::arena;`) when an export writes `arena::Name`, included relative to the header (`#include "arena.h"` beside it, `"../lib/text.h"` from another folder), so the headers of one tree find each other with no include path; a C header (`import <stdio.h>; // printf and the like are raw effects: take a capability instead (smith-io)`, `import "mine.h";`) when an export writes a name of it, `c::FILE` or `struct c::stat`. An import only a body uses stays out, so a C file that includes the header does not get stdio. With several C imports smith asks the compiler which one declares the name (a stage0 cannot, and keeps them all). An `#include` of the module never reaches the header: a module whose exports use a header's types `import`s it and writes `c::SmithArena`, not `SmithArena`. A conditional around imports (`#if __has_include("arena.h") import "arena.h"; #else import <smith/arena.h>; #endif`) is kept with them. An exported variable is declared (`extern`, with its label) before its definition in the module's own compile, so `-Wmissing-variable-declarations -Werror` needs no pragma.
 - A header is written without macros (a `#define` of the module is not copied): keep a macro out of an export's signature.
 - Link C++ with `smith c++`.
 
