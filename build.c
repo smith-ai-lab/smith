@@ -137,7 +137,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // include/smith/<name>.h, are generated and committed, because the stage0 has no hook and embeds them as bytes. Porting
 // a library adds its name here. `smith build headers` regenerates them; `check-headers` (a test, so part of `smith
 // check`) fails when a committed header differs from what its module generates.
-static const char *const build_generated_headers[] = {"random", "text", nullptr};
+static const char *const build_generated_headers[] = {"build", "random", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -434,6 +434,7 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
     "include/smith/build.h",
+    "lib/smith/build.smith",
     "runtime/build_runtime.c",
     "runtime/package.c",
     "runtime/gzip.c",
@@ -589,6 +590,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/random.smith",
                           smith_cat(b, flags, smith_list(b, "-iquote", "include/smith", nullptr), nullptr));
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -616,6 +618,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
     {"bootstrap", "bootstrap", nullptr, nullptr, 0},
     {"build", "build", nullptr, nullptr, 1},
+    {"build-smith", "build-smith", nullptr, nullptr, 1},
     {"cache", "cache", nullptr, nullptr, 0},
     {"contract", "contract", nullptr, nullptr, 0},
     {"conventions", "conventions", nullptr, nullptr, 1},
