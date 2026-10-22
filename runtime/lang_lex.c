@@ -562,9 +562,17 @@ size_t smith_lang_interface_capacity(void) {
     return sizeof smith_lang_header_full;
 }
 
-// Holds one saved state, not a stack: a second save before the restore overwrites the first, and the caller's tables
-// are lost. Read imported modules before setting the run aside (smith_raw_prefetch), never inside it.
+static bool smith_lang_aside_held; // a state is set aside and not yet restored
+
+// Holds one saved state, not a stack: a second save before the restore would overwrite the first, and the caller's
+// tables would be lost without a word, so it stops instead. Read imported modules before setting the run aside
+// (smith_raw_prefetch), never inside it.
 static void smith_lang_keep_aside(bool save) {
+    SMITH_ASSERT(save != smith_lang_aside_held &&
+                 "smith_lang_keep_aside: the lowering set its state aside twice (it holds one state, not a stack), "
+                 "or restored one never saved; a module's interface was read while another was being read, so read "
+                 "imported modules first with smith_raw_prefetch");
+    smith_lang_aside_held = save;
     if (save) {
         memcpy(&smith_lang_saved_instance, &smith_lang_instance, sizeof smith_lang_instance);
         memcpy(smith_lang_saved_chars, smith_lang_chars, sizeof smith_lang_chars);
