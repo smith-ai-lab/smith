@@ -455,6 +455,11 @@ void build(SmithBuild *b) {
   in `.smith`) compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
   and random: its header and source are scanned the same way). `import smith::io;` is not possible yet: io is a C
   library, importable as the header only. `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
+  The same resolver serves `smith_library`: `smith_program` links, beside the objects it is given, the libraries that
+  the libraries among them need (found by scanning their header and source, `smith_library_needs`), so naming
+  `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random). A needed library
+  is the object the project made of that source (any `smith_object` of it), else one compiled with the flags and
+  compiler of the library that needs it, as `<folder of its object>/<name>.o`.
 - **Tests:** every `.smith` file and every `test_*.c` below `tests/`, built with the debug flags. The code under test is
   the program's debug objects but the entry's, so there are no second compiles of it; what only a test includes or
   imports is compiled for the tests, and so is a library only they use. No test file means no task.
@@ -1038,9 +1043,16 @@ translate it or delete it. The output is the low-level API
   true` for `test`), because build.c may not name a task after a verb. `$(MAKE) goal` is the goal as a prerequisite, and `$(MAKE) -C
   dir goal` reads the Makefile in `dir` too: its targets the goal needs join the graph named `dir/name` and their
   commands run in `(cd 'dir' && ...)`.
-- **Readable.** A variable that a recipe uses as whole words becomes a named array with the Makefile's name
-  (`const char *const *WARNINGS = ...`), the arrays that name other arrays are defined after them, and each declaration has a
-  comment with the Makefile line it came from.
+- **Readable.** A variable that a recipe uses as whole words becomes a named array (`const char *const *build_warnings =
+  ...` for `WARNINGS`), an option is `build_cflags` for `CFLAGS`: `build_` and the name in lower case, as smith's naming
+  rules ask (two names that differ only in case get a number), the arrays that name other arrays are defined after
+  them, and each declaration has a comment with the Makefile line and name it came from.
+- **Clean.** The file passes `smith lint` and `smith fmt --dry-run` with smith's defaults: it is written through
+  `smith fmt`, and a file that would not fit a function of 70 lines (`readability-function-size`) is written as a
+  function for each run of targets (`part_1`, `part_2`, ...), with the options, the arrays and the objects as `static`
+  variables at the top, a list of more than 30 words in pieces (`name = smith_cat(b, name, ...)`), and `build()` calling
+  the parts. A single declaration longer than a function (one recipe of a hundred lines) cannot be split, and lint says
+  so. `tests/make.sh` lints and format-checks every translation.
 - **Reported, not guessed**, on standard error as `smith: Makefile:12: not translated: ...` and in a comment at the top of
   the file: `vpath` and `VPATH`, `.SECONDEXPANSION`, double-colon rules, target-specific and pattern-specific variables,
   `$(eval)` in a recipe, `export`, `!=`, a variable on a `$(MAKE)` command line, `$(shell ...)` other than the platform
@@ -1268,9 +1280,11 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // the build file asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random",
-// "test", "text", "trace"; random and io use the arena (io uses random too), so a project that compiles one compiles
-// them all; smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them; "contract"
-// needs "trace").
+// "test", "text", "trace"). Naming a library is enough: smith_program also links the libraries that the libraries it
+// links need ("io" brings "arena" and "random", "contract" brings "trace"), each as the object the project made of that
+// source or else one compiled with the flags of the library that needs it, <folder of its object>/<name>.o; the
+// libraries are found by scanning the library's header and source, as smith_app does. smith_tests compiles "test",
+// "arena", "random", "trace" and "contract" unless .objects has them.
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in the build file. There is no

@@ -153,24 +153,9 @@ static bool smith_make_lex(const char *text, bool shell, SmithMakeArgv *out) {
 
 // ---- Names in C
 
-static const char *const smith_make_c_keywords[] = {
-    "auto",   "break",    "case",      "char",     "const", "continue", "default", "do",        "double",
-    "else",   "enum",     "extern",    "float",    "for",   "goto",     "if",      "inline",    "int",
-    "long",   "register", "restrict",  "return",   "short", "signed",   "sizeof",  "static",    "struct",
-    "switch", "typedef",  "union",     "unsigned", "void",  "volatile", "while",   "bool",      "true",
-    "false",  "nullptr",  "constexpr", "typeof",   "b",     "main",     "build",   "make_words"};
-
-// The C name of a Makefile variable's array: its own name where that is a C name that nothing else uses.
+// The C name of a Makefile variable's array: build_ and its name in lower case (the same rule as an option's).
 static const char *smith_make_array_name(const SmithMakeVar *var) {
-    const char *name = smith_make_c_name(var->name);
-    bool bad = name[0] >= '0' && name[0] <= '9';
-    for (size_t i = 0; i < sizeof smith_make_c_keywords / sizeof smith_make_c_keywords[0]; i++) {
-        if (strcmp(name, smith_make_c_keywords[i]) == 0) bad = true;
-    }
-    if (strncmp(name, "option_", 7) == 0 || strncmp(name, "object_", 7) == 0 || strncmp(name, "program_", 8) == 0 ||
-        strncmp(name, "step_", 5) == 0)
-        bad = true;
-    return bad ? smith_make_format("%s_", name) : name;
+    return smith_make_ident(var->name);
 }
 
 // ---- Lists
@@ -181,6 +166,62 @@ typedef struct {
 } SmithMakeOutput;
 
 static SmithMakeOutput smith_make_output;
+
+// A unit is a piece of build.c that stands alone: an option, an array or what one target makes. A build.c that does not
+// fit a function of 70 lines (readability-function-size in smith's .clang-tidy) is written as one function for each run
+// of units, and a unit's variable (an option, an array, an object a program names) moves to the top of the file as a
+// `static`, where each function reaches it.
+constexpr size_t smith_make_units_max = 65536;
+
+typedef struct {
+    size_t start; // the unit's text is buffer[start .. end)
+    size_t end;
+    const char *type; // the variable it declares, if any, as `type name = ` at text[decl_at .. decl_at + decl_length)
+    const char *name;
+    size_t decl_at;
+    size_t decl_length;
+    bool maybe_unused; // nothing reads the variable (an option the build never uses): [[maybe_unused]]
+} SmithMakeUnit;
+
+typedef struct {
+    SmithMakeBuffer *buffer;
+    SmithMakeUnit *units;
+    size_t count;
+} SmithMakeUnits;
+
+static SmithMakeUnits *smith_make_unit_list; // the list that units are being made in
+
+static void smith_make_units_init(SmithMakeUnits *list, SmithMakeBuffer *buffer) {
+    list->buffer = buffer;
+    list->units = smith_make_alloc(smith_make_units_max * sizeof(SmithMakeUnit));
+    list->count = 0;
+}
+
+static void smith_make_unit_begin(SmithMakeUnits *list) {
+    SMITH_ASSERT(list->count < smith_make_units_max);
+    smith_make_unit_list = list;
+    list->units[list->count] = (SmithMakeUnit){.start = list->buffer->length, .end = list->buffer->length};
+}
+
+// Ends the unit; one that wrote nothing is not kept.
+static void smith_make_unit_end(void) {
+    SmithMakeUnits *list = smith_make_unit_list;
+    SmithMakeUnit *unit = &list->units[list->count];
+    unit->end = list->buffer->length;
+    if (unit->end > unit->start) list->count++;
+}
+
+// The declaration `    type name = ` of the unit's variable; the caller writes what it is set to.
+static void smith_make_put_decl(SmithMakeBuffer *out, const char *type, const char *name, bool maybe_unused) {
+    SmithMakeUnit *unit = &smith_make_unit_list->units[smith_make_unit_list->count];
+    unit->type = type;
+    unit->name = name;
+    unit->maybe_unused = maybe_unused;
+    unit->decl_at = out->length;
+    smith_make_put_format(out, "    %s%s%s%s = ", maybe_unused ? "[[maybe_unused]] " : "", type,
+                          type[strlen(type) - 1] == '*' ? "" : " ", name);
+    unit->decl_length = out->length - unit->decl_at;
+}
 
 // Every array a list named, in order, so that an array is defined after the arrays its definition names.
 constexpr size_t smith_make_ref_log_max = 65536;

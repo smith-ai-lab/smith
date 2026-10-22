@@ -3130,6 +3130,84 @@ expect_contains "-DCC=smith: ... with the hint" "$err" "use \"smith-cc\" for C"
 capture env CC=smith-cc "$smith" build
 expect "CC=smith-cc still builds" 0 "$rc"
 
+# 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "io" brings the arena and random,
+# whether the project passes them to smith_program or not (smith_program adds what the libraries it links need).
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-g", "-I", ".smith/include", nullptr);
+    SmithObject main = {.compiler = "smith-cc", .source = "main.c", .output = "build/main.o", .flags = flags};
+    smith_object(b, &main);
+    SmithObject contract = {.compiler = "smith-cc", .source = smith_library(b, "contract"), .output = "build/smith/contract.o", .flags = flags};
+    smith_object(b, &contract);
+    SmithProgram program = {
+        .linker = "smith-cc",
+        .output = "build/app",
+        .objects = (const SmithObject *[]){&main, &contract, nullptr},
+    };
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+}
+C
+cat >main.c <<'C'
+#include <smith/contract.h>
+
+static int positive(int value) {
+    smith_requires(value > 0);
+    return value;
+}
+
+int main(int argc, char **argv) {
+    (void)argv;
+    return positive(argc - 1);
+}
+C
+build
+expect "library needs: contract alone links (trace comes with it)" 0 "$rc"
+expect "library needs: ... and brings trace's object" build/smith/trace.o "$(ls build/smith/trace.o)"
+capture build/app
+expect_status "library needs: a failing contract aborts" fail
+expect_contains "library needs: ... with its report" "$err" "requires failed"
+project
+cat >build.c <<'C'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const *flags = smith_list(b, "-std=gnu23", "-Wall", "-Werror", "-I", ".smith/include", nullptr);
+    SmithObject main = {.compiler = "smith-cc", .source = "main.c", .output = "build/main.o", .flags = flags};
+    smith_object(b, &main);
+    SmithObject io = {.compiler = "smith-cc", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};
+    smith_object(b, &io);
+    SmithProgram program = {
+        .linker = "smith-cc",
+        .output = "build/app",
+        .objects = (const SmithObject *[]){&main, &io, nullptr},
+    };
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+}
+C
+cat >main.c <<'C'
+#include <smith/io.h>
+
+#include <stdio.h>
+
+int main(int argc, char **argv) {
+    SmithIo io = smith_io_make(argc, argv);
+    printf("seed %d\n", io.seed != 0);
+    return 0;
+}
+C
+build
+expect "library needs: io alone links (arena and random come with it)" 0 "$rc"
+expect "library needs: ... their objects are made beside io's" "build/smith/arena.o build/smith/random.o" "$(ls build/smith/arena.o build/smith/random.o | tr '\n' ' ' | sed 's/ $//')"
+capture build/app
+expect "library needs: ... and the program runs" "0 seed 1" "$rc $out"
+build
+expect_contains "library needs: a second build changes nothing" "$out$err" "no work to do"
+
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build

@@ -10,38 +10,67 @@ static void smith_make_emit_options(SmithMakeBuffer *out) {
     for (size_t i = 0; i < smith_make.var_count; i++) {
         const SmithMakeVar *var = &smith_make.vars[i];
         if (!var->option) continue;
-        if (!any) smith_make_put_text(out, "    // Options: `make NAME=value` is `smith build -DNAME=value`.\n");
-        any = true;
         const char *fallback = var->fallback != nullptr ? var->fallback : "";
         const char *plain = smith_make_unmark(fallback);
         const char *name = smith_make_literal(var->name, strlen(var->name));
+        smith_make_unit_begin(smith_make_unit_list);
+        if (!any) smith_make_put_text(out, "    // Options: `make NAME=value` is `smith build -DNAME=value`.\n");
+        any = true;
+        // an option nothing in the targets reads (a wildcard read at its default) is declared all the same
+        bool read = strstr(smith_make_output.body->data, smith_make_ident(var->name)) != nullptr;
+        smith_make_put_decl(out, "const char *", smith_make_ident(var->name), !read);
         smith_make_put_format(out,
-                              "    const char *option_%s = smith_option_value(b, %s, smith_env(b, %s, %s), "
-                              "\"%s, as `make %s=...` (%s:%u)\");\n",
-                              smith_make_c_name(var->name), name, name, smith_make_render(plain, strlen(plain)),
-                              var->name, var->name, var->where.file != nullptr ? var->where.file : "", var->where.line);
+                              "smith_option_value(b, %s, smith_env(b, %s, %s), \"%s, as `make %s=...` (%s:%u)\");\n",
+                              name, name, smith_make_render(plain, strlen(plain)), var->name, var->name,
+                              var->where.file != nullptr ? var->where.file : "", var->where.line);
+        smith_make_unit_end();
     }
     if (any) smith_make_put_char(out, '\n');
 }
 
 // ---- Arrays
 
+constexpr size_t smith_make_piece_words = 30; // a list of more words is written in pieces, a statement each
+
 typedef struct {
     size_t var;
-    const char *text;
+    const char *text;  // the list, or its first piece
+    const char **more; // the other pieces, each joined to the array with smith_cat
+    size_t more_count;
     size_t deps_first; // the arrays it names, in the reference log
     size_t deps_count;
     bool emitted;
 } SmithMakeArray;
 
 // The definition of a variable's array: its value as a list, the uses of other variables in it as their arrays.
-static const char *smith_make_array_definition(const SmithMakeVar *var) {
+static void smith_make_array_definition(const SmithMakeVar *var, SmithMakeArray *array) {
     const char *marked = var->simple ? var->marked : smith_make_expand_text(var->value, true);
     SmithMakeArgv argv;
+    array->more = nullptr;
+    array->more_count = 0;
     // read as the shell reads a command, so that the array holds the words the command had
-    if (!smith_make_lex(marked, true, &argv) && !smith_make_lex(marked, false, &argv))
-        return "(const char *[]){nullptr}";
-    return smith_make_list_all(&argv);
+    if (!smith_make_lex(marked, true, &argv) && !smith_make_lex(marked, false, &argv)) {
+        array->text = "(const char *[]){nullptr}";
+        return;
+    }
+    size_t *indices = smith_make_alloc((argv.count + 1) * sizeof(size_t));
+    for (size_t i = 0; i < argv.count; i++)
+        indices[i] = i;
+    size_t pieces = (argv.count + smith_make_piece_words - 1) / smith_make_piece_words;
+    if (pieces <= 1) {
+        array->text = smith_make_list(&argv, indices, argv.count);
+        return;
+    }
+    array->more = smith_make_new_list(pieces);
+    for (size_t k = 0; k < pieces; k++) {
+        size_t first = k * smith_make_piece_words;
+        size_t count = argv.count - first < smith_make_piece_words ? argv.count - first : smith_make_piece_words;
+        const char *piece = smith_make_list(&argv, indices + first, count);
+        if (k == 0)
+            array->text = piece;
+        else
+            array->more[array->more_count++] = piece;
+    }
 }
 
 // Every array that is used, and the arrays those use, until there are no more.
@@ -59,7 +88,7 @@ static size_t smith_make_collect_arrays(SmithMakeArray *arrays, size_t capacity)
             if (known) continue;
             size_t before = smith_make_ref_log_count;
             arrays[count].var = v;
-            arrays[count].text = smith_make_array_definition(var);
+            smith_make_array_definition(var, &arrays[count]);
             arrays[count].deps_first = before;
             arrays[count].deps_count = smith_make_ref_log_count - before;
             arrays[count].emitted = false;
@@ -80,13 +109,24 @@ static bool smith_make_array_ready(const SmithMakeArray *arrays, size_t count, c
     return true;
 }
 
-static void smith_make_emit_array(SmithMakeBuffer *out, const SmithMakeArray *array) {
+static void smith_make_emit_array(SmithMakeBuffer *out, const SmithMakeArray *array, const char *intro) {
     const SmithMakeVar *var = &smith_make.vars[array->var];
+    smith_make_unit_begin(smith_make_unit_list);
+    smith_make_put_text(out, intro);
     const char *value =
         smith_make_summary(var->source != nullptr ? var->source : var->value, smith_make_comment_width - 12);
     smith_make_put_format(out, "    // %s:%u  %s %s %s\n", var->where.file != nullptr ? var->where.file : "",
                           var->where.line, var->name, var->simple ? ":=" : "=", value);
-    smith_make_put_format(out, "    const char *const *%s = %s;\n", smith_make_array_name(var), array->text);
+    smith_make_put_decl(out, "const char *const *", smith_make_array_name(var), false);
+    smith_make_put_format(out, "%s;\n", array->text);
+    smith_make_unit_end();
+    for (size_t k = 0; k < array->more_count;
+         k++) { // a piece is a statement, so that a long list can be several functions
+        smith_make_unit_begin(smith_make_unit_list);
+        smith_make_put_format(out, "    %s = smith_cat(b, %s, %s, nullptr);\n", smith_make_array_name(var),
+                              smith_make_array_name(var), array->more[k]);
+        smith_make_unit_end();
+    }
 }
 
 // The arrays in the order of the Makefile, each after the arrays it names.
@@ -95,7 +135,6 @@ static void smith_make_emit_arrays(SmithMakeBuffer *out) {
     SmithMakeArray *arrays = smith_make_alloc(capacity * sizeof(SmithMakeArray));
     size_t count = smith_make_collect_arrays(arrays, capacity);
     if (count == 0) return;
-    smith_make_put_text(out, "    // Variables the commands below use as whole lists, named as in the Makefile.\n");
     for (size_t done = 0; done < count; done++) {
         SmithMakeArray *next = nullptr;
         for (size_t k = 0; k < count; k++) {
@@ -108,7 +147,10 @@ static void smith_make_emit_arrays(SmithMakeBuffer *out) {
                 if (!arrays[k].emitted) next = &arrays[k];
             }
         }
-        smith_make_emit_array(out, next);
+        smith_make_emit_array(out, next,
+                              done == 0 ? "    // Variables the commands below use as whole lists, named as in the "
+                                          "Makefile.\n"
+                                        : "");
         next->emitted = true;
     }
     smith_make_put_char(out, '\n');
@@ -284,6 +326,222 @@ static void smith_make_emit_header(FILE *out, const char *path) {
     fprintf(out, "#include <smith/build.h>\n#include <string.h>\n\n");
 }
 
+// ---- Formatting: build.c is written the way `smith fmt` writes it
+
+// Runs `smith fmt` (smith's .clang-format, or the project's) on a file. False where it cannot run: the stage0 without a
+// clang-format, then the text stays as it is written.
+static bool smith_make_format_files(FILE *in, FILE *out) {
+    char self[PATH_MAX];
+    if (!smith_self_path(self)) return false;
+    fflush(in);
+    SMITH_ASSERT(fseek(in, 0, SEEK_SET) == 0);
+    char *args[] = {self, (char *)"fmt", (char *)"--assume-filename=build.c", nullptr};
+    posix_spawn_file_actions_t actions;
+    SMITH_ASSERT(posix_spawn_file_actions_init(&actions) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, fileno(in), 0) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, fileno(out), 1) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
+    pid_t pid = 0;
+    bool done = false;
+    if (posix_spawn(&pid, self, &actions, nullptr, args, environ) == 0) {
+        int status = 0;
+        int waited = -1;
+        for (int i = 0; i < 1000 && waited < 0; i++) // bounded; only a signal interrupts the wait
+            waited = waitpid(pid, &status, 0);
+        done = waited >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    return done;
+}
+
+// The text, formatted, in out; false where the formatter cannot run.
+static bool smith_make_format_text(const char *text, size_t length, SmithMakeBuffer *out) {
+    FILE *in = tmpfile();
+    FILE *formatted = tmpfile();
+    bool done = in != nullptr && formatted != nullptr && fwrite(text, 1, length, in) == length &&
+                smith_make_format_files(in, formatted);
+    if (done) {
+        SMITH_ASSERT(fseek(formatted, 0, SEEK_SET) == 0);
+        char chunk[65536];
+        for (size_t n = fread(chunk, 1, sizeof chunk, formatted); n > 0; n = fread(chunk, 1, sizeof chunk, formatted))
+            smith_make_put(out, chunk, n);
+    }
+    if (in != nullptr) fclose(in);
+    if (formatted != nullptr) fclose(formatted);
+    return done;
+}
+
+// ---- Functions: one when build.c is small, else one for each run of units
+
+// A function may hold 68 lines between its braces (readability-function-size in smith's .clang-tidy, LineThreshold 69).
+constexpr size_t smith_make_function_lines =
+    62; // with room for what the formatter does to the lines of a variable moved
+
+// The lines a unit takes once formatted, estimated: a long line is wrapped at about a hundred characters.
+static size_t smith_make_unit_estimate(const SmithMakeBuffer *buffer, const SmithMakeUnit *unit) {
+    size_t lines = 0;
+    size_t length = 0;
+    for (size_t i = unit->start; i < unit->end; i++) {
+        if (buffer->data[i] != '\n') {
+            length++;
+            continue;
+        }
+        lines += 1 + (length > 100 ? (length - 1) / 100 : 0);
+        length = 0;
+    }
+    return lines + (length > 0 ? 1 + (length > 100 ? (length - 1) / 100 : 0) : 0);
+}
+
+typedef struct {
+    const SmithMakeUnits *lists[2]; // the options and arrays, then what the targets make
+    size_t *lines[2];               // the lines each unit takes, a blank line before it included
+} SmithMakeSizes;
+
+// How many lines each unit takes: counted in the formatter's output, with every unit as a function of its own; where
+// the formatter cannot run, estimated.
+static void smith_make_measure(SmithMakeSizes *sizes) {
+    SmithMakeBuffer text;
+    smith_make_buffer_init(&text, smith_make_body_size);
+    size_t number = 0;
+    for (size_t l = 0; l < 2; l++) {
+        const SmithMakeUnits *list = sizes->lists[l];
+        sizes->lines[l] = smith_make_alloc((list->count + 1) * sizeof(size_t));
+        for (size_t k = 0; k < list->count; k++, number++) {
+            smith_make_put_format(&text, "static void unit_%zu(SmithBuild *b) {\n", number);
+            smith_make_put(&text, list->buffer->data + list->units[k].start, list->units[k].end - list->units[k].start);
+            smith_make_put_text(&text, "}\n\n");
+        }
+    }
+    SmithMakeBuffer formatted;
+    smith_make_buffer_init(&formatted, smith_make_body_size);
+    bool measured = smith_make_format_text(text.data, text.length, &formatted);
+    number = 0;
+    const char *from = formatted.data;
+    for (size_t l = 0; l < 2; l++) {
+        const SmithMakeUnits *list = sizes->lists[l];
+        for (size_t k = 0; k < list->count; k++, number++) {
+            const SmithMakeUnit *unit = &list->units[k];
+            size_t lines = smith_make_unit_estimate(list->buffer, unit);
+            const char *open =
+                measured ? strstr(from, smith_make_format("static void unit_%zu(SmithBuild *b) {\n", number)) : nullptr;
+            const char *close = open != nullptr ? strstr(open, "\n}\n") : nullptr;
+            if (close != nullptr) {
+                lines = 0;
+                for (const char *c = strchr(open, '\n') + 1; c <= close; c++)
+                    lines += *c == '\n';
+                from = close;
+            }
+            sizes->lines[l][k] = lines + 1;
+        }
+    }
+}
+
+// A unit's text in a function of its own: the variable it declares is the file's, so its declaration is an assignment.
+static void smith_make_put_unit(FILE *out, const SmithMakeUnits *list, const SmithMakeUnit *unit, bool moved) {
+    const char *data = list->buffer->data;
+    if (!moved || unit->type == nullptr) {
+        fwrite(data + unit->start, 1, unit->end - unit->start, out);
+        return;
+    }
+    fwrite(data + unit->start, 1, unit->decl_at - unit->start, out);
+    bool object = strcmp(unit->type, "SmithObject") == 0;
+    bool array = strcmp(unit->type, "const char *const *") == 0;
+    fprintf(out, "    %s = %s", unit->name, object ? "(SmithObject)" : array ? "smith_cat(b, " : "");
+    size_t after = unit->decl_at + unit->decl_length;
+    size_t end = unit->end;
+    if (array) end -= 2; // the `;` and the newline: a list in a literal ends with its block, smith_cat's copy does not
+    fwrite(data + after, 1, end - after, out);
+    if (array) fputs(", nullptr);\n", out);
+}
+
+// Whether the units use the parameter b.
+static bool smith_make_units_use_b(const SmithMakeUnits *list, size_t first, size_t last) {
+    for (size_t k = first; k < last; k++) {
+        const SmithMakeUnit *unit = &list->units[k];
+        if (unit->type != nullptr && strcmp(unit->type, "const char *const *") == 0) return true;
+        for (size_t i = unit->start; i + 3 < unit->end; i++) {
+            const char *at = list->buffer->data + i;
+            if (strncmp(at, "(b,", 3) == 0 || strncmp(at, "(b)", 3) == 0 || strncmp(at, "b->", 3) == 0) return true;
+        }
+    }
+    return false;
+}
+
+// The variables the units declare, at the top of the file.
+static void smith_make_put_statics(FILE *out, const SmithMakeUnits *list) {
+    bool any = false;
+    for (size_t i = 0; i < list->count; i++) {
+        const SmithMakeUnit *unit = &list->units[i];
+        if (unit->type == nullptr) continue;
+        any = true;
+        fprintf(out, "%sstatic %s%s%s;\n", unit->maybe_unused ? "[[maybe_unused]] " : "", unit->type,
+                unit->type[strlen(unit->type) - 1] == '*' ? "" : " ", unit->name);
+    }
+    if (any) fputc('\n', out);
+}
+
+// The units of a list, in functions of at most smith_make_function_lines lines; part counts the functions so far.
+static size_t smith_make_put_parts(FILE *out, const SmithMakeUnits *list, const size_t *lines, size_t part) {
+    size_t i = 0;
+    while (i < list->count) {
+        size_t used = 0;
+        size_t first = i;
+        while (i < list->count && (i == first || used + lines[i] <= smith_make_function_lines)) {
+            used += lines[i];
+            i++;
+        }
+        fprintf(out, "static void part_%zu(SmithBuild *b) {\n", ++part);
+        if (!smith_make_units_use_b(list, first, i)) fputs("    (void)b;\n", out);
+        for (size_t k = first; k < i; k++)
+            smith_make_put_unit(out, list, &list->units[k], true);
+        fputs("}\n\n", out);
+    }
+    return part;
+}
+
+// The functions of build.c: build() alone while it fits, else the variables as statics, a function for each run of
+// units and a build() that calls them in order and sets the default.
+static void smith_make_put_functions(FILE *out, const SmithMakeUnits *head, const SmithMakeUnits *body,
+                                     const SmithMakeBuffer *tail) {
+    SmithMakeSizes sizes = {{head, body}, {nullptr, nullptr}};
+    smith_make_measure(&sizes);
+    size_t lines = 4; // the blank lines the head keeps between its sections
+    for (size_t l = 0; l < 2; l++) {
+        for (size_t k = 0; k < sizes.lists[l]->count; k++)
+            lines += sizes.lines[l][k];
+    }
+    for (size_t i = 0; i < tail->length; i++)
+        lines += tail->data[i] == '\n';
+    if (lines <= smith_make_function_lines) {
+        fputs("void build(SmithBuild *b) {\n", out);
+        fwrite(head->buffer->data, 1, head->buffer->length, out);
+        size_t skip = body->buffer->length > 0 && body->buffer->data[0] == '\n' ? 1 : 0;
+        fwrite(body->buffer->data + skip, 1, body->buffer->length - skip, out);
+        fwrite(tail->data, 1, tail->length, out);
+        fputs("}\n", out);
+        return;
+    }
+    smith_make_put_statics(out, head);
+    smith_make_put_statics(out, body);
+    size_t parts = smith_make_put_parts(out, head, sizes.lines[0], 0);
+    parts = smith_make_put_parts(out, body, sizes.lines[1], parts);
+    constexpr size_t calls_max = 60; // more functions than build() holds calls are called from groups
+    size_t groups = parts > calls_max ? (parts + calls_max - 1) / calls_max : 0;
+    for (size_t g = 0; g < groups; g++) {
+        fprintf(out, "static void group_%zu(SmithBuild *b) {\n", g + 1);
+        for (size_t i = g * calls_max + 1; i <= parts && i <= (g + 1) * calls_max; i++)
+            fprintf(out, "    part_%zu(b);\n", i);
+        fputs("}\n\n", out);
+    }
+    fputs("void build(SmithBuild *b) {\n", out);
+    for (size_t i = 1; groups == 0 && i <= parts; i++)
+        fprintf(out, "    part_%zu(b);\n", i);
+    for (size_t g = 1; g <= groups; g++)
+        fprintf(out, "    group_%zu(b);\n", g);
+    fwrite(tail->data, 1, tail->length, out);
+    fputs("}\n", out);
+}
+
 // Prints the translation of the Makefile at path to out. Warnings about what is not translated go to stderr.
 static int smith_make_translate(const char *path, FILE *out) {
     smith_make.file = path;
@@ -294,6 +552,9 @@ static int smith_make_translate(const char *path, FILE *out) {
     SmithMakeBuffer body;
     smith_make_buffer_init(&body, smith_make_body_size);
     smith_make_output.body = &body;
+    SmithMakeUnits body_units;
+    smith_make_units_init(&body_units, &body);
+    smith_make_unit_list = &body_units;
     SmithMakeGraph *g = &smith_make_graph;
     size_t *order = smith_make_nodes_in_order();
     for (size_t pass = 0; pass < 2; pass++) { // the objects first, so that a program can name them
@@ -303,9 +564,15 @@ static int smith_make_translate(const char *path, FILE *out) {
             if (object == (pass == 0)) smith_make_emit_node(&g->nodes[i], &smith_make_infos[i]);
         }
     }
-    smith_make_emit_default(&body);
+    body.data[body.length] = '\0';
+    SmithMakeBuffer tail;
+    smith_make_buffer_init(&tail, 65536);
+    smith_make_emit_default(&tail);
     SmithMakeBuffer head;
     smith_make_buffer_init(&head, smith_make_body_size);
+    SmithMakeUnits head_units;
+    smith_make_units_init(&head_units, &head);
+    smith_make_unit_list = &head_units;
     smith_make_emit_options(&head);
     smith_make_emit_arrays(&head);
     for (size_t i = 0; i < g->missing_count; i++) {
@@ -314,11 +581,7 @@ static int smith_make_translate(const char *path, FILE *out) {
     }
     smith_make_emit_header(out, path);
     if (smith_make_output.words_used) fputs(smith_make_words_helper, out);
-    fputs("void build(SmithBuild *b) {\n", out);
-    fwrite(head.data, 1, head.length, out);
-    fwrite(body.data + (body.length > 0 && body.data[0] == '\n' ? 1 : 0), 1,
-           body.length - (body.length > 0 && body.data[0] == '\n' ? 1 : 0), out);
-    fputs("}\n", out);
+    smith_make_put_functions(out, &head_units, &body_units, &tail);
     for (size_t i = 0; i < smith_make.diag_count; i++) {
         const SmithMakeDiag *diag = &smith_make.diags[i];
         if (strncmp(diag->message, "note: ", 6) != 0)
