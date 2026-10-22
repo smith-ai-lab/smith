@@ -12,9 +12,6 @@ work=$(mktemp -d)
 editor_work=$(mktemp -d)
 trap 'rm -rf "$work" "$editor_work"' EXIT INT TERM
 export XDG_DATA_HOME=$work/data
-# The projects below test the language, not smith's checks (which the editor runs in a project with no .clang-tidy): this
-# one, above all of them, turns the checks off. The editor's own tests are in a folder of their own, below.
-printf 'Checks: "-*"\n' >"$work/.clang-tidy"
 export XDG_CACHE_HOME=$work/cache
 mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 export PATH=$work/bin:$PATH
@@ -532,6 +529,29 @@ expect "editor: a project's .clang-format replaces smith's (an indent of 3)" 1 \
 expect "editor: ... and none of smith's indent" 0 "$(printf '%s\n' "$log" | grep -Fxc 'format-edit \n    ')"
 expect "editor: a project's .clang-tidy replaces smith's (no recursion finding)" 0 \
     "$(printf '%s\n' "$log" | grep -c '^diag .*recursive')"
+
+# smith's naming check judges a .smith file's names as written (`Box`, not `m_Box`), in the editor as in `smith lint`: a
+# well-named typedef and enum are quiet, a badly named typedef is flagged at the written name.
+mkdir -p editor-smith
+cat >editor-smith/m.smith <<'SMITH'
+module m;
+
+export typedef struct {
+    u32 a;
+} Box;
+
+export typedef enum {
+    Mode_Fast,
+    Mode_Slow,
+} Mode;
+
+export typedef struct {
+    u32 a;
+} bad_type;
+SMITH
+log=$(client_in "$(cd editor-smith && pwd -P)" open m.smith)
+expect "editor: a .smith typedef is judged as written (only bad_type is flagged)" \
+    "diag m.smith:14:3: Invalid case style for typedef 'bad_type' (fix available)" "$(printf '%s\n' "$log" | grep '^diag ')"
 
 echo
 echo "$total language server checks, $failures failed"

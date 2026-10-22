@@ -98,6 +98,16 @@ project() {
 translate() {
     "$smith" build --dump-config >build.c 2>dump.err
     rc=$?
+    [ "$rc" -eq 0 ] && tidy_check
+}
+
+# The build.c a translation wrote passes `smith lint` and `smith fmt --dry-run` with smith's defaults (a project with no
+# .clang-tidy or .clang-format of its own): names in lower case, functions of at most 70 lines, formatted.
+tidy_check() {
+    "$smith" lint >lint.log 2>&1
+    findings=$(grep -E '^build\.c:[0-9]+:[0-9]+: (warning|error)' lint.log)
+    formatting=$("$smith" fmt --dry-run build.c 2>&1 | grep -c 'clang-format-violations')
+    expect "translation $cases: build.c is lint-clean and format-clean" "none 0" "${findings:-none} $formatting"
 }
 
 # main.c prints R1 .. R<count> (strings, or "unset"), which the Makefile gives as -DRn='"value"'.
@@ -421,7 +431,7 @@ prog: main.c
 MK
 translate
 same_output "conditionals" prog
-has "conditionals: a test of an option the Makefile never sets is an option" 'option_NEVER'
+has "conditionals: a test of an option the Makefile never sets is an option" 'build_never'
 
 # 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
 project
@@ -598,8 +608,8 @@ MK
 translate
 "$smith" build >/dev/null 2>&1
 same_commands "commands" prog
-has "readable: a flags variable is an array with the Makefile's name" 'const char *const *WARN ='
-has "readable: and the other uses it" 'smith_cat(b, WARN, '
+has "readable: a flags variable is an array with the Makefile's name" 'const char *const *build_warn ='
+has "readable: and the other uses it" 'smith_cat(b, build_warn, '
 has "readable: the compiler is smith-cc" '.compiler = "smith-cc"'
 has "readable: the header names the Makefile" '// build.c, translated from Makefile'
 
@@ -705,6 +715,38 @@ for name in build.c build.smith; do
     capture "$smith" build --dump-config
     contains "empty $name: and with no Makefile the conventions are dumped" "$out" "smith_app"
 done
+
+# 19. A Makefile too big for one function of 70 lines: build.c is a function for each run of targets, the variables are
+# statics, and it still passes lint and fmt (translate checks) and builds.
+project
+i=1
+: >Makefile
+files=""
+while [ "$i" -le 45 ]; do
+    : >"src$i.dat"
+    files="$files src$i.dat"
+    i=$((i + 1))
+done
+{
+    echo 'DATA := $(sort $(wildcard src*.dat))'
+    echo 'PREFIX ?= out'
+    i=1
+    while [ "$i" -le 30 ]; do
+        printf 'step%s: $(DATA)\n\t@touch $(PREFIX)%s.txt $(DATA)\n' "$i" "$i"
+        i=$((i + 1))
+    done
+    echo '.PHONY: all'
+    echo 'all: step1 step30'
+} >Makefile
+translate
+expect "split: the Makefile is translated" 0 "$rc"
+has "split: the variables are statics" 'static const char *const *build_data;'
+has "split: a long list is written in pieces" 'build_data = smith_cat(b, build_data,'
+has "split: a function for each run of targets" 'static void part_2(SmithBuild *b) {'
+has "split: build() calls them" '    part_1(b);'
+capture "$smith" build -DPREFIX=pre
+expect "split: smith build builds it" 0 "$rc"
+expect "split: the option reaches a recipe" "pre1.txt" "$(ls pre1.txt 2>/dev/null)"
 
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]

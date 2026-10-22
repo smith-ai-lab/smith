@@ -160,7 +160,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   keyword used as a name (`i32 double(i32 x)`) itself, at the name. A smith whose clang lacks the hook, a stage0 included, refuses a `.smith`
   input; it can still write a module's header (`smith cc --smith-header`). The compiler's helpers are under `smith cc`
   (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
-  modules itself: a header step per module, and every `.smith` compile waits for all of them (docs/build-c.md).
+  modules itself: a header step per module, and every `.smith` compile, and every C compile that names a header of `.smith/include` as an input or puts that folder on its include path, waits for all of them (docs/build-c.md).
 - **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
   Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
   called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
@@ -195,7 +195,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
   because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
   it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
-  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+  spelling still sees the lowered one. `smith lsp` registers the same module (clangd makes its built-in checks from the same registry), without `presentThrough` (its findings go through the lsp layer), so the editor judges names as written too (`tests/lint-smith.sh`, `tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.
