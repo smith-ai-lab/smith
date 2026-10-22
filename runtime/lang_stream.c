@@ -461,8 +461,35 @@ static size_t smith_lang_kept_includes(SmithLang *lang, char *out, size_t capaci
     return used;
 }
 
-// The `#include` lines a module's interface needs.
-static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t capacity) {
+// The path by which a header finds another module's header from its own folder: for smith::random importing
+// smith::arena, `arena.h`; for game::main importing lib::text, `../lib/text.h`. A quoted include looks in the
+// including file's folder first, so a header that names its imports this way needs no include path of its own, and
+// the generated headers of one tree (include/smith, .smith/include/smith, an installed copy) find each other.
+static void smith_lang_relative_header(const char *from, const char *to, char *path, size_t capacity) {
+    size_t common = 0;  // the bytes of `to` that are folders `from` is in too
+    size_t folders = 0; // the folders `from` has below the common ones
+    for (size_t at = 0; from[at] != 0 && to[at] == from[at]; at++) { // bounded by the names
+        if (from[at] == ':' && from[at + 1] == ':') common = at + 2;
+    }
+    for (size_t i = common; from[i] != 0; i++) { // bounded by the name
+        if (from[i] == ':' && from[i + 1] == ':') {
+            folders += 1;
+            i += 1;
+        }
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < folders && used + 4 < capacity; i++) { // bounded by the name
+        memcpy(path + used, "../", 3);
+        used += 3;
+    }
+    char rest[smith_lang_name_max];
+    smith_lang_module_to_path(to + common, rest, sizeof rest);
+    snprintf(path + used, capacity - used, "%s", rest);
+}
+
+// The `#include` lines a module's interface needs. For the header file, a module is included relative to the header
+// itself; for the preface an importer reads an interface in memory by, from the include path.
+static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t capacity, bool relative) {
     size_t used = smith_lang_append(out, capacity, 0, "#include <stddef.h>\n#include <stdint.h>\n");
     for (size_t i = 0; i < lang->imports_count; i++) { // bounded by the table: the modules an export names
         const char *module = smith_lang_str(lang->smith_imports[i]);
@@ -474,7 +501,10 @@ static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t ca
         }
         if (!named) continue;
         char path[smith_lang_name_max];
-        smith_lang_module_to_path(module, path, sizeof path);
+        if (relative)
+            smith_lang_relative_header(lang->module, module, path, sizeof path);
+        else
+            smith_lang_module_to_path(module, path, sizeof path);
         used = smith_lang_append(out, capacity, used, "#include \"%s\"\n", path);
     }
     return smith_lang_kept_includes(lang, out, capacity, used);
@@ -512,7 +542,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     used += smith_lang_assemble_meta(lang, out + used, capacity - used);
     used = smith_lang_append(out, capacity, used, "// clang-format on\n");
     used = smith_lang_append(out, capacity, used, "#pragma once\n");
-    used += smith_lang_assemble_includes(lang, out + used, capacity - used);
+    used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");

@@ -68,7 +68,9 @@ u32 helper(void) { … }                              // private
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.
     Inside an attribute (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the
-    attribute's own, not a use of a C name: `printf` there needs no `c::`.
+    attribute's own, not a use of a C name: `printf` there needs no `c::`. The keywords of C23 that a header may define as
+    a macro (`static_assert`, `alignas`, `alignof`, `bool`, `true`, `false`, `nullptr`, `thread_local`) are the
+    language's, not C names.
 - **Sized types**, in any `.smith` file: `u8 u16 u32 u64`, `i8 i16 i32 i64`, `usize` (`size_t`), `isize` (`ptrdiff_t`),
   `f16` (`_Float16`), `f32`, `f64`. They are typedefs of the standard types (`typedef __INT32_TYPE__ i32;`), so the same
   types (`%llu`, `_Generic` and a C header's `uint64_t` agree) and a diagnostic names them as written:
@@ -148,16 +150,30 @@ include both (two anonymous structs of one translation unit are two types, and C
 lowering cannot repeat the header's blocks; a fix in the lowering would have to know the header's text, as the script does): smith's own runtime compiles `io`,
 which includes `<smith/random.h>`, together with the library. `scripts/bootstrap.sh` writes it. It needs no compiler, so the
 stage0 writes the same bytes, and it asks nothing of the machine: the lowering's questions to the parser (`lookup`,
-`type_info`, `field`, `read_header` in `smith_lang_run_raw`) are all unanswered, sized types become the compiler's
-built-in `__UINT32_TYPE__` and its kin, and `c::NAME` becomes `NAME`. There is no SDK, include path or environment in it
+`type_info`, `field` in `smith_lang_run_raw`) are all unanswered, sized types become the compiler's
+built-in `__UINT32_TYPE__` and its kin, and `c::NAME` becomes `NAME`. The one question it does answer is a module's
+header (`read_header`): `import smith::arena;` is read as the compile reads it, from the header on the `-I` paths given
+beside the file, else from the module's source at the path its name implies under the root of the importing module
+(`lib/smith/arena.smith` for `smith::random` in `lib/smith/random.smith`, as `smith cc` finds it), so `arena::Arena` is
+`SmithArena` (its `c_name`) and a call to a generic of that module is expanded into its instance. With no parser the
+raw run cannot infer a type: a generic call in a module that is bootstrapped writes the types as arguments
+(`arena::push_array(arena, f64, count)`) and asks no `if constexpr` condition about a type (`is_float(T)`; `T == f32`
+works), and a call that does not is an error of `--smith-lower`, the one that tells the author to write the type. The
+header's `typedef struct` blocks are compared with the lowering's with both written in the same type spelling
+(`uint64_t` and `__UINT64_TYPE__` are one), since the header says the standard C types and the lowering the compiler's
+own. A module included by the header is found by the header's own folder (`#include "arena.h"`, "The header"), and the
+lowering writes the same import as `#include "smith/arena.h"`, which the script knows for the one file.
+There is no SDK, include path or environment in it
 (`tests/bootstrap.sh` lowers with `env -i` and `SDKROOT=/nonexistent`, and with the stage0). Exports with no `c_name`
 keep their `__asm__("_smith::x::f")` labels, the only extension of C in the file; it compiles under Apple's `/usr/bin/clang`
 and `cc` with `-std=gnu23 -Wall -Wextra -Wpedantic -Werror`. Its code is the code of the `.smith` compiled by smith
 (same assembly at `-O2`), except for the line numbers `assert` prints, which are the lowered file's.
 
 The lowering keeps the module's preprocessor directives as written (see "Lowering"), so the compiler that builds the C
-decides them: a module may use `#pragma STDC FP_CONTRACT OFF`, `#if defined(__aarch64__)` chains, `#error`,
-`#pragma clang diagnostic` and `#include` (`smith::random` does). Left out: comments (the
+decides them: a module may use `#pragma STDC FP_CONTRACT OFF` and `#if defined(__aarch64__)` chains (`smith::random`
+does), `#if __has_feature(address_sanitizer)` (`smith::arena`), `#error` and `#pragma clang diagnostic`. A module's own
+code needs none of them to say what it needs: it `import`s a C header and writes `c::name`, and `import`s a module
+(`import smith::arena;`), where the lowering writes the `#include`. Left out: comments (the
 `.smith` source keeps them), and the use of `::` or a sized type in a `#define` body, which is an error (use an inline
 function). The correct names (a module's name against a C header's) are checked by the real compile of the `.smith` that
 smith's tests still do, not by the raw lowering.
@@ -201,7 +217,13 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   function and the record of an exported generic are the *exported declarations*; the header includes what they use:
   - `<stddef.h>` and `<stdint.h>`, always (the sized types, `size_t`).
   - A module imported with `import a::b;` when an exported declaration writes `b::name`; one only a body uses is not
-    included (it is still in `// smith-imports:`).
+    included (it is still in `// smith-imports:`). It is included **relative to the header**, as a quoted include looks
+    in the including file's folder first: `smith::random` importing `smith::arena` writes `#include "arena.h"`, and
+    `game::main` importing `lib::text` writes `#include "../lib/text.h"`. So the headers of one tree (`include/smith`,
+    `.smith/include/smith`, an installed copy) find each other with no include path of their own, which smith's own
+    build needs: `smith.c` includes `include/smith/random.h` with no `-I`, and so does a stage0 compiling it alone
+    (`tests/headers.sh` compiles each header with and without an include path). The in-memory interface an importer
+    reads from a module's source is included from the include path, as the importer wrote it.
   - A C header imported with `import <h>;` or `import "h";` when an exported declaration writes a name of it as
     `c::name` (`struct c::tag` is a tag); one only a body uses is not included. With one import (or the spellings of one
     header in the branches of a conditional, below) that is all there is to decide. With several, the header pass
@@ -218,7 +240,7 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
     writes them `c::name` (`import <smith/arena.h>;` and `c::SmithArena` for a C library's type). A name that only an
     `#include` declares, used in an export, is not defined in the header: the includer's compile fails, and
     `tests/headers.sh` (every committed generated header compiles on its own, as C and as C++) finds it.
-  A conditional around imports (`#if __has_include("arena.h") import "arena.h"; #else import <smith/arena.h>; #endif`) is
+  A conditional around imports (`#if defined(__linux__) import <linux/x.h>; #else import <sys/x.h>; #endif`) is
   copied with the imports it holds: when one import of a conditional is kept, so are the others of it (they are other
   spellings of it), and a conditional with none kept is left out. The `#if 0` text is left out.
 - **Inline functions.** `export inline T f(…) { … }` is written to the header as `static inline T game_replay_f(…) { … }`,
@@ -484,7 +506,11 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
 - A header imported with `import <h>;` is included textually; the importing file's macros reach it.
 - A module's header is written without macros: a macro in an exported signature is not seen by it. An export under `#if`
   works (the directives are copied), but `#define`s are not, and the header pass does not evaluate a condition.
-- A `c::NAME` that is a macro cannot be passed as a macro argument (the argument is expanded before the lowering sees it).
+- A `c::NAME` that is a macro and an argument of another macro (`c::assert(n < c::SIZE_MAX)`) is expanded with the
+  argument, before the lowering sees it: the lowering drops the `c::` before an expansion and the macro is allowed
+  because the text before it says `c::` (`tests/smith-lang/cases/c-macro-argument`). One that expands to nothing
+  there is not understood. `static_assert`, `alignas`, `alignof`, `bool`, `true`, `false`, `nullptr` and `thread_local`
+  are keywords of C23 and need no `c::` even where a header defines them as macros (`<assert.h>` does `static_assert`).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
 - A hover in an importer shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's
   standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`shim/lsp.cpp`).

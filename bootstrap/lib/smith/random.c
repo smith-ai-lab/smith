@@ -4,15 +4,13 @@
 #include <assert.h>
 #include <float.h>
 #include <math.h>
-#include <string.h>
+
 SmithRandomHook smith_random_hook = nullptr;
 #pragma STDC FP_CONTRACT OFF
-#ifdef __FAST_MATH__
-#error \
-    "smith/random: -ffast-math changes floating-point results, so a key would stop giving the same numbers; compile lib/smith/random.smith without it"
-#endif
-static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53, "float and double must be IEEE");
-static_assert(FLT_EVAL_METHOD == 0, "float arithmetic must happen in float");
+static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
+"giving the same numbers; compile lib/smith/random.smith without it");
+static_assert(FLT_RADIX == 2 && FLT_MANT_DIG == 24 && DBL_MANT_DIG == 53, "f32 and f64 must be IEEE");
+static_assert(FLT_EVAL_METHOD == 0, "f32 arithmetic must happen in f32");
 #if defined(__aarch64__)
 static inline double smith_random_opaque_double(double value) {
 __asm__("" : "+w"(value));
@@ -32,7 +30,7 @@ __asm__("" : "+X"(value));
 return value;
 }
 #endif
-static inline uint32_t smith_random_register_u32(uint32_t value) {
+static inline __UINT32_TYPE__ smith_random_register_u32(__UINT32_TYPE__ value) {
 __asm__("" : "+r"(value));
 return value;
 }
@@ -50,122 +48,113 @@ return smith_random_opaque_double(a * b);
 static inline float smith_random_mul_float(float a, float b) {
 return smith_random_opaque_float(a * b);
 }
-static double smith_random_horner_double(const double *c, size_t count, double x) {
+static double smith_random_horner_double(const double *c, __SIZE_TYPE__ count, double x) {
 c = smith_random_register_doubles(c);
 double sum = c[count - 1];
-for (size_t i = count - 1; i > 0; i--)
+for (__SIZE_TYPE__ i = count - 1; i > 0; i--)
 sum = smith_random_mul_double(sum, x) + c[i - 1];
 return sum;
 }
-static float smith_random_horner_float(const float *c, size_t count, float x) {
+static float smith_random_horner_float(const float *c, __SIZE_TYPE__ count, float x) {
 c = smith_random_register_floats(c);
 float sum = c[count - 1];
-for (size_t i = count - 1; i > 0; i--)
+for (__SIZE_TYPE__ i = count - 1; i > 0; i--)
 sum = smith_random_mul_float(sum, x) + c[i - 1];
 return sum;
 }
-static constexpr uint32_t smith_random_philox_multiplier_0 = 0xD2511F53;
-static constexpr uint32_t smith_random_philox_multiplier_1 = 0xCD9E8D57;
-static constexpr uint32_t smith_random_philox_increment_0 = 0x9E3779B9;
-static constexpr uint32_t smith_random_philox_increment_1 = 0xBB67AE85;
-static constexpr int smith_random_philox_rounds = 10;
+static constexpr __UINT32_TYPE__ smith_random_philox_multiplier_0 = 0xD2511F53;
+static constexpr __UINT32_TYPE__ smith_random_philox_multiplier_1 = 0xCD9E8D57;
+static constexpr __UINT32_TYPE__ smith_random_philox_increment_0 = 0x9E3779B9;
+static constexpr __UINT32_TYPE__ smith_random_philox_increment_1 = 0xBB67AE85;
+static constexpr __INT32_TYPE__ smith_random_philox_rounds = 10;
 typedef struct {
-uint32_t word[4];
+__UINT32_TYPE__ word[4];
 } smith_random_Block;
-static inline void smith_random_philox_round(uint32_t *c0, uint32_t *c1, uint32_t *c2, uint32_t *c3, uint32_t k0, uint32_t k1,
-uint32_t m0, uint32_t m1) {
-uint64_t product_0 = (uint64_t)m0 * *c0;
-uint64_t product_1 = (uint64_t)m1 * *c2;
-*c0 = (uint32_t)((uint64_t)(*c1 ^ k0) ^ (product_1 >> 32));
-*c1 = (uint32_t)product_1;
-*c2 = (uint32_t)((uint64_t)(*c3 ^ k1) ^ (product_0 >> 32));
-*c3 = (uint32_t)product_0;
+static inline void smith_random_philox_round(__UINT32_TYPE__ *c0, __UINT32_TYPE__ *c1, __UINT32_TYPE__ *c2, __UINT32_TYPE__ *c3, __UINT32_TYPE__ k0, __UINT32_TYPE__ k1, __UINT32_TYPE__ m0, __UINT32_TYPE__ m1) {
+__UINT64_TYPE__ product_0 = (__UINT64_TYPE__)m0 * *c0;
+__UINT64_TYPE__ product_1 = (__UINT64_TYPE__)m1 * *c2;
+*c0 = (__UINT32_TYPE__)((__UINT64_TYPE__)(*c1 ^ k0) ^ (product_1 >> 32));
+*c1 = (__UINT32_TYPE__)product_1;
+*c2 = (__UINT32_TYPE__)((__UINT64_TYPE__)(*c3 ^ k1) ^ (product_0 >> 32));
+*c3 = (__UINT32_TYPE__)product_0;
 }
 typedef struct {
-uint32_t word[4];
-uint32_t key_0, key_1;
+__UINT32_TYPE__ word[4];
+__UINT32_TYPE__ key_0, key_1;
 } smith_random_Rounds;
-static inline smith_random_Rounds smith_random_nine_rounds(smith_random_Block counter, uint32_t key_0, uint32_t key_1) {
-uint32_t multiplier_0 = smith_random_philox_multiplier_0;
-uint32_t multiplier_1 = smith_random_philox_multiplier_1;
-uint32_t increment_0 = smith_random_philox_increment_0;
-uint32_t increment_1 = smith_random_philox_increment_1;
+static inline smith_random_Rounds smith_random_nine_rounds(smith_random_Block counter, __UINT32_TYPE__ key_0, __UINT32_TYPE__ key_1) {
+__UINT32_TYPE__ multiplier_0 = smith_random_philox_multiplier_0;
+__UINT32_TYPE__ multiplier_1 = smith_random_philox_multiplier_1;
+__UINT32_TYPE__ increment_0 = smith_random_philox_increment_0;
+__UINT32_TYPE__ increment_1 = smith_random_philox_increment_1;
 multiplier_0 = smith_random_register_u32(multiplier_0);
 multiplier_1 = smith_random_register_u32(multiplier_1);
 increment_0 = smith_random_register_u32(increment_0);
 increment_1 = smith_random_register_u32(increment_1);
-uint32_t c0 = counter.word[0];
-uint32_t c1 = counter.word[1];
-uint32_t c2 = counter.word[2];
-uint32_t c3 = counter.word[3];
-for (int round = 0; round < smith_random_philox_rounds - 1; round++) {
+__UINT32_TYPE__ c0 = counter.word[0];
+__UINT32_TYPE__ c1 = counter.word[1];
+__UINT32_TYPE__ c2 = counter.word[2];
+__UINT32_TYPE__ c3 = counter.word[3];
+for (__INT32_TYPE__ round = 0; round < smith_random_philox_rounds - 1; round++) {
 smith_random_philox_round(&c0, &c1, &c2, &c3, key_0, key_1, multiplier_0, multiplier_1);
 key_0 += increment_0;
 key_1 += increment_1;
 }
 return (smith_random_Rounds){{c0, c1, c2, c3}, key_0, key_1};
 }
-[[maybe_unused]] static smith_random_Block smith_random_philox(smith_random_Block counter, uint32_t key_0, uint32_t key_1) {
+[[maybe_unused]] static smith_random_Block smith_random_philox(smith_random_Block counter, __UINT32_TYPE__ key_0, __UINT32_TYPE__ key_1) {
 smith_random_Rounds r = smith_random_nine_rounds(counter, key_0, key_1);
 smith_random_philox_round(&r.word[0], &r.word[1], &r.word[2], &r.word[3], r.key_0, r.key_1, smith_random_philox_multiplier_0,
 smith_random_philox_multiplier_1);
 return (smith_random_Block){{r.word[0], r.word[1], r.word[2], r.word[3]}};
 }
-static uint64_t smith_random_philox_low(smith_random_Block counter, uint32_t key_0, uint32_t key_1) {
+static __UINT64_TYPE__ smith_random_philox_low(smith_random_Block counter, __UINT32_TYPE__ key_0, __UINT32_TYPE__ key_1) {
 smith_random_Rounds r = smith_random_nine_rounds(counter, key_0, key_1);
-uint64_t product_1 = (uint64_t)smith_random_philox_multiplier_1 * r.word[2];
-return (uint64_t)((uint32_t)(product_1 >> 32) ^ r.word[1] ^ r.key_0) | (product_1 << 32);
+__UINT64_TYPE__ product_1 = (__UINT64_TYPE__)smith_random_philox_multiplier_1 * r.word[2];
+return (__UINT64_TYPE__)((__UINT32_TYPE__)(product_1 >> 32) ^ r.word[1] ^ r.key_0) | (product_1 << 32);
 }
-static uint64_t smith_random_philox_high(smith_random_Block counter, uint32_t key_0, uint32_t key_1) {
+static __UINT64_TYPE__ smith_random_philox_high(smith_random_Block counter, __UINT32_TYPE__ key_0, __UINT32_TYPE__ key_1) {
 smith_random_Rounds r = smith_random_nine_rounds(counter, key_0, key_1);
-uint64_t product_0 = (uint64_t)smith_random_philox_multiplier_0 * r.word[0];
-return (uint64_t)((uint32_t)(product_0 >> 32) ^ r.word[3] ^ r.key_1) | (product_0 << 32);
+__UINT64_TYPE__ product_0 = (__UINT64_TYPE__)smith_random_philox_multiplier_0 * r.word[0];
+return (__UINT64_TYPE__)((__UINT32_TYPE__)(product_0 >> 32) ^ r.word[3] ^ r.key_1) | (product_0 << 32);
 }
-[[nodiscard]] SmithKey smith_key_make(uint64_t seed);
-[[nodiscard]] SmithKey smith_key_make(uint64_t seed) {
+[[nodiscard]] SmithKey smith_key_make(__UINT64_TYPE__ seed);
+[[nodiscard]] SmithKey smith_key_make(__UINT64_TYPE__ seed) {
 return (SmithKey){.bits = seed};
 }
-[[nodiscard]] SmithKey smith_key_derive(SmithKey key, uint64_t i);
-[[nodiscard]] SmithKey smith_key_derive(SmithKey key, uint64_t i) {
-smith_random_Block counter = {{(uint32_t)i, (uint32_t)(i >> 32), 1, 0}};
-return (SmithKey){.bits = smith_random_philox_low(counter, (uint32_t)key.bits, (uint32_t)(key.bits >> 32))};
+[[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i);
+[[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i) {
+smith_random_Block counter = {{(__UINT32_TYPE__)i, (__UINT32_TYPE__)(i >> 32), 1, 0}};
+return (SmithKey){.bits = smith_random_philox_low(counter, (__UINT32_TYPE__)key.bits, (__UINT32_TYPE__)(key.bits >> 32))};
 }
-[[nodiscard]] uint64_t smith_key_bits(SmithKey key, uint64_t n);
-[[nodiscard]] uint64_t smith_key_bits(SmithKey key, uint64_t n) {
-uint64_t block = n >> 1;
-smith_random_Block counter = {{(uint32_t)block, (uint32_t)(block >> 32), 0, 0}};
-uint32_t key_0 = (uint32_t)key.bits;
-uint32_t key_1 = (uint32_t)(key.bits >> 32);
-uint64_t word = (n & 1) == 0 ? smith_random_philox_low(counter, key_0, key_1) : smith_random_philox_high(counter, key_0, key_1);
+[[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n);
+[[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n) {
+__UINT64_TYPE__ block = n >> 1;
+smith_random_Block counter = {{(__UINT32_TYPE__)block, (__UINT32_TYPE__)(block >> 32), 0, 0}};
+__UINT32_TYPE__ key_0 = (__UINT32_TYPE__)key.bits;
+__UINT32_TYPE__ key_1 = (__UINT32_TYPE__)(key.bits >> 32);
+__UINT64_TYPE__ word = (n & 1) == 0 ? smith_random_philox_low(counter, key_0, key_1) : smith_random_philox_high(counter, key_0, key_1);
 return smith_random_hook != nullptr ? smith_random_hook(key, n, word) : word;
 }
-[[nodiscard]] float smith_key_unit_float(SmithKey key, uint64_t n);
-[[nodiscard]] float smith_key_unit_float(SmithKey key, uint64_t n) {
+[[nodiscard]] float smith_key_unit_float(SmithKey key, __UINT64_TYPE__ n);
+[[nodiscard]] float smith_key_unit_float(SmithKey key, __UINT64_TYPE__ n) {
 return (float)(smith_key_bits(key, n) >> 40) * 0x1p-24f;
 }
-[[nodiscard]] double smith_key_unit_double(SmithKey key, uint64_t n);
-[[nodiscard]] double smith_key_unit_double(SmithKey key, uint64_t n) {
+[[nodiscard]] double smith_key_unit_double(SmithKey key, __UINT64_TYPE__ n);
+[[nodiscard]] double smith_key_unit_double(SmithKey key, __UINT64_TYPE__ n) {
 return (double)(smith_key_bits(key, n) >> 11) * 0x1p-53;
 }
-static uint64_t smith_random_double_bits(double x) {
-uint64_t bits = 0;
-memcpy(&bits, &x, sizeof bits);
-return bits;
+static __UINT64_TYPE__ smith_random_double_bits(double x) {
+return __builtin_bit_cast(__UINT64_TYPE__, x);
 }
-static double smith_random_bits_double(uint64_t bits) {
-double x = 0;
-memcpy(&x, &bits, sizeof x);
-return x;
+static double smith_random_bits_double(__UINT64_TYPE__ bits) {
+return __builtin_bit_cast(double, bits);
 }
-static uint32_t smith_random_float_bits(float x) {
-uint32_t bits = 0;
-memcpy(&bits, &x, sizeof bits);
-return bits;
+static __UINT32_TYPE__ smith_random_float_bits(float x) {
+return __builtin_bit_cast(__UINT32_TYPE__, x);
 }
-static float smith_random_bits_float(uint32_t bits) {
-float x = 0;
-memcpy(&x, &bits, sizeof x);
-return x;
+static float smith_random_bits_float(__UINT32_TYPE__ bits) {
+return __builtin_bit_cast(float, bits);
 }
 static constexpr double smith_random_log_double_ln2_hi = 6.93147180369123816490e-01;
 static constexpr double smith_random_log_double_ln2_lo = 1.90821492927058770002e-10;
@@ -177,12 +166,12 @@ static constexpr double smith_random_log_double_lg4 = 2.222219843214978396e-01;
 static constexpr double smith_random_log_double_lg5 = 1.818357216161805012e-01;
 static constexpr double smith_random_log_double_lg6 = 1.531383769920937332e-01;
 static constexpr double smith_random_log_double_lg7 = 1.479819860511658591e-01;
-static double smith_random_log_double_finish(double f, int32_t k, uint32_t hx) {
+static double smith_random_log_double_finish(double f, __INT32_TYPE__ k, __UINT32_TYPE__ hx) {
 double s = f / (2.0 + f);
 double dk = (double)k;
 double z = smith_random_mul_double(s, s);
 double w = smith_random_mul_double(z, z);
-uint32_t mixed =
+__UINT32_TYPE__ mixed =
 (hx - 0x6147a) | (0x6b851 - hx);
 static const double even[] = {smith_random_log_double_lg2, smith_random_log_double_lg4, smith_random_log_double_lg6};
 static const double odd[] = {smith_random_log_double_lg1, smith_random_log_double_lg3, smith_random_log_double_lg5, smith_random_log_double_lg7};
@@ -201,25 +190,25 @@ return smith_random_mul_double(dk, smith_random_log_double_ln2_hi) - ((inner - s
 }
 [[nodiscard]] double smith_log_double(double x);
 [[nodiscard]] double smith_log_double(double x) {
-uint64_t bits = smith_random_double_bits(x);
-uint32_t hx = (uint32_t)(bits >> 32);
-uint32_t lx = (uint32_t)bits;
-int32_t k = 0;
+__UINT64_TYPE__ bits = smith_random_double_bits(x);
+__UINT32_TYPE__ hx = (__UINT32_TYPE__)(bits >> 32);
+__UINT32_TYPE__ lx = (__UINT32_TYPE__)bits;
+__INT32_TYPE__ k = 0;
 if (hx < 0x00100000 || hx >= 0x80000000U) {
 if (((hx & 0x7fffffffU) | lx) == 0) return -(double)INFINITY;
 if (hx >= 0x80000000U) return (double)NAN;
 k -= 54;
 x *= smith_random_log_double_two54;
 bits = smith_random_double_bits(x);
-hx = (uint32_t)(bits >> 32);
+hx = (__UINT32_TYPE__)(bits >> 32);
 }
 if (hx >= 0x7ff00000) return x + x;
-k += (int32_t)(hx >> 20) - 1023;
+k += (__INT32_TYPE__)(hx >> 20) - 1023;
 hx &= 0x000fffff;
-uint32_t half = (hx + 0x95f64) & 0x100000;
-bits = (bits & 0xffffffffULL) | ((uint64_t)(hx | (half ^ 0x3ff00000)) << 32);
+__UINT32_TYPE__ half = (hx + 0x95f64) & 0x100000;
+bits = (bits & 0xffffffffULL) | ((__UINT64_TYPE__)(hx | (half ^ 0x3ff00000)) << 32);
 x = smith_random_bits_double(bits);
-k += (int32_t)(half >> 20);
+k += (__INT32_TYPE__)(half >> 20);
 double f = x - 1.0;
 if ((0x000fffff & (2 + hx)) < 3) {
 if (f == 0.0) {
@@ -241,12 +230,12 @@ static constexpr float smith_random_log_float_lg1 = 0xaaaaaa.0p-24f;
 static constexpr float smith_random_log_float_lg2 = 0xccce13.0p-25f;
 static constexpr float smith_random_log_float_lg3 = 0x91e9ee.0p-25f;
 static constexpr float smith_random_log_float_lg4 = 0xf89e26.0p-26f;
-static float smith_random_log_float_finish(float f, int32_t k, uint32_t ix) {
+static float smith_random_log_float_finish(float f, __INT32_TYPE__ k, __UINT32_TYPE__ ix) {
 float s = f / (2.0f + f);
 float dk = (float)k;
 float z = smith_random_mul_float(s, s);
 float w = smith_random_mul_float(z, z);
-uint32_t mixed = (ix - (0x6147aU << 3)) | ((0x6b851U << 3) - ix);
+__UINT32_TYPE__ mixed = (ix - (0x6147aU << 3)) | ((0x6b851U << 3) - ix);
 float t1 = smith_random_mul_float(w, smith_random_log_float_lg2 + smith_random_mul_float(w, smith_random_log_float_lg4));
 float t2 = smith_random_mul_float(z, smith_random_log_float_lg1 + smith_random_mul_float(w, smith_random_log_float_lg3));
 float r = t2 + t1;
@@ -262,8 +251,8 @@ return smith_random_mul_float(dk, smith_random_log_float_ln2_hi) - ((inner - smi
 }
 [[nodiscard]] float smith_log_float(float x);
 [[nodiscard]] float smith_log_float(float x) {
-uint32_t ix = smith_random_float_bits(x);
-int32_t k = 0;
+__UINT32_TYPE__ ix = smith_random_float_bits(x);
+__INT32_TYPE__ k = 0;
 if (ix < 0x00800000 || ix >= 0x80000000U) {
 if ((ix & 0x7fffffffU) == 0) return -INFINITY;
 if (ix >= 0x80000000U) return NAN;
@@ -272,11 +261,11 @@ x *= smith_random_log_float_two25;
 ix = smith_random_float_bits(x);
 }
 if (ix >= 0x7f800000) return x + x;
-k += (int32_t)(ix >> 23) - 127;
+k += (__INT32_TYPE__)(ix >> 23) - 127;
 ix &= 0x007fffff;
-uint32_t half = (ix + (0x95f64U << 3)) & 0x800000;
+__UINT32_TYPE__ half = (ix + (0x95f64U << 3)) & 0x800000;
 x = smith_random_bits_float(ix | (half ^ 0x3f800000U));
-k += (int32_t)(half >> 23);
+k += (__INT32_TYPE__)(half >> 23);
 float f = x - 1.0f;
 if ((0x007fffffU & (0x8000U + ix)) < 0xc000U) {
 if (f == 0.0f) {
@@ -291,75 +280,76 @@ return smith_random_mul_float(dk, smith_random_log_float_ln2_hi) - ((r - smith_r
 }
 return smith_random_log_float_finish(f, k, ix);
 }
-static int64_t smith_random_zigzag(uint64_t word) {
-int64_t half = (int64_t)(word >> 1);
+static __INT64_TYPE__ smith_random_zigzag(__UINT64_TYPE__ word) {
+__INT64_TYPE__ half = (__INT64_TYPE__)(word >> 1);
 return (word & 1) != 0 ? -half - 1 : half;
 }
-static uint64_t smith_random_around(uint64_t index, uint64_t origin, uint64_t count) {
+static __UINT64_TYPE__ smith_random_around(__UINT64_TYPE__ index, __UINT64_TYPE__ origin, __UINT64_TYPE__ count) {
 assert(origin < count && index < count);
-uint64_t below = origin;
-uint64_t above = count - 1 - origin;
-uint64_t both = below < above ? below : above;
-if (index <= 2 * both) return origin + (uint64_t)smith_random_zigzag(index);
+__UINT64_TYPE__ below = origin;
+__UINT64_TYPE__ above = count - 1 - origin;
+__UINT64_TYPE__ both = below < above ? below : above;
+if (index <= 2 * both) return origin + (__UINT64_TYPE__)smith_random_zigzag(index);
 return below > above ? origin - (index - both) : origin + (index - both);
 }
-static constexpr uint64_t smith_random_attempts = 64;
-static uint64_t smith_random_draw_index(SmithKey key, uint64_t n) {
+static constexpr __UINT64_TYPE__ smith_random_attempts = 64;
+typedef unsigned _BitInt(128) smith_random_Wide;
+static __UINT64_TYPE__ smith_random_draw_index(SmithKey key, __UINT64_TYPE__ n) {
 assert(n > 0);
-uint64_t threshold = (0 - n) % n;
-uint64_t index = 0;
-for (uint64_t attempt = 0; attempt < smith_random_attempts; attempt++) {
-unsigned _BitInt(128) product = (unsigned _BitInt(128))smith_key_bits(key, attempt) * n;
-index = (uint64_t)(product >> 64);
-if (threshold == 0 || (uint64_t)product < 0 - threshold) break;
+__UINT64_TYPE__ threshold = (0 - n) % n;
+__UINT64_TYPE__ index = 0;
+for (__UINT64_TYPE__ attempt = 0; attempt < smith_random_attempts; attempt++) {
+smith_random_Wide product = (smith_random_Wide)smith_key_bits(key, attempt) * n;
+index = (__UINT64_TYPE__)(product >> 64);
+if (threshold == 0 || (__UINT64_TYPE__)product < 0 - threshold) break;
 }
 return index;
 }
-static int64_t smith_random_int_value(int64_t low, int64_t high, uint64_t index) {
-uint64_t span = (uint64_t)high - (uint64_t)low + 1;
-uint64_t origin = 0;
+static __INT64_TYPE__ smith_random_int_value(__INT64_TYPE__ low, __INT64_TYPE__ high, __UINT64_TYPE__ index) {
+__UINT64_TYPE__ span = (__UINT64_TYPE__)high - (__UINT64_TYPE__)low + 1;
+__UINT64_TYPE__ origin = 0;
 if (high < 0) {
 origin = span - 1;
 } else if (low <= 0) {
-origin = 0 - (uint64_t)low;
+origin = 0 - (__UINT64_TYPE__)low;
 }
-return (int64_t)((uint64_t)low + smith_random_around(index, origin, span));
+return (__INT64_TYPE__)((__UINT64_TYPE__)low + smith_random_around(index, origin, span));
 }
-[[nodiscard]] int64_t
-smith_uniform_int64_sample(SmithKey key, SmithUniformInt64 uniform);
-[[nodiscard]] int64_t
-smith_uniform_int64_sample(SmithKey key, SmithUniformInt64 uniform) {
+[[nodiscard]] __INT64_TYPE__ smith_uniform_int64_sample(SmithKey key,
+SmithUniformInt64 uniform);
+[[nodiscard]] __INT64_TYPE__ smith_uniform_int64_sample(SmithKey key,
+SmithUniformInt64 uniform) {
 assert(uniform.low <= uniform.high);
-uint64_t span = (uint64_t)uniform.high - (uint64_t)uniform.low + 1;
+__UINT64_TYPE__ span = (__UINT64_TYPE__)uniform.high - (__UINT64_TYPE__)uniform.low + 1;
 if (span == 0) return smith_random_zigzag(smith_key_bits(key, 0));
 return smith_random_int_value(uniform.low, uniform.high, smith_random_draw_index(key, span));
 }
 static float smith_random_below_float(float high) {
-uint32_t bits = smith_random_float_bits(high);
+__UINT32_TYPE__ bits = smith_random_float_bits(high);
 if (high > 0.0f) return smith_random_bits_float(bits - 1);
 if (high == 0.0f) return smith_random_bits_float(0x80000001U);
 return smith_random_bits_float(bits + 1);
 }
 static double smith_random_below_double(double high) {
-uint64_t bits = smith_random_double_bits(high);
+__UINT64_TYPE__ bits = smith_random_double_bits(high);
 if (high > 0.0) return smith_random_bits_double(bits - 1);
 if (high == 0.0) return smith_random_bits_double(0x8000000000000001ULL);
 return smith_random_bits_double(bits + 1);
 }
-static uint64_t smith_random_origin_float(float low, float high) {
-constexpr uint64_t last = ((uint64_t)1 << 24) - 1;
+static __UINT64_TYPE__ smith_random_origin_float(float low, float high) {
+constexpr __UINT64_TYPE__ last = ((__UINT64_TYPE__)1 << 24) - 1;
 if (low >= 0.0f) return 0;
 if (high <= 0.0f) return last;
 float scaled = smith_random_mul_float(-low / (high - low), 0x1p24f);
-uint64_t origin = (uint64_t)(scaled + 0.5f);
+__UINT64_TYPE__ origin = (__UINT64_TYPE__)(scaled + 0.5f);
 return origin < last ? origin : last;
 }
-static uint64_t smith_random_origin_double(double low, double high) {
-constexpr uint64_t last = ((uint64_t)1 << 53) - 1;
+static __UINT64_TYPE__ smith_random_origin_double(double low, double high) {
+constexpr __UINT64_TYPE__ last = ((__UINT64_TYPE__)1 << 53) - 1;
 if (low >= 0.0) return 0;
 if (high <= 0.0) return last;
 double scaled = smith_random_mul_double(-low / (high - low), 0x1p53);
-uint64_t origin = (uint64_t)(scaled + 0.5);
+__UINT64_TYPE__ origin = (__UINT64_TYPE__)(scaled + 0.5);
 return origin < last ? origin : last;
 }
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key,
@@ -368,25 +358,24 @@ SmithUniformFloat uniform);
 SmithUniformFloat uniform) {
 assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
 assert(isfinite(uniform.high - uniform.low));
-uint64_t origin = smith_random_origin_float(uniform.low, uniform.high);
-uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (uint64_t)1 << 24);
+__UINT64_TYPE__ origin = smith_random_origin_float(uniform.low, uniform.high);
+__UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (__UINT64_TYPE__)1 << 24);
 float value = uniform.low + smith_random_mul_float(uniform.high - uniform.low, (float)grid * 0x1p-24f);
 return value < uniform.high ? value : smith_random_below_float(uniform.high);
 }
-[[nodiscard]] double
-smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform);
-[[nodiscard]] double
-smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform) {
+[[nodiscard]] double smith_uniform_double_sample(SmithKey key,
+SmithUniformDouble uniform);
+[[nodiscard]] double smith_uniform_double_sample(SmithKey key,
+SmithUniformDouble uniform) {
 assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
 assert(isfinite(uniform.high - uniform.low));
-uint64_t origin = smith_random_origin_double(uniform.low, uniform.high);
-uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (uint64_t)1 << 53);
+__UINT64_TYPE__ origin = smith_random_origin_double(uniform.low, uniform.high);
+__UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (__UINT64_TYPE__)1 << 53);
 double value = uniform.low + smith_random_mul_double(uniform.high - uniform.low, (double)grid * 0x1p-53);
 return value < uniform.high ? value : smith_random_below_double(uniform.high);
 }
-static const double smith_random_ppnd16_a[] = {3.387132872796366608, 133.14166789178437745, 1971.5909503065514427,
-13731.693765509461125, 45921.953931549871457, 67265.770927008700853,
-33430.575583588128105, 2509.0809287301226727};
+static const double smith_random_ppnd16_a[] = {3.387132872796366608, 133.14166789178437745, 1971.5909503065514427, 13731.693765509461125,
+45921.953931549871457, 67265.770927008700853, 33430.575583588128105, 2509.0809287301226727};
 static const double smith_random_ppnd16_b[] = {1.0,
 42.313330701600911252,
 687.1870074920579083,
@@ -460,11 +449,11 @@ value = smith_random_horner_float(smith_random_ppnd7_e, 4, r) / smith_random_hor
 return q < 0 ? -value : value;
 }
 static double smith_random_normal_u_double(SmithKey key) {
-uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 12, (uint64_t)1 << 51, (uint64_t)1 << 52);
+__UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 12, (__UINT64_TYPE__)1 << 51, (__UINT64_TYPE__)1 << 52);
 return (double)(grid * 2 + 1) * 0x1p-53;
 }
 static float smith_random_normal_u_float(SmithKey key) {
-uint64_t grid = smith_random_around(smith_key_bits(key, 0) >> 41, (uint64_t)1 << 22, (uint64_t)1 << 23);
+__UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 41, (__UINT64_TYPE__)1 << 22, (__UINT64_TYPE__)1 << 23);
 return (float)(grid * 2 + 1) * 0x1p-24f;
 }
 [[nodiscard]] double smith_normal_double_sample(SmithKey key,
@@ -484,13 +473,13 @@ return normal.mean + smith_random_mul_float(normal.deviation, smith_random_ppnd7
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli);
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli) {
 assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
-uint64_t grid = smith_key_bits(key, 0) >> 11;
-return (double)(((uint64_t)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
+__UINT64_TYPE__ grid = smith_key_bits(key, 0) >> 11;
+return (double)(((__UINT64_TYPE__)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
-static void smith_random_alias_build(double *probability, size_t *alias, size_t *small, size_t *large, size_t count) {
-size_t small_count = 0;
-size_t large_count = 0;
-for (size_t i = 0; i < count; i++) {
+static void smith_random_alias_build(double *probability, __SIZE_TYPE__ *alias, __SIZE_TYPE__ *small, __SIZE_TYPE__ *large, __SIZE_TYPE__ count) {
+__SIZE_TYPE__ small_count = 0;
+__SIZE_TYPE__ large_count = 0;
+for (__SIZE_TYPE__ i = 0; i < count; i++) {
 if (probability[i] < 1.0) {
 small[small_count++] = i;
 } else {
@@ -498,8 +487,8 @@ large[large_count++] = i;
 }
 }
 while (small_count > 0 && large_count > 0) {
-size_t less = small[--small_count];
-size_t more = large[--large_count];
+__SIZE_TYPE__ less = small[--small_count];
+__SIZE_TYPE__ more = large[--large_count];
 alias[less] = more;
 probability[more] = (probability[more] + probability[less]) - 1.0;
 if (probability[more] < 1.0) {
@@ -509,61 +498,65 @@ large[large_count++] = more;
 }
 }
 while (large_count > 0) {
-size_t index = large[--large_count];
+__SIZE_TYPE__ index = large[--large_count];
 probability[index] = 1.0;
 alias[index] = index;
 }
 while (small_count > 0) {
-size_t index = small[--small_count];
+__SIZE_TYPE__ index = small[--small_count];
 probability[index] = 1.0;
 alias[index] = index;
 }
 }
 [[nodiscard]] SmithCategorical
-smith_categorical_make(SmithArena *arena, const double *weights, size_t count);
+smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count);
 [[nodiscard]] SmithCategorical
-smith_categorical_make(SmithArena *arena, const double *weights, size_t count) {
+smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count) {
 assert(arena != nullptr && weights != nullptr && count >= 1);
 double sum = 0.0;
-for (size_t i = 0; i < count; i++) {
+for (__SIZE_TYPE__ i = 0; i < count; i++) {
 assert(isfinite(weights[i]) && weights[i] >= 0.0);
 sum += weights[i];
 }
 assert(isfinite(sum) && sum > 0.0);
-double *probability = smith_arena_push_array(arena, sizeof(double), count, alignof(double));
-size_t *alias = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
-for (size_t i = 0; i < count; i++) {
+double *probability =__extension__({extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");smith_arena_push_array_type__f64(arena,count);});
+__SIZE_TYPE__ *alias =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
+for (__SIZE_TYPE__ i = 0; i < count; i++) {
 probability[i] = weights[i] * (double)count / sum;
 alias[i] = i;
 }
 SmithArenaScope scope = smith_arena_scope_begin(arena);
-size_t *small = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
-size_t *large = smith_arena_push_array(arena, sizeof(size_t), count, alignof(size_t));
+__SIZE_TYPE__ *small =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
+__SIZE_TYPE__ *large =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
 smith_random_alias_build(probability, alias, small, large, count);
 smith_arena_scope_end(scope);
 return (SmithCategorical){.probability = probability, .alias = alias, .count = count};
 }
-[[nodiscard]] size_t smith_categorical_sample(SmithKey key,
+[[nodiscard]] __SIZE_TYPE__ smith_categorical_sample(SmithKey key,
 SmithCategorical categorical);
-[[nodiscard]] size_t smith_categorical_sample(SmithKey key,
+[[nodiscard]] __SIZE_TYPE__ smith_categorical_sample(SmithKey key,
 SmithCategorical categorical) {
 assert(categorical.count >= 1);
-size_t index = (size_t)smith_random_draw_index(smith_key_derive(key, 0), categorical.count);
+__SIZE_TYPE__ index = (__SIZE_TYPE__)smith_random_draw_index(smith_key_derive(key, 0), categorical.count);
 bool keep = smith_key_unit_double(smith_key_derive(key, 1), 0) < categorical.probability[index];
 return keep ? index : categorical.alias[index];
 }
 void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
-size_t *out);
+__SIZE_TYPE__ *out);
 void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
-size_t *out) {
+__SIZE_TYPE__ *out) {
 assert(out != nullptr || permutation.count == 0);
-for (size_t i = 0; i < permutation.count; i++)
+for (__SIZE_TYPE__ i = 0; i < permutation.count; i++)
 out[i] = i;
-for (size_t i = permutation.count; i > 1; i--) {
-size_t j = i - 1 - (size_t)smith_random_draw_index(smith_key_derive(key, i - 1), i);
-size_t swap = out[i - 1];
+for (__SIZE_TYPE__ i = permutation.count; i > 1; i--) {
+__SIZE_TYPE__ j = i - 1 - (__SIZE_TYPE__)smith_random_draw_index(smith_key_derive(key, i - 1), i);
+__SIZE_TYPE__ swap = out[i - 1];
 out[i - 1] = out[j];
 out[j] = swap;
 }
 }
+extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count){return(double*)smith_arena_push_array(arena,sizeof(double),count,alignof(double));}
+extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]__SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count){return(__SIZE_TYPE__*)smith_arena_push_array(arena,sizeof(__SIZE_TYPE__),count,alignof(__SIZE_TYPE__));}
 // NOLINTEND

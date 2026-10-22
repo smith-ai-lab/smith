@@ -281,5 +281,37 @@ expect "... and reports it at the source, as written" "main.smith:2:9: error: in
     "$(grep -h 'main.smith:2:9' "$work/verb.out" "$work/verb.err" | head -n 1 | sed 's|^.*/main.smith|main.smith|')"
 cd "$work/p" || exit 1
 
+# --- a call to a generic: the instance is judged as the generic's name, not `push_array<f64>` ---------------------------
+mkdir -p "$work/p/generic" "$work/p/smith"
+cat >"$work/p/smith/pool.smith" <<'EOF2'
+module smith::pool;
+
+export typedef struct {
+    u8 *base;
+    usize used;
+} Pool;
+
+export T *push_array(Pool *pool, constexpr type T, usize count) {
+    T *result = (T *)(pool->base + pool->used);
+    pool->used += sizeof(T) * count;
+    return result;
+}
+EOF2
+cat >"$work/p/generic/user.smith" <<'EOF2'
+module generic::user;
+import smith::pool;
+
+export f64 *fill(pool::Pool *pool, usize count) {
+    f64 *values = pool::push_array(pool, f64, count);
+    for (usize i = 0; i < count; i++)
+        values[i] = 0;
+    return values;
+}
+EOF2
+run generic/user.smith smith/pool.smith >"$work/generic.out"
+echo "$?" >"$work/generic.status"
+expect "a module that calls a generic lints clean" "0" "$(cat "$work/generic.status")"
+expect "... with no finding about the instance's name" "0" "$(grep -c "push_array<" "$work/generic.out")"
+
 echo "lint-smith: $((total - failures)) of $total passed"
 [ $failures = 0 ]

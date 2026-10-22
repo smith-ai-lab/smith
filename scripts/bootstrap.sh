@@ -23,18 +23,47 @@ trap 'rm -rf "$dir"' EXIT
     printf '#include "../../../include/smith/%s.h"\n' "$name"
     awk '
         function plain(line) { sub(/[ \t]*\/\/.*$/, "", line); return line }
+        # The header says the standard C types (uint64_t) where the lowering of the same declaration says the types of the
+        # compiler (__UINT64_TYPE__), so the two are compared with the same spelling.
+        function norm(text) {
+            gsub(/__UINT8_TYPE__/, "uint8_t", text); gsub(/__UINT16_TYPE__/, "uint16_t", text)
+            gsub(/__UINT32_TYPE__/, "uint32_t", text); gsub(/__UINT64_TYPE__/, "uint64_t", text)
+            gsub(/__INT8_TYPE__/, "int8_t", text); gsub(/__INT16_TYPE__/, "int16_t", text)
+            gsub(/__INT32_TYPE__/, "int32_t", text); gsub(/__INT64_TYPE__/, "int64_t", text)
+            gsub(/__SIZE_TYPE__/, "size_t", text); gsub(/__PTRDIFF_TYPE__/, "ptrdiff_t", text)
+            return text
+        }
         function opens(line) { return line ~ /^typedef .*\{$/ }
+        # The header names a module it imports relative to itself (#include "arena.h"); the lowering names it from the
+        # include path (#include "smith/arena.h"). Both mean one file: the header spelling is joined to the folder of the module.
+        function full(path,    parts, count, out, i, at) {
+            count = split(mdir path, parts, "/")
+            at = 0
+            for (i = 1; i <= count; i++) {
+                if (parts[i] == ".." && at > 0) at--
+                else if (parts[i] != "") out[++at] = parts[i]
+            }
+            path = out[1]
+            for (i = 2; i <= at; i++) path = path "/" out[i]
+            return path
+        }
         function include_only(line) { return line ~ /^#[ \t]*(if|ifdef|ifndef|elif|else|endif)([ \t(<"]|$)/ || (line ~ /^#include/ && (line in hinc)) }
         FNR == 1 { second = (FILENAME != header_file) }
         !second {
+            if ($0 ~ /^\/\/ smith-module: /) {
+                mdir = $3
+                gsub(/::/, "/", mdir)
+                sub(/[^\/]*$/, "", mdir)
+            }
             line = plain($0)
             if (line == "") next
             if (line ~ /^#include/) hinc[line] = 1
+            if (line ~ /^#include "/) { rel = line; sub(/^#include "/, "", rel); sub(/"$/, "", rel); hinc["#include \"" full(rel) "\""] = 1 }
             if (collecting) {
                 block = block "\n" line
-                if (line ~ /^\}.*;$/) { collecting = 0; hblock[block] = 1 }
+                if (line ~ /^\}.*;$/) { collecting = 0; hblock[norm(block)] = 1 }
             } else if (opens(line)) { collecting = 1; block = line }
-            else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[line] = 1
+            else if (line ~ /^(constexpr|extern|typedef) .*;$/) hline[norm(line)] = 1
             next
         }
         chain_on { # a conditional chain: left out when it holds nothing but the header'"'"'s includes
@@ -49,13 +78,13 @@ trap 'rm -rf "$dir"' EXIT
         }
         collecting {
             block = block "\n" $0
-            if ($0 ~ /^\}.*;$/) { collecting = 0; if (!(block in hblock)) print block }
+            if ($0 ~ /^\}.*;$/) { collecting = 0; if (!(norm(block) in hblock)) print block }
             next
         }
         /^#[ \t]*if/ { chain_on = 1; chain = $0; chain_ok = 1; depth = 1; next }
         opens($0) { collecting = 1; block = $0; next }
         /^#include/ && ($0 in hinc) { next }
-        /^(constexpr|extern|typedef) .*;$/ && ($0 in hline) { next }
+        /^(constexpr|extern|typedef) .*;$/ && (norm($0) in hline) { next }
         { print }
     ' header_file="$dir/header.h" "$dir/header.h" "$dir/low.c"
     echo '// NOLINTEND'

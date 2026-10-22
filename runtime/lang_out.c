@@ -12,6 +12,10 @@
     host->error(host->context, location, message);
 }
 
+static bool smith_lang_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
+}
+
 // Writes a token in the layout of the source: a new line where it began one, a space where it had one.
 static void smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
                            bool line_start, bool space) {
@@ -133,8 +137,12 @@ static void smith_lang_dump_directives(SmithLang *lang, uint32_t before) {
 static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
     if (!lang->dump_enabled || token->kind == SmithTokenKind_Eof) return;
     smith_lang_dump_directives(lang, token->location);
+    // The tokens a generic's call and instances are made of carry no layout, and two words written side by side are
+    // one word to the compiler that reads the lowered text (`extern double`).
+    bool joined = lang->dump_used > 0 && token->length > 0 &&
+                  smith_lang_word_char(smith_lang_dump[lang->dump_used - 1]) && smith_lang_word_char(token->text[0]);
     smith_lang_put(smith_lang_dump, smith_lang_dump_max, &lang->dump_used, token->text, token->length,
-                   token->line_start, token->space_before);
+                   token->line_start, token->space_before || joined);
 }
 
 // runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset

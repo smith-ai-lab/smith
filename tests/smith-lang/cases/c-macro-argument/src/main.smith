@@ -1,0 +1,16 @@
+// A C macro written c::NAME inside the argument of another C macro: the preprocessor expands the inner one with the
+// argument, before the lowering reaches the c::. And static_assert, which <assert.h> defines as a macro in some SDKs but
+// which is a keyword in C23: it needs no c::.
+import <assert.h>;
+import <stdint.h>;
+import <stdio.h>;
+
+static_assert(sizeof(usize) == sizeof(u64));
+
+int main(void) {
+    usize small = 3;
+    c::assert(small < c::SIZE_MAX);
+    c::assert(c::UINT64_MAX > 0 && small != c::SIZE_MAX);
+    c::printf("%zu\n", small);
+    return 0;
+}

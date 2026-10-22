@@ -229,13 +229,39 @@ static SmithToken smith_lang_last_of_head(const SmithLang *lang) {
     return smith_lang_held_token(lang, &lang->head[lang->head_count - 1]);
 }
 
+// Where `static` goes in the held head: after the attributes the declaration begins with ([[nodiscard]] static bool
+// f()), since an attribute that follows a storage class belongs to the type and not to the function.
+static size_t smith_lang_head_after_attributes(const SmithLang *lang) {
+    size_t at = 0;
+    while (at + 1 < lang->head_count) { // each leading [[ ]]
+        const SmithLangHeld *open = &lang->head[at];
+        const SmithLangHeld *second = &lang->head[at + 1];
+        if (!smith_lang_equals(smith_lang_scratch_str(open->text), open->text.length, "[") ||
+            !smith_lang_equals(smith_lang_scratch_str(second->text), second->text.length, "["))
+            break;
+        int depth = 0;
+        size_t end = at;
+        for (; end < lang->head_count; end++) { // to the matching ]
+            const SmithLangHeld *held = &lang->head[end];
+            const char *text = smith_lang_scratch_str(held->text);
+            depth += smith_lang_equals(text, held->text.length, "[") ? 1 : 0;
+            depth -= smith_lang_equals(text, held->text.length, "]") ? 1 : 0;
+            if (depth == 0) break;
+        }
+        if (end >= lang->head_count) break;
+        at = end + 1;
+    }
+    return at < lang->head_count ? at : 0;
+}
+
 static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
+    size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
-        if (i == 0 && with_static) {
-            SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
+        if (i == static_at) {
+            SmithToken first = smith_lang_held_token(lang, &lang->head[i]);
             smith_lang_emit_code(lang, host, smith_lang_static_keyword(&first));
-            lang->head[0].line_start = false;
-            lang->head[0].space_before = true;
+            lang->head[i].line_start = false;
+            lang->head[i].space_before = true;
         }
         smith_lang_emit_held(lang, host, i, header_too);
     }

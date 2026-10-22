@@ -33,7 +33,7 @@ mkdir "$work/alone" && printf '#include <string.h>\n\nint main() {\n  (void)strl
 # one whose main.c does not compile, and one of the default language, .smith.
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 mkdir "$work/home" "$work/new"
-(cd "$work/new" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c && "$smith" new fresh >/dev/null 2>&1)
+(cd "$work/new" && PATH="$work/bin:$PATH" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c && "$smith" new fresh >/dev/null 2>&1)
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {}, ABORT = setmetatable({}, { __tostring = function() return "ABORT" end }) }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.

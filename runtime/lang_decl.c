@@ -355,6 +355,14 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         *result = cursor; // it goes to the parser as it is: that is where the completion happens
         return true;
     }
+    if (binding->is_c && member->foreign && member->kind != SmithTokenKind_Eof) {
+        // `c::SIZE_MAX` inside the argument of a macro (`c::assert(n < c::SIZE_MAX)`): the preprocessor expanded
+        // SIZE_MAX with the argument, before this name was reached, so what follows `c::` is already its expansion. The
+        // `c::` has done its work; the expansion goes on as it is (the hook allowed the macro, see macroUsed).
+        smith_lang_take(lang, host);
+        *result = smith_lang_take(lang, host);
+        return true;
+    }
     if (member->kind != SmithTokenKind_Identifier || member->foreign) {
         smith_lang_error(lang, host, name->location, "`%s::` must be followed by a name",
                          smith_lang_str(binding->name));

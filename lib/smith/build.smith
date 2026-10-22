@@ -1,40 +1,40 @@
 // smith::build, <smith/build.h>: the API of a project's build file, which `smith build` compiles and runs to write
 // build.ninja. Its C API is the generated header include/smith/build.h (committed; `smith build headers` regenerates
-// it), so the comments above an export are written with the C names (smith_task), which are what a build.c calls and
-// what the header shows. Every export has no body here: the build runtime (runtime/build_runtime.c) defines it in C,
-// under its C name, and a build.smith calls it by the module name:
+// it). Every export has no body here: the build runtime (runtime/build_runtime.c) defines it in C, under its C name,
+// and a build.smith calls it by the module name:
 //   import smith::build;
 //   export void build(build::Build *b) { build::app(b, &(build::App){}); }
-// The names: the type SmithBuild is build::Build (and SmithStep, SmithRun, SmithObject, SmithProgram, SmithModules,
-// SmithTests, SmithPackage, SmithApp and SmithAppTests are build::Step, Run, Object, Program, Modules, Tests, Package,
-// App and AppTests), and a function smith_x is build::x (smith_run_lines is build::run_lines, smith_default is
-// build::default_targets since default is a C keyword). Nothing is renamed otherwise.
+// The comments above an export are the header's doc comments, so they name the Smith names (build::task); the first one
+// says how a C name follows from them, which is what a build.c calls.
 module smith::build;
-
-#include <stddef.h>
-#include <stdint.h>
 
 // smith/build.h: the API of a project's build file, which `smith build` compiles and runs to write build.ninja.
 // Design: docs/build-c.md. Lists end in nullptr and are never nullptr (an optional field left unset reads as empty).
+//
+// Names. The module's names are short, and a build.smith writes them with the module (build::task, build::Step). A
+// build.c writes the C names, which follow from them: a function build::x is smith_x (build::task is smith_task,
+// build::run_lines is smith_run_lines) and a type build::X is SmithX (build::Step is SmithStep). The two that differ
+// are build::default_targets, which is smith_default (default is a C keyword), and the file's own function, build,
+// which the build file defines and keeps its name.
 [[smith::c_name("SmithBuild")]] export typedef struct {
     // `uname -s` exactly: "Darwin", "Linux"; nothing renamed, so it matches what a Makefile sees
     const char *os;
     const char *arch; // `uname -m` exactly: "arm64", "x86_64", "aarch64"
     const char *root; // the project's absolute folder, where the build file is
-    int cpus;         // the number of cores
+    i32 cpus;         // the number of cores
 } Build;
 
 // Steps written as C functions. A step or task with .run (and no .command) calls it when the executor runs the step.
 // The step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
 // <path>... --arg <word>...`, where <function> is the function's address minus the address of a fixed function in the
 // program, in hex (the program is each .run edge's implicit input, so the offset is valid for the run that uses it).
-// With --run the program does not call build() or any smith_defer callback: it makes a SmithBuild (os, arch, root,
-// cpus, a fresh arena) and a SmithRun from those words, calls the function and exits with its result. So a function
+// With --run the program does not call build() or any build::defer callback: it makes a build::Build (os, arch, root,
+// cpus, a fresh arena) and a build::Run from those words, calls the function and exits with its result. So a function
 // sees no state build() set, no -D option and no earlier capture: its data is its step's .inputs, .outputs and
 // .args, and nothing else. Pass an option's value in .args. The offset is checked to land in this executable.
 // The return value is the exit status. Like a command, the function writes the outputs it declares; one with none gets
-// smith's stamp. run->b works with every helper that needs no build() state (smith_fmt, smith_cat, smith_join,
-// smith_list, smith_lines, smith_glob, smith_capture, smith_write). Editing the build file reruns every .run step,
+// smith's stamp. run->b works with every helper that needs no build() state (build::fmt, build::cat, build::join,
+// build::list, build::lines, build::glob, build::capture, build::write). Editing the build file reruns every .run step,
 // since the function's code is part of the program. .content_hash is not implemented yet and exits 2.
 [[smith::c_name("SmithRun")]] export typedef struct {
     Build *b;
@@ -53,13 +53,13 @@ module smith::build;
     const char *depfile;                  // a file the command writes in -MMD form
     const char *stamp;       // the step's only output, which smith touches on success; .depfile may name it
     const char *description; // printed instead of the command
-    const char *pool;        // a name from smith_pool, or "console" for the terminal
+    const char *pool;        // a name from build::pool, or "console" for the terminal
     bool restat;             // an output the command left unchanged does not rerun what depends on it
     bool always;             // run on every build
-    int (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
+    i32 (*run)(Run *run);    // a C function in the build file instead of .command; 0 succeeds
     const char *const *args; // given to .run as run->args
     bool content_hash;       // later: rerun only when the inputs' bytes changed
-    bool test;               // `smith test` runs this task or builds this step (smith_tests sets it on its task)
+    bool test;               // `smith test` runs this task or builds this step (build::tests sets it on its task)
 } Step;
 
 // what the project writes: the function `build` of the build file (build.c, or a plain `void build(build::Build *b)` in
@@ -82,7 +82,7 @@ module smith::build;
 // declared again under one name with every field equal changes nothing; with any field different it is an error.
 // A task or alias may not be named after a verb (fmt, lint, docs, prove, check, run, test): each verb does one fixed
 // thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
-// tests, which `smith test` runs (smith_tests does it for its own). .test on a step (smith_step) makes `smith test`
+// tests, which `smith test` runs (build::tests does it for its own). .test on a step (build::step) makes `smith test`
 // build it with the tests; it is incremental like any step, so a check stamped by its inputs does not rerun
 [[smith::c_name("smith_task")]] export void task(Build *b, const char *name, Step *step);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
@@ -90,16 +90,16 @@ module smith::build;
 [[smith::c_name("smith_alias")]] export void alias(Build *b, const char *name, const char *const *targets);
 // the targets `smith build` builds when it is given none
 [[smith::c_name("smith_default")]] export void default_targets(Build *b, const char *const *targets);
-[[smith::c_name("smith_pool")]] export void pool(Build *b, const char *name, int depth);
+[[smith::c_name("smith_pool")]] export void pool(Build *b, const char *name, i32 depth);
 
 // -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
-// nullptr, so a smith_defer callback can read what build() read. The other kind is an error
+// nullptr, so a build::defer callback can read what build() read. The other kind is an error
 [[smith::c_name("smith_option")]] export bool option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 [[smith::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name,
                                                                         const char *fallback, const char *description);
 // the arguments `smith run` and `smith test` were given (not their -D options): a list, empty for none. A task passes
-// them on, as smith_tests does to the test runner
+// them on, as build::tests does to the test runner
 [[smith::c_name("smith_args")]] export const char *const *args(Build *b);
 // an environment variable, or fallback (may be nullptr)
 [[smith::c_name("smith_env")]] export const char *env(Build *b, const char *name, const char *fallback);
@@ -111,7 +111,7 @@ module smith::build;
 // a command's stdout without its last newline; no shell. A program that cannot start, exits non-zero or is killed is an
 // error
 [[smith::c_name("smith_capture")]] export const char *capture(Build *b, const char *const *argv);
-// like smith_capture, but returns fallback (may be nullptr) when the program cannot start, exits non-zero or is
+// like build::capture, but returns fallback (may be nullptr) when the program cannot start, exits non-zero or is
 // killed; its stderr goes to /dev/null
 [[smith::c_name("smith_capture_or")]] export const char *capture_or(Build *b, const char *const *argv,
                                                                     const char *fallback);
@@ -125,12 +125,12 @@ module smith::build;
 // module,
 // ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
-// flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
+// flags (build::object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // the build file asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random",
-// "test", "text", "trace"). Naming a library is enough: smith_program also links the libraries that the libraries it
+// "test", "text", "trace"). Naming a library is enough: build::program also links the libraries that the libraries it
 // links need ("io" brings "arena" and "random", "contract" brings "trace"), each as the object the project made of that
 // source or else one compiled with the flags of the library that needs it, <folder of its object>/<name>.o; the
-// libraries are found by scanning the library's header and source, as smith_app does. smith_tests compiles "test",
+// libraries are found by scanning the library's header and source, as build::app does. build::tests compiles "test",
 // "arena", "random", "trace" and "contract" unless .objects has them.
 [[smith::c_name("smith_library")]] export const char *library(Build *b, const char *name);
 
@@ -161,10 +161,10 @@ module smith::build;
 // items, or an empty list
 [[smith::c_name("smith_when")]] export const char *const *when(Build *b, bool condition, const char *const *items);
 // the items with the separator between them, in the arena; the empty list gives "". For text such as a unity file:
-// smith_join(b, smith_map(b, files, "#include \"%s\"\n"), "")
+// build::join(b, build::map(b, files, "#include \"%s\"\n"), "")
 [[smith::c_name("smith_join")]] export const char *join(Build *b, const char *const *items, const char *separator);
 // the strings up to a final nullptr, as a list in the arena. Unlike a compound literal it never dangles, so it is safe
-// to keep and to return from a function; smith_list(b, nullptr) is the empty list
+// to keep and to return from a function; build::list(b, nullptr) is the empty list
 [[smith::c_name("smith_list")]] export const char *const *list(Build *b, const char *first, ...);
 // ("src/a.c", ".o") gives "src/a.o"
 [[smith::c_name("smith_replace_extension")]] export const char *replace_extension(Build *b, const char *path,
@@ -172,29 +172,29 @@ module smith::build;
 
 // Steps that exist only once a generated file is read.
 // `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
-// may call any function here, smith_defer included. The program calls `more` itself while it runs, for each call whose
+// may call any function here, build::defer included. The program calls `more` itself while it runs, for each call whose
 // needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
 // regeneration edge on every call's needs, so the executor builds the needs, runs the program again with them in place,
-// and reloads. A pending `more` may be the one that calls smith_default.
+// and reloads. A pending `more` may be the one that calls build::default_targets.
 [[smith::c_name("smith_defer")]] export void defer(Build *b, const char *const *needs, void (*more)(Build *b));
 // One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
-// is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
+// is read on every `smith build`. A file that a step makes is read inside build::defer's `more`, never in build(). A
 // missing file or one over 16 MiB is an error.
 [[smith::c_name("smith_lines")]] export const char *const *lines(Build *b, const char *path);
 
-// Runs a program, no shell, and returns its stdout split into lines as smith_lines does, with its stderr passed
+// Runs a program, no shell, and returns its stdout split into lines as build::lines does, with its stderr passed
 // through. A program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and
 // gives nullptr. More than 1 MiB of stdout is an error.
 [[smith::c_name("smith_run_lines")]] export const char *const *run_lines(Run *run, const char *const *argv);
-// Like smith_run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
+// Like build::run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
-[[smith::c_name("smith_run_status")]] export int run_status(Run *run, const char *const *argv,
+[[smith::c_name("smith_run_status")]] export i32 run_status(Run *run, const char *const *argv,
                                                             const char *const **lines);
-// Like smith_run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
+// Like build::run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
 // order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
 // limit covers both streams together.
-[[smith::c_name("smith_run_combined")]] export int run_combined(Run *run, const char *const *argv,
+[[smith::c_name("smith_run_combined")]] export i32 run_combined(Run *run, const char *const *argv,
                                                                 const char *const **lines);
 // Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
 // these paths when the function returns. A .run step that records a path must have a .depfile.
@@ -203,12 +203,12 @@ module smith::build;
 // captured). `environment` (NAME=value entries, may be nullptr) is added to the current environment, and an entry
 // replaces a variable of the same name. Returns the exit status, 128 plus the signal that killed it, or 127 when it
 // cannot start. stdout and stderr are flushed first, so the function's own printing comes before the program's. The
-// same flush happens before smith_run_lines and smith_run_status spawn.
-[[smith::c_name("smith_run_program")]] export int run_program(Run *run, const char *const *argv,
+// same flush happens before build::run_lines and build::run_status spawn.
+[[smith::c_name("smith_run_program")]] export i32 run_program(Run *run, const char *const *argv,
                                                               const char *const *environment);
 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
-// Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
+// Each emits ordinary steps, the same as calling build::step yourself; the command is written out in its comment.
 // One source compiled to one object:
 //   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
 // with that .d file as the step's depfile.
@@ -219,7 +219,7 @@ module smith::build;
     const char *const *flags;           // exactly these, in this order
     const char *const *implicit_inputs; // files the compile reads that are not in its depfile on a clean build, such as
                                         // a generated #include or #embed file
-    Step step;                          // set by smith_object: the step it emitted
+    Step step;                          // set by build::object: the step it emitted
 } Object;
 
 // Objects linked into a program:
@@ -228,9 +228,9 @@ module smith::build;
     const char *linker;           // the program, such as "smith-cc" or "smith-c++"; required
     const char *output;           // the program file; required
     const char *const *flags;     // before the objects, such as -mmacosx-version-min=26.0
-    const Object *const *objects; // the objects to link, each already passed to smith_object
+    const Object *const *objects; // the objects to link, each already passed to build::object
     const char *const *libraries; // after the objects: -framework Metal, -lm, a .a path
-    Step step;                    // set by smith_program: the step it emitted
+    Step step;                    // set by build::program: the step it emitted
 } Program;
 
 // A source that ends in .smith is a module or a plain .smith file (docs/smith-lang.md): a module also gets a step that
@@ -242,13 +242,13 @@ module smith::build;
 // Records a compile_commands.json entry for source with no step: {directory: the root, file: source, arguments:
 // [compiler, flags..., "-c", source]} and no "output". It is for files the build never compiles on their own, such as
 // sources reached only through a unity build, so the editor still knows their flags. compiler and source are required.
-// Entries follow the smith_object entries, in call order, before the build file's. A source that already has a
-// smith_object entry or an earlier smith_compile_command is skipped: the first entry for a file wins. Call it before
-// smith_compile_commands, which writes the file; after it, it is an error.
+// Entries follow the build::object entries, in call order, before the build file's. A source that already has a
+// build::object entry or an earlier build::compile_command is skipped: the first entry for a file wins. Call it before
+// build::compile_commands, which writes the file; after it, it is an error.
 [[smith::c_name("smith_compile_command")]] export void compile_command(Build *b, const char *compiler,
                                                                        const char *source, const char *const *flags);
 // Clang modules, off until the build file calls this, and then for every C and Objective-C source passed to
-// smith_object afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each
+// build::object afterwards (never .metal, never C++; call it before the first build::object, or it is an error). Each
 // header under the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own
 // headers (.smith/include/smith/) are modules too. smith writes the module maps to .smith/modules/ and clang keeps its
 // cache in $XDG_CACHE_HOME/smith/modules (or ~/.cache/smith/modules), shared by every project and worktree and keyed
@@ -259,7 +259,7 @@ module smith::build;
 // the headers imported, so editing a header rebuilds exactly the sources that import it. compile_commands.json keeps
 // these flags, so the editor sees what the build does (Homebrew's clangd, without --query-driver, builds the modules).
 // A header that cannot be compiled alone, or that clang must include more than once with different macros, is listed in
-// .textual (paths as smith_glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
+// .textual (paths as build::glob prints them, such as "src/legacy.h"): it stays a plain #include everywhere.
 [[smith::c_name("SmithModules")]] export typedef struct {
     const char *const *folders; // header folders below the project, such as "src"; a folder covers its subfolders
     const char *const *textual; // headers that stay textual
@@ -275,32 +275,32 @@ module smith::build;
     const char *const *inputs; // files the tests read when they run, such as compiled shaders; built first
     const char *output;        // the runner, by default build/tests
     const char *name;          // the task, by default "test"
-    Step step;                 // set by smith_tests: the task
+    Step step;                 // set by build::tests: the task
 } Tests;
 
-// Emits ordinary steps, the same as calling smith_step yourself; the commands are written out here.
+// Emits ordinary steps, the same as calling build::step yourself; the commands are written out here.
 //   find the tests (a .run step, restat): reads .sources and writes <folder of .output>/tests_list.h, the prototypes
 //     of the tests, and tests_list.c, the table the runner reads. A test is a line that is exactly
 //     `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` (<name> in [a-z0-9_], <key> in [a-z_]), the
 //     pattern ^void (test_[a-z0-9_]+)\((void|SmithKey [a-z_]+)\) \{$. A name defined twice is an error that names
 //     both files.
-//   each test file, through smith_object:
+//   each test file, through build::object:
 //     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MMD -MF <d> -c <file> -o <object>
 //     so a test_ function the scan missed, because it is formatted another way, is a compile error.
-//   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
+//   tests_list.c and build::library(b, "test"), compiled with <compiler> <flags...>.
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>
 //     The objects are in <output>_objects/. smith's arena, random, trace and contract libraries are compiled here with
 //     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
-//     smith_library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
+//     build::library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
 //     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
 //   the task <name> (a .run task, on the console, with .test: `smith test` runs it): runs <output> with
-//     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
+//     the arguments `smith test` was given (build::args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
 //     the runner, so they are built before the tests run and a change to one reruns them.
 [[smith::c_name("smith_tests")]] export void tests(Build *b, Tests *tests);
-// Writes compile_commands.json at path when the build file runs, only when its bytes change, from every smith_object so
-// far, then every smith_compile_command, plus one entry for the build file itself with the command smith compiles it
-// with. Call it last.
+// Writes compile_commands.json at path when the build file runs, only when its bytes change, from every build::object
+// so far, then every build::compile_command, plus one entry for the build file itself with the command smith compiles
+// it with. Call it last.
 [[smith::c_name("smith_compile_commands")]] export void compile_commands(Build *b, const char *path);
 
 // Builds by convention (docs/build-c.md, "Conventions"). A project that follows them has no build file: `smith build`
@@ -318,19 +318,19 @@ module smith::build;
 //               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
 //               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2; fast:
 //               -O2 -DNDEBUG), then .flags
-//   smith_modules(b, &(SmithModules){});    // unless modules are already on or an object was already declared
+//   build::modules(b, &(build::Modules){});    // unless modules are already on or an object was already declared
 //   for P in debug, release, fast:
 //     for each source S found, and each library L used:
-//       smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = S,    // L: smith_library(b, "L")
+//       build::object(b, &(build::Object){.compiler = "smith-cc", .source = S,    // L: build::library(b, "L")
 //                                      .output = "build/P/<S without its extension>.o", .flags = flags(P)});
 //                                       // L's object is build/P/smith/<L>.o
-//     smith_program(b, &(SmithProgram){.linker = "smith-cc", .output = "build/P/<name>",
+//     build::program(b, &(build::Program){.linker = "smith-cc", .output = "build/P/<name>",
 //                                      .flags = [-fsanitize=address,undefined for debug] + .link_flags,
 //                                      .objects = those objects, .libraries = .libraries});
-//   smith_alias(b, "release", the release program); smith_alias(b, "fast", the fast program);
-//   smith_default(b, the debug program);
+//   build::alias(b, "release", the release program); build::alias(b, "fast", the fast program);
+//   build::default_targets(b, the debug program);
 // The compile commands go to .smith/ on every build (the verbs read them); a root compile_commands.json is the
-// project's to ask for with smith_compile_commands.
+// project's to ask for with build::compile_commands.
 [[smith::c_name("SmithApp")]] export typedef struct {
     const char *entry;             // "main.smith" or "main.c"; by default the one the root holds
     const char *name;              // the program's name; by default the project's folder
@@ -343,9 +343,9 @@ module smith::build;
 [[smith::c_name("smith_app")]] export void app(Build *b, App *app);
 
 // The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
-// file below the folder (tests are found by smith_tests's rules). Call it after smith_app. The code under test is the
+// file below the folder (tests are found by build::tests's rules). Call it after build::app. The code under test is the
 // program's objects but the entry's, plus what only the tests reach by include or import. Expands to
-//   smith_tests(b, &(SmithTests){.sources = smith_glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
+//   build::tests(b, &(build::Tests){.sources = build::glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
 //                                .objects = app.objects + what only the tests reach (compiled with flags(debug)),
 //                                .flags = flags(debug), .link_flags = [-fsanitize=address,undefined] + .link_flags});
 // With no test file there is no task, and `smith test` says so.

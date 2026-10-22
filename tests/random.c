@@ -8,6 +8,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 // The constants of one run of tests: keys are fixed, so every check is deterministic.
 constexpr uint64_t test_seed = 20260101;
