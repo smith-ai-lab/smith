@@ -30,6 +30,8 @@ constexpr size_t smith_lang_header_max = (size_t)1 << 20;
 constexpr size_t smith_lang_dump_max = (size_t)1 << 22;
 constexpr size_t smith_lang_allowed_max = 16; // the macro names c::X lets expand, until they have
 constexpr size_t smith_lang_name_max = 256;
+constexpr size_t smith_lang_params_max = 16;
+constexpr size_t smith_lang_param_max = 64;
 constexpr size_t smith_lang_message_max = 512;
 constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
@@ -325,7 +327,9 @@ struct SmithLang {
     bool imports_watched; // the host watches the names the imported headers declared
     bool body_sparse;     // inside a function body the host offers only braces and watched names
     bool in_function;     // inside a function body: nothing declared here is the module's
-    bool agg_pending;     // struct, union or enum seen, `{` not yet
+    char params[smith_lang_params_max][smith_lang_param_max]; // the parameters of the function being declared whose
+    uint32_t params_count;                                    // names are the module's: kept as written, not prefixed
+    bool agg_pending;                                         // struct, union or enum seen, `{` not yet
     bool enum_pending;
     bool init_top;             // an initializer at file scope is being read
     bool tail_declarator;      // after an aggregate's `}` or a comma: names are declarators

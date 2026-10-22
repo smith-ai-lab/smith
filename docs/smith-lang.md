@@ -57,6 +57,10 @@ u32 helper(void) { … }                              // private
       one included); a name declared later that the prefix would make the same; `[[smith::c_name]]` not followed by
       `export`; two on one export; an export that declares no typedef, tag, function or variable; a string that is no
       identifier (or a keyword), or an argument that is no string. It is the only attribute in its `[[ ]]`.
+  - **A parameter keeps its name** when the module exports one by that name (`export void step(Step *step)`,
+    `export i32 area(i32 width)` beside an export `width`): the parameter is not the export, so the header and the
+    body say `step` and `width`, as C scopes them (inside the body the export of that name is out of reach, as in C). A
+    local declared in a body is not tracked this way: it is renamed like the export, consistently.
   - A C name used with no `c::` is an error in every `.smith` file, a module or not: a function, a variable, a type,
     a tag or a macro that an `import`ed header declared. Names from `#include`d headers keep working bare, as in C.
     A file with no `module` line lowers nothing else: its names are not prefixed and nothing becomes `static`.

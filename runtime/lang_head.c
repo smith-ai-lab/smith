@@ -113,7 +113,10 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
         lang->decl.name_found = true;
         lang->decl.declared += 1;
         lang->decl.last_name = (uint32_t)index;
-        if (kind == SmithLangName_Function) lang->decl.is_function = true;
+        if (kind == SmithLangName_Function) {
+            lang->decl.is_function = true;
+            lang->decl.params_next = true;
+        }
     } else if (held->role == SmithLangRole_Plain) {
         SmithLangContext context = {held->after_member, held->after_tag, held->typeish, false, held->before};
         SmithLangLowered lowered = smith_lang_lower(lang, host, name, length, held->location, &context, next);
@@ -153,7 +156,10 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, cons
 
 static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
     if (smith_lang_punct(token, "(")) {
-        if (lang->decl.params_next && lang->paren_depth == 0) lang->decl.in_params = true;
+        if (lang->decl.params_next && lang->paren_depth == 0) {
+            lang->decl.in_params = true;
+            lang->params_count = 0;
+        }
         lang->decl.params_next = false;
         lang->paren_depth += 1;
     } else if (smith_lang_punct(token, ")")) {

@@ -8,8 +8,8 @@ int names_fields_combine(names_fields_Stats *stats) {
 int local = stats->count + stats->total;
 return local + names_fields_count + names_fields_total();
 }
-names_fields_Stats names_fields_make(int names_fields_count, int names_fields_total) __asm__("_names::fields::make");
-names_fields_Stats names_fields_make(int names_fields_count, int names_fields_total) {
-names_fields_Stats stats = {.count = names_fields_count, .total = names_fields_total};
+names_fields_Stats names_fields_make(int count, int total) __asm__("_names::fields::make");
+names_fields_Stats names_fields_make(int count, int total) {
+names_fields_Stats stats = {.count = count, .total = total};
 return stats;
 }

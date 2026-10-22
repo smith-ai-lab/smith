@@ -204,6 +204,9 @@ bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location);
 bool smith_lang_is_module(const SmithLang *lang);
 // In a module's function body, whether the host offers only braces and the names it watches (the host's fast paths).
 bool smith_lang_body_sparse(const SmithLang *lang);
+// Whether `name` is a parameter of the function whose body is being read, and so is no name of the module even when
+// the module exports one by that name (the host must leave it as written).
+bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length);
 // A brace of such a body that changes nothing but the nesting: done, and the token goes on unchanged. False for the
 // function's own closing brace and for a struct, union or enum, which the full path reads.
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open);
