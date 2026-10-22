@@ -77,11 +77,11 @@ export i32 area(i32 w, i32 h) {
 }
 EOF
     cat >"$1/tests/test_box.smith" <<'EOF'
-import <smith/test.h>;
+import smith::test;
 import geometry::box;
 
 void test_area(void) {
-    c::smith_check_equal_i32(box::area(2, 3), 6);
+    test::check_equal(box::area(2, 3), 6);
 }
 EOF
 }
@@ -293,6 +293,7 @@ cp "$here/.clang-format" .
 sed 's/^  smith-effects,$/  -smith-effects,/' "$here/.clang-tidy" >.clang-tidy
 capture smith lint
 expect "lint: a clean build.smith passes" 0 "$rc"
+[ "$rc" -eq 0 ] || printf '  lint said: %s\n' "$out$err"
 printf '\nstatic int BadName(int x) {\n    return x;\n}\n' >>build.smith
 capture smith lint
 expect "lint: a finding in build.smith fails" 1 "$rc"
