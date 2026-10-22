@@ -42,6 +42,16 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
 - If the installed smith is broken, or in a fresh clone, a C23 compiler and a clang for build.c are all it takes: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc` installs the stage0; add the `build/stage0 build llvm` step before it for the full smith.
 - `smith build clean` removes `build/`. smith keeps its own files in `.smith/`, outside `build/`, so a project's clean cannot delete them while the build runs.
 
+## Rules for an agent working on smith
+
+- **Test the smith under test.** Run a change's tests with `build/<OS>-<arch>/smith`, not the installed `smith`, when the change is to the language, a library or the build. A test that builds a project puts the tested smith's folder (its `smith-cc` and `smith-c++`) first on `PATH`, so nothing in it compiles with the installed smith.
+- **Regenerate after a merge.** A merge that touches `lib/smith/*.smith` or the lowering needs `smith build headers` and `smith build bootstrap`; `check-headers` and `check-bootstrap` fail until it is done.
+- **LLVM is not yours to rebuild.** Never run `smith build llvm` or start a new LLVM configuration (a new `-rN`) unless your task says to: ask whoever gave it to you.
+- **Write idiomatic Smith, not C renamed.** In a `.smith` file: sized types (`u64`, `usize`, `f64`), `import <h>;` with `c::` names, modules that import modules, generics where a type was passed as `sizeof` and `alignof`, and no preprocessor. Count them before and after a port: a module with a standard C type, an `#include` or an `#if` left is not done.
+- **Effects come through capabilities.** No raw call to the world outside a capability's own module (`smith-effects`); a function takes the part of `SmithIo` it needs as a parameter.
+- **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
+- **One full `smith check` at a time** on a machine, and say plainly what you did not run.
+
 ## Verbs and the compiler links
 
 - `smith.c` ends with the verb table, `smith_verbs`: one row per top-level verb, a kind that says how it runs (`smith_dispatch`) and, for a project verb, the function that does it (`runtime/verbs.c`, included by `smith.c`). `SmithVerb_ToolOrProject` (`fmt`, `lint`, `prove`) is the tool with arguments and the project action with none; `SmithVerb_Project` (`run`, `test`) and `SmithVerb_ProjectBare` (`check`) are the action alone. `smith docs` (`SmithVerb_Docs`, `runtime/docs.c`) is always the check, with the types of `knowledge/index.md`. The actions read `.smith/build.info` (written by every run of build.c, `runtime/build_runtime.c`: `smith_put_build_info`) and build the manifest's `smith_needs` or `smith_tests`; `smith build <verb>` is refused for the seven fixed names (`smith_is_project_verb`), and `smith_task` and `smith_alias` refuse them (`smith_verb_names` in the runtime). A new verb is a row and a function.
