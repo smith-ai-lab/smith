@@ -451,6 +451,10 @@ class C23Check final : public ClangTidyCheck {
                     check.diag(tokens[i].getLocation(), "`NULL` is a macro: write `nullptr`");
                 } else if (name == "_Bool") {
                     check.diag(tokens[i].getLocation(), "`_Bool` is C99's spelling: write `bool`, a keyword in C23");
+                } else if (name == "_Static_assert" || name == "_Alignas" || name == "_Alignof") {
+                    std::string keyword = name.drop_front(1).lower();
+                    check.diag(tokens[i].getLocation(), "`%0` is C11's spelling: write `%1`, a keyword in C23")
+                        << name << llvm::StringRef(keyword);
                 } else if (name == "_Noreturn") {
                     check.diag(tokens[i].getLocation(), "`_Noreturn` is C11's spelling: write `[[noreturn]]`");
                 } else if (name == "stdbool" && i + 1 < tokens.size() && tokens[i + 1].is(tok::period)) {

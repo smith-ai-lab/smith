@@ -612,6 +612,10 @@ int f(const char *p) {
     int values[3] = {0};
     return (p == NULL) + values[0];
 }
+
+_Static_assert(sizeof(int) == 4, "int");
+_Alignas(16) static char buffer[16];
+static const unsigned long alignment = _Alignof(int);
 EOF2
 idiom smith-c23 idiom/c23.smith >"$work/c23.out"
 expected="idiom/c23.smith:4:9: error: \`<stdbool.h>\` is not needed: \`bool\`, \`true\` and \`false\` are keywords in C23
@@ -630,7 +634,10 @@ idiom/c23.c:5:16: error: \`__attribute__((unused))\` has a standard spelling: wr
 idiom/c23.c:5:24: error: \`__attribute__((warn_unused_result))\` has a standard spelling: write \`[[nodiscard]]\`
 idiom/c23.c:6:1: error: \`_Noreturn\` is C11's spelling: write \`[[noreturn]]\`
 idiom/c23.c:9:21: error: \`{0}\` is C's way to zero a whole object: write \`{}\`
-idiom/c23.c:10:18: error: \`NULL\` is a macro: write \`nullptr\`"
+idiom/c23.c:10:18: error: \`NULL\` is a macro: write \`nullptr\`
+idiom/c23.c:13:1: error: \`_Static_assert\` is C11's spelling: write \`static_assert\`, a keyword in C23
+idiom/c23.c:14:1: error: \`_Alignas\` is C11's spelling: write \`alignas\`, a keyword in C23
+idiom/c23.c:15:40: error: \`_Alignof\` is C11's spelling: write \`alignof\`, a keyword in C23"
 expect "smith-c23: the same in a C file" "$expected" "$(idiom_findings <"$work/c23-c.out")"
 
 cat >"$work/p/idiom/consts.smith" <<'EOF2'
