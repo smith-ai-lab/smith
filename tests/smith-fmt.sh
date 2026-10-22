@@ -137,6 +137,12 @@ expect ".c files still read import as a name" "u32 f(void) {
     return value;
 }" "$(printf 'u32 f(void) {\nimport value = 1;\nreturn value;\n}\n' | format "$here/x.c")"
 
+# A file's own header sorts first (patches/smith-format-source-extension.patch): `#include "foo.h"` in foo.smith, as in foo.c.
+expect "a .smith file's own header sorts first, as in a .c file" '#include "foo.h"
+#include <stdlib.h>' "$(printf '#include <stdlib.h>\n#include "foo.h"\n' | format "$here/foo.smith")"
+expect "... and the same in the .c file" "$(printf '#include <stdlib.h>\n#include "foo.h"\n' | format "$here/foo.smith")" \
+    "$(printf '#include <stdlib.h>\n#include "foo.h"\n' | format "$here/foo.c")"
+
 # --- `smith fmt` with no arguments --------------------------------------------------------------------------------------
 # In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
 project=$work/project

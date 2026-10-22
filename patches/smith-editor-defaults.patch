@@ -1,0 +1,134 @@
+diff --git a/clang/include/clang/Format/Format.h b/clang/include/clang/Format/Format.h
+--- a/clang/include/clang/Format/Format.h
++++ b/clang/include/clang/Format/Format.h
+@@ -6504,6 +6504,9 @@ extern const char *DefaultFormatStyle;
+ 
+ /// The suggested predefined style to use as the fallback style in ``getStyle``.
+ /// Different builds can modify the value to the preferred styles.
++/// A fallback style may also be written ``file:<path>``: the predefined LLVM
++/// style with that configuration file applied on top, used when no
++/// ``.clang-format`` is found.
+ extern const char *DefaultFallbackStyle;
+ 
+ /// Construct a FormatStyle based on ``StyleName``.
+diff --git a/clang/lib/Format/Format.cpp b/clang/lib/Format/Format.cpp
+--- a/clang/lib/Format/Format.cpp
++++ b/clang/lib/Format/Format.cpp
+@@ -4653,6 +4653,12 @@ Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
+                                llvm::SourceMgr::DiagHandlerTy DiagHandler) {
+   FormatStyle Style = getLLVMStyle(guessLanguage(FileName, Code));
+   FormatStyle FallbackStyle = getNoStyle();
++  // A fallback of the form file:<path> is LLVM's style with that file on top.
++  StringRef FallbackStyleFile;
++  if (FallbackStyleName.starts_with_insensitive("file:")) {
++    FallbackStyleFile = FallbackStyleName.substr(5);
++    FallbackStyleName = "LLVM";
++  }
+   if (!getPredefinedStyle(FallbackStyleName, Style.Language, &FallbackStyle))
+     return make_string_error("Invalid fallback style: " + FallbackStyleName);
+ 
+@@ -4841,6 +4847,17 @@ Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
+                              UnsuitableConfigFiles);
+   }
+ 
++  if (!FallbackStyleFile.empty()) {
++    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> Text =
++        loadAndParseConfigFile(FallbackStyleFile, FS, &FallbackStyle,
++                               AllowUnknownOptions, DiagHandler, IsDotHFile);
++    if (auto EC = Text.getError()) {
++      return make_string_error("Error reading " + FallbackStyleFile + ": " +
++                               EC.message());
++    }
++    FallbackStyle.InheritConfig.clear();
++  }
++
+   if (!ChildFormatTextToApply.empty()) {
+     LLVM_DEBUG(llvm::dbgs()
+                << "Applying child configurations on fallback style\n");
+diff --git a/clang-tools-extra/clangd/TidyProvider.cpp b/clang-tools-extra/clangd/TidyProvider.cpp
+--- a/clang-tools-extra/clangd/TidyProvider.cpp
++++ b/clang-tools-extra/clangd/TidyProvider.cpp
+@@ -19,6 +19,7 @@
+ #include "llvm/ADT/StringExtras.h"
+ #include "llvm/ADT/StringSet.h"
+ #include "llvm/Support/Allocator.h"
++#include "llvm/Support/MemoryBuffer.h"
+ #include "llvm/Support/Process.h"
+ #include "llvm/Support/SourceMgr.h"
+ #include <memory>
+@@ -97,7 +98,8 @@ public:
+   DotClangTidyTree(const ThreadsafeFS &FS)
+       : FS(FS), RelPath(".clang-tidy"), MaxStaleness(std::chrono::seconds(5)) {}
+ 
+-  void apply(tidy::ClangTidyOptions &Result, PathRef AbsPath) {
++  // Returns whether any .clang-tidy file governs the path.
++  bool apply(tidy::ClangTidyOptions &Result, PathRef AbsPath) {
+     namespace path = llvm::sys::path;
+     assert(path::is_absolute(AbsPath));
+ 
+@@ -133,6 +135,7 @@ public:
+     unsigned Order = 1u;
+     for (auto &Option : llvm::reverse(OptionStack))
+       Result.mergeWith(*Option, Order++);
++    return !OptionStack.empty();
+   }
+ };
+ 
+@@ -264,10 +267,37 @@ TidyProvider provideClangdConfig() {
+   };
+ }
+ 
++const char *FallbackTidyConfigFile = nullptr;
++
++// The options of FallbackTidyConfigFile, read once; null when there are none.
++static const tidy::ClangTidyOptions *fallbackTidyOptions() {
++  static const tidy::ClangTidyOptions *Options =
++      []() -> const tidy::ClangTidyOptions * {
++    if (!FallbackTidyConfigFile)
++      return nullptr;
++    auto Data = llvm::MemoryBuffer::getFile(FallbackTidyConfigFile);
++    if (!Data) {
++      elog("Cannot read clang-tidy fallback configuration {0}: {1}",
++           FallbackTidyConfigFile, Data.getError().message());
++      return nullptr;
++    }
++    auto Parsed = tidy::parseConfiguration(llvm::MemoryBufferRef(**Data));
++    if (!Parsed) {
++      elog("Error parsing clang-tidy fallback configuration {0}: {1}",
++           FallbackTidyConfigFile, Parsed.getError().message());
++      return nullptr;
++    }
++    return new tidy::ClangTidyOptions(std::move(*Parsed));
++  }();
++  return Options;
++}
++
+ TidyProvider provideClangTidyFiles(ThreadsafeFS &TFS) {
+   return [Tree = std::make_unique<DotClangTidyTree>(TFS)](
+              tidy::ClangTidyOptions &Opts, llvm::StringRef Filename) {
+-    Tree->apply(Opts, Filename);
++    if (!Tree->apply(Opts, Filename))
++      if (const tidy::ClangTidyOptions *Fallback = fallbackTidyOptions())
++        Opts.mergeWith(*Fallback, 1u);
+   };
+ }
+ 
+diff --git a/clang-tools-extra/clangd/TidyProvider.h b/clang-tools-extra/clangd/TidyProvider.h
+--- a/clang-tools-extra/clangd/TidyProvider.h
++++ b/clang-tools-extra/clangd/TidyProvider.h
+@@ -48,8 +48,15 @@ disableUnusableChecks(llvm::ArrayRef<std::string> ExtraBadChecks = {});
+ 
+ /// Provider that searches for .clang-tidy configuration files in the directory
+ /// tree.
++///
++/// When \ref FallbackTidyConfigFile is set and no .clang-tidy file governs a
++/// source file, that file's options are used in their place.
+ TidyProvider provideClangTidyFiles(ThreadsafeFS &);
+ 
++/// The path of a .clang-tidy file to use for sources that no .clang-tidy file
++/// governs. Null (the default) changes nothing.
++extern const char *FallbackTidyConfigFile;
++
+ // Provider that uses clangd configuration files.
+ TidyProvider provideClangdConfig();
+ 

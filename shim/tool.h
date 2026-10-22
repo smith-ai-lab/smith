@@ -14,7 +14,9 @@
 //    a smith that is not installed beside lib/clang.
 #pragma once
 
+#include "clang/Driver/CreateInvocationFromArgs.h"
 #include "clang/Options/OptionUtils.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <mach-o/getsect.h>
@@ -22,6 +24,11 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
+
+extern "C" {
+#include "../runtime/lang.h"
+}
 
 inline const char *smith_tool_program = nullptr; // argv[0] of the tool that is running: <folder>/bin/<tool>
 
@@ -37,4 +44,21 @@ inline void smith_tool_start(const char *name, const char *program) {
     auto *table = reinterpret_cast<void (**)()>(getsectiondata(&_mh_execute_header, "__DATA", name, &size));
     for (size_t i = 0; table != nullptr && i < size / sizeof(void (*)()); i++)
         table[i]();
+}
+
+// The command of a .smith input as `smith cc` makes it (smith_lang_command, the one rule of runtime/lang_command.c:
+// `-x c`, and `-std=gnu2y` unless it names a standard), for the places where a tool turns a command into a compile:
+// clang::createInvocation (clangd: the open file, the preamble and the background index alike) and the tooling
+// library's getStripPluginsAdjuster (clang-tidy). A .smith extension is a linker input to the driver, whatever a
+// project's compile database says. clang::CommandHook (patches/smith-command-hook.patch) is where both ask; a command
+// with no .smith input is left as it was.
+inline bool smith_command_hook(llvm::ArrayRef<const char *> Args, llvm::SmallVectorImpl<const char *> &Out) {
+    std::vector<char *> in;
+    for (const char *arg : Args)
+        in.push_back(const_cast<char *>(arg));
+    std::vector<char *> out(in.size() + 16);
+    int count = smith_lang_command((int)in.size(), in.data(), 1, out.data(), out.size() - 1);
+    if (count <= 0) return false;
+    Out.assign(out.begin(), out.begin() + count);
+    return true;
 }
