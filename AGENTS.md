@@ -144,8 +144,15 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   symbolizer. smith turns them into the failing line, its source and the call chain with LLVM's symbolizer, reading
   the debug map of the binary (its object files), not a dSYM: a failure costs about 8 ms beyond smith's start, `dsymutil`
   40 to 150 ms at every link. `smith build test` pipes the runner through `smith symbolize`; smith run as
-  `llvm-symbolizer` serves the sanitizers. `SMITH_CHECK` is kept, deprecated; a test that must abort calls
-  `smith_test_expect_abort()`.
+  `llvm-symbolizer` serves the sanitizers. The checks are the generic functions of `smith::test` (`test::check_equal(a, b)`, `check_less`, `check_near`, ...; the
+  `SMITH_CHECK` macros are gone), and a test that must abort calls `test::expect_abort()`. **A test's signature says what it
+  may touch** (issue #45): `void test_x(void)` is pure, `void test_x(random::Key key)` a property test (the key from the
+  run's seed), `void test_x(c::SmithIo *io)` gets a real io the runner makes for it alone (its key from the run's seed, a
+  scratch folder removed when it passes and kept, named, when it fails, the working directory still the project root);
+  a test makes fakes anywhere and never a real io (`smith-effects`). The runner is `smith::test`'s `main`; its own
+  effects (forked workers, pipes, signals, shared memory) are calls in the module, which defines the `Runner` capability,
+  and its console, clock, arguments and processes are its io's. The shrinking hook is a field of the key (`random::Key.tap`),
+  not a global.
 - **`.smith` files are C with modules, lowered to C as clang reads them** ([docs/smith-lang.md](docs/smith-lang.md), issue
   #11). The one change to clang is a token hook on its `Preprocessor` (`patches/clang-token-hook.patch`, about 100
   lines, applied by `scripts/llvm.sh`), which offers a `TokenHook` the identifiers it watches, after macro expansion and
@@ -283,8 +290,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     - It does one thing and is named for it, so there is no "base" or "utils".
     - It uses standard types: `<stdint.h>`, `size_t`, `float` and `double`, with no aliases.
     - It uses the standard `assert` and defines no macros: a library's API is functions (and, in `.smith`, generics).
-      The check macros of `<smith/test.h>` are the last ones, and leave when test becomes a module (#45). The reason
-      for them, capturing a check's expression text, is gone: a failure's report reads the failing line from the call
+      The check macros of `<smith/test.h>` were the last ones, and are gone with test a module (#45). The reason for
+      them, capturing a check's expression text, was gone: a failure's report reads the failing line from the call
       stack.
     - Its names are typed as `<math.h>` names them, with no `_Generic`.
   - **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
@@ -292,7 +299,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
     `smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
     bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random` and `arena` are `.smith` (issue #39; #45 step 2). C passes `sizeof` and
+    (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random`, `arena` and `test` are `.smith` (issue #39; #45). C passes `sizeof` and
     `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
     `arena::push_array(&a, T, n)`.
   - **Talking to the OS:** `<smith/io.h>` is the one way a program touches the world outside it (memory, randomness,

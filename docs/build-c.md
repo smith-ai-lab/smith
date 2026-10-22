@@ -818,31 +818,35 @@ A stage0 (no clang inside, so no token hook) still writes the headers; the compi
 saying the compiler needs the token hook. `tests/build.sh` section 15 builds three modules and a C file, and checks the
 rebuilds, a cycle, a path that does not match, a plain file and the helpers.
 
-## Tests: `smith_tests` and `<smith/test.h>`
+## Tests: `smith_tests` and `smith::test`
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
-types, workers that run the tests in parallel, and a runner that is the library's `main`. `smith_tests` (the call is in the API below,
-with the exact commands) builds that runner from the project's test files and adds the task `test` (a task with `.test`, which `smith test` runs).
+types, workers that run the tests in parallel, and a runner that is the library's `main`. The library is the module
+`smith::test` (`lib/smith/test.smith`, issue #45); C includes its generated header `<smith/test.h>`. `smith_tests` (the
+call is in the API below, with the exact commands) builds the runner from the project's test files and adds the task
+`test` (a task with `.test`, which `smith test` runs). It needs a smith with clang inside, since the library is a
+`.smith` module.
 
-```c
-// tests/test_random.c
-#include <smith/test.h>
+```smith
+// tests/test_random.smith
+import smith::random;
+import smith::test;
 
-void test_addition(void) {                      // a test: found by name, no registration
-    SMITH_CHECK(2 + 2, ==, 4);
+void test_addition(void) {                        // a test: found by name, no registration; pure
+    test::check_equal(2 + 2, 4);
 }
 
-void test_uniform_stays_in_range(SmithKey key) { // a property test: runs on 100 keys
-    SmithUniformInt64 range = {.low = 0, .high = 6};
-    int64_t x = smith_uniform_int64_sample(key, range);
-    SMITH_CHECK(x, <=, range.high);
+void test_uniform_stays_in_range(random::Key key) { // a property test: runs on 100 keys
+    random::UniformInt64 range = {.low = 0, .high = 6};
+    i64 x = random::uniform_int64_sample(key, range);
+    test::check_less_equal(x, range.high);
 }
 ```
 
 ```c
 // build.c
 SmithTests tests = {
-    .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+    .sources = smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/test_*.c", nullptr)),
     .objects = (const SmithObject *[]){&code_under_test, nullptr},
     .flags = flags,                                  // for the test files and smith's test library
     .link_flags = link_flags,
@@ -850,46 +854,67 @@ SmithTests tests = {
 smith_tests(b, &tests);                              // tests.step is the task "test"
 ```
 
-- **Checks are plain functions.** A failure shows the line that called the check and the call chain, read from the
+- **A test's signature says what it may touch.** `void test_x(void)` is pure; `void test_x(random::Key key)` (`SmithKey`
+  in C) is a property test, with the key from the run's seed; `void test_x(c::SmithIo *io)` (`SmithIo *io` in C) gets a
+  real io made for that one test by the runner (below). A test makes fakes (`smith_io_make_test`) anywhere, but never a
+  real io: `smith-effects` allows `smith_io_make` only in `main`, so the runner can always seed, sandbox and clean up
+  after a test.
+- **Checks are generic functions.** A failure shows the line that called the check and the call chain, read from the
   call stack and the source file (see "Failure reports"), so a check needs no macro to capture its text or its place.
-  A test is a plain function too; there is no `TEST()` macro and no registration. The `SMITH_CHECK` macros below are
-  the old spelling: they keep working, and are deprecated (the docs say so; no compiler warning does, because game,
-  learner and checkers have about 3,500 uses under `-Werror`).
-- **The functions:** `smith_check(bool)`; `smith_check_equal_<type>(a, b)` for `bool`, `char`, `i8` `i16` `i32` `i64`,
-  `u8` `u16` `u32` `u64`, `f32`, `f64` and `ptr`; `smith_check_near_f32(a, b, tolerance)` and `_f64`; and
-  `smith_check_same_bits_f32(a, b)` and `_f64`. The type is in the name, as `<math.h>` names `sinf` and `sin`, so there is
-  no `_Generic` and no conversion between the two values. A failed one prints `a` and `b` (and the tolerance and the
-  distance of `near`) with the short type name: `a = 3   (u64)`. `.smith` will have one generic `test.check_equal(a, b)`
-  (#15).
+  A test is a plain function too; there is no `TEST()` macro and no registration. `test::check(c)`,
+  `test::check_equal(a, b)`, `check_not_equal`, `check_less`, `check_less_equal`, `check_greater`,
+  `check_greater_equal`, `check_near(a, b, tolerance)`, `check_same_bits(a, b)` and `expect_abort()`. The type is
+  inferred from the arguments (smith-lang-generics): `a` and `b` have one type, a literal or an expression of literals
+  adapts, and arithmetic, comparisons and `?:` are typed by C's rules; two different types are the error "conflicting
+  types for `T`", fixed by a cast or by writing the type first (`test::check_equal(u64, a, b)`). They check `bool`,
+  `char`, integers, `f32`, `f64` and pointers. A failed one prints `a` and `b` (and the tolerance and the distance of
+  `near`) with the sized type name: `a = 3   (u64)`. A NaN is unordered, so every comparison but `check_not_equal` fails
+  on one. The macros `SMITH_CHECK`, `SMITH_CHECK_NEAR` and `SMITH_CHECK_SAME_BITS` are gone, and the generated header
+  defines no macro.
+- **C keeps its API as named instances:** `smith_check(bool)`; `smith_check_equal_<type>(a, b)` for `bool`, `char`,
+  `i8` `i16` `i32` `i64`, `u8` `u16` `u32` `u64`, `f32`, `f64` and `ptr`; `smith_check_near_f32(a, b, tolerance)` and
+  `_f64`; `smith_check_same_bits_f32(a, b)` and `_f64`; and `smith_test_expect_abort()`. The type is in the name, as
+  `<math.h>` names `sinf` and `sin`. C has the ordering checks only when a C caller needs one.
 - **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
-  because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {` or
-  `void test_<name>(SmithKey key) {` (`<name>` in `[a-z0-9_]`, the parameter's name in `[a-z_]`) and writes
-  `tests_list.h` (prototypes) and `tests_list.c` (the table) beside the runner. Each test file compiles with
+  because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {`,
+  `void test_<name>(SmithKey key) {` or `void test_<name>(SmithIo *io) {` (`<name>` in `[a-z0-9_]`, the parameter's name
+  in `[a-z_]`) and writes `tests_list.h` (prototypes) and `tests_list.c` (the table, `{name, plain, property, with_io}`)
+  beside the runner. Each test file compiles with
   `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
   another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
   error that names both files; a file with no tests is fine.
   - **Tests in `.smith` files** (name the files in `.sources`, `tests/**/*_test.smith`): in a file with no `module` line
     the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
-    `export void test_<name>(void) {` or `export void test_<name>(SmithKey key) {` (`c::SmithKey` is the same type for a
-    file that imports `<smith/test.h>`); an `export` is needed, since a private function is `static` and nothing can call
-    it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
+    `export void test_<name>(void) {`, `export void test_<name>(random::Key key) {` or
+    `export void test_<name>(c::SmithIo *io) {` (`c::SmithKey` is the same type as `random::Key` for a file that imports
+    `<smith/test.h>` or `<smith/random.h>`); an `export` is needed, since a private function is `static` and nothing can
+    call it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
     `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
     as written: `geometry::box_test::area` (the written `geometry::box_test::test_area`, `test_` of the last part dropped as
     for a C test); `--test` also takes the written form, `--test geometry::box_test::test_area` (or `test_area` for a C
     test). Two tests with the same C name are an error that names both files.
-- **`SMITH_CHECK(condition)`**, **`SMITH_CHECK(a, op, b)`**, **`SMITH_CHECK_NEAR(a, b, tolerance)`** and
-  **`smith_test_expect_abort()`** are the checks. A comparison evaluates each argument once and converts `b` to
-  `a`'s type as an assignment would, so `-Wconversion` flags a lossy comparison (`SMITH_CHECK(int_value, ==, 3.5)` is a
-  compile error) and both values print in `a`'s type. `a`'s type is its type as a value: an array becomes a pointer and
-  `const` drops; every pointer compares, and prints, as an address. Printed types: `bool`, `char`, every standard
-  signed and unsigned integer type, `float` and `double` (shortest round trip plus `%a`, so a difference in the last
-  bit shows) and pointers. A failed check ends the test.
-- **`SMITH_CHECK_SAME_BITS(a, b)`** passes when two floats or two doubles are bitwise identical: `-0.0` is not `0.0`,
-  and a NaN is itself (two NaNs with different payloads differ). `b` converts to `a`'s type; any other type is a
-  compile error. It is the check for determinism. A failure prints both values, shortest and in hex, and a NaN or an
-  infinity also shows its raw bits (`nan [0x7ff8000000000001]`).
-- **`smith_test_expect_abort()`** says that from this call on the running test must stop the program on purpose, and is
-  a plain function (`.smith` will call it `test::expect_abort()`): the test calls it and then runs the code that aborts,
+- **A test that takes `SmithIo *io`** is run with a real io the runner makes for that test alone, in the worker: its key
+  and `seed` come from the run's seed (`--seed N` replays it; without `--seed` the seed is the runner's own, printed by
+  a failure as `with seed N` and `rerun: smith test --test name --seed N`), its arena is fresh, and it has a scratch
+  folder of its own, `test::scratch(io)` (`smith_test_scratch` in C), named by the runner's pid and the test's row under
+  `$TMPDIR` (else `/tmp`) and also set as `$TMPDIR` and `$SMITH_TEST_SCRATCH` while the test runs. The runner removes
+  the folder (with `rm -rf`, through its io's `processes`) when the test passed and keeps it, printing
+  `scratch folder (kept): <path>` under the failure, when it failed. The working directory stays the project root, so
+  fixtures resolve. The runner can make the io because `main` hands it `smith_io_make` as a value (`Runner.make_io`).
+- **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it makes its io once
+  (`smith_io_make`, in `main`) and hands `run_tests` a `Runner` (`smith_test_run`), a type marked as a capability
+  whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
+  memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
+  every exported function that reaches one takes the `Runner`. What io has a part in goes through it: the runner's
+  console prints the report, its clock times the tests, its arguments hold `$TMPDIR` and `$NO_COLOR`, and its processes
+  remove a scratch folder. The checks reach the running test's state (the shared block the runner reads after the test)
+  through module variables, since a check takes no context parameter; they are the only state a test can reach.
+- **The shrinking hook is a field of the key.** `random::Key` has a `tap` (`nullptr` for every key a program makes) and
+  `key_derive` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
+  `(key, n)` a property test draws and replaces it from an override table in shared memory; no global of
+  `smith::random` is set.
+- **`test::expect_abort()`** (`smith_test_expect_abort()` in C) says that from this call on the running test must stop the program on purpose, and is
+  a plain function: the test calls it and then runs the code that aborts,
   as its last statements. It records a flag and the call's stack in the block the worker shares with the runner, and the
   runner judges how the test ended. The test passes when it ends with `SIGABRT` or `SIGTRAP` (an `assert`, `abort()`,
   `__builtin_trap`, the arena's capacity stop, a failed contract or library check) and its output holds no sanitizer
@@ -902,8 +927,8 @@ smith_tests(b, &tests);                              // tests.step is the task "
   worker (or the child of `--isolate`), whose end the runner reads, as for any crash; `--in-process`, which has no
   process to end, jumps to its loop. A second call in a test is harmless. The test's output is shown only for a failure,
   as always.
-- **`smith_test_note(format, ...)`** prints under a failure, whether a failed check, a crash or a timeout; each note
-  replaces the last. **`smith_test_arena(capacity)`** is the test's memory, from a block the runner reserved once with
+- **`test::note(format, ...)`** (`smith_test_note`) prints under a failure, whether a failed check, a crash or a timeout; each note
+  replaces the last. **`test::memory(capacity)`** (`smith_test_arena`) is the test's memory, from a block the runner reserved once with
   `mmap`, given back before each test and each key.
 - **The runner** forks `--jobs` workers (the cores by default), once each and when one is needed, and sends each the
   tests to run, one after another, in its own process. Before each test and each key of a property test the worker gives
@@ -925,7 +950,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   the cores), `--timeout <seconds>` (10, per test and per key), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
   time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort the test did not expect or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
-- **Full size: `smith_test_full()`.** It is false by default and true when the run was given `--full`. A test with a heavy check
+- **Full size: `test::full()`** (`smith_test_full()`). It is false by default and true when the run was given `--full`. A test with a heavy check
   picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either
   way, so `smith test` stays fast and `smith test --full` is the slow pass. It replaces a second task such as game's
   `test-slow`: that becomes `smith test --full`.
@@ -934,31 +959,32 @@ smith_tests(b, &tests);                              // tests.step is the task "
   them by their path, relative to the project's root, where `smith build` runs them.
 - **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
   replays exactly.
-- **A failure prints** the test, the seed of a property test, the check's file and line, the line as written, the call
-  chain, the values with their types, the note, the test's output, and the command that reruns it. The runner on its own
-  prints a macro's failure like this (`smith build test` prints the report of "Failure reports" in its place):
+- **A failure prints** the test, the seed of a property test or an io test, the call chain, the values with their
+  types, the note, the kept scratch folder, the test's output, and the command that reruns it. The runner on its own
+  (by hand) prints the raw trace of a failed check, then the values; `smith build test` prints the report of "Failure
+  reports" in its place:
 
   ```
   FAIL uniform_stays_in_range with seed 6387777158891554393, shrunk in 41 runs
-    tests/test_random.c:12
-        SMITH_CHECK(x, <=, range.high);
-      x          = 7   (long long)
-      range.high = 6   (long long)
+    check failed at tests/test_random.smith:12
+         12 |     test::check_less_equal(x, range.high);
+              x = 7, range.high = 6   (i64)
+    called from
+      tests/test_random.smith:12  test_uniform_stays_in_range
       note: <the note, if any>
       <the test's output, indented, if any>
       rerun: smith test --test uniform_stays_in_range --seed 6387777158891554393
   ```
 
-  The check's source line is read from the file when the failure is reported, and left out when the file cannot be read.
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a timeout is
   `FAIL name: timed out after 10.0 s` (the time the test ran: a test that calls `alarm` itself replaces the runner's timer, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
-- **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own that has `smith_random_hook`
-  (in `<smith/random.h>`) set, which records each `(key, n)` the test asks `smith_key_bits` for, in first-use order, in
+- **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own whose keys carry the runner's
+  `random::Tap`, which records each `(key, n)` the test asks `random::key_bits` for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest
   value (0 or the bound nearest it for an integer, about the mean for a normal, false, the identity permutation). For
   each recorded word in order the runner tries 0; if the test then stops failing it binary-searches between 0 and the
   word for the smallest one that still fails. Each try is a run in that worker, which reads an override table from shared memory; a try that kills the worker costs a fork, and nothing else does.
-  A try is kept only when the failure is the same: the same check (file and line), or the same signal or exit status;
+  A try is kept only when the failure is the same: the same check (the same stack), or the same signal or exit status;
   a failure that moves to another check is not kept. Passes repeat until none improves, within 1,000 runs or 10
   seconds, whichever comes first, and the same seed gives the same shrunk case (when the runs limit ends it; the
   seconds limit depends on the machine). The report is the shrunk failure, with its values, its note and its output,
@@ -979,8 +1005,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     symbolizer lives in the program, so a test binary stays as small and as quick to link as before. The walk ends at
     `smith_test_execute`'s frame (`smith_trace_stop`), so a stack is the same however the runner reached the test, which
     shrinking compares. The runner prints the block when it is given `--trace` (the test task passes it when smith can
-    symbolize), and for a plain-function check always, since it has no file and line of its own; a macro's failure on a
-    runner run by hand still prints the old report, so existing output does not change.
+    symbolize), and for a failed check always, since a check has no file and line of its own.
   - **In smith (`runtime/symbolize.c`, `shim/symbolize.cpp`):** `smith build test` pipes the runner's output through
     `smith symbolize` (the stage0 has no LLVM, so it runs the runner as before). The filter copies its input and replaces
     each block with the report:
@@ -991,7 +1016,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
            42 |     smith_check(moves.count == expected);
       called from
         tests/moves_test.c:42  moves_every_step
-        .smith/lib/test.c:931  smith_test_execute
+        .smith/lib/smith/test.smith:1065  smith_test_execute
     ```
 
     The failing frame is the first that is not smith's own machinery (a function whose name starts with `smith_test_`,
@@ -1002,7 +1027,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     debug info has them, innermost first. A `.smith` function is shown as written (`geometry::box::area`; the debug names
     of issue #27), a module's test as `geometry::box_test::test_area_fails`. The chain ends at the first frame of the runner or at `main`. The source line
     is read from the file; if the file is newer than the program a note says the line may have changed. A stack with no
-    debug info reports the site the program gave (an old macro's file and line) or says to build with `-g`. A crash is
+    debug info says to build with `-g`. A crash is
     `FAIL name: killed by SIGSEGV` and then `crashed at file:line`; an `assert` is `aborted at file:line` with libc's
     message under it. A sanitizer's report is not given a trace of its own: its stack is the report.
   - **`smith symbolize [--binary <program>] [<file>]`** does the same for a trace saved from a run anywhere (a log, a crash

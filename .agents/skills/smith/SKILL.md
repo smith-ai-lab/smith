@@ -20,7 +20,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 - `smith cc`, `smith c++`, and the links `smith-cc` and `smith-c++`: the compiler. Load `smith-cc` (a Makefile's `CC`, compile errors, `compile_commands.json`, `SMITH_VERBOSE`); shaders: `smith-metal`.
 - `smith build`, and a project's `build.c` or `build.smith`, and turning a Makefile into one (`smith build --dump-config > build.c`): load `smith-build`, and `smith-build-levels` to move between the conventions, the high-level `smith_app` and the low-level calls.
-- `smith run`, `smith test`: run the program `smith_default` names, run the tests `smith_tests` declares. Load `smith-run-test`; `smith-test` for writing tests, property-based tests and `<smith/test.h>`.
+- `smith run`, `smith test`: run the program `smith_default` names, run the tests `smith_tests` declares. Load `smith-run-test`; `smith-test` for writing tests, property-based tests and `smith::test` (`<smith/test.h>` from C).
 - `smith check`, `smith fmt`, `smith lint`: format (every file the repository tracks or could track), lint (the build's compiles), all checks (fmt, docs, lint, test, prove). Load `smith-check`. The verbs mean the same in every project and need no task in build.c; a project's own tasks run with `smith build <task>`. `smith fmt --dump-config > .clang-format` and `smith lint --dump-config > .clang-tidy` take the defaults over.
 - `smith lsp`: the language server for C, C++, Objective-C and `.smith` (any editor, Claude Code). Load `smith-lsp`; for Neovim `smith-neovim`.
 - `smith docs`: checks AGENTS.md, knowledge/ (an OKF bundle) and the skills of a project, and says the format. Load `smith-docs`.
