@@ -1,6 +1,6 @@
 typedef struct { double width; double height; } shapes_area_Rect;
 struct shapes_area_Circle { double radius; };
-enum shapes_area_Kind { shapes_area_Square, shapes_area_Round = 5, shapes_area_Other };
+enum shapes_area_Kind { shapes_area_Kind_Square, shapes_area_Kind_Round = 5, shapes_area_Kind_Other };
 constexpr __UINT32_TYPE__ shapes_area_sides = 4;
 extern __UINT32_TYPE__ shapes_area_calls __asm__("_shapes::area::calls");
 __UINT32_TYPE__ shapes_area_calls __asm__("_shapes::area::calls") = 0;
@@ -32,5 +32,5 @@ return shapes_area_private_calls;
 }
 enum shapes_area_Kind shapes_area_kind_of(__UINT32_TYPE__ side_count) __asm__("_shapes::area::kind_of");
 enum shapes_area_Kind shapes_area_kind_of(__UINT32_TYPE__ side_count) {
-return side_count == shapes_area_sides ? shapes_area_Square : shapes_area_Other;
+return side_count == shapes_area_sides ? shapes_area_Kind_Square : shapes_area_Kind_Other;
 }

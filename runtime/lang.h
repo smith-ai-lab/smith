@@ -355,6 +355,17 @@ typedef struct {
 size_t smith_lang_call_site_count(const SmithLang *lang);
 bool smith_lang_call_site_at(const SmithLang *lang, size_t index, SmithCallSite *out);
 
+// The instances the file made: the compiler's name of each and the source of the generic it came from (an instance is
+// compiled in the importer's file, but it is its generic's module's code: the checks that judge a module by its file
+// ask this).
+typedef struct {
+    char name[256];
+    char source[512];
+} SmithInstanceOrigin;
+
+size_t smith_lang_instance_count(const SmithLang *lang);
+bool smith_lang_instance_at(const SmithLang *lang, size_t index, SmithInstanceOrigin *out);
+
 size_t smith_lang_written_count(const SmithLang *lang);
 bool smith_lang_written_at(const SmithLang *lang, size_t index, SmithWrittenName *out);
 bool smith_lang_written_find(const SmithLang *lang, const char *lowered, size_t length, SmithWrittenName *out);

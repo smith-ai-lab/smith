@@ -1993,6 +1993,33 @@ export f64 length_squared(Vec v) {
 }
 export f64 dot(Vec a, Vec b);
 export u32 counter = 5;
+==> module-enum-c-names/src/mix/modes.smith <==
+module mix::modes;
+
+// An exported enum's constants are `<CType>_<Value>` in C, the type's C name and the constant: `MixMode_Fast`.
+[[smith::c_name("MixMode")]] export typedef enum {
+    Fast,
+    Slow,
+} Mode;
+
+// A tagged enum has its tag's C name: `mix_modes_Level_High`.
+export enum Level {
+    Low,
+    High,
+};
+
+export i32 score(Mode mode, enum Level level) {
+    return (mode == Slow ? 10 : 1) + (level == High ? 100 : 0);
+}
+==> module-enum-c-names/src/mix/use.smith <==
+module mix::use;
+
+import mix::modes;
+
+// From Smith the constants are the module's own names, whatever C calls them.
+export i32 both(void) {
+    return modes::score(modes::Fast, modes::Low) + modes::score(modes::Slow, modes::High);
+}
 ==> module-export-extern/src/cfg/limits.smith <==
 module cfg::limits;
 

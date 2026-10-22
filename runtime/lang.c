@@ -260,6 +260,7 @@ typedef struct {
     bool static_inserted; // `static` was written before the first token, so a later one is dropped
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
     SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled

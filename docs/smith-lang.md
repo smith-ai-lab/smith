@@ -55,7 +55,7 @@ u32 helper(void) { … }                              // private
       header's `// smith-names:` line lists `Arena=SmithArena`, which is how the importer's lowering, its diagnostics
       and its editor know the pair. In the module itself the name is the C name in the generated code.
     - It goes on the export's first name (the tag, in `export typedef struct S {…} S;`, and the typedef of the same
-      name with it); an enumeration's constants keep the prefixed names. It is a string holding one C identifier.
+      name with it); an exported enumeration's constants are `<CType>_<Value>` in C, the C name of the enum (this one's, or its tag's, `mix_modes_Level_High`) and the constant, which is C's own naming rule (`MixMode_Fast`), while `.smith` importers write `modes::Fast`; an anonymous enum typedef without it keeps the prefixed names. It is a string holding one C identifier.
     - Errors: a C name another export already has chosen; one that the module's prefix gives another name (a private
       one included); a name declared later that the prefix would make the same; `[[smith::c_name]]` not followed by
       `export`; two on one export; an export that declares no typedef, tag, function or variable; a string that is no

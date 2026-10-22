@@ -2105,6 +2105,18 @@ static size_t smith_lang_generic_signature(const SmithLang *lang, const SmithLan
     return used;
 }
 
+size_t smith_lang_instance_count(const SmithLang *lang) {
+    return lang->instances_count;
+}
+
+bool smith_lang_instance_at(const SmithLang *lang, size_t index, SmithInstanceOrigin *out) {
+    if (index >= lang->instances_count) return false;
+    const SmithLangInstance *instance = &smith_lang_instances[index];
+    snprintf(out->name, sizeof out->name, "%s", smith_lang_str(instance->cname));
+    snprintf(out->source, sizeof out->source, "%s", smith_lang_str(smith_lang_generics[instance->generic].source));
+    return true;
+}
+
 size_t smith_lang_call_site_count(const SmithLang *lang) {
     return lang->call_site_count;
 }

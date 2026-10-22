@@ -257,6 +257,19 @@ static bool smith_lang_takes_c_name(const SmithLang *lang, SmithLangNameKind kin
     return exported && kind != SmithLangName_Constant && lang->decl.c_name.length > 0 && !lang->decl.c_name_used;
 }
 
+// The C name of an exported enum's constant: the enum's C name (the one [[smith::c_name]] chose for it or its tag's),
+// an underscore and the constant, `SmithTestKind_Equal`, which is what C's naming rule for enumeration constants asks.
+// False when the enum has no C name yet (an anonymous typedef without [[smith::c_name]]): the constant is prefixed.
+static bool smith_lang_enum_constant_name(const SmithLang *lang, SmithLangNameKind kind, bool exported,
+                                          const char *name, size_t length, char *out, size_t capacity) {
+    if (kind != SmithLangName_Constant || !exported) return false;
+    SmithLangText prefix = lang->decl.enum_prefix;
+    if (prefix.length == 0 && !lang->decl.c_name_used) prefix = lang->decl.c_name;
+    if (prefix.length == 0 || prefix.length + length + 2 > capacity) return false;
+    snprintf(out, capacity, "%s_%.*s", smith_lang_str(prefix), (int)length, name);
+    return true;
+}
+
 static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, SmithLangNameKind kind, bool exported) {
     bool chosen = smith_lang_takes_c_name(lang, kind, exported);
@@ -267,6 +280,9 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
         lang->decl.c_name_used = true;
         if (!smith_lang_c_name_free(lang, host, c_name, c_length, name, length, lang->decl.c_name_location))
             chosen = false;
+    } else if (smith_lang_enum_constant_name(lang, kind, exported, name, length, c_name, sizeof c_name)) {
+        c_length = strlen(c_name);
+        chosen = smith_lang_c_name_free(lang, host, c_name, c_length, name, length, location);
     } else if (lang->c_name_count > 0) {
         smith_lang_c_name_taken(lang, host, name, length, location);
     }
@@ -279,6 +295,9 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
         }
     }
     const char *lowered = smith_lang_prefixed(lang, name, length);
+    if (kind == SmithLangName_Tag && exported && lang->decl.last_tag_enum) { // its constants follow this C name
+        lang->decl.enum_prefix = smith_lang_store(lang, lowered, lang->tmp_length);
+    }
     smith_lang_written_add(lang, lowered, lang->tmp_length, name, length, chosen ? 0 : strlen(lang->prefix),
                            lang->module_text, true, chosen ? name : nullptr, chosen ? length : 0);
     if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);

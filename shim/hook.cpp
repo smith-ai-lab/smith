@@ -2518,6 +2518,11 @@ class SmithHook final : public TokenHook, public NameSource {
             names->index[name.lowered] = names->names.size();
             names->names.push_back(std::move(name));
         }
+        for (size_t i = 0, count = smith_lang_instance_count(lang); i < count; i++) {
+            SmithInstanceOrigin origin;
+            if (!smith_lang_instance_at(lang, i, &origin)) break;
+            names->instance_files[origin.name] = absolute(origin.source);
+        }
         for (size_t i = 0, count = smith_lang_call_site_count(lang); i < count; i++) {
             SmithCallSite found;
             if (!smith_lang_call_site_at(lang, i, &found)) break;
