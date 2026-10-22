@@ -1524,13 +1524,14 @@ static const char *smith_lang_slashed(const char *name) {
 
 // The module `source` declares, registered with its header's path in *header; nullptr for a file that is no module. The
 // module's path rule is checked here, once: module a::b lives in a file whose path ends in a/b.smith.
-static const char *smith_lang_register(const char *source, const char **header) {
+static const char *smith_lang_register(const char *source, const char **header, bool *first) {
     const char *name = smith_lang_module_of(source);
     if (name == nullptr) return nullptr;
     const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
     bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
     if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
     *header = smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+    *first = false;
     for (size_t i = 0; i < smith_lang_module_count; i++) {
         if (strcmp(smith_lang_module_names[i], name) != 0) continue;
         if (strcmp(smith_lang_module_sources[i], source) != 0)
@@ -1541,6 +1542,7 @@ static const char *smith_lang_register(const char *source, const char **header) 
     smith_lang_module_sources[smith_lang_module_count] = source;
     smith_lang_module_names[smith_lang_module_count] = name;
     smith_lang_module_headers[smith_lang_module_count++] = *header;
+    *first = true;
     return name;
 }
 
@@ -1691,7 +1693,7 @@ static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObje
     size_t count = 0;
     for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++)
         count += 1;
-    const char **kept = smith_alloc((count + 1) * sizeof *kept);
+    const char **kept = (const char **)smith_alloc((count + 1) * sizeof *kept);
     size_t used = 0;
     for (size_t i = 0; i < count; i++) { // bounded by the flags
         const char *flag = object->flags[i];
@@ -1751,7 +1753,10 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         // A smith library's header is the formatted one smith wrote with its source (.smith/include/smith/): a step
         // would write it again as the generator makes it, unformatted, and the two would take turns
         bool library = strncmp(copy.source, ".smith/lib/smith/", 17) == 0;
-        if (smith_lang_register(copy.source, &header) != nullptr && !library) smith_lang_header_step(b, &copy, header);
+        // one header step per module: the first compile's flags are the ones the header pass is given
+        bool first = false;
+        if (smith_lang_register(copy.source, &header, &first) != nullptr && first && !library)
+            smith_lang_header_step(b, &copy, header);
     }
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
