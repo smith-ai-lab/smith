@@ -1,0 +1,1 @@
+src/main.smith:5:23: cannot tell `T` from `big`: the compiler cannot say; write the type as the argument

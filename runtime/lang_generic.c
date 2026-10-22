@@ -1285,13 +1285,18 @@ static int smith_lang_infer_stars(const SmithLangParam *param, unsigned type_ind
     return seen && words == 1 ? stars : -1; // the one word that is not T or a qualifier is the parameter's name
 }
 
-// Whether an argument is a literal, whose type adapts to the others (`check_equal(x, 1)`).
+// Whether an argument is a literal, whose type adapts to the others (`check_equal(x, 1)`): numbers, characters and
+// strings and `nullptr` with operators and parentheses between them (`2 + 2`, `-(1 << 4)`), and no name.
 static bool smith_lang_infer_literal(SmithLangSpan span) {
-    uint32_t at = span.start;
-    if (at < span.end && smith_lang_gt_punct(&smith_lang_gt.tokens[at], "-")) at += 1;
-    if (at + 1 != span.end) return false;
-    SmithTokenKind kind = (SmithTokenKind)smith_lang_gt.tokens[at].kind;
-    return kind == SmithTokenKind_Number || kind == SmithTokenKind_Character || kind == SmithTokenKind_String;
+    bool literal = false;
+    for (uint32_t at = span.start; at < span.end; at++) {
+        SmithTokenKind kind = (SmithTokenKind)smith_lang_gt.tokens[at].kind;
+        bool null = kind == SmithTokenKind_Identifier && smith_lang_gt_is(&smith_lang_gt.tokens[at], kind, "nullptr");
+        if (kind == SmithTokenKind_Identifier && !null) return false;
+        literal = literal || null || kind == SmithTokenKind_Number || kind == SmithTokenKind_Character ||
+                  kind == SmithTokenKind_String;
+    }
+    return literal;
 }
 
 // The argument's tokens, with the instance's types for T, separated by \x1f for the host's question.
@@ -1368,8 +1373,13 @@ static bool smith_lang_infer(SmithLang *lang, const SmithHost *host, const Smith
                 return false;
             }
             SmithLangInferred here = {.literal = smith_lang_infer_literal(args[i])};
-            if (host->expr_type == nullptr ||
-                !host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type)) {
+            // The header pass writes declarations only: a body is not its business, so a call whose type nothing can
+            // tell is skipped, with no error and no guess. The raw lowering keeps the error: its output is compiled.
+            if (host->expr_type == nullptr && host->declarations_only) return false;
+            bool answered =
+                host->expr_type != nullptr &&
+                host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), (uint32_t)stars, &here.type);
+            if (!answered) {
                 char shown[256] = "";
                 for (const char *c = tokens; *c != 0 && strlen(shown) + 2 < sizeof shown; c++)
                     snprintf(shown + strlen(shown), 2, "%c", *c == '\x1f' ? ' ' : *c);

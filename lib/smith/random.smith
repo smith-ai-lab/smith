@@ -14,8 +14,8 @@ import smith::math;
 // state and no generator that advances, so nothing can interleave, and a test that fails once fails every time.
 //
 // Names. The module's names are short (random::key_make, random::Key, random::uniform_double_sample). In C a function
-// is smith_<name> (smith_key_make) and a type has Smith in front (SmithKey, SmithUniformDouble); the hook is the one
-// exception: random::Hook and random::hook are SmithRandomHook and smith_random_hook.
+// is smith_<name> (smith_key_make) and a type has Smith in front (SmithKey, SmithUniformDouble); the tap is the one
+// exception: random::Tap is SmithRandomTap.
 //
 //   random::Key key = random::key_make(seed);
 //   f64 x = random::uniform_double_sample(key, (random::UniformDouble){.low = 0, .high = 1});
@@ -63,17 +63,21 @@ import smith::math;
 //   smith_library(b, "random") and smith_library(b, "arena") in its build.c.
 // On platforms where sqrt is not inlined, link libm (-lm).
 //
-// A key: a 64-bit value that names a stream of random bits. Keys are values; copy them freely.
+// A tap watches the words a key hands out. For smith's test runner, and nothing else: a key made by the runner carries
+// one, and key_bits passes each word through its `word` (the key's bits, the draw's number and the word), so the runner
+// can record a failing test's words and replace them with smaller ones. The tap travels with the key, through
+// key_derive, so there is no global to set and a program's own keys, which carry none, stay pure functions of their
+// bits. `word` is given the tap it is called through, to find the runner's state around it.
+[[smith::c_name("SmithRandomTap")]] export typedef struct Tap {
+    u64 (*word)(const struct Tap *tap, u64 key, u64 n, u64 bits);
+} Tap;
+
+// A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. Keys are
+// values; copy them freely.
 [[smith::c_name("SmithKey")]] export typedef struct {
     u64 bits;
+    const Tap *tap; // nullptr, except for a key the test runner made
 } Key;
-
-// For smith's test runner, and nothing else: when it is set, key_bits passes each word through it, so the runner
-// can record a failing test's words and replace them with smaller ones. A program never sets it, and draws then stay
-// pure functions of the key. It is nullptr until the runner sets it. It is not synchronised: set it while one thread
-// runs. key_derive is not hooked, so keys stay the same and only words change.
-[[smith::c_name("SmithRandomHook")]] export typedef u64 (*Hook)(Key key, u64 n, u64 bits);
-[[smith::c_name("smith_random_hook")]] export Hook hook = nullptr;
 
 // [low, high)
 [[smith::c_name("SmithUniformFloat")]] export typedef struct {
@@ -280,11 +284,11 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
 // JAX's fold_in: the key for part or item i of key. Deriving is how a key is split, so each use gets its own.
 [[smith::c_name("smith_key_derive")]] export [[nodiscard]] Key key_derive(Key key, u64 i) {
     Block counter = {{(u32)i, (u32)(i >> 32), 1, 0}};
-    return (Key){.bits = philox_low(counter, (u32)key.bits, (u32)(key.bits >> 32))};
+    return (Key){.bits = philox_low(counter, (u32)key.bits, (u32)(key.bits >> 32)), .tap = key.tap};
 }
 
-// Every distribution draws through here, so the runner's hook sees every word. key_derive is not hooked: keys
-// stay the same, and only words change.
+// Every distribution draws through here, so the runner's tap sees every word. key_derive does not change the bits a
+// tap sees: keys stay the same, and only words change.
 // The key's n-th 64 random bits. Draws n = 0, 1, 2... of one key are different numbers; they are a stream a
 // distribution may spend, while a program gives each use its own derived key.
 [[smith::c_name("smith_key_bits")]] export [[nodiscard]] u64 key_bits(Key key, u64 n) {
@@ -293,7 +297,7 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
     u32 key_0 = (u32)key.bits;
     u32 key_1 = (u32)(key.bits >> 32);
     u64 word = (n & 1) == 0 ? philox_low(counter, key_0, key_1) : philox_high(counter, key_0, key_1);
-    return hook != nullptr ? hook(key, n, word) : word;
+    return key.tap != nullptr ? key.tap->word(key.tap, key.bits, n, word) : word;
 }
 
 // A real in [0, 1) on a grid of 2^-24, from the key's bits n. 1 - unit is then exact and lies in (0, 1]: the safe way

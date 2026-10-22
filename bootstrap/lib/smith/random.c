@@ -25,7 +25,6 @@
 #include "../../../include/smith/contract.h"
 #include "../../../include/smith/math.h"
 
-SmithRandomHook smith_random_hook = nullptr;
 static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
 "giving the same numbers; compile lib/smith/random.smith without it");
 static_assert(SMITH_TARGET_FLOAT_RADIX == 2 && SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53,
@@ -152,7 +151,7 @@ return (SmithKey){.bits = seed};
 [[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i);
 [[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i) {
 smith_random_Block counter = {{(__UINT32_TYPE__)i, (__UINT32_TYPE__)(i >> 32), 1, 0}};
-return (SmithKey){.bits = smith_random_philox_low(counter, (__UINT32_TYPE__)key.bits, (__UINT32_TYPE__)(key.bits >> 32))};
+return (SmithKey){.bits = smith_random_philox_low(counter, (__UINT32_TYPE__)key.bits, (__UINT32_TYPE__)(key.bits >> 32)), .tap = key.tap};
 }
 [[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n);
 [[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n) {
@@ -161,7 +160,7 @@ smith_random_Block counter = {{(__UINT32_TYPE__)block, (__UINT32_TYPE__)(block >
 __UINT32_TYPE__ key_0 = (__UINT32_TYPE__)key.bits;
 __UINT32_TYPE__ key_1 = (__UINT32_TYPE__)(key.bits >> 32);
 __UINT64_TYPE__ word = (n & 1) == 0 ? smith_random_philox_low(counter, key_0, key_1) : smith_random_philox_high(counter, key_0, key_1);
-return smith_random_hook != nullptr ? smith_random_hook(key, n, word) : word;
+return key.tap != nullptr ? key.tap->word(key.tap, key.bits, n, word) : word;
 }
 [[nodiscard]] float smith_key_unit_float(SmithKey key, __UINT64_TYPE__ n);
 [[nodiscard]] float smith_key_unit_float(SmithKey key, __UINT64_TYPE__ n) {

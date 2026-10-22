@@ -1,300 +1,216 @@
-// <smith/test.h>: tests, written once and done well. A test is a plain function in a file build.c names:
-//
-//   void test_addition(void) { SMITH_CHECK(2 + 2, ==, 4); }
-//   void test_sorted(SmithKey key) { ... }   // a property test: it runs on 100 keys, and a failure prints its seed
-//
-// There is no registration: smith_tests (build.c) finds `void test_<name>(void) {` and
-// `void test_<name>(SmithKey key) {` by name, and the library's main runs them, in parallel, with failures printed with
-// both values and their types. `smith test` runs them; its arguments are the runner's options: --test <substring>,
-// --seed <n>, --seeds <n>, --jobs <n>, --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full
-// (docs/build-c.md).
-//
-// The runner forks one worker per job, once, and each worker runs the tests it is sent one after another, in its own
-// process. A test starts with fresh arenas and an empty note; what it leaves in global variables, open files and the
-// process stays for the next test that worker runs, except after these, which end the worker: a failed test (a failed
-// check unwinds out of arbitrary code and can leave state half-done), a test that called smith_test_expect_abort (an
-// abort stands for the program ending), a crash, a timeout, an exit and a sanitizer report. The runner forks another
-// worker, so a worker is reused only after a clean pass that expected no abort. Which tests share a worker depends on
-// timing, unless there is one job. A test must not depend on another: --shuffle <seed> runs the tests in a shuffled
-// order to find one that does (with --jobs 1 the order, and so the failure, replays from the seed), and --isolate
-// gives every test a process of its own. Under a debugger that cannot follow a fork (lldb on macOS) use --in-process:
-// the tests run in the runner's own process, one after another, with no fork (`smith dbg build/tests -- --test name
-// --in-process`). It gives up the isolation: a crash, an abort the test did not expect or a hang ends the whole
-// run, state a test leaves reaches the tests after it, there is no timeout unless --timeout is given, and no shrinking.
-//
-// A project builds the library with smith_tests and links it with smith's arena and random; no other file includes
-// more than this header.
-//
-// The runner sets a timer for each test and for each key of a property test (`--timeout`, 10 s). A test that calls
-// `alarm` itself replaces that timer, and when its alarm fires the test ends as a timeout, reported with the time it
-// ran
-// ("timed out after 2.0 s"). The runner clears the timer when a test ends.
-//
-// A test whose heavy checks have a full size reads smith_test_full(): false by default, true when the run was asked
-// for it (`smith test --full`). The test picks its size from it and checks the same
-// properties either way; the default run keeps `smith test` fast, and --full is the slow pass.
-//
-// The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
-// call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
-// into files, lines and source text, so a check needs no macro to capture its text or its place. `smith test`
-// prints the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
-//
-//   smith_check(condition)                 fails the test when the condition is false
-//   smith_check_equal_<type>(a, b)         a == b; both values print with their type. <type> is bool, char, i8 i16 i32
-//                                          i64, u8 u16 u32 u64, f32, f64 or ptr (as <math.h> names sinf and sin)
-//   smith_check_near_f32(a, b, tolerance)  |a - b| <= tolerance; a NaN fails; equal infinities pass. Also _f64
-//   smith_check_same_bits_f32(a, b)        a and b have the same bits: -0 is not 0, and a NaN is itself. Also _f64
-//   smith_test_expect_abort()              from here on the test must abort; see below
-//
-// smith_test_expect_abort() says that from this call on the running test must stop the program on purpose: it raises
-// SIGABRT or SIGTRAP (an assert, abort(), __builtin_trap, the arena's capacity stop, a failed contract or library
-// check) with no sanitizer report in its output. It is a plain function, called before the code that aborts, which is
-// the last thing the test does:
-//
-//   void test_halve_refuses_odd(void) {
-//       smith_test_expect_abort();
-//       (void)halve(5);
-//   }
-//
-// The test passes if it aborts after the call. It fails, at the call's file and line, if it returns, exits, crashes
-// with another signal (SIGSEGV), fails a smith_check, or prints a sanitizer report (a memory bug is not the stop the
-// test expected). An abort before the call is an ordinary failure. Nothing in the test runs after the abort, so its
-// process ends (a worker is replaced; with --isolate the test's child ends; --in-process, which has no process to end,
-// takes the test back to the runner's loop). A second call in the same test is harmless.
-//
-// The SMITH_CHECK macros that follow are the old spelling. They keep working, and print what they always printed (the
-// check's file, line, source text and values) when the runner is run by hand, but they are deprecated: new tests call
-// the functions. (No compiler warning marks them, since they are used about 3,500 times under -Werror.)
-//
-//
-//   SMITH_CHECK(condition)            a bool, or anything that converts to one
-//   SMITH_CHECK(a, op, b)             op is ==, !=, <, <=, > or >=; each argument is evaluated once, and both values
-//   print
-//                                     with their types. b converts to a's type as an assignment would, so a lossy
-//                                     comparison is a -Wconversion error. a's type is its type as a value: an array
-//                                     becomes a pointer and const drops. Pointers compare, and print, as addresses.
-//   SMITH_CHECK_NEAR(a, b, tolerance) |a - b| <= tolerance, for float and double. A NaN fails; equal infinities pass.
-//   SMITH_CHECK_SAME_BITS(a, b)       a and b are float or double (b converts to a's type) and bitwise identical: -0 is
-//                                     not 0, and a NaN is itself. A failure prints both values, shortest and in hex; a
-//                                     NaN or an infinity also shows its bits. For determinism: the same inputs must
-//                                     give the same bits, not merely near ones.
-//
-// A failed check ends the test, so nothing after it runs. Because the arguments of SMITH_CHECK are separated by
-// commas, a comma outside parentheses in an argument (a compound literal's braces) splits it: parenthesize it.
+// clang-format off
+// Generated by smith from lib/smith/test.smith. Do not edit.
+// smith-module: smith::test
+// smith-imports: smith::arena smith::contract smith::math smith::random
+// smith-names: Test=SmithTest table=smith_test_table table_size=smith_test_count Runner=SmithTestRunner Kind=SmithTestKind kind_unsigned kind_signed kind_f32 kind_f64 kind_bool kind_char kind_pointer Value=SmithTestValue Op=SmithTestOp op_equal op_not_equal op_less op_less_equal op_greater op_greater_equal value_signed=smith_test_value_signed value_unsigned=smith_test_value_unsigned value_f32=smith_test_value_f32 value_f64=smith_test_value_f64 value_bool=smith_test_value_bool value_char=smith_test_value_char value_pointer=smith_test_value_pointer value_i8=smith_test_value_i8 value_i16=smith_test_value_i16 value_i32=smith_test_value_i32 value_i64=smith_test_value_i64 value_isize=smith_test_value_isize value_u8=smith_test_value_u8 value_u16=smith_test_value_u16 value_u32=smith_test_value_u32 value_u64=smith_test_value_u64 value_usize=smith_test_value_usize value_of full=smith_test_full memory=smith_test_arena note=smith_test_note scratch=smith_test_scratch check=smith_check check_compare=smith_test_check_compare check_equal check_not_equal check_less check_less_equal check_greater check_greater_equal check_near_f32=smith_check_near_f32 check_near_f64=smith_check_near_f64 check_same_bits_f32=smith_check_same_bits_f32 check_same_bits_f64=smith_check_same_bits_f64 check_near check_same_bits check_equal_bool=smith_check_equal_bool check_equal_char=smith_check_equal_char check_equal_i8=smith_check_equal_i8 check_equal_i16=smith_check_equal_i16 check_equal_i32=smith_check_equal_i32 check_equal_i64=smith_check_equal_i64 check_equal_u8=smith_check_equal_u8 check_equal_u16=smith_check_equal_u16 check_equal_u32=smith_check_equal_u32 check_equal_u64=smith_check_equal_u64 check_equal_f32=smith_check_equal_f32 check_equal_f64=smith_check_equal_f64 check_equal_ptr=smith_check_equal_ptr expect_abort=smith_test_expect_abort run_tests=smith_test_run
+// smith-generic: smith::test value_of smith_test_value_of lib/smith/test.smith - 6 7 14 15 | pw@301:8=[ p@301:9=[ i@301:10=nodiscard p@301:19=] p@301:20=] iw@301:22=SmithTestValue iw@301:28=smith_test_value_of p@301:36=( i@301:37=constexpr iw@301:47=type iP1w@301:52=T p@301:53=, iP1w@301:55=T iw@301:57=v p@301:58=) pw@301:60={ iw@302:5=return iw@302:12=_Generic p@302:20=( i@302:21=v p@302:22=, iw@303:9=bool p@303:13=: iw@303:15=smith_test_value_bool p@303:25=, iw@304:9=char p@304:13=: iw@304:15=smith_test_value_char p@304:25=, ixw@305:9=__INT8_TYPE__ p@305:11=: iw@305:13=smith_test_value_i8 p@305:21=, ixw@306:9=__INT16_TYPE__ p@306:12=: iw@306:14=smith_test_value_i16 p@306:23=, ixw@307:9=__INT32_TYPE__ p@307:12=: iw@307:14=smith_test_value_i32 p@307:23=, ixw@308:9=__INT64_TYPE__ p@308:12=: iw@308:14=smith_test_value_i64 p@308:23=, ixw@309:9=__PTRDIFF_TYPE__ p@309:14=: iw@309:16=smith_test_value_isize p@309:27=, ixw@310:9=__UINT8_TYPE__ p@310:11=: iw@310:13=smith_test_value_u8 p@310:21=, ixw@311:9=__UINT16_TYPE__ p@311:12=: iw@311:14=smith_test_value_u16 p@311:23=, ixw@312:9=__UINT32_TYPE__ p@312:12=: iw@312:14=smith_test_value_u32 p@312:23=, ixw@313:9=__UINT64_TYPE__ p@313:12=: iw@313:14=smith_test_value_u64 p@313:23=, ixw@314:9=__SIZE_TYPE__ p@314:14=: iw@314:16=smith_test_value_usize p@314:27=, ixw@315:9=float p@315:12=: iw@315:14=smith_test_value_f32 p@315:23=, ixw@316:9=double p@316:12=: iw@316:14=smith_test_value_f64 p@316:23=, iw@317:9=default p@317:16=: iw@317:18=smith_test_value_pointer p@317:31=) p@317:32=( i@317:33=v p@317:34=) p@317:35=; p@318:1=}
+// smith-generic: smith::test check_equal smith_test_check_equal lib/smith/test.smith - 1 2 12 13 | iw@659:8=void iw@659:13=smith_test_check_equal p@659:24=( i@659:25=constexpr iw@659:35=type iP1w@659:40=T p@659:41=, iP1w@659:43=T iw@659:45=a p@659:46=, iP1w@659:48=T iw@659:50=b p@659:51=) pw@659:53={ iw@660:5=smith_test_check_compare p@660:18=( i@660:19=smith_test_op_equal p@660:27=, B@660:29=smith::test::value_of p@660:37=( iP1@660:38=T p@660:39=, iw@660:41=a p@660:42=) E@660:29= p@660:43=, B@660:45=smith::test::value_of p@660:53=( iP1@660:54=T p@660:55=, iw@660:57=b p@660:58=) E@660:45= p@660:59=) p@660:60=; p@661:1=}
+// smith-generic: smith::test check_not_equal smith_test_check_not_equal lib/smith/test.smith - 1 2 12 13 | iw@664:8=void iw@664:13=smith_test_check_not_equal p@664:28=( i@664:29=constexpr iw@664:39=type iP1w@664:44=T p@664:45=, iP1w@664:47=T iw@664:49=a p@664:50=, iP1w@664:52=T iw@664:54=b p@664:55=) pw@664:57={ iw@665:5=smith_test_check_compare p@665:18=( i@665:19=smith_test_op_not_equal p@665:31=, B@665:33=smith::test::value_of p@665:41=( iP1@665:42=T p@665:43=, iw@665:45=a p@665:46=) E@665:33= p@665:47=, B@665:49=smith::test::value_of p@665:57=( iP1@665:58=T p@665:59=, iw@665:61=b p@665:62=) E@665:49= p@665:63=) p@665:64=; p@666:1=}
+// smith-generic: smith::test check_less smith_test_check_less lib/smith/test.smith - 1 2 12 13 | iw@669:8=void iw@669:13=smith_test_check_less p@669:23=( i@669:24=constexpr iw@669:34=type iP1w@669:39=T p@669:40=, iP1w@669:42=T iw@669:44=a p@669:45=, iP1w@669:47=T iw@669:49=b p@669:50=) pw@669:52={ iw@670:5=smith_test_check_compare p@670:18=( i@670:19=smith_test_op_less p@670:26=, B@670:28=smith::test::value_of p@670:36=( iP1@670:37=T p@670:38=, iw@670:40=a p@670:41=) E@670:28= p@670:42=, B@670:44=smith::test::value_of p@670:52=( iP1@670:53=T p@670:54=, iw@670:56=b p@670:57=) E@670:44= p@670:58=) p@670:59=; p@671:1=}
+// smith-generic: smith::test check_less_equal smith_test_check_less_equal lib/smith/test.smith - 1 2 12 13 | iw@673:8=void iw@673:13=smith_test_check_less_equal p@673:29=( i@673:30=constexpr iw@673:40=type iP1w@673:45=T p@673:46=, iP1w@673:48=T iw@673:50=a p@673:51=, iP1w@673:53=T iw@673:55=b p@673:56=) pw@673:58={ iw@674:5=smith_test_check_compare p@674:18=( i@674:19=smith_test_op_less_equal p@674:32=, B@674:34=smith::test::value_of p@674:42=( iP1@674:43=T p@674:44=, iw@674:46=a p@674:47=) E@674:34= p@674:48=, B@674:50=smith::test::value_of p@674:58=( iP1@674:59=T p@674:60=, iw@674:62=b p@674:63=) E@674:50= p@674:64=) p@674:65=; p@675:1=}
+// smith-generic: smith::test check_greater smith_test_check_greater lib/smith/test.smith - 1 2 12 13 | iw@677:8=void iw@677:13=smith_test_check_greater p@677:26=( i@677:27=constexpr iw@677:37=type iP1w@677:42=T p@677:43=, iP1w@677:45=T iw@677:47=a p@677:48=, iP1w@677:50=T iw@677:52=b p@677:53=) pw@677:55={ iw@678:5=smith_test_check_compare p@678:18=( i@678:19=smith_test_op_greater p@678:29=, B@678:31=smith::test::value_of p@678:39=( iP1@678:40=T p@678:41=, iw@678:43=a p@678:44=) E@678:31= p@678:45=, B@678:47=smith::test::value_of p@678:55=( iP1@678:56=T p@678:57=, iw@678:59=b p@678:60=) E@678:47= p@678:61=) p@678:62=; p@679:1=}
+// smith-generic: smith::test check_greater_equal smith_test_check_greater_equal lib/smith/test.smith - 1 2 12 13 | iw@681:8=void iw@681:13=smith_test_check_greater_equal p@681:32=( i@681:33=constexpr iw@681:43=type iP1w@681:48=T p@681:49=, iP1w@681:51=T iw@681:53=a p@681:54=, iP1w@681:56=T iw@681:58=b p@681:59=) pw@681:61={ iw@682:5=smith_test_check_compare p@682:18=( i@682:19=smith_test_op_greater_equal p@682:35=, B@682:37=smith::test::value_of p@682:45=( iP1@682:46=T p@682:47=, iw@682:49=a p@682:50=) E@682:37= p@682:51=, B@682:53=smith::test::value_of p@682:61=( iP1@682:62=T p@682:63=, iw@682:65=b p@682:66=) E@682:53= p@682:67=) p@682:68=; p@683:1=}
+// smith-generic: smith::test check_near smith_test_check_near lib/smith/test.smith - 1 2 15 16 | iw@720:8=void iw@720:13=smith_test_check_near p@720:23=( i@720:24=constexpr iw@720:34=type iP1w@720:39=T p@720:40=, iP1w@720:42=T iw@720:44=a p@720:45=, iP1w@720:47=T iw@720:49=b p@720:50=, iP1w@720:52=T iw@720:54=tolerance p@720:63=) pw@720:65={ iw@721:5=_Generic p@721:13=( i@721:14=a p@721:15=, ixw@721:17=float p@721:20=: iw@721:22=smith_check_near_f32 p@721:36=, ixw@721:38=double p@721:41=: iw@721:43=smith_check_near_f64 p@721:57=) p@721:58=( i@721:59=a p@721:60=, iw@721:62=b p@721:63=, iw@721:65=tolerance p@721:74=) p@721:75=; p@722:1=}
+// smith-generic: smith::test check_same_bits smith_test_check_same_bits lib/smith/test.smith - 1 2 12 13 | iw@725:8=void iw@725:13=smith_test_check_same_bits p@725:28=( i@725:29=constexpr iw@725:39=type iP1w@725:44=T p@725:45=, iP1w@725:47=T iw@725:49=a p@725:50=, iP1w@725:52=T iw@725:54=b p@725:55=) pw@725:57={ iw@726:5=_Generic p@726:13=( i@726:14=a p@726:15=, ixw@726:17=float p@726:20=: iw@726:22=smith_check_same_bits_f32 p@726:41=, ixw@726:43=double p@726:46=: iw@726:48=smith_check_same_bits_f64 p@726:67=) p@726:68=( i@726:69=a p@726:70=, iw@726:72=b p@726:73=) p@726:74=; p@727:1=}
+// clang-format on
 #pragma once
-
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <smith/io.h>
+#include <smith/trace.h>
 #include <stddef.h>
 #include <stdint.h>
-
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "arena.h"
 #include "random.h"
-#include "trace.h"
-
-// A test. The generated tests_list.c holds one row per test in the build's test files: `plain` for
-// `test_<name>(void)`, `property` for `test_<name>(SmithKey key)`.
+#ifdef __cplusplus
+extern "C" {
+#endif
+// A test. The generated tests_list.c holds one row per test in the build's test files: `plain` for `test_<name>(void)`,
+// `property` for `test_<name>(random::Key key)` and `with_io` for `test_<name>(c::SmithIo *io)`.
 typedef struct {
     const char *name; // without the test_ prefix
     void (*plain)(void);
     void (*property)(SmithKey key);
+    void (*with_io)(SmithIo *io);
 } SmithTest;
 
 // The table, generated by smith_tests, ended by a row of nullptrs that is not counted.
 extern const SmithTest smith_test_table[];
+
 extern const size_t smith_test_count;
+
+// The runner's own capability, which main makes and hands to run: the forked workers, their pipes and sockets, the
+// signals they catch, the memory they share, and the clock and console of the real io it was made with. io holds the
+// runner's own console, clock, arena and arguments. make_io is main's smith_io_make, handed down as a value, which is
+// how the runner makes a real io for the test that takes one and for no other code.
+typedef struct [[clang::annotate("smith::capability")]] {
+    SmithIo *io;
+    SmithIo (*make_io)(int32_t argc, char **argv);
+    int32_t argc;
+    char **argv;
+} SmithTestRunner;
+
+// How a Value is read: the member that holds it.
+typedef uint8_t SmithTestKind;
+
+constexpr SmithTestKind smith_test_kind_unsigned = 0;
+
+constexpr SmithTestKind smith_test_kind_signed = 1;
+
+constexpr SmithTestKind smith_test_kind_f32 = 2;
+
+constexpr SmithTestKind smith_test_kind_f64 = 3;
+
+constexpr SmithTestKind smith_test_kind_bool = 4;
+
+constexpr SmithTestKind smith_test_kind_char = 5;
+
+constexpr SmithTestKind smith_test_kind_pointer = 6;
+
+// A value of any type a check takes, with the name of its type.
+typedef struct {
+    SmithTestKind kind;
+    const char *type; // "i32", "u64", "f64", "bool", "char", "ptr"
+    union {
+        uint64_t unsigned_value;
+        int64_t signed_value;
+        float f32_value;
+        double f64_value;
+        bool bool_value;
+        char char_value;
+        size_t pointer_value;
+    };
+} SmithTestValue;
+
+// The comparisons of the checks.
+typedef uint8_t SmithTestOp;
+
+constexpr SmithTestOp smith_test_op_equal = 0;
+
+constexpr SmithTestOp smith_test_op_not_equal = 1;
+
+constexpr SmithTestOp smith_test_op_less = 2;
+
+constexpr SmithTestOp smith_test_op_less_equal = 3;
+
+constexpr SmithTestOp smith_test_op_greater = 4;
+
+constexpr SmithTestOp smith_test_op_greater_equal = 5;
+
+// The Value of an integer of `size` bytes, named as the sized types are (i8 to i64, u8 to u64).
+[[nodiscard]] SmithTestValue smith_test_value_signed(int64_t value, size_t size);
+
+[[nodiscard]] SmithTestValue smith_test_value_unsigned(uint64_t value, size_t size);
+
+[[nodiscard]] SmithTestValue smith_test_value_f32(float value);
+
+[[nodiscard]] SmithTestValue smith_test_value_f64(double value);
+
+[[nodiscard]] SmithTestValue smith_test_value_bool(bool value);
+
+[[nodiscard]] SmithTestValue smith_test_value_char(char value);
+
+[[nodiscard]] SmithTestValue smith_test_value_pointer(const volatile void *value);
+
+[[nodiscard]] SmithTestValue smith_test_value_i8(int8_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_i16(int16_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_i32(int32_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_i64(int64_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_isize(ptrdiff_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_u8(uint8_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_u16(uint16_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_u32(uint32_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_u64(uint64_t value);
+
+[[nodiscard]] SmithTestValue smith_test_value_usize(size_t value);
+
+// Whether this run asked for the heavy checks at full size (--full). False by default.
+[[nodiscard]] bool smith_test_full(void);
+
+// This test's memory, capacity bytes, from a block the runner reserved once. It is given back before each test and each
+// key, so a test never frees. Running out stops the test with a message.
+[[nodiscard]] SmithArena smith_test_arena(size_t capacity);
 
 // Printed under a failure, whether it is a failed check, a crash or a timeout. Each note replaces the last, and the
 // runner clears it before each test and each key. For where the test is, such as a loop's index. It holds 4 KiB; a
 // longer note is cut and ends with `…` so the cut shows.
 [[gnu::format(printf, 1, 2)]] void smith_test_note(const char *format, ...);
 
-// This test's memory, capacity bytes, from a block the runner reserved once. It is given back before each test and each
-// key, so a test never frees. Running out stops the test with a message.
-[[nodiscard]] SmithArena smith_test_arena(size_t capacity);
+// The scratch folder of a test that takes an io: its path, also $TMPDIR while the test runs. The fake io has none
+// (nullptr).
+[[nodiscard]] const char *smith_test_scratch(const SmithIo *io);
 
-// Whether this run asked for the heavy checks at full size (--full). False by default.
-[[nodiscard]] bool smith_test_full(void);
-
-// The plain-function checks. A failed one ends the test, like the macros.
+// Fails the test when the condition is false.
 void smith_check(bool condition);
 
-void smith_check_equal_bool(bool a, bool b);
-void smith_check_equal_char(char a, char b);
-void smith_check_equal_i8(int8_t a, int8_t b);
-void smith_check_equal_i16(int16_t a, int16_t b);
-void smith_check_equal_i32(int32_t a, int32_t b);
-void smith_check_equal_i64(int64_t a, int64_t b);
-void smith_check_equal_u8(uint8_t a, uint8_t b);
-void smith_check_equal_u16(uint16_t a, uint16_t b);
-void smith_check_equal_u32(uint32_t a, uint32_t b);
-void smith_check_equal_u64(uint64_t a, uint64_t b);
-void smith_check_equal_f32(float a, float b);
-void smith_check_equal_f64(double a, double b);
-void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
+// Fails the test unless the comparison holds, printing both values. The generic checks below make the Values.
+void smith_test_check_compare(SmithTestOp op, SmithTestValue a, SmithTestValue b);
+
+// |a - b| <= tolerance; a NaN in any of them fails. Also check_near_f64.
 void smith_check_near_f32(float a, float b, float tolerance);
+
 void smith_check_near_f64(double a, double b, double tolerance);
+
+// a and b have the same bits: -0 is not 0, and a NaN is itself. A failure prints both in hex. Also check_same_bits_f64.
 void smith_check_same_bits_f32(float a, float b);
+
 void smith_check_same_bits_f64(double a, double b);
 
-#define SMITH_CHECK(...) \
-    SMITH_TEST_SELECT(__VA_ARGS__, SMITH_TEST_COMPARE, SMITH_TEST_TWO_ARGUMENTS, SMITH_TEST_CONDITION, ~)(__VA_ARGS__)
-#define SMITH_TEST_SELECT(first, second, third, macro, ...) macro
+void smith_check_equal_bool(bool a, bool b);
 
-#define SMITH_TEST_TWO_ARGUMENTS(a, b) \
-    do { \
-        static_assert(false, "SMITH_CHECK takes a condition, or a, op and b"); \
-    } while (0)
+void smith_check_equal_char(char a, char b);
 
-#define SMITH_TEST_CONDITION(condition) \
-    do { \
-        bool smith_check_condition = (condition); \
-        if (!smith_check_condition) smith_test_fail_condition(__FILE__, __LINE__); \
-    } while (0)
+void smith_check_equal_i8(int8_t a, int8_t b);
 
-// The comparison is made on the two values by a function that reads the operator's text, so no binary operator is
-// written in the macro: a check such as an unsigned >= 0 draws no tautology warning, a float compared with == draws
-// no -Wfloat-equal (the test means it), and clangd has no operator to offer to swap inside the call.
-#define SMITH_TEST_COMPARE(a, op, b) \
-    do { \
-        SMITH_TEST_TYPE(a) smith_check_a = (a); \
-        SMITH_TEST_TYPE(a) smith_check_b = (b); \
-        SmithTestValue smith_check_value_a = SMITH_TEST_VALUE(smith_check_a); \
-        SmithTestValue smith_check_value_b = SMITH_TEST_VALUE(smith_check_b); \
-        if (!smith_test_compare(smith_check_value_a, #op, smith_check_value_b)) \
-            smith_test_fail_compare(#a, #b, smith_check_value_a, smith_check_value_b, __FILE__, __LINE__); \
-    } while (0)
+void smith_check_equal_i16(int16_t a, int16_t b);
 
-#define SMITH_CHECK_NEAR(a, b, tolerance) \
-    do { \
-        SMITH_TEST_TYPE(a) smith_check_a = (a); \
-        SMITH_TEST_TYPE(a) smith_check_b = (b); \
-        SMITH_TEST_TYPE(a) smith_check_tolerance = (tolerance); \
-        SMITH_TEST_TYPE(a) smith_check_distance = SMITH_TEST_DISTANCE(smith_check_a, smith_check_b); \
-        if (!smith_test_within((double)smith_check_distance, (double)smith_check_tolerance)) \
-            smith_test_fail_near(#a, #b, #tolerance, \
-                                 (SmithTestValue[]){SMITH_TEST_VALUE(smith_check_a), SMITH_TEST_VALUE(smith_check_b), \
-                                                    SMITH_TEST_VALUE(smith_check_tolerance), \
-                                                    SMITH_TEST_VALUE(smith_check_distance)}, \
-                                 __FILE__, __LINE__); \
-    } while (0)
+void smith_check_equal_i32(int32_t a, int32_t b);
 
-// The values are compared by their bits, read by smith_test_same_bits; _Generic has no default, so an integer is a
-// compile error.
-#define SMITH_CHECK_SAME_BITS(a, b) \
-    do { \
-        SMITH_TEST_REAL_TYPE(a) smith_check_a = (a); \
-        SMITH_TEST_REAL_TYPE(a) smith_check_b = (b); \
-        SmithTestValue smith_check_value_a = SMITH_TEST_VALUE(smith_check_a); \
-        SmithTestValue smith_check_value_b = SMITH_TEST_VALUE(smith_check_b); \
-        if (!smith_test_same_bits(smith_check_value_a, smith_check_value_b)) \
-            smith_test_fail_same_bits(#a, #b, smith_check_value_a, smith_check_value_b, __FILE__, __LINE__); \
-    } while (0)
+void smith_check_equal_i64(int64_t a, int64_t b);
 
-#define SMITH_TEST_REAL_TYPE(value) typeof(_Generic((value), float: 0.0F, double: 0.0))
+void smith_check_equal_u8(uint8_t a, uint8_t b);
 
-// The type of value as an expression's result: an array becomes a pointer, const drops, and no integer promotion
-// applies. Every pointer's type is const volatile void *, so any two pointers compare, as addresses. The types are the
-// ones SMITH_TEST_VALUE prints. (Written with _Generic, not with a test on the type's class: clangd offers to swap the
-// operands of an == in a macro, and fails.)
-#define SMITH_TEST_TYPE(value) \
-    typeof(_Generic((value), \
-               bool: false, \
-               char: (char)0, \
-               signed char: (signed char)0, \
-               unsigned char: (unsigned char)0, \
-               short: (short)0, \
-               unsigned short: (unsigned short)0, \
-               int: 0, \
-               unsigned int: 0U, \
-               long: 0L, \
-               unsigned long: 0UL, \
-               long long: 0LL, \
-               unsigned long long: 0ULL, \
-               float: 0.0F, \
-               double: 0.0, \
-               default: (const volatile void *)nullptr))
+void smith_check_equal_u16(uint16_t a, uint16_t b);
 
-#define SMITH_TEST_DISTANCE(a, b) \
-    _Generic((a), float: smith_test_distance_float, double: smith_test_distance_double)(a, b)
+void smith_check_equal_u32(uint32_t a, uint32_t b);
 
-// What a value looks like when printed: its kind, the type as written in C, and the value.
-typedef enum : unsigned char {
-    SmithTestKind_Unsigned,
-    SmithTestKind_Signed,
-    SmithTestKind_Float,
-    SmithTestKind_Double,
-    SmithTestKind_Bool,
-    SmithTestKind_Char,
-    SmithTestKind_Pointer,
-} SmithTestKind;
+void smith_check_equal_u64(uint64_t a, uint64_t b);
 
-typedef struct {
-    SmithTestKind kind;
-    const char *type; // "int", "unsigned long", "double", "pointer"
-    union {
-        unsigned long long unsigned_value;
-        long long signed_value;
-        float float_value;
-        double double_value;
-        bool bool_value;
-        char char_value;
-        uintptr_t pointer_value;
-    };
-} SmithTestValue;
+void smith_check_equal_f32(float a, float b);
 
-#define SMITH_TEST_VALUE(value) \
-    _Generic((value), \
-        bool: smith_test_value_bool, \
-        char: smith_test_value_char, \
-        signed char: smith_test_value_signed_char, \
-        unsigned char: smith_test_value_unsigned_char, \
-        short: smith_test_value_short, \
-        unsigned short: smith_test_value_unsigned_short, \
-        int: smith_test_value_int, \
-        unsigned int: smith_test_value_unsigned_int, \
-        long: smith_test_value_long, \
-        unsigned long: smith_test_value_unsigned_long, \
-        long long: smith_test_value_long_long, \
-        unsigned long long: smith_test_value_unsigned_long_long, \
-        float: smith_test_value_float, \
-        double: smith_test_value_double, \
-        default: smith_test_value_pointer)(value)
+void smith_check_equal_f64(double a, double b);
 
-[[nodiscard]] SmithTestValue smith_test_value_bool(bool value);
-[[nodiscard]] SmithTestValue smith_test_value_char(char value);
-[[nodiscard]] SmithTestValue smith_test_value_signed_char(signed char value);
-[[nodiscard]] SmithTestValue smith_test_value_unsigned_char(unsigned char value);
-[[nodiscard]] SmithTestValue smith_test_value_short(short value);
-[[nodiscard]] SmithTestValue smith_test_value_unsigned_short(unsigned short value);
-[[nodiscard]] SmithTestValue smith_test_value_int(int value);
-[[nodiscard]] SmithTestValue smith_test_value_unsigned_int(unsigned int value);
-[[nodiscard]] SmithTestValue smith_test_value_long(long value);
-[[nodiscard]] SmithTestValue smith_test_value_unsigned_long(unsigned long value);
-[[nodiscard]] SmithTestValue smith_test_value_long_long(long long value);
-[[nodiscard]] SmithTestValue smith_test_value_unsigned_long_long(unsigned long long value);
-[[nodiscard]] SmithTestValue smith_test_value_float(float value);
-[[nodiscard]] SmithTestValue smith_test_value_double(double value);
-[[nodiscard]] SmithTestValue smith_test_value_pointer(const volatile void *value);
+void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
 
-// Whether a op b holds, for the operator written as text: "==", "!=", "<", "<=", ">" or ">=". The values have one
-// type. A NaN is unordered, so every operator but != fails. Any other text stops the test.
-[[nodiscard]] bool smith_test_compare(SmithTestValue a, const char *op, SmithTestValue b);
-// Whether a and b, floats of one kind, have the same bits.
-[[nodiscard]] bool smith_test_same_bits(SmithTestValue a, SmithTestValue b);
-// Whether distance <= tolerance; a NaN in either fails.
-[[nodiscard]] bool smith_test_within(double distance, double tolerance);
-[[nodiscard]] float smith_test_distance_float(float a, float b);
-[[nodiscard]] double smith_test_distance_double(double a, double b);
-
-// The macros' failures. Each records where the check is and what the values were, for the runner to print, and ends
-// the process.
-[[noreturn]] void smith_test_fail_condition(const char *file, int line);
-[[noreturn]] void smith_test_fail_compare(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
-                                          const char *file, int line);
-[[noreturn]] void smith_test_fail_same_bits(const char *a_text, const char *b_text, SmithTestValue a, SmithTestValue b,
-                                            const char *file, int line);
-// values holds a, b, the tolerance and their distance.
-[[noreturn]] void smith_test_fail_near(const char *a_text, const char *b_text, const char *tolerance_text,
-                                       const SmithTestValue values[4], const char *file, int line);
-
-// Says that the test must abort from here on (see the top of this header).
+// smith_test_expect_abort. From the call on, the test must abort, and the runner judges how it ended: in a worker or in
+// a child of --isolate, the abort's signal ends the process (on_signal) and a returning test replies or exits 0;
+// --in-process jumps to the runner's loop. The flag and the stack of the call are in the shared block, so they survive
+// the process, and nothing runs in the test after the abort. A check or contract that fails after the call is the abort
+// (on_failure); a plain check that fails is not.
 void smith_test_expect_abort(void);
+
+// The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
+// test passed. main makes the Runner.
+int32_t smith_test_run(SmithTestRunner *runner);
+#ifdef __cplusplus
+}
+#endif

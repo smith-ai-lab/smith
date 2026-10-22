@@ -1033,6 +1033,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .field = nullptr,
         .read_header = smith_raw_read_header,
         .main_file = path,
+        .declarations_only = header_path != nullptr,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
     };

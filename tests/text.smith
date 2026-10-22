@@ -1,0 +1,923 @@
+// Tests of smith::text, in smith's own test library; tests/text.sh builds them in a scratch project as
+// tests/test_text.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a locale),
+// and the halfway cases are also checked against what they must round to, so the reference is not the only witness.
+import smith::math;
+import smith::random;
+import smith::test;
+import smith::text;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+
+constexpr usize test_text_capacity = 1024;
+
+// The C headers write these as macros (FLT_MAX, INT64_MIN), which a .smith file does not use.
+constexpr i64 i64_max = 9223372036854775807;
+constexpr i64 i64_min = -9223372036854775807 - 1;
+constexpr f32 f32_max = 0x1.fffffep+127F;
+constexpr f32 f32_min = 0x1p-126F;
+constexpr f64 f64_max = 0x1.fffffffffffffp+1023;
+constexpr f64 f64_min = 0x1p-1022;
+
+static text::Text test_text(const char *string) {
+    return text::make(string);
+}
+
+static u64 test_text_draw_u64(random::Key key) {
+    u64 shift = random::key_bits(random::key_derive(key, 1), 0) % 64; // spreads values over every length
+    return random::key_bits(random::key_derive(key, 0), 0) >> shift;
+}
+
+static i64 test_text_uniform(random::Key key, i64 low, i64 high) {
+    return random::uniform_int64_sample(key, (random::UniformInt64){.low = low, .high = high});
+}
+
+static f32 test_text_f32_of(u32 bits) {
+    return __builtin_bit_cast(f32, bits);
+}
+
+static f64 test_text_f64_of(u64 bits) {
+    return __builtin_bit_cast(f64, bits);
+}
+
+static u64 test_text_bits_of(f64 value) {
+    return __builtin_bit_cast(u64, value);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Lines and words
+
+void test_text_lines_and_words(void) {
+    text::Text input = test_text("first line\r\n\n  # only a comment\n\tmove  3\t-4   # go\nlast");
+    text::Text line = {};
+    text::Text word = {};
+    test::check(text::take_line(&input, &line));
+    test::check(text::is(line, "first line")); // the carriage return is gone
+    test::check(text::take_line(&input, &line));
+    test::check_equal(line.length, 0);
+    test::check(text::take_line(&input, &line));
+    test::check_equal(line.length, 0); // a comment and the spaces before it are gone
+    test::check(text::take_line(&input, &line));
+    test::check(text::take_word(&line, &word));
+    test::check(text::is(word, "move"));
+    test::check(text::take_word(&line, &word));
+    i64 three = 0;
+    test::check(text::parse_i64(word, &three));
+    test::check_equal(three, 3);
+    test::check(text::take_word(&line, &word));
+    test::check(text::is(word, "-4"));
+    test::check(!text::take_word(&line, &word)); // only the comment was left
+    test::check(text::take_line(&input, &line)); // the last line has no newline
+    test::check(text::is(line, "last"));
+    test::check(!text::take_line(&input, &line));
+    test::check_equal(input.length, 0);
+}
+
+void test_text_empty_and_unterminated(void) {
+    text::Text empty = test_text("");
+    text::Text line = {};
+    test::check(!text::take_line(&empty, &line));
+    text::Text newline = test_text("\n");
+    test::check(text::take_line(&newline, &line)); // one empty line
+    test::check_equal(line.length, 0);
+    test::check(!text::take_line(&newline, &line));
+    text::Text blank = test_text(" \t ");
+    text::Text word = {};
+    test::check(!text::take_word(&blank, &word));
+}
+
+void test_text_is_compares_whole_words(void) {
+    test::check(text::is(test_text("move"), "move"));
+    test::check(!text::is(test_text("move"), "mov"));
+    test::check(!text::is(test_text("mov"), "move"));
+    test::check(!text::is(test_text("move"), "Move"));
+    test::check(text::is((text::Text){"moves", 4}, "move")); // a word is a pointer and a length
+    test::check(text::is(test_text(""), ""));
+    test::check(!text::is(test_text(""), "x"));
+}
+
+// A line of words is read back from what was written, for any words.
+void test_text_words_round_trip(random::Key key) {
+    char buffer[test_text_capacity];
+    usize used = 0;
+    usize count = (usize)test_text_uniform(random::key_derive(key, 0), 0, 20);
+    for (usize i = 0; i < count; i++) {
+        used += text::write_u64(buffer + used, test_text_draw_u64(random::key_derive(key, 100 + i)));
+        buffer[used++] = i % 2 == 0 ? ' ' : '\t';
+    }
+    text::Text line = {buffer, used};
+    text::Text word = {};
+    usize seen = 0;
+    while (text::take_word(&line, &word)) {
+        u64 value = 0;
+        test::check(text::parse_u64(word, &value));
+        test::check_equal(value, test_text_draw_u64(random::key_derive(key, 100 + seen)));
+        seen += 1;
+    }
+    test::check_equal(seen, count);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Whole numbers
+
+static void test_text_check_written(char *out, usize count, const char *expected) {
+    test::check_equal(count, c::strlen(expected));
+    test::check_equal(c::memcmp(out, expected, count), 0);
+}
+
+void test_text_write_known_values(void) {
+    char out[text::number_capacity];
+    test_text_check_written(out, text::write_u64(out, 0), "0");
+    test_text_check_written(out, text::write_u64(out, 10), "10");
+    test_text_check_written(out, text::write_u64(out, math::max(u64)), "18446744073709551615");
+    test_text_check_written(out, text::write_i64(out, 0), "0");
+    test_text_check_written(out, text::write_i64(out, -1), "-1");
+    test_text_check_written(out, text::write_i64(out, i64_max), "9223372036854775807");
+    test_text_check_written(out, text::write_i64(out, i64_min), "-9223372036854775808");
+    test_text_check_written(out, text::write_hex(out, 0), "0000000000000000");
+    test_text_check_written(out, text::write_hex(out, 0xdeadbeef), "00000000deadbeef");
+    test_text_check_written(out, text::write_hex(out, math::max(u64)), "ffffffffffffffff");
+}
+
+void test_text_write_stays_in_capacity(void) {
+    char out[text::number_capacity + 8];
+    __builtin_memset(out, 'x', sizeof out);
+    test::check_equal(text::write_i64(out, i64_min), text::number_capacity); // the longest text
+    for (usize i = text::number_capacity; i < sizeof out; i++)
+        test::check_equal(out[i], 'x');
+}
+
+void test_text_u64_round_trip(random::Key key) {
+    u64 value = test_text_draw_u64(key);
+    char out[text::number_capacity];
+    usize count = text::write_u64(out, value);
+    test::check_less_equal(count, text::number_capacity);
+    u64 back = 0;
+    test::check(text::parse_u64((text::Text){out, count}, &back));
+    test::check_equal(back, value);
+    // Leading zeros change nothing, however many.
+    char padded[test_text_capacity];
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    __builtin_memset(padded, '0', zeros);
+    __builtin_memcpy(padded + zeros, out, count);
+    u64 again = 0;
+    test::check(text::parse_u64((text::Text){padded, zeros + count}, &again));
+    test::check_equal(again, value);
+}
+
+void test_text_i64_round_trip(random::Key key) {
+    u64 bits = test_text_draw_u64(key);
+    i64 value = (i64)bits;
+    if (random::key_bits(random::key_derive(key, 7), 0) % 2 == 1) value = (i64)(0 - bits); // both signs, all lengths
+    char out[text::number_capacity];
+    usize count = text::write_i64(out, value);
+    test::check_less_equal(count, text::number_capacity);
+    i64 back = 0;
+    test::check(text::parse_i64((text::Text){out, count}, &back));
+    test::check_equal(back, value);
+    char padded[test_text_capacity];
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    usize sign = value < 0 ? 1 : 0;
+    __builtin_memcpy(padded, out, sign);
+    __builtin_memset(padded + sign, '0', zeros);
+    __builtin_memcpy(padded + sign + zeros, out + sign, count - sign);
+    i64 again = 0;
+    test::check(text::parse_i64((text::Text){padded, zeros + count}, &again));
+    test::check_equal(again, value);
+}
+
+void test_text_hex_round_trip(random::Key key) {
+    u64 value = test_text_draw_u64(key);
+    char out[16];
+    test::check_equal(text::write_hex(out, value), 16);
+    u64 back = 0;
+    test::check(text::parse_hex((text::Text){out, 16}, &back));
+    test::check_equal(back, value);
+    for (usize i = 0; i < 16; i++)
+        test::check((out[i] >= '0' && out[i] <= '9') || (out[i] >= 'a' && out[i] <= 'f'));
+    char padded[test_text_capacity];
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    __builtin_memset(padded, '0', zeros);
+    __builtin_memcpy(padded + zeros, out, 16);
+    u64 again = 0;
+    test::check(text::parse_hex((text::Text){padded, zeros + 16}, &again));
+    test::check_equal(again, value);
+}
+
+// Every value that has exactly n digits, for each n: the lengths of a number are the edges.
+void test_text_integer_edges(void) {
+    u64 u = 0;
+    test::check(text::parse_u64(test_text("0"), &u));
+    test::check_equal(u, 0);
+    test::check(text::parse_u64(test_text("18446744073709551615"), &u));
+    test::check_equal(u64, u, math::max(u64));
+    test::check(text::parse_u64(test_text("00000000000000000000000000018446744073709551615"), &u));
+    test::check_equal(u64, u, math::max(u64));
+    i64 i = 0;
+    test::check(text::parse_i64(test_text("9223372036854775807"), &i));
+    test::check_equal(i, i64_max);
+    test::check(text::parse_i64(test_text("-9223372036854775808"), &i));
+    test::check_equal(i, i64_min);
+    test::check(text::parse_i64(test_text("-0"), &i));
+    test::check_equal(i, 0);
+    test::check(text::parse_i64(test_text("-0009"), &i));
+    test::check_equal(i, -9);
+    u64 h = 0;
+    test::check(text::parse_hex(test_text("0"), &h));
+    test::check_equal(h, 0);
+    test::check(text::parse_hex(test_text("ffffffffffffffff"), &h));
+    test::check_equal(u64, h, math::max(u64));
+    test::check(text::parse_hex(test_text("000000000000000000000000000000ffffffffffffffff"), &h));
+    test::check_equal(u64, h, math::max(u64));
+    test::check(!text::parse_hex(test_text("DEAD"), &h)); // lowercase only, as it is written
+}
+
+// Each bad word fails and leaves the result as it was.
+void test_text_failed_parse_writes_nothing(void) {
+    const char *bad_unsigned[] = {"",
+                                  "-",
+                                  "-1",
+                                  "+1",
+                                  " 1",
+                                  "1 ",
+                                  "1_0",
+                                  "0x10",
+                                  "1.0",
+                                  "18446744073709551616",
+                                  "18446744073709551620",
+                                  "99999999999999999999",
+                                  "184467440737095516150",
+                                  "100000000000000000000000000000000000000",
+                                  nullptr};
+    for (const char **s = bad_unsigned; *s != nullptr; s++) {
+        u64 value = 77;
+        test::check(!text::parse_u64(test_text(*s), &value));
+        test::check_equal(value, 77);
+    }
+    const char *bad_signed[] = {"",
+                                "-",
+                                "--1",
+                                "+1",
+                                "- 1",
+                                "1-",
+                                "9223372036854775808",
+                                "-9223372036854775809",
+                                "-18446744073709551615",
+                                "-99999999999999999999999",
+                                nullptr};
+    for (const char **s = bad_signed; *s != nullptr; s++) {
+        i64 value = 77;
+        test::check(!text::parse_i64(test_text(*s), &value));
+        test::check_equal(value, 77);
+    }
+    const char *bad_hex[] = {"", "g", "-1", "0x1", "F", "1 ", "10000000000000000", "1ffffffffffffffff", nullptr};
+    for (const char **s = bad_hex; *s != nullptr; s++) {
+        u64 value = 77;
+        test::check(!text::parse_hex(test_text(*s), &value));
+        test::check_equal(value, 77);
+    }
+}
+
+// One past the top of a type fails, and so does everything above it.
+void test_text_overflow_fails(random::Key key) {
+    u64 value = test_text_draw_u64(key);
+    char out[text::number_capacity + 4];
+    usize count = text::write_u64(out, value);
+    out[count++] = (char)('0' + test_text_uniform(random::key_derive(key, 3), 0, 9));
+    u64 result = 0;
+    bool fits = text::parse_u64((text::Text){out, count}, &result);
+    // The text of value followed by a digit is value * 10 + digit, which fits exactly when it does not wrap.
+    u64 digit = (u64)(out[count - 1] - '0');
+    bool should_fit = value <= (math::max(u64) - digit) / 10;
+    test::check(fits == should_fit);
+    if (fits) test::check_equal(result, value * 10 + digit);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Floats
+
+static bool test_text_reference(const char *string, f32 *value) {
+    f32 reference = c::strtof(string, nullptr);
+    if (reference > f32_max || reference < -f32_max) return false; // rounded to infinity
+    *value = reference;
+    return true;
+}
+
+// The parser against strtof: the same f32, or a refusal exactly when strtof says infinity.
+static void test_text_check_f32(const char *string) {
+    test::note("text \"%.200s\"", string);
+    f32 expected = 0;
+    bool finite = test_text_reference(string, &expected);
+    f32 actual = 12345.0F;
+    bool parsed = text::parse_f32(test_text(string), &actual);
+    test::check(parsed == finite);
+    if (finite)
+        test::check_same_bits(actual, expected);
+    else
+        test::check_same_bits(actual, 12345.0F); // a failed parse writes nothing
+}
+
+static f32 test_text_f32(const char *string) {
+    f32 value = 0;
+    test::check(text::parse_f32(test_text(string), &value));
+    return value;
+}
+
+void test_text_f32_known_values(void) {
+    test::check_same_bits(test_text_f32("0"), 0.0F);
+    test::check_same_bits(test_text_f32("-0"), -0.0F);
+    test::check_same_bits(test_text_f32("+0.0"), 0.0F);
+    test::check_same_bits(test_text_f32("-0.000e5"), -0.0F);
+    test::check_same_bits(test_text_f32("0.25"), 0.25F);
+    test::check_same_bits(test_text_f32("-90"), -90.0F);
+    test::check_same_bits(test_text_f32("5."), 5.0F);
+    test::check_same_bits(test_text_f32(".5"), 0.5F);
+    test::check_same_bits(test_text_f32("1e3"), 1000.0F);
+    test::check_same_bits(test_text_f32("2.5E+3"), 2500.0F);
+    test::check_same_bits(test_text_f32("25e-1"), 2.5F);
+    test::check_same_bits(test_text_f32("0.1"), 0.1F);
+    test::check_same_bits(test_text_f32("0.2"), 0.2F);
+    test::check_same_bits(test_text_f32("3.14159265358979"), 3.14159274F);
+    test::check_same_bits(test_text_f32("16777216"), 16777216.0F);
+    test::check_same_bits(test_text_f32("16777217"), 16777216.0F); // halfway: ties to even
+    test::check_same_bits(test_text_f32("16777219"), 16777220.0F); // halfway: ties to even, up
+    test::check_same_bits(test_text_f32("16777217.0000000000000000000001"), 16777218.0F);
+    test::check_same_bits(test_text_f32("3.4028234663852886e38"), f32_max);
+    test::check_same_bits(test_text_f32("3.4028235e38"), f32_max);
+    test::check_same_bits(test_text_f32("1.17549435e-38"), f32_min);
+    test::check_same_bits(test_text_f32("1.4e-45"), 0x1p-149F);
+    test::check_same_bits(test_text_f32("7e-46"), 0.0F); // under half the smallest subnormal
+    test::check_same_bits(test_text_f32("7.01e-46"), 0x1p-149F);
+    test::check_same_bits(test_text_f32("1e-99999999999"), 0.0F);
+    test::check_same_bits(test_text_f32("0e99999999999"), 0.0F);
+    test::check_same_bits(test_text_f32("000000000000000000000000000000000000000000000001"), 1.0F);
+}
+
+// 15-digit texts next to a halfway point, where the first version (an f64 sum, rounded again to f32) was wrong.
+void test_text_f32_double_rounding_cases(void) {
+    test::check_same_bits(test_text_f32("1.00047367811203"), 1.00047362F);
+    test::check_same_bits(test_text_f32("1.00057715177536"), 1.00057709F);
+    test::check_same_bits(test_text_f32("1.00076562166214"), 1.00076568F);
+    test_text_check_f32("1.00086909532547");
+    test_text_check_f32("1.00147145986557");
+    test_text_check_f32("1.00176340341568");
+}
+
+void test_text_f32_rejects(void) {
+    const char *bad[] = {"",
+                         "-",
+                         "+",
+                         ".",
+                         "-.",
+                         "e5",
+                         ".e5",
+                         "1e",
+                         "1e+",
+                         "1e-",
+                         "1.2.3",
+                         "inf",
+                         "-inf",
+                         "nan",
+                         "0x10",
+                         "1f",
+                         " 1",
+                         "1 ",
+                         "1,5",
+                         "--1",
+                         "+-1",
+                         "1e5.5",
+                         "1ee5",
+                         "1e5e5",
+                         "3.4028236e38",
+                         "1e39",
+                         "-1e39",
+                         "340282356779733661637539395458142568448",
+                         "1e99999999999",
+                         "0.0000000000000000000000000001e68",
+                         nullptr};
+    for (const char **s = bad; *s != nullptr; s++) {
+        f32 value = 12345.0F;
+        test::check(!text::parse_f32(test_text(*s), &value));
+        test::check_same_bits(value, 12345.0F);
+    }
+}
+
+// The first f32 that is too large: halfway between f32_max and 2^128.
+void test_text_f32_overflow_edge(void) {
+    test::check_same_bits(test_text_f32("340282356779733661637539395458142568447"), f32_max);
+    f32 value = 0;
+    test::check(!text::parse_f32(test_text("340282356779733661637539395458142568448"), &value));
+    test::check_same_bits(test_text_f32("-340282356779733661637539395458142568447"), -f32_max);
+}
+
+// Random decimals: any digits, a point anywhere, an exponent that reaches subnormals and the overflow.
+static usize test_text_random_decimal(random::Key key, char *out) {
+    usize used = 0;
+    if (random::bernoulli_sample(random::key_derive(key, 0), (random::Bernoulli){.probability = 0.3}))
+        out[used++] = '-';
+    usize digits = (usize)test_text_uniform(random::key_derive(key, 1), 1, 60);
+    usize point = (usize)test_text_uniform(random::key_derive(key, 2), 0, (i64)digits + 1);      // digits + 1: none
+    usize zero_from = (usize)test_text_uniform(random::key_derive(key, 3), 1, (i64)digits + 20); // zeros after
+    for (usize i = 0; i < digits; i++) {
+        if (i == point) out[used++] = '.';
+        char digit = (char)('0' + test_text_uniform(random::key_derive(key, 1000 + i), 0, 9));
+        out[used++] = i >= zero_from ? '0' : digit;
+    }
+    if (random::bernoulli_sample(random::key_derive(key, 4), (random::Bernoulli){.probability = 0.7})) {
+        i64 exponent = test_text_uniform(random::key_derive(key, 5), -60, 50);
+        used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
+    }
+    out[used] = '\0';
+    return used;
+}
+
+void test_text_f32_matches_strtof_on_random_decimals(random::Key key) {
+    char decimal[test_text_capacity];
+    (void)test_text_random_decimal(key, decimal);
+    test_text_check_f32(decimal);
+}
+
+// More digits than any f32 needs, and zeros between: the tail past the 128th digit still decides a tie.
+void test_text_f32_long_digit_strings(random::Key key) {
+    char decimal[test_text_capacity];
+    usize used = 0;
+    u64 bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7f7fffff; // a finite, nonnegative f32
+    f32 f = test_text_f32_of((u32)bits);
+    used += (usize)__builtin_snprintf(decimal, 64, "%.9g", (f64)f);
+    char *exponent = c::strchr(decimal, 'e');
+    char tail[8] = "";
+    if (exponent != nullptr) {
+        __builtin_snprintf(tail, sizeof tail, "%s", exponent);
+        used = (usize)(exponent - decimal);
+    }
+    if (c::strchr(decimal, '.') == nullptr) decimal[used++] = '.';
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 0, 300);
+    __builtin_memset(decimal + used, '0', zeros);
+    used += zeros;
+    decimal[used++] =
+        random::bernoulli_sample(random::key_derive(key, 2), (random::Bernoulli){.probability = 0.5}) ? '1' : '0';
+    __builtin_snprintf(decimal + used, 8, "%s", tail);
+    test_text_check_f32(decimal);
+}
+
+// Between two f32 values lies the point halfway; a string that is exactly it rounds to the even f32, one a hair above
+// it up, one a hair below it down. The hair is the neighbouring f64, and then a 1 after hundreds of zeros.
+void test_text_f32_halfway(random::Key key) {
+    u32 low_bits = (u32)(random::key_bits(random::key_derive(key, 0), 0) % 0x7f7fffff);
+    f32 low = test_text_f32_of(low_bits);
+    f32 high = test_text_f32_of(low_bits + 1);
+    f64 middle = ((f64)low + (f64)high) / 2; // exact: 25 bits
+    u64 middle_bits = test_text_bits_of(middle);
+    f64 above = test_text_f64_of(middle_bits + 1);
+    f64 below = middle_bits == 0 ? 0 : test_text_f64_of(middle_bits - 1);
+    char decimal[test_text_capacity];
+    test::note("low %.9g (0x%08x)", (f64)low, low_bits);
+    f32 expected_middle = (low_bits & 1) == 0 ? low : high;
+    __builtin_snprintf(decimal, sizeof decimal, "%.320f", middle);
+    test::check_same_bits(test_text_f32(decimal), expected_middle);
+    test_text_check_f32(decimal);
+    __builtin_snprintf(decimal, sizeof decimal, "%.320f", above);
+    test::check_same_bits(test_text_f32(decimal), high);
+    test_text_check_f32(decimal);
+    if (middle_bits != 0) {
+        __builtin_snprintf(decimal, sizeof decimal, "%.320f", below);
+        test::check_same_bits(test_text_f32(decimal), low);
+        test_text_check_f32(decimal);
+    }
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 0, 300);
+    __builtin_snprintf(decimal, sizeof decimal, "%.320f", middle);
+    usize used = c::strlen(decimal);
+    __builtin_memset(decimal + used, '0', zeros);
+    decimal[used + zeros] = '1';
+    decimal[used + zeros + 1] = '\0';
+    test::check_same_bits(test_text_f32(decimal), high); // a 1 far past the tie breaks it upward
+    test_text_check_f32(decimal);
+}
+
+// What a program writes with %.9g reads back as the same f32, signs of zero included.
+void test_text_f32_round_trips_nine_digits(random::Key key) {
+    u32 bits = (u32)random::key_bits(key, 0);
+    f32 f = test_text_f32_of(bits);
+    if (f != f || f > f32_max || f < -f32_max) return; // infinity and nan have no decimal here
+    char decimal[64];
+    __builtin_snprintf(decimal, sizeof decimal, "%.9g", (f64)f);
+    f32 back = 0;
+    test::check(text::parse_f32(test_text(decimal), &back));
+    test::check_same_bits(back, f);
+    test_text_check_f32(decimal);
+}
+
+// A sweep of the whole range of f32 patterns, formatted and parsed back. tests/text.sh's `exhaustive` mode does all
+// 2^32.
+void test_text_f32_sweep_of_every_pattern(void) {
+    u64 stride = test::full() ? 1021 : 16381; // prime, so the sweep touches every exponent and mantissa
+    char decimal[64];
+    for (u64 pattern = 0; pattern <= math::max(u32); pattern += stride) {
+        f32 f = test_text_f32_of((u32)pattern);
+        if (f != f || f > f32_max || f < -f32_max) continue;
+        __builtin_snprintf(decimal, sizeof decimal, "%.9g", (f64)f);
+        f32 back = 0;
+        test::check(text::parse_f32(test_text(decimal), &back));
+        test::check_same_bits(back, f);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Doubles
+
+static bool test_text_reference_f64(const char *string, f64 *value) {
+    f64 reference = c::strtod(string, nullptr);
+    if (reference > f64_max || reference < -f64_max) return false; // rounded to infinity
+    *value = reference;
+    return true;
+}
+
+// The parser against strtod: the same f64, or a refusal exactly when strtod says infinity.
+static void test_text_check_f64(const char *string) {
+    test::note("text \"%.200s\"", string);
+    f64 expected = 0;
+    bool finite = test_text_reference_f64(string, &expected);
+    f64 actual = 12345.0;
+    bool parsed = text::parse_f64(test_text(string), &actual);
+    test::check(parsed == finite);
+    if (finite)
+        test::check_same_bits(actual, expected);
+    else
+        test::check_same_bits(actual, 12345.0); // a failed parse writes nothing
+}
+
+static f64 test_text_f64(const char *string) {
+    f64 value = 0;
+    test::check(text::parse_f64(test_text(string), &value));
+    return value;
+}
+
+void test_text_f64_known_values(void) {
+    test::check_same_bits(test_text_f64("0"), 0.0);
+    test::check_same_bits(test_text_f64("-0"), -0.0);
+    test::check_same_bits(test_text_f64("+0.0"), 0.0);
+    test::check_same_bits(test_text_f64("-0.000e5"), -0.0);
+    test::check_same_bits(test_text_f64("1"), 1.0);
+    test::check_same_bits(test_text_f64("0.25"), 0.25);
+    test::check_same_bits(test_text_f64("-90"), -90.0);
+    test::check_same_bits(test_text_f64("5."), 5.0);
+    test::check_same_bits(test_text_f64(".5"), 0.5);
+    test::check_same_bits(test_text_f64("2.5E+3"), 2500.0);
+    test::check_same_bits(test_text_f64("0.1"), 0x1.999999999999ap-4);
+    test::check_same_bits(test_text_f64("0.2"), 0x1.999999999999ap-3);
+    test::check_same_bits(test_text_f64("0.3"), 0x1.3333333333333p-2);
+    test::check_same_bits(test_text_f64("3.141592653589793"), 0x1.921fb54442d18p+1);
+    test::check_same_bits(test_text_f64("9007199254740992"), 0x1p53);
+    test::check_same_bits(test_text_f64("9007199254740993"), 0x1p53);               // halfway: ties to even
+    test::check_same_bits(test_text_f64("9007199254740995"), 0x1.0000000000002p53); // halfway: ties to even, up
+    test::check_same_bits(test_text_f64("9007199254740993.0000000000000000001"), 0x1.0000000000001p53);
+    test::check_same_bits(test_text_f64("1.7976931348623157e308"), f64_max);
+    test::check_same_bits(test_text_f64("1.7976931348623158e308"), f64_max); // under the halfway point
+    test::check_same_bits(test_text_f64("2.2250738585072014e-308"), f64_min);
+    test::check_same_bits(test_text_f64("2.2250738585072011e-308"), 0x0.fffffffffffffp-1022); // the famous hang
+    test::check_same_bits(test_text_f64("4.9406564584124654e-324"), 0x1p-1074);
+    test::check_same_bits(test_text_f64("5e-324"), 0x1p-1074);
+    test::check_same_bits(test_text_f64("2.4703282292062327e-324"), 0.0); // under half the smallest subnormal
+    test::check_same_bits(test_text_f64("2.4703282292062328e-324"), 0x1p-1074);
+    test::check_same_bits(test_text_f64("1e-99999999999"), 0.0);
+    test::check_same_bits(test_text_f64("0e99999999999"), 0.0);
+    test::check_same_bits(test_text_f64("000000000000000000000000000000000000000000000001"), 1.0);
+    test::check_same_bits(test_text_f64("1e22"), 1e22);
+    test::check_same_bits(test_text_f64("1e23"), 0x1.52d02c7e14af6p+76);
+}
+
+void test_text_f64_rejects(void) {
+    const char *bad[] = {"",
+                         "-",
+                         "+",
+                         ".",
+                         "-.",
+                         "e5",
+                         ".e5",
+                         "1e",
+                         "1e+",
+                         "1e-",
+                         "1.2.3",
+                         "inf",
+                         "nan",
+                         "0x10",
+                         " 1",
+                         "1 ",
+                         "--1",
+                         "1e5.5",
+                         "1e309",
+                         "-1e309",
+                         "1.7976931348623159e308",
+                         "1e99999999999",
+                         "0.0000000000000000000000000001e340",
+                         nullptr};
+    for (const char **s = bad; *s != nullptr; s++) {
+        f64 value = 12345.0;
+        test::check(!text::parse_f64(test_text(*s), &value));
+        test::check_same_bits(value, 12345.0);
+    }
+}
+
+// Random decimals: any digits, a point anywhere, an exponent that reaches subnormals and the overflow.
+static usize test_text_random_decimal_f64(random::Key key, char *out) {
+    usize used = 0;
+    if (random::bernoulli_sample(random::key_derive(key, 0), (random::Bernoulli){.probability = 0.3}))
+        out[used++] = '-';
+    usize digits = (usize)test_text_uniform(random::key_derive(key, 1), 1, 40);
+    if (random::bernoulli_sample(random::key_derive(key, 6), (random::Bernoulli){.probability = 0.1}))
+        digits = (usize)test_text_uniform(random::key_derive(key, 7), 40, 400); // a long one
+    usize point = (usize)test_text_uniform(random::key_derive(key, 2), 0, (i64)digits + 1);
+    usize zero_from = (usize)test_text_uniform(random::key_derive(key, 3), 1, (i64)digits + 20);
+    for (usize i = 0; i < digits; i++) {
+        if (i == point) out[used++] = '.';
+        char digit = (char)('0' + test_text_uniform(random::key_derive(key, 1000 + i), 0, 9));
+        out[used++] = i >= zero_from ? '0' : digit;
+    }
+    if (random::bernoulli_sample(random::key_derive(key, 4), (random::Bernoulli){.probability = 0.8})) {
+        i64 exponent = test_text_uniform(random::key_derive(key, 5), -340, 320);
+        used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
+    }
+    out[used] = '\0';
+    return used;
+}
+
+void test_text_f64_matches_strtod_on_random_decimals(random::Key key) {
+    char decimal[test_text_capacity];
+    (void)test_text_random_decimal_f64(key, decimal);
+    test_text_check_f64(decimal);
+}
+
+// Short decimals, which a multiply and a divide of exact doubles can answer: the fast path.
+void test_text_f64_matches_strtod_on_short_decimals(random::Key key) {
+    char decimal[64];
+    i64 mantissa = test_text_uniform(random::key_derive(key, 0), 0, 999999999999999);
+    i64 exponent = test_text_uniform(random::key_derive(key, 1), -30, 30);
+    __builtin_snprintf(decimal, sizeof decimal, "%lldE%lld", (i64)mantissa, (i64)exponent);
+    test_text_check_f64(decimal);
+}
+
+// The exact decimal expansion of (2m + 1) * 2^(e - 1), the point halfway between the doubles m * 2^e and
+// (m + 1) * 2^e, written as digits and an exponent of ten, "<digits>e<exponent>". It is computed here with a digit
+// array, apart from the library's arithmetic. `zeros` zeros follow the digits; with `bump` +1, a 1 replaces the last of
+// them, and with -1 the number is one in that last place less.
+static void test_text_halfway_decimal(u64 m, i32 exponent, usize zeros, i32 bump, char *out) {
+    u8 digit[2400] = {}; // least significant first
+    usize count = 0;
+    u64 n = 2 * m + 1;
+    while (n != 0) {
+        digit[count++] = (u8)(n % 10);
+        n /= 10;
+    }
+    i32 shift = exponent - 1; // the value is n * 2^shift
+    i32 decimal_exponent = 0;
+    for (i32 i = 0; i < (shift < 0 ? -shift : shift); i++) { // n * 2 each time, or n * 5 and one more place
+        u32 factor = shift < 0 ? 5 : 2;
+        u32 carry = 0;
+        for (usize j = 0; j < count; j++) {
+            u32 v = digit[j] * factor + carry;
+            digit[j] = (u8)(v % 10);
+            carry = v / 10;
+        }
+        while (carry != 0) {
+            digit[count++] = (u8)(carry % 10);
+            carry /= 10;
+        }
+        if (shift < 0) decimal_exponent -= 1;
+    }
+    for (usize j = count + zeros; j-- > zeros;) {
+        digit[j] = digit[j - zeros];
+    }
+    for (usize j = 0; j < zeros; j++) {
+        digit[j] = 0;
+    }
+    count += zeros;
+    decimal_exponent -= (i32)zeros;
+    if (bump > 0) {
+        digit[0] = 1;
+    } else if (bump < 0) {
+        usize j = 0;
+        while (digit[j] == 0) {
+            digit[j++] = 9;
+        }
+        digit[j] -= 1;
+    }
+    usize used = 0;
+    for (usize j = count; j-- > 0;) {
+        if (used == 0 && digit[j] == 0) continue; // a borrow can leave a leading zero
+        out[used++] = (char)('0' + digit[j]);
+    }
+    __builtin_snprintf(out + used, 16, "e%d", decimal_exponent);
+}
+
+// The significand and exponent of a finite positive f64: bits = m * 2^exponent.
+static void test_text_split_f64(u64 bits, u64 *m, i32 *exponent) {
+    u64 fraction = bits & 0xfffffffffffff;
+    u64 field = bits >> 52;
+    *m = field == 0 ? fraction : fraction | ((u64)1 << 52);
+    *exponent = field == 0 ? -1074 : (i32)field - 1075;
+}
+
+// Between two f64 values lies the point halfway; a string that is exactly it rounds to the even f64, one a hair above
+// it up, one a hair below it down. The expected answers are computed here, and strtod is checked against the same.
+void test_text_f64_halfway(random::Key key) {
+    u64 low_bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7fefffffffffffff; // finite, positive
+    u64 m = 0;
+    i32 exponent = 0;
+    test_text_split_f64(low_bits, &m, &exponent);
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 1, 300);
+    char decimal[2800];
+    test::note("low bits 0x%016llx", (u64)low_bits);
+    u64 middle_winner = (low_bits & 1) == 0 ? low_bits : low_bits + 1;
+    test_text_halfway_decimal(m, exponent, 0, 0, decimal);
+    test::check_same_bits(test_text_f64(decimal), test_text_f64_of(middle_winner));
+    test_text_check_f64(decimal);
+    test_text_halfway_decimal(m, exponent, zeros, 1, decimal); // a 1 far past the tie breaks it upward
+    test::check_same_bits(test_text_f64(decimal), test_text_f64_of(low_bits + 1));
+    test_text_check_f64(decimal);
+    test_text_halfway_decimal(m, exponent, zeros, -1, decimal); // and a hair below breaks it downward
+    test::check_same_bits(test_text_f64(decimal), test_text_f64_of(low_bits));
+    test_text_check_f64(decimal);
+}
+
+// The overflow edge: halfway between f64_max and 2^1024 rounds to even, which is infinity, so it is refused, and a hair
+// below it is f64_max.
+void test_text_f64_overflow_edge(void) {
+    char decimal[2800];
+    u64 m = ((u64)1 << 53) - 1;
+    test_text_halfway_decimal(m, 971, 0, 0, decimal);
+    f64 value = 0;
+    test::check(!text::parse_f64(test_text(decimal), &value));
+    test_text_check_f64(decimal);
+    test_text_halfway_decimal(m, 971, 5, -1, decimal);
+    test::check_same_bits(test_text_f64(decimal), f64_max);
+    test_text_check_f64(decimal);
+    test_text_halfway_decimal(m, 971, 5, 1, decimal);
+    test::check(!text::parse_f64(test_text(decimal), &value));
+}
+
+// More digits than the 800 the parser keeps, with a nonzero digit only at the very end: the tail still decides a tie.
+void test_text_f64_long_digit_strings(random::Key key) {
+    u64 low_bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7fefffffffffffff;
+    u64 m = 0;
+    i32 exponent = 0;
+    test_text_split_f64(low_bits, &m, &exponent);
+    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 700, 1500);
+    char decimal[2800];
+    test::note("low bits 0x%016llx, %zu zeros", (u64)low_bits, zeros);
+    test_text_halfway_decimal(m, exponent, zeros, 1, decimal); // the midpoint, a 1 at the end of `zeros` zeros
+    test_text_check_f64(decimal);
+    test::check_same_bits(test_text_f64(decimal), test_text_f64_of(low_bits + 1));
+    test_text_halfway_decimal(m, exponent, zeros, -1, decimal);
+    test_text_check_f64(decimal);
+    test::check_same_bits(test_text_f64(decimal), test_text_f64_of(low_bits));
+}
+
+// What a program writes with %.17g reads back as the same f64, signs of zero included.
+void test_text_f64_round_trips_seventeen_digits(random::Key key) {
+    u64 bits = random::key_bits(key, 0);
+    f64 d = test_text_f64_of(bits);
+    if (d != d || d > f64_max || d < -f64_max) return;
+    char decimal[64];
+    __builtin_snprintf(decimal, sizeof decimal, "%.17g", d);
+    f64 back = 0;
+    test::check(text::parse_f64(test_text(decimal), &back));
+    test::check_same_bits(back, d);
+    test_text_check_f64(decimal);
+}
+
+// The patterns that bound the format: zero, the smallest and largest subnormal and normal, the largest f64, powers
+// of two, and the neighbours of each. Every one is written with %.17g and with %.17e and read back.
+void test_text_f64_round_trips_the_edges(void) {
+    u64 edges[] = {0x0000000000000000, 0x0000000000000001, 0x0000000000000002, 0x000fffffffffffff, 0x0010000000000000,
+                   0x0010000000000001, 0x3ff0000000000000, 0x3fefffffffffffff, 0x3ff0000000000001, 0x4340000000000000,
+                   0x433fffffffffffff, 0x7fe0000000000000, 0x7fefffffffffffff, 0x7feffffffffffffe};
+    char decimal[64];
+    for (usize i = 0; i < sizeof edges / sizeof edges[0]; i++) {
+        for (u64 sign = 0; sign < 2; sign++) {
+            f64 d = test_text_f64_of(edges[i] | (sign << 63));
+            for (i32 format = 0; format < 2; format++) {
+                __builtin_snprintf(decimal, sizeof decimal, format == 0 ? "%.17g" : "%.17e", d);
+                f64 back = 0;
+                test::check(text::parse_f64(test_text(decimal), &back));
+                test::check_same_bits(back, d);
+            }
+        }
+    }
+    for (u64 field = 0; field < 2047; field++) { // every exponent, with the smallest, next and largest fractions
+        for (u64 kind = 0; kind < 3; kind++) {
+            u64 fraction = kind == 2 ? 0xfffffffffffff : kind;
+            f64 d = test_text_f64_of((field << 52) | fraction);
+            __builtin_snprintf(decimal, sizeof decimal, "%.17g", d);
+            f64 back = 0;
+            test::check(text::parse_f64(test_text(decimal), &back));
+            test::check_same_bits(back, d);
+        }
+    }
+}
+
+// A sweep of the whole range of f64 patterns, formatted and parsed back: 2^13 of them, or 2^18 with --full.
+// `smith build text-exhaustive` does 2^28.
+void test_text_f64_sweep_of_every_pattern(void) {
+    u64 count = test::full() ? ((u64)1 << 18) : ((u64)1 << 13);
+    u64 stride = (math::max(u64) / count) | 1; // odd, so the sweep touches every exponent and mantissa
+    char decimal[64];
+    for (u64 i = 0; i < count; i++) {
+        f64 d = test_text_f64_of(i * stride);
+        if (d != d || d > f64_max || d < -f64_max) continue;
+        __builtin_snprintf(decimal, sizeof decimal, "%.17g", d);
+        f64 back = 0;
+        test::check(text::parse_f64(test_text(decimal), &back));
+        test::check_same_bits(back, d);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Writing doubles
+
+static void test_text_check_f64_text(const char *expected, f64 value) {
+    char out[text::f64_capacity + 1];
+    usize length = text::write_f64(out, value);
+    out[length] = '\0';
+    test::note("value %.17g", value);
+    test::check_equal(c::strcmp(out, expected), 0);
+}
+
+void test_text_f64_write_known_values(void) {
+    test_text_check_f64_text("0", 0.0);
+    test_text_check_f64_text("-0", -0.0);
+    test_text_check_f64_text("1", 1.0);
+    test_text_check_f64_text("-1", -1.0);
+    test_text_check_f64_text("0.1", 0.1);
+    test_text_check_f64_text("0.5", 0.5);
+    test_text_check_f64_text("123.456", 123.456);
+    test_text_check_f64_text("100", 100.0);
+    test_text_check_f64_text("1e22", 1e22);
+    test_text_check_f64_text("10000000000000000", 1e16);
+    test_text_check_f64_text("1e17", 1e17);
+    test_text_check_f64_text("0.00001", 1e-5);
+    test_text_check_f64_text("1e-6", 1e-6);
+    test_text_check_f64_text("3.141592653589793", 0x1.921fb54442d18p+1);
+    test_text_check_f64_text("0.30000000000000004", 0.1 + 0.2);
+    test_text_check_f64_text("5e-324", 0x1p-1074);
+    test_text_check_f64_text("1.7976931348623157e308", f64_max);
+    test_text_check_f64_text("2.2250738585072014e-308", f64_min);
+    test_text_check_f64_text("9007199254740992", 0x1p53);
+}
+
+// Every f64 written reads back as the same bits, in the fewest digits: one digit fewer, correctly rounded, would
+// read back as another f64 (strtod and snprintf are the witnesses).
+void test_text_f64_write_is_shortest_and_round_trips(random::Key key) {
+    u64 bits = random::key_bits(key, 0);
+    if (random::bernoulli_sample(random::key_derive(key, 1),
+                                 (random::Bernoulli){.probability = 0.5})) { // short decimals too
+        i64 thousandths = test_text_uniform(random::key_derive(key, 2), -100000, 100000);
+        bits = test_text_bits_of((f64)thousandths / 1000.0);
+    }
+    f64 d = test_text_f64_of(bits);
+    if (d != d || d > f64_max || d < -f64_max) return;
+    char out[text::f64_capacity + 1];
+    usize length = text::write_f64(out, d);
+    test::check_less_equal(length, text::f64_capacity);
+    out[length] = '\0';
+    test::note("text %s", out);
+    f64 back = 0;
+    test::check(text::parse_f64(test_text(out), &back));
+    test::check_same_bits(back, d);
+    test::check_same_bits(c::strtod(out, nullptr), d);
+    i32 digits = 0;
+    bool started = false;
+    i32 trailing_zeros = 0;
+    for (usize i = 0; i < length && out[i] != 'e'; i++) {
+        if (out[i] < '0' || out[i] > '9') continue;
+        if (out[i] != '0') started = true;
+        if (!started) continue;
+        digits += 1;
+        trailing_zeros = out[i] == '0' ? trailing_zeros + 1 : 0;
+    }
+    if (c::strchr(out, '.') == nullptr) digits -= trailing_zeros; // 1500 has two digits
+    if (digits > 1) {
+        char shorter[64];
+        __builtin_snprintf(shorter, sizeof shorter, "%.*e", digits - 2, d); // digits - 1 significant digits
+        test::check(c::strtod(shorter, nullptr) != d);
+    }
+}
+
+void test_text_f64_write_edges_round_trip(void) {
+    for (u64 field = 0; field < 2047; field++) {
+        // Under the sanitizers every exponent takes seconds, so the quick run takes every 13th and the edges (zero and
+        // subnormals, around 1.0, the largest); --full takes them all.
+        bool edge = field <= 1 || (field >= 1022 && field <= 1024) || field >= 2045;
+        if (!test::full() && !edge && field % 13 != 0) continue;
+        for (u64 kind = 0; kind < 4; kind++) {
+            u64 fraction = kind == 3 ? 0xfffffffffffff : kind;
+            for (u64 sign = 0; sign < 2; sign++) {
+                f64 d = test_text_f64_of((sign << 63) | (field << 52) | fraction);
+                char out[text::f64_capacity];
+                usize length = text::write_f64(out, d);
+                f64 back = 0;
+                test::check(text::parse_f64((text::Text){out, length}, &back));
+                test::check_same_bits(back, d);
+            }
+        }
+    }
+}

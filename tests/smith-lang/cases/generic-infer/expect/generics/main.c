@@ -10,6 +10,12 @@ __extension__({ extern i32 pick_first_of__i32(const i32 * values, __SIZE_TYPE__ 
 __extension__({ extern __SIZE_TYPE__ pick_size_of_value__unsigned_short(unsigned short value) __asm__("_pick::size_of_value(unsigned short)"); pick_size_of_value__unsigned_short((__UINT16_TYPE__) 3); })
 __extension__({ extern void pick_set__i32(i32 * out, i32 value) __asm__("_pick::set(int)"); pick_set__i32(& slot, 42); })
 __extension__({ extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value) __asm__("_pick::twice(int)"); pick_twice__i32(slot); })
+__extension__({ extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)"); pick_larger__i32(a + 1, b * 2); })
+__extension__({ extern f64 pick_larger__f64(f64 a, f64 b) __asm__("_pick::larger(double)"); pick_larger__f64(d * 2, d + 1); })
+__extension__({ extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)"); pick_larger__i32(a, 1 << 3); })
+__extension__({ extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)"); pick_larger__i32(a > 2 ? a :b, 5); })
+__extension__({ extern u64 pick_larger__u64(u64 a, u64 b) __asm__("_pick::larger(unsigned long long)"); pick_larger__u64(big + a, 2 + 2); })
+__extension__({ extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)"); pick_larger__i32((__INT32_TYPE__) big - 1, a); })
 extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)");
 [[gnu::weak]][[gnu::visibility("hidden")]] i32 pick_larger__i32(i32 a, i32 b) {
     return a > b ? a :b;
@@ -42,4 +48,8 @@ extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value) __asm__("_pick::twic
 [[gnu::weak]][[gnu::visibility("hidden")]] __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value) {
     return
     __extension__({ extern i32 pick_larger__i32(i32 a, i32 b) __asm__("_pick::larger(int)"); pick_larger__i32(value, value); });
+}
+extern u64 pick_larger__u64(u64 a, u64 b) __asm__("_pick::larger(unsigned long long)");
+[[gnu::weak]][[gnu::visibility("hidden")]] u64 pick_larger__u64(u64 a, u64 b) {
+    return a > b ? a :b;
 }

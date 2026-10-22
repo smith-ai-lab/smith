@@ -95,7 +95,7 @@ If a signature wants four or more separate capabilities, pass `SmithIo *` or def
 
 The rules:
 1. **A raw effect is a call into a system header that is not on the pure allow list** (`<string.h>`, `<math.h>`, `<ctype.h>`, `<stdint.h>`, `<stddef.h>`, `<float.h>`, `<limits.h>`, `<stdbit.h>`, `<stdckdint.h>`, `snprintf`, `vsnprintf`, `sscanf`, the `strto*` family, `qsort`, `bsearch`, `abs`, `div`, `__builtin_*`), or an Objective-C message to a system framework's class or object (`[NSFileManager defaultManager]`). The list is `shim/effects.h` in smith; a call the list does not name is reported. In a `.smith` file the finding names the callee as written (`c::fopen`).
-2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls (`contract::assert` included) and the checks of `<smith/test.h>` are allowed everywhere.
+2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls (`contract::assert` included) and the checks of `smith::test` are allowed everywhere.
 3. **Raw effects are allowed in a capability's implementation.** A capability is a type marked `[[clang::annotate("smith::capability")]]`: SmithIo, SmithConsole, SmithFiles, SmithClock, SmithProcesses, SmithNet and SmithArgs (the process's inputs: the live environment), and the handles SmithOp, SmithCapture, SmithChild and SmithConnection. (SmithKey and SmithArena are values, not capabilities.) Its implementation is the module that defines it: the `.smith` module file, or for C the `.c` file beside the header that defines it (`io.c` with `io.h`; `lib/io.c` or `src/io.c` with a header under the `include/` beside them). Every function there, private helpers included, may make raw calls.
 4. **An exported function of that module that reaches a raw effect, directly or through the module's own static functions, must take or return a capability** (or a struct holding one). Otherwise make it `static`.
 5. **A main-only constructor may be called only inside `main`:** `smith_io_make`, marked `[[clang::annotate("smith::main_only")]]`. `smith_io_make_test` is not: tests make fakes anywhere.
@@ -286,6 +286,8 @@ void fetch(c::SmithIo *io, const char *request, usize request_size) {
 Failures are values: `ECONNREFUSED` and the other errnos of the system, `ENOENT` for a name that does not resolve, and `EAUTH` for a certificate or handshake failure with the reason in the message ("the certificate has expired"). The system's trust decides and there is no way to turn the check off.
 
 ## The test io
+
+A test that takes `c::SmithIo *io` (`test_x(c::SmithIo *io)`, smith-test) gets a real io the runner made for it, seeded from the run's seed and with a scratch folder of its own (`test::scratch(io)`, also `$TMPDIR`), removed when the test passes. A test never makes a real io itself (`smith_io_make` is for `main`, and smith-effects reports it anywhere else); to test code that takes a capability on a fake, make one:
 
 ```smith
 import smith::arena;

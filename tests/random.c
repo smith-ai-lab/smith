@@ -665,13 +665,14 @@ static uint64_t test_fold(uint64_t digest, uint64_t value) {
     return digest;
 }
 
-static uint64_t test_digest_draws(void) {
+static uint64_t test_digest_draws(const SmithRandomTap *tap) {
     static TestMemory memory;
     SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
     const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     SmithCategorical categorical = smith_categorical_make(&arena, weights, 7);
     uint64_t digest = 0xcbf29ce484222325ULL;
     SmithKey key = smith_key_make(test_seed);
+    key.tap = tap;
     for (uint64_t i = 0; i < 100000; i++) {
         SmithKey k = smith_key_derive(key, i);
         digest = test_fold(digest, k.bits);
@@ -710,18 +711,23 @@ static uint64_t test_digest_draws(void) {
 
 static uint64_t test_hook_word;
 
-static uint64_t test_hook_constant(SmithKey key, uint64_t n, uint64_t bits) {
+static uint64_t test_hook_constant(const SmithRandomTap *tap, uint64_t key, uint64_t n, uint64_t bits) {
+    (void)tap;
     (void)key;
     (void)n;
     (void)bits;
     return test_hook_word;
 }
 
-static uint64_t test_hook_identity(SmithKey key, uint64_t n, uint64_t bits) {
+static uint64_t test_hook_identity(const SmithRandomTap *tap, uint64_t key, uint64_t n, uint64_t bits) {
+    (void)tap;
     (void)key;
     (void)n;
     return bits;
 }
+
+static const SmithRandomTap test_tap_constant = {test_hook_constant};
+static const SmithRandomTap test_tap_identity = {test_hook_identity};
 
 // The word that makes Lemire's index equal `index` for a span: the smallest word whose high half is the index.
 static uint64_t test_word_for_index(uint64_t index, uint64_t span) {
@@ -773,12 +779,11 @@ static void test_around_bijection(void) {
 // A word at 0 is accepted by Lemire's rejection (it would not be if the smallest low half were rejected).
 static void test_index_zero_word(void) {
     test_hook_word = 0;
-    smith_random_hook = test_hook_constant;
     SmithKey key = smith_key_make(1);
+    key.tap = &test_tap_constant;
     const uint64_t spans[] = {1, 2, 3, 5, 6, 7, 10, 1000, ((uint64_t)1 << 63) + 1, UINT64_MAX};
     for (size_t i = 0; i < sizeof spans / sizeof spans[0]; i++)
         assert(smith_random_draw_index(key, spans[i]) == 0);
-    smith_random_hook = nullptr;
 }
 
 static void test_zero_word_simplest(void) {
@@ -787,7 +792,7 @@ static void test_zero_word_simplest(void) {
     SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
     SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1.0, 2.0, 3.0}, 3);
     test_hook_word = 0;
-    smith_random_hook = test_hook_constant;
+    key.tap = &test_tap_constant;
     assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-3, 6}) == 0);
     assert(smith_uniform_int64_sample(key, (SmithUniformInt64){5, 9}) == 5);
     assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-9, -5}) == -5);
@@ -817,13 +822,12 @@ static void test_zero_word_simplest(void) {
     smith_permutation_sample(key, (SmithPermutation){9}, order);
     for (size_t i = 0; i < 9; i++)
         assert(order[i] == i);
-    smith_random_hook = nullptr;
 }
 
 // Words 1, 2 and 3 move the values away from the simplest one in the zigzag order.
 static void test_small_words_zigzag(void) {
     SmithKey key = smith_key_make(test_seed + 14);
-    smith_random_hook = test_hook_constant;
+    key.tap = &test_tap_constant;
     const uint64_t words[] = {0, 1, 2, 3, 4};
     const int64_t full[] = {0, -1, 1, -2, 2};
     for (size_t i = 0; i < 5; i++) {
@@ -857,12 +861,11 @@ static void test_small_words_zigzag(void) {
     assert(smith_bernoulli_sample(key, (SmithBernoulli){0.5}));
     test_hook_word = (uint64_t)1 << 11;
     assert(smith_bernoulli_sample(key, (SmithBernoulli){1.0}));
-    smith_random_hook = nullptr;
 }
 
 static void test_zero_word_permutation_steps(void) {
     SmithKey key = smith_key_make(test_seed + 15);
-    smith_random_hook = test_hook_constant;
+    key.tap = &test_tap_constant;
     size_t out[4];
     test_hook_word = test_word_for_index(1, 4); // one step off the identity: only the last position swaps
     smith_permutation_sample(key, (SmithPermutation){4}, out);
@@ -870,16 +873,12 @@ static void test_zero_word_permutation_steps(void) {
     for (size_t i = 0; i < 4; i++)
         moved += out[i] != i;
     assert(moved > 0);
-    smith_random_hook = nullptr;
 }
 
 static void test_hook_identity_matches(void) {
-    uint64_t without = test_digest_draws();
-    smith_random_hook = test_hook_identity;
-    uint64_t with = test_digest_draws();
-    smith_random_hook = nullptr;
+    uint64_t without = test_digest_draws(nullptr);
+    uint64_t with = test_digest_draws(&test_tap_identity);
     assert(with == without);
-    assert(smith_random_hook == nullptr);
 }
 
 static void test_print_pins(void) {
@@ -895,7 +894,7 @@ static void test_print_pins(void) {
 
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "digest") == 0) {
-        printf("%016" PRIx64 "\n", test_digest_draws());
+        printf("%016" PRIx64 "\n", test_digest_draws(nullptr));
         return 0;
     }
     if (argc > 1 && strcmp(argv[1], "pins") == 0) {

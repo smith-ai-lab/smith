@@ -72,13 +72,16 @@ AddressSanitizer and UBSan), `smith build release` (optimized, assertions on) an
 is `tests/test_primes.smith`:
 
 ```c
-import <smith/test.h>;
 import primes;
+import smith::test;
 
 void test_the_first_five_primes_add_up_to_28(void) {
-    c::smith_check_equal_i32(primes::sum(5), 28);
+    test::check_equal(primes::sum(5), 28);
 }
 ```
+
+A test's signature says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, and `(c::SmithIo *io)`
+gets a real io in a scratch folder of its own.
 
 ```
 $ smith test
@@ -89,8 +92,10 @@ $ smith test
 slowest:
       0.02 s  the_first_five_primes_add_up_to_28
       0.00 s  no_primes_add_up_to_nothing
+      0.00 s  report_prints_the_sum
+      0.00 s  six_primes_are_one_too_many
 
-2 passed, 0 failed in 0.08 s
+4 passed, 0 failed in 0.08 s
 ```
 
 `smith check` is everything that must pass before a commit: formatting, lint, the docs check and the tests, and whatever
@@ -242,7 +247,7 @@ with its own flags (`smith_library` in `build.c`). A library joins smith when tw
 - [arena](.agents/skills/smith-arena/SKILL.md): memory without malloc.
 - [io](.agents/skills/smith-io/SKILL.md): the one way a program touches the world: console, files, clock, processes, the
   network. A fake io is there for tests.
-- [test](.agents/skills/smith-test/SKILL.md): checks that print both values, parallel workers, property tests on keys.
+- [test](.agents/skills/smith-test/SKILL.md): `smith::test`, checks that print both values, parallel workers, property tests on keys, tests with an io of their own.
 - [contract](.agents/skills/smith-contract/SKILL.md): `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert`.
 - [math](.agents/skills/smith-math/SKILL.md): `is_finite`, `sqrt`, `abs`, and the largest integer, infinity and NaN of a type.
 - [random](.agents/skills/smith-random/SKILL.md): random numbers from keys, so a run can be replayed.

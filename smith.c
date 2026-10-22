@@ -927,7 +927,7 @@ static constexpr unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
 };
 static constexpr unsigned char smith_test_source[] = {
-#embed "lib/test.c"
+#embed "lib/smith/test.smith"
 };
 
 static constexpr unsigned char smith_trace_header[] = {
@@ -963,7 +963,7 @@ typedef struct {
 static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, false),
     SMITH_LIBRARY(json, false), SMITH_LIBRARY(math, true),     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
-    SMITH_LIBRARY(test, false), SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
+    SMITH_LIBRARY(test, true),  SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.

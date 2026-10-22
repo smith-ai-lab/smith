@@ -78,7 +78,7 @@ changes a debug configuration of yours.
     smith's for `.smith`), and each is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has
     `module a::b;`.
   - **What runs.** Nearest: `smith test --test <name> --verbose`. File: `--test` is exact when a test has that name and
-    a substring otherwise (`lib/test.c`), so a `.smith` module's file runs `--test <module>:: --verbose`, which selects the
+    a substring otherwise (`lib/smith/test.smith`), so a `.smith` module's file runs `--test <module>:: --verbose`, which selects the
     module's tests, and a `.c` file, which has no module to select by, runs the suite and keeps its own tests' results.
     Suite or directory: `smith test --verbose`. The command runs in the project root.
   - **Debug nearest** (neotest's `dap` strategy): the runner is built as the launch configuration builds it (`smith build

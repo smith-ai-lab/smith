@@ -945,7 +945,7 @@ class SmithHook final : public TokenHook, public NameSource {
         ASTContext &ast = sema->getASTContext();
         const TargetInfo &target = ast.getTargetInfo();
         if (macro == "__SIZE_TYPE__") return ast.getSizeType();
-        if (macro == "__PTRDIFF_TYPE__") return ast.getPointerDiffType();
+        if (macro == "__PTRDIFF_TYPE__") return ast.getCanonicalType(ast.getPointerDiffType());
         if (!macro.consume_front("__") || !macro.consume_back("_TYPE__")) return QualType();
         bool isSigned = macro.consume_front("INT");
         if (!isSigned && !macro.consume_front("UINT")) return QualType();
@@ -1721,6 +1721,11 @@ class SmithHook final : public TokenHook, public NameSource {
             return QualType();
         }
         if (token == "true" || token == "false") return literalType(token);
+        if (token == "nullptr") return sema->getASTContext().NullPtrTy;
+        if (token == "sizeof" || token == "alignof" || token == "_Alignof" || token == "_Countof") {
+            *next = begin + 1 < end && t[begin + 1] == "(" ? closingOf(t, begin + 1, end) + 1 : begin + 2;
+            return sema->getASTContext().getCanonicalType(sema->getASTContext().getSizeType());
+        }
         QualType type = nameType(token);
         if (type.isNull() || begin + 1 >= end || t[begin + 1] != "(") return type;
         size_t close = closingOf(t, begin + 1, end);
@@ -1752,6 +1757,155 @@ class SmithHook final : public TokenHook, public NameSource {
         return type; // - + ~
     }
 
+    // Binary operators, by precedence (higher binds tighter); 0 for a token that is no binary operator.
+    static int binaryPrecedence(const std::string &op) {
+        if (op == "||") return 1;
+        if (op == "&&") return 2;
+        if (op == "|") return 3;
+        if (op == "^") return 4;
+        if (op == "&") return 5;
+        if (op == "==" || op == "!=") return 6;
+        if (op == "<" || op == "<=" || op == ">" || op == ">=") return 7;
+        if (op == "<<" || op == ">>") return 8;
+        if (op == "+" || op == "-") return 9;
+        if (op == "*" || op == "/" || op == "%") return 10;
+        return 0;
+    }
+
+    // Whether the token ends an operand: a name or a literal, `)` or `]`.
+    static bool endsOperand(const std::string &token) {
+        if (token == ")" || token == "]") return true;
+        unsigned char first = static_cast<unsigned char>(token[0]);
+        return std::isalnum(first) || first == '_' || first == '"' || first == '\'';
+    }
+
+    // Whether the `)` at `close` ends a cast, `(i32)`, whose operand follows, rather than an operand.
+    bool endsCast(const std::vector<std::string> &t, size_t begin, size_t close) {
+        int depth = 0;
+        size_t open = close;
+        for (;; open--) {
+            if (t[open] == ")" || t[open] == "]" || t[open] == "}") depth += 1;
+            if (t[open] == "(" || t[open] == "[" || t[open] == "{") depth -= 1;
+            if (depth == 0 || open == begin) break;
+        }
+        if (depth != 0 || t[open] != "(" || (open > begin && endsOperand(t[open - 1]))) return false;
+        std::string spelling;
+        for (size_t at = open + 1; at < close; at++)
+            spelling += (at > open + 1 ? " " : "") + t[at];
+        return !readType(spelling).isNull();
+    }
+
+    // The index of the binary operator that ends the expression, the last of the lowest precedence outside any
+    // brackets (they associate to the left), or `end` for none. A `?` is found first: the conditional is below them
+    // all.
+    size_t splitBinary(const std::vector<std::string> &t, size_t begin, size_t end, bool *conditional) {
+        size_t found = end;
+        int lowest = 100;
+        int depth = 0;
+        *conditional = false;
+        for (size_t at = end; at > begin; at--) {
+            const std::string &token = t[at - 1];
+            if (token == ")" || token == "]" || token == "}") depth += 1;
+            if (token == "(" || token == "[" || token == "{") depth -= 1;
+            if (depth != 0) continue;
+            if (token == "?") {
+                found = at - 1; // the first `?` from the left is found last: the scan goes back
+                *conditional = true;
+                lowest = 0;
+                continue;
+            }
+            int precedence = binaryPrecedence(token);
+            if (precedence == 0 || precedence >= lowest || at - 1 == begin || !endsOperand(t[at - 2])) continue;
+            if (t[at - 2] == ")" && endsCast(t, begin, at - 2)) continue;
+            found = at - 1;
+            lowest = precedence;
+        }
+        return found;
+    }
+
+    // The type both operands of an arithmetic operator are converted to (C's usual arithmetic conversions).
+    QualType usualArithmetic(QualType a, QualType b) {
+        ASTContext &ast = sema->getASTContext();
+        if (a->isFloatingType() || b->isFloatingType()) {
+            if (!a->isFloatingType()) return b;
+            if (!b->isFloatingType()) return a;
+            return ast.getFloatingTypeOrder(a, b) >= 0 ? a : b;
+        }
+        if (!a->isIntegralOrEnumerationType() || !b->isIntegralOrEnumerationType()) {
+            typeWhy = "an operator needs numbers";
+            return QualType();
+        }
+        if (ast.isPromotableIntegerType(a)) a = ast.getPromotedIntegerType(a);
+        if (ast.isPromotableIntegerType(b)) b = ast.getPromotedIntegerType(b);
+        a = a.getUnqualifiedType();
+        b = b.getUnqualifiedType();
+        if (ast.hasSameType(a, b)) return a;
+        bool signedA = a->isSignedIntegerType();
+        bool signedB = b->isSignedIntegerType();
+        if (signedA == signedB) return ast.getIntegerTypeOrder(a, b) >= 0 ? a : b;
+        QualType unsignedType = signedA ? b : a;
+        QualType signedType = signedA ? a : b;
+        if (ast.getIntegerTypeOrder(unsignedType, signedType) >= 0) return unsignedType;
+        if (ast.getIntWidth(signedType) > ast.getIntWidth(unsignedType)) return signedType;
+        return ast.getCorrespondingUnsignedType(signedType);
+    }
+
+    // The type of `left op right`.
+    QualType binaryType(const std::string &op, QualType left, QualType right) {
+        ASTContext &ast = sema->getASTContext();
+        int precedence = binaryPrecedence(op);
+        if (precedence <= 2 || precedence == 6 || precedence == 7) return ast.IntTy; // && || == != < <= > >=
+        if (op == "<<" || op == ">>") {
+            if (!left->isIntegralOrEnumerationType()) {
+                typeWhy = "a shift needs an integer";
+                return QualType();
+            }
+            return ast.isPromotableIntegerType(left) ? ast.getPromotedIntegerType(left) : left.getUnqualifiedType();
+        }
+        if ((op == "+" || op == "-") && (left->isPointerType() || right->isPointerType())) {
+            if (left->isPointerType() && right->isPointerType()) return ast.getCanonicalType(ast.getPointerDiffType());
+            return left->isPointerType() ? left : right;
+        }
+        return usualArithmetic(left, right);
+    }
+
+    QualType subexpressionType(const std::vector<std::string> &t, size_t begin, size_t end) {
+        return expressionType(
+            std::vector<std::string>(t.begin() + static_cast<long>(begin), t.begin() + static_cast<long>(end)));
+    }
+
+    // The type of an expression with a binary operator or a `?:` at its top, or null with typeWhy (and `handled`
+    // false when there is none).
+    QualType operatorType(const std::vector<std::string> &t, size_t begin, size_t end, bool *handled) {
+        bool conditional = false;
+        size_t at = splitBinary(t, begin, end, &conditional);
+        *handled = at < end;
+        if (!*handled) return QualType();
+        if (conditional) { // a ? b : c has the type b and c share
+            int depth = 0;
+            size_t colon = end;
+            for (size_t i = at + 1; i < end && colon == end; i++) {
+                if (t[i] == "(" || t[i] == "[" || t[i] == "{" || t[i] == "?") depth += 1;
+                if (t[i] == ")" || t[i] == "]" || t[i] == "}") depth -= 1;
+                if (t[i] == ":" && depth == 0) colon = i;
+                if (t[i] == ":" && depth > 0) depth -= 1;
+            }
+            if (colon == end) {
+                typeWhy = "a `?` has no `:`";
+                return QualType();
+            }
+            QualType yes = subexpressionType(t, at + 1, colon);
+            QualType no = yes.isNull() ? yes : subexpressionType(t, colon + 1, end);
+            if (yes.isNull() || no.isNull()) return QualType();
+            if (yes->isArithmeticType() && no->isArithmeticType()) return usualArithmetic(yes, no);
+            return yes;
+        }
+        QualType left = subexpressionType(t, begin, at);
+        QualType right = left.isNull() ? left : subexpressionType(t, at + 1, end);
+        if (left.isNull() || right.isNull()) return QualType();
+        return binaryType(t[at], left, right);
+    }
+
     // The type of the expression the tokens spell, unqualified, with arrays and functions as pointers.
     QualType expressionType(std::vector<std::string> t) {
         size_t begin = 0;
@@ -1765,6 +1919,9 @@ class SmithHook final : public TokenHook, public NameSource {
             typeWhy = "the expression is empty";
             return QualType();
         }
+        bool handled = false;
+        QualType operated = operatorType(t, begin, end, &handled);
+        if (handled) return operated.isNull() ? operated : finishType(operated);
         if (t[begin] == "(") { // a cast: its type is the type
             size_t close = closingOf(t, begin, end);
             std::string spelling;

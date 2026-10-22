@@ -6,7 +6,7 @@ int main(void) {
     i32 sum = pick::larger(a, d);
     i32 *p = pick::alloc(4);
     i32 z = pick::zero();
-    i32 q = pick::larger(a, a + 1);
+    i32 q = pick::larger(a, a++);
     i32 r = pick::larger(a, missing);
     return sum + z + q + r + *p;
 }
