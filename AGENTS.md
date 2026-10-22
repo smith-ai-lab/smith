@@ -195,7 +195,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
   because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
   it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
-  spelling still sees the lowered one (`tests/lint-smith.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
+  spelling still sees the lowered one. `smith lsp` registers the same module (clangd makes its built-in checks from the same registry), without `presentThrough` (its findings go through the lsp layer), so the editor judges names as written too (`tests/lint-smith.sh`, `tests/lsp.sh`, [docs/smith-lang.md](docs/smith-lang.md)).
 - **Contracts are C23 attributes that smith reads through libclang**, loaded with `dlopen` only when a check runs. Not a
   clang plugin: a plugin's `[[smith::requires(...)]]` receives no arguments, and its `__attribute__` form cannot see the
   parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so the spelling in `.c` files is open.

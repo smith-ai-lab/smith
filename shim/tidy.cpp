@@ -136,7 +136,12 @@ class SmithNaming final : public RenamerClangTidyCheck {
 };
 
 // Makes the findings of the translation unit's engine show names as written, when it is a .smith file.
+// clang-tidy's own findings only: clangd shows its checks' findings through its own diagnostics and the layer of
+// shim/lsp.cpp, which writes the names as the source did.
+bool presenting = false;
+
 void attach(ClangTidyContext *Context) {
+    if (!presenting) return;
     if (DiagnosticsEngine *engine = Context->*reach(EngineFn{})) smith::presentThrough(*engine);
 }
 
@@ -161,6 +166,17 @@ class SmithModule final : public ClangTidyModule {
 
 } // namespace
 } // namespace clang::tidy
+
+// Registers the module after the ones clang-tidy has registered (by now), so that it wraps their checks. clang-tidy's
+// main and clangd's built-in checks (clangd creates them from the same registry) both ask for it; `present` is whether
+// the findings of the checks go through smith::presentThrough (clang-tidy's do, clangd's do not).
+extern "C" void smith_tidy_names_register(bool present) {
+    clang::tidy::presenting = present;
+    static const llvm::Registry<clang::tidy::ClangTidyModule>::Add<clang::tidy::SmithModule> smith_module(
+        "smith-lang", "checks see the names a .smith file wrote");
+}
+#else
+extern "C" void smith_tidy_names_register(bool) {}
 #endif
 
 // Runs clang-tidy on argv[1 .. argc), as argv[0], <folder>/bin/clang-tidy, in clang's folder. Returns
@@ -173,9 +189,7 @@ extern "C" int smith_tidy_main(int argc, char **argv) {
     clang::CommandHook = smith_command_hook;
 #ifdef SMITH_HOOK
     smith_hook_install();
-    // After the modules clang-tidy registers (which are in by now), so that it wraps their checks.
-    static const llvm::Registry<clang::tidy::ClangTidyModule>::Add<clang::tidy::SmithModule> smith_module(
-        "smith-lang", "checks see the names a .smith file wrote");
 #endif
+    smith_tidy_names_register(true);
     return clang::tidy::clangTidyMain(argc, const_cast<const char **>(argv));
 }
