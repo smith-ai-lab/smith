@@ -1475,6 +1475,30 @@ static void smith_dump_c(void) {
     fputs("    smith_app_tests(b, &(SmithAppTests){.folder = \"tests\"});\n}\n", stdout);
 }
 
+// Copies a file to standard output from its start.
+static void smith_copy_to_stdout(FILE *from) {
+    char chunk[65536];
+    SMITH_ASSERT(fseek(from, 0, SEEK_SET) == 0);
+    for (size_t n = fread(chunk, 1, sizeof chunk, from); n > 0; n = fread(chunk, 1, sizeof chunk, from))
+        fwrite(chunk, 1, n, stdout);
+}
+
+// The translation of a Makefile, formatted by `smith fmt` (smith's .clang-format, or the project's) so that the
+// build.c it makes passes `smith fmt --dry-run`. Where the formatter cannot run, the text as it is written.
+static void smith_make_dump(const char *makefile) {
+    FILE *raw = tmpfile();
+    FILE *formatted = tmpfile();
+    if (raw == nullptr || formatted == nullptr) {
+        smith_make_translate(makefile, stdout);
+        return;
+    }
+    smith_make_translate(makefile, raw);
+    bool formatted_ok = smith_make_format_files(raw, formatted);
+    smith_copy_to_stdout(formatted_ok ? formatted : raw);
+    fclose(raw);
+    fclose(formatted);
+}
+
 // The one place that decides what a folder dumps. A project that has a build file is already explicit.
 static int smith_build_dump_config(void) {
     bool has_c = smith_has_build_file("build.c");
@@ -1485,7 +1509,7 @@ static int smith_build_dump_config(void) {
         return 0;
     }
     if (smith_has_makefile()) { // the project's real build, whether or not a main is here too (issue #44)
-        smith_make_translate(smith_make_find_makefile(), stdout);
+        smith_make_dump(smith_make_find_makefile());
         return 0;
     }
     bool main_smith = access("main.smith", F_OK) == 0;

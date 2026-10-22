@@ -39,7 +39,7 @@ smith build -t commands build/app             # the compile and link commands, t
 
 ## 3. Format, lint, check
 
-`smith fmt` and `smith lint` need no config file: smith's `.clang-format` and `.clang-tidy` apply where the project has none. Run `smith fmt --dump-config > .clang-format` and `smith lint --dump-config > .clang-tidy` to make them the project's and edit what you disagree with (loading `smith-check`). The translated build.c is linted and formatted too and will not satisfy smith's naming rules (`option_CFLAGS`); reformat it with `smith fmt`, and loosen `.clang-tidy` or rename what lint reports. `smith check` runs fmt, docs, lint, test and prove and reports every part.
+`smith fmt` and `smith lint` need no config file: smith's `.clang-format` and `.clang-tidy` apply where the project has none. Run `smith fmt --dump-config > .clang-format` and `smith lint --dump-config > .clang-tidy` to make them the project's and edit what you disagree with (loading `smith-check`). The translated build.c is linted and formatted too and passes both (`CFLAGS` is `build_cflags`; the file is written formatted, and as a function for each run of targets when it is long), except a single recipe or list longer than 68 lines, which `readability-function-size` reports: shorten it by hand. `smith check` runs fmt, docs, lint, test and prove and reports every part.
 
 ## 4. Tests
 
