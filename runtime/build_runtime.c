@@ -1185,6 +1185,7 @@ const char *smith_replace_extension(SmithBuild *b, const char *path, const char 
 // High level: compiles and links that smith knows are compiles and links.
 
 constexpr size_t smith_objects_max = 65536;
+constexpr size_t smith_app_libraries_max = 32; // smith's libraries a program uses, with what they need
 
 typedef struct {
     const SmithObject *address; // the caller's struct, so a copy that was never registered is found out
@@ -1743,22 +1744,81 @@ static const char *const *smith_library_files(const char *const *libraries) {
     return files;
 }
 
+static const char *const *smith_library_needs(SmithBuild *b, const char *name);
+
+// The name of a library of smith's from its source (".smith/lib/arena.c", ".smith/lib/smith/text.smith"), else nullptr.
+static const char *smith_library_of(const char *source) {
+    const char *prefix = ".smith/lib/";
+    if (strncmp(source, prefix, strlen(prefix)) != 0) return nullptr;
+    const char *name = source + strlen(prefix);
+    if (strncmp(name, "smith/", strlen("smith/")) == 0) name += strlen("smith/");
+    const char *dot = strrchr(name, '.');
+    return dot == nullptr || strchr(name, '/') != nullptr ? nullptr : smith_text("%.*s", (int)(dot - name), name);
+}
+
+static bool smith_links_source(const SmithObject *const *linked, size_t count, const char *source) {
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(linked[i]->source, source) == 0) return true;
+    }
+    return false;
+}
+
+// The object of one library a program needs: the one the project made of that source (declared, not passed), else a
+// new one compiled like the library that needs it (its compiler and flags), as <folder of that object>/<name>.o.
+static const SmithObject *smith_needed_object(SmithBuild *b, const SmithObject *by, const char *name) {
+    const char *source = smith_library(b, name);
+    for (size_t k = 0; k < smith_object_row_count; k++) {
+        if (strcmp(smith_object_rows[k].object.source, source) == 0) return &smith_object_rows[k].object;
+    }
+    const char *slash = strrchr(by->output, '/');
+    int folder = slash != nullptr ? (int)(slash - by->output + 1) : 0;
+    SmithObject *object = smith_alloc(sizeof *object);
+    *object = (SmithObject){.compiler = by->compiler,
+                            .source = source,
+                            .output = smith_text("%.*s%s.o", folder, by->output, name),
+                            .flags = by->flags};
+    smith_object(b, object);
+    return &smith_find_row(object, object->output)->object;
+}
+
+// Adds the libraries that the libraries a program links need and it does not link. Naming a library is enough:
+// contract brings trace, io brings arena and random. `linked` has room for smith_app_libraries_max more; returns the
+// new count.
+static size_t smith_program_needs(SmithBuild *b, const SmithObject **linked, size_t count) {
+    size_t used = count;
+    for (size_t i = 0; i < count; i++) { // what is added is not read again: needs are transitive already
+        const char *library = smith_library_of(linked[i]->source);
+        if (library == nullptr) continue;
+        const char *const *needs = smith_library_needs(b, library);
+        for (size_t n = 0; needs[n] != nullptr; n++) {
+            if (smith_links_source(linked, used, smith_library(b, needs[n]))) continue;
+            if (used - count >= smith_app_libraries_max) smith_too_many("libraries", smith_app_libraries_max);
+            linked[used++] = smith_needed_object(b, linked[i], needs[n]);
+        }
+    }
+    return used;
+}
+
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
     smith_require_program("smith_program", "linker", program->linker);
     smith_require_text("smith_program", "output", program->output);
     if (program->objects == nullptr || program->objects[0] == nullptr)
         smith_fail("smith_program: .objects is empty; give it objects passed to smith_object");
-    size_t count = smith_count((const char *const *)program->objects);
-    const SmithObject **rows = (const SmithObject **)smith_new_list(count);
-    const char **outputs = smith_new_list(count);
-    const char **sources = smith_new_list(count);
-    for (size_t i = 0; i < count; i++) {
+    size_t given = smith_count((const char *const *)program->objects);
+    const SmithObject **rows = (const SmithObject **)smith_new_list(given + smith_app_libraries_max);
+    for (size_t i = 0; i < given; i++) {
         const SmithObjectRow *row = smith_find_row(program->objects[i], program->objects[i]->output);
         if (row == nullptr) smith_fail("smith_program: .objects[%zu] was never passed to smith_object", i);
         rows[i] = &row->object;
-        outputs[i] = row->object.output;
-        sources[i] = row->object.source;
+    }
+    size_t count = smith_program_needs(b, rows, given);
+    rows[count] = nullptr;
+    const char **outputs = smith_new_list(count);
+    const char **sources = smith_new_list(count);
+    for (size_t i = 0; i < count; i++) {
+        outputs[i] = rows[i]->output;
+        sources[i] = rows[i]->source;
     }
     SmithProgram copy = *program;
     copy.linker = smith_copy_string(program->linker);
@@ -2320,7 +2380,6 @@ static const char *const smith_profile_release[] = {"-O2", nullptr};
 static const char *const smith_profile_fast[] = {"-O2", "-DNDEBUG", nullptr};
 
 constexpr size_t smith_app_files_max = 4096;
-constexpr size_t smith_app_libraries_max = 32;
 constexpr size_t smith_app_roots_max = 64;
 constexpr size_t smith_app_line_max = 4096;
 constexpr size_t smith_app_depth_max = 64;
@@ -2330,15 +2389,20 @@ typedef struct {
     bool compile; // a source the program compiles; a header is read for what it includes and is not compiled
 } SmithAppFile;
 
+// smith's libraries something uses, then those they use: a queue read in order, each library once.
+typedef struct {
+    const char *names[smith_app_libraries_max];
+    size_t count;
+    size_t scanned; // names[0..scanned) have been read
+} SmithLibraryQueue;
+
 // What a lexical scan of the sources found. A file is scanned once, in the order it was found (a queue), so the order
 // of the sources is the order of the includes and imports.
 static struct {
     SmithAppFile files[smith_app_files_max];
     size_t file_count;
-    size_t scanned;                                 // files[0..scanned) have been read
-    const char *libraries[smith_app_libraries_max]; // smith's libraries the sources use, then those they use
-    size_t library_count;
-    size_t libraries_scanned;
+    size_t scanned;                         // files[0..scanned) have been read
+    SmithLibraryQueue queue;                // smith's libraries the sources use, then those they use
     const char *roots[smith_app_roots_max]; // where a module's path starts (the folder above a/b.smith for a::b)
     size_t root_count;
 } smith_app_found;
@@ -2418,11 +2482,11 @@ static void smith_app_library(const char *name, size_t length) {
     bool known = smith_app_is_file(smith_text(".smith/lib/%s.c", copy)) ||
                  smith_app_is_file(smith_text(".smith/lib/smith/%s.smith", copy));
     if (!known) return;
-    for (size_t i = 0; i < smith_app_found.library_count; i++) {
-        if (strcmp(smith_app_found.libraries[i], copy) == 0) return;
+    for (size_t i = 0; i < smith_app_found.queue.count; i++) {
+        if (strcmp(smith_app_found.queue.names[i], copy) == 0) return;
     }
-    if (smith_app_found.library_count >= smith_app_libraries_max) smith_too_many("libraries", smith_app_libraries_max);
-    smith_app_found.libraries[smith_app_found.library_count++] = copy;
+    if (smith_app_found.queue.count >= smith_app_libraries_max) smith_too_many("libraries", smith_app_libraries_max);
+    smith_app_found.queue.names[smith_app_found.queue.count++] = copy;
 }
 
 // The file a quoted include names, found as the compiler finds it: beside the including file, then at the project's
@@ -2615,22 +2679,47 @@ static void smith_app_scan(const char *path, bool libraries_only) {
     }
 }
 
+// Reads the header and the source of the next queued library, which queue the libraries it uses.
+static void smith_library_scan_next(SmithBuild *b) {
+    const char *name = smith_app_found.queue.names[smith_app_found.queue.scanned++];
+    const char *header = smith_text(".smith/include/smith/%s.h", name);
+    if (smith_app_is_file(header)) smith_app_scan(header, true);
+    smith_app_scan(smith_library(b, name), true);
+}
+
 // Reads every queued file, and then smith's libraries that those use (and the headers they include), until nothing
 // new turns up.
 static void smith_app_follow(SmithBuild *b) {
     for (size_t round = 0; round < smith_app_files_max + smith_app_libraries_max; round++) {
-        if (smith_app_found.scanned < smith_app_found.file_count) {
+        if (smith_app_found.scanned < smith_app_found.file_count)
             smith_app_scan(smith_app_found.files[smith_app_found.scanned++].path, false);
-        } else if (smith_app_found.libraries_scanned < smith_app_found.library_count) {
-            const char *name = smith_app_found.libraries[smith_app_found.libraries_scanned++];
-            const char *header = smith_text(".smith/include/smith/%s.h", name);
-            if (smith_app_is_file(header)) smith_app_scan(header, true);
-            smith_app_scan(smith_library(b, name), true);
-        } else {
+        else if (smith_app_found.queue.scanned < smith_app_found.queue.count)
+            smith_library_scan_next(b);
+        else
             return;
-        }
     }
     smith_fail("the program's files and libraries are too many to follow");
+}
+
+// The libraries a library of smith's uses, directly or not, in the order found and not itself (io: random and arena;
+// contract: trace). The one resolver of both ways in: smith_app follows the libraries a program names, and
+// smith_program adds what the libraries it links need, so naming a library is enough wherever it is named.
+static const char *const *smith_library_needs(SmithBuild *b, const char *name) {
+    SmithLibraryQueue saved = smith_app_found.queue; // the app's own queue is put back
+    smith_app_found.queue = (SmithLibraryQueue){};
+    smith_app_library(name, strlen(name));
+    for (size_t round = 0; round < smith_app_libraries_max; round++) {
+        if (smith_app_found.queue.scanned >= smith_app_found.queue.count) break;
+        smith_library_scan_next(b);
+    }
+    const char **needs = smith_new_list(smith_app_found.queue.count);
+    size_t used = 0;
+    for (size_t i = 0; i < smith_app_found.queue.count; i++) {
+        if (strcmp(smith_app_found.queue.names[i], name) != 0) needs[used++] = smith_app_found.queue.names[i];
+    }
+    needs[used] = nullptr;
+    smith_app_found.queue = saved;
+    return needs;
 }
 
 // The entry point: the one given, else main.smith or main.c at the root.
@@ -2687,15 +2776,15 @@ static const char *const *smith_app_link_flags(SmithBuild *b, const char *profil
 // debug profile's objects but the entry's are kept for the tests.
 static SmithStep smith_app_program(SmithBuild *b, const SmithApp *app, const char *profile) {
     const char *const *flags = smith_app_flags(b, profile, app->flags);
-    size_t total = smith_app_found.file_count + smith_app_found.library_count;
+    size_t total = smith_app_found.file_count + smith_app_found.queue.count;
     const SmithObject **linked = (const SmithObject **)smith_new_list(total);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_found.file_count; i++) {
         if (smith_app_found.files[i].compile)
             linked[used++] = smith_app_object(b, profile, smith_app_found.files[i].path, flags);
     }
-    for (size_t i = 0; i < smith_app_found.library_count; i++)
-        linked[used++] = smith_app_object(b, profile, smith_library(b, smith_app_found.libraries[i]), flags);
+    for (size_t i = 0; i < smith_app_found.queue.count; i++)
+        linked[used++] = smith_app_object(b, profile, smith_library(b, smith_app_found.queue.names[i]), flags);
     if (strcmp(profile, "debug") == 0) {
         smith_app_state.flags = flags;
         smith_app_state.link_flags = smith_app_link_flags(b, profile, app->link_flags);
@@ -2765,11 +2854,11 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
     // What the tests reach that the program does not (a module only a test imports) is compiled with the debug flags,
     // and so is any library of smith's that only they use.
     size_t before_files = smith_app_found.file_count;
-    size_t before_libraries = smith_app_found.library_count;
+    size_t before_libraries = smith_app_found.queue.count;
     for (size_t i = 0; files[i] != nullptr; i++)
         smith_app_add(files[i], false);
     smith_app_follow(b);
-    size_t room = smith_app_state.object_count + smith_app_found.file_count + smith_app_found.library_count;
+    size_t room = smith_app_state.object_count + smith_app_found.file_count + smith_app_found.queue.count;
     const SmithObject **objects = (const SmithObject **)smith_new_list(room);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_state.object_count; i++)
@@ -2779,9 +2868,9 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
         if (file->compile && !smith_app_listed(files, file->path))
             objects[used++] = smith_app_object(b, "debug", file->path, smith_app_state.flags);
     }
-    for (size_t i = before_libraries; i < smith_app_found.library_count; i++)
+    for (size_t i = before_libraries; i < smith_app_found.queue.count; i++)
         objects[used++] =
-            smith_app_object(b, "debug", smith_library(b, smith_app_found.libraries[i]), smith_app_state.flags);
+            smith_app_object(b, "debug", smith_library(b, smith_app_found.queue.names[i]), smith_app_state.flags);
     SmithTests run = {
         .sources = files,
         .objects = (const SmithObject *const *)objects,

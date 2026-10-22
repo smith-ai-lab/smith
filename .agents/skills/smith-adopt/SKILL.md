@@ -57,14 +57,12 @@ smith_tests(b, &(SmithTests){
 
 ## 5. Contracts and proofs
 
-For code whose correctness matters (parsers, move generators, bounds), write `smith_requires`, `smith_ensures` and `smith_invariant` (`#include <smith/contract.h>`) and run `smith prove` (load `smith-contract`). In build.c the program links smith's contract and trace libraries, and its compiles take `-I .smith/include`:
+For code whose correctness matters (parsers, move generators, bounds), write `smith_requires`, `smith_ensures` and `smith_invariant` (`#include <smith/contract.h>`) and run `smith prove` (load `smith-contract`). In build.c the program links smith's contract library (trace comes with it), and its compiles take `-I .smith/include`:
 
 ```c
 const char *const *flags = smith_cat(b, project_flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr);
 SmithObject contract = {.compiler = "smith-cc", .source = smith_library(b, "contract"), .output = "build/contract.o", .flags = flags};
-SmithObject trace = {.compiler = "smith-cc", .source = smith_library(b, "trace"), .output = "build/trace.o", .flags = flags};
-smith_object(b, &contract);
-smith_object(b, &trace);                    // a failed contract calls smith_failure, which is in trace; put both in .objects of the program
+smith_object(b, &contract);                 // a failed contract calls smith_failure, which is in trace; smith_program links trace too
 ```
 
 - One file: `smith prove src/util.c -- -I .smith/include` (the flags after `--` are the include paths and defines). The project form, `smith prove` with no arguments, proves the C sources of each `smith_program` together, and also proves a function that calls a function with an `smith_ensures`: `main` calling `printf` fails with `cannot be proved: a call of printf, which has neither a body nor a contract`, so prove the files whose functions have no I/O by name (`smith prove src/util.c -- ...`) and use the project form only where every caller is provable.

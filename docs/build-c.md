@@ -455,6 +455,11 @@ void build(SmithBuild *b) {
   in `.smith`) compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
   and random: its header and source are scanned the same way). `import smith::io;` is not possible yet: io is a C
   library, importable as the header only. `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
+  The same resolver serves `smith_library`: `smith_program` links, beside the objects it is given, the libraries that
+  the libraries among them need (found by scanning their header and source, `smith_library_needs`), so naming
+  `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random). A needed library
+  is the object the project made of that source (any `smith_object` of it), else one compiled with the flags and
+  compiler of the library that needs it, as `<folder of its object>/<name>.o`.
 - **Tests:** every `.smith` file and every `test_*.c` below `tests/`, built with the debug flags. The code under test is
   the program's debug objects but the entry's, so there are no second compiles of it; what only a test includes or
   imports is compiled for the tests, and so is a library only they use. No test file means no task.
@@ -1234,8 +1239,9 @@ void smith_write(SmithBuild *b, const char *path, const char *text);
 // ".smith/lib/smith/text.smith", a module that smith_object compiles with a smith that has clang inside), which smith
 // writes on every `smith build` together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
-// build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test", "text"; random and io use the arena,
-// and io uses random too, so a project that compiles one compiles what it uses; smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them).
+// build.c asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random", "test", "text", "trace"). Naming a library is
+// enough: smith_program also links the libraries that the libraries it links need ("io" brings "arena" and "random",
+// "contract" brings "trace"); smith_tests compiles "test", "arena", "random", "trace" and "contract" unless .objects has them.
 const char *smith_library(SmithBuild *b, const char *name);
 
 // A package is an archive named by a URL and the hash of its bytes, both written in build.c. There is no registry, no
