@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-static [[gnu::format(printf, 1, 2)]] int log_fmt_private_say(const char *format, ...) {
+[[gnu::format(printf, 1, 2)]] static int log_fmt_private_say(const char *format, ...) {
 va_list args;
 va_start(args, format);
 int n = vprintf(format, args);
@@ -16,4 +16,4 @@ __attribute__((format(printf, 1, 2))) int log_fmt_said(const char *format, ...) 
 __attribute__((format(printf, 1, 2))) int log_fmt_said(const char *format, ...) {
 return log_fmt_private_say("%s", format);
 }
-static [[gnu::format(scanf, 2, 3)]] int log_fmt_private_scan(int fd, const char *format, ...);
+[[gnu::format(scanf, 2, 3)]] static int log_fmt_private_scan(int fd, const char *format, ...);

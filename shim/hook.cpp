@@ -761,6 +761,34 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // The spellings that are keywords of C23, which some SDK headers still define as macros (assert.h's static_assert):
+    // they are the language's own, not a C name to write with `c::`.
+    bool isStandardKeyword(StringRef name) const {
+        if (!PP.getLangOpts().C23) return false;
+        static constexpr StringRef keywords[] = {"static_assert", "alignas", "alignof", "bool",
+                                                 "true",          "false",   "nullptr", "thread_local"};
+        for (StringRef keyword : keywords) {
+            if (name == keyword) return true;
+        }
+        return false;
+    }
+
+    // Whether the name at `at` is written `c::name`. A macro that is an argument of another is expanded with the
+    // argument before the hook reaches the `c::` before it (`c::assert(n < c::SIZE_MAX)`), so the text is what says.
+    bool writtenAsC(SourceLocation at) const {
+        StringRef text = SM.getBufferData(SM.getFileID(at));
+        size_t offset = SM.getFileOffset(at);
+        auto space = [&](size_t i) { return text[i] == ' ' || text[i] == '\t' || text[i] == '\n'; };
+        while (offset > 0 && space(offset - 1))
+            offset -= 1;
+        if (offset < 3 || text[offset - 1] != ':' || text[offset - 2] != ':') return false;
+        offset -= 2;
+        while (offset > 0 && space(offset - 1))
+            offset -= 1;
+        if (offset == 0 || text[offset - 1] != 'c') return false;
+        return offset == 1 || !(isAlphanumeric(text[offset - 2]) || text[offset - 2] == '_');
+    }
+
     // A macro of an imported header used where the source names it with no `c::` is an error, in a module or not.
     void macroUsed(const MacroDefinition &definition, SourceRange range) {
         SourceLocation at = range.getBegin();
@@ -776,6 +804,7 @@ class SmithHook final : public TokenHook, public NameSource {
         const char *start = SM.getCharacterData(at, &invalid);
         if (invalid) return;
         StringRef name(start, Lexer::MeasureTokenLength(at, SM, PP.getLangOpts()));
+        if (isStandardKeyword(name) || writtenAsC(at)) return;
         std::string message = "`" + name.str() + "` is a C macro; write `c::" + name.str() + "`";
         PP.getDiagnostics().Report(at, diagnostic) << message;
     }

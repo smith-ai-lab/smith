@@ -7,7 +7,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include "lib/text.h"
+#include "../lib/text.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

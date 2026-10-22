@@ -16,12 +16,15 @@ Point *pp = &p;
 __INT32_TYPE__ numbers[3] = {7, 8, 9};
 __UINT8_TYPE__ byte = 200;
 const __INT32_TYPE__ fixed = 4;
-printf("%d %g\n", pick_larger(a, b), pick_larger(d, 1.5));
-printf("%d %d %d\n", pick_larger(p.x, pp->y), pick_larger(p.x, 3), pick_larger(numbers[1], fixed));
-printf("%d %g %zu\n", pick_larger(a, 100), pick_larger(half(9), d), pick_size_of_value(byte));
-printf("%d %zu\n", pick_first_of(numbers, 3), pick_size_of_value((__UINT16_TYPE__)3));
-__INT32_TYPE__ slot = 0;
-pick_set(&slot, 42);
-printf("%d %d\n", slot, pick_twice(__INT32_TYPE__, slot));
+printf("%d %g\n",smith_call_failed,smith_call_failed);
+printf("%d %d %d\n",smith_call_failed,smith_call_failed,smith_call_failed);
+printf("%d %g %zu\n",smith_call_failed,smith_call_failed,smith_call_failed);
+printf("%d %zu\n",smith_call_failed,smith_call_failed);
+__INT32_TYPE__ slot = 0;smith_call_failed;
+printf("%d %d\n", slot,__extension__({extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value)__asm__("_pick::twice(__INT32_TYPE__)");pick_twice__i32(slot);}));
 return 0;
 }
+extern __INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value)__asm__("_pick::twice(__INT32_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ pick_twice__i32(__INT32_TYPE__ value){return __extension__({extern __INT32_TYPE__ pick_larger__i32(__INT32_TYPE__ a,__INT32_TYPE__ b)__asm__("_pick::larger(__INT32_TYPE__)");pick_larger__i32(value,value);});}
+extern __INT32_TYPE__ pick_larger__i32(__INT32_TYPE__ a,__INT32_TYPE__ b)__asm__("_pick::larger(__INT32_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ pick_larger__i32(__INT32_TYPE__ a,__INT32_TYPE__ b){return a>b?a:b;}

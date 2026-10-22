@@ -49,7 +49,7 @@ for header in "$here"/include/smith/*.h; do
 done
 
 # 2. The rule.
-mkdir -p "$work/src/t" "$work/include/t"
+mkdir -p "$work/src/t" "$work/include/t" "$work/include/u/deep"
 cd "$work/src" || exit 1
 cat >t/body.smith <<'S'
 module t::body;
@@ -110,17 +110,40 @@ export i32 body_module_x(void) {
     return point::origin().x;
 }
 S
+mkdir -p u/deep
+cat >u/far.smith <<'S'
+module u::far;
+import t::point;
+export typedef struct {
+    point::Point at;
+} Far;
+S
+cat >u/deep/farther.smith <<'S'
+module u::deep::farther;
+import t::point;
+import u::far;
+export far::Far farther(far::Far f, point::Point p);
+S
 for module in body typed two tag include point uses body_module; do
     "$smith" cc --smith-header "t/$module.smith" -o "$work/include/t/$module.h" 2>"$work/err.$module"
     ok "$module: the header is written" $?
 done
+"$smith" cc --smith-header u/far.smith -o "$work/include/u/far.h" 2>"$work/err.far"
+ok "far: the header is written" $?
+"$smith" cc --smith-header u/deep/farther.smith -o "$work/include/u/deep/farther.h" 2>"$work/err.farther"
+ok "farther: the header is written" $?
 
 has "body: an import only a body uses" "$work/include/t/body.h" "#include <stdio.h>" no
 has "typed: an import an export's type uses" "$work/include/t/typed.h" "#include <stdio.h>" yes
 has "include: an #include" "$work/include/t/include.h" "#include <stdio.h>" no
 has "include: an #include" "$work/include/t/include.h" "#include <string.h>" no
-has "uses: an imported module an export's type uses" "$work/include/t/uses.h" '#include "t/point.h"' yes
-has "body_module: an imported module only a body uses" "$work/include/t/body_module.h" '#include "t/point.h"' no
+# A module is included relative to the header that includes it, so the headers of one tree find each other with no
+# include path of their own (a stage0 compiling smith.c has none).
+has "uses: an imported module an export's type uses" "$work/include/t/uses.h" '#include "point.h"' yes
+has "body_module: an imported module only a body uses" "$work/include/t/body_module.h" '#include "point.h"' no
+has "far: a module in another folder" "$work/include/u/far.h" '#include "../t/point.h"' yes
+has "farther: a module in a folder above" "$work/include/u/deep/farther.h" '#include "../../t/point.h"' yes
+has "farther: a module beside the folder" "$work/include/u/deep/farther.h" '#include "../far.h"' yes
 has "every header: the sized types' headers" "$work/include/t/body.h" "#include <stdint.h>" yes
 
 if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
@@ -134,6 +157,13 @@ fi
 
 for module in body typed two tag include point uses body_module; do
     standalone "t/$module.h" "$work/include/t/$module.h" "$work/include"
+done
+standalone "u/far.h" "$work/include/u/far.h" "$work/include"
+standalone "u/deep/farther.h" "$work/include/u/deep/farther.h" "$work/include"
+# and with no include path at all: the header finds the headers it includes beside itself
+for mode in "c -std=gnu23" "c++ -std=c++23"; do
+    "$smith" cc -fsyntax-only -x $mode "$work/include/u/deep/farther.h" 2>/dev/null
+    ok "u/deep/farther.h compiles with no include path (${mode%% *})" $?
 done
 
 echo
