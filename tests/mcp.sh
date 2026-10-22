@@ -334,7 +334,7 @@ static int twice(int x) {
 
 void test_twice_doubles(void) {
     int result = twice(21);
-    SMITH_CHECK(result, ==, 42);
+    smith_check_equal_i32(result, 42);
 }
 C
 if env PATH="$work/bin:$PATH" CC=smith-cc CXX=smith-c++ smith build >"$work/project.log" 2>&1; then

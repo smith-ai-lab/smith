@@ -204,7 +204,7 @@ cat >tests/test_util.c <<'EOF'
 #include <smith/test.h>
 
 void test_twice(void) {
-    SMITH_CHECK(util_twice(2) == 4);
+    smith_check(util_twice(2) == 4);
 }
 EOF
 capture smith build
@@ -317,7 +317,7 @@ cat >tests/test_clock.c <<'EOF'
 
 void test_io_makes(void) {
     SmithIo io = smith_io_make(0, nullptr);
-    SMITH_CHECK(io.seed != 0);
+    smith_check(io.seed != 0);
     smith_io_close(&io);
 }
 EOF

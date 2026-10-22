@@ -90,14 +90,14 @@ project() {
 
 void build(SmithBuild *b) {
     bool sanitize = strcmp(smith_option_value(b, "SAN", "1", "0 builds without the sanitizers"), "1") == 0;
-    const char *const *flags = smith_cat(b, smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr),
+    const char *const *flags = smith_cat(b, smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr),
                                          smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", "-fno-sanitize-recover=all", nullptr)), nullptr);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
     smith_object(b, &random);
     SmithTests tests = {
-        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+        .sources = smith_glob(b, smith_list(b, "tests/test_*.c", "tests/test_*.smith", nullptr)),
         .objects = (const SmithObject *[]){&arena, &random, nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -109,6 +109,12 @@ void build(SmithBuild *b) {
 C
 }
 
+# A project of C tests only, in C23: the C API of <smith/test.h> with no .smith file anywhere.
+project_c() { # folder
+    project "$1"
+    sed -e 's/gnu2y/gnu23/' -e 's|, "tests/test_\*.smith"||' build.c >build.c.new && mv build.c.new build.c
+}
+
 # The runner's output without the timings: the slowest list is dropped and the summary's seconds are masked.
 plain() {
     sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'
@@ -118,90 +124,135 @@ run_plain() { # runner arguments
     "$work/main/build/tests" $iso "$@" 2>&1 | plain
 }
 
+# The report `smith test` prints for a failure: the runner's trace turned into the failing line and the call chain by smith
+# symbolize, from the project's folder, without the timings and the runner's own frame (its line moves with the library).
+# The spaces are squeezed on both sides, because the columns of the chain follow the longest path in it.
+have_symbolizer=$("$smith" symbolize --available && echo yes)
+report() { # runner arguments
+    build/tests $iso --trace "$@" 2>&1 | "$smith" symbolize 2>&1 | plain | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d'
+}
+expect_report() { # name, expected report, runner arguments
+    name=$1
+    wanted=$(printf '%s\n' "$2" | tr -s ' ')
+    shift 2
+    expect "$name" "$wanted" "$(report "$@" | tr -s ' ')"
+}
+
 line_of() { # file, text: the line number of the first line holding the text
     grep -n -F "$2" "$1" | head -n 1 | cut -d: -f1
 }
 
 if part main; then
-# 1. The checks: a project with passing and failing tests.
+# 1. The checks: a project with passing and failing tests, in .smith, and a few in C for the C API.
 project "$work/main"
-cat >tests/test_checks.c <<'C'
-#include <smith/test.h>
-
-#include <assert.h>
-#include <stdio.h>
-#include <unistd.h>
+cat >tests/test_checks.smith <<'C'
+import <assert.h>;
+import <stdio.h>;
+import smith::math;
+import smith::test;
 
 void test_passing(void) {
-    printf("this output is hidden\n");
-    SMITH_CHECK(1 + 1, ==, 2);
-    SMITH_CHECK(true);
-    SMITH_CHECK_NEAR(0.1 + 0.2, 0.3, 1e-9);
-    SMITH_CHECK_NEAR(1.0f, 1.0001f, 0.001f);
-    int array[3] = {1, 2, 3};
-    SMITH_CHECK(array, ==, &array[0]);
-    smith_test_expect_abort();
-    assert(false);
+    c::printf("this output is hidden\n");
+    test::check_equal(1 + 1, 2);
+    test::check(true);
+    test::check_near(0.1 + 0.2, 0.3, 1e-9);
+    test::check_near(1.0f, 1.0001f, 0.001f);
+    i32 array[3] = {1, 2, 3};
+    test::check_equal(array, &array[0]);
+    test::expect_abort();
+    c::assert(false);
 }
 
 void test_compare(void) {
-    long long x = 7;
+    i64 x = 7;
     struct {
-        long long high;
+        i64 high;
     } range = {6};
-    printf("the test's output\n");
-    smith_test_note("loop %d", 3);
-    SMITH_CHECK(x, <=, range.high);
+    c::printf("the test's output\n");
+    test::note("loop %d", 3);
+    test::check_less_equal(x, range.high);
 }
 
 void test_condition(void) {
-    int items = 0;
-    SMITH_CHECK(items > 0);
+    i32 items = 0;
+    test::check(items > 0);
 }
 
 void test_unsigned(void) {
-    unsigned int small = 3;
-    SMITH_CHECK(small, >=, 4);
+    u32 small = 3;
+    test::check_greater_equal(small, 4);
 }
 
 void test_float_bits(void) {
-    SMITH_CHECK(0.1 + 0.2, ==, 0.3);
+    test::check_equal(0.1 + 0.2, 0.3);
 }
 
 void test_char(void) {
-    char c = 'a';
-    SMITH_CHECK(c, ==, 'b');
+    char letter = 'a';
+    test::check_equal(letter, 'b');
 }
 
 void test_bool(void) {
     bool flag = true;
-    SMITH_CHECK(flag, ==, false);
+    test::check_equal(flag, false);
 }
 
 void test_pointer(void) {
-    int value = 0;
-    int *pointer = &value;
-    SMITH_CHECK(pointer, ==, nullptr);
+    i32 value = 0;
+    i32 *pointer = &value;
+    test::check_equal(pointer, nullptr);
 }
 
 void test_near(void) {
-    SMITH_CHECK_NEAR(1.0, 1.5, 0.1);
+    f64 low = 1.0;
+    f64 high = 1.5;
+    f64 tolerance = 0.1;
+    test::check_near(low, high, tolerance);
 }
 
 void test_near_nan(void) {
-    SMITH_CHECK_NEAR(__builtin_nan(""), 1.0, 1e300);
+    f64 nan = math::nan(f64);
+    test::check_near(nan, 1.0, 1e300);
 }
 
 void test_stops(void) {
-    SMITH_CHECK(1, ==, 2);
-    printf("never printed\n");
+    test::check_equal(1, 2);
+    c::printf("never printed\n");
+}
+C
+cat >tests/test_checks_c.c <<'C'
+#include <smith/test.h>
+
+#include <stdio.h>
+
+void test_c_passing(void) {
+    printf("this output is hidden\n");
+    smith_check(true);
+    smith_check_equal_i32(1 + 1, 2);
+    smith_check_near_f64(0.1 + 0.2, 0.3, 1e-9);
+    smith_check_same_bits_f32(1.5F, 1.5F);
+}
+
+void test_c_equal(void) {
+    long long x = 7;
+    smith_check_equal_i64(x, 6);
+}
+
+void test_c_near(void) {
+    smith_check_near_f64(1.0, 1.5, 0.1);
+}
+
+void test_c_pointer(void) {
+    int value = 0;
+    int *pointer = &value;
+    smith_check_equal_ptr(pointer, nullptr);
 }
 C
 capture "$smith" build
 expect "build: the runner builds" 0 "$rc"
 expect "build: the scan writes the prototypes" yes "$([ -f build/tests_list.h ] && echo yes)"
 expect "build: ... and the table" yes "$([ -f build/tests_list.c ] && echo yes)"
-expect_contains "build: the table lists a test by its name" "$(cat build/tests_list.c)" '{"compare", test_compare, nullptr},'
+expect_contains "build: the table lists a test by its name" "$(cat build/tests_list.c)" '"compare", test_compare'
 capture build/tests $iso --list
 expect "list: names, in file order" "passing
 compare
@@ -213,82 +264,122 @@ bool
 pointer
 near
 near_nan
-stops" "$out"
+stops
+c_passing
+c_equal
+c_near
+c_pointer" "$out"
 
 expect "pass: the line and the summary, nothing else" "PASS passing
 
 1 passed, 0 failed" "$(run_plain --test passing --verbose)"
 expect "pass: without --verbose only the summary" "1 passed, 0 failed" "$(run_plain --test passing)"
+expect "pass: the C names pass too, and hide the output" "PASS c_passing
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK(x, <=, range.high);')
-expect "compare: the failure block" "FAIL compare
-  tests/test_checks.c:$line
-      SMITH_CHECK(x, <=, range.high);
-    x          = 7   (long long)
-    range.high = 6   (long long)
+1 passed, 0 failed" "$(run_plain --test c_passing --verbose)"
+
+# The runner on its own prints a failure as a raw trace and the values, with a and b for the names; smith symbolize reads the
+# trace and the source line, which also names the values by their text.
+capture build/tests $iso --test compare
+expect_contains "raw: a failed check prints a trace block" "$out" "  smith-trace begin check failed"
+expect_contains "raw: ... with frames" "$out" "  smith-trace frame 0x"
+expect_contains "raw: ... and the image's UUID" "$out" "  smith-trace image "
+expect_contains "raw: ... both values with their type, named a and b" "$out" "    a = 7   (i64)
+    b = 6   (i64)"
+expect_contains "raw: ... then the note and the test's output" "$out" "    note: loop 3
+    the test's output"
+
+if [ -n "$have_symbolizer" ]; then
+    line=$(line_of tests/test_checks.smith 'test::check_less_equal(x, range.high);')
+    expect_report "compare: the failure block" "FAIL compare
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check_less_equal(x, range.high);
+           x = 7, range.high = 6   (i64)
+  called from
+    tests/test_checks.smith:$line test_compare
     note: loop 3
     the test's output
 
-0 passed, 1 failed" "$(run_plain --test compare)"
+0 passed, 1 failed" --test compare
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK(items > 0);')
-expect "condition: the failure block" "FAIL condition
-  tests/test_checks.c:$line
-      SMITH_CHECK(items > 0);
-    the condition is false
+    line=$(line_of tests/test_checks.smith 'test::check(items > 0);')
+    expect_report "condition: the failure block" "FAIL condition
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check(items > 0);
+           the condition is false
+  called from
+    tests/test_checks.smith:$line test_condition
 
-0 passed, 1 failed" "$(run_plain --test condition)"
+0 passed, 1 failed" --test condition
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK(small, >=, 4);')
-expect "types: an unsigned int prints as one, and a literal has no =" "FAIL unsigned
-  tests/test_checks.c:$line
-      SMITH_CHECK(small, >=, 4);
-    small = 3   (unsigned int)
-    4           (unsigned int)
+    line=$(line_of tests/test_checks.smith 'test::check_greater_equal(small, 4);')
+    expect_report "types: a u32 prints as one, and a literal has no =" "FAIL unsigned
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check_greater_equal(small, 4);
+           small = 3, 4   (u32)
+  called from
+    tests/test_checks.smith:$line test_unsigned
 
-0 passed, 1 failed" "$(run_plain --test unsigned)"
+0 passed, 1 failed" --test unsigned
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK(0.1 + 0.2, ==, 0.3);')
-expect "types: a double prints its shortest text and its hex, so the last bit shows" "FAIL float_bits
-  tests/test_checks.c:$line
-      SMITH_CHECK(0.1 + 0.2, ==, 0.3);
-    0.1 + 0.2 = 0.30000000000000004 [0x1.3333333333334p-2]   (double)
-    0.3       = 0.3 [0x1.3333333333333p-2]                   (double)
+    line=$(line_of tests/test_checks.smith 'test::check_equal(0.1 + 0.2, 0.3);')
+    expect_report "types: an f64 prints its shortest text and its hex, so the last bit shows" "FAIL float_bits
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check_equal(0.1 + 0.2, 0.3);
+           0.1 + 0.2 = 0.30000000000000004 [0x1.3333333333334p-2], 0.3 = 0.3 [0x1.3333333333333p-2]   (f64)
+  called from
+    tests/test_checks.smith:$line test_float_bits
 
-0 passed, 1 failed" "$(run_plain --test float_bits)"
+0 passed, 1 failed" --test float_bits
 
-line=$(line_of tests/test_checks.c "SMITH_CHECK(c, ==, 'b');")
-expect "types: a char prints as a character" "FAIL char
-  tests/test_checks.c:$line
-      SMITH_CHECK(c, ==, 'b');
-    c = 'a'   (char)
-    'b'       (char)
+    line=$(line_of tests/test_checks.smith "test::check_equal(letter, 'b');")
+    expect_report "types: a char prints as a character" "FAIL char
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check_equal(letter, 'b');
+           letter = 'a', 'b'   (char)
+  called from
+    tests/test_checks.smith:$line test_char
 
-0 passed, 1 failed" "$(run_plain --test char)"
+0 passed, 1 failed" --test char
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK(flag, ==, false);')
-expect "types: a bool prints true and false" "FAIL bool
-  tests/test_checks.c:$line
-      SMITH_CHECK(flag, ==, false);
-    flag = true    (bool)
-    false          (bool)
+    line=$(line_of tests/test_checks.smith 'test::check_equal(flag, false);')
+    expect_report "types: a bool prints true and false" "FAIL bool
+  check failed at tests/test_checks.smith:$line
+     $line |     test::check_equal(flag, false);
+           flag = true, false   (bool)
+  called from
+    tests/test_checks.smith:$line test_bool
 
-0 passed, 1 failed" "$(run_plain --test bool)"
+0 passed, 1 failed" --test bool
 
-capture build/tests $iso --test pointer
-expect_contains "types: a pointer prints as an address" "$out" "    pointer = 0x"
-expect_contains "types: ... and nullptr as nullptr" "$out" "    nullptr "
+    capture sh -c "build/tests $iso --test pointer --trace 2>&1 | '$smith' symbolize"
+    expect_contains "types: a pointer prints as an address" "$out" "pointer = 0x"
+    expect_contains "types: ... and nullptr as nullptr" "$out" ", nullptr   (ptr)"
 
-line=$(line_of tests/test_checks.c 'SMITH_CHECK_NEAR(1.0, 1.5, 0.1);')
-expect "near: the failure block has the distance" "FAIL near
-  tests/test_checks.c:$line
-      SMITH_CHECK_NEAR(1.0, 1.5, 0.1);
-    1.0      = 1 [0x1p+0]                   (double)
-    1.5      = 1.5 [0x1.8p+0]               (double)
-    0.1      = 0.1 [0x1.999999999999ap-4]   (double)
-    distance = 0.5 [0x1p-1]                 (double)
+    line=$(line_of tests/test_checks.smith 'test::check_near(low, high, tolerance);')
+    capture sh -c "build/tests $iso --test near --trace 2>&1 | '$smith' symbolize"
+    expect_contains "near: the failure names the line" "$out" "  check failed at tests/test_checks.smith:$line"
+    expect_contains "near: ... shows the first value" "$out" "= 1 [0x1p+0]   (f64)"
+    expect_contains "near: ... the second" "$out" "= 1.5 [0x1.8p+0]   (f64)"
+    expect_contains "near: ... the tolerance" "$out" "= 0.1 [0x1.999999999999ap-4]   (f64)"
+    expect_contains "near: ... and the distance" "$out" "distance"
+    expect_contains "near: ... which is 0.5" "$out" "= 0.5 [0x1p-1]   (f64)"
 
-0 passed, 1 failed" "$(run_plain --test near)"
+    line=$(line_of tests/test_checks_c.c 'smith_check_equal_i64(x, 6);')
+    expect_report "c: smith_check_equal_i64 prints the same block, named by the text" "FAIL c_equal
+  check failed at tests/test_checks_c.c:$line
+     $line |     smith_check_equal_i64(x, 6);
+           x = 7, 6   (i64)
+  called from
+    tests/test_checks_c.c:$line test_c_equal
+
+0 passed, 1 failed" --test c_equal
+
+    line=$(line_of tests/test_checks_c.c 'smith_check_near_f64(1.0, 1.5, 0.1);')
+    capture sh -c "build/tests $iso --test c_near --trace 2>&1 | '$smith' symbolize"
+    expect_contains "c: smith_check_near_f64 names its line" "$out" "  check failed at tests/test_checks_c.c:$line"
+    expect_contains "c: ... and the distance" "$out" "= 0.5 [0x1p-1]   (f64)"
+fi
 
 capture build/tests $iso --test near_nan
 expect_contains "near: a NaN fails" "$out" "FAIL near_nan"
@@ -298,88 +389,87 @@ capture build/tests $iso --test stops
 expect_lacks "stop: a failed check ends the test" "$out" "never printed"
 
 # 2. Aborts.
-cat >tests/test_aborts.c <<'C'
-#include <smith/test.h>
-
-#include <assert.h>
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
+cat >tests/test_aborts.smith <<'C'
+import <assert.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import smith::arena;
+import smith::test;
 
 void test_abort_assert(void) {
-    smith_test_expect_abort();
-    printf("child noise\n");
-    assert(1 > 2);
+    test::expect_abort();
+    c::printf("child noise\n");
+    c::assert(1 > 2);
 }
 
 void test_abort_arena(void) {
-    SmithArena arena = smith_test_arena(128);
-    smith_test_expect_abort();
-    (void)smith_arena_push(&arena, 1000, 8);
+    arena::Arena memory = test::memory(128);
+    test::expect_abort();
+    (void)arena::push_array(&memory, u8, 1000);
 }
 
 void test_abort_abort(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 
 void test_abort_trap(void) {
-    smith_test_expect_abort();
+    test::expect_abort();
     __builtin_trap();
 }
 
 void test_sanitized_read(void) {
-    char *bytes = malloc(8);
-    volatile size_t index = 8;
-    smith_test_expect_abort();
-    printf("before\n");
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    test::expect_abort();
+    c::printf("before\n");
     (void)bytes[index];
-    free(bytes);
+    c::free(bytes);
 }
 
 void test_sanitized_overflow(void) {
-    volatile int largest = INT_MAX;
-    smith_test_expect_abort();
+    volatile i32 largest = 2147483647;
+    test::expect_abort();
     (void)(largest + 1);
 }
 
 void test_abort_exit(void) {
-    smith_test_expect_abort();
-    exit(3);
+    test::expect_abort();
+    c::exit(3);
 }
 
 void test_abort_returns(void) {
-    smith_test_expect_abort();
-    printf("child output\n");
+    test::expect_abort();
+    c::printf("child output\n");
 }
 
 void test_abort_check_inside(void) {
-    smith_test_expect_abort();
-    smith_check(false);
+    test::expect_abort();
+    test::check(false);
 }
 
 void test_abort_twice(void) {
-    smith_test_expect_abort();
-    smith_test_expect_abort(); // harmless
-    abort();
+    test::expect_abort();
+    test::expect_abort(); // harmless
+    c::abort();
 }
 
 void test_abort_before(void) {
-    printf("aborting early\n");
-    abort();
-    smith_test_expect_abort();
+    c::printf("aborting early\n");
+    c::abort();
+    test::expect_abort();
 }
 
 void test_abort_after_check(void) {
-    smith_check_equal_i32(1 + 1, 2);
-    smith_test_expect_abort();
-    abort();
+    test::check_equal(1 + 1, 2);
+    test::expect_abort();
+    c::abort();
 }
 C
 capture "$smith" build
 expect "aborts: the runner builds" 0 "$rc"
 capture build/tests $iso --test abort_assert --verbose
-expect_contains "aborts: an assert passes" "$out" "PASS abort_assert"
+expect_contains "aborts: an abort passes" "$out" "PASS abort_assert"
 expect_lacks "aborts: ... and the child's output is hidden" "$out" "child noise"
 capture build/tests $iso --test abort_arena --verbose
 expect_contains "aborts: the arena's capacity stop passes" "$out" "PASS abort_arena"
@@ -396,15 +486,15 @@ expect_contains "aborts: a UBSan error fails" "$out" "stopped by a sanitizer rep
 expect_contains "aborts: ... and shows the child's output" "$out" "runtime error: signed integer overflow"
 capture build/tests $iso --test abort_exit
 expect_contains "aborts: exit(3) fails" "$out" "it exited with status 3"
-line=$(($(line_of tests/test_aborts.c 'printf("child output\n");') - 1)) # the call, the line above the print
+line=$(($(line_of tests/test_aborts.smith 'c::printf("child output\n");') - 1)) # the call, the line above the print
 capture build/tests $iso --test abort_returns
 expect_contains "aborts: returning fails" "$out" "FAIL abort_returns"
 expect_contains "aborts: ... saying it returned" "$out" "expected an abort; the test returned"
 expect_contains "aborts: ... and shows the test's output" "$out" "child output"
-if "$smith" symbolize --available; then
+if [ -n "$have_symbolizer" ]; then
     capture sh -c "build/tests $iso --test abort_returns --trace 2>&1 | '$smith' symbolize"
-    expect_contains "aborts: ... at the call's line" "$out" "  check failed at tests/test_aborts.c:$line"
-    expect_contains "aborts: ... showing the call" "$out" "$line |     smith_test_expect_abort();"
+    expect_contains "aborts: ... at the call's line" "$out" "  check failed at tests/test_aborts.smith:$line"
+    expect_contains "aborts: ... showing the call" "$out" "$line |     test::expect_abort();"
 fi
 capture build/tests $iso --test abort_check_inside
 expect_contains "aborts: a check that fails after the call is not an abort" "$out" "expected an abort; a check failed, which is not an abort"
@@ -419,34 +509,33 @@ expect_contains "aborts: ... showing what it printed" "$out" "aborting early"
 
 # A crash without the sanitizers, in a project of its own.
 project "$work/nosan"
-cat >tests/test_crash.c <<'C'
-#include <smith/test.h>
-
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+cat >tests/test_crash.smith <<'C'
+import <signal.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::test;
 
 void test_abort_segv(void) {
-    smith_test_expect_abort();
-    printf("before the crash\n");
-    raise(SIGSEGV);
+    test::expect_abort();
+    c::printf("before the crash\n");
+    c::raise(c::SIGSEGV);
 }
 
 void test_abort_hangs(void) {
-    smith_test_expect_abort();
-    printf("hanging\n");
-    sleep(30);
+    test::expect_abort();
+    c::printf("hanging\n");
+    c::sleep(30);
 }
 
 void test_abort_exits_zero(void) {
-    smith_test_expect_abort();
-    exit(0);
+    test::expect_abort();
+    c::exit(0);
 }
 
 void test_abort_survivor(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 C
 capture "$smith" build -DSAN=0
@@ -466,7 +555,7 @@ expect_contains "aborts: the tests after a crash, a hang and an exit still run" 
 # -DNDEBUG, where an assert is gone: abort() and __builtin_trap() still stop, and a test that expects an assert to stop it
 # returns.
 for profile in release fast; do
-    project "$work/profile-$profile"
+    project_c "$work/profile-$profile" # C only: the one project that checks the C API with nothing else around it
     if [ $profile = release ]; then flags='"-O2"'; else flags='"-O2", "-DNDEBUG"'; fi
     sed "s/\"-Wconversion\",/\"-Wconversion\", $flags,/" build.c >build.c.new && mv build.c.new build.c
     cat >tests/test_profile.c <<'C'
@@ -526,48 +615,47 @@ done
 cd "$work/main" || exit 1
 
 # 3. Isolation: a crash, a sanitizer report and a timeout each fail one test and the rest still run.
-cat >tests/test_isolation.c <<'C'
-#include <smith/test.h>
-
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+cat >tests/test_isolation.smith <<'C'
+import <stdlib.h>;
+import <string.h>;
+import <unistd.h>;
+import smith::test;
 
 void test_overflow(void) {
-    char *buffer = malloc(8);
-    smith_test_note("index %d", 8);
+    u8 *buffer = (u8 *)c::malloc(8);
+    test::note("index %d", 8);
     buffer[8] = 'x';
-    free(buffer);
+    c::free(buffer);
 }
 
 void test_sleeps(void) {
-    sleep(30);
+    c::sleep(30);
 }
 
 void test_exits(void) {
-    exit(3);
+    c::exit(3);
 }
 
 void test_alarm_hangs(void) {
-    alarm(1);
-    sleep(30);
+    c::alarm(1);
+    c::sleep(30);
 }
 
 void test_long_note(void) {
     char text[6000];
-    memset(text, 'a', sizeof text - 1);
+    c::memset(text, 'a', sizeof text - 1);
     text[sizeof text - 1] = '\0';
-    smith_test_note("%s", text);
-    SMITH_CHECK(1, ==, 2);
+    test::note("%s", text);
+    test::check_equal(1, 2);
 }
 
 void test_board_note(void) {
-    smith_test_note("board\n  . x .\n  x . x\n  . x .\nend");
-    SMITH_CHECK(1, ==, 2);
+    test::note("board\n  . x .\n  x . x\n  . x .\nend");
+    test::check_equal(1, 2);
 }
 
 void test_ok_after(void) {
-    SMITH_CHECK(1, ==, 1);
+    test::check_equal(1, 1);
 }
 C
 capture "$smith" build
@@ -604,17 +692,18 @@ capture build/tests $iso --test nothing_like_this
 expect "options: no matching test exits 1" "1 no test matches \"nothing_like_this\"" "$rc $out"
 
 # 4. Running: --test filters, --seeds counts, --jobs 1 gives the same results.
-cat >tests/test_properties.c <<'C'
-#include <smith/test.h>
+cat >tests/test_properties.smith <<'C'
+import smith::random;
+import smith::test;
 
-void test_prop_ok(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <=, 1000);
+void test_prop_ok(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less_equal(x, 1000);
 }
 
-void test_prop_fails(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <, 500);
+void test_prop_fails(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
 }
 C
 capture "$smith" build
@@ -643,47 +732,348 @@ capture build/tests $iso --test prop_fails --shrink 0
 seed=$(printf '%s' "$out" | sed -n 's/^FAIL prop_fails with seed \([0-9]*\).*/\1/p')
 expect "properties: a failure names its seed" yes "$([ -n "$seed" ] && echo yes)"
 expect_contains "properties: ... and a rerun line" "$out" "    rerun: smith test --test prop_fails --seed $seed"
-# The task prints the failing line from the stack; the runner on its own prints it as the macro gave it. The seed, the value
-# and the rerun line are the same either way.
-first=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
+# The task prints the values under the failing line, named by their text (x = 700, 500); the runner on its own prints them as a
+# and b. The seed, the first value and the rerun line are the same either way.
+digest() { # the header, the first value and the rerun line of the failure in the text on standard input
+    sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +[ax] = |rerun' | sed -e 's/^ *//' -e 's/^[ax] = \([0-9]*\).*/first \1/'
+}
+first=$(printf '%s' "$out" | digest)
 capture "$smith" test $iso --test prop_fails --seed "$seed" --shrink 0
-second=$(printf '%s%s' "$out" "$err" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
+second=$(printf '%s%s' "$out" "$err" | digest)
 expect "properties: the rerun line reproduces the failure" "$first" "$second"
 capture build/tests $iso --test prop_fails --seed "$seed" --shrink 0
-third=$(printf '%s' "$out" | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +x +=|rerun' | sed 's/^ *//')
+third=$(printf '%s' "$out" | digest)
 expect "properties: --seed reproduces it too" "$first" "$third"
 
+# 4a. The checks as generic functions: the ordering checks (a NaN is unordered, so every comparison but not_equal fails on
+# one), check_not_equal, check_near and check_same_bits for f32 and f64, a pointer against nullptr, a type written first,
+# arguments that are expressions, and test::memory.
+project "$work/api"
+cat >tests/test_api.smith <<'C'
+import smith::arena;
+import smith::math;
+import smith::test;
+
+void test_ordering_passes(void) {
+    i32 one = 1;
+    i32 two = 2;
+    test::check_less(one, two);
+    test::check_less_equal(one, two);
+    test::check_less_equal(two, 2);
+    test::check_greater(two, one);
+    test::check_greater_equal(two, one);
+    test::check_greater_equal(two, 2);
+    test::check_not_equal(one, two);
+    u8 small = 3;
+    u8 big = 200;
+    test::check_less(small, big);
+    f64 pi = 3.14159;
+    test::check_greater(pi, 3.0);
+    test::check_less(-1.5, pi);
+    char a = 'a';
+    test::check_less(a, 'b');
+    bool no = false;
+    test::check_not_equal(no, true);
+}
+
+void test_lt_fails(void) {
+    i32 a = 5;
+    i32 b = 5;
+    test::check_less(a, b);
+}
+
+void test_le_fails(void) {
+    u16 a = 6;
+    u16 b = 5;
+    test::check_less_equal(a, b);
+}
+
+void test_gt_fails(void) {
+    i64 a = -5;
+    i64 b = 5;
+    test::check_greater(a, b);
+}
+
+void test_ge_fails(void) {
+    i8 a = -5;
+    i8 b = 5;
+    test::check_greater_equal(a, b);
+}
+
+void test_ne_fails(void) {
+    i32 count = 5;
+    test::check_not_equal(count, 5);
+}
+
+void test_nan_lt(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_less(not_a_number, 1.0);
+}
+
+void test_nan_le(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_less_equal(1.0, not_a_number);
+}
+
+void test_nan_gt(void) {
+    f32 not_a_number = math::nan(f32);
+    test::check_greater(not_a_number, 1.0f);
+}
+
+void test_nan_ge(void) {
+    f32 not_a_number = math::nan(f32);
+    test::check_greater_equal(not_a_number, not_a_number);
+}
+
+void test_nan_eq(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_equal(not_a_number, not_a_number);
+}
+
+void test_nan_ne_passes(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_not_equal(not_a_number, not_a_number);
+    test::check_not_equal(not_a_number, 1.0);
+}
+
+void test_near_generic_passes(void) {
+    f32 a = 1.0f;
+    f32 b = 1.05f;
+    test::check_near(a, b, 0.1f);
+    f64 x = 1.0;
+    f64 y = 1.0 + 1e-12;
+    test::check_near(x, y, 1e-9);
+    f64 infinity = math::infinity(f64);
+    test::check_near(infinity, infinity, 0.0);
+}
+
+void test_near_f32_fails(void) {
+    f32 a = 1.0f;
+    f32 b = 1.5f;
+    f32 tolerance = 0.1f;
+    test::check_near(a, b, tolerance);
+}
+
+void test_near_infinity_fails(void) {
+    f64 infinity = math::infinity(f64);
+    f64 big = 1e300;
+    test::check_near(infinity, big, big);
+}
+
+void test_same_bits_passes(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_same_bits(not_a_number, not_a_number);
+    f32 minus_zero = -0.0f;
+    test::check_same_bits(minus_zero, -0.0f);
+}
+
+void test_same_bits_zero_fails(void) {
+    f64 zero = 0.0;
+    test::check_same_bits(zero, -0.0);
+}
+
+void test_same_bits_f32_fails(void) {
+    f32 one = 1.0f;
+    f32 next = 1.0000001f;
+    test::check_same_bits(one, next);
+}
+
+void test_pointer_passes(void) {
+    i32 value = 1;
+    i32 *none = nullptr;
+    i32 *some = &value;
+    test::check_equal(none, nullptr);
+    test::check_not_equal(some, nullptr);
+    test::check_equal(some, &value);
+    i32 values[2] = {1, 2};
+    test::check_less(&values[0], &values[1]);
+}
+
+void test_pointer_null_fails(void) {
+    i32 value = 1;
+    i32 *some = &value;
+    test::check_equal(some, nullptr);
+}
+
+void test_pointer_not_null_fails(void) {
+    i32 *none = nullptr;
+    test::check_not_equal(none, nullptr);
+}
+
+void test_typed_passes(void) {
+    u32 small = 3;
+    u64 big = 3;
+    test::check_equal(u64, small, big);
+    test::check_less(u64, small, 10);
+}
+
+void test_expressions_pass(void) {
+    i32 a = 2;
+    test::check_equal(a * 2 + 1, a > 1 ? 5 : 6);
+    test::check_less(a - 1, a);
+    test::check_equal(a + 1, 3);
+}
+
+void test_memory_passes(void) {
+    arena::Arena memory = test::memory(1 << 12);
+    i32 *items = arena::push_array(&memory, i32, 10);
+    for (i32 i = 0; i < 10; i++) {
+        items[i] = i * i;
+    }
+    test::check_equal(items[9], 81);
+    f64 *halves = arena::push_array(&memory, f64, 4);
+    halves[3] = 1.5;
+    test::check_near(halves[3], 1.5, 0.0);
+}
+
+void test_memory_stops(void) {
+    arena::Arena memory = test::memory(256);
+    test::expect_abort();
+    (void)arena::push_array(&memory, f64, 100);
+}
+C
+capture "$smith" build
+expect "api: the runner builds" 0 "$rc"
+if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
+capture build/tests $iso --list
+expect "api: the tests are found" "ordering_passes
+lt_fails
+le_fails
+gt_fails
+ge_fails
+ne_fails
+nan_lt
+nan_le
+nan_gt
+nan_ge
+nan_eq
+nan_ne_passes
+near_generic_passes
+near_f32_fails
+near_infinity_fails
+same_bits_passes
+same_bits_zero_fails
+same_bits_f32_fails
+pointer_passes
+pointer_null_fails
+pointer_not_null_fails
+typed_passes
+expressions_pass
+memory_passes
+memory_stops" "$out"
+capture build/tests $iso --verbose --test _pass
+expect_contains "api: the ordering checks pass on ordered values of every type" "$out" "PASS ordering_passes"
+expect_contains "api: ... not_equal passes on a NaN, which equals nothing" "$out" "PASS nan_ne_passes"
+expect_contains "api: ... near passes for f32 and f64 and for equal infinities" "$out" "PASS near_generic_passes"
+expect_contains "api: ... same_bits passes for a NaN and -0 against itself" "$out" "PASS same_bits_passes"
+expect_contains "api: ... a pointer is checked against nullptr and its own address" "$out" "PASS pointer_passes"
+expect_contains "api: ... a type written first overrides the inference" "$out" "PASS typed_passes"
+expect_contains "api: ... arguments may be expressions" "$out" "PASS expressions_pass"
+expect_contains "api: ... test::memory gives a typed arena" "$out" "PASS memory_passes"
+expect_contains "api: ... and none of them failed" "$out" "8 passed, 0 failed"
+capture build/tests $iso --verbose --test memory_stops
+expect_contains "api: the arena of test::memory stops on a push past its capacity" "$out" "PASS memory_stops"
+
+if [ -n "$have_symbolizer" ]; then
+    expect_fail() { # name, test, source text, the values line
+        line=$(line_of tests/test_api.smith "$3")
+        expect_report "$1" "FAIL $2
+  check failed at tests/test_api.smith:$line
+     $line |     $3
+           $4
+  called from
+    tests/test_api.smith:$line test_$2
+
+0 passed, 1 failed" --test "$2"
+    }
+    expect_fail "api: check_less fails on equal values" lt_fails 'test::check_less(a, b);' "a = 5, b = 5   (i32)"
+    expect_fail "api: check_less_equal fails on a greater value, and prints a u16" le_fails 'test::check_less_equal(a, b);' "a = 6, b = 5   (u16)"
+    expect_fail "api: check_greater fails on a smaller value, and prints an i64" gt_fails 'test::check_greater(a, b);' "a = -5, b = 5   (i64)"
+    expect_fail "api: check_greater_equal fails on a smaller value, and prints an i8" ge_fails 'test::check_greater_equal(a, b);' "a = -5, b = 5   (i8)"
+    expect_fail "api: check_not_equal fails on equal values" ne_fails 'test::check_not_equal(count, 5);' "count = 5, 5   (i32)"
+    expect_fail "api: a NaN is not less than a number" nan_lt 'test::check_less(not_a_number, 1.0);' "not_a_number = nan, 1.0 = 1 [0x1p+0]   (f64)"
+    expect_fail "api: ... nor is a number less than or equal to it" nan_le 'test::check_less_equal(1.0, not_a_number);' "1.0 = 1 [0x1p+0], not_a_number = nan   (f64)"
+    expect_fail "api: ... nor greater, in f32" nan_gt 'test::check_greater(not_a_number, 1.0f);' "not_a_number = nan, 1.0f = 1 [0x1p+0]   (f32)"
+    expect_fail "api: ... a NaN is not greater than or equal to itself" nan_ge 'test::check_greater_equal(not_a_number, not_a_number);' "not_a_number = nan, not_a_number = nan   (f32)"
+    expect_fail "api: ... and not equal to itself" nan_eq 'test::check_equal(not_a_number, not_a_number);' "not_a_number = nan, not_a_number = nan   (f64)"
+    expect_fail "api: check_same_bits tells 0 from -0, in hex" same_bits_zero_fails 'test::check_same_bits(zero, -0.0);' "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)"
+    expect_fail "api: ... and f32 values one bit apart" same_bits_f32_fails 'test::check_same_bits(one, next);' "one = 1 [0x1p+0], next = 1.0000001 [0x1.000002p+0]   (f32)"
+
+    line=$(line_of tests/test_api.smith 'test::check_near(a, b, tolerance);')
+    expect_report "api: check_near for f32 shows the values, the tolerance and the distance" "FAIL near_f32_fails
+  check failed at tests/test_api.smith:$line
+     $line |     test::check_near(a, b, tolerance);
+           a = 1 [0x1p+0]   (f32)
+           b = 1.5 [0x1.8p+0]   (f32)
+           tolerance = 0.1 [0x1.99999ap-4]   (f32)
+           distance = 0.5 [0x1p-1]   (f32)
+  called from
+    tests/test_api.smith:$line test_near_f32_fails
+
+0 passed, 1 failed" --test near_f32_fails
+    capture sh -c "build/tests $iso --test near_infinity_fails --trace 2>&1 | '$smith' symbolize"
+    expect_contains "api: check_near fails on an infinity against a finite value" "$out" "check failed at tests/test_api.smith:"
+    expect_contains "api: ... and the distance is inf" "$out" "= inf   (f64)"
+
+    capture sh -c "build/tests $iso --test pointer_null_fails --trace 2>&1 | '$smith' symbolize"
+    expect_contains "api: a non-null pointer against nullptr prints its address and nullptr" "$out" "some = 0x"
+    expect_contains "api: ... and the type" "$out" ", nullptr   (ptr)"
+    expect_report "api: a null pointer fails check_not_equal against nullptr" "FAIL pointer_not_null_fails
+  check failed at tests/test_api.smith:$(line_of tests/test_api.smith 'test::check_not_equal(none, nullptr);')
+     $(line_of tests/test_api.smith 'test::check_not_equal(none, nullptr);') |     test::check_not_equal(none, nullptr);
+           none = nullptr, nullptr   (ptr)
+  called from
+    tests/test_api.smith:$(line_of tests/test_api.smith 'test::check_not_equal(none, nullptr);') test_pointer_not_null_fails
+
+0 passed, 1 failed" --test pointer_not_null_fails
+fi
+
+# Two types are a compile error that names the parameter: cast one side, or write the type first.
+project "$work/conflict"
+cat >tests/test_conflict.smith <<'C'
+import smith::test;
+
+void test_conflict(void) {
+    u32 small = 3;
+    u64 big = 3;
+    test::check_equal(small, big);
+}
+C
+capture "$smith" build
+expect "conflict: two types in one check fail to build" 1 "$rc"
+expect_contains "conflict: ... naming the type parameter" "$out$err" "conflicting types for \`T\`"
 fi
 
 # 4b. Shrinking, in three parts (each runs the same test file in a project of its own).
 if part shrink_int shrink_list shrink_normal; then
 project "$work/shrink"
-cat >tests/test_shrink.c <<'C'
-#include <smith/test.h>
+cat >tests/test_shrink.smith <<'C'
+import smith::random;
+import smith::test;
 
-void test_shrink_int(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <, 500);
+void test_shrink_int(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
 }
 
-void test_shrink_list(SmithKey key) {
-    long long length = smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 8});
-    for (long long i = 0; i < length; i++) {
-        long long item = smith_uniform_int64_sample(smith_key_derive(key, (uint64_t)i + 1), (SmithUniformInt64){.low = 0, .high = 100});
-        smith_test_note("length %lld, item %lld", length, i);
-        SMITH_CHECK(item, <=, 90);
+void test_shrink_list(random::Key key) {
+    i64 length = random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 8});
+    for (i64 i = 0; i < length; i++) {
+        i64 item = random::uniform_int64_sample(random::key_derive(key, (u64)i + 1), (random::UniformInt64){.low = 0, .high = 100});
+        test::note("length %lld, item %lld", length, i);
+        test::check_less_equal(item, 90);
     }
 }
 
-void test_shrink_normal(SmithKey key) {
-    double z = smith_normal_double_sample(key, (SmithNormalDouble){.mean = 0, .deviation = 1});
-    SMITH_CHECK(z, <, 3.0);
+void test_shrink_normal(random::Key key) {
+    f64 z = random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
+    test::check_less(z, 3.0);
 }
 
-void test_shrink_moves(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    SMITH_CHECK(x, <, 500);
-    SMITH_CHECK(x, !=, 0); // the failure that shrinking to 0 would move to
+void test_shrink_moves(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
+    test::check_not_equal(x, 0); // the failure that shrinking to 0 would move to
 }
 C
 capture "$smith" build
@@ -691,53 +1081,62 @@ expect "shrink: the runner builds" 0 "$rc"
 fi
 
 if part shrink_int; then
-line=$(line_of tests/test_shrink.c 'SMITH_CHECK(x, <, 500);')
-capture build/tests $iso --test shrink_int --shrink-seconds 3600
-seed=$(printf '%s' "$out" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
-expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
-  tests/test_shrink.c:$line
-      SMITH_CHECK(x, <, 500);
-    x = 500   (long long)
-    500       (long long)
-    rerun: smith test --test shrink_int --seed $seed
+line=$(line_of tests/test_shrink.smith 'test::check_less(x, 500);')
+shrunk=$(report --test shrink_int --shrink-seconds 3600)
+seed=$(printf '%s' "$shrunk" | sed -n 's/^FAIL shrink_int with seed \([0-9]*\),.*/\1/p')
+runs=$(printf '%s' "$shrunk" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+if [ -n "$have_symbolizer" ]; then
+    expect "shrink: a uniform [0, 1000] with x < 500 shrinks to 500" "FAIL shrink_int with seed $seed, shrunk in RUNS runs
+ check failed at tests/test_shrink.smith:$line
+ $line | test::check_less(x, 500);
+ x = 500, 500 (i64)
+ called from
+ tests/test_shrink.smith:$line test_shrink_int
+ rerun: smith test --test shrink_int --seed $seed
 
-0 passed, 1 failed" "$(printf '%s' "$out" | plain | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/')"
-runs=$(printf '%s' "$out" | sed -n 's/.*shrunk in \([0-9]*\) runs.*/\1/p')
+0 passed, 1 failed" "$(printf '%s' "$shrunk" | sed 's/shrunk in [0-9]* runs/shrunk in RUNS runs/' | tr -s ' ')"
+fi
+capture build/tests $iso --test shrink_int --shrink-seconds 3600
+expect_contains "shrink: the runner on its own shows 500 and 500" "$out" "    a = 500   (i64)
+    b = 500   (i64)"
 expect "shrink: ... in at most 1000 runs" yes "$([ -n "$runs" ] && [ "$runs" -le 1000 ] && echo yes)"
 
 capture build/tests $iso --test shrink_int --shrink 0
-unshrunk=$(printf '%s' "$out" | sed -n 's/^    x = \([0-9]*\) .*/\1/p')
+unshrunk=$(printf '%s' "$out" | sed -n 's/^    a = \([0-9]*\) .*/\1/p')
 expect "shrink: --shrink 0 shows the unshrunk failure" yes "$([ "$unshrunk" -gt 500 ] && echo yes)"
 expect_lacks "shrink: ... without 'shrunk'" "$out" "shrunk"
 
 capture "$smith" test $iso --test shrink_int --seed "$seed"
-expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500   (long long)"
+expect_contains "shrink: the rerun line shrinks to the same case" "$out$err" "    x = 500, 500   (i64)"
 fi
 
 if part shrink_list; then
-# The same command twice, side by side: it takes a minute under --isolate.
-(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-first") &
-(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain >"$work/shrink-second") &
+# The same command twice, side by side: it takes a minute under --isolate. The addresses of the trace differ per run.
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)' >"$work/shrink-first") &
+(build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)' >"$work/shrink-second") &
 wait
 first=$(cat "$work/shrink-first")
 expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
-expect_contains "shrink: ... of 91" "$first" "    item = 91   (long long)"
+expect_contains "shrink: ... of 91" "$first" "    a = 91   (i64)"
 second=$(cat "$work/shrink-second")
 expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
 fi
 
 if part shrink_normal; then
 capture build/tests $iso --test shrink_normal --shrink-seconds 3600 --seeds 5000
-z=$(printf '%s' "$out" | sed -n 's/^    z *= \([0-9.e+-]*\) .*/\1/p')
+z=$(printf '%s' "$out" | sed -n 's/^    a = \([0-9.e+-]*\) .*/\1/p')
 expect_contains "shrink: a normal with z < 3 shrinks" "$out" "FAIL shrink_normal with seed"
 expect "shrink: ... to the z nearest 3 from above" yes "$(awk -v z="$z" 'BEGIN { print (z >= 3 && z < 3.0000001) ? "yes" : "no" }')"
 fi
 
 if part shrink_int; then
-line=$(grep -n -F 'SMITH_CHECK(x, <, 500);' tests/test_shrink.c | sed -n 2p | cut -d: -f1)
 capture build/tests $iso --test shrink_moves --shrink-seconds 3600
-expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    x = 500   (long long)"
-expect_contains "shrink: ... and it is the first check" "$out" "  tests/test_shrink.c:$line"
+expect_contains "shrink: a failure that moves to another check is not kept: x is not 0" "$out" "    a = 500   (i64)"
+if [ -n "$have_symbolizer" ]; then
+    line=$(grep -n -F 'test::check_less(x, 500);' tests/test_shrink.smith | sed -n 2p | cut -d: -f1)
+    capture sh -c "build/tests $iso --test shrink_moves --shrink-seconds 3600 --trace 2>&1 | '$smith' symbolize"
+    expect_contains "shrink: ... and it is the first check" "$out" "  check failed at tests/test_shrink.smith:$line"
+fi
 
 fi
 
@@ -745,29 +1144,35 @@ if part alongside; then
 # Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes more
 # than 64 KiB, waits a second and writes more, still passes with --timeout 2.
 project "$work/alongside"
-cat >tests/test_alongside.c <<'C'
-#include <smith/test.h>
+cat >tests/test_alongside.smith <<'C'
+import <stdio.h>;
+import <unistd.h>;
+import smith::random;
+import smith::test;
 
-#include <stdio.h>
-
-void test_a_shrinks_slowly(SmithKey key) {
-    usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
-    long long smallest = 1000000000;
-    for (uint64_t i = 0; i < 200; i++) {
-        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
-        if (v < smallest) smallest = v;
+void test_a_shrinks_slowly(random::Key key) {
+    c::usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
+    i64 smallest = 1000000000;
+    for (u64 i = 0; i < 200; i++) {
+        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) {
+            smallest = v;
+        }
     }
-    SMITH_CHECK(smallest, <, 1000);
+    test::check_less(smallest, 1000);
 }
 
 void test_b_writes_a_lot(void) {
-    for (int i = 0; i < 1000; i++) printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
-    usleep(1000000);                                      // while the runner shrinks the other test
-    for (int i = 0; i < 3000; i++) printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
-    printf("done\n");
+    for (i32 i = 0; i < 1000; i++) {
+        c::printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
+    }
+    c::usleep(1000000); // while the runner shrinks the other test
+    for (i32 i = 0; i < 3000; i++) {
+        c::printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
+    }
+    c::printf("done\n");
 }
 C
-sed -i.bak 's/#include <stdio.h>/#include <stdio.h>\n#include <unistd.h>/' tests/test_alongside.c && rm tests/test_alongside.c.bak
 capture "$smith" build -DSAN=0
 expect "alongside: the runner builds" 0 "$rc"
 capture build/tests $iso --timeout 2 --jobs 2
@@ -779,16 +1184,19 @@ fi
 if part budget; then
 # The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds.
 project "$work/budget"
-cat >tests/test_budget.c <<'C'
-#include <smith/test.h>
+cat >tests/test_budget.smith <<'C'
+import smith::random;
+import smith::test;
 
-void test_budget(SmithKey key) {
-    long long smallest = 1000000000;
-    for (uint64_t i = 0; i < 200; i++) {
-        long long v = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){.low = 0, .high = 1000000000});
-        if (v < smallest) smallest = v;
+void test_budget(random::Key key) {
+    i64 smallest = 1000000000;
+    for (u64 i = 0; i < 200; i++) {
+        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) {
+            smallest = v;
+        }
     }
-    SMITH_CHECK(smallest, <, 1000);
+    test::check_less(smallest, 1000);
 }
 C
 capture "$smith" build -DSAN=0
@@ -804,17 +1212,17 @@ fi
 if part misc; then
 # 5. SIGSEGV without the sanitizers is named.
 project "$work/plain"
-cat >tests/test_crash.c <<'C'
-#include <smith/test.h>
+cat >tests/test_crash.smith <<'C'
+import smith::test;
 
 void test_crash(void) {
-    volatile int *pointer = nullptr;
-    smith_test_note("about to crash");
+    volatile i32 *pointer = nullptr;
+    test::note("about to crash");
     *pointer = 1;
 }
 
 void test_survivor(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 C
 capture "$smith" build -DSAN=0
@@ -824,11 +1232,9 @@ expect_contains "crash: a SIGSEGV is named" "$out" "FAIL crash: killed by SIGSEG
 expect_contains "crash: ... with the note" "$out" "    note: about to crash"
 expect_contains "crash: ... and the other test passed" "$out" "1 passed, 1 failed"
 
-# 6. Finding the tests.
+# 6. Finding the tests: in .smith and in C files, side by side.
 project "$work/finding"
-cat >tests/test_a.c <<'C'
-#include <smith/test.h>
-
+cat >tests/test_a.smith <<'C'
 void test_same(void) {
 }
 C
@@ -840,25 +1246,21 @@ void test_same(void) {
 C
 capture "$smith" build
 expect "duplicate: a name defined twice fails the build" 1 "$rc"
-expect_contains "duplicate: ... naming both files" "$out$err" "smith: smith_tests: test_same is defined in tests/test_a.c and in tests/test_b.c"
+expect_contains "duplicate: ... naming both files, a .smith one and a C one" "$out$err" "smith: smith_tests: test_same is defined in tests/test_a.smith and in tests/test_b.c"
 rm tests/test_b.c
-cat >tests/test_b.c <<'C'
-#include <smith/test.h>
-
+cat >tests/test_b.smith <<'C'
 void test_odd (void) {
 }
 C
 capture "$smith" build
 expect "formatting: a test the scan missed fails to compile" 1 "$rc"
 expect_contains "formatting: ... with the missing prototype" "$out$err" "no previous prototype for function 'test_odd'"
-cat >tests/test_b.c <<'C'
-#include <smith/test.h>
-
-[[maybe_unused]] static int helper(int value) {
+cat >tests/test_b.smith <<'C'
+[[maybe_unused]] static i32 helper(i32 value) {
     return value + 1;
 }
 
-[[maybe_unused]] static int not_a_test(int value) {
+[[maybe_unused]] static i32 not_a_test(i32 value) {
     return helper(value);
 }
 C
@@ -866,21 +1268,22 @@ capture "$smith" build
 expect "no tests: a file without tests is fine" 0 "$rc"
 capture build/tests $iso --list
 expect "no tests: ... and adds nothing" "same" "$out"
-rm tests/test_a.c
+rm tests/test_a.smith
 capture "$smith" build
 expect "no tests: a project with none builds" 0 "$rc"
 capture build/tests $iso
 expect_contains "no tests: ... and runs nothing" "$out" "0 passed, 0 failed"
 expect "no tests: ... with status 0" 0 "$rc"
 
-# 7. Conversions: a lossy comparison is a -Wconversion error.
+# 7. Conversions: a lossy comparison in C is a -Wconversion error (the C names take the type in their name). In .smith the
+# types of the two arguments must agree, which is checked in section 4a.
 project "$work/lossy"
 cat >tests/test_lossy.c <<'C'
 #include <smith/test.h>
 
 void test_lossy(void) {
     int count = 3;
-    SMITH_CHECK(count, ==, 3.5);
+    smith_check_equal_i32(count, 3.5);
 }
 C
 capture "$smith" build
@@ -889,21 +1292,22 @@ expect_contains "conversion: ... with -Wconversion's message" "$out$err" "implic
 
 # 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects at all.
 project "$work/missing"
-cat >tests/test_x.c <<'C'
-#include <smith/test.h>
+cat >tests/test_x.smith <<'C'
+import smith::test;
 
 void test_x(void) {
+    test::check(true);
 }
 C
 cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    const char *const *flags = smith_list(b, "-std=gnu23", "-I", ".smith/include", nullptr);
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-I", ".smith/include", nullptr);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_x.c", nullptr),
+        .sources = smith_list(b, "tests/test_x.smith", nullptr),
         .objects = (const SmithObject *[]){&arena, nullptr},
         .flags = flags,
     };
@@ -921,50 +1325,59 @@ expect "objects: no .objects at all builds" 0 "$rc"
 capture build/tests
 expect_contains "objects: ... and the test runs without them" "$out" "1 passed, 0 failed"
 
-# 8b. Full size, SMITH_CHECK_SAME_BITS and .inputs.
+# 8b. Full size, check_same_bits and .inputs.
 project "$work/extras"
-cat >tests/test_extras.c <<'C'
-#include <smith/test.h>
-
-#include <math.h>
-#include <stdio.h>
-#include <string.h>
+cat >tests/test_extras.smith <<'C'
+import smith::math;
+import smith::test;
 
 void test_size(void) {
-    size_t count = smith_test_full() ? 1000 : 10;
-    smith_test_note("count %zu", count);
-    SMITH_CHECK(count, ==, 10);
+    usize count = test::full() ? 1000 : 10;
+    test::note("count %zu", count);
+    test::check_equal(count, 10);
 }
 
 void test_bits_equal(void) {
-    SMITH_CHECK_SAME_BITS(0.1 + 0.2, 0.30000000000000004);
-    SMITH_CHECK_SAME_BITS(-0.0, -0.0);
-    SMITH_CHECK_SAME_BITS(1.5f, 1.5f);
-    SMITH_CHECK_SAME_BITS(__builtin_nan(""), __builtin_nan(""));
-    SMITH_CHECK_SAME_BITS(-INFINITY, -INFINITY);
+    test::check_same_bits(0.1 + 0.2, 0.30000000000000004);
+    test::check_same_bits(-0.0, -0.0);
+    test::check_same_bits(1.5f, 1.5f);
+    f64 not_a_number = math::nan(f64);
+    test::check_same_bits(not_a_number, not_a_number);
+    f64 minus_infinity = -math::infinity(f64);
+    test::check_same_bits(minus_infinity, minus_infinity);
 }
 
 void test_bits_zero(void) {
-    double zero = 0.0;
-    SMITH_CHECK_SAME_BITS(zero, -0.0);
+    f64 zero = 0.0;
+    test::check_same_bits(zero, -0.0);
 }
 
 void test_bits_nan(void) {
-    SMITH_CHECK_SAME_BITS(__builtin_nan("1"), __builtin_nan("2"));
+    f64 first = __builtin_nan("1");
+    f64 second = __builtin_nan("2");
+    test::check_same_bits(first, second);
 }
 
 void test_bits_float(void) {
-    SMITH_CHECK_SAME_BITS(1.0f, 1.0000001f);
+    f32 one = 1.0f;
+    f32 next = 1.0000001f;
+    test::check_same_bits(one, next);
 }
+C
+cat >tests/test_extras_c.c <<'C'
+#include <smith/test.h>
+
+#include <stdio.h>
+#include <string.h>
 
 void test_reads_input(void) {
     FILE *file = fopen("build/data.txt", "r");
-    SMITH_CHECK(file != nullptr);
+    smith_check(file != nullptr);
     char text[16] = "";
-    SMITH_CHECK(fgets(text, sizeof text, file) != nullptr);
+    smith_check(fgets(text, sizeof text, file) != nullptr);
     fclose(file);
     smith_test_note("data %s", text);
-    SMITH_CHECK(strcmp(text, "one\n"), ==, 0);
+    smith_check_equal_i32(strcmp(text, "one\n"), 0);
 }
 C
 cat >gen.sh <<'S'
@@ -974,7 +1387,7 @@ cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    const char *const *flags = smith_list(b, "-std=gnu23", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
+    const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-I", ".smith/include", nullptr);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
     SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
@@ -987,7 +1400,7 @@ void build(SmithBuild *b) {
     };
     smith_step(b, &data);
     SmithTests tests = {
-        .sources = smith_list(b, "tests/test_extras.c", nullptr),
+        .sources = smith_list(b, "tests/test_extras.smith", "tests/test_extras_c.c", nullptr),
         .objects = (const SmithObject *[]){&arena, &random, nullptr},
         .flags = flags,
         .inputs = data.outputs,
@@ -998,6 +1411,7 @@ void build(SmithBuild *b) {
 C
 capture "$smith" build
 expect "extras: the runner builds" 0 "$rc"
+if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
 run_extras() { # runner arguments
     "$work/extras/build/tests" $iso "$@" 2>&1 | plain
 }
@@ -1010,14 +1424,17 @@ capture "$smith" test $iso --test size
 expect_contains "full: ... and without it the test sees false" "$out$err" "1 passed, 0 failed"
 capture build/tests $iso --test bits_equal
 expect_contains "bits: equal bits pass, even a NaN and -0" "$out" "1 passed, 0 failed"
-line=$(line_of tests/test_extras.c 'SMITH_CHECK_SAME_BITS(zero, -0.0);')
-expect "bits: 0.0 against -0.0 fails, with both in hex" "FAIL bits_zero
-  tests/test_extras.c:$line
-      SMITH_CHECK_SAME_BITS(zero, -0.0);
-    zero = 0 [0x0p+0]     (double)
-    -0.0 = -0 [-0x0p+0]   (double)
+if [ -n "$have_symbolizer" ]; then
+    line=$(line_of tests/test_extras.smith 'test::check_same_bits(zero, -0.0);')
+    expect_report "bits: 0.0 against -0.0 fails, with both in hex" "FAIL bits_zero
+  check failed at tests/test_extras.smith:$line
+     $line |     test::check_same_bits(zero, -0.0);
+           zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)
+  called from
+    tests/test_extras.smith:$line test_bits_zero
 
-0 passed, 1 failed" "$(run_extras --test bits_zero)"
+0 passed, 1 failed" --test bits_zero
+fi
 capture build/tests $iso --test bits_nan
 expect_contains "bits: two NaN payloads fail" "$out" "FAIL bits_nan"
 expect_contains "bits: ... and the first NaN's bits show" "$out" "nan [0x7ff8000000000001]"
@@ -1031,6 +1448,7 @@ echo two >gen.sh.new && printf 'echo two >"$1"\n' >gen.sh && rm gen.sh.new
 capture "$smith" test $iso --test reads_input
 expect "inputs: touching the generator reruns the tests, which see the new file" 1 "$rc"
 expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
+expect_contains "inputs: ... as the note shows" "$out$err" "note: data two"
 
 fi
 
@@ -1039,196 +1457,203 @@ if part workers; then
 # prints the forks the run made, which tells the two apart. A group is chosen with --test <prefix> and runs on one worker
 # (--jobs 1); its tests run in the order written.
 project "$work/workers"
-cat >tests/test_workers.c <<'C'
-#include <smith/test.h>
-
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+cat >tests/test_workers.smith <<'C'
+import <assert.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::arena;
+import smith::random;
+import smith::test;
 
 void test_crash_1_before(void) {
-    SMITH_CHECK(1, ==, 1);
+    test::check_equal(1, 1);
 }
 
 void test_crash_2_dies(void) {
-    smith_test_note("about to abort");
-    abort();
+    test::note("about to abort");
+    c::abort();
 }
 
 void test_crash_3_after(void) {
-    SMITH_CHECK(2, ==, 2);
+    test::check_equal(2, 2);
 }
 
 void test_crash_4_after(void) {
-    SMITH_CHECK(3, ==, 3);
+    test::check_equal(3, 3);
 }
 
 void test_late_1_before(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_late_2_sleeps(void) {
-    sleep(30);
+    c::sleep(30);
 }
 
 void test_late_3_after(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_report_1_before(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_report_2_overflows(void) {
-    char *bytes = malloc(8);
-    volatile size_t index = 8;
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
     bytes[index] = 'x';
-    free(bytes);
+    c::free(bytes);
 }
 
 void test_report_3_prints_one(void) {
-    printf("AddressSanitizer: a test that only says so\n");
+    c::printf("AddressSanitizer: a test that only says so\n");
 }
 
 void test_report_4_after(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_aborts_1_assert(void) {
-    smith_test_expect_abort();
-    assert(false);
+    test::expect_abort();
+    c::assert(false);
 }
 
 void test_aborts_2_quiet(void) {
-    smith_test_expect_abort();
-    printf("hidden-by-the-check\n");
-    abort();
+    test::expect_abort();
+    c::printf("hidden-by-the-check\n");
+    c::abort();
 }
 
 void test_aborts_3_reads(void) {
-    char *bytes = malloc(8);
-    volatile size_t index = 8;
-    smith_test_expect_abort();
-    printf("before the read\n");
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    test::expect_abort();
+    c::printf("before the read\n");
     (void)bytes[index];
-    free(bytes);
+    c::free(bytes);
 }
 
 void test_aborts_4_after(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 
 void test_unwind_1_fails(void) {
-    SMITH_CHECK(1, ==, 2);
+    test::check_equal(1, 2);
 }
 
 void test_unwind_2_fails(void) {
-    SMITH_CHECK(3, ==, 4);
+    test::check_equal(3, 4);
 }
 
 void test_unwind_3_passes(void) {
-    SMITH_CHECK(true);
+    test::check(true);
 }
 
 void test_out_1_fails(void) {
-    printf("from-1\n");
-    fprintf(stderr, "err-from-1\n");
-    SMITH_CHECK(1, ==, 2);
+    c::printf("from-1\n");
+    c::fprintf(c::stderr, "err-from-1\n");
+    test::check_equal(1, 2);
 }
 
 void test_out_2_passes(void) {
-    printf("from-2\n");
-    fprintf(stderr, "err-from-2\n");
+    c::printf("from-2\n");
+    c::fprintf(c::stderr, "err-from-2\n");
 }
 
 void test_out_3_fails(void) {
-    printf("from-3\n");
-    SMITH_CHECK(1, ==, 2);
+    c::printf("from-3\n");
+    test::check_equal(1, 2);
 }
 
 void test_out_4_buffers(void) {
     static char buffer[256];
-    setvbuf(stdout, buffer, _IOFBF, sizeof buffer);
-    printf("from-4\n"); // still in the test's own buffer when the test returns
+    c::setvbuf(c::stdout, buffer, c::_IOFBF, sizeof buffer);
+    c::printf("from-4\n"); // still in the test's own buffer when the test returns
 }
 
 void test_out_5_fails(void) {
-    SMITH_CHECK(1, ==, 2);
+    test::check_equal(1, 2);
 }
 
-static int dirty_death;
-static int dirty_failed;
+static i32 dirty_death;
+static i32 dirty_failed;
 
 void test_dirty_1_death(void) {
     dirty_death = 1;
-    smith_test_expect_abort(); // stands for the program ending: the worker ends with it
-    abort();
+    test::expect_abort(); // stands for the program ending: the worker ends with it
+    c::abort();
 }
 
 void test_dirty_2_fresh(void) {
-    SMITH_CHECK(dirty_death, ==, 0);
+    test::check_equal(dirty_death, 0);
 }
 
 void test_dirty_3_fails(void) {
     dirty_failed = 1;
-    SMITH_CHECK(1, ==, 2); // unwinds out of whatever it was doing: the worker ends
+    test::check_equal(1, 2); // unwinds out of whatever it was doing: the worker ends
 }
 
 void test_dirty_4_fresh(void) {
-    SMITH_CHECK(dirty_failed, ==, 0);
+    test::check_equal(dirty_failed, 0);
 }
 
 // A failure that depends on state: the first run in a process fails only for a large x, a later one always fails. Shrinking
 // reruns the key in one worker, so its smaller cases fail on the state its earlier attempts left, not on their own.
-static int leaky_runs;
+static i32 leaky_runs;
 
-void test_shrink_leaky(SmithKey key) {
-    long long x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
+void test_shrink_leaky(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     leaky_runs += 1;
     bool fails = leaky_runs == 1 ? x >= 500 : true;
-    SMITH_CHECK(fails, ==, false);
+    test::check_equal(fails, false);
 }
 
 static void *fresh_base;
 
 void test_fresh_1_sets(void) {
-    smith_test_note("note from 1");
-    SmithArena arena = smith_test_arena(4096);
-    unsigned char *bytes = smith_arena_push(&arena, 100, 8);
+    test::note("note from 1");
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_array(&memory, u8, 100);
     fresh_base = bytes;
-    for (size_t i = 0; i < 100; i++)
+    for (usize i = 0; i < 100; i++) {
         bytes[i] = 0xAB;
+    }
 }
 
 void test_fresh_2_sees(void) {
-    SmithArena arena = smith_test_arena(4096);
-    unsigned char *bytes = smith_arena_push(&arena, 100, 8);
-    if (fresh_base != nullptr) SMITH_CHECK(bytes, ==, fresh_base); // given back: the same memory
-    for (size_t i = 0; i < 100; i++)
-        SMITH_CHECK(bytes[i], ==, 0);
-    SMITH_CHECK(1, ==, 2); // fails to show the note it was given: none
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_array(&memory, u8, 100);
+    if (fresh_base != nullptr) {
+        test::check_equal((void *)bytes, fresh_base); // given back: the same memory
+    }
+    for (usize i = 0; i < 100; i++) {
+        test::check_equal(bytes[i], 0);
+    }
+    test::check_equal(1, 2); // fails to show the note it was given: none
 }
 
 void test_fresh_3_big(void) {
-    SmithArena arena = smith_test_arena(200U << 20);
-    SMITH_CHECK(smith_arena_push(&arena, 8, 8) != nullptr);
+    arena::Arena memory = test::memory(200U << 20);
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
 }
 
 void test_fresh_4_big(void) {
-    SmithArena arena = smith_test_arena(200U << 20); // out of capacity if the last test's was not given back
-    SMITH_CHECK(smith_arena_push(&arena, 8, 8) != nullptr);
+    arena::Arena memory = test::memory(200U << 20); // out of capacity if the last test's was not given back
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
 }
 
-static int ran;
+static i32 ran;
 
 void test_order_a(void) {
     ran = 1;
 }
 
 void test_order_b(void) {
-    SMITH_CHECK(ran, ==, 1); // only if order_a ran first, in this process
+    test::check_equal(ran, 1); // only if order_a ran first, in this process
 }
 C
 capture "$smith" build
@@ -1323,9 +1748,9 @@ else
         case $out in *"FAIL order_b"*) found=$number; break ;; esac
     done
     expect "shuffle: some seed runs order_b before order_a, and the test fails" yes "$([ -n "$found" ] && echo yes)"
-    first=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain)
-    second=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain)
-    expect "shuffle: the same seed gives the same results" "$first" "$second"
+    first=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)')
+    second=$(build/tests --test order_ --jobs 1 --shuffle "${found:-1}" --verbose 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)')
+    expect "shuffle: the same seed gives the same results (the trace's addresses differ per run)" "$first" "$second"
     expect_contains "shuffle: ... reported in table order" "$first" "PASS order_a
 FAIL order_b"
     capture "$smith" test --test order_ --jobs 1 --shuffle "${found:-1}"
@@ -1335,12 +1760,11 @@ fi
 # Many jobs under a low descriptor limit: every job's worker holds two descriptors in the runner, which raises the limit.
 project "$work/many"
 {
-    echo '#include <smith/test.h>'
-    echo '#include <unistd.h>'
+    echo 'import <unistd.h>;'
     for number in $(seq 1 90); do
-        printf 'void test_many_%s(void) {\n    usleep(200000);\n}\n' "$number"
+        printf 'void test_many_%s(void) {\n    c::usleep(200000);\n}\n' "$number"
     done
-} >tests/test_many.c
+} >tests/test_many.smith
 capture "$smith" build -DSAN=0
 expect "many: the runner builds" 0 "$rc"
 capture sh -c "ulimit -S -n 100; build/tests $iso --jobs 90"
@@ -1354,7 +1778,7 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     capture "$smith" build
     # The sample is not what smith-effects tests; its checks are off.
     printf 'Checks: "-*"\n' >.clang-tidy
-    capture "$smith" lsp --check=tests/test_checks.c
+    capture "$smith" lsp --check=tests/test_checks.smith
     errors=$(printf '%s\n%s\n' "$out" "$err" | grep -c 'E\[')
     expect "clangd: no errors in a test file" 0 "$errors"
 fi
@@ -1365,49 +1789,49 @@ if part reports; then
 # The plain-function checks print no file and line themselves, so the runner on its own prints the raw trace; smith
 # symbolize (and smith test, which pipes the runner through it) reads the source.
 project "$work/reports"
-cat >tests/test_reports.c <<'C'
-#include <smith/test.h>
+cat >tests/test_reports.smith <<'C'
+import <assert.h>;
+import smith::random;
+import smith::test;
 
-#include <assert.h>
-
-[[gnu::always_inline]] static inline void check_positive(int value) {
-    smith_check(value > 0);
+[[gnu::always_inline]] static inline void check_positive(i32 value) {
+    test::check(value > 0);
 }
 
 void test_passes(void) {
-    smith_check(true);
-    smith_check_equal_u64(4, 4);
-    smith_check_equal_f64(0.5, 0.5);
-    smith_check_near_f32(1.0F, 1.0001F, 0.001F);
-    smith_check_same_bits_f64(-0.0, -0.0);
+    test::check(true);
+    test::check_equal(4, 4);
+    test::check_equal(0.5, 0.5);
+    test::check_near(1.0f, 1.0001f, 0.001f);
+    test::check_same_bits(-0.0, -0.0);
 }
 
 void test_check_fails(void) {
-    int moves = 0;
-    smith_check(moves > 0);
+    i32 moves = 0;
+    test::check(moves > 0);
 }
 
 void test_equal_fails(void) {
-    uint64_t count = 3;
-    uint64_t expected = 4;
-    smith_check_equal_u64(count, expected);
+    u64 count = 3;
+    u64 expected = 4;
+    test::check_equal(count, expected);
 }
 
 void test_near_fails(void) {
-    smith_check_near_f64(1.0, 1.5, 0.1);
+    test::check_near(1.0, 1.5, 0.1);
 }
 
 void test_same_bits_fails(void) {
-    smith_check_same_bits_f32(0.0F, -0.0F);
+    test::check_same_bits(0.0f, -0.0f);
 }
 
 void test_assert_fails(void) {
-    int moves = 1;
-    assert(moves == 2);
+    i32 moves = 1;
+    c::assert(moves == 2);
 }
 
 void test_segfault(void) {
-    volatile int *nothing = nullptr;
+    volatile i32 *nothing = nullptr;
     *nothing = 7;
 }
 
@@ -1415,14 +1839,15 @@ void test_inlined(void) {
     check_positive(-1);
 }
 
-void test_macro_fails(void) {
-    SMITH_CHECK(2 + 2, ==, 5);
+void test_ordering_fails(void) {
+    i32 total = 2 + 2;
+    test::check_less_equal(total, 3);
 }
 
-void test_prop_function(SmithKey key) {
-    int64_t x = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = 1000});
-    smith_test_note("x = %lld", (long long)x);
-    smith_check(x < 500);
+void test_prop_function(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::note("x = %lld", x);
+    test::check(x < 500);
 }
 C
 capture "$smith" build -DSAN=0
@@ -1430,7 +1855,7 @@ expect "reports: the runner builds" 0 "$rc"
 capture build/tests $iso --test passes --verbose
 expect_contains "reports: the plain-function checks pass" "$out" "PASS passes"
 
-# Without smith in the pipe, a failure prints the trace and the values, and a macro keeps its old report.
+# Without smith in the pipe, a failure prints the trace and the values.
 capture build/tests $iso --test check_fails
 expect_contains "raw: a failed smith_check prints a trace block" "$out" "  smith-trace begin check failed"
 expect_contains "raw: ... with frames" "$out" "  smith-trace frame 0x"
@@ -1438,19 +1863,14 @@ expect_contains "raw: ... and the image's UUID" "$out" "  smith-trace image "
 capture build/tests $iso --test equal_fails
 expect_contains "raw: a failed check_equal shows a" "$out" "    a = 3   (u64)"
 expect_contains "raw: ... and b" "$out" "    b = 4   (u64)"
-line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
-expect "raw: a macro keeps the report it had" "FAIL macro_fails
-  tests/test_reports.c:$line
-      SMITH_CHECK(2 + 2, ==, 5);
-    2 + 2 = 4   (int)
-    5           (int)
-
-0 passed, 1 failed" "$(build/tests $iso --test macro_fails 2>&1 | plain)"
+capture build/tests $iso --test ordering_fails
+expect_contains "raw: a failed ordering check shows a" "$out" "    a = 4   (i32)"
+expect_contains "raw: ... and b" "$out" "    b = 3   (i32)"
 capture build/tests $iso --test prop_function --shrink-seconds 3600
 expect_contains "raw: a property test's failed function check shrinks" "$out" "shrunk in"
 expect_contains "raw: ... to the smallest case" "$out" "    note: x = 500"
 capture build/tests $iso --test near_fails
-expect_contains "raw: a failed check_near shows the distance" "$out" "    distance  = 0.5 [0x1p-1]"
+expect_contains "raw: a failed check_near shows the distance" "$out" "= 0.5 [0x1p-1]"
 capture build/tests $iso --test same_bits_fails
 expect_contains "raw: a failed check_same_bits shows the bits" "$out" "    a = 0 [0x0p+0]"
 expect "reports: --list sees the new tests" yes "$(build/tests --list | grep -q segfault && echo yes)"
@@ -1460,51 +1880,51 @@ if "$smith" symbolize --available; then
         capture "$smith" test $iso -DSAN=0 --test "$1"
         printf '%s\n%s\n' "$out" "$err"
     }
-    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    line=$(line_of tests/test_reports.smith 'test::check(moves > 0);')
     report=$(sym check_fails)
-    expect_contains "report: a failed smith_check names the line" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... shows the source line" "$report" "$line |     smith_check(moves > 0);"
+    expect_contains "report: a failed test::check names the line" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... shows the source line" "$report" "$line |     test::check(moves > 0);"
     expect_contains "report: ... and the call chain" "$report" "  called from"
-    expect_contains "report: ... whose first frame is the test" "$report" "tests/test_reports.c:$line"
+    expect_contains "report: ... whose first frame is the test" "$report" "tests/test_reports.smith:$line"
     expect_contains "report: ... and whose last is the runner" "$report" "smith_test_execute"
-    expect_lacks "report: ... without smith's own check machinery" "$report" "smith_check "
+    expect_lacks "report: ... without the check machinery of smith::test" "$report" "smith::test::"
     expect_lacks "report: ... or the raw trace" "$report" "smith-trace"
 
-    line=$(line_of tests/test_reports.c 'smith_check_equal_u64(count, expected);')
+    line=$(line_of tests/test_reports.smith 'test::check_equal(count, expected);')
     report=$(sym equal_fails)
-    expect_contains "report: a failed check_equal names the line" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... and prints both values under the source line, named by their text" "$report" "$line |     smith_check_equal_u64(count, expected);
+    expect_contains "report: a failed check_equal names the line" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... and prints both values under the source line, named by their text" "$report" "$line |     test::check_equal(count, expected);
             count = 3, expected = 4   (u64)
   called from"
 
-    line=$(line_of tests/test_reports.c 'assert(moves == 2);')
+    line=$(line_of tests/test_reports.smith 'c::assert(moves == 2);')
     report=$(sym assert_fails)
-    expect_contains "report: an assert names the line" "$report" "  aborted at tests/test_reports.c:$line"
-    expect_contains "report: ... shows it" "$report" "$line |     assert(moves == 2);"
+    expect_contains "report: an assert names the line" "$report" "  aborted at tests/test_reports.smith:$line"
+    expect_contains "report: ... shows it" "$report" "$line |     c::assert(moves == 2);"
     expect_contains "report: ... and keeps assert's own message" "$report" "Assertion failed: (moves == 2)"
     expect_lacks "report: ... without libc's abort path" "$report" "pthread_kill"
 
-    line=$(line_of tests/test_reports.c '*nothing = 7;')
+    line=$(line_of tests/test_reports.smith '*nothing = 7;')
     report=$(sym segfault)
     expect_contains "report: a segfault names the line" "$report" "FAIL segfault: killed by SIGSEGV
-  crashed at tests/test_reports.c:$line"
+  crashed at tests/test_reports.smith:$line"
     expect_contains "report: ... shows it" "$report" "$line |     *nothing = 7;"
 
-    line=$(line_of tests/test_reports.c 'smith_check(value > 0);')
-    caller=$(line_of tests/test_reports.c 'check_positive(-1);')
+    line=$(line_of tests/test_reports.smith 'test::check(value > 0);')
+    caller=$(line_of tests/test_reports.smith 'check_positive(-1);')
     report=$(sym inlined)
-    expect_contains "report: an inlined check names the inlined line" "$report" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: an inlined check names the inlined line" "$report" "  check failed at tests/test_reports.smith:$line"
     expect_contains "report: ... and the chain has the inlined function" "$report" "check_positive"
-    expect_contains "report: ... and the function it was inlined into" "$report" "tests/test_reports.c:$caller"
+    expect_contains "report: ... and the function it was inlined into" "$report" "tests/test_reports.smith:$caller"
 
-    line=$(line_of tests/test_reports.c 'SMITH_CHECK(2 + 2, ==, 5);')
-    report=$(sym macro_fails)
-    expect_contains "report: a macro's failure has the same report" "$report" "  check failed at tests/test_reports.c:$line"
-    expect_contains "report: ... and its values" "$report" "    2 + 2 = 4   (int)"
+    line=$(line_of tests/test_reports.smith 'test::check_less_equal(total, 3);')
+    report=$(sym ordering_fails)
+    expect_contains "report: an ordering check's failure has the same report" "$report" "  check failed at tests/test_reports.smith:$line"
+    expect_contains "report: ... and its values" "$report" "    total = 4, 3   (i32)"
 
     # Objective-C frames and methods.
     project "$work/objc"
-    sed -e 's|tests/test_\*.c|tests/test_*.m|' -e 's|\.link_flags = .*|.link_flags = smith_list(b, "-framework", "Foundation", nullptr),|' build.c >build.c.new && mv build.c.new build.c
+    sed -e 's|tests/test_\*.c", "tests/test_\*.smith|tests/test_*.m|' -e 's|\.link_flags = .*|.link_flags = smith_list(b, "-framework", "Foundation", nullptr),|' build.c >build.c.new && mv build.c.new build.c
     cat >tests/test_objc.m <<'M'
 #import <Foundation/Foundation.h>
 
@@ -1534,34 +1954,34 @@ M
     cd "$work/reports" || exit 1
     # The Apple linker, in place of lld: the same debug map.
     rm -f build/tests
-    line=$(line_of tests/test_reports.c 'smith_check(moves > 0);')
+    line=$(line_of tests/test_reports.smith 'test::check(moves > 0);')
     capture env SMITH_LINKER=/usr/bin/ld "$smith" test $iso -DSAN=0 --test check_fails
-    expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.c:$line"
+    expect_contains "report: a program linked by Apple's ld has lines too" "$out$err" "  check failed at tests/test_reports.smith:$line"
     rm -f build/tests
 
     # A trace saved from a run is symbolized later, given the program.
     capture "$smith" build -DSAN=0
     capture sh -c "build/tests $iso --test check_fails --trace >'$work/trace.txt' 2>&1"
     saved=$("$smith" symbolize "$work/trace.txt")
-    expect_contains "symbolize: a saved trace becomes a report" "$saved" "  check failed at tests/test_reports.c:$line"
+    expect_contains "symbolize: a saved trace becomes a report" "$saved" "  check failed at tests/test_reports.smith:$line"
     expect_contains "symbolize: ... from standard input too" "$("$smith" symbolize <"$work/trace.txt")" "called from"
     cp build/tests "$work/moved_tests"
     mv build/tests build/tests_gone
     capture "$smith" symbolize "$work/trace.txt"
     expect_contains "symbolize: a program that is gone is said so" "$out" "note: cannot read"
     capture "$smith" symbolize --binary "$work/moved_tests" "$work/trace.txt"
-    expect_contains "symbolize: --binary names it, and its UUID is checked" "$out" "  check failed at tests/test_reports.c:$line"
+    expect_contains "symbolize: --binary names it, and its UUID is checked" "$out" "  check failed at tests/test_reports.smith:$line"
     mv build/tests_gone build/tests
 
     # A source file newer than the program may have changed since: the report says so.
     sleep 1
-    touch tests/test_reports.c
+    touch tests/test_reports.smith
     capture sh -c "build/tests $iso --test check_fails --trace 2>&1 | '$smith' symbolize"
-    expect_contains "newer: a source newer than the program is noted" "$out" "note: tests/test_reports.c is newer than the program, so line $line may have changed"
+    expect_contains "newer: a source newer than the program is noted" "$out" "note: tests/test_reports.smith is newer than the program, so line $line may have changed"
 
     # A trace of another program: the UUID differs, and no line is made up.
-    printf '\n' >>tests/test_reports.c
-    printf 'void test_extra(void) {\n    smith_check(true);\n}\n' >>tests/test_reports.c
+    printf '\n' >>tests/test_reports.smith
+    printf 'void test_extra(void) {\n    test::check(true);\n}\n' >>tests/test_reports.smith
     capture "$smith" build -DSAN=0
     capture "$smith" symbolize "$work/trace.txt"
     expect_contains "symbolize: a program that is not the one that ran is noted" "$out" "is not the program that ran"
@@ -1572,7 +1992,7 @@ M
     ln -s "$smith" "$work/llvm-symbolizer"
     capture sh -c "printf 'CODE \"%s:arm64\" 0x%s\n' '$PWD/build/tests' '$address' | '$work/llvm-symbolizer' --demangle --inlines"
     expect_contains "protocol: a CODE request names the function" "$out" "test_check_fails"
-    expect_contains "protocol: ... and the file, line and column" "$out" "tests/test_reports.c:"
+    expect_contains "protocol: ... and the file, line and column" "$out" "tests/test_reports.smith:"
     capture sh -c "printf '\"%s\" 0x1\n' '/nonexistent' | '$work/llvm-symbolizer'"
     expect "protocol: an unknown module gives ?? and an empty line" "??
 ??:0:0
@@ -1681,7 +2101,7 @@ flags="$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 
 for standard in gnu2y gnu23; do
     for library in test random arena trace; do
         source=$repo/lib/$library.c
-        case $library in random | arena) source=$repo/lib/smith/$library.smith ;; esac # .smith modules
+        case $library in random | arena | test) source=$repo/lib/smith/$library.smith ;; esac # .smith modules
         # shellcheck disable=SC2086
         capture "$smith" cc -std=$standard $flags -I "$repo/include" -c "$source" -o "$work/$library.o"
         expect "flags: ${source#"$repo"/} compiles clean under $standard with the conventions' warnings" 0 "$rc"
@@ -1695,51 +2115,50 @@ if part inprocess; then
 # 12. --in-process: every test in the runner's own process, no fork, so a debugger that does not follow forks (lldb on
 # macOS) stops inside a test. smith dbg is in the full smith only.
 project "$work/inprocess"
-cat >tests/test_inproc.c <<'C'
-#include <smith/test.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+cat >tests/test_inproc.smith <<'C'
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::test;
 
 void test_inproc_pass(void) {
-    printf("in-process output\n");
-    SMITH_CHECK(1 + 1, ==, 2);
+    c::printf("in-process output\n");
+    test::check_equal(1 + 1, 2);
 }
 
 void test_inproc_fail(void) {
-    int total = 40;
+    i32 total = 40;
     total += 2;
-    SMITH_CHECK(total, ==, 41);
+    test::check_equal(total, 41);
 }
 
 void test_inproc_local(void) {
-    int answer = 41;
+    i32 answer = 41;
     answer += 1;
-    SMITH_CHECK(answer, ==, 42);
+    test::check_equal(answer, 42);
 }
 
 void test_inproc_pid(void) {
-    printf("pid %d\n", (int)getpid());
+    c::printf("pid %d\n", (i32)c::getpid());
 }
 
 void test_inabort_abort(void) {
-    smith_test_expect_abort();
-    abort();
+    test::expect_abort();
+    c::abort();
 }
 
 void test_inabort_trap(void) {
-    smith_test_expect_abort();
+    test::expect_abort();
     __builtin_trap();
 }
 
 void test_inabort_returns(void) {
-    smith_test_expect_abort();
+    test::expect_abort();
 }
 
 void test_inabort_check_after(void) {
-    smith_test_expect_abort();
-    SMITH_CHECK(1, ==, 2);
+    test::expect_abort();
+    test::check_equal(1, 2);
 }
 C
 capture "$smith" build
@@ -1761,10 +2180,10 @@ expect_contains "in-process: no fork" "$out" "forks: 0"
 capture build/tests --test inproc_pass --stats
 expect_contains "in-process: without the flag the runner forks a worker" "$out" "forks: 1"
 if "$smith" dbg --version >/dev/null 2>&1; then
-    line=$(line_of tests/test_inproc.c 'SMITH_CHECK(answer, ==, 42);')
-    capture "$smith" dbg -b -o "b test_inproc.c:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
+    line=$(line_of tests/test_inproc.smith 'test::check_equal(answer, 42);')
+    capture "$smith" dbg -b -o "b test_inproc.smith:$line" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local --in-process
     expect_contains "in-process: smith dbg stops at a breakpoint inside a test" "$out" "stop reason = breakpoint 1.1"
-    expect_contains "in-process: ... and shows its local" "$out" "(int) answer = 42"
+    expect_contains "in-process: ... and shows its local" "$out" "(i32) answer = 42"
 fi
 fi
 
@@ -1803,51 +2222,64 @@ export u64 area(u64 width, u64 height) {
 C
     cat >src/smith/test/helpers.smith <<'C'
 module smith::test::helpers;
-import <smith/test.h>;
+import smith::test;
 
 // A check of a library written as a module under smith::test: its frames are machinery, never the failing line.
 export void require(bool condition) {
-    c::smith_check(condition);
+    test::check(condition);
 }
 C
     cat >tests/test_plain.smith <<'C'
-import <smith/test.h>;
+import smith::random;
+import smith::test;
 
 void test_plain_works(void) {
-    c::smith_check_equal_u64(2 + 2, 4);
+    test::check_equal(2 + 2, 4);
 }
 
 void test_plain_fails(void) {
     u64 n = 3;
-    c::smith_check_equal_u64(n, 4);
+    test::check_equal(n, 4);
 }
 
-void test_plain_property(c::SmithKey key) {
-    c::smith_check(c::smith_key_bits(key, 0) == c::smith_key_bits(key, 0));
+void test_plain_property(random::Key key) {
+    test::check_equal(random::key_bits(key, 0), random::key_bits(key, 0));
+}
+C
+    cat >tests/test_c_header.smith <<'C'
+import <smith/test.h>;
+
+// The C header of the library imported as a C header: the names under c:: and the C spelling of the key are found too.
+void test_c_header_key(c::SmithKey key) {
+    c::smith_check_equal_u64(c::smith_key_bits(key, 0), c::smith_key_bits(key, 0));
 }
 C
     cat >tests/geometry/box_test.smith <<'C'
 module geometry::box_test;
-import <smith/test.h>;
 import geometry::box;
+import smith::random;
+import smith::test;
 import smith::test::helpers as helpers;
 
 export void test_area(void) {
-    c::smith_check_equal_u64(box::area(2, 3), 6);
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, 6); // the named instance: the header pass of a module cannot lower a generic call
 }
 
 export void test_area_fails(void) {
     u64 expected = 7;
-    c::smith_check_equal_u64(box::area(2, 3), expected);
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, expected);
 }
 
 export void test_area_through_a_library(void) {
     helpers::require(box::area(2, 3) == 7);
 }
 
-export void test_area_property(c::SmithKey key) {
-    u64 side = c::smith_key_bits(key, 0) % 1000;
-    c::smith_check_equal_u64(box::area(side, 1), side);
+export void test_area_property(random::Key key) {
+    u64 side = random::key_bits(key, 0) % 1000;
+    u64 area = box::area(side, 1);
+    test::check_equal_u64(area, side);
 }
 
 // Not exported: private to the module, nothing can call it, so it is not a test.
@@ -1862,6 +2294,7 @@ C
 geometry::box_test::area_fails
 geometry::box_test::area_through_a_library
 geometry::box_test::area_property
+c_header_key
 plain_works
 plain_fails
 plain_property" "$out"
@@ -1891,19 +2324,169 @@ plain_property" "$out"
 
     if "$smith" symbolize --available; then
         capture "$smith" test --test geometry::box_test::area_fails
-        line=$(line_of tests/geometry/box_test.smith 'c::smith_check_equal_u64(box::area(2, 3), expected);')
+        line=$(line_of tests/geometry/box_test.smith 'test::check_equal_u64(area, expected);')
         expect_contains "smith tests: a failing check names the .smith line" "$out" "check failed at tests/geometry/box_test.smith:$line"
-        expect_contains "smith tests: ... its source" "$out" "c::smith_check_equal_u64(box::area(2, 3), expected);"
-        expect_contains "smith tests: ... the function as written, in the chain" "$out" "tests/geometry/box_test.smith:$line     geometry::box_test::test_area_fails"
+        expect_contains "smith tests: ... its source" "$out" "test::check_equal_u64(area, expected);"
+        expect_contains "smith tests: ... the function as written, in the chain (the columns follow the longest path)" "$(printf '%s' "$out" | tr -s ' ')" "tests/geometry/box_test.smith:$line geometry::box_test::test_area_fails"
         capture "$smith" test --test geometry::box_test::area_through_a_library
         line=$(line_of tests/geometry/box_test.smith 'helpers::require(box::area(2, 3) == 7);')
         expect_contains "smith tests: a frame of the module smith::test is not the failing line" "$out" "check failed at tests/geometry/box_test.smith:$line"
         expect_lacks "smith tests: ... nor in the chain" "$out" "smith::test::"
         capture "$smith" test --test plain_fails
-        line=$(line_of tests/test_plain.smith 'c::smith_check_equal_u64(n, 4);')
-        expect_contains "smith tests: a test of a file with no module is named as written" "$out" "tests/test_plain.smith:$line      test_plain_fails"
+        line=$(line_of tests/test_plain.smith 'test::check_equal(n, 4);')
+        expect_contains "smith tests: a test of a file with no module is named as written" "$(printf '%s' "$out" | tr -s ' ')" "tests/test_plain.smith:$line test_plain_fails"
         capture "$smith" test --test geometry::box_test::test_area_property
         expect_contains "smith tests: smith test passes the written name through" "$out" "1 passed, 0 failed"
+    fi
+
+    # 14. A test that takes an io: `void test_x(c::SmithIo *io)` gets a real io made for it alone, on the run's seed, with a
+    # scratch folder of its own (also $TMPDIR), removed when the test passes and kept, with its path printed, when it fails.
+    # The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks below read.
+    project "$work/iotests"
+    mkdir "$work/probe" && probe_folder=$work/probe
+    echo hello >tests/fixture.txt
+    cat >tests/test_io.smith <<'C'
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+import smith::arena;
+import smith::test;
+
+// Writes text to $SMITH_TEST_PROBE/name, where the script that runs the tests reads it.
+static void probe(const char *name, const char *text) {
+    const char *folder = c::getenv("SMITH_TEST_PROBE");
+    test::check_not_equal(folder, nullptr);
+    char path[1024];
+    c::snprintf(path, sizeof path, "%s/%s", folder, name);
+    c::FILE *file = c::fopen(path, "w");
+    test::check_not_equal(file, nullptr);
+    c::fputs(text, file);
+    c::fclose(file);
+}
+
+static bool exists(const char *path) {
+    return c::access(path, c::F_OK) == 0;
+}
+
+void test_io_real(c::SmithIo *io) {
+    const char *scratch = test::scratch(io);
+    test::check_not_equal(scratch, nullptr);
+    struct c::stat info;
+    test::check_equal(c::stat(scratch, &info), 0);
+    test::check(c::S_ISDIR(info.st_mode));
+    const char *tmp = c::getenv("TMPDIR");
+    test::check_not_equal(tmp, nullptr);
+    test::check_equal(c::strcmp(tmp, scratch), 0);
+    u64 *cell = arena::push(&io->arena, u64); // the io's arena is real memory
+    test::check_not_equal(cell, nullptr);
+    char marker[1024];
+    c::snprintf(marker, sizeof marker, "%s/marker.txt", scratch);
+    probe("real", scratch);
+    c::FILE *file = c::fopen(marker, "w");
+    test::check_not_equal(file, nullptr);
+    c::fclose(file);
+    test::check(exists(marker));
+}
+
+void test_io_fails(c::SmithIo *io) {
+    const char *scratch = test::scratch(io);
+    probe("fails", scratch);
+    char marker[1024];
+    c::snprintf(marker, sizeof marker, "%s/marker.txt", scratch);
+    c::FILE *file = c::fopen(marker, "w");
+    test::check_not_equal(file, nullptr);
+    c::fclose(file);
+    test::check_equal(1, 2);
+}
+
+void test_io_seed(c::SmithIo *io) {
+    char text[128];
+    c::snprintf(text, sizeof text, "%llu %llu", io->seed, io->key.bits);
+    probe("seed", text);
+    test::check_equal(io->key.bits, io->seed);
+}
+
+void test_io_fixture(c::SmithIo *io) {
+    c::FILE *file = c::fopen("tests/fixture.txt", "r");
+    test::check_not_equal(file, nullptr);
+    char text[16] = "";
+    test::check_not_equal(c::fgets(text, sizeof text, file), nullptr);
+    c::fclose(file);
+    test::check_equal(c::strcmp(text, "hello\n"), 0);
+    char directory[1024];
+    test::check_not_equal(c::getcwd(directory, sizeof directory), nullptr);
+    probe("cwd", directory);
+    test::check_not_equal(test::scratch(io), nullptr);
+}
+
+// Two io tests that wait for each other: each can finish only while the other is running, so they run side by side.
+static void wait_for(const char *name) {
+    const char *folder = c::getenv("SMITH_TEST_PROBE");
+    char path[1024];
+    c::snprintf(path, sizeof path, "%s/%s", folder, name);
+    for (i32 i = 0; i < 300 && !exists(path); i++) {
+        c::usleep(10000);
+    }
+    test::check(exists(path));
+}
+
+void test_io_parallel_a(c::SmithIo *io) {
+    probe("a", test::scratch(io));
+    wait_for("b");
+}
+
+void test_io_parallel_b(c::SmithIo *io) {
+    probe("b", test::scratch(io));
+    wait_for("a");
+}
+C
+    capture "$smith" build
+    expect "io tests: the runner builds" 0 "$rc"
+    if [ "$rc" -ne 0 ]; then printf '%s\n%s\n' "$out" "$err"; fi
+    capture build/tests $iso --list
+    expect_contains "io tests: an io test is found beside the others" "$out" "io_real"
+    here=$(pwd -P)
+    io_run() { # runner arguments
+        capture env SMITH_TEST_PROBE="$probe_folder" build/tests $iso "$@"
+    }
+
+    io_run --test io_real --verbose
+    expect_contains "io tests: a test gets a real io, with a scratch folder that is its TMPDIR" "$out" "PASS io_real"
+    scratch=$(cat "$probe_folder/real" 2>/dev/null)
+    expect "io tests: ... the folder is removed after a pass" "gone" "$([ -n "$scratch" ] && [ ! -e "$scratch" ] && echo gone)"
+
+    io_run --test io_fails
+    scratch=$(cat "$probe_folder/fails" 2>/dev/null)
+    expect_contains "io tests: a failure prints the folder it kept" "$out" "scratch folder (kept): $scratch"
+    expect "io tests: ... which exists, with what the test wrote" "yes" "$([ -n "$scratch" ] && [ -f "$scratch/marker.txt" ] && echo yes)"
+    expect_contains "io tests: ... and the failure names the seed to replay" "$out" "rerun: smith test --test io_fails --seed "
+    [ -n "$scratch" ] && rm -rf "$scratch"
+
+    io_run --test io_seed --seed 12345 --verbose
+    expect_contains "io tests: --seed N runs an io test on N" "$out" "PASS io_seed (seed 12345)"
+    expect "io tests: ... its seed is N and so are the bits of its key" "12345 12345" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    rm -f "$probe_folder/seed"
+    io_run --test io_seed --seed 12345
+    expect "io tests: ... and again, the same" "12345 12345" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    io_run --test io_seed --seed 6
+    expect "io tests: ... another seed, another key" "6 6" "$(cat "$probe_folder/seed" 2>/dev/null)"
+    io_run --test io_seed
+    seeds=$(cat "$probe_folder/seed" 2>/dev/null)
+    expect "io tests: ... without --seed the key still comes from the seed" "yes" "$([ "${seeds% *}" = "${seeds#* }" ] && [ -n "$seeds" ] && echo yes)"
+
+    io_run --test io_fixture
+    expect_contains "io tests: the working directory is the project root, so a fixture resolves" "$out" "1 passed, 0 failed"
+    expect "io tests: ... the root itself" "$here" "$(cat "$probe_folder/cwd" 2>/dev/null)"
+
+    rm -f "$probe_folder/a" "$probe_folder/b"
+    io_run --test io_parallel --jobs 2
+    expect_contains "io tests: two io tests run side by side" "$out" "2 passed, 0 failed"
+    expect "io tests: ... each in a folder of its own" "different" "$([ -n "$(cat "$probe_folder/a")" ] && [ "$(cat "$probe_folder/a")" != "$(cat "$probe_folder/b")" ] && echo different)"
+    if [ -n "$have_symbolizer" ]; then
+        capture env SMITH_TEST_PROBE="$probe_folder" "$smith" test $iso --test io_fixture
+        expect "io tests: smith test runs an io test too" 0 "$rc"
     fi
 fi
 fi

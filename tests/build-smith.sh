@@ -248,7 +248,7 @@ cat >tests/test_util.c <<'EOF'
 #include <smith/test.h>
 
 void test_twice(void) {
-    SMITH_CHECK(util_twice(2) == 4);
+    smith_check(util_twice(2) == 4);
 }
 EOF
 capture smith build -t commands build/debug/cdump build/release/cdump build/fast/cdump build/tests
