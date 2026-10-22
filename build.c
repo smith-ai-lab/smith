@@ -144,7 +144,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena", "build", "contract", "math", "random", "text", nullptr};
+static const char *const build_generated_headers[] = {"arena", "build", "contract", "math", "random", "test", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -483,7 +483,7 @@ static const char *const build_smith_inputs[] = {
     "include/smith/http.h",
     "lib/http.c",
     "include/smith/test.h",
-    "lib/test.c",
+    "lib/smith/test.smith",
     "templates/new/main.c",
     "templates/new/gitignore",
     "templates/defaults/clang-format",
@@ -603,6 +603,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/test.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.

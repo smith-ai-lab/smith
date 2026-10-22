@@ -380,10 +380,11 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
     return chain;
 }
 
-// The arguments of the smith_check_ call on the source line: the texts between the top-level commas of its parentheses.
+// The arguments of the check call (smith_check_equal_u64 in C, test::check_equal in .smith) on the source line: the texts between the top-level commas of its parentheses.
 // Returns how many (at most smith_sym_arguments_max); each is a copy with its blanks trimmed.
 static size_t smith_sym_arguments(const char *source, char arguments[smith_sym_arguments_max][128]) {
     const char *call = strstr(source, "smith_check_");
+    if (call == nullptr) call = strstr(source, "::check_"); // test::check_equal(a, b)
     const char *open = call != nullptr ? strchr(call, '(') : nullptr;
     if (open == nullptr) return 0;
     size_t count = 0;

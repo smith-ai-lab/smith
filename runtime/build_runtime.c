@@ -2248,13 +2248,16 @@ static void smith_write_build_info(SmithBuild *b) {
 
 constexpr size_t smith_tests_max = 65536;
 
-// The name in a line that defines a test, `void test_<name>(void) {` or `void test_<name>(SmithKey <key>) {` with
-// <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...`
-// (a private one is `static`, which nothing can call), and its key may be written `c::SmithKey` or, with
-// `import smith::random;`, `random::Key` (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that
-// spelling, "random::Key", or nullptr). *length is the name's length, test_ not counted.
+// The name in a line that defines a test, `void test_<name>(void) {`, `void test_<name>(SmithKey <key>) {` (a property
+// test) or `void test_<name>(SmithIo *<io>) {` (a test that takes a real io) with <name> in [a-z0-9_] and <key> and
+// <io> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...` (a private one is `static`,
+// which nothing can call), its key may be written `c::SmithKey` or, with `import smith::random;`, `random::Key`
+// (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
+// its io `c::SmithIo *`. *length is the name's length, test_ not counted; *kind is how the test is called.
+typedef enum { SmithTestKind_Plain, SmithTestKind_Property, SmithTestKind_Io } SmithTestKind;
+
 static const char *smith_tests_match(const char *line, bool module, const char *key_type, size_t *length,
-                                     bool *property) {
+                                     SmithTestKind *kind) {
     const char *prefix = "void test_";
     if (module) {
         if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
@@ -2266,8 +2269,9 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     const char *rest = name + size;
     if (size == 0) return nullptr;
     *length = size;
-    *property = false;
+    *kind = SmithTestKind_Plain;
     if (strcmp(rest, "(void) {") == 0) return name;
+    *kind = SmithTestKind_Property;
     if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) == 0) {
         rest += strlen("(SmithKey ");
     } else if (strncmp(rest, "(c::SmithKey ", strlen("(c::SmithKey ")) == 0) {
@@ -2275,12 +2279,17 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     } else if (key_type != nullptr && rest[0] == '(' && strncmp(rest + 1, key_type, strlen(key_type)) == 0 &&
                rest[1 + strlen(key_type)] == ' ') {
         rest += 2 + strlen(key_type);
+    } else if (strncmp(rest, "(SmithIo *", strlen("(SmithIo *")) == 0) {
+        *kind = SmithTestKind_Io;
+        rest += strlen("(SmithIo *");
+    } else if (strncmp(rest, "(c::SmithIo *", strlen("(c::SmithIo *")) == 0) {
+        *kind = SmithTestKind_Io;
+        rest += strlen("(c::SmithIo *");
     } else {
         return nullptr;
     }
     size_t key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
     if (key_size == 0 || strcmp(rest + key_size, ") {") != 0) return nullptr;
-    *property = true;
     return name;
 }
 
@@ -2312,7 +2321,7 @@ typedef struct {
     const char *symbol; // the C name: test_x, and a_b_test_x in a module
     const char *label;  // a module's export has the symbol `a::b::test_x` (an asm label), else nullptr
     const char *file;
-    bool property;
+    SmithTestKind kind;
 } SmithTestFound;
 
 // a::b and test_x give a_b_test_x, as the lowering names an export.
@@ -2349,8 +2358,8 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
             if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             if (in_smith && key_type == nullptr) key_type = smith_tests_key_type(lines[j]);
             size_t length = 0;
-            bool property = false;
-            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, &length, &property);
+            SmithTestKind kind = SmithTestKind_Plain;
+            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, &length, &kind);
             if (name == nullptr) continue;
             const char *test = smith_text("test_%.*s", (int)length, name);
             const char *symbol = smith_tests_symbol(module, test);
@@ -2367,7 +2376,7 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
                 .symbol = symbol,
                 .label = module != nullptr ? written : nullptr,
                 .file = run->inputs[i],
-                .property = property,
+                .kind = kind,
             };
         }
     }
@@ -2384,19 +2393,22 @@ static int smith_tests_scan(SmithRun *run) {
     const char **prototypes = smith_new_list(count);
     const char **rows = smith_new_list(count);
     for (size_t i = 0; i < count; i++) {
-        const char *argument = found[i].property ? "SmithKey key" : "void";
+        const char *argument = found[i].kind == SmithTestKind_Property ? "SmithKey key"
+                               : found[i].kind == SmithTestKind_Io     ? "SmithIo *io"
+                                                                       : "void";
         const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
         prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
-        rows[i] = smith_text("    {\"%s\", %s, %s},\n", found[i].name, found[i].property ? "nullptr" : found[i].symbol,
-                             found[i].property ? found[i].symbol : "nullptr");
+        const char *slot_names[] = {"nullptr", "nullptr", "nullptr"};
+        slot_names[found[i].kind] = found[i].symbol;
+        rows[i] = smith_text("    {\"%s\", %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1], slot_names[2]);
     }
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
-                                    "#include <smith/random.h>\n\n%s",
+                                    "#include <smith/io.h>\n#include <smith/random.h>\n\n%s",
                                     smith_join(run->b, prototypes, ""));
     const char *base = strrchr(run->outputs[0], '/');
     const char *table = smith_text("// Generated by smith_tests from the test files; do not edit.\n"
                                    "#include <smith/test.h>\n\n#include \"%s\"\n\n"
-                                   "const SmithTest smith_test_table[] = {\n%s    {nullptr, nullptr, nullptr},\n};\n"
+                                   "const SmithTest smith_test_table[] = {\n%s    {nullptr, nullptr, nullptr, nullptr},\n};\n"
                                    "const size_t smith_test_count = sizeof smith_test_table / sizeof "
                                    "smith_test_table[0] - 1;\n",
                                    base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, rows, ""));
@@ -2472,7 +2484,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 6 + smith_count((const char *const *)tests->objects));
+    const char **objects = smith_new_list(count + 7 + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
@@ -2482,7 +2494,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
     // memory from them), trace (a failure's report) and contract (<smith/contract.h>). Each is compiled here, with the
     // test flags, unless the project links it itself in .objects, so no library is defined twice.
-    static const char *const libraries[] = {"arena", "random", "trace", "contract"};
+    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         const char *source = smith_library(b, libraries[i]); // C or a .smith module
         if (smith_tests_links(tests, source)) continue;
