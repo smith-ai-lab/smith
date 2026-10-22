@@ -3,8 +3,6 @@
 // smith-imports:
 // smith-names: Text=SmithText number_capacity f64_capacity make=smith_text_make take_line=smith_text_take_line take_word=smith_text_take_word is=smith_text_is parse_u64=smith_text_parse_u64 parse_i64=smith_text_parse_i64 parse_hex=smith_text_parse_hex parse_f32=smith_text_parse_f32 parse_f64=smith_text_parse_f64 write_u64=smith_text_write_u64 write_i64=smith_text_write_i64 write_hex=smith_text_write_hex write_f64=smith_text_write_f64
 #pragma once
-#include <stddef.h>
-#include <stdint.h>
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -28,41 +26,56 @@ extern "C" {
 //
 // A run of characters: all of a file, one line of it, or one word of a line.
 typedef struct {
-const char *begin;
-size_t length;
+    const char *begin;
+    size_t length;
 } SmithText;
+
 // Writes a number into out, which has room for smith_text_number_capacity characters, and returns how many it wrote.
 // There is no terminator.
 constexpr size_t smith_text_number_capacity = 20;
+
 // Room for smith_text_write_f64.
 constexpr size_t smith_text_f64_capacity = 32;
+
 // The text of a terminated string.
 [[nodiscard]] SmithText smith_text_make(const char *string);
+
 // Takes the next line off text into line, without its newline, a trailing carriage return, or a # comment and the
 // spaces before it. Returns false once text is empty.
 [[nodiscard]] bool smith_text_take_line(SmithText *text, SmithText *line);
+
 // Takes the next word off line, a run without spaces or tabs, into word. Returns false when only spaces are left.
 [[nodiscard]] bool smith_text_take_word(SmithText *line, SmithText *word);
+
 // Whether word is exactly the terminated string.
 [[nodiscard]] bool smith_text_is(SmithText word, const char *string);
+
 // Whole numbers: decimal digits, with an optional leading - for the signed one, or lowercase hexadecimal digits.
 // Leading zeros of any number are fine. Each returns false for an empty word, a stray character (a +, a space, a
 // capital hex digit) or a value that doesn't fit.
 [[nodiscard]] bool smith_text_parse_u64(SmithText word, uint64_t *value);
+
 [[nodiscard]] bool smith_text_parse_i64(SmithText word, int64_t *value);
+
 [[nodiscard]] bool smith_text_parse_hex(SmithText word, uint64_t *value);
+
 // A decimal number: an optional sign, digits with an optional fraction (-90, 0.25, .5, 5.), and an optional exponent
 // (1e-5, 2.5E+3). The result is the float nearest to the number, ties to even, as strtof gives in the C locale, for
 // any number of digits; "-0" is negative zero. It returns false for no digits, a stray character, or a number too
 // large for a float (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
 [[nodiscard]] bool smith_text_parse_f32(SmithText word, float *value);
+
 // The same for a double: the double nearest the number, ties to even, as strtod gives in the C locale, for any number
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
 [[nodiscard]] bool smith_text_parse_f64(SmithText word, double *value);
+
 size_t smith_text_write_u64(char *out, uint64_t value);
+
 size_t smith_text_write_i64(char *out, int64_t value);
+
 // 16 digits, so every hash lines up.
 size_t smith_text_write_hex(char *out, uint64_t value);
+
 // A double in the fewest digits, at most 17, that smith_text_parse_f64 reads back as the same bits, signs of zero
 // included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
 // exponent (no plus), always valid JSON. Room for smith_text_f64_capacity characters; no terminator. The value must be

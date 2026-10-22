@@ -165,6 +165,10 @@ extern uint32_t game_replay_counter __asm__("_game::replay::counter");
 game_replay_Replay game_replay_open(const char *path) __asm__("_game::replay::open");
 ```
 
+Exports are separated by a blank line. A header that is committed (smith's own libraries, `include/smith/*.h`) is also
+formatted with the repository's `.clang-format` by `smith build headers`, and `smith fmt` keeps it so; the `// Generated
+by smith` and `// smith-` lines stay whole because that style's `CommentPragmas` says so (an importer reads them by line).
+
 It has `extern "C"` guards and the module's imports as `#include`s, and it lists them in a `// smith-imports:` line,
 which is how an import cycle is found, and the exports in a `// smith-names:` line (`// smith-names: Replay version open`),
 which is how an importer knows the names it can write back (see "Names as written"); an export with a chosen C name is listed as `member=CName`. Both depend on the exports only, so

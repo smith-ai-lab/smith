@@ -14,6 +14,7 @@ uint8_t *base;
 size_t used;
 size_t capacity;
 } arena_Arena;
+
 arena_Arena arena_make(uint8_t *memory, size_t capacity) __asm__("_arena::make");
 #ifdef __cplusplus
 }

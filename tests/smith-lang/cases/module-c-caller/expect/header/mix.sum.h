@@ -9,6 +9,7 @@
 extern "C" {
 #endif
 int64_t mix_sum_add(int64_t a, int64_t b) __asm__("_mix::sum::add");
+
 extern int64_t mix_sum_total __asm__("_mix::sum::total");
 #ifdef __cplusplus
 }

@@ -12,12 +12,16 @@ extern "C" {
 #if defined(__x86_64__)
 uint32_t demo_dir_width(uint32_t x) __asm__("_demo::dir::width");
 #elif defined(__aarch64__)
+
 uint32_t demo_dir_width(uint32_t x) __asm__("_demo::dir::width");
 #else
 #endif
+
 // An exported variable's definition has no declaration before it in the module's own compile.
 extern uint32_t demo_dir_counter __asm__("_demo::dir::counter");
+
 uint32_t demo_dir_pair(uint32_t a, uint32_t b) __asm__("_demo::dir::pair");
+
 size_t demo_dir_name_length(void) __asm__("_demo::dir::name_length");
 #ifdef __cplusplus
 }

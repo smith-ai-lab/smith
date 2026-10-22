@@ -62,8 +62,8 @@ module smith::build;
     bool test;               // `smith test` runs this task or builds this step (smith_tests sets it on its task)
 } Step;
 
-// what the project writes: the function `build` of the build file (build.c, or build.smith with `export void
-// build(build::Build *b)`), which smith build's program calls. The build file defines it; this declares it.
+// what the project writes: the function `build` of the build file (build.c, or a plain `void build(build::Build *b)` in
+// build.smith), which smith build's program calls. The build file defines it; this declares it.
 [[smith::c_name("build")]] export void build(Build *b);
 
 // one ninja edge. Afterwards every list and string in *step points at the arena copies; with no outputs, .outputs is
@@ -75,7 +75,7 @@ module smith::build;
 // an error. With .stamp the step's output is that file, $out is it, and afterwards .outputs is {stamp}; .stamp with
 // .outputs (other than the {stamp} a returned step holds) is an error, and so is .stamp on a task. Declared again,
 // .stamp must be equal like every other field.
-[[smith::c_name("smith_step")]] export void step(Build *b, Step *step);
+[[smith::c_name("smith_step")]] export void step(Build *b, Step *edge);
 // `smith build <name>`: runs every time it is asked for, like a make .PHONY target
 // afterwards .outputs is {name}, so other steps can depend on the task. A name holds A-Z a-z 0-9 _ . / -, may not
 // start with '/' or '-', end with '/', or hold an empty, '.' or '..' component (check-alone/src/a.c is a name). A task
@@ -84,7 +84,7 @@ module smith::build;
 // thing in every project, and `smith build <task>` runs the project's own. .test makes the task one of the project's
 // tests, which `smith test` runs (smith_tests does it for its own). .test on a step (smith_step) makes `smith test`
 // build it with the tests; it is incremental like any step, so a check stamped by its inputs does not rerun
-[[smith::c_name("smith_task")]] export void task(Build *b, const char *name, Step *step);
+[[smith::c_name("smith_task")]] export void task(Build *b, const char *name, Step *edge);
 // a group of targets, named by the same rules as a task; declared again with equal targets it changes nothing, with
 // different targets it is an error
 [[smith::c_name("smith_alias")]] export void alias(Build *b, const char *name, const char *const *targets);
@@ -145,7 +145,7 @@ module smith::build;
 // is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
 // -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
 // so it can go in steps, -I flags and objects. macOS only for now.
-[[smith::c_name("smith_package")]] export const char *package(Build *b, const Package *package);
+[[smith::c_name("smith_package")]] export const char *package(Build *b, const Package *config);
 
 // Helpers
 [[smith::c_name("smith_fmt")]] export [[gnu::format(printf, 2, 3)]] const char *fmt(Build *b, const char *format, ...);
@@ -187,12 +187,12 @@ module smith::build;
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
 [[smith::c_name("smith_run_status")]] export int run_status(Run *run, const char *const *argv,
-                                                            const char *const **lines);
+                                                            const char *const **output);
 // Like smith_run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
 // order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
 // limit covers both streams together.
 [[smith::c_name("smith_run_combined")]] export int run_combined(Run *run, const char *const *argv,
-                                                                const char *const **lines);
+                                                                const char *const **output);
 // Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
 // these paths when the function returns. A .run step that records a path must have a .depfile.
 [[smith::c_name("smith_run_depend")]] export void run_depend(Run *run, const char *path);
@@ -206,7 +206,6 @@ module smith::build;
 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
 // Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
-
 // One source compiled to one object:
 //   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
 // with that .d file as the step's depfile.
@@ -235,8 +234,8 @@ module smith::build;
 // writes its header, .smith/include/a/b.h, through `<compiler> --smith-header`, and every .smith compile gets
 // `-I .smith/include` and waits for all the headers and for a check that fails on an import cycle. The module a::b must
 // be in a file whose path ends in a/b.smith.
-[[smith::c_name("smith_object")]] export void object(Build *b, Object *object);
-[[smith::c_name("smith_program")]] export void program(Build *b, Program *program);
+[[smith::c_name("smith_object")]] export void object(Build *b, Object *config);
+[[smith::c_name("smith_program")]] export void program(Build *b, Program *config);
 // Records a compile_commands.json entry for source with no step: {directory: the root, file: source, arguments:
 // [compiler, flags..., "-c", source]} and no "output". It is for files the build never compiles on their own, such as
 // sources reached only through a unity build, so the editor still knows their flags. compiler and source are required.
@@ -262,7 +261,7 @@ module smith::build;
     const char *const *folders; // header folders below the project, such as "src"; a folder covers its subfolders
     const char *const *textual; // headers that stay textual
 } Modules;
-[[smith::c_name("smith_modules")]] export void modules(Build *b, const Modules *modules);
+[[smith::c_name("smith_modules")]] export void modules(Build *b, const Modules *config);
 // Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
 [[smith::c_name("SmithTests")]] export typedef struct {
     const char *compiler;         // compiles and links the tests, by default "smith-cc"
@@ -295,7 +294,7 @@ module smith::build;
 //     the arguments `smith test` was given (smith_args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after
 //     the runner, so they are built before the tests run and a change to one reruns them.
-[[smith::c_name("smith_tests")]] export void tests(Build *b, Tests *tests);
+[[smith::c_name("smith_tests")]] export void tests(Build *b, Tests *config);
 // Writes compile_commands.json at path when the build file runs, only when its bytes change, from every smith_object so
 // far, then every smith_compile_command, plus one entry for the build file itself with the command smith compiles it
 // with. Call it last.
@@ -304,7 +303,6 @@ module smith::build;
 // Builds by convention (docs/build-c.md, "Conventions"). A project that follows them has no build file: `smith build`
 // runs a build program of exactly these two calls with their defaults. Each call is documented as the low-level calls
 // it expands to, so a project that needs control replaces the call with its expansion.
-
 // The program, in the three profiles. The entry point (main.smith, else main.c, at the root) is followed through the
 // files it uses: for .smith, every `import a::b;` to a/b.smith (found as the compiler finds an import's source: under
 // the root of the importing module); for C, every quoted `#include "foo.h"` to the foo.c beside the header (the
@@ -339,7 +337,7 @@ module smith::build;
     const Object *const *objects;  // set: the debug objects of everything but the entry, the code under test
     Step step;                     // set: the debug program, the default target
 } App;
-[[smith::c_name("smith_app")]] export void app(Build *b, App *app);
+[[smith::c_name("smith_app")]] export void app(Build *b, App *config);
 
 // The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
 // file below the folder (tests are found by smith_tests's rules). Call it after smith_app. The code under test is the
@@ -352,4 +350,4 @@ module smith::build;
     const char *folder; // by default "tests"
     Step step;          // set: the task test
 } AppTests;
-[[smith::c_name("smith_app_tests")]] export void app_tests(Build *b, AppTests *tests);
+[[smith::c_name("smith_app_tests")]] export void app_tests(Build *b, AppTests *config);

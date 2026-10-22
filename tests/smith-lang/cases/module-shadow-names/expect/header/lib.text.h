@@ -9,7 +9,9 @@
 extern "C" {
 #endif
 typedef struct { const char *data; size_t length; } lib_text_Text;
+
 lib_text_Text lib_text_make(const char *data) __asm__("_lib::text::make");
+
 size_t lib_text_length(lib_text_Text text) __asm__("_lib::text::length");
 #ifdef __cplusplus
 }

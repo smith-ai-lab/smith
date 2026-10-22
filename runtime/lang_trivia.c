@@ -26,6 +26,15 @@ static bool smith_lang_header_at_line_start(const SmithLang *lang) {
     return lang->header_used == 0 || smith_lang_header_body[lang->header_used - 1] == '\n';
 }
 
+// A blank line between one export and the next, so that the header reads like one written by hand. (In an interface
+// read in memory the lines are the source's own, and nothing is added.)
+static void smith_lang_header_separate(SmithLang *lang) {
+    if (!lang->is_module || lang->aligned || lang->header_used == 0) return;
+    if (!smith_lang_header_at_line_start(lang)) smith_lang_header_append(lang, "\n", 1);
+    bool blank = lang->header_used >= 2 && smith_lang_header_body[lang->header_used - 2] == '\n';
+    if (!blank) smith_lang_header_append(lang, "\n", 1);
+}
+
 // A whole line of the header: a directive, or a comment above a declaration. In an interface read in memory the line is
 // the one the source has it on (so that a diagnostic points at the module), and a comment is not kept there.
 static void smith_lang_header_line(SmithLang *lang, const char *text, size_t length, uint32_t location) {
@@ -242,6 +251,7 @@ static void smith_lang_doc_capture(SmithLang *lang) {
 
 // An export begins: the conditionals around it, then its doc comment.
 static void smith_lang_trivia_export(SmithLang *lang) {
+    smith_lang_header_separate(lang);
     smith_lang_cond_emit(lang);
     if (lang->doc_pending) {
         const SmithTrivia *entry = lang->doc_export_from;

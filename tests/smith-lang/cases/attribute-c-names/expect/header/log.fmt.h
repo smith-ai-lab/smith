@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 [[gnu::format(printf, 1, 2)]] int log_fmt_say(const char *format, ...) __asm__("_log::fmt::say");
+
 __attribute__((format(printf, 1, 2))) int log_fmt_said(const char *format, ...) __asm__("_log::fmt::said");
 #ifdef __cplusplus
 }

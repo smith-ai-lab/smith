@@ -9,15 +9,25 @@
 extern "C" {
 #endif
 typedef struct { double width; double height; } shapes_area_Rect;
+
 struct shapes_area_Circle { double radius; };
+
 enum shapes_area_Kind { shapes_area_Square, shapes_area_Round = 5, shapes_area_Other };
+
 constexpr uint32_t shapes_area_sides = 4;
+
 extern uint32_t shapes_area_calls __asm__("_shapes::area::calls");
+
 extern double shapes_area_pi __asm__("_shapes::area::pi");
+
 double shapes_area_rect(shapes_area_Rect shape) __asm__("_shapes::area::rect");
+
 double shapes_area_circle(struct shapes_area_Circle shape) __asm__("_shapes::area::circle");
+
 double shapes_area_triangle(shapes_area_Rect shape) __asm__("_shapes::area::triangle");
+
 uint32_t shapes_area_private_count(void) __asm__("_shapes::area::private_count");
+
 enum shapes_area_Kind shapes_area_kind_of(uint32_t side_count) __asm__("_shapes::area::kind_of");
 #ifdef __cplusplus
 }

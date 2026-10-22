@@ -13,6 +13,7 @@ uint16_t width;
 uint16_t height;
 float scale;
 } lib_shape_Shape;
+
 uint64_t lib_shape_area(const lib_shape_Shape *shape) __asm__("_lib::shape::area");
 #ifdef __cplusplus
 }

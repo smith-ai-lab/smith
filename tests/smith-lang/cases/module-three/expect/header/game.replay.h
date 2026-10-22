@@ -10,11 +10,17 @@
 extern "C" {
 #endif
 typedef struct { uint64_t frames; lib_text_Text name; } game_replay_Replay;
+
 constexpr uint32_t game_replay_version = 3;
+
 extern uint32_t game_replay_counter __asm__("_game::replay::counter");
+
 typedef struct game_replay_Handle { int32_t fd; } game_replay_Handle;
+
 enum game_replay_Mode { game_replay_Fast, game_replay_Slow };
+
 game_replay_Replay game_replay_open(game_replay_Handle *handle, const char *path) __asm__("_game::replay::open");
+
 uint64_t game_replay_checksum(const uint8_t *data, size_t size) __asm__("_game::replay::checksum");
 #ifdef __cplusplus
 }

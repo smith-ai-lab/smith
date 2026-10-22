@@ -13,15 +13,18 @@ extern "C" {
 static inline uint32_t math_small_twice(uint32_t x) {
 return x * 2; // the body is the header's too
 }
+
 static inline uint32_t math_small_clamp(uint32_t x, uint32_t low, uint32_t high) {
 if (x < low) return low;
 if (x > high) return high;
 return x;
 }
+
 // Inline functions call each other, and the module's other exports.
 static inline uint32_t math_small_clamp_twice(uint32_t x) {
 return math_small_clamp(math_small_twice(x), 10, 100);
 }
+
 uint32_t math_small_regular(uint32_t x) __asm__("_math::small::regular");
 #ifdef __cplusplus
 }

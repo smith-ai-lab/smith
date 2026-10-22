@@ -9,9 +9,13 @@
 extern "C" {
 #endif
 typedef struct { double x; double y; } geo_vec_Vec;
+
 constexpr uint32_t geo_vec_dimensions = 2;
+
 double geo_vec_length_squared(geo_vec_Vec v) __asm__("_geo::vec::length_squared");
+
 double geo_vec_dot(geo_vec_Vec a, geo_vec_Vec b) __asm__("_geo::vec::dot");
+
 extern uint32_t geo_vec_counter __asm__("_geo::vec::counter");
 #ifdef __cplusplus
 }
