@@ -1,0 +1,17 @@
+module shapes;
+
+export typedef struct {
+    i32 width;
+} Box;
+
+// A keyword after the module's own Box is a name too: one error each, at the name, with nothing from the compiler.
+export i32 area(Box double, i32 b) {
+    return b;
+}
+export i32 grow(i32 x, const Box *restrict while);
+i32 shrink(Box long, i32 b) {
+    return b;
+}
+export i32 plain(i32 a, i32 for) {
+    return a;
+}

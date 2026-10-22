@@ -78,25 +78,50 @@ static void smith_lang_header_comment(SmithLang *lang, const SmithTrivia *entry)
     }
 }
 
-// A directive line, as written. `as_open` writes an #elif (the first live branch after `#if 0`) as the #if it stands
-// for.
+// The text of a directive line as written, or, with `as_open`, an #elif (the first live branch after `#if 0`) as the
+// #if it stands for.
+static void smith_lang_directive_text(const SmithTrivia *entry, bool as_open, char *converted, size_t capacity,
+                                      const char **text, size_t *length) {
+    *text = entry->text;
+    *length = entry->length;
+    if (!as_open || *length <= 1 || *length >= capacity - 2) return;
+    size_t word = 1;
+    while (word < *length && ((*text)[word] == ' ' || (*text)[word] == '\t'))
+        word += 1;
+    if (word + 2 < *length && (*text)[word] == 'e' && (*text)[word + 1] == 'l') { // "#elif B" is "#if B"
+        converted[0] = '#';
+        memcpy(converted + 1, *text + word + 2, *length - word - 2);
+        *text = converted;
+        *length = *length - word - 1;
+    }
+}
+
 static void smith_lang_header_directive(SmithLang *lang, const SmithTrivia *entry, bool as_open) {
     if (!lang->is_module) return;
     char converted[1024];
-    const char *text = entry->text;
-    size_t length = entry->length;
-    if (as_open && length > 1 && length < sizeof converted - 2) {
-        size_t word = 1;
-        while (word < length && (text[word] == ' ' || text[word] == '\t'))
-            word += 1;
-        if (word + 2 < length && text[word] == 'e' && text[word + 1] == 'l') { // "#elif B" is "#if B"
-            converted[0] = '#';
-            memcpy(converted + 1, text + word + 2, length - word - 2);
-            text = converted;
-            length = length - word - 1;
-        }
-    }
+    const char *text = nullptr;
+    size_t length = 0;
+    smith_lang_directive_text(entry, as_open, converted, sizeof converted, &text, &length);
     smith_lang_header_line(lang, text, length, entry->location);
+}
+
+// The same, into the header's include lines.
+static void smith_lang_include_append(SmithLang *lang, const char *text, size_t length) {
+    if (lang->include_used + length + 2 > sizeof lang->include_body) {
+        lang->broken = true;
+        return;
+    }
+    memcpy(lang->include_body + lang->include_used, text, length);
+    lang->include_used += length;
+    lang->include_body[lang->include_used++] = '\n';
+}
+
+static void smith_lang_include_directive(SmithLang *lang, const SmithTrivia *entry, bool as_open) {
+    char converted[1024];
+    const char *text = nullptr;
+    size_t length = 0;
+    smith_lang_directive_text(entry, as_open, converted, sizeof converted, &text, &length);
+    smith_lang_include_append(lang, text, length);
 }
 
 static bool smith_lang_directive_is(const SmithTrivia *entry, const char *name) {
@@ -155,6 +180,7 @@ static void smith_lang_cond_branch(SmithLang *lang, const SmithTrivia *entry) {
     cond->lines[cond->count] = entry;
     cond->count += 1;
     if (cond->emitted) smith_lang_header_directive(lang, entry, false);
+    if (cond->inc_emitted) smith_lang_include_directive(lang, entry, false);
 }
 
 static void smith_lang_cond_close(SmithLang *lang, const SmithTrivia *entry) {
@@ -165,6 +191,7 @@ static void smith_lang_cond_close(SmithLang *lang, const SmithTrivia *entry) {
     if (lang->cond_depth == 0) return;
     SmithLangCond *cond = &lang->conds[--lang->cond_depth];
     if (cond->emitted && !cond->transparent) smith_lang_header_directive(lang, entry, false);
+    if (cond->inc_emitted && !cond->transparent) smith_lang_include_directive(lang, entry, false);
 }
 
 // The conditionals an export is inside are written, outermost first, with the branches before it.
@@ -176,6 +203,22 @@ static void smith_lang_cond_emit(SmithLang *lang) {
             smith_lang_header_directive(lang, cond->lines[line], line == 0 && cond->first_open);
         cond->emitted = true;
     }
+}
+
+// A header the file includes (`#include` or `import <h>;`), for the generated header: its line, inside the conditionals
+// the source has it in, so that a module can choose between two spellings of an include.
+static void smith_lang_add_include(SmithLang *lang, const char *text, size_t length, bool angled) {
+    for (uint32_t i = 0; i < lang->cond_depth; i++) { // bounded by the table
+        SmithLangCond *cond = &lang->conds[i];
+        if (cond->inc_emitted || cond->transparent || cond->zero) continue;
+        for (uint8_t line = 0; line < cond->count; line++)
+            smith_lang_include_directive(lang, cond->lines[line], line == 0 && cond->first_open);
+        cond->inc_emitted = true;
+    }
+    char line[smith_lang_name_max + 16];
+    int written =
+        snprintf(line, sizeof line, "#include %c%.*s%c", angled ? '<' : '"', (int)length, text, angled ? '>' : '"');
+    if (written > 0 && (size_t)written < sizeof line) smith_lang_include_append(lang, line, (size_t)written);
 }
 
 // ---- Applying the list
@@ -196,6 +239,10 @@ static void smith_lang_trivia_apply(SmithLang *lang, const SmithTrivia *entry) {
         if (active) smith_lang_header_comment(lang, entry);
     } else if (entry->kind == SmithTrivia_Trailing) {
         if (active || lang->tail_open) smith_lang_header_comment(lang, entry);
+    } else if (entry->kind == SmithTrivia_Include) {
+        lang->doc_from = nullptr;
+        lang->doc_to = nullptr;
+        smith_lang_add_include(lang, entry->text, entry->length, entry->angled);
     } else {
         lang->doc_from = nullptr;
         lang->doc_to = nullptr;

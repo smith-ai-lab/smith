@@ -589,8 +589,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         smith_compile_command(b, config->cc, sources[i], flags);
     }
     // The text library is a module, linted as written.
-    smith_compile_command(b, config->cc, "lib/smith/random.smith",
-                          smith_cat(b, flags, smith_list(b, "-iquote", "include/smith", nullptr), nullptr));
+    smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.

@@ -56,4 +56,4 @@ A project's build file can be `.smith` too: a root `build.smith` with `import sm
 
 ## Errors
 
-Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it. A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.
+Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``, `Box double` for a typedef of the module) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it (after a typedef from a C header, clang's own message). A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.

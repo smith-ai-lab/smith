@@ -30,6 +30,7 @@ C and C++ include it (`-I .smith/include`, with the header in the compile's `.im
 - `constexpr` exports are in the header as `constexpr` (C23 or C++11); an exported variable is `extern` with the symbol label.
 - The header keeps what C needs of the source: the comments directly above an `export` (a doc comment), the comments inside an exported declaration and after its last token on its line, and the `#if`/`#ifdef`/`#elif`/`#else`/`#endif` lines around exports, verbatim. The header is never preprocessed, so the includer's `-D` flags choose the branch; the module is compiled with its own flags. A blank line between a comment and the `export` makes it no doc comment.
 - `export inline T f(...) { ... }` is `static inline game_replay_f` in the header with its body, and the module defines it the same way: no symbol, so C, C++ and `.smith` importers each compile it. Its body may use only the module's other exports, its imports and C, never a private name.
+- `#include` lines (and `import <h>;`) are copied in source order inside the conditionals they stand in, so a module can choose a spelling: `#if __has_include("arena.h") #include "arena.h" #else #include <smith/arena.h> #endif`. An exported variable is declared (`extern`, with its label) before its definition in the module's own compile, so `-Wmissing-variable-declarations -Werror` needs no pragma.
 - A header is written without macros (a `#define` of the module is not copied): keep a macro out of an export's signature.
 - Link C++ with `smith c++`.
 

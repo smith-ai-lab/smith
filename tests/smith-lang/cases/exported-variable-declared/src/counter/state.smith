@@ -1,0 +1,14 @@
+module counter::state;
+
+// An exported variable is declared before its definition in the module's own compile, as a C file that includes its own
+// header would, so -Wmissing-variable-declarations -Werror (the flags of this case) has nothing to say.
+export u32 total = 3;
+export u32 spare;
+export const char *const names[2] = {"low", "high"};
+[[smith::c_name("counter_state_chosen")]] export u64 chosen = 9;
+export constexpr u32 limit = 4;
+u32 hidden = 2;
+
+export u32 sum(void) {
+    return total + spare + limit + hidden;
+}

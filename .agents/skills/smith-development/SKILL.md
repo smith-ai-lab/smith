@@ -71,7 +71,7 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   `smith_<name>_` prefix, `[[smith::c_name("smith_<name>_x")]] export` on each function so the symbols stay, `[[smith::c_name("SmithX")]]` on
   each type; comments above an export are the header's, written with the C names); change the `#embed` path and the row's
   `false` to `true` in `smith.c`; add the name to `build_generated_headers` in `build.c` and remove the library from `build_tidy` (it has
-  no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it); a header the library needs beside its own is a quoted include (`#include "arena.h"`), found by `-iquote` (see `smith::random`, which also taught two lowering limits: docs/smith-lang.md, end of "The bootstrap");
+  no `.smith` support yet); `smith build headers` writes `include/smith/<name>.h` (commit it); a header the library needs beside its own is `#if __has_include("arena.h") #include "arena.h" #else #include <smith/arena.h> #endif` (see `smith::random`; the header copies the chain, docs/smith-lang.md "The header");
   point the library's own test script at the `.smith` source. Compare the old and new header's declarations and `nm -gU` of an
   object from each: they must match. `#include`s in a module are copied into its header, so keep them few.
 - **The bootstrap (`bootstrap/`).** A `.smith` source that smith's own build compiles is compiled from its committed

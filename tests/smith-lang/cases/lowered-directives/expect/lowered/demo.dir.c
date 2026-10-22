@@ -27,6 +27,7 @@ return (__UINT32_TYPE__)(wide + 2);
 #endif
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-variable-declarations"
+extern __UINT32_TYPE__ demo_dir_counter __asm__("_demo::dir::counter");
 __UINT32_TYPE__ demo_dir_counter __asm__("_demo::dir::counter") = 7;
 #pragma clang diagnostic pop
 __UINT32_TYPE__ demo_dir_pair(__UINT32_TYPE__ a, __UINT32_TYPE__ b) __asm__("_demo::dir::pair");

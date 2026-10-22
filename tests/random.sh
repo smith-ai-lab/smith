@@ -54,7 +54,7 @@ hook=yes
 printf 'int main(void) { return 0; }\n' >"$work/probe.smith"
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/random.smith"
-mflags="-I $here/include -iquote $here/include/smith"
+mflags="-I $here/include"
 
 # 1. The checks, in two builds: -O0 under AddressSanitizer and UBSan, and -O2.
 $cc -std=gnu23 $warn -I "$here/include" -O0 -g -fsanitize=address,undefined $sources -o "$work/asan" || exit 1

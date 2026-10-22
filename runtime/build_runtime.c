@@ -1411,16 +1411,11 @@ static SmithObjectRow *smith_find_row(const SmithObject *address, const char *ou
     return nullptr;
 }
 
-// A .smith compile finds the modules' headers there. smith's own library modules (.smith/lib/smith/<name>.smith) also
-// find the headers of their siblings by a quoted include (`#include "arena.h"`, which their generated header says too:
-// the header sits beside arena.h), as `-iquote .smith/include/smith`.
+// A .smith compile finds the modules' headers there.
 static bool smith_ends_with(const char *text, const char *suffix);
 
 static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
     if (!smith_ends_with(source, ".smith")) return smith_list(b, nullptr);
-    if (strncmp(source, ".smith/lib/smith/", strlen(".smith/lib/smith/")) == 0) {
-        return smith_list(b, "-I", ".smith/include", "-iquote", ".smith/include/smith", nullptr);
-    }
     return smith_list(b, "-I", ".smith/include", nullptr);
 }
 

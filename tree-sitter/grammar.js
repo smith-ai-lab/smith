@@ -95,6 +95,7 @@ module.exports = grammar(C, {
     // module = 0; (an assignment's left side is a short list of its own)
     _assignment_left_expression: ($, original) => choice(
       original,
+      $.scoped_identifier,
       alias(choice(...sized), $.identifier),
       alias(choice(...soft), $.identifier),
     ),

@@ -8,6 +8,7 @@ __UINT32_TYPE__ mode : 3;
 struct { __INT16_TYPE__ x, y; } point;
 } kit_things_Node;
 constexpr __SIZE_TYPE__ kit_things_capacity = 4;
+extern const char *const kit_things_names[] __asm__("_kit::things::names");
 const char *const kit_things_names[] __asm__("_kit::things::names") = {"zero", "one", "two"};
 static_assert(sizeof(kit_things_Word) == 4, "a word is four bytes");
 [[nodiscard]] static inline int kit_things_square(int value) {
