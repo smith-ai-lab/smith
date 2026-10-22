@@ -615,6 +615,10 @@
             "named": true
           },
           {
+            "type": "scoped_identifier",
+            "named": true
+          },
+          {
             "type": "subscript_expression",
             "named": true
           }
