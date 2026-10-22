@@ -29,7 +29,7 @@ Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --see
 ## When it goes wrong
 
 - `smith run: the default of build.c names no program` / `more than one program`: `smith_default` must name exactly one `smith_program` output (aliases are opened); it lists what it names.
-- `smith test: build.c declares no tests`: the build calls no `smith_tests`; add it (the smith-test skill). A task of your own that should run with `smith test` sets `.test = true`.
+- `smith test: the build declares no tests`: the build calls no `smith_tests`; add it (the smith-test skill). A task of your own that should run with `smith test` sets `.test = true`.
 - `this verb was given arguments, but build.c does not read them`: `smith test` was given arguments and build.c calls no `smith_tests` (the runner reads them through `smith_args(b)`).
 - `build.c: task 'run' is named after a verb`: no task or alias is named `run`, `test`, `check`, `fmt`, `lint`, `docs` or `prove`; the verb does it, or name the task another way and run it with `smith build <name>`.
 - `test is a verb, not a target of smith build`: `smith build run|test|check|fmt|lint|prove|docs` are refused. Use the verb.

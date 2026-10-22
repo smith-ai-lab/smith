@@ -350,7 +350,7 @@ mkdir "$work/plain" && cd "$work/plain" || exit 1
 printf 'int main(void) {\n    return 0;\n}\n' >main.c
 capture smith test
 expect "test: a project with no tests says so" 0 "$rc"
-expect_contains "test: ... in smith test's words" "$err" "declares no tests"
+expect_contains "test: ... in smith test's words" "$err" "the build declares no tests"
 cd "$work" || exit 1
 
 # 5. The stage0 builds a C project by convention: it is plain C, so the build program needs nothing but a C compiler.
