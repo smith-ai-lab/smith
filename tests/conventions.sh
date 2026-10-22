@@ -383,9 +383,10 @@ int base_value(void);
 EOF
 cat >src/base/value.c <<'EOF'
 #include "base/value.h"
+#include "build/gen.h"
 
 int base_value(void) {
-    return 21;
+    return 3 * GEN_VALUE;
 }
 EOF
 cat >main.c <<'EOF'
@@ -436,9 +437,13 @@ cat >build.c <<'EOF'
 void build(SmithBuild *b) {
     smith_defaults(b, &(SmithDefaults){
                           .flags = smith_list(b, "-I", "src", nullptr),
-                          .folder_flags = (const SmithFolderFlags[]){{"src/base", smith_list(b, "-DFROM_BASE=1", nullptr)}, {}},
+                          .folders = (const SmithFolder[]){{"src/base", smith_list(b, "-DFROM_BASE=1", nullptr),
+                                                                    smith_list(b, "build/gen.h", nullptr)},
+                                                                   {}},
                           .link_flags = smith_list(b, "-Wl,-headerpad,0x100", nullptr),
                       });
+    smith_step(b, &(SmithStep){.command = smith_list(b, "sh", "-c", "printf '#define GEN_VALUE 7\\n' > build/gen.h", nullptr),
+                               .outputs = smith_list(b, "build/gen.h", nullptr)});
     smith_app(b, &(SmithApp){});
     smith_app(b, &(SmithApp){.entry = "tools/tool.c", .name = "tool", .tool = true});
     smith_app_tests(b, &(SmithAppTests){});
@@ -457,6 +462,7 @@ expect "multi: builds the project's program" yes "$(exists build/debug/multi)"
 expect "multi: ... and not the tool" no "$(exists build/debug/tool)"
 capture smith run
 expect "multi: smith run runs the program, found through -I" 21 "$(last "$out")"
+expect "multi: ... after the file its folder's compiles wait for was made" yes "$(exists build/gen.h)"
 capture smith build tools
 expect "multi: smith build tools builds the tool" yes "$(exists build/debug/tool)"
 capture smith build release fast

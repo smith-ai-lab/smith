@@ -515,18 +515,19 @@ project has one program that is not; a `.tool` is built by `smith build tools` (
 **`smith_defaults`: what every program and test shares.** Called once, before the first `smith_app`:
 
 ```c
-typedef struct { const char *folder; const char *const *flags; } SmithFolderFlags;
+typedef struct { const char *path; const char *const *flags; const char *const *inputs; } SmithFolder;
 typedef struct {
-    const char *const *flags;        // added to every compile of every profile, after the profile's own
-    const SmithFolderFlags *folder_flags; // flags for the sources below a folder; a row with a nullptr folder ends it
-    const char *const *link_flags;   // added to every link
+    const char *const *flags;     // added to every compile of every profile, after the profile's own
+    const SmithFolder *folders;   // settings for the sources below a folder; a row with a nullptr path ends the list
+    const char *const *link_flags; // added to every link
 } SmithDefaults;
 void smith_defaults(SmithBuild *b, const SmithDefaults *defaults);
 ```
 
-A folder row covers the sources below the folder (or the one file) in every profile: `{"src/base", {"-O2"}}` compiles
-the base layer at `-O2` even in debug. smith's own libraries are the sources under `.smith/lib`. Flags come in the order
-profile, defaults, folder rows, the program's `.flags`.
+A folder row covers the sources below the path (or the one file) in every profile: `{"src/base", {"-O2"}}` compiles
+the base layer at `-O2` even in debug, and `.inputs` are files the build makes that those sources embed (`#embed`, a
+generated include): their compiles wait for them. smith's own libraries are the sources under `.smith/lib`. Flags come in
+the order profile, defaults, folder rows, the program's `.flags`.
 
 **For checks and low-level builds that start from the conventions:**
 - `smith_profile_flags(b, profile)` and `smith_profile_link_flags(b, profile)`: the compile and link flags of a profile
@@ -1511,19 +1512,20 @@ void smith_tests(SmithBuild *b, SmithTests *tests);
 // with. Call it last.
 void smith_compile_commands(SmithBuild *b, const char *path);
 
-// A folder's own flags: every source below `folder` (a path from the project's root, such as "src/base", or one file)
-// is compiled with `flags` too, after the project's.
+// A folder's own settings: every source below `path` (a path from the project's root, such as "src/base", or one file)
+// is compiled with `flags` too, after the project's, and its compile waits for `inputs` (files the build makes and the
+// source embeds or includes, such as a baked table; the file is a dependency of the object).
 typedef struct {
-    const char *folder;
+    const char *path;
     const char *const *flags;
-} SmithFolderFlags;
+    const char *const *inputs;
+} SmithFolder;
 
 // What every program and every test of the project shares, declared once, before the first build::app. Everything is
 // optional. smith's own libraries are the sources under ".smith/lib", so a folder row for it flags them.
 typedef struct {
-    const char *const *flags; // added to every compile of every profile, after the profile's own
-    const SmithFolderFlags
-        *folder_flags;             // flags for the sources below a folder; a row with a nullptr folder ends the list
+    const char *const *flags;      // added to every compile of every profile, after the profile's own
+    const SmithFolder *folders;    // settings for the sources below a folder; a row with a nullptr path ends the list
     const char *const *link_flags; // added to every link
 } SmithDefaults;
 
@@ -1568,7 +1570,7 @@ const char *const *smith_objects(SmithBuild *b, const char *profile, const char 
 //               -Wstrict-prototypes -Wvla -Werror, -ffp-contract=off, -mcpu=apple-m1 (Darwin arm64 only),
 //               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
 //               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2
-//               -flto=thin; fast: -O2 -DNDEBUG -flto=thin), then build::defaults .flags, the .folder_flags rows that
+//               -flto=thin; fast: -O2 -DNDEBUG -flto=thin), then build::defaults .flags, the .folders rows that
 //               cover the source, and .flags
 //   build::modules(b, &(build::Modules){});    // unless modules are already on or an object was already declared
 //   for P in debug, release, fast:

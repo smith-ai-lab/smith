@@ -54,7 +54,7 @@ A second program is a second `build::app` with its own `.entry` and `.name`; a s
 ```c
 build::defaults(b, &(build::Defaults){
     .flags = build::list(b, "-I", "src", nullptr),                       // "base/math.h" is src/base/math.h; the scan follows -I
-    .folder_flags = (const build::FolderFlags[]){{"src/base", build::list(b, "-O2", nullptr)}, {}},
+    .folders = (const build::Folder[]){{"src/base", build::list(b, "-O2", nullptr)}, {}},
     .link_flags = build::list(b, "-mmacosx-version-min=26.0", nullptr),
 });
 build::app(b, &(build::App){.entry = "src/main.c", .name = "game"});

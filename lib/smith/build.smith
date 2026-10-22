@@ -307,19 +307,21 @@ module smith::build;
 // runs a build program of exactly these calls with their defaults. Each call is documented as the low-level calls it
 // expands to, so a project that needs control replaces the call with its expansion.
 
-// A folder's own flags: every source below `folder` (a path from the project's root, such as "src/base", or one file)
-// is compiled with `flags` too, after the project's.
-[[smith::c_name("SmithFolderFlags")]] export typedef struct {
-    const char *folder;
+// A folder's own settings: every source below `path` (a path from the project's root, such as "src/base", or one file)
+// is compiled with `flags` too, after the project's, and its compile waits for `inputs` (files the build makes and the
+// source embeds or includes, such as a baked table; the file is a dependency of the object).
+[[smith::c_name("SmithFolder")]] export typedef struct {
+    const char *path;
     const char *const *flags;
-} FolderFlags;
+    const char *const *inputs;
+} Folder;
 
 // What every program and every test of the project shares, declared once, before the first build::app. Everything is
 // optional. smith's own libraries are the sources under ".smith/lib", so a folder row for it flags them.
 [[smith::c_name("SmithDefaults")]] export typedef struct {
-    const char *const *flags;        // added to every compile of every profile, after the profile's own
-    const FolderFlags *folder_flags; // flags for the sources below a folder; a row with a nullptr folder ends the list
-    const char *const *link_flags;   // added to every link
+    const char *const *flags;      // added to every compile of every profile, after the profile's own
+    const Folder *folders;         // settings for the sources below a folder; a row with a nullptr path ends the list
+    const char *const *link_flags; // added to every link
 } Defaults;
 [[smith::c_name("smith_defaults")]] export void defaults(Build *b, const Defaults *defaults);
 
@@ -360,7 +362,7 @@ module smith::build;
 //               -Wstrict-prototypes -Wvla -Werror, -ffp-contract=off, -mcpu=apple-m1 (Darwin arm64 only),
 //               -I . -I .smith/include, then P's own (debug: -g -O0 -fsanitize=address,undefined
 //               -fno-sanitize-recover=all -fno-omit-frame-pointer -ftrivial-auto-var-init=pattern; release: -O2
-//               -flto=thin; fast: -O2 -DNDEBUG -flto=thin), then build::defaults .flags, the .folder_flags rows that
+//               -flto=thin; fast: -O2 -DNDEBUG -flto=thin), then build::defaults .flags, the .folders rows that
 //               cover the source, and .flags
 //   build::modules(b, &(build::Modules){});    // unless modules are already on or an object was already declared
 //   for P in debug, release, fast:

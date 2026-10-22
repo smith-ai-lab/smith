@@ -2895,9 +2895,10 @@ static const char *const *smith_app_flags(SmithBuild *b, const char *profile, co
                                           const char *const *more) {
     bool apple_silicon = strcmp(b->os, "Darwin") == 0 && strcmp(b->arch, "arm64") == 0;
     const char *const *folders = smith_list(b, nullptr);
-    const SmithFolderFlags *rows = smith_app_state.defaults.folder_flags;
-    for (size_t i = 0; source != nullptr && rows != nullptr && rows[i].folder != nullptr; i++) {
-        if (smith_app_covers(rows[i].folder, source)) folders = smith_cat(b, folders, rows[i].flags, nullptr);
+    const SmithFolder *rows = smith_app_state.defaults.folders;
+    for (size_t i = 0; source != nullptr && rows != nullptr && rows[i].path != nullptr; i++) {
+        if (smith_app_covers(rows[i].path, source))
+            folders = smith_cat(b, folders, smith_or_empty(b, rows[i].flags), nullptr);
     }
     return smith_cat(b, smith_profile_warnings, smith_list(b, "-ffp-contract=off", nullptr),
                      smith_when(b, apple_silicon, smith_list(b, "-mcpu=apple-m1", nullptr)),
@@ -2955,15 +2956,27 @@ const char *const *smith_objects(SmithBuild *b, const char *profile, const char 
     return objects;
 }
 
-static SmithFolderFlags *smith_copy_folder_flags(const SmithFolderFlags *rows) {
+static SmithFolder *smith_copy_folders(const SmithFolder *rows) {
     size_t count = 0;
-    while (rows != nullptr && rows[count].folder != nullptr && count < smith_list_max)
+    while (rows != nullptr && rows[count].path != nullptr && count < smith_list_max)
         count += 1;
-    SmithFolderFlags *copy = smith_alloc((count + 1) * sizeof *copy);
-    for (size_t i = 0; i < count; i++)
-        copy[i] = (SmithFolderFlags){smith_copy_string(rows[i].folder), smith_copy_list(rows[i].flags)};
-    copy[count] = (SmithFolderFlags){};
+    SmithFolder *copy = smith_alloc((count + 1) * sizeof *copy);
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = (SmithFolder){smith_copy_string(rows[i].path), smith_copy_list(rows[i].flags),
+                                smith_copy_list(rows[i].inputs)};
+    }
+    copy[count] = (SmithFolder){};
     return copy;
+}
+
+// The files the compile of `source` waits for: the inputs of the folder rows that cover it.
+static const char *const *smith_app_inputs(SmithBuild *b, const char *source) {
+    const char *const *inputs = smith_list(b, nullptr);
+    const SmithFolder *rows = smith_app_state.defaults.folders;
+    for (size_t i = 0; rows != nullptr && rows[i].path != nullptr; i++) {
+        if (smith_app_covers(rows[i].path, source)) inputs = smith_cat(b, inputs, rows[i].inputs, nullptr);
+    }
+    return inputs;
 }
 
 void smith_defaults(SmithBuild *b, const SmithDefaults *defaults) {
@@ -2973,7 +2986,7 @@ void smith_defaults(SmithBuild *b, const SmithDefaults *defaults) {
     if (smith_app_state.defaults.flags != nullptr) smith_fail("smith_defaults is called twice");
     smith_app_state.defaults = (SmithDefaults){
         .flags = smith_copy_list(defaults->flags),
-        .folder_flags = smith_copy_folder_flags(defaults->folder_flags),
+        .folders = smith_copy_folders(defaults->folders),
         .link_flags = smith_copy_list(defaults->link_flags),
     };
     smith_app_include_dirs(smith_app_state.defaults.flags);
@@ -3005,6 +3018,7 @@ static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const c
         .source = source,
         .output = output,
         .flags = flags,
+        .implicit_inputs = smith_app_inputs(b, source),
     };
     smith_object(b, object);
     return object;
