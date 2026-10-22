@@ -1050,13 +1050,12 @@ static bool smith_has_makefile(void) {
 
 // What smith looked for, and how to write a build file. The folder has no build file and no entry point.
 [[noreturn]] static void smith_no_convention(void) {
-    fputs(
-        "smith: no build.c in this folder, and no main.smith or main.c to build by convention\n"
-        "smith build runs the build.c or build.smith of the project's root; without one it builds main.smith or "
-        "main.c\n"
-        "and what they use (docs/build-c.md, Conventions). Add a main.smith or main.c (`smith new` writes one), or "
-        "write a build.c.\n",
-        stderr);
+    fputs("smith: no build.c in this folder, and no main.smith or main.c to build by convention\n"
+          "smith build runs the build.c or build.smith of the project's root; without one it builds main.smith or "
+          "main.c\n"
+          "and what they use (docs/build-c.md, Conventions). Add a main.smith or main.c (`smith new` writes one), or "
+          "write a build.c.\n",
+          stderr);
     if (smith_has_makefile()) {
         fputs("A Makefile is here: `CC = smith-cc` in it builds with smith unchanged (`smith cc` is a pure passthrough "
               "for clang),\nand a build.c can replace it command for command (the smith-build skill).\n",
@@ -1602,7 +1601,8 @@ static const unsigned char smith_new_docs_skill[] = {
 #embed "templates/new/docs-skill.md"
 };
 
-// smith's own style and checks, which `smith fmt` and `smith lint` use where a project has no file (smith_defaults_apply).
+// smith's own style and checks, which `smith fmt` and `smith lint` use where a project has no file
+// (smith_defaults_apply).
 static const unsigned char smith_defaults_clang_format[] = {
 #embed "templates/defaults/clang-format"
 };
@@ -1616,18 +1616,18 @@ typedef struct {
     const char *path;
     const unsigned char *bytes;
     size_t size;
-    bool named;       // @NAME@ is replaced by the program's name, and @KEBAB@ by the same in kebab-case
-    bool about_main;  // describes main, so a project that keeps its own sources does not get it
-    bool lists_main;  // its last line lists what describes main, which that project does not get either
-    bool any;         // written for both languages; else only for `language`
+    bool named;      // @NAME@ is replaced by the program's name, and @KEBAB@ by the same in kebab-case
+    bool about_main; // describes main, so a project that keeps its own sources does not get it
+    bool lists_main; // its last line lists what describes main, which that project does not get either
+    bool any;        // written for both languages; else only for `language`
     SmithNewLanguage language;
     const char *link; // not a file: a symbolic link to this
 } SmithNewFile;
 
 #define SMITH_NEW_FILE(path, bytes, named, about_main, lists_main) \
-    {path, bytes, sizeof bytes, named, about_main, lists_main, true, SmithNewLanguage_Smith, nullptr}
+    {path, bytes, sizeof(bytes), named, about_main, lists_main, true, SmithNewLanguage_Smith, nullptr}
 #define SMITH_NEW_ONLY(path, bytes, language, about_main) \
-    {path, bytes, sizeof bytes, true, about_main, false, false, language, nullptr}
+    {path, bytes, sizeof(bytes), true, about_main, false, false, language, nullptr}
 
 // The program's files, then what every project gets. No build file and no .clang-format or .clang-tidy: smith builds by
 // convention and has defaults for both (issue #43).
@@ -2092,10 +2092,10 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 
 // ---- smith's defaults for a project with no config file (issue #43, part 1)
 //
-// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/defaults, embedded) for a file the
-// tool would find none for: clang-format's lookup (`.clang-format` or `_clang-format`, in the file's folder and each
-// folder above) and clang-tidy's (`.clang-tidy`, the same walk). They are written to <data>/smith/defaults/ (named by
-// their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
+// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/defaults, embedded) for a file
+// the tool would find none for: clang-format's lookup (`.clang-format` or `_clang-format`, in the file's folder and
+// each folder above) and clang-tidy's (`.clang-tidy`, the same walk). They are written to <data>/smith/defaults/ (named
+// by their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
 // whole, and an explicit option of the tool wins. `--dump-config` is the tool's own, so it prints the effective one.
 // `smith lsp` points clangd at `.smith/compile_commands.json` when the project has no root one.
 constexpr int smith_defaults_args_max = 4096;

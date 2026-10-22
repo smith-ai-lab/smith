@@ -15,4 +15,6 @@ you commit: it checks the formatting, the lint and these documents (`smith docs`
   check`. The skills of the smith plugin, which `.claude/settings.json` enables, say how.
 - **To change a default, write it down first.** `smith fmt --dump-config > .clang-format` and `smith lint --dump-config >
   .clang-tidy` make the style and the checks this project's own. When the build needs more than the conventions give (a
-  package, a second program, other flags), the project needs a build file: load the smith-build skill.
+  package, a second program, other flags), the project needs a build file: `smith build --dump-config` prints the one
+  that does what the conventions do (`build.smith` or `build.c`, by the project's language), to edit; load the
+  smith-build skill.
