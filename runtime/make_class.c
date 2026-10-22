@@ -76,38 +76,35 @@ static bool smith_make_noise(const SmithMakeNode *node, const SmithMakeCommand *
     const char *program = argv.args[0].text;
     if (argv.count == 1 && (strcmp(program, ":") == 0 || strcmp(program, "true") == 0)) return true;
     if (strcmp(program, "mkdir") != 0 || argv.count < 3 || strcmp(argv.args[1].text, "-p") != 0) return false;
+    const char *name = node->name; // in the folder the commands run in
+    if (node->cwd != nullptr && strncmp(name, node->cwd, strlen(node->cwd)) == 0) name += strlen(node->cwd) + 1;
     for (size_t i = 2; i < argv.count; i++) {
         const char *folder = argv.args[i].text;
-        if (!smith_make_path_prefix(folder, node->name)) return false;
-        if (strcmp(folder, node->name) == 0) *directory = true;
+        if (!smith_make_path_prefix(folder, name)) return false;
+        if (strcmp(folder, name) == 0) *directory = true;
     }
     return true;
 }
 
 // ---- $(MAKE)
 
-// `make [flags] [goals]` run by the Makefile on itself: its goals, appended to *goals. False if the command is another
-// make (another folder or file) that this reading does not follow.
-static bool smith_make_forward(const SmithMakeCommand *command, const char ***goals, size_t *count) {
-    SmithMakeArgv argv;
-    if (!smith_make_lex(smith_make_unmark(command->text), true, &argv) || argv.count == 0) return false;
-    if (strcmp(smith_make_basename(argv.args[0].text), "make") != 0) return false;
-    for (size_t i = 1; i < argv.count; i++) {
-        const char *word = argv.args[i].text;
-        if (strcmp(word, "-C") == 0 || strcmp(word, "-f") == 0 || strncmp(word, "--directory", 11) == 0 ||
-            strncmp(word, "--file", 6) == 0 || strncmp(word, "-C", 2) == 0 || strncmp(word, "-f", 2) == 0)
-            return false;
-        if (strchr(word, '=') != nullptr) {
-            smith_make_report_at(command->where, "a variable on a $(MAKE) command line is not supported: %s", word);
-            continue;
-        }
-        if (word[0] == '-') {
-            if (strcmp(word, "-j") == 0 && i + 1 < argv.count && argv.args[i + 1].text[0] >= '0' &&
-                argv.args[i + 1].text[0] <= '9')
-                i++;
-            continue;
-        }
-        smith_make_append(goals, count, &word, 1);
+// `make [flags] [goals]` run by the Makefile on itself, or in another folder (make_sub.c read that one): its goals,
+// under the folder, appended to *goals. False if the command is not make, or is make run in another way.
+static bool smith_make_forward(const SmithMakeNode *node, const SmithMakeCommand *command, const char ***goals,
+                               size_t *count) {
+    const char *folder = nullptr;
+    const char **given = smith_make_new_list(1);
+    size_t given_count = 0;
+    SmithMakeCall call = smith_make_parse_make(command, &folder, &given, &given_count);
+    if (call == SmithMakeCall_None || call == SmithMakeCall_Other) return false;
+    const char *path = call == SmithMakeCall_Folder ? smith_make_under(node->cwd, folder) : node->cwd;
+    if (given_count == 0 && call == SmithMakeCall_Folder) {
+        const SmithMakeSub *sub = smith_make_sub_find(path, given, 0);
+        if (sub != nullptr && sub->default_goal != nullptr) smith_make_append(goals, count, &sub->default_goal, 1);
+    }
+    for (size_t i = 0; i < given_count; i++) {
+        const char *goal = smith_make_under(path, given[i]);
+        smith_make_append(goals, count, &goal, 1);
     }
     return true;
 }
@@ -134,7 +131,7 @@ static void smith_make_info_commands(SmithMakeNode *node, SmithMakeInfo *info) {
     for (size_t j = 0; j < node->command_count; j++) {
         const SmithMakeCommand *command = &node->commands[j];
         if (smith_make_noise(node, command, &directory)) continue;
-        if (smith_make_forward(command, &info->prerequisites, &info->prerequisite_count)) {
+        if (smith_make_forward(node, command, &info->prerequisites, &info->prerequisite_count)) {
             if (info->prerequisite_count == 0) smith_make_report_at(command->where, "$(MAKE) with no goal");
             continue;
         }
@@ -183,7 +180,7 @@ static void smith_make_info_node(SmithMakeNode *node, SmithMakeInfo *info) {
 
 // The name a task or alias has in build.c: a verb's name is taken, so `test` is make-test.
 static const char *smith_make_emit_name(const SmithMakeNode *node, SmithMakeInfo *info) {
-    if (smith_make_is_verb(node->name)) {
+    if (smith_make_is_verb(node->name) && info->kind != SmithMakeKind_Drop) {
         info->note = smith_make_format("`%s` is a verb in smith (`smith %s` does it for a project), so the Makefile's "
                                        "target of that name is the task make-%s",
                                        node->name, node->name, node->name);
@@ -201,7 +198,8 @@ static bool smith_make_known_object(const char *output, const SmithMakeNode **no
 
 // A step whose one command compiles one source into the node's target becomes an object.
 static void smith_make_try_object(SmithMakeNode *node, SmithMakeInfo *info) {
-    if (info->kind != SmithMakeKind_Step || info->kept_count != 1 || node->guard != nullptr) return;
+    if (info->kind != SmithMakeKind_Step || info->kept_count != 1 || node->guard != nullptr || node->cwd != nullptr)
+        return;
     SmithMakeArgv argv;
     SmithMakeCc cc;
     if (!smith_make_lex(node->commands[info->kept[0]].text, true, &argv) || !smith_make_parse_cc(&argv, &cc)) return;
@@ -226,7 +224,8 @@ static bool smith_make_link_covers(const SmithMakeNode *node, const SmithMakeInf
 }
 
 static void smith_make_try_program(SmithMakeNode *node, SmithMakeInfo *info) {
-    if (info->kind != SmithMakeKind_Step || info->kept_count != 1 || node->guard != nullptr) return;
+    if (info->kind != SmithMakeKind_Step || info->kept_count != 1 || node->guard != nullptr || node->cwd != nullptr)
+        return;
     SmithMakeArgv argv;
     SmithMakeCc cc;
     if (!smith_make_lex(node->commands[info->kept[0]].text, true, &argv) || !smith_make_parse_cc(&argv, &cc)) return;
@@ -240,6 +239,29 @@ static void smith_make_try_program(SmithMakeNode *node, SmithMakeInfo *info) {
     info->c_name = smith_make_format("program_%zu", ++smith_make_program_count);
 }
 
+// An alias that groups nothing (a `lint: ; true`, or only targets that are dropped) is dropped: nothing can name it.
+static void smith_make_prune_aliases(void) {
+    SmithMakeGraph *g = &smith_make_graph;
+    for (size_t round = 0; round < g->node_count + 1; round++) {
+        bool changed = false;
+        for (size_t i = 0; i < g->node_count; i++) {
+            SmithMakeInfo *info = &smith_make_infos[i];
+            if (info->kind != SmithMakeKind_Alias) continue;
+            bool groups = false;
+            for (size_t k = 0; k < info->prerequisite_count && !groups; k++) {
+                const SmithMakeNode *node = smith_make_node_find(info->prerequisites[k]);
+                groups = node == nullptr || smith_make_info_of(node)->kind != SmithMakeKind_Drop ||
+                         smith_make_exists(info->prerequisites[k]);
+            }
+            if (groups) continue;
+            info->kind = SmithMakeKind_Drop;
+            if (info->note == nullptr) info->note = "it groups nothing";
+            changed = true;
+        }
+        if (!changed) break;
+    }
+}
+
 // Decides what every node becomes.
 static void smith_make_classify(void) {
     SmithMakeGraph *g = &smith_make_graph;
@@ -250,11 +272,13 @@ static void smith_make_classify(void) {
         smith_make_try_object(&g->nodes[i], &smith_make_infos[i]);
     for (size_t i = 0; i < g->node_count; i++)
         smith_make_try_program(&g->nodes[i], &smith_make_infos[i]);
+    smith_make_prune_aliases();
     for (size_t i = 0; i < g->node_count; i++) {
         SmithMakeInfo *info = &smith_make_infos[i];
         if (info->kind == SmithMakeKind_Step) info->c_name = smith_make_format("step_%zu", ++smith_make_step_count);
         if (info->kind == SmithMakeKind_Task) info->c_name = smith_make_format("task_%zu", i + 1);
         info->emit_name = smith_make_emit_name(&g->nodes[i], info);
+        if (info->kind == SmithMakeKind_Task && strcmp(g->nodes[i].name, "test") == 0) info->test = true;
         if ((info->kind == SmithMakeKind_Task || info->kind == SmithMakeKind_Alias) &&
             !smith_make_task_name_ok(info->emit_name)) {
             smith_make_report_at(g->nodes[i].where,

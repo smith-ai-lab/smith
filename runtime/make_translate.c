@@ -38,7 +38,9 @@ typedef struct {
 static const char *smith_make_array_definition(const SmithMakeVar *var) {
     const char *marked = var->simple ? var->marked : smith_make_expand_text(var->value, true);
     SmithMakeArgv argv;
-    if (!smith_make_lex(marked, false, &argv)) return "(const char *[]){nullptr}";
+    // read as the shell reads a command, so that the array holds the words the command had
+    if (!smith_make_lex(marked, true, &argv) && !smith_make_lex(marked, false, &argv))
+        return "(const char *[]){nullptr}";
     return smith_make_list_all(&argv);
 }
 
@@ -179,17 +181,27 @@ static size_t *smith_make_nodes_in_order(void) {
 }
 
 static const char *smith_make_words_helper =
-    "// Splits an option or an environment variable at blanks, as a shell splits a make variable.\n"
+    "// Splits an option or an environment variable into words as the shell splits a make variable: at blanks, with\n"
+    "// quotes and backslashes removed.\n"
     "static const char *const *make_words(SmithBuild *b, const char *text) {\n"
     "    const char *const *words = smith_list(b, nullptr);\n"
     "    while (*text != '\\0') {\n"
     "        while (*text == ' ' || *text == '\\t' || *text == '\\n') text++;\n"
-    "        const char *end = text;\n"
-    "        while (*end != '\\0' && *end != ' ' && *end != '\\t' && *end != '\\n') end++;\n"
-    "        if (end > text)\n"
-    "            words = smith_cat(b, words, smith_list(b, smith_fmt(b, \"%.*s\", (int)(end - text), text), nullptr), "
-    "nullptr);\n"
-    "        text = end;\n"
+    "        if (*text == '\\0') break;\n"
+    "        const char *word = \"\";\n"
+    "        char quote = '\\0';\n"
+    "        while (*text != '\\0' && (quote != '\\0' || (*text != ' ' && *text != '\\t' && *text != '\\n'))) {\n"
+    "            if (quote == '\\0' && (*text == '\\'' || *text == '\"')) {\n"
+    "                quote = *text++;\n"
+    "            } else if (quote != '\\0' && *text == quote) {\n"
+    "                quote = '\\0';\n"
+    "                text++;\n"
+    "            } else {\n"
+    "                if (*text == '\\\\' && text[1] != '\\0' && quote != '\\'') text++;\n"
+    "                word = smith_fmt(b, \"%s%c\", word, *text++);\n"
+    "            }\n"
+    "        }\n"
+    "        words = smith_cat(b, words, smith_list(b, word, nullptr), nullptr);\n"
     "    }\n"
     "    return words;\n"
     "}\n\n";
@@ -276,6 +288,7 @@ static int smith_make_translate(const char *path, FILE *out) {
     smith_make.file = path;
     smith_make_read(path);
     smith_make_graph_build();
+    smith_make_import_all();
     smith_make_classify();
     SmithMakeBuffer body;
     smith_make_buffer_init(&body, smith_make_body_size);

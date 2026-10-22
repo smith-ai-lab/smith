@@ -972,6 +972,8 @@ static const SmithLibrary smith_libraries[] = {
 
 #include "runtime/make_cc.c"
 
+#include "runtime/make_sub.c"
+
 #include "runtime/make_class.c"
 
 #include "runtime/make_print.c"

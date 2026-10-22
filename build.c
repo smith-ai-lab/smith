@@ -627,6 +627,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"json", "json", nullptr, nullptr, 0},
     {"lint-smith", "lint-smith", nullptr, nullptr, 0},
     {"lsp", "lsp", nullptr, nullptr, 0},
+    {"make", "make", nullptr, nullptr, 0},
     {"mcp", "mcp", nullptr, nullptr, 0},
     {"neovim", "neovim", nullptr, nullptr, 0},
     {"new", "new", nullptr, nullptr, 0},

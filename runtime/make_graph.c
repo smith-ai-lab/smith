@@ -23,7 +23,8 @@ typedef struct {
     const char *guard;
     bool phony;
     bool has_recipe;
-    bool built_in; // its recipe is make's own
+    bool built_in;   // its recipe is make's own
+    const char *cwd; // the folder its commands run in, when it comes from the Makefile of another folder
     SmithMakeCommand *commands;
     size_t command_count;
     bool expanded;
@@ -239,7 +240,10 @@ static void smith_make_node_implicit(SmithMakeNode *node, const SmithMakePick *p
     node->has_recipe = true;
     node->built_in = (size_t)node->rule >= smith_make_graph.builtin_first;
     if (rule->guard != nullptr && node->guard == nullptr) node->guard = rule->guard;
-    if (!node->built_in) node->where = rule->where;
+    if (!node->built_in)
+        node->where = rule->where;
+    else if (node->where.file == nullptr)
+        node->where = (SmithMakeWhere){"(make's built-in rule)", 0};
 }
 
 // The node of a name, made on first use. A name nothing makes and no file is has no node.

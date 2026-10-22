@@ -50,7 +50,11 @@ static const char *smith_make_rule_text(const SmithMakeNode *node) {
 
 static void smith_make_comment(const SmithMakeNode *node, const char *note) {
     SmithMakeBuffer *out = SMITH_MAKE_BODY;
-    smith_make_put_format(out, "\n    // %s:%u  %s\n", node->where.file, node->where.line, smith_make_rule_text(node));
+    if (node->where.line == 0)
+        smith_make_put_format(out, "\n    // %s  %s\n", node->where.file, smith_make_rule_text(node));
+    else
+        smith_make_put_format(out, "\n    // %s:%u  %s\n", node->where.file, node->where.line,
+                              smith_make_rule_text(node));
     if (note != nullptr) smith_make_put_format(out, "    // %s\n", note);
 }
 
@@ -60,6 +64,16 @@ static void smith_make_field_list(const char *field, const char *const *names, s
     smith_make_put_format(SMITH_MAKE_BODY, "        .%s = %s,\n", field, smith_make_names(names, count));
 }
 
+// A command's text as the script runs it: its compiler is smith-cc or smith-c++, whatever the Makefile called it.
+static const char *smith_make_command_text(const SmithMakeCommand *command) {
+    const char *text = smith_make_unmark(smith_make_trim(command->text));
+    size_t first = 0;
+    while (text[first] != '\0' && !smith_make_space(text[first]))
+        first++;
+    const char *compiler = smith_make_compiler_name(smith_make_dup(text, first));
+    return compiler != nullptr ? smith_make_format("%s%s", compiler, text + first) : text;
+}
+
 static const char *smith_make_script(const SmithMakeNode *node, const SmithMakeInfo *info) {
     SmithMakeBuffer script;
     smith_make_buffer_init(&script, 262144);
@@ -67,15 +81,9 @@ static const char *smith_make_script(const SmithMakeNode *node, const SmithMakeI
     for (size_t k = 0; k < info->kept_count; k++) {
         const SmithMakeCommand *command = &node->commands[info->kept[k]];
         if (k > 0) smith_make_put_char(&script, '\n');
-        const char *text = smith_make_unmark(smith_make_trim(command->text));
-        size_t first = 0;
-        while (text[first] != '\0' && !smith_make_space(text[first]))
-            first++;
-        const char *compiler = smith_make_compiler_name(smith_make_dup(text, first));
-        if (compiler != nullptr)
-            smith_make_put_format(&script, "%s%s", compiler, text + first);
-        else
-            smith_make_put_text(&script, text);
+        const char *text = smith_make_command_text(command);
+        if (node->cwd != nullptr) text = smith_make_format("(cd '%s' && %s)", node->cwd, text);
+        smith_make_put_text(&script, text);
         if (command->ignore) smith_make_put_text(&script, " || true");
     }
     return smith_make_take(&script, 0);
@@ -84,7 +92,7 @@ static const char *smith_make_script(const SmithMakeNode *node, const SmithMakeI
 // The command of a step or task: the words of its one command, or `sh -c` of the commands.
 static const char *smith_make_command_list(const SmithMakeNode *node, const SmithMakeInfo *info) {
     SmithMakeArgv argv;
-    if (info->kept_count == 1 && !node->commands[info->kept[0]].ignore &&
+    if (info->kept_count == 1 && !node->commands[info->kept[0]].ignore && node->cwd == nullptr &&
         smith_make_lex(node->commands[info->kept[0]].text, true, &argv) && argv.count > 0) {
         const char *compiler = smith_make_compiler_name(argv.args[0].text);
         if (compiler != nullptr) argv.args[0] = (SmithMakeArg){compiler, -1};
@@ -135,6 +143,7 @@ static void smith_make_emit_alias(const SmithMakeNode *node, const SmithMakeInfo
     size_t count = 0;
     const char **targets = smith_make_inputs(info->prerequisites, info->prerequisite_count, &count);
     smith_make_comment(node, info->note);
+    if (count == 0) return; // a target that groups nothing
     smith_make_put_format(out, "    smith_alias(b, %s, %s);\n",
                           smith_make_literal(info->emit_name, strlen(info->emit_name)),
                           smith_make_names(targets, count));

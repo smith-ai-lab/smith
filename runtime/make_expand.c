@@ -274,9 +274,25 @@ static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
     smith_make_var_set(var, text, text, true);
 }
 
-// A variable the Makefile never assigns: an environment variable is a hole for it; any other is a knob (`make X=1`).
-static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t length) {
+// A variable the Makefile never assigns: an environment variable is a hole for it; any other is a knob (`make X=1`),
+// unless its name was made by an expansion ($(BINARY_$(1))), which is how a Makefile asks whether a setting exists.
+static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t length, bool computed) {
     if (length == 0 || smith_make.no_knobs) return;
+    if (computed && !smith_make_is_env_name(name, length)) return;
+    if (smith_make.generated_include) { // reported once for each name
+        static const char *reported[256];
+        static size_t reported_count;
+        bool seen = false;
+        for (size_t i = 0; i < reported_count && !seen; i++)
+            seen = strlen(reported[i]) == length && memcmp(reported[i], name, length) == 0;
+        if (!seen && reported_count < 256) {
+            reported[reported_count++] = smith_make_dup(name, length);
+            smith_make_report(
+                "%.*s is empty here: a Makefile that this one generates may define it, and it is not read", (int)length,
+                name);
+        }
+        return;
+    }
     if (smith_make_is_env_name(name, length)) {
         const char *key = smith_make_dup(name, length);
         smith_make_put_text(&m->buffer, smith_make_hole_text(smith_make_format("smith_env(b, \"%s\", \"\")", key)));
@@ -389,7 +405,7 @@ static void smith_make_push_mark(SmithMakeMachine *m, const SmithMakeVar *var) {
 }
 
 // Appends the value of the variable `name` (or pushes the frames that will).
-static void smith_make_lookup(SmithMakeMachine *m, const char *name, size_t length, bool top) {
+static void smith_make_lookup(SmithMakeMachine *m, const char *name, size_t length, bool top, bool computed) {
     size_t from = 0;
     length = smith_make_trim_length(name, length, &from);
     name += from;
@@ -399,7 +415,7 @@ static void smith_make_lookup(SmithMakeMachine *m, const char *name, size_t leng
     }
     SmithMakeVar *var = smith_make_var_find(name, length);
     if (var == nullptr || !var->defined) {
-        smith_make_undefined(m, name, length);
+        smith_make_undefined(m, name, length, computed);
         return;
     }
     if (var->simple) {
@@ -468,7 +484,7 @@ static void smith_make_start_call(SmithMakeMachine *m, bool top, const char *tex
     size_t args_at = 0;
     const SmithMakeFunction *function = smith_make_function_at(text, length, &args_at);
     if (function == nullptr && memchr(text, '$', length) == nullptr && memchr(text, ':', length) == nullptr) {
-        smith_make_lookup(m, text, length, top);
+        smith_make_lookup(m, text, length, top, false);
         return;
     }
     SmithMakeFrame *frame = smith_make_push(m);
@@ -534,7 +550,7 @@ static void smith_make_step_text(SmithMakeMachine *m, SmithMakeFrame *f) {
         smith_make_step_reference(m, f, c);
     } else {
         f->pos = i + 2;
-        smith_make_lookup(m, f->src + i + 1, 1, f->top);
+        smith_make_lookup(m, f->src + i + 1, 1, f->top, false);
     }
 }
 
@@ -964,11 +980,23 @@ static void smith_make_fn_origin(SmithMakeFn fn, const SmithMakeSpan *args, Smit
     }
 }
 
+// $(eval text) adds the text to the Makefile as lines: the reader takes it after the line that holds the call, which is
+// when make reads it for a line that is only the call (the usual $(foreach ...$(eval $(call template,...))).
+static void smith_make_fn_eval(const SmithMakeSpan *args) {
+    if (!smith_make.reading) {
+        smith_make_report("$(eval) in a recipe is not supported");
+    } else if (smith_make.eval_count >= sizeof smith_make.evals / sizeof smith_make.evals[0]) {
+        smith_make_report("too many $(eval) calls in one line");
+    } else if (!smith_make_span_empty(args[0])) {
+        smith_make.evals[smith_make.eval_count++] = smith_make_span_text(args[0]);
+    }
+}
+
 static void smith_make_fn_message(SmithMakeFn fn, const SmithMakeSpan *args) {
     if (fn == SmithMakeFn_Error)
         smith_make_report("$(error) is reached: %s", smith_make_span_trimmed(args[0]));
     else if (fn == SmithMakeFn_Eval)
-        smith_make_report("$(eval) is not supported");
+        smith_make_fn_eval(args);
 }
 
 static void smith_make_compute_more(SmithMakeFn fn, const SmithMakeSpan *args, SmithMakeBuffer *out) {
@@ -1107,7 +1135,7 @@ static void smith_make_step_var(SmithMakeMachine *m, SmithMakeFrame *f) {
         if (colon == nullptr || equals == nullptr) {
             bool top = f->top;
             m->depth--;
-            smith_make_lookup(m, name, strlen(name), top);
+            smith_make_lookup(m, name, strlen(name), top, true);
             return;
         }
         f->text = smith_make_format("%.*s", (int)(equals - colon - 1), colon + 1);
@@ -1116,10 +1144,13 @@ static void smith_make_step_var(SmithMakeMachine *m, SmithMakeFrame *f) {
         f->stage = 2;
         const char *replacement = smith_make_copy(name + f->aux);
         f->raw[1] = (SmithMakeSpan){replacement, strlen(replacement)};
-        smith_make_lookup(m, name, (size_t)(colon - name), false);
+        smith_make_lookup(m, name, (size_t)(colon - name), false, true);
         return;
     }
     SmithMakeSpan text = {m->buffer.data + f->start, m->buffer.length - f->start};
+    if (smith_make_has_hole(text.p, text.n))
+        smith_make_report("a value that depends on the platform or an option reaches a substitution reference, which "
+                          "keeps it as it is");
     const char *pattern = f->text;
     SmithMakeBuffer *out = &m->scratch;
     out->length = 0;

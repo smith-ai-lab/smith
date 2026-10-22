@@ -631,6 +631,7 @@ static void smith_make_assign(const char *name, SmithMakeOp op, const char *raw)
             return;
         }
         smith_make_make_knob(var, smith_make_expand_text(raw, true));
+        var->source = smith_make_trim(raw);
         return;
     }
     if (op == SmithMakeOp_Append) {
@@ -938,6 +939,23 @@ static void smith_make_open(const char *path) {
     r->sources[r->source_count++] = (SmithMakeSource){.name = smith_make_copy(path), .text = text, .length = length};
 }
 
+// Text that a $(eval) made, read as lines after the line that held it.
+static void smith_make_flush_evals(void) {
+    SmithMakeReader *r = &smith_make_reader;
+    for (size_t i = smith_make.eval_count; i > 0; i--) { // the first is read first: it goes on the stack last
+        if (r->source_count >= smith_make_includes_max) {
+            smith_make_report("includes nest more than %zu deep", smith_make_includes_max);
+            break;
+        }
+        const char *text = smith_make.evals[i - 1];
+        r->sources[r->source_count++] = (SmithMakeSource){.name = smith_make.here.file,
+                                                          .text = (char *)text,
+                                                          .length = strlen(text),
+                                                          .line = smith_make.here.line - 1};
+    }
+    smith_make.eval_count = 0;
+}
+
 static void smith_make_include(const char *args, bool optional) {
     SmithMakeReader *r = &smith_make_reader;
     size_t count = 0;
@@ -949,7 +967,10 @@ static void smith_make_include(const char *args, bool optional) {
                                  "note: -include %s is dropped: smith tracks the headers of each compile", name);
             continue;
         }
-        if (smith_make_exists(name)) {
+        const SmithMakeTarget *made = smith_make_target_find(name);
+        bool generated = made != nullptr && made->first != 0; // a file this Makefile makes is never read
+        if (generated) smith_make.generated_include = true;
+        if (smith_make_exists(name) && !generated) {
             smith_make_open(name);
         } else if (optional) {
             if (r->generated_count < 1024) r->generated_includes[r->generated_count++] = name;
@@ -1065,6 +1086,7 @@ static void smith_make_read(const char *path) {
     SmithMakeReader *r = &smith_make_reader;
     smith_make_reader_init();
     smith_make_define_defaults();
+    smith_make.reading = true;
     smith_make_open(path);
     for (uint64_t steps = 0; r->source_count > 0; steps++) {
         if (steps > smith_make_steps_max) smith_die(smith_exit_usage, "make: the Makefile does not end", nullptr);
@@ -1080,8 +1102,11 @@ static void smith_make_read(const char *path) {
         } else {
             smith_make_line(source, line.text);
         }
+        if (smith_make.eval_count > 0) smith_make_flush_evals();
     }
+    smith_make.reading = false;
     if (r->cond_count > 0) smith_make_report("a conditional is not closed by an endif");
+    smith_make.generated_include = false; // recipes are expanded later, with the variables a command line can set
     for (size_t i = 0; i < r->generated_count; i++) {
         const SmithMakeTarget *made = smith_make_target_find(r->generated_includes[i]);
         if (made != nullptr && made->first != 0)
