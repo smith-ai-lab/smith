@@ -8,6 +8,9 @@ cc=${CC:-cc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
+# The projects name smith-cc and smith-c++ as compilers: the ones found are the smith under test, not the installed one.
+mkdir "$work/tested" && ln -s "$smith" "$work/tested/smith-cc" && ln -s "$smith" "$work/tested/smith-c++"
+PATH=$work/tested:$PATH
 
 failures=0
 total=0
