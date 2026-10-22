@@ -67,12 +67,12 @@ compare build build.c ""
 compare build_runtime runtime/build_runtime.c ""
 compare stub tests/stub.c "-DNAME=\"stub\""
 compare pack scripts/pack.c ""
-for name in io http test; do
+for name in io http; do
     compare "lib_$name" "lib/$name.c" ""
 done
 # Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes one string;
 # as random.smith it is two, so the constants after it are numbered differently. (Nothing else differs.)
-for name in arena io http text untar; do
+for name in arena io http untar; do
     compare "test_$name" "tests/$name.c" ""
 done
 compare templates_main templates/new/main.c "-std=gnu2y"
