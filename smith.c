@@ -958,6 +958,25 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/lang_lex.c"
 // The rule for the command of a .smith file, shared with `smith lsp`.
 #include "runtime/lang_command.c"
+// A Makefile read as GNU make reads it and written as a build.c: `smith build --dump-config` (issue #44).
+// (memory and text, the expander, the reader, the targets, then build.c; blank lines keep clang-format from sorting)
+#include "runtime/make.c"
+
+#include "runtime/make_expand.c"
+
+#include "runtime/make_read.c"
+
+#include "runtime/make_graph.c"
+
+#include "runtime/make_emit.c"
+
+#include "runtime/make_cc.c"
+
+#include "runtime/make_class.c"
+
+#include "runtime/make_print.c"
+
+#include "runtime/make_translate.c"
 
 constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
@@ -1313,6 +1332,7 @@ static void smith_build_refuse_verbs(int count, char **args) {
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
+    if (verb == nullptr && smith_make_dump_config(count, args)) return 0;
     if (access("build.c", R_OK) != 0) smith_die(smith_exit_usage, "no build.c in this folder", nullptr);
     smith_cache_hold();
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
