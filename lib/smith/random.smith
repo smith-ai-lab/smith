@@ -6,8 +6,8 @@ module smith::random;
 
 import smith::arena;
 import target;
-import <assert.h>;
-import <math.h>;
+import smith::contract;
+import smith::math;
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -119,11 +119,11 @@ import <math.h>;
 } Permutation;
 
 // The same bits on every platform: a fused multiply-add rounds once where the standard rounds twice, and changes the
-// last bit of a draw. The pragma turns contraction off, which holds against -ffp-contract=on (clang's default) and
-// against fast-honor-pragmas, but -ffp-contract=fast ignores pragmas by definition. So every product that feeds a sum
-// goes through mul_*, whose empty asm makes the product opaque to the optimizer: nothing fuses, in any
-// flags. -ffast-math, which also reorders, is refused.
-#pragma STDC FP_CONTRACT OFF
+// last bit of a draw. The library declares -ffp-contract=off (the registry in smith.c), which `smith build` adds after
+// the project's own flags whenever it compiles this file, so it wins over the project's -ffp-contract=fast and over
+// clang's default (on). Compiled by hand, with no such flag, every product that feeds a sum also goes through mul_*,
+// whose empty asm makes the product opaque to the optimizer: nothing fuses, in any flags. -ffast-math, which also
+// reorders, is refused.
 static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
                                      "giving the same numbers; compile lib/smith/random.smith without it");
 
@@ -369,8 +369,8 @@ f64 log_double_finish(f64 f, i32 k, u32 hx) {
     u32 lx = (u32)bits;
     i32 k = 0;
     if (hx < 0x00100000 || hx >= 0x80000000U) { // x < 2^-1022, or negative
-        if (((hx & 0x7fffffffU) | lx) == 0) return -(f64)c::INFINITY;
-        if (hx >= 0x80000000U) return (f64)c::NAN;
+        if (((hx & 0x7fffffffU) | lx) == 0) return -math::infinity(f64);
+        if (hx >= 0x80000000U) return math::nan(f64);
         k -= 54; // subnormal: scale up
         x *= log_double_two54;
         bits = double_bits(x);
@@ -433,8 +433,8 @@ f32 log_float_finish(f32 f, i32 k, u32 ix) {
     u32 ix = float_bits(x);
     i32 k = 0;
     if (ix < 0x00800000 || ix >= 0x80000000U) { // x < 2^-126, or negative
-        if ((ix & 0x7fffffffU) == 0) return -c::INFINITY;
-        if (ix >= 0x80000000U) return c::NAN;
+        if ((ix & 0x7fffffffU) == 0) return -math::infinity(f32);
+        if (ix >= 0x80000000U) return math::nan(f32);
         k -= 25; // subnormal: scale up
         x *= log_float_two25;
         ix = float_bits(x);
@@ -471,7 +471,7 @@ i64 zigzag(u64 word) {
 // origin - 1, origin + 1, origin - 2, origin + 2... until one side runs out, then the rest of the other side in order.
 // A bijection of [0, count), so a uniform index gives a uniform position, and index 0 gives the origin.
 u64 around(u64 index, u64 origin, u64 count) {
-    c::assert(origin < count && index < count);
+    contract::assert(origin < count && index < count);
     u64 below = origin;
     u64 above = count - 1 - origin;
     u64 both = below < above ? below : above; // positions come in pairs this many times
@@ -493,7 +493,7 @@ constexpr u64 attempts = 64;
 typedef unsigned _BitInt(128) Wide; // the product of two words, whose high half is the index
 
 u64 draw_index(Key key, u64 n) {
-    c::assert(n > 0);
+    contract::assert(n > 0);
     u64 threshold = (0 - n) % n; // 2^64 mod n
     u64 index = 0;
     for (u64 attempt = 0; attempt < attempts; attempt++) {
@@ -519,7 +519,7 @@ i64 int_value(i64 low, i64 high, u64 index) {
 
 [[smith::c_name("smith_uniform_int64_sample")]] export [[nodiscard]] i64 uniform_int64_sample(Key key,
                                                                                               UniformInt64 uniform) {
-    c::assert(uniform.low <= uniform.high);
+    contract::assert(uniform.low <= uniform.high);
     u64 span = (u64)uniform.high - (u64)uniform.low + 1;
     if (span == 0) return zigzag(key_bits(key, 0)); // the whole i64 range
     return int_value(uniform.low, uniform.high, draw_index(key, span));
@@ -567,8 +567,8 @@ u64 origin_double(f64 low, f64 high) {
 // checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[smith::c_name("smith_uniform_float_sample")]] export [[nodiscard]] f32 uniform_float_sample(Key key,
                                                                                               UniformFloat uniform) {
-    c::assert(c::isfinite(uniform.low) && c::isfinite(uniform.high) && uniform.low < uniform.high);
-    c::assert(c::isfinite(uniform.high - uniform.low));
+    contract::assert(math::is_finite(f32, uniform.low) && math::is_finite(f32, uniform.high) && uniform.low < uniform.high);
+    contract::assert(math::is_finite(f32, uniform.high - uniform.low));
     u64 origin = origin_float(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 40, origin, (u64)1 << 24);
     f32 value = uniform.low + mul_float(uniform.high - uniform.low, (f32)grid * 0x1p-24f);
@@ -577,8 +577,8 @@ u64 origin_double(f64 low, f64 high) {
 
 [[smith::c_name("smith_uniform_double_sample")]] export [[nodiscard]] f64 uniform_double_sample(Key key,
                                                                                                 UniformDouble uniform) {
-    c::assert(c::isfinite(uniform.low) && c::isfinite(uniform.high) && uniform.low < uniform.high);
-    c::assert(c::isfinite(uniform.high - uniform.low));
+    contract::assert(math::is_finite(f64, uniform.low) && math::is_finite(f64, uniform.high) && uniform.low < uniform.high);
+    contract::assert(math::is_finite(f64, uniform.high - uniform.low));
     u64 origin = origin_double(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 11, origin, (u64)1 << 53);
     f64 value = uniform.low + mul_double(uniform.high - uniform.low, (f64)grid * 0x1p-53);
@@ -630,12 +630,12 @@ const f64 ppnd16_f[] = {1.0,
 
 f64 ppnd16(f64 p) {
     f64 q = p - 0.5;
-    if (c::fabs(q) <= 0.425) {
+    if (math::abs(f64, q) <= 0.425) {
         f64 r = 0.180625 - mul_double(q, q);
         return mul_double(q, horner_double(ppnd16_a, 8, r)) / horner_double(ppnd16_b, 8, r);
     }
     f64 tail = q < 0 ? p : 1.0 - p;
-    f64 r = c::sqrt(-log_double(tail));
+    f64 r = math::sqrt(f64, -log_double(tail));
     f64 value = 0;
     if (r <= 5.0) {
         r += -1.6;
@@ -658,12 +658,12 @@ const f32 ppnd7_f[] = {1.0f, 0.24197894225f, 0.012258202635f};
 
 f32 ppnd7(f32 p) {
     f32 q = p - 0.5f;
-    if (c::fabsf(q) <= 0.425f) {
+    if (math::abs(f32, q) <= 0.425f) {
         f32 r = 0.180625f - mul_float(q, q);
         return mul_float(q, horner_float(ppnd7_a, 4, r)) / horner_float(ppnd7_b, 4, r);
     }
     f32 tail = q < 0 ? p : 1.0f - p;
-    f32 r = c::sqrtf(-log_float(tail));
+    f32 r = math::sqrt(f32, -log_float(tail));
     f32 value = 0;
     if (r <= 5.0f) {
         r -= 1.6f;
@@ -689,20 +689,20 @@ f32 normal_u_float(Key key) {
 
 [[smith::c_name("smith_normal_double_sample")]] export [[nodiscard]] f64 normal_double_sample(Key key,
                                                                                               NormalDouble normal) {
-    c::assert(c::isfinite(normal.mean) && c::isfinite(normal.deviation) && normal.deviation > 0);
+    contract::assert(math::is_finite(f64, normal.mean) && math::is_finite(f64, normal.deviation) && normal.deviation > 0);
     return normal.mean + mul_double(normal.deviation, ppnd16(normal_u_double(key)));
 }
 
 [[smith::c_name("smith_normal_float_sample")]] export [[nodiscard]] f32 normal_float_sample(Key key,
                                                                                             NormalFloat normal) {
-    c::assert(c::isfinite(normal.mean) && c::isfinite(normal.deviation) && normal.deviation > 0);
+    contract::assert(math::is_finite(f32, normal.mean) && math::is_finite(f32, normal.deviation) && normal.deviation > 0);
     return normal.mean + mul_float(normal.deviation, ppnd7(normal_u_float(key)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 
 [[smith::c_name("smith_bernoulli_sample")]] export [[nodiscard]] bool bernoulli_sample(Key key, Bernoulli bernoulli) {
-    c::assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
+    contract::assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
     u64 grid = key_bits(key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
     return (f64)(((u64)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
@@ -748,13 +748,13 @@ void alias_build(f64 *probability, usize *alias, usize *small, usize *large, usi
 // that ends before this returns.
 [[smith::c_name("smith_categorical_make")]] export [[nodiscard]] Categorical
 categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
-    c::assert(arena != nullptr && weights != nullptr && count >= 1);
+    contract::assert(arena != nullptr && weights != nullptr && count >= 1);
     f64 sum = 0.0;
     for (usize i = 0; i < count; i++) {
-        c::assert(c::isfinite(weights[i]) && weights[i] >= 0.0);
+        contract::assert(math::is_finite(f64, weights[i]) && weights[i] >= 0.0);
         sum += weights[i];
     }
-    c::assert(c::isfinite(sum) && sum > 0.0);
+    contract::assert(math::is_finite(f64, sum) && sum > 0.0);
     f64 *probability = arena::push_array(arena, f64, count);
     usize *alias = arena::push_array(arena, usize, count);
     for (usize i = 0; i < count; i++) {
@@ -772,7 +772,7 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
 // An index below count; a zero weight is never drawn.
 [[smith::c_name("smith_categorical_sample")]] export [[nodiscard]] usize categorical_sample(Key key,
                                                                                             Categorical categorical) {
-    c::assert(categorical.count >= 1);
+    contract::assert(categorical.count >= 1);
     usize index = (usize)draw_index(key_derive(key, 0), categorical.count);
     bool keep = key_unit_double(key_derive(key, 1), 0) < categorical.probability[index];
     return keep ? index : categorical.alias[index];
@@ -781,7 +781,7 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
 // Writes 0..count-1 to out in a uniformly random order (Fisher-Yates); a count of 0 writes nothing.
 [[smith::c_name("smith_permutation_sample")]] export void permutation_sample(Key key, Permutation permutation,
                                                                              usize *out) {
-    c::assert(out != nullptr || permutation.count == 0);
+    contract::assert(out != nullptr || permutation.count == 0);
     for (usize i = 0; i < permutation.count; i++)
         out[i] = i;
     for (usize i = permutation.count; i > 1; i--) { // step i swaps position i - 1 with a position in [0, i)

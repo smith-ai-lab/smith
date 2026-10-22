@@ -140,7 +140,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena", "build", "random", "text", nullptr};
+static const char *const build_generated_headers[] = {"arena", "build", "contract", "math", "random", "text", nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -180,8 +180,8 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // is generated, so `smith lint` leaves it alone, and it ends with `// NOLINTEND`), an include of the module's generated
 // header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
 // It needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The bootstrap").
-static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith", "lib/smith/random.smith",
-                                                      "lib/smith/text.smith", nullptr};
+static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith", "lib/smith/contract.smith",
+                                                      "lib/smith/random.smith", "lib/smith/text.smith", nullptr};
 
 // Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
 static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -468,7 +468,10 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/random.smith",
     "bootstrap/lib/smith/random.c",
     "include/smith/contract.h",
-    "lib/contract.c",
+    "lib/smith/contract.smith",
+    "bootstrap/lib/smith/contract.c",
+    "include/smith/math.h",
+    "lib/smith/math.smith",
     "include/smith/text.h",
     "lib/smith/text.smith",
     "include/smith/json.h",
@@ -593,6 +596,8 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     }
     // The text library is a module, linted as written.
     smith_compile_command(b, config->cc, "lib/smith/arena.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/contract.smith", flags);
+    smith_compile_command(b, config->cc, "lib/smith/math.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", flags);

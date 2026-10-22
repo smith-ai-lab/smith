@@ -289,15 +289,23 @@ const char *smith_failure_heading(SmithFailureKind kind) {
         return "ensures failed";
     case SmithFailure_Invariant:
         return "invariant failed";
+    case SmithFailure_Assert:
+        return "assert failed";
+    case SmithFailure_Capacity:
+        return "arena out of capacity";
     }
     return "failed";
 }
 
-void smith_failure(SmithFailureKind kind) {
+void smith_failure_detail(SmithFailureKind kind, const char *details) {
     uintptr_t frames[smith_trace_frames_max];
     size_t count = smith_trace_capture(frames, smith_trace_frames_max);
     if (smith_failure_hook != nullptr) smith_failure_hook(kind, frames, count);
     fflush(nullptr);
-    smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, nullptr, frames, count, false, true);
+    smith_trace_write(STDERR_FILENO, "", smith_failure_heading(kind), nullptr, details, frames, count, false, true);
     abort();
+}
+
+void smith_failure(SmithFailureKind kind) {
+    smith_failure_detail(kind, nullptr);
 }

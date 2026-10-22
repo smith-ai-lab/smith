@@ -4,12 +4,13 @@
 // the header's doc comments, so they name the Smith names; the first one says how a C name follows from them.
 module smith::arena;
 
+import smith::contract;
+import smith::math;
 import target;
-import <assert.h>;
 import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_REGION is one of them
+import <smith/trace.h>;               // smith_failure: the stop below is the report a failed contract writes
 import <stdint.h>;
 import <stdio.h>;
-import <stdlib.h>;
 import <string.h>;
 
 // <smith/arena.h>: a fixed block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its
@@ -73,7 +74,7 @@ constexpr usize poison_window = 64 << 10; // poisoned past the cursor after each
 
 // Poisons [used, touched) again, after a reset or the end of a scope.
 void poison_unused(const Arena *arena) {
-    c::assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
+    contract::assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
     c::__asan_poison_memory_region(arena->memory + arena->used, arena->touched - arena->used);
 }
 
@@ -100,9 +101,9 @@ usize effective_align(usize align) {
 
 // Whether size bytes at align fit; the bytes of padding go to *padding. Written so that no sum can overflow.
 bool measure(const Arena *arena, usize size, usize align, usize *padding) {
-    c::assert(arena != nullptr);
-    c::assert(arena->used <= arena->capacity);
-    c::assert(align_valid(align));
+    contract::assert(arena != nullptr);
+    contract::assert(arena->used <= arena->capacity);
+    contract::assert(align_valid(align));
     align = effective_align(align);
     *padding = (align - (arena->used & (align - 1))) & (align - 1);
     usize room = arena->capacity - arena->used;
@@ -111,17 +112,17 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // A push that cannot be served stops here in every build, so a build with NDEBUG never writes past the memory.
 [[noreturn]] void stop(const Arena *arena, usize size, usize align) {
-    c::fprintf(c::stderr, "smith: arena out of capacity: push of %zu bytes (align %zu) with %zu of %zu bytes used\n",
-               size, align, arena->used, arena->capacity);
-    c::fflush(c::stderr);
-    c::abort();
+    char details[160];
+    c::snprintf(details, sizeof details, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size, align,
+                arena->used, arena->capacity);
+    c::smith_failure_detail(c::SmithFailure_Capacity, details);
 }
 
 // An arena over memory, which must be aligned to align_max and hold capacity bytes.
 [[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
-    c::assert(memory != nullptr);
-    c::assert(((usize)memory & (align_max - 1)) == 0);
-    c::assert(capacity > 0);
+    contract::assert(memory != nullptr);
+    contract::assert(((usize)memory & (align_max - 1)) == 0);
+    contract::assert(capacity > 0);
     return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
 }
 
@@ -142,23 +143,23 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     }
     c::memset(result, 0, size);
 
-    c::assert(arena->used <= arena->capacity);
+    contract::assert(arena->used <= arena->capacity);
     return result;
 }
 
 // An overflowing count * size is the same stop.
 [[noreturn]] void stop_overflow(const Arena *arena, usize size, usize count) {
-    c::fprintf(c::stderr, "smith: arena out of capacity: %zu items of %zu bytes overflow size_t (capacity %zu)\n",
-               count, size, arena->capacity);
-    c::fflush(c::stderr);
-    c::abort();
+    char details[160];
+    c::snprintf(details, sizeof details, "%zu items of %zu bytes overflow size_t (capacity %zu)", count, size,
+                arena->capacity);
+    c::smith_failure_detail(c::SmithFailure_Capacity, details);
 }
 
 // count items of size bytes.
 [[smith::c_name("smith_arena_push_array")]] export [[nodiscard]] void *push_array_raw(Arena *arena, usize size,
                                                                                       usize count, usize align) {
-    c::assert(arena != nullptr);
-    if (size > 0 && count > c::SIZE_MAX / size) stop_overflow(arena, size, count);
+    contract::assert(arena != nullptr);
+    if (size > 0 && count > math::max(usize) / size) stop_overflow(arena, size, count);
     return push_raw(arena, size * count, align);
 }
 
@@ -187,8 +188,8 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 // one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the parent has no
 // scope open, since the end of the scope would hand the carved memory back.
 [[smith::c_name("smith_arena_carve")]] export [[nodiscard]] Arena carve(Arena *parent, usize capacity) {
-    c::assert(parent != nullptr && capacity > 0);
-    c::assert(parent->scopes == 0); // ending a scope would give the carved memory back
+    contract::assert(parent != nullptr && capacity > 0);
+    contract::assert(parent->scopes == 0); // ending a scope would give the carved memory back
     usize start = (parent->used + align_max - 1) & ~(align_max - 1);
     if (start > parent->capacity || capacity > parent->capacity - start) stop(parent, capacity, align_max);
     u8 *memory = parent->memory + start;
@@ -206,18 +207,18 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Frees everything. Asserts no scope is open.
 [[smith::c_name("smith_arena_reset")]] export void reset(Arena *arena) {
-    c::assert(arena != nullptr);
-    c::assert(arena->used <= arena->capacity);
-    c::assert(arena->scopes == 0); // a scope still open would restore a cursor past the reset
+    contract::assert(arena != nullptr);
+    contract::assert(arena->used <= arena->capacity);
+    contract::assert(arena->scopes == 0); // a scope still open would restore a cursor past the reset
     arena->used = 0;
     if (sanitized) poison_unused(arena);
 }
 
 // Begins a scope.
 [[smith::c_name("smith_arena_scope_begin")]] export [[nodiscard]] Scope scope_begin(Arena *arena) {
-    c::assert(arena != nullptr);
-    c::assert(arena->used <= arena->capacity);
-    c::assert(arena->scopes < c::SIZE_MAX);
+    contract::assert(arena != nullptr);
+    contract::assert(arena->used <= arena->capacity);
+    contract::assert(arena->scopes < math::max(usize));
     Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};
     arena->scopes += 1;
     return scope;
@@ -225,10 +226,10 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Ends a scope: frees what was pushed since it began.
 [[smith::c_name("smith_arena_scope_end")]] export void scope_end(Scope scope) {
-    c::assert(scope.arena != nullptr);
-    c::assert(scope.arena->scopes > 0);                // more ends than begins
-    c::assert(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
-    c::assert(scope.used <= scope.arena->used);
+    contract::assert(scope.arena != nullptr);
+    contract::assert(scope.arena->scopes > 0);                // more ends than begins
+    contract::assert(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
+    contract::assert(scope.used <= scope.arena->used);
     scope.arena->scopes -= 1;
     scope.arena->used = scope.used;
     if (sanitized) poison_unused(scope.arena);

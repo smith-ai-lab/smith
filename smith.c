@@ -865,7 +865,7 @@ static const unsigned char smith_contract_header[] = {
 #embed "include/smith/contract.h"
 };
 static const unsigned char smith_contract_source[] = {
-#embed "lib/contract.c"
+#embed "lib/smith/contract.smith"
 };
 
 static const unsigned char smith_io_header[] = {
@@ -897,6 +897,13 @@ static const unsigned char smith_text_source[] = {
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
+static const unsigned char smith_math_header[] = {
+#embed "include/smith/math.h"
+};
+static const unsigned char smith_math_source[] = {
+#embed "lib/smith/math.smith"
+};
+
 static const unsigned char smith_embedded_http_header[] = {
 #embed "include/smith/http.h"
 };
@@ -906,6 +913,9 @@ static const unsigned char smith_embedded_http_source[] = {
 // The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
 // the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, docs/smith-lang.md), written to
 // .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
+static const unsigned char smith_embedded_contract_source[] = {
+#embed "bootstrap/lib/smith/contract.c"
+};
 static const unsigned char smith_embedded_arena_source[] = {
 #embed "bootstrap/lib/smith/arena.c"
 };
@@ -933,21 +943,27 @@ typedef struct {
     size_t header_size;
     const unsigned char *source;
     size_t source_size;
-    bool lang; // the source is a .smith module, not C
+    bool lang;         // the source is a .smith module, not C
+    const char *flags; // the flags the library declares, which `smith build` adds when it compiles it, or nullptr
 } SmithLibrary;
 
 // One row per library, in order of name: SMITH_LIBRARY(name, lang) uses the arrays smith_<name>_header and _source.
-#define SMITH_LIBRARY(library, is_lang) \
+// SMITH_LIBRARY_FLAGS adds the flags the library declares (one string, a flag a line), which the build adds after the
+// project's own whenever it compiles the library: random needs -ffp-contract=off, whatever the project passes.
+#define SMITH_LIBRARY_FLAGS(library, is_lang, declared) \
     {#library, \
      smith_##library##_header, \
      sizeof smith_##library##_header, \
      smith_##library##_source, \
      sizeof smith_##library##_source, \
-     is_lang}
+     is_lang, \
+     declared}
+#define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, true),  SMITH_LIBRARY(contract, false), SMITH_LIBRARY(io, false),  SMITH_LIBRARY(json, false),
-    SMITH_LIBRARY(random, true), SMITH_LIBRARY(test, false),     SMITH_LIBRARY(text, true), SMITH_LIBRARY(trace, false),
+    SMITH_LIBRARY(arena, true),  SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, false),   SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(math, true),   SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"), SMITH_LIBRARY(test, false), SMITH_LIBRARY(text, true),
+    SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
@@ -1390,6 +1406,15 @@ static void smith_build_write_libraries(void) {
         }
         SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
         smith_write_if_changed(path, library->source, library->source_size);
+        // The flags the library declares go beside its source (the build adds them to its compile).
+        char *extension = strrchr(path, '.');
+        SMITH_ASSERT(extension != nullptr);
+        written = snprintf(extension, sizeof path - (size_t)(extension - path), ".flags");
+        SMITH_ASSERT(written > 0 && (size_t)written < sizeof path - (size_t)(extension - path));
+        if (library->flags != nullptr)
+            smith_write_if_changed(path, (const unsigned char *)library->flags, strlen(library->flags));
+        else
+            unlink(path);
     }
 }
 
@@ -1415,6 +1440,8 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/contract.c", smith_embedded_contract_source,
+                           sizeof smith_embedded_contract_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/arena.c", smith_embedded_arena_source,
                            sizeof smith_embedded_arena_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,

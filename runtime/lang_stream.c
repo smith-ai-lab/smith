@@ -543,6 +543,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     used = smith_lang_append(out, capacity, used, "// clang-format on\n");
     used = smith_lang_append(out, capacity, used, "#pragma once\n");
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
+    used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");

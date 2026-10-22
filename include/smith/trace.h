@@ -58,20 +58,27 @@ typedef enum : unsigned char {
     SmithFailure_Requires,
     SmithFailure_Ensures,
     SmithFailure_Invariant,
+    SmithFailure_Assert,
+    SmithFailure_Capacity,
 } SmithFailureKind;
 
-// "check failed", "requires failed", "ensures failed", "invariant failed".
+// "check failed", "requires failed", "ensures failed", "invariant failed", "assert failed", "arena out of capacity".
 [[nodiscard]] const char *smith_failure_heading(SmithFailureKind kind);
 
-// The entry point of plain-function checks and contracts (smith_requires, smith_ensures, smith_invariant, and a
+// The entry point of plain-function checks and contracts (smith_requires, smith_ensures, smith_invariant, smith_assert and a
 // library's own checks): it ends the program, or the test, with a report. It captures the stack of its caller, so the
 // failing line is the caller's, and a function that calls it is skipped when the frame is chosen if its name starts
-// with smith_failure, smith_contract_, smith_check, smith_requires, smith_ensures or smith_invariant. It does not
+// with smith_failure, smith_contract_, smith_check, smith_requires, smith_ensures, smith_invariant or smith_assert. It does not
 // capture file, line or text: smith reads the line from the source file.
 //
 // In a test run by smith_tests, the test fails with the report. Anywhere else it writes the heading and the trace to
 // standard error and calls abort(), so a log holds what `smith symbolize` needs.
 [[noreturn]] void smith_failure(SmithFailureKind kind);
+
+// smith_failure with one line of what was wrong (`smith-trace detail <text>`), which the report prints under the source
+// line: the arena's out-of-capacity stop says what was asked and what was left. The text is copied before anything
+// else runs; in a test the hook fails the test with the heading, as for smith_failure.
+[[noreturn]] void smith_failure_detail(SmithFailureKind kind, const char *details);
 
 // What smith_failure does instead of writing and aborting; smith_tests installs it in the test runner. It must not
 // return. frames and count are the caller's stack, as smith_trace_capture gives it.

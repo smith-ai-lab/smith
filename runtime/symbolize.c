@@ -16,7 +16,7 @@
 //     lib/test.c:812         smith_test_execute
 //
 // The failing frame is the first frame that is not smith's own check, contract and abort machinery (a function whose
-// name starts with smith_test_, smith_check, smith_requires, smith_ensures, smith_invariant, smith_failure,
+// name starts with smith_test_, smith_check, smith_requires, smith_ensures, smith_invariant, smith_assert, smith_failure,
 // smith_contract_, smith_trace_, or the library as a module: smith::test::, smith::contract:: or smith::trace::, and
 // the older smith.test. and smith.contract.) and not a frame of a system library (libc's abort path, which has no debug
 // info). The chain ends at the first frame of the test runner (smith_test_... or smith::test::...) or at main. A
@@ -214,7 +214,7 @@ static bool smith_sym_apply(SmithSymTrace *trace, const char *word, const char *
 // Rows.
 
 static const char *smith_sym_skipped[] = {
-    "smith_test_",   "smith_check",       "smith_requires", "smith_ensures", "smith_invariant",
+    "smith_test_",   "smith_check",       "smith_requires", "smith_ensures", "smith_invariant", "smith_assert",
     "smith_failure", "smith_contract_",   "smith_trace_",   "smith.test.",   "smith.contract.",
     "smith::test::", "smith::contract::", "smith::trace::"};
 

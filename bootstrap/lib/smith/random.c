@@ -22,11 +22,10 @@
 #ifndef SMITH_TARGET_FLOAT_EVAL_METHOD
 #define SMITH_TARGET_FLOAT_EVAL_METHOD __FLT_EVAL_METHOD__
 #endif
-#include <assert.h>
-#include <math.h>
+#include "smith/contract.h"
+#include "smith/math.h"
 
 SmithRandomHook smith_random_hook = nullptr;
-#pragma STDC FP_CONTRACT OFF
 static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
 "giving the same numbers; compile lib/smith/random.smith without it");
 static_assert(SMITH_TARGET_FLOAT_RADIX == 2 && SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53,
@@ -223,8 +222,8 @@ __UINT32_TYPE__ hx = (__UINT32_TYPE__)(bits >> 32);
 __UINT32_TYPE__ lx = (__UINT32_TYPE__)bits;
 __INT32_TYPE__ k = 0;
 if (hx < 0x00100000 || hx >= 0x80000000U) {
-if (((hx & 0x7fffffffU) | lx) == 0) return -(double)INFINITY;
-if (hx >= 0x80000000U) return (double)NAN;
+if (((hx & 0x7fffffffU) | lx) == 0) return -__extension__({extern double smith_math_infinity__f64(void)__asm__("_smith::math::infinity(double)");smith_math_infinity__f64();});
+if (hx >= 0x80000000U) return __extension__({extern double smith_math_nan__f64(void)__asm__("_smith::math::nan(double)");smith_math_nan__f64();});
 k -= 54;
 x *= smith_random_log_double_two54;
 bits = smith_random_double_bits(x);
@@ -282,8 +281,8 @@ return smith_random_mul_float(dk, smith_random_log_float_ln2_hi) - ((inner - smi
 __UINT32_TYPE__ ix = smith_random_float_bits(x);
 __INT32_TYPE__ k = 0;
 if (ix < 0x00800000 || ix >= 0x80000000U) {
-if ((ix & 0x7fffffffU) == 0) return -INFINITY;
-if (ix >= 0x80000000U) return NAN;
+if ((ix & 0x7fffffffU) == 0) return -__extension__({extern float smith_math_infinity__f32(void)__asm__("_smith::math::infinity(float)");smith_math_infinity__f32();});
+if (ix >= 0x80000000U) return __extension__({extern float smith_math_nan__f32(void)__asm__("_smith::math::nan(float)");smith_math_nan__f32();});
 k -= 25;
 x *= smith_random_log_float_two25;
 ix = smith_random_float_bits(x);
@@ -313,7 +312,7 @@ __INT64_TYPE__ half = (__INT64_TYPE__)(word >> 1);
 return (word & 1) != 0 ? -half - 1 : half;
 }
 static __UINT64_TYPE__ smith_random_around(__UINT64_TYPE__ index, __UINT64_TYPE__ origin, __UINT64_TYPE__ count) {
-assert(origin < count && index < count);
+smith_assert(origin < count && index < count);
 __UINT64_TYPE__ below = origin;
 __UINT64_TYPE__ above = count - 1 - origin;
 __UINT64_TYPE__ both = below < above ? below : above;
@@ -323,7 +322,7 @@ return below > above ? origin - (index - both) : origin + (index - both);
 static constexpr __UINT64_TYPE__ smith_random_attempts = 64;
 typedef unsigned _BitInt(128) smith_random_Wide;
 static __UINT64_TYPE__ smith_random_draw_index(SmithKey key, __UINT64_TYPE__ n) {
-assert(n > 0);
+smith_assert(n > 0);
 __UINT64_TYPE__ threshold = (0 - n) % n;
 __UINT64_TYPE__ index = 0;
 for (__UINT64_TYPE__ attempt = 0; attempt < smith_random_attempts; attempt++) {
@@ -347,7 +346,7 @@ return (__INT64_TYPE__)((__UINT64_TYPE__)low + smith_random_around(index, origin
 SmithUniformInt64 uniform);
 [[nodiscard]] __INT64_TYPE__ smith_uniform_int64_sample(SmithKey key,
 SmithUniformInt64 uniform) {
-assert(uniform.low <= uniform.high);
+smith_assert(uniform.low <= uniform.high);
 __UINT64_TYPE__ span = (__UINT64_TYPE__)uniform.high - (__UINT64_TYPE__)uniform.low + 1;
 if (span == 0) return smith_random_zigzag(smith_key_bits(key, 0));
 return smith_random_int_value(uniform.low, uniform.high, smith_random_draw_index(key, span));
@@ -384,8 +383,8 @@ return origin < last ? origin : last;
 SmithUniformFloat uniform);
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key,
 SmithUniformFloat uniform) {
-assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
-assert(isfinite(uniform.high - uniform.low));
+smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.high);}) && uniform.low < uniform.high);
+smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(uniform.high-uniform.low);}));
 __UINT64_TYPE__ origin = smith_random_origin_float(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (__UINT64_TYPE__)1 << 24);
 float value = uniform.low + smith_random_mul_float(uniform.high - uniform.low, (float)grid * 0x1p-24f);
@@ -395,8 +394,8 @@ return value < uniform.high ? value : smith_random_below_float(uniform.high);
 SmithUniformDouble uniform);
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key,
 SmithUniformDouble uniform) {
-assert(isfinite(uniform.low) && isfinite(uniform.high) && uniform.low < uniform.high);
-assert(isfinite(uniform.high - uniform.low));
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.low);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.high);}) && uniform.low < uniform.high);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(uniform.high-uniform.low);}));
 __UINT64_TYPE__ origin = smith_random_origin_double(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (__UINT64_TYPE__)1 << 53);
 double value = uniform.low + smith_random_mul_double(uniform.high - uniform.low, (double)grid * 0x1p-53);
@@ -436,12 +435,12 @@ static const double smith_random_ppnd16_f[] = {1.0,
 2.04426310338993978564e-15};
 static double smith_random_ppnd16(double p) {
 double q = p - 0.5;
-if (fabs(q) <= 0.425) {
+if (__extension__({extern double smith_math_abs__f64(double x)__asm__("_smith::math::abs(double)");smith_math_abs__f64(q);}) <= 0.425) {
 double r = 0.180625 - smith_random_mul_double(q, q);
 return smith_random_mul_double(q, smith_random_horner_double(smith_random_ppnd16_a, 8, r)) / smith_random_horner_double(smith_random_ppnd16_b, 8, r);
 }
 double tail = q < 0 ? p : 1.0 - p;
-double r = sqrt(-smith_log_double(tail));
+double r =__extension__({extern double smith_math_sqrt__f64(double x)__asm__("_smith::math::sqrt(double)");smith_math_sqrt__f64(-smith_log_double(tail));});
 double value = 0;
 if (r <= 5.0) {
 r += -1.6;
@@ -460,12 +459,12 @@ static const float smith_random_ppnd7_e[] = {6.6579051150f, 3.0812263860f, 0.428
 static const float smith_random_ppnd7_f[] = {1.0f, 0.24197894225f, 0.012258202635f};
 static float smith_random_ppnd7(float p) {
 float q = p - 0.5f;
-if (fabsf(q) <= 0.425f) {
+if (__extension__({extern float smith_math_abs__f32(float x)__asm__("_smith::math::abs(float)");smith_math_abs__f32(q);}) <= 0.425f) {
 float r = 0.180625f - smith_random_mul_float(q, q);
 return smith_random_mul_float(q, smith_random_horner_float(smith_random_ppnd7_a, 4, r)) / smith_random_horner_float(smith_random_ppnd7_b, 4, r);
 }
 float tail = q < 0 ? p : 1.0f - p;
-float r = sqrtf(-smith_log_float(tail));
+float r =__extension__({extern float smith_math_sqrt__f32(float x)__asm__("_smith::math::sqrt(float)");smith_math_sqrt__f32(-smith_log_float(tail));});
 float value = 0;
 if (r <= 5.0f) {
 r -= 1.6f;
@@ -488,19 +487,19 @@ return (float)(grid * 2 + 1) * 0x1p-24f;
 SmithNormalDouble normal);
 [[nodiscard]] double smith_normal_double_sample(SmithKey key,
 SmithNormalDouble normal) {
-assert(isfinite(normal.mean) && isfinite(normal.deviation) && normal.deviation > 0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(normal.deviation);}) && normal.deviation > 0);
 return normal.mean + smith_random_mul_double(normal.deviation, smith_random_ppnd16(smith_random_normal_u_double(key)));
 }
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal);
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal) {
-assert(isfinite(normal.mean) && isfinite(normal.deviation) && normal.deviation > 0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.mean);}) &&__extension__({extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");smith_math_is_finite__f32(normal.deviation);}) && normal.deviation > 0);
 return normal.mean + smith_random_mul_float(normal.deviation, smith_random_ppnd7(smith_random_normal_u_float(key)));
 }
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli);
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli) {
-assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
+smith_assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
 __UINT64_TYPE__ grid = smith_key_bits(key, 0) >> 11;
 return (double)(((__UINT64_TYPE__)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
@@ -540,13 +539,13 @@ alias[index] = index;
 smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count);
 [[nodiscard]] SmithCategorical
 smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count) {
-assert(arena != nullptr && weights != nullptr && count >= 1);
+smith_assert(arena != nullptr && weights != nullptr && count >= 1);
 double sum = 0.0;
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
-assert(isfinite(weights[i]) && weights[i] >= 0.0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(weights[i]);}) && weights[i] >= 0.0);
 sum += weights[i];
 }
-assert(isfinite(sum) && sum > 0.0);
+smith_assert(__extension__({extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");smith_math_is_finite__f64(sum);}) && sum > 0.0);
 double *probability =__extension__({extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");smith_arena_push_array_type__f64(arena,count);});
 __SIZE_TYPE__ *alias =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
@@ -564,7 +563,7 @@ return (SmithCategorical){.probability = probability, .alias = alias, .count = c
 SmithCategorical categorical);
 [[nodiscard]] __SIZE_TYPE__ smith_categorical_sample(SmithKey key,
 SmithCategorical categorical) {
-assert(categorical.count >= 1);
+smith_assert(categorical.count >= 1);
 __SIZE_TYPE__ index = (__SIZE_TYPE__)smith_random_draw_index(smith_key_derive(key, 0), categorical.count);
 bool keep = smith_key_unit_double(smith_key_derive(key, 1), 0) < categorical.probability[index];
 return keep ? index : categorical.alias[index];
@@ -573,7 +572,7 @@ void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
 __SIZE_TYPE__ *out);
 void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
 __SIZE_TYPE__ *out) {
-assert(out != nullptr || permutation.count == 0);
+smith_assert(out != nullptr || permutation.count == 0);
 for (__SIZE_TYPE__ i = 0; i < permutation.count; i++)
 out[i] = i;
 for (__SIZE_TYPE__ i = permutation.count; i > 1; i--) {
@@ -583,6 +582,26 @@ out[i - 1] = out[j];
 out[j] = swap;
 }
 }
+extern double smith_math_infinity__f64(void)__asm__("_smith::math::infinity(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]double smith_math_infinity__f64(void){return(double)__builtin_inf();}
+extern double smith_math_nan__f64(void)__asm__("_smith::math::nan(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]double smith_math_nan__f64(void){return(double)__builtin_nan("");}
+extern float smith_math_infinity__f32(void)__asm__("_smith::math::infinity(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_infinity__f32(void){return(float)__builtin_inf();}
+extern float smith_math_nan__f32(void)__asm__("_smith::math::nan(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_nan__f32(void){return(float)__builtin_nan("");}
+extern bool smith_math_is_finite__f32(float x)__asm__("_smith::math::is_finite(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]bool smith_math_is_finite__f32(float x){return __builtin_isfinite(x);}
+extern bool smith_math_is_finite__f64(double x)__asm__("_smith::math::is_finite(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]bool smith_math_is_finite__f64(double x){return __builtin_isfinite(x);}
+extern double smith_math_abs__f64(double x)__asm__("_smith::math::abs(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]double smith_math_abs__f64(double x){return __builtin_elementwise_abs(x);}
+extern double smith_math_sqrt__f64(double x)__asm__("_smith::math::sqrt(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]double smith_math_sqrt__f64(double x){return __builtin_elementwise_sqrt(x);}
+extern float smith_math_abs__f32(float x)__asm__("_smith::math::abs(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_abs__f32(float x){return __builtin_elementwise_abs(x);}
+extern float smith_math_sqrt__f32(float x)__asm__("_smith::math::sqrt(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_sqrt__f32(float x){return __builtin_elementwise_sqrt(x);}
 extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");
 [[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count){return(double*)smith_arena_push_array(arena,sizeof(double),count,alignof(double));}
 extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");

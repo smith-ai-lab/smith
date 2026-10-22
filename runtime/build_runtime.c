@@ -1420,6 +1420,21 @@ static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
     return smith_list(b, "-I", ".smith/include", nullptr);
 }
 
+static size_t smith_read_file(const char *path, char **text);
+static const char *const *smith_split_lines(char *text, size_t size);
+
+// The flags a library of smith's declares (the registry in smith.c writes them beside its source, one a line, as
+// .smith/lib/smith/random.flags). They come after the project's own, so that they win: random's results need
+// -ffp-contract=off whatever flags the project compiles it with.
+static const char *const *smith_library_flags(SmithBuild *b, const char *source) {
+    if (strncmp(source, ".smith/lib/", strlen(".smith/lib/")) != 0) return smith_list(b, nullptr);
+    const char *path = smith_replace_extension(b, source, ".flags");
+    if (access(path, R_OK) != 0) return smith_list(b, nullptr);
+    char *text = nullptr;
+    size_t size = smith_read_file(path, &text);
+    return smith_split_lines(text, size);
+}
+
 // .smith sources (docs/smith-lang.md). A module's generated header is a step of its own, made from the module's tokens
 // alone (`smith-cc --smith-header`), so every header can be written before any compile, and every compile of a .smith
 // source waits for all of them (an order-only input: the stamp of the check below) and gets `-I .smith/include`. What
@@ -1760,7 +1775,8 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     }
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, tail, nullptr),
+                             smith_lang_flags(b, copy.source), copy.flags, smith_library_flags(b, copy.source), tail,
+                             nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
@@ -1962,7 +1978,8 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     const char *copy = smith_copy_string(source);
     const char *const tail[] = {"-c", copy, nullptr};
     const char *const *arguments = smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy),
-                                             smith_lang_flags(b, copy), smith_copy_list(flags), tail, nullptr);
+                                             smith_lang_flags(b, copy), smith_copy_list(flags),
+                                             smith_library_flags(b, copy), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 

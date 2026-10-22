@@ -59,7 +59,7 @@ namespace {
 
 // ---- names the macros and clang use ----
 
-enum class Contract { None, Requires, Ensures, Invariant, Trusted };
+enum class Contract { None, Requires, Ensures, Invariant, Assert, Trusted };
 
 Contract contract_of(const Instruction *instruction) {
     auto *call = dyn_cast_or_null<CallBase>(instruction);
@@ -68,13 +68,14 @@ Contract contract_of(const Instruction *instruction) {
     if (name == "smith_contract_requires") return Contract::Requires;
     if (name == "smith_contract_ensures") return Contract::Ensures;
     if (name == "smith_contract_invariant") return Contract::Invariant;
+    if (name == "smith_contract_assert") return Contract::Assert;
     if (name == "smith_contract_trusted") return Contract::Trusted;
     return Contract::None;
 }
 
 bool contract_name(StringRef name) {
     return name == "smith_contract_requires" || name == "smith_contract_ensures" ||
-           name == "smith_contract_invariant" || name == "smith_contract_trusted";
+           name == "smith_contract_invariant" || name == "smith_contract_assert" || name == "smith_contract_trusted";
 }
 
 // The function a call names, even when the call uses another type than the function declares (an Objective-C message
@@ -171,11 +172,13 @@ bool has_own_contract(const Function &function, Contract kind) {
     return false;
 }
 
-// A smith_requires, smith_ensures or smith_invariant the function wrote itself (smith_trusted() is not one).
+// A smith_requires, smith_ensures or smith_invariant the function wrote itself (smith_trusted() is not one, and neither
+// is smith_assert: a function with only asserts is part of its callers, where the asserts are proved, as `assert` was).
 bool has_any_own_contract(const Function &function) {
     for (const Instruction &instruction : instructions(function)) {
         Contract kind = contract_of(&instruction);
-        if (kind != Contract::None && kind != Contract::Trusted && owner_id(instruction) == function_id(function))
+        if (kind != Contract::None && kind != Contract::Trusted && kind != Contract::Assert &&
+            owner_id(instruction) == function_id(function))
             return true;
     }
     return false;
@@ -1364,6 +1367,7 @@ class Normalizer {
             } else if (kind != Contract::None) {
                 Kind point_kind = kind == Contract::Requires  ? Kind::Requires
                                   : kind == Contract::Ensures ? Kind::Ensures
+                                  : kind == Contract::Assert  ? Kind::Assert
                                                               : Kind::Invariant;
                 point(instruction, point_kind, instruction->getOperand(0), true);
             } else if (is_trap(instruction)) {
@@ -1413,6 +1417,8 @@ class Normalizer {
         auto *base = cast<CallBase>(call);
         if (kind == Kind::Requires || kind == Kind::Ensures || kind == Kind::Invariant || kind == Kind::Premise) {
             if (MDNode *site = call->getMetadata("smith.callsite")) info.call_site = static_cast<int>(id_of(site));
+        } else if (kind == Kind::Assert && condition != nullptr) {
+            // smith_assert(condition) of <smith/contract.h>: the text is the line's, below
         } else if (kind == Kind::Assert) {
             // __assert_rtn(function, file, line, expression) on macOS, __assert_fail(expression, file, line, function)
             bool apple = base->getCalledFunction()->getName() == "__assert_rtn";
@@ -1450,7 +1456,7 @@ class Normalizer {
             }
         }
         if (info.kind == Kind::Requires || info.kind == Kind::Ensures || info.kind == Kind::Invariant ||
-            info.kind == Kind::Premise)
+            info.kind == Kind::Premise || (info.kind == Kind::Assert && condition != nullptr))
             info.text = source_line(info.file, info.line);
         IRBuilder<> builder(call);
         Value *value = condition != nullptr ? condition : builder.getFalse();
