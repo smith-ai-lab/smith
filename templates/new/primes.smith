@@ -1,0 +1,15 @@
+// The first primes, in their own module so that main and the tests both call them.
+module primes;
+
+import <assert.h>;
+
+// The sum of the first `count` primes, which is at most five.
+export i32 sum(usize count) {
+    constexpr i32 first[] = {2, 3, 5, 7, 11};
+    c::assert(count <= _Countof(first));
+    i32 total = 0;
+    for (usize i = 0; i < count; i++) {
+        total += first[i];
+    }
+    return total;
+}

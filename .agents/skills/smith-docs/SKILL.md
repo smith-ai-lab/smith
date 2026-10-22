@@ -70,7 +70,7 @@ requires: dataset:license_class=commercial-ok,research-only,unknown; model:owner
 
 ## smith new
 
-`smith new` writes `AGENTS.md`, `knowledge/index.md` and `knowledge/program.md` (a concept describing the program it writes), `.agents/skills/<name>-docs/SKILL.md` (what goes where, adding a concept or a skill, running `smith docs`), the `.claude/skills` link, with the types in its index. A project that keeps its own `main.c` or `build.c` does not get `program.md`. The generated skill, `<name>-docs`, is the project's guide to maintaining all of it.
+`smith new` writes `AGENTS.md`, `knowledge/index.md` and `knowledge/program.md` (a concept describing the program it writes), `.agents/skills/<name>-docs/SKILL.md` (what goes where, adding a concept or a skill, running `smith docs`), the `.claude/skills` link, with the types in its index. A project that keeps its own `main.smith`, `main.c` or build file does not get `program.md`. The generated skill, `<name>-docs`, is the project's guide to maintaining all of it.
 
 ## Add a concept or a skill
 

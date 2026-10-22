@@ -1,0 +1,11 @@
+// The tests of @NAME@, run by `smith test`. A test is a function named test_<name>, defined as below.
+import <smith/test.h>;
+import primes;
+
+void test_the_first_five_primes_add_up_to_28(void) {
+    c::smith_check_equal_i32(primes::sum(5), 28);
+}
+
+void test_no_primes_add_up_to_nothing(void) {
+    c::smith_check_equal_i32(primes::sum(0), 0);
+}

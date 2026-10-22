@@ -57,7 +57,7 @@ refuse `fmt`, `lint`, `docs`, `prove`, `check`, `run` and `test` (`smith: build.
 - Each project used to carry about sixty lines that said the obvious (a list of sources "add a file when you add one", the
   clang-format and clang-tidy commands, the docs step), the verbs meant whatever each wrote, and a project without the task
   got an error (smith's own repository had no `docs` task, so `smith docs` failed there). What a verb does is now the same
-  everywhere, and a `smith new` project has no verb tasks to keep up.
+  everywhere, and a project that builds by convention (what `smith new` writes) has no verb tasks to keep up.
 - The project already says what the verbs need: `smith_object` and `smith_program` say what is compiled and with which
   flags, `smith_tests` says what the tests are, `smith_default` says what `run` runs, and git says which files exist.
   smith writes what it learned from the run of build.c in `.smith/` for the verbs (below).
@@ -465,7 +465,7 @@ void build(SmithBuild *b) {
   unchanged. It never guesses. A root `build.smith` is a build file like `build.c` (below).
 
 **The profiles.** `debug` is the default target; `release` and `fast` are aliases (`smith build release`, `smith build
-fast`). The flags are those `smith new` wrote before there was a convention, moved into smith:
+fast`). The flags are those `smith new` used to write into a build.c, moved into smith:
 
 | | flags |
 |---|---|
@@ -683,8 +683,8 @@ void build(SmithBuild *b) {
 }
 ```
 
-- **Off until build.c says so.** smith never changes a default. `smith new`'s template turns it on (`smith_modules(b,
-  &(SmithModules){})`, with no folders, which still covers system headers and smith's); `tests/new.sh` checks that.
+- **Off until build.c says so.** smith never changes a default. The conventions turn it on (`smith_modules(b,
+  &(SmithModules){})`, with no folders, which still covers system headers and smith's).
 - **Which compiles.** Every `smith_object` after the call whose source ends in `.c` or `.m`: the flags are added before
   the object's `.flags`, so a later `-fno-modules` wins. `.metal` and C++ sources never get them. Calling it after a
   `smith_object`, or twice, is an error.

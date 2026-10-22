@@ -44,7 +44,7 @@ fi
 
 mkdir -p "$work/p/geometry" "$work/p/clean"
 cd "$work/p" || exit 1
-cp "$here/templates/new/clang-tidy" .clang-tidy
+cp "$here/templates/defaults/clang-tidy" .clang-tidy
 cat >geometry/box.smith <<'EOF'
 module geometry::box;
 
@@ -209,7 +209,7 @@ expect "plain C on both sides of a .smith file keeps its names" "$(printf '%s\n%
 
 # --- `smith lint` with no arguments lints the .smith sources a build compiles --------------------------------------------
 mkdir -p "$work/q" && cd "$work/q" || exit 1
-cp "$here/templates/new/clang-tidy" .clang-tidy
+cp "$here/templates/defaults/clang-tidy" .clang-tidy
 cat >build.c <<'EOF'
 #include <smith/build.h>
 

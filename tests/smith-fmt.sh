@@ -141,10 +141,9 @@ expect ".c files still read import as a name" "u32 f(void) {
 # In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
 project=$work/project
 mkdir -p "$project/src/a" "$project/tests"
-sed 's/@NAME@/demo/g' templates/new/build.c >"$project/build.c"
 for f in main.c primes.c primes.h; do sed 's/@NAME@/demo/g' "templates/new/$f" >"$project/$f"; done
 sed 's/@NAME@/demo/g' templates/new/test_primes.c >"$project/tests/test_primes.c"
-cp templates/new/clang-format "$project/.clang-format"
+cp templates/defaults/clang-format "$project/.clang-format"
 git -C "$project" init -q
 printf 'module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n' >"$project/src/a/b.smith"
 total=$((total + 1))

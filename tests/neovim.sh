@@ -28,10 +28,11 @@ printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c",
     >"$work/project/compile_commands.json"
 # A folder with a .smith file and nothing else: no build.c, no compile_commands.json, no .git.
 mkdir "$work/alone" && printf '#include <stdio.h>\n\nint main() {\n  printf("hello world\\n");\n  return zzz;\n}\n' >"$work/alone/main.smith"
-# Projects made by smith new: one that builds, one whose main.c does not compile.
+# Projects made by smith new: one that builds, one whose main.c does not compile. The plugin finds a project by its build
+# file, which smith new does not write, so each gets the one that does what the conventions do (smith build --dump-config).
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1
 mkdir "$work/home" "$work/new"
-(cd "$work/new" && "$smith" new hello >/dev/null 2>&1 && "$smith" new broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c)
+(cd "$work/new" && "$smith" new --language c hello >/dev/null 2>&1 && "$smith" new --language c broken >/dev/null 2>&1 && printf 'this is an error\n' >>broken/main.c && for p in hello broken; do (cd $p && "$smith" build --dump-config >../dumped && mv ../dumped build.c); done)
 mkdir -p "$work/fakedap/lua" && printf 'return { adapters = {}, configurations = {}, ABORT = setmetatable({}, { __tostring = function() return "ABORT" end }) }\n' >"$work/fakedap/lua/dap.lua"
 
 # A smith that prints a commit of our choosing and is the real one otherwise.
