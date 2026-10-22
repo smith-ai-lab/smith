@@ -318,6 +318,77 @@ esac
 expect "check: a build.smith with no main is linted and tested" yes "$ok"
 cd "$work" || exit 1
 
+# 10. A mistake in a build.smith names build.smith, not build.c, and every name collision is reported in one run (#47).
+mkdir "$work/errors" && cd "$work/errors" || exit 1
+printf 'int main(void) {\n    return 0;\n}\n' >prog.c
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::Step step = {.command = build::list(b, "true", nullptr)};
+    build::task(b, "lint", &step);
+    build::alias(b, "fmt", step.outputs);
+    build::Step other = {.command = build::list(b, "true", nullptr)};
+    build::task(b, "release", &other);
+    build::app(b, &(build::App){.entry = "prog.c"});
+}
+EOF
+capture smith build
+expect "errors: a build.smith with mistakes fails" 2 "$rc"
+expect_contains "errors: the message names build.smith" "$err" "smith: build.smith: task 'lint' is named after a verb"
+expect_contains "errors: the second collision is reported in the same run" "$err" "smith: build.smith: alias 'fmt' is named after a verb"
+expect_contains "errors: the third, an alias the app makes against a task" "$err" \
+    "smith_app: the alias release that every program adds to is the name of a task; name the task another way"
+case $err in
+*"build.c"*) named=build.c ;;
+*) named=none ;;
+esac
+expect "errors: and never says build.c" none "$named"
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "prog.c"});
+}
+EOF
+capture smith build -Dnope
+expect_contains "errors: an unknown option names build.smith" "$err" "smith: build.smith: unknown option -Dnope"
+expect_contains "errors: and says it declares none" "$err" "build.smith declares no options"
+cd "$work" || exit 1
+
+# 11. Relaxing a convention's warning (smith-build-levels): the example there builds, and without the flags it fails.
+mkdir "$work/relax" && cd "$work/relax" || exit 1
+mkdir fixtures
+printf '// a fixture with nothing in it\n' >fixtures/empty.c
+printf '#include <assert.h>\n#include "fixtures/empty.c"\n\nstatic_assert(0.5f + 0.5f == 1.0f, "exact");\n\nint main(void) {\n    return 0;\n}\n' >main.c
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.c", .name = "hello"});
+}
+EOF
+capture smith build
+expect "relax: without the flags the conventions' warnings fail the build" 1 "$rc"
+expect_contains "relax: the diagnostic names the flag to turn off" "$out$err" "[-Werror,-Wgnu-folding-constant]"
+cat >build.smith <<'EOF'
+import smith::build;
+
+void build(build::Build *b) {
+    build::defaults(b, &(build::Defaults){
+        .folders = (const build::Folder[]){{.path = "fixtures", .flags = build::list(b, "-Wno-empty-translation-unit", nullptr)}, {}},
+    });
+    build::app(b, &(build::App){
+        .entry = "main.c",
+        .name = "hello",
+        .flags = build::list(b, "-Wno-gnu-folding-constant", nullptr),
+    });
+}
+EOF
+capture smith build
+expect "relax: with -Wno-... in .flags and a folder's list it builds" 0 "$rc"
+cd "$work" || exit 1
+
 echo
 echo "$total build.smith checks, $failures failed"
 [ "$failures" -eq 0 ]

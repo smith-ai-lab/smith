@@ -72,6 +72,27 @@ build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hi", n
 
 A task may not be named after a verb (`run`, `test`, `check`, `fmt`, `lint`, `docs`, `prove`). Packages, options (`build::option_value`), `build::glob`, `build::env` and `build::capture` are all available beside `build::app`: they are the same functions as `smith_x` (`smith-build`). `smith build --dump-config` prints the same file for a C project, where the calls are `smith_app` and `smith_task`. `smith_app` makes the aliases `release` and `fast` and the default target itself, so a build file that calls it declares no `smith_default`. Call `smith_compile_commands(b, "compile_commands.json")` after it if another tool wants a root file.
 
+### Relaxing one of the conventions' warnings
+
+The conventions compile with `-Wall -Wextra -Wpedantic ... -Werror`, then your flags, so a `-Wno-...` in `.flags` (or the folder's list) wins and the rest stay on. Turn off as little as you can: a folder's list for files that break a rule on purpose (a linter's fixtures are empty or odd translation units), the app's `.flags` for a construct the whole program uses (a float in a `static_assert`, which clang calls a GNU constant-folding extension under `-Wpedantic`). The two game needed:
+
+```smith
+import smith::build;
+
+void build(build::Build *b) {
+    build::defaults(b, &(build::Defaults){
+        .folders = (const build::Folder[]){{.path = "fixtures", .flags = build::list(b, "-Wno-empty-translation-unit", nullptr)}, {}},
+    });
+    build::app(b, &(build::App){
+        .entry = "main.smith",
+        .name = "hello",
+        .flags = build::list(b, "-Wno-gnu-folding-constant", nullptr),   // static_assert(0.5f + 0.5f == 1.0f)
+    });
+}
+```
+
+Find the flag's name in the diagnostic: clang ends it with `[-Wname]`, and `-Wno-name` turns it off. Check with `smith build -t commands <target>` that the flag is last on the files you meant, and `-Werror=name` puts one back.
+
 ## Level 2: the low-level API, replacing one call by its expansion
 
 When you need a step the high level has no field for (a shader, a data-baking step), add it beside the calls: `build::profile_flags(b, "debug")` and `build::source_flags` give the conventions' flags to add yours to, and `build::sources(b, folder)` / `build::objects(b, "debug", folder)` list what the programs compile. When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:

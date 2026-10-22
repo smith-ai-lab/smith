@@ -255,8 +255,8 @@ static size_t smith_plan_targets(SmithExec *exec, uint32_t *targets) {
         length = smith_exec_canonical(folded, length);
         uint32_t node = smith_exec_node(exec, folded, length, false, nullptr);
         if (node == UINT32_MAX && exec->options.verb != nullptr) {
-            smith_exec_fail("smith %s: build.c defines no task or alias named %s; add smith_task(b, \"%s\", ...)", name,
-                            name, name);
+            smith_exec_fail("smith %s: %s defines no task or alias named %s; add smith_task(b, \"%s\", ...)", name,
+                            smith_project_build_file(), name, name);
         }
         if (node == UINT32_MAX) smith_exec_fail("unknown target '%s'", name);
         targets[count++] = node;
