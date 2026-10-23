@@ -580,7 +580,13 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (contract_name(function.getName())) {
             function.setMemoryEffects(MemoryEffects::none());
             function.addFnAttr(Attribute::NoUnwind);
+            function.addFnAttr(Attribute::NoFree);
         }
+        // Neither frees anything, but LLVM's intrinsics do not say it, so no function with a contract or a UBSan check
+        // is inferred nofree, and Alive2 then takes a call of one as possibly freeing the objects it was given: every
+        // load of one after the call is undefined behaviour (issue #62).
+        if (function.getIntrinsicID() == Intrinsic::ubsantrap || function.getIntrinsicID() == Intrinsic::trap)
+            function.addFnAttr(Attribute::NoFree);
     }
     Analyses analyses;
     for (Function &function : module) {

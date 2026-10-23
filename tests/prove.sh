@@ -211,6 +211,10 @@ prove --function=grows_by_one "$cases/readonly.c"
 expect "readonly: a claim stronger than the contract fails" 1 "$rc"
 expect_contains "readonly: ... with its line" "$out" "readonly.c:54: smith_ensures(now == old + 1) may be false"
 
+# 7c2b. What a caller reads after a callee with UBSan checks and a contract is a value, not undefined behaviour (#62).
+prove --function=add_row "$cases/after_call.c"
+expect "after_call: add_row is proved" 0 "$rc"
+
 # 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
 # int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects; `restrict`
 # is what says it.
