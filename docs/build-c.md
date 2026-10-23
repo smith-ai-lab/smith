@@ -635,7 +635,7 @@ as `.tar.xz`. A `.gz` whose content is not a tar (the first 512 bytes are no tar
 folder holding it, named as the URL without `.gz` (`file` when nothing is left), mode 0644, as tree-sitter's release is. A
 zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd; nothing needs them.
 
-- **The code is smith's own**, not a vendored library: `runtime/gzip.c` (gzip, DEFLATE, CRC-32; about 480 lines),
+- **The code is smith's own**, not a vendored library: `lib/smith/inflate.smith` (DEFLATE, the zlib and gzip wrappers, CRC-32 and Adler-32: the library `smith::inflate`, skill smith-inflate, which learner uses too; `runtime/gzip.c` is the loop over a file's members),
   `runtime/xz.c` (the xz container, LZMA2, CRC-64 and SHA-256 checks; about 670) and `runtime/untar.c` (tar and the safe
   extraction; about 720). They are written in the rules of the rest of smith: no malloc (the LZMA2 dictionary is one
   anonymous `mmap` of the size the block asks for, at most 1 GiB, and the rest is static), every loop bounded by an input

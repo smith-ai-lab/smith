@@ -979,6 +979,7 @@ typedef struct {
      declared}
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
+// clang-format off
 static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
     SMITH_LIBRARY(autodiff, true),
@@ -992,6 +993,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(text, true),
     SMITH_LIBRARY(trace, false),
 };
+// clang-format on
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
 #include "runtime/symbolize.c"
