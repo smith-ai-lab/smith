@@ -68,6 +68,7 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
     }
     if (lang->is_module && !lang->prev_member) {
         const SmithLangName *known = smith_lang_name_find(lang, token->text, token->length);
+        if (known != nullptr && known->generic != 0) smith_lang_note_edge(lang, known);
         if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
     }
     if (smith_lang_stream_declared(lang, host, token)) {
@@ -157,12 +158,17 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 
 static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
-    if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next) {
+    bool hidden = lang->is_module && !lang->pending_export && smith_lang_hidden_unit(lang, host, token->location);
+    if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next && !hidden) {
         smith_lang_declare_process(lang, host, token); // a private one streams
         return;
     }
     lang->seen_declaration = true;
     smith_lang_reset_declaration(lang);
+    lang->decl.first_location = token->location;
+    lang->decl.hidden = hidden;
+    lang->export_active = lang->export_active || (hidden && !lang->decl.generic);
+    if (lang->export_active && hidden) smith_lang_span_begin(lang);
     lang->state = lang->is_module ? SmithLangState_Head : SmithLangState_Stream;
     if (lang->state == SmithLangState_Head) {
         smith_lang_head(lang, host, token);
@@ -533,6 +539,31 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
 // (shim/hook.cpp, smith.c) skip this one.
 static constexpr char smith_clang_format_off[] = "// clang-format off\n";
 
+// The header's body: the module's API, then, in a section of its own, the private declarations that the instances of
+// its exported generics need (they were written where the module declares them).
+static size_t smith_lang_append_body(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+    if (lang->spans_count == 0)
+        return smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
+    size_t at = 0;
+    for (size_t i = 0; i < lang->spans_count; i++) { // the API: everything but the hidden declarations
+        used = smith_lang_append(out, capacity, used, "%.*s", (int)(lang->spans[i].begin - at),
+                                 smith_lang_header_body + at);
+        at = lang->spans[i].end;
+    }
+    used = smith_lang_append(out, capacity, used, "%.*s\n", (int)(lang->header_used - at), smith_lang_header_body + at);
+    used = smith_lang_append(
+        out, capacity, used,
+        "\n// ---- Not API: what the instances of this module's generics use, compiled in the files that call "
+        "them.\n// ---- Hidden in visibility, and the names are reserved (%s_<name>).\n"
+        "// NOLINTBEGIN\n",
+        lang->prefix);
+    for (size_t i = 0; i < lang->spans_count; i++) { // the hidden declarations, in the order of the module
+        used = smith_lang_append(out, capacity, used, "%.*s\n", (int)(lang->spans[i].end - lang->spans[i].begin),
+                                 smith_lang_header_body + lang->spans[i].begin);
+    }
+    return smith_lang_append(out, capacity, used, "// NOLINTEND\n");
+}
+
 // The module's generated header: what C and C++ include to call it, and what importers read.
 static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     char *out = smith_lang_header_full;
@@ -545,7 +576,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
     used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
-    used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
+    used = smith_lang_append_body(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");
     lang->header_full_used = used;
 }

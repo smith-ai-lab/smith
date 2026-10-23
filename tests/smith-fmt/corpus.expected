@@ -237,6 +237,66 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-generic-private-call/src/main.smith <==
+module main;
+
+import store;
+
+// `twice` is a private generic of store: its instances exist for store's own generics, not for this call.
+int main(void) {
+    return (int)store::twice(i32, 4);
+}
+==> error-generic-private-call/src/store.smith <==
+module store;
+
+// What the exported generic's instances need, none of it exported: a type, constants, an enum, a variable, functions
+// and a generic. Instances are compiled in the file that calls the generic.
+typedef struct {
+    i64 total;
+    u32 count;
+} Tally;
+
+typedef u8 Mode;
+constexpr Mode mode_add = 0;
+constexpr Mode mode_scale = 1;
+
+enum Size { size_small = 1, size_large = 10 };
+
+i64 weight = 3;
+
+Tally start(void) {
+    return (Tally){0, 0};
+}
+
+Tally step(Tally tally, i64 value, Mode mode) {
+    if (mode == mode_scale) {
+        value = value * weight;
+    }
+    tally.total = tally.total + value;
+    tally.count = tally.count + 1;
+    return tally;
+}
+
+// Used by nothing the instances need: it stays static.
+i64 unused(i64 value) {
+    return value + weight;
+}
+
+T twice(constexpr type T, T value) {
+    return value + value;
+}
+
+// The sum of both values, doubled and scaled.
+export i64 total(constexpr type T, T a, T b) {
+    Tally tally = start();
+    tally = step(tally, (i64)twice(T, a), mode_add);
+    tally = step(tally, (i64)b, mode_scale);
+    return tally.total + size_large + (i64)tally.count;
+}
+
+export i64 current_weight(void) {
+    return unused(0);
+}
 ==> error-if-constexpr/src/main.smith <==
 import target;
 
@@ -1270,6 +1330,69 @@ int main(void) {
     c::printf("%d %zu %zu\n", p->x, after_point, a.used);
     return 0;
 }
+==> generic-private-names/src/main.smith <==
+module main;
+
+import store;
+import <stdio.h>;
+
+int main(void) {
+    i64 a = store::total(i32, 4, 5);
+    i64 b = store::total(f64, 1.5, 2.5);
+    c::printf("%lld %lld %lld\n", (long long)a, (long long)b, (long long)store::current_weight());
+    return 0;
+}
+==> generic-private-names/src/store.smith <==
+module store;
+
+// What the exported generic's instances need, none of it exported: a type, constants, an enum, a variable, functions
+// and a generic. Instances are compiled in the file that calls the generic.
+typedef struct {
+    i64 total;
+    u32 count;
+} Tally;
+
+typedef u8 Mode;
+constexpr Mode mode_add = 0;
+constexpr Mode mode_scale = 1;
+
+enum Size { size_small = 1, size_large = 10 };
+
+i64 weight = 3;
+
+Tally start(void) {
+    return (Tally){0, 0};
+}
+
+Tally step(Tally tally, i64 value, Mode mode) {
+    if (mode == mode_scale) {
+        value = value * weight;
+    }
+    tally.total = tally.total + value;
+    tally.count = tally.count + 1;
+    return tally;
+}
+
+// Used by nothing the instances need: it stays static.
+i64 unused(i64 value) {
+    return value + weight;
+}
+
+T twice(constexpr type T, T value) {
+    return value + value;
+}
+
+// The sum of both values, doubled and scaled.
+export i64 total(constexpr type T, T a, T b) {
+    Tally tally = start();
+    tally = step(tally, (i64)twice(T, a), mode_add);
+    tally = step(tally, (i64)b, mode_scale);
+    return tally.total + size_large + (i64)tally.count;
+}
+
+export i64 current_weight(void) {
+    return unused(0);
+}
 ==> generic-static-assert/src/main.smith <==
 import sa;
 int main(void) {
@@ -1609,6 +1732,534 @@ int main(void) {
     int status = 256 * 3;
     c::printf("%.1f %d %d eof=%d %d\n", (double)root, c::WIFEXITED(status), c::WEXITSTATUS(status), c::EOF,
               c::local_value());
+    return 0;
+}
+==> import-many-modules/src/chain00.smith <==
+module chain00;
+
+export i32 value(void) {
+    return 0;
+}
+
+export i32 depth(void) {
+    return 1;
+}
+==> import-many-modules/src/chain01.smith <==
+module chain01;
+
+import chain00 as a;
+
+export i32 value(void) {
+    return 1;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1;
+}
+==> import-many-modules/src/chain02.smith <==
+module chain02;
+
+import chain01 as a;
+import chain00 as b;
+
+export i32 value(void) {
+    return 2;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain03.smith <==
+module chain03;
+
+import chain02 as a;
+import chain01 as b;
+
+export i32 value(void) {
+    return 3;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain04.smith <==
+module chain04;
+
+import chain03 as a;
+import chain02 as b;
+
+export i32 value(void) {
+    return 4;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain05.smith <==
+module chain05;
+
+import chain04 as a;
+import chain03 as b;
+
+export i32 value(void) {
+    return 5;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain06.smith <==
+module chain06;
+
+import chain05 as a;
+import chain04 as b;
+
+export i32 value(void) {
+    return 6;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain07.smith <==
+module chain07;
+
+import chain06 as a;
+import chain05 as b;
+
+export i32 value(void) {
+    return 7;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain08.smith <==
+module chain08;
+
+import chain07 as a;
+import chain06 as b;
+
+export i32 value(void) {
+    return 8;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain09.smith <==
+module chain09;
+
+import chain08 as a;
+import chain07 as b;
+
+export i32 value(void) {
+    return 9;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain10.smith <==
+module chain10;
+
+import chain09 as a;
+import chain08 as b;
+
+export i32 value(void) {
+    return 10;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain11.smith <==
+module chain11;
+
+import chain10 as a;
+import chain09 as b;
+
+export i32 value(void) {
+    return 11;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain12.smith <==
+module chain12;
+
+import chain11 as a;
+import chain10 as b;
+
+export i32 value(void) {
+    return 12;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain13.smith <==
+module chain13;
+
+import chain12 as a;
+import chain11 as b;
+
+export i32 value(void) {
+    return 13;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain14.smith <==
+module chain14;
+
+import chain13 as a;
+import chain12 as b;
+
+export i32 value(void) {
+    return 14;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain15.smith <==
+module chain15;
+
+import chain14 as a;
+import chain13 as b;
+
+export i32 value(void) {
+    return 15;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain16.smith <==
+module chain16;
+
+import chain15 as a;
+import chain14 as b;
+
+export i32 value(void) {
+    return 16;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain17.smith <==
+module chain17;
+
+import chain16 as a;
+import chain15 as b;
+
+export i32 value(void) {
+    return 17;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain18.smith <==
+module chain18;
+
+import chain17 as a;
+import chain16 as b;
+
+export i32 value(void) {
+    return 18;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain19.smith <==
+module chain19;
+
+import chain18 as a;
+import chain17 as b;
+
+export i32 value(void) {
+    return 19;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain20.smith <==
+module chain20;
+
+import chain19 as a;
+import chain18 as b;
+
+export i32 value(void) {
+    return 20;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain21.smith <==
+module chain21;
+
+import chain20 as a;
+import chain19 as b;
+
+export i32 value(void) {
+    return 21;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain22.smith <==
+module chain22;
+
+import chain21 as a;
+import chain20 as b;
+
+export i32 value(void) {
+    return 22;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain23.smith <==
+module chain23;
+
+import chain22 as a;
+import chain21 as b;
+
+export i32 value(void) {
+    return 23;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain24.smith <==
+module chain24;
+
+import chain23 as a;
+import chain22 as b;
+
+export i32 value(void) {
+    return 24;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain25.smith <==
+module chain25;
+
+import chain24 as a;
+import chain23 as b;
+
+export i32 value(void) {
+    return 25;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain26.smith <==
+module chain26;
+
+import chain25 as a;
+import chain24 as b;
+
+export i32 value(void) {
+    return 26;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain27.smith <==
+module chain27;
+
+import chain26 as a;
+import chain25 as b;
+
+export i32 value(void) {
+    return 27;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain28.smith <==
+module chain28;
+
+import chain27 as a;
+import chain26 as b;
+
+export i32 value(void) {
+    return 28;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain29.smith <==
+module chain29;
+
+import chain28 as a;
+import chain27 as b;
+
+export i32 value(void) {
+    return 29;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain30.smith <==
+module chain30;
+
+import chain29 as a;
+import chain28 as b;
+
+export i32 value(void) {
+    return 30;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain31.smith <==
+module chain31;
+
+import chain30 as a;
+import chain29 as b;
+
+export i32 value(void) {
+    return 31;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain32.smith <==
+module chain32;
+
+import chain31 as a;
+import chain30 as b;
+
+export i32 value(void) {
+    return 32;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain33.smith <==
+module chain33;
+
+import chain32 as a;
+import chain31 as b;
+
+export i32 value(void) {
+    return 33;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain34.smith <==
+module chain34;
+
+import chain33 as a;
+import chain32 as b;
+
+export i32 value(void) {
+    return 34;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain35.smith <==
+module chain35;
+
+import chain34 as a;
+import chain33 as b;
+
+export i32 value(void) {
+    return 35;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain36.smith <==
+module chain36;
+
+import chain35 as a;
+import chain34 as b;
+
+export i32 value(void) {
+    return 36;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain37.smith <==
+module chain37;
+
+import chain36 as a;
+import chain35 as b;
+
+export i32 value(void) {
+    return 37;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain38.smith <==
+module chain38;
+
+import chain37 as a;
+import chain36 as b;
+
+export i32 value(void) {
+    return 38;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/chain39.smith <==
+module chain39;
+
+import chain38 as a;
+import chain37 as b;
+
+export i32 value(void) {
+    return 39;
+}
+
+export i32 depth(void) {
+    return a::depth() + 1 + b::value() * 0;
+}
+==> import-many-modules/src/main.smith <==
+module main;
+
+import chain39 as top;
+import chain10 as mid;
+import <stdio.h>;
+
+// Forty modules, each importing the two before it: one run of a header reads all the ones under it.
+int main(void) {
+    c::printf("%d %d\n", top::depth(), mid::depth());
     return 0;
 }
 ==> import-smith-module/src/lib/text.smith <==

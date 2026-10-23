@@ -57,6 +57,8 @@ constexpr size_t smith_lang_if_depth_max = 32;             // `if constexpr` blo
 constexpr size_t smith_lang_constants_max = 256;           // `constexpr` constants a condition may name
 constexpr size_t smith_lang_condition_max = 200;           // tokens of one condition
 constexpr size_t smith_lang_generic_scan_max = 200;        // tokens read ahead to see whether a declaration is generic
+constexpr size_t smith_lang_edges_max = 8192;              // uses of a private name by a declaration (issue #49 item 5)
+constexpr size_t smith_lang_hidden_max = 1024;             // private declarations the instances of generics need
 
 typedef enum {
     SmithLangWord_Other,
@@ -128,7 +130,24 @@ typedef struct {
     uint32_t location;    // of the declaration's name in the source, in the host's own measure
     SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
     uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
+    bool hidden;          // private, but an instance of an exported generic uses it: not `static`, in the header's
+                          // section for instances, under a reserved C name (`smith_test__value`)
+    bool mark;            // the scan found its declaration needed by the instances
+    uint32_t unit;        // the place of the first token of the declaration that introduced it
 } SmithLangName;
+
+// A declaration uses a private name (the scan that finds what the instances need).
+typedef struct {
+    uint32_t owner; // the place of the first token of the declaration that uses it
+    uint32_t name;  // the index of the name used
+    bool root;      // the user is an exported generic: its instances are compiled in other files
+} SmithLangEdge;
+
+// A hidden declaration's text in the header's body, which the assembled header moves to its section for instances.
+typedef struct {
+    size_t begin;
+    size_t end;
+} SmithLangHiddenSpan;
 
 // One token a generic keeps (a function with `type T` parameters, runtime/lang_generic.c), or of the calls being read
 // and the types instances were asked for. 28 bytes; the text is in the pool's own.
@@ -170,7 +189,8 @@ typedef struct {
     uint8_t type_position[smith_lang_type_params_max]; // and which parameter it is
     bool is_inline;
     bool exported;
-    bool own; // the module being lowered defines it (else an import's)
+    bool hidden; // private, but an exported generic's instance calls it: in the header's records, for instances only
+    bool own;    // the module being lowered defines it (else an import's)
 } SmithLangGeneric;
 
 // A name the compiler sees, and how the source writes it (runtime/lang_names.c).
@@ -263,8 +283,11 @@ typedef struct {
     SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
     SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
     uint32_t c_name_location;
-    bool c_name_used; // a name this declaration introduces took it
-    bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
+    bool c_name_used;        // a name this declaration introduces took it
+    bool generic;            // the head has a `type T` parameter: the declaration is recorded, not compiled
+    bool hidden;             // private, but the instances of exported generics need it (see SmithLangName::hidden)
+    bool visibility;         // its symbol is `hidden` in visibility: the attribute goes on the declaration
+    uint32_t first_location; // of the declaration's first token: what identifies it to the scan
 } SmithLangDecl;
 
 // An `if constexpr` outside a generic whose then-block is being read (runtime/lang_target.c).
@@ -446,6 +469,18 @@ struct SmithLang {
     size_t constants_count;
     uint32_t target_used;        // the raw lowering: a bit for each fact the output uses
     uint32_t header_target_used; // the same for an exported inline function's `if constexpr`: the header defines them
+    // Private declarations the instances of exported generics use (issue #49, item 5). A scan pass (`scanning`) reads
+    // the file first and lists them; the pass that follows has the list.
+    bool scanning;
+    size_t edges_count;
+    SmithLangEdge edges[smith_lang_edges_max];
+    bool hidden_loaded;
+    size_t hidden_count;
+    uint32_t hidden_units[smith_lang_hidden_max]; // the host's places of the first tokens of the hidden declarations
+    size_t spans_count;
+    SmithLangHiddenSpan spans[smith_lang_hidden_max]; // the hidden declarations in the header's body
+    bool span_open;
+    size_t span_begin; // where the open one began in the header's body
 };
 
 static char smith_lang_chars[smith_lang_chars_max];

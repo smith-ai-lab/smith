@@ -134,6 +134,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
     if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
     if (!forced && smith_lang_generic_candidate(lang, host, token)) return smith_lang_act(SmithLangAct_Slow);
+    if (!forced && smith_lang_hidden_unit(lang, host, token->location)) return smith_lang_act(SmithLangAct_Slow);
     bool slow = false;
     bool wants = smith_lang_wants_static(lang, host, token, may_peek, &slow);
     if (slow) return smith_lang_act(SmithLangAct_Slow);
@@ -437,7 +438,7 @@ static SmithLangAct smith_lang_fast_stream_name(SmithLang *lang, const SmithHost
 // A token after a head (an aggregate's body, an initializer, what follows an aggregate), when the host decides it
 // without a look ahead: the punctuation, the keywords, a name nothing watches, a sized type.
 static SmithLangAct smith_lang_fast_stream(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    if (lang->decl.exported || lang->decl.checking || lang->pending_export || lang->in_function) {
+    if (lang->decl.exported || lang->decl.hidden || lang->decl.checking || lang->pending_export || lang->in_function) {
         return smith_lang_act(SmithLangAct_Slow);
     }
     if (token->kind == SmithTokenKind_Punctuator) {

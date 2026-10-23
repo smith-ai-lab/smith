@@ -198,17 +198,17 @@ constexpr i32 usage_status = 2;
 // Values: what a check compares and prints.
 
 // How a Value is read: the member that holds it.
-[[smith::c_name("SmithTestKind")]] export typedef u8 Kind;
-export constexpr Kind kind_unsigned = 0;
-export constexpr Kind kind_signed = 1;
-export constexpr Kind kind_f32 = 2;
-export constexpr Kind kind_f64 = 3;
-export constexpr Kind kind_bool = 4;
-export constexpr Kind kind_char = 5;
-export constexpr Kind kind_pointer = 6;
+typedef u8 Kind;
+constexpr Kind kind_unsigned = 0;
+constexpr Kind kind_signed = 1;
+constexpr Kind kind_f32 = 2;
+constexpr Kind kind_f64 = 3;
+constexpr Kind kind_bool = 4;
+constexpr Kind kind_char = 5;
+constexpr Kind kind_pointer = 6;
 
 // A value of any type a check takes, with the name of its type.
-[[smith::c_name("SmithTestValue")]] export typedef struct {
+typedef struct {
     Kind kind;
     const char *type; // "i32", "u64", "f64", "bool", "char", "ptr"
     union {
@@ -223,89 +223,89 @@ export constexpr Kind kind_pointer = 6;
 } Value;
 
 // The comparisons of the checks.
-[[smith::c_name("SmithTestOp")]] export typedef u8 Op;
-export constexpr Op op_equal = 0;
-export constexpr Op op_not_equal = 1;
-export constexpr Op op_less = 2;
-export constexpr Op op_less_equal = 3;
-export constexpr Op op_greater = 4;
-export constexpr Op op_greater_equal = 5;
+typedef u8 Op;
+constexpr Op op_equal = 0;
+constexpr Op op_not_equal = 1;
+constexpr Op op_less = 2;
+constexpr Op op_less_equal = 3;
+constexpr Op op_greater = 4;
+constexpr Op op_greater_equal = 5;
 
 // The Value of an integer of `size` bytes, named as the sized types are (i8 to i64, u8 to u64).
-[[smith::c_name("smith_test_value_signed")]] export [[nodiscard]] Value value_signed(i64 value, usize size) {
+[[nodiscard]] Value value_signed(i64 value, usize size) {
     const char *name = size == 1 ? "i8" : size == 2 ? "i16" : size == 4 ? "i32" : "i64";
     return (Value){.kind = kind_signed, .type = name, .signed_value = value};
 }
 
-[[smith::c_name("smith_test_value_unsigned")]] export [[nodiscard]] Value value_unsigned(u64 value, usize size) {
+[[nodiscard]] Value value_unsigned(u64 value, usize size) {
     const char *name = size == 1 ? "u8" : size == 2 ? "u16" : size == 4 ? "u32" : "u64";
     return (Value){.kind = kind_unsigned, .type = name, .unsigned_value = value};
 }
 
-[[smith::c_name("smith_test_value_f32")]] export [[nodiscard]] Value value_f32(f32 value) {
+[[nodiscard]] Value value_f32(f32 value) {
     return (Value){.kind = kind_f32, .type = "f32", .f32_value = value};
 }
 
-[[smith::c_name("smith_test_value_f64")]] export [[nodiscard]] Value value_f64(f64 value) {
+[[nodiscard]] Value value_f64(f64 value) {
     return (Value){.kind = kind_f64, .type = "f64", .f64_value = value};
 }
 
-[[smith::c_name("smith_test_value_bool")]] export [[nodiscard]] Value value_bool(bool value) {
+[[nodiscard]] Value value_bool(bool value) {
     return (Value){.kind = kind_bool, .type = "bool", .bool_value = value};
 }
 
-[[smith::c_name("smith_test_value_char")]] export [[nodiscard]] Value value_char(char value) {
+[[nodiscard]] Value value_char(char value) {
     return (Value){.kind = kind_char, .type = "char", .char_value = value};
 }
 
-[[smith::c_name("smith_test_value_pointer")]] export [[nodiscard]] Value value_pointer(const volatile void *value) {
+[[nodiscard]] Value value_pointer(const volatile void *value) {
     return (Value){.kind = kind_pointer, .type = "ptr", .pointer_value = (usize)value};
 }
 
-[[smith::c_name("smith_test_value_i8")]] export [[nodiscard]] Value value_i8(i8 value) {
+[[nodiscard]] Value value_i8(i8 value) {
     return value_signed((i64)value, 1);
 }
 
-[[smith::c_name("smith_test_value_i16")]] export [[nodiscard]] Value value_i16(i16 value) {
+[[nodiscard]] Value value_i16(i16 value) {
     return value_signed((i64)value, 2);
 }
 
-[[smith::c_name("smith_test_value_i32")]] export [[nodiscard]] Value value_i32(i32 value) {
+[[nodiscard]] Value value_i32(i32 value) {
     return value_signed((i64)value, 4);
 }
 
-[[smith::c_name("smith_test_value_i64")]] export [[nodiscard]] Value value_i64(i64 value) {
+[[nodiscard]] Value value_i64(i64 value) {
     return value_signed((i64)value, 8);
 }
 
-[[smith::c_name("smith_test_value_isize")]] export [[nodiscard]] Value value_isize(isize value) {
+[[nodiscard]] Value value_isize(isize value) {
     return value_signed((i64)value, 8);
 }
 
-[[smith::c_name("smith_test_value_u8")]] export [[nodiscard]] Value value_u8(u8 value) {
+[[nodiscard]] Value value_u8(u8 value) {
     return value_unsigned((u64)value, 1);
 }
 
-[[smith::c_name("smith_test_value_u16")]] export [[nodiscard]] Value value_u16(u16 value) {
+[[nodiscard]] Value value_u16(u16 value) {
     return value_unsigned((u64)value, 2);
 }
 
-[[smith::c_name("smith_test_value_u32")]] export [[nodiscard]] Value value_u32(u32 value) {
+[[nodiscard]] Value value_u32(u32 value) {
     return value_unsigned((u64)value, 4);
 }
 
-[[smith::c_name("smith_test_value_u64")]] export [[nodiscard]] Value value_u64(u64 value) {
+[[nodiscard]] Value value_u64(u64 value) {
     return value_unsigned((u64)value, 8);
 }
 
-[[smith::c_name("smith_test_value_usize")]] export [[nodiscard]] Value value_usize(usize value) {
+[[nodiscard]] Value value_usize(usize value) {
     return value_unsigned((u64)value, 8);
 }
 
 // The Value of a value of type T: the bridge from a generic check to the comparison below. The type is chosen by
 // _Generic, which needs no compiler to lower, so a module's tests can call the checks too. bool, char, the sized
 // integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
-export [[nodiscard]] Value value_of(constexpr type T, T v) {
+[[nodiscard]] Value value_of(constexpr type T, T v) {
     return _Generic(v,
         bool: value_bool,
         char: value_char,
@@ -667,11 +667,10 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
     } else {
         check_condition(condition);
     }
-}
-// NOLINTEND(smith-c23)
+} // NOLINTEND(smith-c23)
 
 // Fails the test unless the comparison holds, printing both values. The generic checks below make the Values.
-[[smith::c_name("smith_test_check_compare")]] export void check_compare(Op op, Value a, Value b) {
+void check_compare(Op op, Value a, Value b) {
     if (!holds(op, order(a, b))) fail_compare(a, b);
 }
 

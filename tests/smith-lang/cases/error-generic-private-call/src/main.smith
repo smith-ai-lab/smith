@@ -1,0 +1,8 @@
+module main;
+
+import store;
+
+// `twice` is a private generic of store: its instances exist for store's own generics, not for this call.
+int main(void) {
+    return (int)store::twice(i32, 4);
+}

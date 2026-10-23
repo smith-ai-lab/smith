@@ -1,0 +1,1 @@
+src/main.smith:7:24: `twice` is private to its module (`store`); only the instances of the module's own generics call it

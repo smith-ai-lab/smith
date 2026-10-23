@@ -323,6 +323,17 @@ class SmithHook final : public TokenHook, public NameSource {
         mainBegin = SM.getLocForStartOfFile(MainFile).getRawEncoding();
         mainEnd = SM.getLocForEndOfFile(MainFile).getRawEncoding();
         Lowering::acquire(holding);
+        // A module with an exported generic: the private declarations its instances need (compiled in other files) are
+        // found by a scan of the text first, since the declarations come before the generics that use them.
+        StringRef text = SM.getBufferData(MainFile);
+        if (text.contains("constexpr type ")) {
+            hiddenPlaces.resize(3 * 1024);
+            OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile);
+            std::string name = entry ? entry->getName().str() : std::string();
+            size_t found = smith_lang_hidden_places(name.c_str(), text.data(), text.size(), hiddenPlaces.data(),
+                                                    hiddenPlaces.size());
+            hiddenPlaces.resize(3 * found);
+        }
         lang = smith_lang_new();
         host.context = this;
         host.next = &SmithHook::nextToken;
@@ -351,6 +362,8 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
+        host.hidden_places = hiddenPlaces.data();
+        host.hidden_count = (uint32_t)(hiddenPlaces.size() / 3);
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
@@ -726,6 +739,7 @@ class SmithHook final : public TokenHook, public NameSource {
     SmithLang *lang;
     SmithHost host{};
     std::string mainName;
+    std::vector<uint32_t> hiddenPlaces; // see SmithHost::hidden_places
     unsigned diagnostic = 0;
     // Per call.
     std::vector<Token> pool; // every token the lowering was given, by handle

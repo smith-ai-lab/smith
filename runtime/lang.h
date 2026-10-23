@@ -211,6 +211,12 @@ typedef struct {
     // that import spells it, `<stdio.h>` or `"mine.h"`, never an internal header the compiler found the name in. Null
     // when no import did. Asked by SMITH_LANG_ASK_IMPORTS; a host without a parser leaves it null.
     const char *(*declared_by)(void *context, const char *name, uint32_t length, SmithLookupKind space);
+    // The private declarations of the module that the instances of its exported generics need (a scan of the file
+    // found them: smith_lang_hidden_scan): the line and column (from 1) and the offset of the first token of each, in
+    // `hidden_places` as triples. A host with a compiler turns the line and column into its own place with `locate`;
+    // the plain lexer's places are offsets.
+    const uint32_t *hidden_places;
+    uint32_t hidden_count;
 } SmithHost;
 
 typedef struct SmithLang SmithLang;
@@ -292,6 +298,11 @@ bool smith_lang_interface(const char *file, const char *text, size_t length, Smi
 // Where a module's source declares its exports: a line "name line column" (from 1, the name as written) for each, in
 // the order declared, read the way smith_lang_interface reads it. Returns the bytes written to `out`.
 size_t smith_lang_declarations(const char *file, const char *text, size_t length, char *out, size_t capacity);
+// Where the private declarations that the instances of the module's exported generics need begin (a scan of the
+// module's source, runtime/lang_decl.c): triples of line, column (from 1) and offset, at most `capacity` entries of
+// three (it must be at least 3 * 1024). The compiler's host gives them back as SmithHost::hidden_places. Returns how
+// many declarations, 0 for a module with no exported generic.
+size_t smith_lang_hidden_places(const char *file, const char *text, size_t length, uint32_t *places, size_t capacity);
 // The module of the file being lowered ("a::b"), or null if it is no module.
 const char *smith_lang_module_name(const SmithLang *lang);
 

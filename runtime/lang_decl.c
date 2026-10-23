@@ -74,6 +74,7 @@ static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, siz
     name->name = smith_lang_store(lang, text, length);
     name->kind = kind;
     name->exported = exported;
+    name->unit = lang->decl.first_location != 0 ? lang->decl.first_location : UINT32_MAX;
     uint32_t slot = smith_lang_hash(text, length) & (smith_lang_slots - 1);
     for (size_t probe = 0; probe < smith_lang_slots; probe++) { // the table is half empty at most
         if (lang->slots[slot] == 0) break;
@@ -81,6 +82,77 @@ static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, siz
     }
     lang->slots[slot] = (uint32_t)lang->names_count;
     return name;
+}
+
+// ---- Private declarations that instances need (issue #49, item 5)
+// An instance of an exported generic is compiled in the importer's file, so every private name its body (or a private
+// generic it calls, or a declaration those need) names must exist there: a function or variable with a symbol, a type
+// or constant with its definition. A scan of the whole file (the pass that sets `scanning`) records which declarations
+// use which private names; `smith_lang_hidden_close` follows them from the exported generics and lists the declarations
+// needed, by the place of their first token. The pass that writes the output has that list: such a declaration is
+// "hidden". It is not `static` (a function or variable has a symbol in the object, `hidden` in visibility), its C
+// names are reserved (`smith_<module>__<name>`, never a name a C user is given), and the header carries it in a
+// section of its own after the module's API.
+
+static bool smith_lang_hidden_unit(SmithLang *lang, const SmithHost *host, uint32_t location) {
+    if (!lang->hidden_loaded) {
+        lang->hidden_loaded = true;
+        for (uint32_t i = 0; i < host->hidden_count && lang->hidden_count < smith_lang_hidden_max; i++) { // the list
+            const uint32_t *place = host->hidden_places + 3 * (size_t)i;
+            uint32_t at =
+                host->locate != nullptr ? host->locate(host->context, host->main_file, place[0], place[1]) : place[2];
+            if (at != UINT32_MAX) lang->hidden_units[lang->hidden_count++] = at;
+        }
+    }
+    for (size_t i = 0; i < lang->hidden_count; i++) { // a few dozen at most
+        if (lang->hidden_units[i] == location) return true;
+    }
+    return false;
+}
+
+// A use of a private name by the declaration being read, for the scan.
+static void smith_lang_note_edge(SmithLang *lang, const SmithLangName *known) {
+    if (!lang->scanning || known->exported || known->hidden) return;
+    if (lang->in_function && !lang->recording) return; // a body nobody else compiles
+    if (lang->edges_count >= smith_lang_edges_max) {
+        lang->broken = true;
+        return;
+    }
+    lang->edges[lang->edges_count++] = (SmithLangEdge){
+        .owner = lang->decl.first_location,
+        .name = (uint32_t)(known - lang->names),
+        .root = lang->decl.generic && lang->decl.exported,
+    };
+}
+
+static bool smith_lang_unit_marked(const SmithLang *lang, uint32_t unit) {
+    for (size_t i = 0; i < lang->names_count; i++) { // the names declared
+        if (lang->names[i].unit == unit && lang->names[i].mark) return true;
+    }
+    return false;
+}
+
+static void smith_lang_unit_mark(SmithLang *lang, uint32_t unit) {
+    for (size_t i = 0; i < lang->names_count; i++) { // the names declared
+        if (lang->names[i].unit == unit) lang->names[i].mark = true;
+    }
+}
+
+// Follows the uses from the exported generics: what they use, what that uses. Each round marks at least one more
+// declaration, so the rounds are bounded by the edges.
+static void smith_lang_hidden_close(SmithLang *lang) {
+    for (size_t round = 0; round <= lang->edges_count; round++) { // a fixed point
+        bool changed = false;
+        for (size_t i = 0; i < lang->edges_count; i++) { // each use
+            const SmithLangEdge *edge = &lang->edges[i];
+            const SmithLangName *used = &lang->names[edge->name];
+            if (used->unit == UINT32_MAX || used->mark) continue;
+            if (!edge->root && !smith_lang_unit_marked(lang, edge->owner)) continue;
+            smith_lang_unit_mark(lang, used->unit);
+            changed = true;
+        }
+        if (!changed) return;
+    }
 }
 
 // ---- Parameters
@@ -272,10 +344,15 @@ static bool smith_lang_enum_constant_name(const SmithLang *lang, SmithLangNameKi
 
 static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, SmithLangNameKind kind, bool exported) {
+    bool hidden = !exported && lang->decl.hidden;
     bool chosen = smith_lang_takes_c_name(lang, kind, exported);
     char c_name[smith_lang_name_max];
     size_t c_length = chosen ? lang->decl.c_name.length : 0;
-    if (chosen) {
+    if (hidden) { // smith_<module>__<name>: reserved, so no C user is given it as API
+        int made = snprintf(c_name, sizeof c_name, "%s_%.*s", lang->prefix, (int)length, name);
+        c_length = made > 0 && (size_t)made < sizeof c_name ? (size_t)made : 0;
+        chosen = c_length > 0 && smith_lang_c_name_free(lang, host, c_name, c_length, name, length, location);
+    } else if (chosen) {
         memcpy(c_name, smith_lang_str(lang->decl.c_name), c_length + 1);
         lang->decl.c_name_used = true;
         if (!smith_lang_c_name_free(lang, host, c_name, c_length, name, length, lang->decl.c_name_location))
@@ -289,6 +366,7 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
     SmithLangName *added = smith_lang_name_add(lang, name, length, kind, exported);
     if (added != nullptr) {
         added->location = location;
+        added->hidden = hidden;
         if (chosen) {
             added->c_name = smith_lang_store(lang, c_name, c_length);
             lang->c_name_count += 1;
@@ -523,7 +601,10 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
         return kept;
     }
     SmithLangName *known = smith_lang_name_find(lang, name, length);
-    if (known != nullptr) return smith_lang_prefix_name(lang, name, length, true);
+    if (known != nullptr) {
+        smith_lang_note_edge(lang, known);
+        return smith_lang_prefix_name(lang, name, length, true);
+    }
     const SmithToken *after = smith_lang_after(lang, host, next);
     bool defines = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":");
     if (!lang->in_function && defines) {
@@ -583,6 +664,7 @@ static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host,
     if (known != nullptr && lang->in_function && smith_lang_is_param(lang, name, length)) return smith_lang_keep();
     if (known != nullptr && smith_lang_param_here(lang, known, name, length)) return smith_lang_keep();
     if (known != nullptr) {
+        smith_lang_note_edge(lang, known);
         if (lang->recording) smith_lang_generic_private_name(lang, host, known, name, length, location);
         if (lang->decl.checking && !known->exported &&
             (known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag)) {

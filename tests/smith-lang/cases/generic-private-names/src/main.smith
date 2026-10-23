@@ -1,0 +1,11 @@
+module main;
+
+import store;
+import <stdio.h>;
+
+int main(void) {
+    i64 a = store::total(i32, 4, 5);
+    i64 b = store::total(f64, 1.5, 2.5);
+    c::printf("%lld %lld %lld\n", (long long)a, (long long)b, (long long)store::current_weight());
+    return 0;
+}

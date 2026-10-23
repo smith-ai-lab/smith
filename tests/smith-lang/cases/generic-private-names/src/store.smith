@@ -1,0 +1,50 @@
+module store;
+
+// What the exported generic's instances need, none of it exported: a type, constants, an enum, a variable, functions
+// and a generic. Instances are compiled in the file that calls the generic.
+typedef struct {
+    i64 total;
+    u32 count;
+} Tally;
+
+typedef u8 Mode;
+constexpr Mode mode_add = 0;
+constexpr Mode mode_scale = 1;
+
+enum Size { size_small = 1, size_large = 10 };
+
+i64 weight = 3;
+
+Tally start(void) {
+    return (Tally){0, 0};
+}
+
+Tally step(Tally tally, i64 value, Mode mode) {
+    if (mode == mode_scale) {
+        value = value * weight;
+    }
+    tally.total = tally.total + value;
+    tally.count = tally.count + 1;
+    return tally;
+}
+
+// Used by nothing the instances need: it stays static.
+i64 unused(i64 value) {
+    return value + weight;
+}
+
+T twice(constexpr type T, T value) {
+    return value + value;
+}
+
+// The sum of both values, doubled and scaled.
+export i64 total(constexpr type T, T a, T b) {
+    Tally tally = start();
+    tally = step(tally, (i64)twice(T, a), mode_add);
+    tally = step(tally, (i64)b, mode_scale);
+    return tally.total + size_large + (i64)tally.count;
+}
+
+export i64 current_weight(void) {
+    return unused(0);
+}

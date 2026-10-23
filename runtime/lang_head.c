@@ -254,9 +254,45 @@ static size_t smith_lang_head_after_attributes(const SmithLang *lang) {
     return at < lang->head_count ? at : 0;
 }
 
+// __attribute__((visibility("hidden"))): a hidden declaration's symbol is in the object and in the final image, and in
+// no dynamic library's interface.
+static void smith_lang_emit_visibility(SmithLang *lang, const SmithHost *host, const SmithToken *like,
+                                       bool header_too) {
+    static const struct {
+        SmithTokenKind kind;
+        const char *text;
+    } pieces[] = {{SmithTokenKind_Identifier, "__attribute__"},
+                  {SmithTokenKind_Punctuator, "("},
+                  {SmithTokenKind_Punctuator, "("},
+                  {SmithTokenKind_Identifier, "visibility"},
+                  {SmithTokenKind_Punctuator, "("},
+                  {SmithTokenKind_String, "\"hidden\""},
+                  {SmithTokenKind_Punctuator, ")"},
+                  {SmithTokenKind_Punctuator, ")"},
+                  {SmithTokenKind_Punctuator, ")"}};
+    for (size_t i = 0; i < sizeof pieces / sizeof pieces[0]; i++) { // the nine pieces
+        SmithToken made = smith_lang_synth(pieces[i].kind, pieces[i].text, strlen(pieces[i].text), like);
+        made.line_start = false;
+        made.space_before = i == 0;
+        made.synthetic = true;
+        if (header_too) {
+            smith_lang_emit(lang, host, made);
+        } else {
+            smith_lang_emit_code(lang, host, made);
+        }
+    }
+}
+
 static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
     size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
+    size_t visibility_at = lang->decl.visibility ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
+        if (i == visibility_at) {
+            SmithToken first = smith_lang_held_token(lang, &lang->head[i]);
+            smith_lang_emit_visibility(lang, host, &first, header_too);
+            lang->head[i].line_start = false;
+            lang->head[i].space_before = true;
+        }
         if (i == static_at) {
             SmithToken first = smith_lang_held_token(lang, &lang->head[i]);
             smith_lang_emit_code(lang, host, smith_lang_static_keyword(&first));
@@ -291,6 +327,7 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
     SmithToken first = smith_lang_held_token(lang, &lang->head[0]);
     SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "extern", 6, &first);
     if (!lang->decl.is_extern) smith_lang_variable_token(lang, host, keyword, in_code);
+    if (lang->decl.visibility) smith_lang_emit_visibility(lang, host, &first, true);
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
         SmithToken token = smith_lang_held_token(lang, &lang->head[i]);
         if (i == 0 && !lang->decl.is_extern) {
@@ -321,11 +358,26 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
     lang->emit_synthetic = false;
 }
 
+// A hidden declaration's text in the header's body: the assembled header moves it to the section for instances.
+static void smith_lang_span_begin(SmithLang *lang) {
+    lang->span_open = true;
+    lang->span_begin = lang->header_used;
+}
+
+static void smith_lang_span_end(SmithLang *lang) {
+    if (!lang->span_open) return;
+    lang->span_open = false;
+    if (lang->spans_count < smith_lang_hidden_max && lang->header_used > lang->span_begin) {
+        lang->spans[lang->spans_count++] = (SmithLangHiddenSpan){lang->span_begin, lang->header_used};
+    }
+}
+
 static void smith_lang_end_declaration(SmithLang *lang) {
     if (lang->decl.c_name.length > 0 && !lang->decl.c_name_used) { // reported by the next token fed (it has the host)
         lang->unnamed_c_name = true;
         lang->unnamed_c_name_location = lang->decl.c_name_location;
     }
+    smith_lang_span_end(lang);
     // A comment after the export's last token follows it in the header.
     lang->tail_open = lang->export_active || lang->export_tail;
     lang->export_tail = false;
@@ -439,10 +491,12 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         smith_lang_error(lang, host, lang->head[0].location, "an exported declaration declares one name; split it");
     }
     // A chosen C name is the symbol too, as C writes it: no label, so C and C++ define and call it by that name.
-    bool has_c_name = lang->decl.c_name_used && lang->decl.c_name.length > 0;
-    bool symbol = lang->decl.exported && form != SmithLangForm_Type && !lang->decl.is_constexpr && !is_main;
-    bool private_static =
-        lang->is_module && !lang->decl.exported && form != SmithLangForm_Type && !lang->decl.storage && !is_main;
+    bool has_c_name = (lang->decl.c_name_used && lang->decl.c_name.length > 0) || lang->decl.hidden;
+    bool symbol = (lang->decl.exported || lang->decl.hidden) && form != SmithLangForm_Type &&
+                  !lang->decl.is_constexpr && !is_main;
+    bool private_static = lang->is_module && !lang->decl.exported && !lang->decl.hidden && form != SmithLangForm_Type &&
+                          !lang->decl.storage && !is_main;
+    lang->decl.visibility = symbol && lang->decl.hidden && !lang->decl.is_inline;
     bool proto_written = false;
     SmithToken like = smith_lang_last_of_head(lang);
     if (symbol && form == SmithLangForm_Function && lang->decl.is_inline && smith_lang_punct(terminator, "{")) {

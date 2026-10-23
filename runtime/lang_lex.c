@@ -651,6 +651,61 @@ static bool smith_lang_interface_work(const char *file, const char *text, size_t
                                       char *error, size_t error_capacity);
 static bool smith_raw_cache_only;
 
+// ---- The private declarations that instances need
+// A first pass over a module that has an exported generic: it only collects which private names the generics' instances
+// would need in another file (smith_lang_hidden_close), and says where their declarations begin. The pass that writes
+// the output is given the list (SmithHost::hidden_places). The scan reports nothing: the pass after it reports.
+
+// Fills `places` (line, column and offset of each declaration's first token) and returns how many. The source is in
+// smith_lang_source, its lines indexed.
+static uint32_t smith_lang_hidden_scan(const char *file, size_t length, uint32_t *places) {
+    if (strstr(smith_lang_source, "constexpr type ") == nullptr) return 0;
+    char quiet[256] = "";
+    SmithLangRaw raw = {
+        .file = file, .length = length, .line_start = true, .capture = quiet, .capture_capacity = sizeof quiet};
+    SmithLang *lang = smith_lang_new();
+    raw.lang = lang;
+    lang->dump_enabled = false;
+    lang->gen_dump_on = false;
+    lang->scanning = true;
+    SmithHost host = {
+        .context = &raw,
+        .next = smith_raw_next_named,
+        .emit = smith_raw_emit,
+        .include = smith_raw_include,
+        .error = smith_raw_error,
+        .lookup = smith_raw_lookup,
+        .read_header = smith_raw_read_header,
+        .read_problem = smith_raw_read_problem,
+        .main_file = file,
+        .declarations_only = true,
+        .maybe_generic = true,
+        .maybe_if_constexpr = true,
+    };
+    SmithRawNames names = {};
+    raw.names = &names;
+    for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
+        SmithToken token;
+        smith_raw_next_named(&raw, &token, false);
+        smith_lang_feed(lang, &host, &token);
+        if (token.kind == SmithTokenKind_Eof) break;
+    }
+    smith_lang_hidden_close(lang);
+    uint32_t count = 0;
+    for (size_t i = 0; i < lang->names_count && count < smith_lang_hidden_max; i++) { // the declarations marked
+        const SmithLangName *name = &lang->names[i];
+        bool listed = false;
+        for (uint32_t j = 0; j < count; j++) // once each
+            listed = listed || places[3 * j + 2] == name->unit;
+        if (!name->mark || name->exported || name->unit == UINT32_MAX || listed) continue;
+        places[3 * count] = (uint32_t)smith_lang_line_of(name->unit);
+        places[3 * count + 1] = (uint32_t)smith_lang_column_of(name->unit);
+        places[3 * count + 2] = name->unit;
+        count += 1;
+    }
+    return count;
+}
+
 // Lowers the module's source with the plain lexer. The tables are the run's when it returns, and smith_lang_keep_aside
 // has put the caller's away: the caller reads what it wants and then puts them back.
 static SmithLang *smith_lang_run_interface(const char *file, const char *text, size_t length, char *error,
@@ -659,6 +714,10 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
     memcpy(smith_lang_source, text, length);
     smith_lang_source[length] = 0;
     smith_lang_index_lines(length);
+    uint32_t places[3 * smith_lang_hidden_max];
+    smith_raw_cache_only = true;
+    uint32_t placed = smith_lang_hidden_scan(file, length, places);
+    smith_raw_cache_only = false;
     SmithLangRaw raw = {
         .file = file, .length = length, .line_start = true, .capture = error, .capture_capacity = error_capacity};
     SmithLang *lang = smith_lang_new();
@@ -675,9 +734,12 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .error = smith_raw_error,
         .lookup = smith_raw_lookup,
         .read_header = smith_raw_read_header,
+        .read_problem = smith_raw_read_problem,
         .main_file = file,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
+        .hidden_places = places,
+        .hidden_count = placed,
     };
     SmithRawNames names = {};
     raw.names = &names;
@@ -734,13 +796,30 @@ size_t smith_lang_declarations(const char *file, const char *text, size_t length
     size_t used = 0;
     for (size_t i = 0; lang->is_module && i < lang->names_count; i++) { // the exports, in the order declared
         const SmithLangName *name = &lang->names[i];
-        .read_problem = smith_raw_read_problem,
         if (!name->exported) continue;
         used = smith_lang_append(out, capacity, used, "%s %zu %zu\n", smith_lang_str(name->name),
                                  smith_lang_line_of(name->location), smith_lang_column_of(name->location));
     }
     smith_lang_keep_aside(false);
     return used;
+}
+
+// For a compiler's run of the module: where the private declarations that the instances of its exported generics need
+// begin, as triples (line, column, offset), `capacity` of them at most. The compiler's host turns each into its place
+// and hands the list to the lowering (SmithHost::hidden_places). Returns how many.
+size_t smith_lang_hidden_places(const char *file, const char *text, size_t length, uint32_t *places, size_t capacity) {
+    if (length > smith_lang_source_max || capacity < 3 * smith_lang_hidden_max) return 0;
+    smith_raw_interface_enter();
+    smith_raw_prefetch(file, text, length);
+    smith_lang_keep_aside(true);
+    memcpy(smith_lang_source, text, length);
+    smith_lang_source[length] = 0;
+    smith_lang_index_lines(length);
+    smith_raw_cache_only = true;
+    size_t count = smith_lang_hidden_scan(file, length, places);
+    smith_raw_cache_only = false;
+    smith_lang_keep_aside(false);
+    return count;
 }
 
 // The compile flags the header pass was given beside the file (`smith cc --smith-header f.smith -o f.h -I x -DY`): the
@@ -986,7 +1065,8 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
     for (size_t i = 0; i < smith_raw_modules_count; i++) { // the modules read already
         if (strcmp(smith_raw_modules[i].path, relative) == 0) slot = i;
     }
-    if (slot == SIZE_MAX && smith_raw_cache_only) { // an interface being made reads what was read before it began
+    if (slot == SIZE_MAX && smith_raw_cache_only) {  // an interface being made reads what was read before it began
+        if (smith_raw_problem[0] != 0) return false; // the cap kept it out
         *text = "";
         *length = 0;
         return true;
@@ -1043,6 +1123,9 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     smith_raw_directive_pool_used = 0;
     if (!smith_raw_read_source(path, &raw.length)) smith_die(smith_exit_missing, "cannot read", path);
     smith_lang_index_lines(raw.length);
+    uint32_t places[3 * smith_lang_hidden_max];
+    uint32_t placed = smith_lang_hidden_scan(path, raw.length, places);
+    smith_lang_index_lines(raw.length);
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
     lang->dump_enabled = print_lowered;
@@ -1056,10 +1139,13 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .type_info = nullptr,
         .field = nullptr,
         .read_header = smith_raw_read_header,
+        .read_problem = smith_raw_read_problem,
         .main_file = path,
         .declarations_only = header_path != nullptr,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
+        .hidden_places = places,
+        .hidden_count = placed,
     };
     SmithRawNames names = {};
     raw.names = &names;
@@ -1070,7 +1156,6 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         smith_raw_next_named(&raw, &token, false);
         if (guard == 0 && header_path != nullptr && !smith_lang_ident(&token, "module")) {
             fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
-        if (smith_raw_problem[0] != 0) return false; // the cap kept it out
             return 1;
         }
         smith_lang_feed(lang, &host, &token);
@@ -1126,4 +1211,3 @@ static int smith_lang_main(int count, char **args, bool header) {
     }
     return smith_lang_run_raw(file, header ? output : nullptr, !header);
 }
-        .read_problem = smith_raw_read_problem,
