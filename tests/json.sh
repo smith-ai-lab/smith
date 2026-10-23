@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests of <smith/json.h>, with real clang and ninja. Usage: sh tests/json.sh path/to/smith
-# The checks are tests/json_test.smith, built as a scratch project's test file with smith_tests (smith's own test library), in
-# three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. JSONTestSuite is fetched as a package
+# The checks are tests/json_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
+# (issue #31; $UNITS names it); here they are built as a scratch project's test file with smith_tests (smith's own test
+# library), in two builds: -O2, and -O2 -DNDEBUG. JSONTestSuite is fetched as a package
 # pinned by hash (into $SMITH_JSON_SUITE_CACHE, else ~/.cache/smith-tests, so that it is downloaded once; with no
 # network the conformance test says so and is skipped). The asan build also runs the fuzz tests on many more keys.
 set -u
@@ -92,7 +93,7 @@ void build(SmithBuild *b) {
 C
 
 count=$(grep -c '^export void test_' "$here/tests/json_test.smith")
-for mode in asan fast ndebug; do
+for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"
     capture env SMITH_JSON_SUITE="$suite" ./build/tests
@@ -114,10 +115,16 @@ if [ -n "$suite" ]; then
 fi
 
 # Fuzzing under AddressSanitizer and UBSan: many more keys for the damaged documents, the random bytes and the
-# written documents.
-capture smith build -DMODE=asan
+# written documents, on the runner of build.c's `test-units` ($UNITS; a scratch asan build without it).
+runner=${UNITS:-}
+if [ -z "$runner" ]; then
+    capture smith build -DMODE=asan
+    runner=./build/tests
+else
+    case $runner in /*) ;; *) runner=$here/$runner ;; esac
+fi
 for fuzz in json_damaged_documents_never_misbehave json_random_bytes_never_misbehave json_any_value_written; do
-    capture ./build/tests --test $fuzz --seeds 5000
+    capture "$runner" --test $fuzz --seeds 5000
     summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
     expect "fuzz: $fuzz on 5000 keys under ASan and UBSan" "1 passed, 0 failed" "$summary"
 done

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests of <smith/text.h>, with real clang and ninja. Usage: sh tests/text.sh path/to/smith [exhaustive]
-# The checks are tests/text_test.smith, built as a scratch project's test file with smith_tests (smith's own test library), in
-# three builds: -O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
+# The checks are tests/text_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
+# (issue #31); here they are built as a scratch project's test file with smith_tests (smith's own test library), in two
+# builds: -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
 # finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith test`.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -88,7 +89,7 @@ void build(SmithBuild *b) {
 C
 
 count=$(grep -c '^export void test_' "$here/tests/text_test.smith")
-for mode in asan fast ndebug; do
+for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"
     capture ./build/tests

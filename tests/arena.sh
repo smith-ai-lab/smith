@@ -52,13 +52,9 @@ hook=yes
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/arena.smith"
 
-# 1. The checks, plain and under AddressSanitizer (which lays pushes out on granules).
+# 1. The programs of the modes below, plain and under AddressSanitizer (the checks of behavior are tests/arena_test.smith).
 $cc $flags "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/plain" || exit 1
-capture "$work/plain"
-expect "library: the checks pass" "0 arena: all checks passed" "$rc $out"
 $cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/asan" || exit 1
-capture "$work/asan"
-expect "library: the checks pass under ASan and UBSan" "0 arena: all checks passed" "$rc $out"
 
 # 2. The capacity stop is on in every build, NDEBUG included.
 $cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/fast" || exit 1
