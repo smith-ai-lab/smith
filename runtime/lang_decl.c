@@ -40,7 +40,7 @@ static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, cons
                                     const SmithLangBinding *binding, const SmithToken *member);
 static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                          const SmithLangName *known);
-static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, const SmithLangName *known,
+static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
                                             const char *name, size_t length, uint32_t location);
 
 static uint32_t smith_lang_hash(const char *text, size_t length) {
@@ -341,7 +341,9 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
                          name);
     }
     if (known != nullptr && exported && !known->exported) known->exported = true;
-    return smith_lang_prefixed(lang, name, length);
+    const char *prefixed = smith_lang_prefixed(lang, name, length);
+    if (lang->private_active) smith_lang_priv_name(lang, name, length, prefixed, lang->tmp_length);
+    return prefixed;
 }
 
 // Whether `module`, `import` or `export` is the file's own name for something, which the parser or a typedef says.
@@ -469,6 +471,12 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         lang->tmp[total] = 0;
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
         if (chosen == nullptr) smith_lang_check_listed(lang, host, binding, &taken, total);
+        if (smith_lang_is_hidden(lang, lang->tmp, total)) {
+            smith_lang_error(lang, host, taken.location,
+                             "`%s::%.*s` is private to its module (an exported generic's instance uses it); export it "
+                             "to use it",
+                             smith_lang_str(binding->name), (int)taken.length, taken.text);
+        }
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
@@ -552,7 +560,10 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
         return kept;
     }
     SmithLangName *known = smith_lang_name_find(lang, name, length);
-    if (known != nullptr) return smith_lang_prefix_name(lang, name, length, true);
+    if (known != nullptr) {
+        if (lang->recording) smith_lang_generic_private_name(lang, host, known, name, length, location);
+        return smith_lang_prefix_name(lang, name, length, true);
+    }
     const SmithToken *after = smith_lang_after(lang, host, next);
     bool defines = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":");
     if (!lang->in_function && defines) {

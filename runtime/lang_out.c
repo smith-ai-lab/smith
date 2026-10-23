@@ -198,7 +198,29 @@ static bool smith_lang_tag_before(const char *text, size_t used) {
            smith_lang_equals(text + used, length, "enum");
 }
 
+// runtime/lang_private.c
+static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token);
+static void smith_lang_priv_begin(SmithLang *lang);
+static void smith_lang_priv_end(SmithLang *lang);
+static void smith_lang_priv_abandon(SmithLang *lang);
+static void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked);
+static void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
+                                 size_t cname_length);
+static void smith_lang_priv_resolve(SmithLang *lang);
+static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used);
+static size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
+static size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
+static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,
+                                   size_t prefix_length);
+static bool smith_lang_is_hidden(const SmithLang *lang, const char *lowered, size_t length);
+static void smith_lang_linked_read(SmithLang *lang, const SmithHost *host);
+static bool smith_lang_is_linked(const SmithLang *lang, const char *name, size_t length);
+
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
+    if (lang->private_active) { // a private declaration the header pass keeps, for the instance section
+        smith_lang_priv_write(lang, token);
+        return;
+    }
     if (!lang->is_module || !lang->export_active || token->kind == SmithTokenKind_Eof) return;
     if (token->via != 0) {
         smith_lang_note_use(lang, token->via, token->text, token->length,

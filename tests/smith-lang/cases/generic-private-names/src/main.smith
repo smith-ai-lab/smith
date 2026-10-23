@@ -1,0 +1,11 @@
+module main;
+
+import scale;
+import <stdio.h>;
+
+int main(void) {
+    i32 a = scale::spread(0, 0);
+    f64 b = scale::spread(0.5, 1);
+    c::printf("%d %.1f %d\n", a, b, scale::calls());
+    return 0;
+}

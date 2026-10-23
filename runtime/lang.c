@@ -15,7 +15,14 @@
 #include "lang.h"
 
 constexpr size_t smith_lang_names_max = 65536;
-constexpr size_t smith_lang_slots = 131072; // a power of two, twice the names
+// The module's private declarations the header pass keeps, for the instance section of its header (lang_private.c).
+constexpr size_t smith_lang_priv_text_max = (size_t)1 << 19;
+constexpr size_t smith_lang_priv_ranges_max = 1024;
+constexpr size_t smith_lang_priv_names_max = 2048;
+constexpr size_t smith_lang_priv_notes_max = 4096;
+constexpr size_t smith_lang_hidden_max = 1024; // private names of imports an instance section declares
+constexpr size_t smith_lang_linked_max = 256;  // private names of a module that have a symbol (its header says which)
+constexpr size_t smith_lang_slots = 131072;    // a power of two, twice the names
 constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
@@ -132,7 +139,33 @@ typedef struct {
     uint32_t location;    // of the declaration's name in the source, in the host's own measure
     SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
     uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
+    bool needed;          // the body of an exported generic names it: it is in the header's instance section
 } SmithLangName;
+
+// A private declaration, kept as the lowering wrote it (a function or a variable as the declaration that carries its
+// symbol), with the names it uses from imports noted, to be written to the header if an exported generic needs it.
+typedef struct {
+    uint32_t from; // [from, to) of SmithLang::priv_text
+    uint32_t to;
+    uint32_t note_first;
+    uint32_t note_count;
+    uint8_t form; // a SmithLangForm
+    bool linked;  // a function or a variable the module defines with a symbol (not a type or a constexpr)
+    bool needed;
+    bool done; // its text is complete
+} SmithLangPrivRange;
+
+typedef struct {
+    SmithLangText name;  // as written
+    SmithLangText cname; // as lowered
+    uint32_t range;      // of SmithLang::priv_ranges
+} SmithLangPrivName;
+
+typedef struct {
+    uint16_t via; // the binding the name was written through
+    bool tag;
+    SmithLangText name;
+} SmithLangPrivNote;
 
 // One token a generic keeps (a function with `type T` parameters, runtime/lang_generic.c), or of the calls being read
 // and the types instances were asked for. 28 bytes; the text is in the pool's own.
@@ -282,6 +315,7 @@ typedef struct {
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
+    bool linked;      // a private function or variable that has a symbol: an exported generic's instance calls it
 } SmithLangDecl;
 
 // An `if constexpr` outside a generic whose then-block is being read (runtime/lang_target.c).
@@ -448,6 +482,23 @@ struct SmithLang {
     size_t c_uses_count;
     bool imports_resolved;
     bool export_active;
+    bool tee;            // the host is a raw run: private declarations are kept for the header's instance section
+    bool private_active; // the tokens of the private declaration being read go to priv_text
+    uint32_t priv_range; // 1 + the range of that declaration (0: none)
+    size_t priv_used;
+    char priv_text[smith_lang_priv_text_max];
+    SmithLangPrivRange priv_ranges[smith_lang_priv_ranges_max];
+    size_t priv_ranges_count;
+    SmithLangPrivName priv_names[smith_lang_priv_names_max];
+    size_t priv_names_count;
+    SmithLangPrivNote priv_notes[smith_lang_priv_notes_max];
+    size_t priv_notes_count;
+    bool priv_resolved;                          // the ranges the generics need are chosen
+    SmithLangText linked[smith_lang_linked_max]; // a compile: the private names that have a symbol (the header says)
+    size_t linked_count;
+    bool linked_read;
+    SmithLangText hidden[smith_lang_hidden_max]; // as lowered: the imports' private names that their headers declare
+    size_t hidden_count;
     bool emit_synthetic;   // everything emitted is a copy with no token of its own in the source (a prototype)
     bool aligned;          // the header body keeps the source's lines (an interface read in memory, runtime/lang_lex.c)
     size_t aligned_line;   // the line of the header body that is being written (from 1)
@@ -702,3 +753,6 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Bodies, the start and end of the file, and the entry points.
 #include "lang_stream.c"
+
+// The private names an exported generic's body uses.
+#include "lang_private.c"

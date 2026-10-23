@@ -117,6 +117,7 @@ static void smith_lang_written_from_header(SmithLang *lang, const char *text, si
     }
     prefix[prefix_length++] = '_';
     SmithLangText module_text = smith_lang_store(lang, module, strlen(module));
+    smith_lang_hidden_read(lang, text, length, prefix, prefix_length);
     size_t cursor = 0;
     size_t start = 0;
     size_t end = 0;

@@ -1,0 +1,4 @@
+src/main.smith:10:12: use of undeclared identifier 'scale::counter'; did you mean 'scale_Boosted'?
+src/main.smith:10:19: member reference base type 'int' is not a structure or union
+src/main.smith:8:30: `scale::clamp_to_base` is private to its module (an exported generic's instance uses it); export it to use it
+src/main.smith:9:12: `scale::Range` is private to its module (an exported generic's instance uses it); export it to use it

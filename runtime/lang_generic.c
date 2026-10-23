@@ -3613,13 +3613,14 @@ static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host,
 
 // A name of the module that a generic's exported body uses must be public: the body is compiled where the generic is
 // called.
-static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, const SmithLangName *known,
+static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
                                             const char *name, size_t length, uint32_t location) {
+    (void)host;
+    (void)name;
+    (void)length;
+    (void)location;
     if (!lang->decl.exported || known->exported || known->generic != 0) return;
-    smith_lang_error(lang, host, location,
-                     "the body of an exported generic names `%.*s`, which is private; instances are compiled where the "
-                     "generic is called, so export it",
-                     (int)length, name);
+    known->needed = true; // the header's instance section declares it (runtime/lang_private.c)
 }
 
 // ---- Beside the nested interface reads

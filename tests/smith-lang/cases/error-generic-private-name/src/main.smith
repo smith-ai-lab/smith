@@ -1,0 +1,12 @@
+module main;
+
+import scale;
+import <stdio.h>;
+
+int main(void) {
+    // The instance of `spread` calls these, but the source of an importer cannot name them.
+    c::printf("%d\n", scale::clamp_to_base(5));
+    scale::Range r = {0, 1};
+    scale::counter.calls = 3;
+    return r.low + scale::spread(0, 1);
+}

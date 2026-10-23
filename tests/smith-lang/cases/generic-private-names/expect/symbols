@@ -1,0 +1,7 @@
+D _scale::table
+T _main
+T _scale::calls
+T _scale::clamp_to_base
+T _scale::spread(double)
+T _scale::spread(int)
+T _scale::widen

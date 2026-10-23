@@ -1338,8 +1338,11 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     void enterHeader(const Action &action) {
-        std::string text = action.preface + std::string("#include ") + (action.angled ? "<" : "\"") + action.header +
-                           (action.angled ? ">" : "\"") + "\n";
+        // A module's header has a section for the instances of its exported generics (what they use of its private
+        // code): only an importer that is a .smith file reads it.
+        std::string text = action.preface + (action.angled ? "" : "#define SMITH_INSTANCES\n") +
+                           std::string("#include ") + (action.angled ? "<" : "\"") + action.header +
+                           (action.angled ? ">" : "\"") + "\n" + (action.angled ? "" : "#undef SMITH_INSTANCES\n");
         auto buffer = llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-import>");
         FileID id = SM.createFileID(std::move(buffer), SrcMgr::C_User, 0, 0, action.at);
         importFiles.insert(id.getHashValue());

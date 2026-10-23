@@ -111,6 +111,7 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
     if (smith_lang_add_binding(lang, host, name.last, strlen(name.last), name.location, &name, false)) {
         smith_lang_binding_find(lang, name.last, strlen(name.last))->is_self = true;
     }
+    smith_lang_linked_read(lang, host); // the private names an exported generic's instance calls have a symbol
 }
 
 // ---- Imports
