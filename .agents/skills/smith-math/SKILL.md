@@ -13,7 +13,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-math/SKILL.md` 
 import smith::math;
 
 f64 length(f64 x, f64 y) {
-    return math::sqrt(f64, x * x + y * y);          // the square root, correctly rounded: libm's sqrt, as an instruction
+    return math::sqrt(x * x + y * y);          // the square root, correctly rounded: libm's sqrt, as an instruction
 }
 
 bool usable(f32 value) {
@@ -38,6 +38,6 @@ f64 missing(bool negative) {
 | `math::infinity(f64)` | `c::INFINITY` | positive infinity of a floating type; negate it for the other |
 | `math::nan(f32)` | `c::NAN` | a quiet not-a-number of a floating type |
 
-- **The type is inferred from the argument** when it is a name, a field chain, `*e`, `e[i]`, a call or a literal (`smith-lang-generics`); an arithmetic expression is not typed, so write the type: `math::is_finite(f64, high - low)`. The constants take the type where a value goes. A module that is in the bootstrap (smith's own libraries) writes the type everywhere, because the lowering without a compiler cannot infer.
+- **`is_finite`, `sqrt` and `abs` take `auto x`**: the type is the argument's (a name, a field chain, `*e`, `e[i]`, a call, a cast, a literal, or arithmetic over them: `math::is_finite(high - low)`), and `sqrt` and `abs` return it (`export typeof(x) sqrt(auto x)`). The constants carry no argument, so they take the type where a value goes (`math::max(usize)`). A module that is in the bootstrap (smith's own libraries) cannot call the `auto` functions, because the lowering without a compiler cannot type the argument: it calls the builtins they wrap (`__builtin_isfinite(x)`, `__builtin_elementwise_sqrt(x)`, `__builtin_elementwise_abs(x)`).
 - **They are always-inline functions**, so the optimizer folds `math::max(usize)` to the literal. A generic call is not a constant expression in C, so in a `static_assert` or an array size write the number or a `constexpr` of the file. What is a constant is a `target::` fact (`target::f64_mantissa_bits`), which the lowering writes as a literal.
 - **Get the library in build.c** with `smith_library(b, "math")` like any library; it has no symbols of its own, only the instances a caller makes (weak and hidden), so nothing is linked for it. A module that imports it needs nothing more.

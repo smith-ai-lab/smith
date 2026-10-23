@@ -198,7 +198,13 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   SDK), each with the replacement. `.c` files are untouched; `// NOLINT(smith-preprocessor)` opts a line out.
 - **Generic functions are lowered, not templates** ([docs/smith-lang.md](docs/smith-lang.md), issue #15; skill smith-lang-generics).
   Every compile-time parameter is marked `constexpr`, a type parameter included: `export T *push(Arena *a, constexpr type T)`,
-  called as `arena::push(&a, Point)` or, with the types left out, inferred from the arguments. The lowering records the
+  called as `arena::push(&a, Point)`; a call passes every parameter the function declares, so a type no argument carries
+  stays a parameter (`math::max(u32)`) and leaving it out is an error (issue #61). An `auto` parameter takes the type of
+  its argument (`export void check_equal(auto a, typeof(a) b)`), `typeof(a)` names it in later parameters, the body and
+  the return type (`export typeof(x) sqrt(auto x)`), a later argument converts to it by C's rules but a conversion that
+  changes the value is an error at the call (judged by value for a literal or a constant of the file, else by type; no
+  warning flag involved), and a module the bootstrap lowers calls no `auto` function (no compiler to type the argument).
+  The lowering records the
   generic's tokens (no clang patch), writes one weak, hidden instance per canonical list of types at the end of the file,
   and chooses the branch of each `if constexpr` for it, so the parser only ever sees ordinary functions; an error in an
   instance is reported at the generic's source with a note at the call. An instance's code is a copy of its generic's source

@@ -12,7 +12,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 1. **Sized types** work in any `.smith` file: `u32`, `f64`, `usize` (load `smith-lang-sized-types`).
 2. **Imports** work in any `.smith` file: `import lib::text;` for a smith module, `import <math.h>;` for a C header, whose names are then written `c::sqrtf` in a module or not (load `smith-lang-modules`, `smith-lang-c-interop`).
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
-4. **Generic functions** in a module: parameters marked `constexpr type T`, called as `arena::push(&a, Point)` or with `T` inferred, and `if constexpr` in their bodies (load `smith-lang-generics`).
+4. **Generic functions** in a module: parameters marked `constexpr type T` (called as `arena::push(&a, Point)`) or `auto x` (the argument's type, `typeof(x)` names it: `check_equal(auto a, typeof(a) b)`), and `if constexpr` in their bodies (load `smith-lang-generics`).
 5. **The target, and `if constexpr` in any function body**, in place of the preprocessor: `import target;`, then `target::arch == target::aarch64`, `target::address_sanitizer` (below).
 6. **`main` with the io:** `i32 main(io::Io *io)` (with `import smith::io;`) is written as a `static` function and a C `main` that makes the io, calls it and closes the io, returning its status; the C forms (`i32 main(i32 argc, char *argv[])`, `int main(void)`) still compile as they do. `io::make` in a file with the io form is an error. Load `smith-io`.
 

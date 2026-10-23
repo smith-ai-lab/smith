@@ -2,7 +2,7 @@
 
 A `.smith` file is C with modules. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant. A file opts
 into more, step by step: imports and sized type names work in any `.smith` file; a `module` line makes it a module, with
-exports and private names, and a function with `constexpr type T` parameters is generic. The design and the issues it answers are in
+exports and private names, and a function with `constexpr type T` or `auto` parameters is generic. The design and the issues it answers are in
 [issue #11](https://github.com/adam-r-kowalski/smith/issues/11); this page is what is built.
 
 ```c
@@ -169,7 +169,7 @@ header (`read_header`): `import smith::arena;` is read as the compile reads it, 
 beside the file, else from the module's source at the path its name implies under the root of the importing module
 (`lib/smith/arena.smith` for `smith::random` in `lib/smith/random.smith`, as `smith cc` finds it), so `arena::Arena` is
 `SmithArena` (its `c_name`) and a call to a generic of that module is expanded into its instance. With no parser the
-raw run cannot infer a type: a generic call in a module that is bootstrapped writes the types as arguments
+raw run cannot type an argument: a generic call in a module that is bootstrapped writes the types as arguments (and calls no `auto` function)
 (`arena::push_array(arena, f64, count)`) and asks no `if constexpr` condition about a type (`is_float(T)`; `T == f32`
 works), and a call that does not is an error of `--smith-lower`, the one that tells the author to write the type. The
 header's `typedef struct` blocks are compared with the lowering's with both written in the same type spelling
@@ -485,7 +485,7 @@ given (`tests/lint-smith.sh`).
 
 ## Generic functions
 
-A function of a module whose parameter list has `constexpr type T` parameters is written once and compiled for each
+A function of a module whose parameter list has `constexpr type T` or `auto x` parameters is written once and compiled for each
 type it is called with (issue #15). `constexpr` in a parameter list means compile-time: the parameter is in no
 generated function. `type` is a kind, as `u32` is, so `constexpr type T` is a compile-time constant that is a type. A
 bare `type T` is an error that says to write `constexpr type T`.
@@ -507,32 +507,46 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   (`[[clang::unavailable]] void arena_push(void);`), and the module's header carries the record of the generic in a
   `// smith-generic:` comment line, which an importer reads (so a header on the include path, as `smith build` writes,
   or the module's source read in memory, both work).
-- **A call** writes the type as the argument in the place of the parameter (`arena::push(&a, Point)`,
-  `list::make_two(arena, i32)`), or leaves every type argument out and has them inferred (below). A call is read whole,
-  so it may be an argument of another call, 16 deep at most. The call becomes
-  `__extension__ ({ extern R f(P) __asm__("label"); f(args); })` with the instance's name for `f`.
+- **A call** passes every parameter the function declares: a `constexpr type` parameter takes the type where it stands
+  (`arena::push(&a, Point)`, `list::make_two(arena, i32)`), and leaving it out is the error ``"`push` is called without
+  its type `T`; pass the type: arena::push(&a, T)"``. A call is read whole, so it may be an argument of another call,
+  16 deep at most. It becomes `__extension__ ({ extern R f(P) __asm__("label"); f(args); })` with the instance's name
+  for `f`.
+- **`auto` parameters.** `export void check_equal(auto a, typeof(a) b)` is a generic with no `constexpr type`: the type
+  of `a` is the type of its argument, and each distinct canonical type (or list of them, for several `auto`
+  parameters, up to 4 with the `constexpr type`s) is one instance. The compiler types the argument as a name, a field
+  chain (anonymous members too), `*e`, `&e`, `e[i]`, a call (a call to another generic has its result's type), a cast,
+  `sizeof` or a literal, and the binary operators and `?:` of C over them, in the scope the parser is in; arrays are
+  pointers, and qualifiers are dropped, as `auto` drops them. An argument it cannot type (a `++`, a compound literal) is
+  an error that says to give it a type with a cast or a variable. Inside a generic's body, an argument that is a
+  parameter of that generic (`value_of(a)`, `check_compare(op, value_of(b))`) has the instance's type, so generics
+  call generics with their parameters.
+- **`typeof(p)`** names the type of an earlier `auto` parameter `p` (or of the instance's own `T`) in later parameters,
+  in the body and in the return type, which is written before the name as in C: `export typeof(x) sqrt(auto x);`. It
+  is one token of the record, replaced by the instance's type, so `if constexpr (typeof(x) == f32)` and
+  `sizeof(typeof(x))` work as they do for `T`. `typeof` of anything else is C's.
+- **Conversions.** A later argument whose parameter is `typeof(a) b` converts to a's type by C's rules, with one
+  addition: a conversion that changes the value is an error at the call, whatever warnings the project has on. A
+  literal and an expression of literals and the file's `constexpr` integers (`1 << 4`, `button_a | button_b`) are
+  judged by their value (`check_equal(my_u8, 300)`, `check_near(my_f32, 0.1)`, `-1` for an unsigned type, `16777217`
+  for an `f32` are errors; `0.5` and `0.1f` are fine); any other argument is judged by its type, which must have a
+  range inside the target's (`u8` to `u32`, `i32` to `f64` and `u16` to `f32` are fine; `u32` to `u8`, `i32` to `u32`,
+  `i32` to `f32` and `f64` to `f32` are not). Bools, enums and pointers convert by C's rules, and an argument whose type
+  the compiler cannot say is not judged. The message names both fixes: ``the argument `big` of `check_equal` is u32 and
+  converts to u8, the type of its first argument `small`, which may change its value; cast it, `(u8)big`, or the
+  first argument, `(u32)small` ``.
+- **Without a compiler.** The header pass writes declarations only and skips a call in a body whose type it cannot
+  tell (a module's test can call `test::check_equal(a, 1)`); the raw lowering (`--smith-lower`, the bootstrap, the
+  stage0) has no compiler to type an `auto` argument, so a bootstrapped module calls no `auto` function (it calls
+  the builtins, or a function with `constexpr type` parameters and the types written).
 - **An instance** is one function for each distinct list of types, compared by the parser's canonical spelling (`u32`
   and `uint32_t` are one instance). It is written at the end of the file as a weak, hidden definition with a symbol of
   its own, `_pick::larger(int)`, so the linker folds the copies other files made; an `inline` generic is
   `always_inline` instead. Its C name is `pick_larger__i32`. A generic can call generics (`list::make(a, T)` in a
   body: `T` is the instance's type), 32 deep and 4096 instances at most.
-- **Inference.** A call that leaves out all the type arguments has each `T` told from the arguments of the parameters
-  that say it: `T x`, `const T *x`, `T *x`, `T x[]` (`*` and `[]` each dereference the argument's type once). The
-  compiler types a name, a field chain (`p.x`, `p->y`), the lanes of an ext-vector (`v.x`, `v.yx`; several lanes are the
-  program's typedef for that vector), `*e`, `&e`, `e[i]`, a call, a cast, `sizeof` and a literal, and
-  the binary operators and `?:` of C over them, by C's rules (`a + 1`, `x * 2`, `a > 0 ? a : b`; the usual arithmetic
-  conversions, `int` for a comparison, the promoted left operand for a shift), in the scope the parser is in (a local
-  declared by an earlier statement counts). A literal, or an expression of literals only (`2 + 2`), adapts to the
-  arguments that are not one (`larger(x, 1)` is the type of `x`). Two arguments that disagree are the error "conflicting types for `T`: i32 and f64" (Smith's spellings,
-  at the second argument); an argument it cannot type (a `++`, a compound literal, a call to another generic) is an
-  error that quotes the argument as written and says to write the type. Inside a generic's
-  body the locals of the instance are not yet known to the parser, so write the type there.
-  The passes with no compiler treat a call whose type is not written differently: `--smith-header` writes declarations
-  only, so it skips such a call in a body (a module's test can call `test::check_equal(a, 1)`), and `--smith-lower`, whose
-  output is compiled (bootstrap/, the stage0), reports it as an error, "cannot tell `T` from ...": write the type there.
 - **`if constexpr`** in a generic's body is chosen for each instance; the branch not taken is never given to the parser,
   so it may name what `T` has not (`value.x`). The condition is a constant expression of integers (`true`, `false`,
-  the operators of C), `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (canonical spellings), and the questions
+  the operators of C), `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (canonical spellings; `T` may be `typeof(x)` of an `auto` parameter, and a `constexpr` integer of the file is a number), and the questions
   `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum` and `is_record`. A type is written as C
   writes one: `T`, a sized type, a typedef, `struct S`, qualifiers, `*`. Anywhere else a generic's constraint is a
   `static_assert` in a final `else`. `if constexpr` outside a generic is "The target, and `if constexpr` outside generics".
@@ -547,6 +561,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   generic's name. An instance is `pick::larger<i32>` in `smith dbg` and `smith dap`, and its code is the generic's own
   file, line and column, so a breakpoint, a listing and the arguments are those of the source.
 - **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),
+  argument lists (`auto... rest`), `auto *p` and `const auto x` (an `auto` parameter is `auto name`),
   overloading, specialization, variadic type lists, constraints other than `if constexpr` and `static_assert`,
   pointers to a generic, and a type local to a function as `T`.
 

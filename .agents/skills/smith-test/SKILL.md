@@ -14,7 +14,7 @@ A test is a plain function in a file build.c names. There is no `TEST()` macro a
 - `void test_x(random::Key key)` is a property test: it runs on 100 keys drawn from a fixed root, and a failure prints the seed that replays it (`SmithKey` in C).
 - `void test_x(io::Io *io)` takes a real io (`SmithIo *io` in C): the runner makes it for that one test, with its key made from the run's seed (so `--seed` replays it: `io->seed` and `io->key`), a fresh arena, and a scratch folder of its own, `test::scratch(io)`, which is also `$TMPDIR` while the test runs. The folder is removed when the test passes and kept, with its path printed, when it fails. The working directory stays the project root, so fixtures resolve. A test makes fakes (`io::make_test`) anywhere, but never a real io: `smith-effects` allows `io::make` only in `main`, so the runner can always seed, sandbox and clean up after a test, and parallel tests never share the real world.
 
-A test file is a module named for what it tests, `tests/primes_test.smith` is `module primes_test;` (`tests/` is a root of its own), and each test is `export`ed: a private function of a module is static, and the runner calls a test from outside. The runner lists `primes_test::the_first_five_primes_add_up_to_28`. `smith new` writes it so, and `smith lint` (`smith-module`) says to add the module line to a file that has none (such a file still builds, and its tests need no `export`). Write the type argument of a check, as `smith new`'s test does (`test::check_equal(i32, primes::sum(5), 28)`); it is inferred when left out.
+A test file is a module named for what it tests, `tests/primes_test.smith` is `module primes_test;` (`tests/` is a root of its own), and each test is `export`ed: a private function of a module is static, and the runner calls a test from outside. The runner lists `primes_test::the_first_five_primes_add_up_to_28`. `smith new` writes it so, and `smith lint` (`smith-module`) says to add the module line to a file that has none (such a file still builds, and its tests need no `export`). Write the type argument of a check, as `smith new`'s test does (`test::check_equal(primes::sum(5), 28)`); it is inferred when left out.
 
 ```smith
 module math_test;
@@ -25,8 +25,8 @@ import smith::random;
 import smith::test;
 
 export void test_addition(void) {
-    test::check_equal(i32, 2 + 2, 4);
-    test::check_near(f64, 0.1 + 0.2, 0.3, 1e-9);
+    test::check_equal(2 + 2, 4);
+    test::check_near(0.1 + 0.2, 0.3, 1e-9);
 }
 
 export void test_sorted_stays_sorted(random::Key key) { // a property test: runs on 100 keys
@@ -76,7 +76,7 @@ export void test_area_property(random::Key key) {
 
 ## The checks
 
-The checks are generic functions of `smith::test`: the type is inferred from the arguments, so there is nothing to spell (smith-lang-generics). A failure shows the line that called the check and the call chain, read from the stack and the source file, so a check needs no macro.
+The checks are generic functions of `smith::test`: the type is the first argument's (`auto a`, smith-lang-generics), so there is nothing to spell. A failure shows the line that called the check and the call chain, read from the stack and the source file, so a check needs no macro.
 
 ```smith fragment
 test::check(condition)                      // a bool
@@ -88,7 +88,7 @@ test::check_same_bits(a, b)                 // bitwise identical, f32 or f64: -0
 test::expect_abort()                        // from this call on the test must abort (below)
 ```
 
-- **One type for `a` and `b`.** `T` is told from both: a literal adapts (`check_equal(count, 3)` is the type of `count`; so is `2 + 2` or `nullptr` against a pointer), and arithmetic, comparisons and `?:` are typed by C's rules (`check_equal(x * 2, y + 1)`). Two arguments of different types (`u32` against `u64`, `usize` against `i32`) are the error ``conflicting types for `T`: u32 and u64``: cast one side, or write the type first, `test::check_equal(u64, a, b)`. A call to a generic or a builtin (`math::max(u64)`, `__builtin_nan("")`) is not typed: put it in a variable or write the type first.
+- **`b` converts to the type of `a`** (`check_equal(auto a, typeof(a) b)`): `check_equal(count, 3)` is the type of `count`, as C converts. A conversion that changes the value is an error at the call that names the cast: `check_equal(my_u8, 300)`, `check_near(my_f32, 0.1)` (write `0.1f`), a `u32` variable against a `u8` first argument, an `i32` against a `u32`. Cast the argument (`(u8)big`) or the first one. A literal first argument is an `i32` (`check_equal(0, count)` with a `usize` count needs `(usize)0` or the order `check_equal(count, 0)`). A call to a generic is typed by its result; one the compiler cannot type (`__builtin_nan("")`) goes in a variable first.
 - Types print as Smith spells them: `i8` to `i64`, `u8` to `u64`, `f32`, `f64`, `bool`, `char`, `ptr`.
 - A failed check ends the test.
 - **`test::check(condition)` is an assumption to clang's static analyzer** (`smith lint`'s `clang-analyzer-*`, the editor), as `contract::assert` is: after `test::check(p != nullptr)` the analyzer knows `p` is not null, so it reports no null dereference past it and no `__builtin_assume` is needed. It is the one check that tells the analyzer, so write a null or bounds fact as `check(p != nullptr)`, not as `check_not_equal(p, nullptr)`.
