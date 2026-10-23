@@ -298,215 +298,240 @@ typedef struct {
 } SmithNetServer;
 
 // The error for an errno value, with the message "what path: strerror".
-[[nodiscard]] SmithError smith_error_make(int32_t code, const char *what, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_error_make(int32_t code, const char *what,
+                                                                             const char *path);
 
 // Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
 // completed. File operations always complete here. The fake io never waits: it completes what is ready now, and when
 // given a time to wait and nothing is ready it lets that much of its clock pass (that is how it waits) and completes
 // what became ready.
-size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
+[[clang::annotate("smith::edge")]] size_t smith_io_run(SmithIo *io, int64_t timeout_ns);
 
 // The whole file, in the arena.
-void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, const char *path);
+[[clang::annotate("smith::edge")]] void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena,
+                                                               const char *path);
 
-void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, size_t size,
-                             SmithWrite mode);
+[[clang::annotate("smith::edge")]] void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path,
+                                                                const void *data, size_t size, SmithWrite mode);
 
 // The whole file, in the arena.
-[[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena,
+                                                                            const char *path);
 
 // Writes size bytes to the file as the mode says.
-[[nodiscard]] SmithError smith_files_write(SmithFiles *files, const char *path, const void *data, size_t size,
-                                           SmithWrite mode);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_files_write(SmithFiles *files, const char *path, const void *data, size_t size, SmithWrite mode);
 
 // Deletes a file (not a folder: EPERM).
-[[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
 
 // Makes the folder and the ones above it that are missing; one that is there already is success.
-[[nodiscard]] SmithError smith_files_make_folder(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_files_make_folder(SmithFiles *files,
+                                                                                    const char *path);
 
 // What is at the path (symbolic links followed).
-[[nodiscard]] SmithFileInfo smith_files_info(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileInfo smith_files_info(SmithFiles *files, const char *path);
 
 // What is in a folder.
-[[nodiscard]] SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena, const char *folder);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena,
+                                                                                const char *folder);
 
 // Maps the file into the address space instead of reading it: nothing is copied or read until the memory is touched,
 // so a large file costs only the pages used. The mapping is private: writes change the memory and never the file. It
 // lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
-[[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path);
 
 // Writes the text to stdout or stderr, all of it or an error.
-[[nodiscard]] SmithError smith_console_print(SmithConsole *console, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_console_print(SmithConsole *console,
+                                                                                const char *text);
 
-[[nodiscard]] SmithError smith_console_print_error(SmithConsole *console, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_console_print_error(SmithConsole *console,
+                                                                                      const char *text);
 
 // printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
-[[gnu::format(printf, 2, 3)]] SmithError smith_console_printf(SmithConsole *console, const char *format, ...);
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
+smith_console_printf(SmithConsole *console, const char *format, ...);
 
-[[gnu::format(printf, 2, 3)]] SmithError smith_console_eprintf(SmithConsole *console, const char *format, ...);
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
+smith_console_eprintf(SmithConsole *console, const char *format, ...);
 
 // Completes with whatever is available, at most max bytes, in the arena; size 0 and end set mean the input is over.
-void smith_console_read_async(SmithConsole *console, SmithOp *op, SmithArena *arena, size_t max);
+[[clang::annotate("smith::edge")]] void smith_console_read_async(SmithConsole *console, SmithOp *op, SmithArena *arena,
+                                                                 size_t max);
 
 // The next line of stdin without its newline, in the arena. At the end of the input end is true; a last line with no
 // newline is still returned first.
-[[nodiscard]] SmithRead smith_console_read_line(SmithConsole *console, SmithArena *arena);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead smith_console_read_line(SmithConsole *console,
+                                                                                   SmithArena *arena);
 
 // Monotonic nanoseconds: they never go back, and mean nothing but as a difference.
-[[nodiscard]] uint64_t smith_clock_now(const SmithClock *clock);
+[[clang::annotate("smith::edge")]] [[nodiscard]] uint64_t smith_clock_now(const SmithClock *clock);
 
 // Nanoseconds since the Unix epoch.
-[[nodiscard]] int64_t smith_clock_wall(const SmithClock *clock);
+[[clang::annotate("smith::edge")]] [[nodiscard]] int64_t smith_clock_wall(const SmithClock *clock);
 
 // Moves the fake clock forward, and only the fake clock (asserted). Both the monotonic and the wall time move.
-void smith_clock_advance(SmithClock *clock, uint64_t ns);
+[[clang::annotate("smith::edge")]] void smith_clock_advance(SmithClock *clock, uint64_t ns);
 
 // Completes after ns nanoseconds of the clock. On the fake clock that is when it has been advanced that far.
-void smith_clock_timeout_async(SmithClock *clock, SmithOp *op, uint64_t ns);
+[[clang::annotate("smith::edge")]] void smith_clock_timeout_async(SmithClock *clock, SmithOp *op, uint64_t ns);
 
 // Blocks for ns. On the fake clock nothing can advance it, so this is the error EDEADLK unless ns is 0.
-[[nodiscard]] SmithError smith_clock_sleep(SmithClock *clock, uint64_t ns);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_clock_sleep(SmithClock *clock, uint64_t ns);
 
 // Starts argv[0] with no stdin and the program's own stdout and stderr, without waiting.
-[[nodiscard]] SmithError smith_processes_spawn(SmithProcesses *processes, const char *const *argv,
-                                               SmithProcess *process);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_processes_spawn(SmithProcesses *processes, const char *const *argv, SmithProcess *process);
 
 // Starts argv[0] with the program's own stdin, stdout and stderr, in this process group, so a signal from the terminal
 // reaches it: for a program that talks to the person at the terminal. Without waiting.
-[[nodiscard]] SmithError smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv,
-                                                        SmithProcess *process);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv, SmithProcess *process);
 
 // Completes when the process has exited, with op->exit_status or op->signal.
-void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
+[[clang::annotate("smith::edge")]] void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op,
+                                                                   SmithProcess process);
 
 // Completes when the child has exited, with op->exit_status or op->signal, like io::processes_wait_async; afterwards
 // io::child_kill does not signal the child's id, which is free for another program from then on. The child stays
 // where it is until the op is done.
-void smith_child_wait_async(SmithChild *child, SmithOp *op);
+[[clang::annotate("smith::edge")]] void smith_child_wait_async(SmithChild *child, SmithOp *op);
 
 // How many processes can run at once: the machine's logical cores. The fake has what io::Test.cores says, or 1.
-[[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
+[[clang::annotate("smith::edge")]] [[nodiscard]] size_t smith_processes_cores(const SmithProcesses *processes);
 
 // Starts argv[0] (found on PATH) with a pipe for stdin and a pipe for stdout and returns at once. The error is that it
 // could not start (a missing program is ENOENT). On the fake, argv[0] needs a script (io::test_add_child) and is
 // otherwise ENOENT.
-[[nodiscard]] SmithError smith_processes_start_piped(SmithProcesses *processes, const char *const *argv,
-                                                     SmithChild *child);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child);
 
 // Completes when all size bytes are in the child's stdin pipe (op->size is size), or fails: EPIPE when the child has
 // closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program. The data
 // stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child reads, and a
 // program that also reads its output (io::child_read_async) cannot deadlock on it.
-void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, size_t size);
+[[clang::annotate("smith::edge")]] void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data,
+                                                                size_t size);
 
 // Completes with whatever the child's stdout holds, at least one byte and at most capacity, in buffer (op->data,
 // op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
 // and nothing was read.
-void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, size_t capacity);
+[[clang::annotate("smith::edge")]] void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer,
+                                                               size_t capacity);
 
 // Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
-void smith_child_close_input(SmithChild *child);
+[[clang::annotate("smith::edge")]] void smith_child_close_input(SmithChild *child);
 
 // Sends the signal to the child's process group. ESRCH if there is nothing left to signal: also, with no signal
 // sent, once the wait of io::child_wait_async has completed, since the id could then be another program's.
-[[nodiscard]] SmithError smith_child_kill(SmithChild *child, int32_t signal);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_child_kill(SmithChild *child, int32_t signal);
 
 // Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
 // child anyway), and call this once, after the last op on the child is done.
-void smith_child_close(SmithChild *child);
+[[clang::annotate("smith::edge")]] void smith_child_close(SmithChild *child);
 
 // Runs argv[0] (found on PATH) with no stdin and waits, capturing stdout and stderr in the arena. The capture is
 // read in doubling blocks, so it may use up to twice the output's size.
-[[nodiscard]] SmithProcessResult smith_processes_run(SmithProcesses *processes, SmithArena *arena,
-                                                     const char *const *argv);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithProcessResult
+smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *const *argv);
 
 // Opens a connection to host:port; with tls, it is a TLS connection whose certificate is checked against host. The op
 // completes when the connection is ready, or fails.
-void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const char *host, uint16_t port,
-                             bool tls);
+[[clang::annotate("smith::edge")]] void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
+                                                                const char *host, uint16_t port, bool tls);
 
 // Sends all size bytes (the library copies them, so they need not outlive the call).
-void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const void *data, size_t size);
+[[clang::annotate("smith::edge")]] void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
+                                                             const void *data, size_t size);
 
 // Completes with whatever has arrived, at least one byte and at most capacity, in buffer (op->data, op->size; not
 // NUL-terminated); op->end is true when the peer is done sending and nothing was read.
-void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection, void *buffer, size_t capacity);
+[[clang::annotate("smith::edge")]] void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
+                                                                void *buffer, size_t capacity);
 
 // Closes the connection.
-void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
+[[clang::annotate("smith::edge")]] void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
 
 // The same, blocking.
-[[nodiscard]] SmithError smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, uint16_t port,
-                                           bool tls);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, uint16_t port, bool tls);
 
-[[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection, const void *data, size_t size);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection,
+                                                                           const void *data, size_t size);
 
-[[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection, void *buffer, size_t capacity);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection,
+                                                                             void *buffer, size_t capacity);
 
-[[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection);
 
 // Adds a scripted server for the net (see io::NetServer).
-[[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io,
+                                                                                     SmithNetServer server);
 
 // The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
 // was no such connection.
-[[nodiscard]] const char *smith_io_test_request(const SmithIo *io, const char *host, uint16_t port, size_t n);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_io_test_request(const SmithIo *io, const char *host,
+                                                                                   uint16_t port, size_t n);
 
 // Starts argv[0] (found on PATH) with no stdin and returns at once; the error is that it could not start (a missing
 // program is ENOENT). The output is read in doubling blocks into the arena, so it may use up to twice its size.
-[[nodiscard]] SmithError smith_processes_capture_async(SmithProcesses *processes, SmithArena *arena,
-                                                       const char *const *argv, SmithCapture *capture);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_processes_capture_async(SmithProcesses *processes,
+                                                                                          SmithArena *arena,
+                                                                                          const char *const *argv,
+                                                                                          SmithCapture *capture);
 
 // Takes in what io::run completed and submits the next read; true once the capture is done. Call it after each
 // io::run for every capture still running.
-[[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
+[[clang::annotate("smith::edge")]] [[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
 
 // Sends the signal to the capture's process group, unless its wait has completed: the id is then free for another
 // program, so ESRCH is returned and nothing is sent. That is also the answer once the capture is done. A process that
 // has exited but whose output is still being read (a child of it holds the pipe) is therefore not reached either; it
 // ends on its own or when the caller gives up on the output.
-[[nodiscard]] SmithError smith_capture_stop(SmithCapture *capture, int32_t signal);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_capture_stop(SmithCapture *capture, int32_t signal);
 
 // The argument i (0 is the program), or nullptr past the end.
-[[nodiscard]] const char *smith_args_get(const SmithArgs *args, size_t i);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_args_get(const SmithArgs *args, size_t i);
 
 // The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
 // process's environment each time, so a setenv after io::make shows.
-[[nodiscard]] const char *smith_args_env(const SmithArgs *args, const char *name);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_args_env(const SmithArgs *args, const char *name);
 
 // The real io. The arena is 64 GiB of address space reserved with mmap; only pages a program touches cost memory (under
 // AddressSanitizer the arena poisons lazily, so the shadow grows with what is used). SMITH_SEED, a
 // decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
 // failure to reserve memory, stops the program with a message.
-[[nodiscard, clang::annotate("smith::main_only")]] SmithIo smith_io_make(int32_t argc, char **argv);
+[[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] SmithIo
+smith_io_make(int32_t argc, char **argv);
 
 // Releases the reservation and the event loop. A program need not call it: the process ends.
-void smith_io_close(SmithIo *io);
+[[clang::annotate("smith::edge")]] void smith_io_close(SmithIo *io);
 
 // Same type as the real one. Files, programs and the console's output are inside the arena: the fake holds up to 64
 // files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
-[[nodiscard]] SmithIo smith_io_make_test(SmithIoTest test);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithIo smith_io_make_test(SmithIoTest test);
 
 // Adds an in-memory file (the text is copied), replacing one of the same path.
-[[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path,
+                                                                                   const char *text);
 
 // Scripts a program for io::processes_run and spawn: its stdout and its exit status.
-[[nodiscard]] SmithError smith_io_test_add_program(SmithIo *io, const char *program, const char *output,
-                                                   int32_t status);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_program(SmithIo *io, const char *program, const char *output, int32_t status);
 
 // Scripts a child of the fake io (see io::ChildScript).
-[[nodiscard]] SmithError smith_io_test_add_child(SmithIo *io, SmithChildScript script);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_io_test_add_child(SmithIo *io,
+                                                                                    SmithChildScript script);
 
 // The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
 // there is no such child.
-[[nodiscard]] const char *smith_io_test_child_input(const SmithIo *io, size_t n);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_io_test_child_input(const SmithIo *io, size_t n);
 
 // What the program printed to stdout and stderr so far, NUL-terminated.
-[[nodiscard]] const char *smith_io_test_output(const SmithIo *io);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_io_test_output(const SmithIo *io);
 
-[[nodiscard]] const char *smith_io_test_errors(const SmithIo *io);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *smith_io_test_errors(const SmithIo *io);
 #ifdef __cplusplus
 }
 #endif

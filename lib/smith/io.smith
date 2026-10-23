@@ -619,8 +619,8 @@ struct Loop {
 // ---------------------------------------------------------------- errors
 
 // The error for an errno value, with the message "what path: strerror".
-[[smith::c_name("smith_error_make")]] export [[nodiscard]] Error error_make(i32 code, const char *what,
-                                                                            const char *path) {
+[[smith::c_name("smith_error_make")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+error_make(i32 code, const char *what, const char *path) {
     contract::assert(what != nullptr && path != nullptr);
     Error error = {.code = code};
     if (code == 0) return error;
@@ -1574,7 +1574,7 @@ void loop_wait(Loop *loop, Op *op) {
 // completed. File operations always complete here. The fake io never waits: it completes what is ready now, and when
 // given a time to wait and nothing is ready it lets that much of its clock pass (that is how it waits) and completes
 // what became ready.
-[[smith::c_name("smith_io_run")]] export usize run(Io *io, i64 timeout_ns) {
+[[smith::c_name("smith_io_run")]] export [[clang::annotate("smith::edge")]] usize run(Io *io, i64 timeout_ns) {
     contract::assert(io != nullptr);
     return loop_run(io->loop, timeout_ns);
 }
@@ -1589,8 +1589,8 @@ void op_start(Op *op, Loop *loop, OpKind kind) {
 }
 
 // The whole file, in the arena.
-[[smith::c_name("smith_files_read_async")]] export void files_read_async(Files *files, Op *op, arena::Arena *arena,
-                                                                         const char *path) {
+[[smith::c_name("smith_files_read_async")]] export [[clang::annotate("smith::edge")]] void
+files_read_async(Files *files, Op *op, arena::Arena *arena, const char *path) {
     contract::assert(files != nullptr && arena != nullptr);
     op_start(op, files->loop, FileRead);
     op->internal.arena = arena;
@@ -1599,8 +1599,8 @@ void op_start(Op *op, Loop *loop, OpKind kind) {
     loop_submit(files->loop, op);
 }
 
-[[smith::c_name("smith_files_write_async")]] export void files_write_async(Files *files, Op *op, const char *path,
-                                                                           const void *data, usize size, Write mode) {
+[[smith::c_name("smith_files_write_async")]] export [[clang::annotate("smith::edge")]] void
+files_write_async(Files *files, Op *op, const char *path, const void *data, usize size, Write mode) {
     contract::assert(files != nullptr && (data != nullptr || size == 0));
     op_start(op, files->loop, FileWrite);
     contract::assert(path != nullptr);
@@ -1612,8 +1612,8 @@ void op_start(Op *op, Loop *loop, OpKind kind) {
 }
 
 // The whole file, in the arena.
-[[smith::c_name("smith_files_read")]] export [[nodiscard]] Read files_read(Files *files, arena::Arena *arena,
-                                                                           const char *path) {
+[[smith::c_name("smith_files_read")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+files_read(Files *files, arena::Arena *arena, const char *path) {
     Op op = {};
     files_read_async(files, &op, arena, path);
     if (!op.done) loop_wait(files->loop, &op);
@@ -1621,7 +1621,7 @@ void op_start(Op *op, Loop *loop, OpKind kind) {
 }
 
 // Writes size bytes to the file as the mode says.
-[[smith::c_name("smith_files_write")]] export [[nodiscard]] Error
+[[smith::c_name("smith_files_write")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 files_write(Files *files, const char *path, const void *data, usize size, Write mode) {
     Op op = {};
     files_write_async(files, &op, path, data, size, mode);
@@ -1632,30 +1632,32 @@ files_write(Files *files, const char *path, const void *data, usize size, Write 
 // The calls below run at once and only block: they do not queue behind asynchronous file operations still pending.
 
 // Deletes a file (not a folder: EPERM).
-[[smith::c_name("smith_files_remove")]] export [[nodiscard]] Error files_remove(Files *files, const char *path) {
+[[smith::c_name("smith_files_remove")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_remove(Files *files, const char *path) {
     contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_remove(files->loop->fake, path);
     return c::unlink(path) == 0 ? (Error){} : error_make(errno_now(), "remove", path);
 }
 
 // Makes the folder and the ones above it that are missing; one that is there already is success.
-[[smith::c_name("smith_files_make_folder")]] export [[nodiscard]] Error files_make_folder(Files *files,
-                                                                                          const char *path) {
+[[smith::c_name("smith_files_make_folder")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_make_folder(Files *files, const char *path) {
     contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_make_folder(files->loop->fake, path);
     return real_make_folder(path);
 }
 
 // What is at the path (symbolic links followed).
-[[smith::c_name("smith_files_info")]] export [[nodiscard]] FileInfo files_info(Files *files, const char *path) {
+[[smith::c_name("smith_files_info")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileInfo
+files_info(Files *files, const char *path) {
     contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_info(files->loop->fake, path);
     return real_info(path);
 }
 
 // What is in a folder.
-[[smith::c_name("smith_files_list")]] export [[nodiscard]] FileList files_list(Files *files, arena::Arena *arena,
-                                                                               const char *folder) {
+[[smith::c_name("smith_files_list")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileList
+files_list(Files *files, arena::Arena *arena, const char *folder) {
     contract::assert(files != nullptr && arena != nullptr && folder != nullptr);
     if (files->loop->fake != nullptr) return fake_list(files->loop->fake, arena, folder);
     return real_list(arena, folder);
@@ -1664,7 +1666,8 @@ files_write(Files *files, const char *path, const void *data, usize size, Write 
 // Maps the file into the address space instead of reading it: nothing is copied or read until the memory is touched,
 // so a large file costs only the pages used. The mapping is private: writes change the memory and never the file. It
 // lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
-[[smith::c_name("smith_files_map")]] export [[nodiscard]] Mapped files_map(Files *files, const char *path) {
+[[smith::c_name("smith_files_map")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Mapped
+files_map(Files *files, const char *path) {
     contract::assert(files != nullptr && path != nullptr);
     Mapped mapped = {};
     if (files->loop->fake != nullptr) {
@@ -1686,12 +1689,13 @@ Error console_write(Console *console, bool errors, const char *text) {
 // --- console ---
 
 // Writes the text to stdout or stderr, all of it or an error.
-[[smith::c_name("smith_console_print")]] export [[nodiscard]] Error console_print(Console *console, const char *text) {
+[[smith::c_name("smith_console_print")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+console_print(Console *console, const char *text) {
     return console_write(console, false, text);
 }
 
-[[smith::c_name("smith_console_print_error")]] export [[nodiscard]] Error console_print_error(Console *console,
-                                                                                              const char *text) {
+[[smith::c_name("smith_console_print_error")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+console_print_error(Console *console, const char *text) {
     return console_write(console, true, text);
 }
 
@@ -1706,7 +1710,7 @@ Error console_write(Console *console, bool errors, const char *text) {
 
 // printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
-[[smith::c_name("smith_console_printf")]] export [[gnu::format(printf, 2, 3)]] Error
+[[smith::c_name("smith_console_printf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
 console_printf(Console *console, const char *format, ...) {
     contract::assert(console != nullptr && format != nullptr);
     __builtin_va_list arguments;
@@ -1716,7 +1720,7 @@ console_printf(Console *console, const char *format, ...) {
     return error;
 }
 
-[[smith::c_name("smith_console_eprintf")]] export [[gnu::format(printf, 2, 3)]] Error
+[[smith::c_name("smith_console_eprintf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
 console_eprintf(Console *console, const char *format, ...) {
     contract::assert(console != nullptr && format != nullptr);
     __builtin_va_list arguments;
@@ -1727,8 +1731,8 @@ console_eprintf(Console *console, const char *format, ...) {
 }
 
 // Completes with whatever is available, at most max bytes, in the arena; size 0 and end set mean the input is over.
-[[smith::c_name("smith_console_read_async")]] export void console_read_async(Console *console, Op *op,
-                                                                             arena::Arena *arena, usize max) {
+[[smith::c_name("smith_console_read_async")]] export [[clang::annotate("smith::edge")]] void
+console_read_async(Console *console, Op *op, arena::Arena *arena, usize max) {
     contract::assert(console != nullptr && arena != nullptr && max > 0);
     op_start(op, console->loop, ConsoleRead);
     op->internal.console = console;
@@ -1761,8 +1765,8 @@ bool console_fill(Console *console, Error *error) {
 
 // The next line of stdin without its newline, in the arena. At the end of the input end is true; a last line with no
 // newline is still returned first.
-[[smith::c_name("smith_console_read_line")]] export [[nodiscard]] Read console_read_line(Console *console,
-                                                                                         arena::Arena *arena) {
+[[smith::c_name("smith_console_read_line")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+console_read_line(Console *console, arena::Arena *arena) {
     contract::assert(console != nullptr && arena != nullptr);
     Grow line = {.arena = arena};
     Read result = {};
@@ -1801,19 +1805,22 @@ u64 time_ns(c::clockid_t which) {
 // --- clock ---
 
 // Monotonic nanoseconds: they never go back, and mean nothing but as a difference.
-[[smith::c_name("smith_clock_now")]] export [[nodiscard]] u64 clock_now(const Clock *clock) {
+[[smith::c_name("smith_clock_now")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] u64
+clock_now(const Clock *clock) {
     contract::assert(clock != nullptr);
     return clock->loop->fake != nullptr ? clock->loop->fake->monotonic : time_ns(clock_monotonic);
 }
 
 // Nanoseconds since the Unix epoch.
-[[smith::c_name("smith_clock_wall")]] export [[nodiscard]] i64 clock_wall(const Clock *clock) {
+[[smith::c_name("smith_clock_wall")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] i64
+clock_wall(const Clock *clock) {
     contract::assert(clock != nullptr);
     return clock->loop->fake != nullptr ? clock->loop->fake->wall : (i64)time_ns(clock_realtime);
 }
 
 // Moves the fake clock forward, and only the fake clock (asserted). Both the monotonic and the wall time move.
-[[smith::c_name("smith_clock_advance")]] export void clock_advance(Clock *clock, u64 ns) {
+[[smith::c_name("smith_clock_advance")]] export [[clang::annotate("smith::edge")]] void clock_advance(Clock *clock,
+                                                                                                      u64 ns) {
     contract::assert(clock != nullptr && clock->loop->fake != nullptr); // only the fake clock can be advanced
     contract::assert(ns <= math::max(u64) >> 1);
     clock->loop->fake->monotonic += ns;
@@ -1821,7 +1828,8 @@ u64 time_ns(c::clockid_t which) {
 }
 
 // Completes after ns nanoseconds of the clock. On the fake clock that is when it has been advanced that far.
-[[smith::c_name("smith_clock_timeout_async")]] export void clock_timeout_async(Clock *clock, Op *op, u64 ns) {
+[[smith::c_name("smith_clock_timeout_async")]] export [[clang::annotate("smith::edge")]] void
+clock_timeout_async(Clock *clock, Op *op, u64 ns) {
     contract::assert(clock != nullptr && ns <= math::max(u64) >> 1);
     op_start(op, clock->loop, Timeout);
     op->internal.deadline = ns; // relative; the fake adds its clock on submit, kqueue takes it relative
@@ -1829,7 +1837,8 @@ u64 time_ns(c::clockid_t which) {
 }
 
 // Blocks for ns. On the fake clock nothing can advance it, so this is the error EDEADLK unless ns is 0.
-[[smith::c_name("smith_clock_sleep")]] export [[nodiscard]] Error clock_sleep(Clock *clock, u64 ns) {
+[[smith::c_name("smith_clock_sleep")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+clock_sleep(Clock *clock, u64 ns) {
     Op op = {};
     clock_timeout_async(clock, &op, ns);
     loop_wait(clock->loop, &op);
@@ -1894,7 +1903,7 @@ Error spawn(const char *const *argv, i32 out, i32 err, i32 *id) {
 // --- processes ---
 
 // Starts argv[0] with no stdin and the program's own stdout and stderr, without waiting.
-[[smith::c_name("smith_processes_spawn")]] export [[nodiscard]] Error
+[[smith::c_name("smith_processes_spawn")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_spawn(Processes *processes, const char *const *argv, Process *process) {
     contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
     Fake *fake = processes->loop->fake;
@@ -1906,7 +1915,7 @@ processes_spawn(Processes *processes, const char *const *argv, Process *process)
 
 // Starts argv[0] with the program's own stdin, stdout and stderr, in this process group, so a signal from the terminal
 // reaches it: for a program that talks to the person at the terminal. Without waiting.
-[[smith::c_name("smith_processes_spawn_terminal")]] export [[nodiscard]] Error
+[[smith::c_name("smith_processes_spawn_terminal")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_spawn_terminal(Processes *processes, const char *const *argv, Process *process) {
     contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
     if (processes->loop->fake != nullptr) return processes_spawn(processes, argv, process);
@@ -1914,8 +1923,8 @@ processes_spawn_terminal(Processes *processes, const char *const *argv, Process 
 }
 
 // Completes when the process has exited, with op->exit_status or op->signal.
-[[smith::c_name("smith_processes_wait_async")]] export void processes_wait_async(Processes *processes, Op *op,
-                                                                                 Process process) {
+[[smith::c_name("smith_processes_wait_async")]] export [[clang::annotate("smith::edge")]] void
+processes_wait_async(Processes *processes, Op *op, Process process) {
     contract::assert(processes != nullptr && process.id != 0);
     op_start(op, processes->loop, ProcessWait);
     op->internal.process = process.id;
@@ -1925,7 +1934,8 @@ processes_spawn_terminal(Processes *processes, const char *const *argv, Process 
 // Completes when the child has exited, with op->exit_status or op->signal, like io::processes_wait_async; afterwards
 // io::child_kill does not signal the child's id, which is free for another program from then on. The child stays
 // where it is until the op is done.
-[[smith::c_name("smith_child_wait_async")]] export void child_wait_async(Child *child, Op *op) {
+[[smith::c_name("smith_child_wait_async")]] export [[clang::annotate("smith::edge")]] void
+child_wait_async(Child *child, Op *op) {
     contract::assert(child != nullptr && child->process.id != 0);
     op_start(op, child->internal.loop, ProcessWait);
     op->internal.process = child->process.id;
@@ -1934,7 +1944,8 @@ processes_spawn_terminal(Processes *processes, const char *const *argv, Process 
 }
 
 // How many processes can run at once: the machine's logical cores. The fake has what io::Test.cores says, or 1.
-[[smith::c_name("smith_processes_cores")]] export [[nodiscard]] usize processes_cores(const Processes *processes) {
+[[smith::c_name("smith_processes_cores")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] usize
+processes_cores(const Processes *processes) {
     contract::assert(processes != nullptr);
     if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
     i64 cores = c::sysconf(processors_online);
@@ -1990,7 +2001,7 @@ Error child_start_fake(Fake *fake, const char *const *argv, Child *child) {
 // Starts argv[0] (found on PATH) with a pipe for stdin and a pipe for stdout and returns at once. The error is that it
 // could not start (a missing program is ENOENT). On the fake, argv[0] needs a script (io::test_add_child) and is
 // otherwise ENOENT.
-[[smith::c_name("smith_processes_start_piped")]] export [[nodiscard]] Error
+[[smith::c_name("smith_processes_start_piped")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_start_piped(Processes *processes, const char *const *argv, Child *child) {
     contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && child != nullptr);
     *child = (Child){.internal = {.loop = processes->loop, .input = -1, .output = -1}};
@@ -2002,8 +2013,8 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 // closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program. The data
 // stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child reads, and a
 // program that also reads its output (io::child_read_async) cannot deadlock on it.
-[[smith::c_name("smith_child_write_async")]] export void child_write_async(Child *child, Op *op, const void *data,
-                                                                           usize size) {
+[[smith::c_name("smith_child_write_async")]] export [[clang::annotate("smith::edge")]] void
+child_write_async(Child *child, Op *op, const void *data, usize size) {
     contract::assert(child != nullptr && (data != nullptr || size == 0));
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeWrite);
@@ -2021,8 +2032,8 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 // Completes with whatever the child's stdout holds, at least one byte and at most capacity, in buffer (op->data,
 // op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
 // and nothing was read.
-[[smith::c_name("smith_child_read_async")]] export void child_read_async(Child *child, Op *op, void *buffer,
-                                                                         usize capacity) {
+[[smith::c_name("smith_child_read_async")]] export [[clang::annotate("smith::edge")]] void
+child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
     contract::assert(child != nullptr && buffer != nullptr && capacity > 0);
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeRead);
@@ -2039,7 +2050,8 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 }
 
 // Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
-[[smith::c_name("smith_child_close_input")]] export void child_close_input(Child *child) {
+[[smith::c_name("smith_child_close_input")]] export [[clang::annotate("smith::edge")]] void
+child_close_input(Child *child) {
     contract::assert(child != nullptr);
     Fake *fake = child->internal.loop->fake;
     if (fake != nullptr) {
@@ -2052,7 +2064,8 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 
 // Sends the signal to the child's process group. ESRCH if there is nothing left to signal: also, with no signal
 // sent, once the wait of io::child_wait_async has completed, since the id could then be another program's.
-[[smith::c_name("smith_child_kill")]] export [[nodiscard]] Error child_kill(Child *child, i32 signal) {
+[[smith::c_name("smith_child_kill")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+child_kill(Child *child, i32 signal) {
     contract::assert(child != nullptr && signal > 0);
     Fake *fake = child->internal.loop->fake;
     if (fake != nullptr) {
@@ -2070,7 +2083,7 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 
 // Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
 // child anyway), and call this once, after the last op on the child is done.
-[[smith::c_name("smith_child_close")]] export void child_close(Child *child) {
+[[smith::c_name("smith_child_close")]] export [[clang::annotate("smith::edge")]] void child_close(Child *child) {
     contract::assert(child != nullptr);
     if (child->internal.loop->fake != nullptr) return;
     if (child->internal.input >= 0) c::close(child->internal.input);
@@ -2158,7 +2171,7 @@ ProcessResult run_real(Loop *loop, arena::Arena *arena, const char *const *argv)
 
 // Runs argv[0] (found on PATH) with no stdin and waits, capturing stdout and stderr in the arena. The capture is
 // read in doubling blocks, so it may use up to twice the output's size.
-[[smith::c_name("smith_processes_run")]] export [[nodiscard]] ProcessResult
+[[smith::c_name("smith_processes_run")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] ProcessResult
 processes_run(Processes *processes, arena::Arena *arena, const char *const *argv) {
     contract::assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr);
     Fake *fake = processes->loop->fake;
@@ -2416,8 +2429,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 
 // Opens a connection to host:port; with tls, it is a TLS connection whose certificate is checked against host. The op
 // completes when the connection is ready, or fails.
-[[smith::c_name("smith_net_connect_async")]] export void net_connect_async(Net *net, Op *op, Connection *connection,
-                                                                           const char *host, u16 port, bool tls) {
+[[smith::c_name("smith_net_connect_async")]] export [[clang::annotate("smith::edge")]] void
+net_connect_async(Net *net, Op *op, Connection *connection, const char *host, u16 port, bool tls) {
     contract::assert(host != nullptr && host[0] != 0);
     net_start(net, op, connection, NetConnect);
     *connection = (Connection){};
@@ -2429,8 +2442,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 }
 
 // Sends all size bytes (the library copies them, so they need not outlive the call).
-[[smith::c_name("smith_net_send_async")]] export void net_send_async(Net *net, Op *op, Connection *connection,
-                                                                     const void *data, usize size) {
+[[smith::c_name("smith_net_send_async")]] export [[clang::annotate("smith::edge")]] void
+net_send_async(Net *net, Op *op, Connection *connection, const void *data, usize size) {
     contract::assert(data != nullptr || size == 0);
     net_start(net, op, connection, NetSend);
     op->internal.input = data;
@@ -2446,8 +2459,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 
 // Completes with whatever has arrived, at least one byte and at most capacity, in buffer (op->data, op->size; not
 // NUL-terminated); op->end is true when the peer is done sending and nothing was read.
-[[smith::c_name("smith_net_receive_async")]] export void net_receive_async(Net *net, Op *op, Connection *connection,
-                                                                           void *buffer, usize capacity) {
+[[smith::c_name("smith_net_receive_async")]] export [[clang::annotate("smith::edge")]] void
+net_receive_async(Net *net, Op *op, Connection *connection, void *buffer, usize capacity) {
     contract::assert(buffer != nullptr && capacity > 0 && capacity <= math::max(u32));
     net_start(net, op, connection, NetReceive);
     op->internal.destination = buffer;
@@ -2462,7 +2475,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 }
 
 // Closes the connection.
-[[smith::c_name("smith_net_close_async")]] export void net_close_async(Net *net, Op *op, Connection *connection) {
+[[smith::c_name("smith_net_close_async")]] export [[clang::annotate("smith::edge")]] void
+net_close_async(Net *net, Op *op, Connection *connection) {
     net_start(net, op, connection, NetClose);
     loop_submit(net->loop, op);
     if (net_scripted(net->loop)) {
@@ -2481,31 +2495,32 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 }
 
 // The same, blocking.
-[[smith::c_name("smith_net_connect")]] export [[nodiscard]] Error net_connect(Net *net, Connection *connection,
-                                                                              const char *host, u16 port, bool tls) {
+[[smith::c_name("smith_net_connect")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_connect(Net *net, Connection *connection, const char *host, u16 port, bool tls) {
     Op op = {};
     net_connect_async(net, &op, connection, host, port, tls);
     loop_wait(net->loop, &op);
     return op.error;
 }
 
-[[smith::c_name("smith_net_send")]] export [[nodiscard]] Error net_send(Net *net, Connection *connection,
-                                                                        const void *data, usize size) {
+[[smith::c_name("smith_net_send")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_send(Net *net, Connection *connection, const void *data, usize size) {
     Op op = {};
     net_send_async(net, &op, connection, data, size);
     loop_wait(net->loop, &op);
     return op.error;
 }
 
-[[smith::c_name("smith_net_receive")]] export [[nodiscard]] Read net_receive(Net *net, Connection *connection,
-                                                                             void *buffer, usize capacity) {
+[[smith::c_name("smith_net_receive")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
+net_receive(Net *net, Connection *connection, void *buffer, usize capacity) {
     Op op = {};
     net_receive_async(net, &op, connection, buffer, capacity);
     loop_wait(net->loop, &op);
     return (Read){.error = op.error, .data = op.data, .size = op.size, .end = op.end};
 }
 
-[[smith::c_name("smith_net_close")]] export [[nodiscard]] Error net_close(Net *net, Connection *connection) {
+[[smith::c_name("smith_net_close")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+net_close(Net *net, Connection *connection) {
     Op op = {};
     net_close_async(net, &op, connection);
     loop_wait(net->loop, &op);
@@ -2515,7 +2530,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 // --- the scripted network's setup
 
 // Adds a scripted server for the net (see io::NetServer).
-[[smith::c_name("smith_io_test_add_server")]] export [[nodiscard]] Error test_add_server(Io *io, NetServer server) {
+[[smith::c_name("smith_io_test_add_server")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_server(Io *io, NetServer server) {
     contract::assert(io != nullptr && server.host != nullptr &&
                      (server.response != nullptr || server.response_size == 0));
     Loop *loop = io->loop;
@@ -2546,8 +2562,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 
 // The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
 // was no such connection.
-[[smith::c_name("smith_io_test_request")]] export [[nodiscard]] const char *test_request(const Io *io, const char *host,
-                                                                                         u16 port, usize n) {
+[[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_request(const Io *io, const char *host, u16 port, usize n) {
     contract::assert(io != nullptr && host != nullptr);
     if (io->loop->servers == nullptr) return nullptr;
     const FakeServer *server = net_server_find(io->loop->servers, host, port, n, false);
@@ -2590,7 +2606,7 @@ Error capture_fake(Fake *fake, arena::Arena *arena, const char *const *argv, Cap
 
 // Starts argv[0] (found on PATH) with no stdin and returns at once; the error is that it could not start (a missing
 // program is ENOENT). The output is read in doubling blocks into the arena, so it may use up to twice its size.
-[[smith::c_name("smith_processes_capture_async")]] export [[nodiscard]] Error
+[[smith::c_name("smith_processes_capture_async")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_capture_async(Processes *processes, arena::Arena *arena, const char *const *argv, Capture *capture) {
     contract::assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr &&
                      capture != nullptr);
@@ -2651,7 +2667,8 @@ void capture_feed(Capture *capture) {
 
 // Takes in what io::run completed and submits the next read; true once the capture is done. Call it after each
 // io::run for every capture still running.
-[[smith::c_name("smith_capture_poll")]] export [[nodiscard]] bool capture_poll(Capture *capture) {
+[[smith::c_name("smith_capture_poll")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] bool
+capture_poll(Capture *capture) {
     contract::assert(capture != nullptr);
     if (capture->done) return true;
     capture_feed(capture);
@@ -2673,7 +2690,8 @@ void capture_feed(Capture *capture) {
 // program, so ESRCH is returned and nothing is sent. That is also the answer once the capture is done. A process that
 // has exited but whose output is still being read (a child of it holds the pipe) is therefore not reached either; it
 // ends on its own or when the caller gives up on the output.
-[[smith::c_name("smith_capture_stop")]] export [[nodiscard]] Error capture_stop(Capture *capture, i32 signal) {
+[[smith::c_name("smith_capture_stop")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+capture_stop(Capture *capture, i32 signal) {
     contract::assert(capture != nullptr && signal > 0);
     // Once the wait has completed the process is reaped and its id may be another program's; a fake capture is done at
     // once.
@@ -2688,14 +2706,16 @@ void capture_feed(Capture *capture) {
 // --- arguments ---
 
 // The argument i (0 is the program), or nullptr past the end.
-[[smith::c_name("smith_args_get")]] export [[nodiscard]] const char *args_get(const Args *args, usize i) {
+[[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+args_get(const Args *args, usize i) {
     contract::assert(args != nullptr);
     return i < args->count ? args->values[i] : nullptr;
 }
 
 // The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
 // process's environment each time, so a setenv after io::make shows.
-[[smith::c_name("smith_args_env")]] export [[nodiscard]] const char *args_env(const Args *args, const char *name) {
+[[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+args_env(const Args *args, const char *name) {
     contract::assert(args != nullptr && name != nullptr && name[0] != 0);
     usize length = c::strlen(name);
     if (args->environment == nullptr) return c::getenv(name); // the real io asks the process, which setenv may change
@@ -2758,8 +2778,9 @@ u64 seed_read(void) {
 // AddressSanitizer the arena poisons lazily, so the shadow grows with what is used). SMITH_SEED, a
 // decimal or 0x number, makes the key; otherwise it comes from getentropy. A SMITH_SEED that is not a number, or a
 // failure to reserve memory, stops the program with a message.
-[[smith::c_name("smith_io_make")]] export [[nodiscard, clang::annotate("smith::main_only")]] Io make(i32 argc,
-                                                                                                     char **argv) {
+[[smith::c_name("smith_io_make")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] Io
+    make(i32 argc, char **argv) {
     contract::assert(argc >= 0);
     void *memory = c::mmap(nullptr, reservation, protect_both, map_reservation, -1, 0);
     if (memory == (void *)-1)
@@ -2775,7 +2796,7 @@ u64 seed_read(void) {
 }
 
 // Releases the reservation and the event loop. A program need not call it: the process ends.
-[[smith::c_name("smith_io_close")]] export void close(Io *io) {
+[[smith::c_name("smith_io_close")]] export [[clang::annotate("smith::edge")]] void close(Io *io) {
     contract::assert(io != nullptr);
     Loop *loop = io->loop;
     if (loop->queue >= 0) c::close(loop->queue);
@@ -2787,7 +2808,8 @@ u64 seed_read(void) {
 
 // Same type as the real one. Files, programs and the console's output are inside the arena: the fake holds up to 64
 // files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
-[[smith::c_name("smith_io_make_test")]] export [[nodiscard]] Io make_test(Test test) {
+[[smith::c_name("smith_io_make_test")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Io
+make_test(Test test) {
     contract::assert(test.memory != nullptr && test.capacity > 0);
     Io io = {.arena = arena::make(test.memory, test.capacity)};
     io.loop = loop_make(&io.arena, true);
@@ -2817,14 +2839,14 @@ u64 seed_read(void) {
 }
 
 // Adds an in-memory file (the text is copied), replacing one of the same path.
-[[smith::c_name("smith_io_test_add_file")]] export [[nodiscard]] Error test_add_file(Io *io, const char *path,
-                                                                                     const char *text) {
+[[smith::c_name("smith_io_test_add_file")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_file(Io *io, const char *path, const char *text) {
     contract::assert(io != nullptr && path != nullptr && text != nullptr);
     return fake_write_file(fake_of(io->loop), path, text, c::strlen(text));
 }
 
 // Scripts a program for io::processes_run and spawn: its stdout and its exit status.
-[[smith::c_name("smith_io_test_add_program")]] export [[nodiscard]] Error
+[[smith::c_name("smith_io_test_add_program")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 test_add_program(Io *io, const char *program, const char *output, i32 status) {
     Fake *fake = fake_of(io->loop);
     if (fake->program_count == fake_programs_max) return error_make(enospc, "script", program);
@@ -2838,7 +2860,8 @@ test_add_program(Io *io, const char *program, const char *output, i32 status) {
 }
 
 // Scripts a child of the fake io (see io::ChildScript).
-[[smith::c_name("smith_io_test_add_child")]] export [[nodiscard]] Error test_add_child(Io *io, ChildScript script) {
+[[smith::c_name("smith_io_test_add_child")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+test_add_child(Io *io, ChildScript script) {
     Fake *fake = fake_of(io->loop);
     contract::assert(script.program != nullptr);
     if (fake->child_count == fake_children_max) return error_make(enospc, "script", script.program);
@@ -2860,18 +2883,20 @@ test_add_program(Io *io, const char *program, const char *output, i32 status) {
 
 // The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
 // there is no such child.
-[[smith::c_name("smith_io_test_child_input")]] export [[nodiscard]] const char *test_child_input(const Io *io,
-                                                                                                 usize n) {
+[[smith::c_name("smith_io_test_child_input")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_child_input(const Io *io, usize n) {
     const Fake *fake = fake_of(io->loop);
     if (n >= fake->child_count) return nullptr;
     return (const char *)fake->children[n].input;
 }
 
 // What the program printed to stdout and stderr so far, NUL-terminated.
-[[smith::c_name("smith_io_test_output")]] export [[nodiscard]] const char *test_output(const Io *io) {
+[[smith::c_name("smith_io_test_output")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_output(const Io *io) {
     return fake_of(io->loop)->output;
 }
 
-[[smith::c_name("smith_io_test_errors")]] export [[nodiscard]] const char *test_errors(const Io *io) {
+[[smith::c_name("smith_io_test_errors")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+test_errors(const Io *io) {
     return fake_of(io->loop)->errors;
 }
