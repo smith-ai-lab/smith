@@ -1810,6 +1810,7 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
         .inputs = smith_one(object->source),
         .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
         .outputs = smith_one(header),
+        .description = smith_text("header %s", object->source),
         .restat = true, // the header is written only when its bytes change
     };
     smith_step(b, &step);
@@ -1850,6 +1851,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         .outputs = smith_one(copy.output),
+        .description = smith_text("compile %s", copy.source),
         .depfile = depfile,
     };
     bool listed = true;
@@ -1975,6 +1977,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         .implicit_inputs =
             smith_cat(b, smith_library_files(copy.libraries), smith_one(smith_compiler_file(copy.linker)), nullptr),
         .outputs = smith_one(copy.output),
+        .description = smith_text("link %s", copy.output),
     };
     smith_step(b, &copy.step);
     if (smith_program_count >= smith_objects_max) smith_too_many("programs", smith_objects_max);

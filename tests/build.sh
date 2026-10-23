@@ -2346,6 +2346,17 @@ expect "library needs: ... and the program runs" "0 seed 1" "$rc $out"
 build
 expect_contains "library needs: a second build changes nothing" "$out$err" "no work to do"
 
+# 13b. The progress lines say what a compile and a link do, not the whole command; -v shows the command.
+project
+printf 'int main(void) { return 0; }\n' >main.c
+build
+expect_contains "progress: a compile says what it compiles" "$out" "compile main.c"
+expect_contains "progress: a link says what it links" "$out" "link build/"
+case $out in *" -o "*) expect "progress: no command line without -v" "no -o" "$out" ;; *) expect "progress: no command line without -v" ok ok ;; esac
+touch main.c
+build -v
+expect_contains "progress: -v shows the command" "$out" " -o "
+
 # 14. A no-op build, timed (informational).
 cd "$copy_project" || exit 1
 build
