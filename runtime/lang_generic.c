@@ -1540,6 +1540,8 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
                          name, generic->param_count, generic->param_count - generic->type_count);
         return false;
     }
+    // The header pass writes declarations only: a call in a body needs no instance, so it stays a plain call.
+    if (host->expr_type == nullptr && host->declarations_only) return false;
     uint32_t mark[2] = {smith_lang_it.count, smith_lang_it.text_used};
     uint32_t type_first[smith_lang_type_params_max];
     uint32_t type_count[smith_lang_type_params_max];
