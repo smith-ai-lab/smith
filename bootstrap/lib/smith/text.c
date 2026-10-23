@@ -588,4 +588,45 @@ __INT64_TYPE__ s = 0;
 __UINT64_TYPE__ q = smith_text_f64_round_to(m, e, first, low, &s);
 return used + smith_text_f64_format(out + used, q, low, s + (__INT64_TYPE__)low - 1);
 }
+static constexpr __UINT32_TYPE__ smith_text_f32_digits_max = 9;
+static_assert(smith_text_f32_capacity >= 1 + smith_text_f64_positional_max + 2 + 5, "sign, a positional integer, a point and e-45");
+static bool smith_text_f32_reads_back(__UINT64_TYPE__ q, __INT64_TYPE__ s, __UINT32_TYPE__ bits) {
+char text[smith_text_number_capacity * 2];
+__SIZE_TYPE__ length = smith_text_write_u64(text, q);
+text[length++] = 'e';
+length += smith_text_write_i64(text + length, s);
+float back = 0;
+return smith_text_parse_f32((SmithText){text, length}, &back) && __builtin_bit_cast(__UINT32_TYPE__, back) == bits;
+}
+__SIZE_TYPE__ smith_text_write_f32(char *out, float value);
+__SIZE_TYPE__ smith_text_write_f32(char *out, float value) {
+__UINT32_TYPE__ bits = __builtin_bit_cast(__UINT32_TYPE__, value);
+__UINT32_TYPE__ field = (bits >> 23) & 0xff;
+if (field == 0xff) smith_text_stop("infinity and nan have no text");
+__SIZE_TYPE__ used = 0;
+if ((bits >> 31) != 0) out[used++] = '-';
+__UINT32_TYPE__ fraction = bits & 0x7fffff;
+if (field == 0 && fraction == 0) {
+out[used++] = '0';
+return used;
+}
+__UINT64_TYPE__ m = field == 0 ? fraction : fraction | ((__UINT64_TYPE__)1 << 23);
+__INT64_TYPE__ e = field == 0 ? -149 : (__INT64_TYPE__)field - 150;
+__UINT32_TYPE__ positive = bits & 0x7fffffffU;
+__INT64_TYPE__ first = smith_text_f64_first_exponent(m, e);
+__UINT32_TYPE__ low = 1;
+__UINT32_TYPE__ high = smith_text_f32_digits_max;
+while (low < high) {
+__UINT32_TYPE__ middle = (low + high) / 2;
+__INT64_TYPE__ s = 0;
+__UINT64_TYPE__ q = smith_text_f64_round_to(m, e, first, middle, &s);
+if (smith_text_f32_reads_back(q, s, positive))
+high = middle;
+else
+low = middle + 1;
+}
+__INT64_TYPE__ s = 0;
+__UINT64_TYPE__ q = smith_text_f64_round_to(m, e, first, low, &s);
+return used + smith_text_f64_format(out + used, q, low, s + (__INT64_TYPE__)low - 1);
+}
 // NOLINTEND

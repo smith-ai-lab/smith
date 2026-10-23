@@ -47,6 +47,9 @@ export constexpr usize number_capacity = 20;
 // Room for write_f64.
 export constexpr usize f64_capacity = 32;
 
+// Room for write_f32.
+export constexpr usize f32_capacity = 24;
+
 // The text of a terminated string.
 [[smith::c_name("smith_text_make")]] export [[nodiscard]] Text make(const char *string) {
     usize length = 0;
@@ -734,6 +737,53 @@ usize f64_format(char *out, u64 q, u32 p, i64 first) {
         i64 s = 0;
         u64 q = f64_round_to(m, e, first, middle, &s);
         if (f64_reads_back(q, s, positive))
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    i64 s = 0;
+    u64 q = f64_round_to(m, e, first, low, &s);
+    return used + f64_format(out + used, q, low, s + (i64)low - 1);
+}
+
+constexpr u32 f32_digits_max = 9;
+static_assert(f32_capacity >= 1 + f64_positional_max + 2 + 5, "sign, a positional integer, a point and e-45");
+
+bool f32_reads_back(u64 q, i64 s, u32 bits) {
+    char text[number_capacity * 2];
+    usize length = write_u64(text, q);
+    text[length++] = 'e';
+    length += write_i64(text + length, s);
+    f32 back = 0;
+    return parse_f32((Text){text, length}, &back) && __builtin_bit_cast(u32, back) == bits;
+}
+
+// An f32 in the fewest digits, at most 9, that parse_f32 reads back as the same bits: 0.1f is "0.1", where its f64
+// value is 0.10000000149011612. Written as write_f64 writes (positional or scientific, no plus), so a f32's text and
+// its widened f64's differ only in the digits. Room for f32_capacity characters; no terminator. The value must be
+// finite (checked).
+[[smith::c_name("smith_text_write_f32")]] export usize write_f32(char *out, f32 value) {
+    u32 bits = __builtin_bit_cast(u32, value);
+    u32 field = (bits >> 23) & 0xff;
+    if (field == 0xff) stop("infinity and nan have no text");
+    usize used = 0;
+    if ((bits >> 31) != 0) out[used++] = '-';
+    u32 fraction = bits & 0x7fffff;
+    if (field == 0 && fraction == 0) {
+        out[used++] = '0';
+        return used;
+    }
+    u64 m = field == 0 ? fraction : fraction | ((u64)1 << 23);
+    i64 e = field == 0 ? -149 : (i64)field - 150;
+    u32 positive = bits & 0x7fffffffU;
+    i64 first = f64_first_exponent(m, e);
+    u32 low = 1;
+    u32 high = f32_digits_max;
+    while (low < high) {
+        u32 middle = (low + high) / 2;
+        i64 s = 0;
+        u64 q = f64_round_to(m, e, first, middle, &s);
+        if (f32_reads_back(q, s, positive))
             high = middle;
         else
             low = middle + 1;

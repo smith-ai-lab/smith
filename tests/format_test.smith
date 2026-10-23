@@ -132,6 +132,9 @@ export void test_format_floats_known(void) {
     f32 half = 0.5F;
     (void)format::to(out, sizeof out, 0.1, " ", 2.5, " ", -3.0, " ", big, " ", tiny, " ", negative_zero, " ", half);
     test::check(is(out, "0.1 2.5 -3 1e22 5e-324 -0 0.5"));
+    f32 tenth = 0.1F;
+    (void)format::to(out, sizeof out, tenth, " ", 16777216.0F, " ", 3.14159265F);
+    test::check(is(out, "0.1 16777216 3.1415927")); // a f32's own shortest digits, not its f64 value's
     (void)format::to(out, sizeof out, math::infinity(f64), " ", -math::infinity(f64), " ", math::nan(f64), " ",
                      math::infinity(f32));
     test::check(is(out, "inf -inf nan inf"));

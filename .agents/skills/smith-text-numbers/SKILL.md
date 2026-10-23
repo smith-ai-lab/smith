@@ -42,6 +42,6 @@ usize write_line(char *out, u64 tick, u64 hash) {
 }
 ```
 
-There is no terminator and no failure: give room for `text::number_capacity` characters (16 for hex). `text::write_f64(out, d)` writes a finite double in the fewest digits (at most 17) that read back as the same bits (`0.1`, `1e22`, `-0`), in room for `text::f64_capacity` (32). A float has no writer, because the right text for one depends on what the file is for: a replay records bits as hex or whole numbers, and `%.9g` from `snprintf` in a tool reads back exactly through `text::parse_f32`.
+There is no terminator and no failure: give room for `text::number_capacity` characters (16 for hex). `text::write_f64(out, d)` writes a finite double in the fewest digits (at most 17) that read back as the same bits (`0.1`, `1e22`, `-0`), in room for `text::f64_capacity` (32). `text::write_f32(out, f)` does the same for a float (at most 9 digits, `0.1f` is `0.1`, room for `text::f32_capacity`, 24); both stop on infinity and nan. A replay that must not depend on text records bits as hex or whole numbers.
 
 Also in this family: [smith-text](../smith-text/SKILL.md), [smith-text-c](../smith-text-c/SKILL.md).

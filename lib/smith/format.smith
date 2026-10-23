@@ -17,8 +17,8 @@ import smith::text;
 //   bool                      true or false
 //   char                      the character
 //   i8..i64, u8..u64, usize   decimal digits, a leading - for a negative number (i8 is a number, char is a character)
-//   f32, f64                  text::write_f64's shortest digits that read back as the same value (0.1, 1e22,
-//                             5e-324), a f32 as its f64 value; inf, -inf and nan for what has no number
+//   f32, f64                  text::write_f32's and write_f64's shortest digits that read back as the same value
+//                             (0.1f is 0.1, 1e22, 5e-324); inf, -inf and nan for what has no number
 //   char *, const char *      the terminated string; a null pointer is (null)
 //   text::Text                its length of characters, which need no terminator
 //   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
@@ -136,6 +136,17 @@ void put_unfinite(Writer *writer, f64 value) {
     }
     char digits[text::f64_capacity];
     usize length = text::write_f64(digits, value);
+    put_bytes(writer, digits, length);
+}
+
+// As text::write_f32: the shortest digits that read back as the same f32, and inf, -inf or nan.
+[[smith::c_name("smith_format_put_f32")]] export void put_f32(Writer *writer, f32 value) {
+    if (!is_finite((f64)value)) {
+        put_unfinite(writer, (f64)value);
+        return;
+    }
+    char digits[text::f32_capacity];
+    usize length = text::write_f32(digits, value);
     put_bytes(writer, digits, length);
 }
 
@@ -261,6 +272,8 @@ export Written to(char *buffer, usize capacity, auto... args) {
             put_i64(&writer, (i64)args[i]);
         } else if constexpr (is_integer(typeof(args[i]))) {
             put_u64(&writer, (u64)args[i]);
+        } else if constexpr (typeof(args[i]) == f32) {
+            put_f32(&writer, args[i]);
         } else if constexpr (is_float(typeof(args[i]))) {
             put_f64(&writer, (f64)args[i]);
         } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char *) {

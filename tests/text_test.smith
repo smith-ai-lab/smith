@@ -923,3 +923,58 @@ export void test_text_f64_write_edges_round_trip(void) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Writing floats
+
+static void test_text_check_f32_text(const char *expected, f32 value) {
+    char out[text::f32_capacity + 1];
+    usize length = text::write_f32(out, value);
+    out[length] = '\0';
+    test::note("value %.9g", (f64)value);
+    test::check_equal(c::strcmp(out, expected), 0);
+}
+
+export void test_text_f32_write_known_values(void) {
+    test_text_check_f32_text("0", 0.0F);
+    test_text_check_f32_text("-0", -0.0F);
+    test_text_check_f32_text("0.1", 0.1F);
+    test_text_check_f32_text("-2.5", -2.5F);
+    test_text_check_f32_text("3.1415927", 3.14159265F);
+    test_text_check_f32_text("16777216", 16777216.0F);
+    test_text_check_f32_text("1e-45", 0x1p-149F);
+    test_text_check_f32_text("3.4028235e38", f32_max);
+    test_text_check_f32_text("1.1754944e-38", 0x1p-126F);
+}
+
+// Every f32 written reads back as the same bits, in the fewest digits (strtof and snprintf are the witnesses).
+export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
+    u32 bits = (u32)random::key_bits(key, 0);
+    f32 value = __builtin_bit_cast(f32, bits);
+    if (value != value || value > f32_max || value < -f32_max) return;
+    char out[text::f32_capacity + 1];
+    usize length = text::write_f32(out, value);
+    test::check_less_equal(length, text::f32_capacity);
+    out[length] = '\0';
+    test::note("text %s", out);
+    f32 back = 0;
+    test::check(text::parse_f32(test_text(out), &back));
+    test::check_equal(__builtin_bit_cast(u32, back), bits);
+    test::check_equal(__builtin_bit_cast(u32, c::strtof(out, nullptr)), bits);
+    i32 digits = 0;
+    bool started = false;
+    i32 trailing_zeros = 0;
+    for (usize i = 0; i < length && out[i] != 'e'; i++) {
+        if (out[i] < '0' || out[i] > '9') continue;
+        if (out[i] != '0') started = true;
+        if (!started) continue;
+        digits += 1;
+        trailing_zeros = out[i] == '0' ? trailing_zeros + 1 : 0;
+    }
+    if (c::strchr(out, '.') == nullptr) digits -= trailing_zeros;
+    if (digits > 1) {
+        char shorter[64];
+        __builtin_snprintf(shorter, sizeof shorter, "%.*e", digits - 2, (f64)value);
+        test::check(c::strtof(shorter, nullptr) != value);
+    }
+}
