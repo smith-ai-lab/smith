@@ -115,7 +115,7 @@ How each verb uses it:
 **Quiet output** (issue #78): agents pay for every byte a tool prints, and again on every later turn, so `smith check`,
 `smith test`, `smith lint` and a project's `smith prove` print one line per stage and write the rest to a log:
 `smith test: ok (48 tasks, 1530 passed, 83.8 s)`, and in `smith check` `smith check: test ok: 48 tasks, 1530 passed
-(83.8 s wall, 619.1 s cpu)`. A passing `smith check` of smith prints about 8 lines (191,753 bytes before, under 500 now).
+(83.8 s wall, 619.1 s cpu)`. A passing `smith check` of smith prints about 8 lines (191,753 bytes before, about 500 now).
 The stage runs as a child with SMITH_OUTPUT=full, its output (build progress, per-test lines, the prover's
 `trusted` lines) in **`.smith/log/<verb>.log`** (`test.log`, `prove.log`, `lint.log`; every run writes it whole, and
 `.smith/` is smith's own folder that git ignores). A failure prints its line, a bounded excerpt of the log (at most 30
