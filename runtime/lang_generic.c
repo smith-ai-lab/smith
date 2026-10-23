@@ -359,6 +359,42 @@ static void smith_lang_generic_discard(SmithLang *lang) {
     smith_lang_end_declaration(lang);
 }
 
+static uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *generic);
+
+// The result type is written before the parameters, where C does not know them: `typeof(*x) gradient(auto x)` has no
+// `x` there. Each `auto` parameter's name in a `typeof(...)` of the result type stands for a value of its type, written
+// `(*(T *)0)` (never evaluated), so any expression of the parameter has the type it would have.
+static void smith_lang_generic_mark_values(const SmithLangGeneric *generic) {
+    SmithLangAutoNames autos = smith_lang_auto_names(generic);
+    uint32_t end = smith_lang_generic_skip_attributes(generic);
+    for (uint32_t at = end; at + 1 < generic->name_index; at++) { // the result type, to the name
+        SmithLangGenToken *keyword = &smith_lang_gt.tokens[generic->first + at];
+        bool is_typeof = smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "typeof") ||
+                         smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "__typeof__");
+        if (!is_typeof || !smith_lang_gt_punct(keyword + 1, "(")) continue;
+        uint32_t close = at + 1;
+        for (int depth = 0; close < generic->name_index; close++) { // to the matching parenthesis
+            depth += smith_lang_gt_punct(keyword + (close - at), "(") ? 1 : 0;
+            depth -= smith_lang_gt_punct(keyword + (close - at), ")") ? 1 : 0;
+            if (depth == 0) break;
+        }
+        for (uint32_t inner = at + 2; inner < close; inner++) { // the names inside
+            SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + inner];
+            bool member = smith_lang_gt_punct(token - 1, ".") || smith_lang_gt_punct(token - 1, "->");
+            for (size_t k = 0; token->kind == SmithTokenKind_Identifier && !member && k < smith_lang_type_params_max;
+                 k++) { // the auto parameters
+                const SmithLangGenToken *name = &autos.names[k];
+                if (name->length == token->length && name->length > 0 &&
+                    memcmp(smith_lang_gt_str(name), smith_lang_gt_str(token), name->length) == 0) {
+                    token->param = (uint8_t)(k + 1);
+                    token->flags |= (uint8_t)smith_lang_gen_flag_value;
+                }
+            }
+        }
+        at = close;
+    }
+}
+
 // The type parameters of the head just recorded: `constexpr type T`, their names and which parameter each is. A
 // message, or null.
 static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
@@ -410,9 +446,10 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
         generic->type_position[generic->type_count] = (uint8_t)i;
         generic->type_count += 1;
     }
-    return generic->type_count == 0
-               ? "a generic function needs a `constexpr type T`, `constexpr auto f` or `auto` parameter"
-               : nullptr;
+    if (generic->type_count == 0)
+        return "a generic function needs a `constexpr type T`, `constexpr auto f` or `auto` parameter";
+    smith_lang_generic_mark_values(generic);
+    return nullptr;
 }
 
 static bool smith_lang_held_is_inline(const SmithLangHeld *held) {
@@ -1332,6 +1369,20 @@ static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, con
     bool pack = token->param != 0 && instance != nullptr &&
                 smith_lang_generics[instance->generic].type_kind[token->param - 1] == SmithLangSlot_Pack;
     if (token->param != 0 && instance != nullptr && !pack) {
+        if ((token->flags & smith_lang_gen_flag_value) != 0) { // a value of the type, `(*(T *)0)`
+            static const SmithLangPiece open[] = {{SmithTokenKind_Punctuator, "("},
+                                                  {SmithTokenKind_Punctuator, "*"},
+                                                  {SmithTokenKind_Punctuator, "("}};
+            static const SmithLangPiece close[] = {{SmithTokenKind_Punctuator, "*"},
+                                                   {SmithTokenKind_Punctuator, ")"},
+                                                   {SmithTokenKind_Number, "0"},
+                                                   {SmithTokenKind_Punctuator, ")"}};
+            uint32_t at = token->location != UINT32_MAX ? token->location : fallback;
+            smith_lang_gen_puts(lang, host, open, sizeof open / sizeof open[0], at, instance_id);
+            smith_lang_gen_put_arg(lang, host, instance, (unsigned)token->param - 1, instance_id);
+            smith_lang_gen_puts(lang, host, close, sizeof close / sizeof close[0], at, instance_id);
+            return;
+        }
         smith_lang_gen_put_arg(lang, host, instance, (unsigned)token->param - 1, instance_id);
         return;
     }

@@ -1569,6 +1569,50 @@ int main(void) {
     c::printf("%d %d %.2f %d %d %zu %.1f\n", a, b, c, d, e, f, g);
     return 0;
 }
+==> generic-gradient-shape/src/main.smith <==
+module main;
+
+import shape;
+import <stdio.h>;
+
+static f64 loss(const shape::Params *p, const shape::Batch *batch) {
+    return (p->a + p->b) * batch->scale;
+}
+
+static f64 plain(const shape::Params *p) {
+    return p->a * 2;
+}
+
+int main(void) {
+    shape::Params p = {1.0, 2.0};
+    shape::Batch batch = {3.0};
+    shape::Params g = shape::gradient(loss, &p, &batch);
+    shape::Params h = shape::gradient(plain, &p);
+    c::printf("%.1f %.1f\n", g.a, h.a);
+    return 0;
+}
+==> generic-gradient-shape/src/shape.smith <==
+module shape;
+
+import <stdio.h>;
+
+export typedef struct {
+    f64 a;
+    f64 b;
+} Params;
+
+export typedef struct {
+    f64 scale;
+} Batch;
+
+// The shape autodiff::gradient takes: the function by its name, the parameters by pointer, the rest as they come.
+export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
+    (void)sizeof(f(x, rest...));
+    typeof(*x) dx = {};
+    dx.a = f(x, rest...);
+    c::printf("%d %zu\n", (void *)f != nullptr, countof(rest));
+    return dx;
+}
 ==> generic-if-constexpr-analyzer/src/guard.smith <==
 module guard;
 

@@ -88,6 +88,10 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   call to another generic is expanded before that call is read, so `forward(f, x, rest...)` types each element by its
   own type; a call of the generic needs at least the parameters before the list. No value-changing conversion check
   applies (no `typeof` target). The debugger names the instance with every type, `gradient<loss, Params *, Batch *>`.
+- **`typeof` of an expression in the result type.** The result type is written before the parameters, where C does not
+  know them, so an `auto` parameter's name inside a `typeof(...)` there stands for a value of its type, `(*(T *)0)`
+  (never evaluated): `export typeof(*x) gradient(constexpr auto f, auto x, auto... rest)` returns what `*x` is. In the
+  parameters and the body `typeof(*x)` is plain C.
 - **Conversions.** A later argument whose parameter is `typeof(a) b` converts to a's type by C's rules, with one
   addition: a conversion that changes the value is an error at the call, whatever warnings the project has on. A
   literal and an expression of literals, `constexpr` integers (the file's or a C header's, an unsigned one as the

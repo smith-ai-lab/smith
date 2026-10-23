@@ -1,0 +1,21 @@
+module shape;
+
+import <stdio.h>;
+
+export typedef struct {
+    f64 a;
+    f64 b;
+} Params;
+
+export typedef struct {
+    f64 scale;
+} Batch;
+
+// The shape autodiff::gradient takes: the function by its name, the parameters by pointer, the rest as they come.
+export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
+    (void)sizeof(f(x, rest...));
+    typeof(*x) dx = {};
+    dx.a = f(x, rest...);
+    c::printf("%d %zu\n", (void *)f != nullptr, countof(rest));
+    return dx;
+}

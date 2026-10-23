@@ -66,6 +66,28 @@ static void smith_lang_emit_held(SmithLang *lang, const SmithHost *host, size_t 
 // ---- Resolving a name once the token after it is known
 // -----------------------------------------------------------------
 
+// Whether the held token at `index` is inside the parentheses of `typeof` (or `__typeof__`): what is there is an
+// expression, and `typeof(*x)` declares nothing.
+static bool smith_lang_in_typeof(const SmithLang *lang, size_t index) {
+    int depth = 0;
+    for (size_t i = index; i > 0; i--) { // back to the unmatched `(`
+        const SmithLangHeld *before = &lang->head[i - 1];
+        const char *text = smith_lang_scratch_str(before->text);
+        if (before->kind == SmithTokenKind_Punctuator && before->text.length == 1) {
+            depth += text[0] == ')' ? 1 : 0;
+            if (text[0] == '(' && depth-- == 0) {
+                if (i < 2) return false;
+                const SmithLangHeld *keyword = &lang->head[i - 2];
+                const char *word = smith_lang_scratch_str(keyword->text);
+                return smith_lang_equals(word, keyword->text.length, "typeof") ||
+                       smith_lang_equals(word, keyword->text.length, "__typeof__") ||
+                       smith_lang_equals(word, keyword->text.length, "typeof_unqual");
+            }
+        }
+    }
+    return false;
+}
+
 // Whether the identifier just held introduces a name, given what follows it.
 static bool smith_lang_declares_here(const SmithLang *lang, const SmithLangHeld *held, const SmithToken *next) {
     if (held->after_member || held->after_tag || !lang->decl.saw_type || lang->decl.name_found) return false;
@@ -73,8 +95,9 @@ static bool smith_lang_declares_here(const SmithLang *lang, const SmithLangHeld 
         return smith_lang_punct(next, "(") || smith_lang_punct(next, "[") || smith_lang_punct(next, "=") ||
                smith_lang_punct(next, ";") || smith_lang_punct(next, ",");
     }
-    // void (*callback)(int): the name inside the first parentheses, after a star.
-    return held->paren_depth == 1 && held->before == '*' && smith_lang_punct(next, ")") && !lang->decl.in_params;
+    // void (*callback)(int): the name inside the first parentheses, after a star (`typeof(*x)` is no declarator).
+    return held->paren_depth == 1 && held->before == '*' && smith_lang_punct(next, ")") && !lang->decl.in_params &&
+           !smith_lang_in_typeof(lang, (size_t)(held - lang->head));
 }
 
 static bool smith_lang_type_use_follows(const SmithToken *next) {
