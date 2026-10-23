@@ -1,0 +1,15 @@
+module apply;
+
+export typeof(x) twice(constexpr auto f, auto x) {
+    return f(f(x));
+}
+
+// A generic call is the argument of another, in an instance's body: its type is asked as the instance writes it.
+export typeof(x) four(constexpr auto f, auto x) {
+    return twice(f, twice(f, x));
+}
+
+// The same with a parameter in an expression beside the call, and a call that is an operand.
+export typeof(x) five(constexpr auto f, auto x) {
+    return twice(f, twice(f, x) + 1);
+}

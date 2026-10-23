@@ -1,0 +1,17 @@
+module main;
+
+import apply;
+import <stdio.h>;
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+static f64 half(f64 x) {
+    return x / 2;
+}
+
+int main(void) {
+    c::printf("%d %d %.2f\n", apply::four(inc, 0), apply::five(inc, 0), apply::four(half, 16.0));
+    return 0;
+}

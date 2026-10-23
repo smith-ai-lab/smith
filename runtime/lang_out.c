@@ -39,6 +39,8 @@ typedef struct {
     uint32_t text_used;
     uint32_t capacity;
     uint32_t text_capacity;
+    uint32_t keep; // smith_lang_it only: what an instance's types hold (a call typed inside another's arguments)
+    uint32_t keep_text;
 } SmithLangPool;
 
 static SmithLangGenToken smith_lang_gt_tokens[smith_lang_gt_max];
@@ -46,9 +48,9 @@ static char smith_lang_gt_chars[smith_lang_gt_text_max];
 static SmithLangGenToken smith_lang_it_tokens[smith_lang_it_max];
 static char smith_lang_it_chars[smith_lang_it_text_max];
 static SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,   0, 0,
-                                      smith_lang_gt_max,    smith_lang_gt_text_max};
+                                      smith_lang_gt_max,    smith_lang_gt_text_max, 0, 0};
 static SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,   0, 0,
-                                      smith_lang_it_max,    smith_lang_it_text_max};
+                                      smith_lang_it_max,    smith_lang_it_text_max, 0, 0};
 
 constexpr unsigned smith_lang_gen_flag_line_start = 1U;
 constexpr unsigned smith_lang_gen_flag_space = 2U;

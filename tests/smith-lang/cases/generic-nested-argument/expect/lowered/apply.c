@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "apply::twice is a generic function: call it from a .smith module" ) ] ] void apply_twice ( void ) ; [ [ clang :: unavailable ( "apply::four is a generic function: call it from a .smith module" ) ] ] void apply_four ( void ) ; [ [ clang :: unavailable ( "apply::five is a generic function: call it from a .smith module" ) ] ] void apply_five ( void ) ;
