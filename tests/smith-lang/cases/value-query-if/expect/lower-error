@@ -1,0 +1,3 @@
+src/size.smith:17:5: in `if constexpr`: `size_table_size` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/size.smith:25:5: in `if constexpr`: `size_table_size` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/size.smith:26:5: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them

@@ -1,0 +1,2 @@
+src/main.smith:6:19: in `if constexpr`: `f` is not a constant: a call or a field of a `constexpr` value in an `if constexpr` needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:7:19: in `if constexpr`: `cfg` is not a constant: a call or a field of a `constexpr` value in an `if constexpr` needs smith's compiler to evaluate it, and the raw lowering has none

@@ -1,0 +1,9 @@
+#include <stdio.h>
+static int f(int n) { return n * 2; }
+struct C { int count; };
+constexpr struct C cfg = {.count = 3};
+int main(void) {
+    if constexpr (f(3) > 5) { puts("big"); } else { puts("small"); }
+    if constexpr (cfg.count == 3) { puts("three"); }
+    return 0;
+}

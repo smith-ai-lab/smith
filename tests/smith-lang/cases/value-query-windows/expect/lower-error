@@ -1,0 +1,1 @@
+src/size.smith:8:5: in `if constexpr`: `size_long_size` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none

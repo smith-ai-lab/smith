@@ -1,0 +1,17 @@
+module size;
+
+static usize long_size(void) {
+    return sizeof(long);
+}
+
+i32 long_is_four(constexpr type T) {
+    if constexpr (long_size() == 4) {
+        static_assert(false, "long is four bytes here");
+        return 4;
+    }
+    return 8;
+}
+
+export i32 use(void) {
+    return long_is_four(i32);
+}

@@ -634,6 +634,8 @@ const char *smith_lang_header(const SmithLang *lang, size_t *length) {
     return smith_lang_header_full;
 }
 
+constexpr uint32_t smith_lang_ask_nodes = 4096;
+
 // `?const T *` in SMITH_LANG_ASK: what the parser says of a type written as tokens (type_query).
 static void smith_lang_ask_query(const SmithHost *host, const char *spelling, size_t length) {
     SmithTypeQuery query = {};
@@ -691,6 +693,60 @@ static void smith_lang_ask_imports(const SmithHost *host) {
     fclose(file);
 }
 
+// One leaf of a value, as SMITH_LANG_ASK shows it: `i32 -5`, `u8 255`, `f32 1.5`.
+static void smith_lang_ask_leaf(const SmithValue *value) {
+    if (value->kind == SmithValue_Float) {
+        fprintf(stderr, "%s %.17g", value->is_f32 ? "f32" : "f64", value->real);
+        return;
+    }
+    fprintf(stderr, "%c%u %s%llu", value->is_signed ? 'i' : 'u', value->bits, value->negative ? "-" : "",
+            (unsigned long long)value->magnitude);
+}
+
+// `!expression` in SMITH_LANG_ASK: what the compiler evaluates the expression to (value_query), a struct as
+// `{a, b}` and an array as `[a, b]`. Walks the tree with a stack of its own: smith's code has no recursion.
+static void smith_lang_ask_value(const SmithHost *host, const char *text, size_t length) {
+    static SmithValue nodes[smith_lang_ask_nodes];
+    SmithValueQuery query = {.nodes = nodes, .capacity = smith_lang_ask_nodes};
+    char expression[512];
+    snprintf(expression, sizeof expression, "%.*s", (int)length, text);
+    if (host->value_query == nullptr || !host->value_query(host->context, expression, (uint32_t)strlen(expression), &query)) {
+        fprintf(stderr, "value %s: error: %s\n", expression, query.why != nullptr ? query.why : "unknown");
+        return;
+    }
+    fprintf(stderr, "value %s: ", expression);
+    const SmithValue *stack[32];
+    uint32_t next[32];
+    size_t depth = 0;
+    stack[0] = &query.root;
+    next[0] = UINT32_MAX; // not yet opened
+    depth = 1;
+    for (size_t guard = 0; depth > 0 && guard < smith_lang_ask_nodes * 4; guard++) { // bounded by the tree
+        const SmithValue *value = stack[depth - 1];
+        bool aggregate = value->kind == SmithValue_Struct || value->kind == SmithValue_Array;
+        if (!aggregate) {
+            smith_lang_ask_leaf(value);
+            depth -= 1;
+            continue;
+        }
+        if (next[depth - 1] == UINT32_MAX) {
+            fputc(value->kind == SmithValue_Struct ? '{' : '[', stderr);
+            next[depth - 1] = 0;
+        }
+        if (next[depth - 1] == value->count) {
+            fputc(value->kind == SmithValue_Struct ? '}' : ']', stderr);
+            depth -= 1;
+            continue;
+        }
+        if (next[depth - 1] > 0) fputs(", ", stderr);
+        if (depth == 32) return;
+        stack[depth] = &value->items[next[depth - 1]++];
+        next[depth] = UINT32_MAX;
+        depth += 1;
+    }
+    fputc('\n', stderr);
+}
+
 static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
     smith_lang_ask_imports(host);
     const char *list = getenv("SMITH_LANG_ASK");
@@ -698,6 +754,11 @@ static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
     for (const char *at = list; *at != 0;) { // each entry
         const char *end = strchr(at, ',');
         size_t length = end != nullptr ? (size_t)(end - at) : strlen(at);
+        if (at[0] == '!') {
+            smith_lang_ask_value(host, at + 1, length - 1);
+            at = end != nullptr ? end + 1 : at + length;
+            continue;
+        }
         if (at[0] == '?') {
             smith_lang_ask_query(host, at + 1, length - 1);
             at = end != nullptr ? end + 1 : at + length;

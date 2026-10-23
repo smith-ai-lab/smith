@@ -1,0 +1,38 @@
+module size;
+
+// An ordinary function: the compiler evaluates the condition, the small evaluator cannot. The instances are written in
+// this file, where the function is defined.
+static usize table_size(usize bytes) {
+    usize total = 0;
+    for (usize i = 0; i < bytes; i++)
+        total += i % 3 == 0 ? 2 : 1;
+    return total;
+}
+
+typedef struct {
+    u8 bytes[80];
+} Big;
+
+i32 choose(constexpr type T) {
+    if constexpr (table_size(sizeof(T)) > 64) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+i32 mixed(constexpr type T) {
+    if constexpr (table_size(sizeof(T)) > 64 && sizeof(T) < 1000) return 10;
+    if constexpr (sizeof(T) == 4) return 20;
+    return 30;
+}
+
+export i32 small(void) {
+    return choose(u8);
+}
+export i32 big(void) {
+    return choose(Big);
+}
+export i32 all(void) {
+    return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
+}

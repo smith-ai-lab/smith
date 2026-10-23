@@ -1,0 +1,16 @@
+module main;
+
+static i32 forever(i32 n) {
+    while (n >= 0)
+        n += 1;
+    return n;
+}
+
+i32 broken(constexpr type T) {
+    if constexpr (forever(sizeof(T)) > 1) return 1;
+    return 0;
+}
+
+export i32 call(void) {
+    return broken(i32);
+}

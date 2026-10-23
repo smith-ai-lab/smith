@@ -1,0 +1,7 @@
+import size;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %d %d\n", size::small(), size::big(), size::all());
+    return 0;
+}

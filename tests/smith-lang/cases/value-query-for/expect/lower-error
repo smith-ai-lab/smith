@@ -1,0 +1,1 @@
+src/loop.smith:12:5: in `for constexpr`: the condition must be a compile-time constant: `loop_config` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none

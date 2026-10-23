@@ -934,6 +934,23 @@ void use(void) {
     struct { f64, f32 } plain = m;
     (void)plain;
 }
+==> error-value-query/src/main.smith <==
+module main;
+
+static i32 forever(i32 n) {
+    while (n >= 0)
+        n += 1;
+    return n;
+}
+
+i32 broken(constexpr type T) {
+    if constexpr (forever(sizeof(T)) > 1) return 1;
+    return 0;
+}
+
+export i32 call(void) {
+    return broken(i32);
+}
 ==> export-inline-attributes/src/hint.smith <==
 module hint;
 
@@ -4699,5 +4716,127 @@ enum Color { Red, Green };
 typedef enum Color Paint;
 
 int main(void) {
+    return 0;
+}
+==> value-query-for/src/loop.smith <==
+module loop;
+
+struct Config {
+    usize count;
+    i32 step;
+};
+constexpr struct Config config = {.count = 4, .step = 3};
+
+// The bound is a field of a `constexpr` struct: only the compiler can read it.
+i32 total(constexpr type T) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < config.count; i++) {
+        sum += config.step + sizeof(T);
+    }
+    return sum;
+}
+
+export i32 bytes(void) {
+    return total(u8);
+}
+export i32 words(void) {
+    return total(u64);
+}
+==> value-query-for/src/main.smith <==
+import loop;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %d\n", loop::bytes(), loop::words());
+    return 0;
+}
+==> value-query-if/src/main.smith <==
+import size;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %d %d\n", size::small(), size::big(), size::all());
+    return 0;
+}
+==> value-query-if/src/size.smith <==
+module size;
+
+// An ordinary function: the compiler evaluates the condition, the small evaluator cannot. The instances are written in
+// this file, where the function is defined.
+static usize table_size(usize bytes) {
+    usize total = 0;
+    for (usize i = 0; i < bytes; i++)
+        total += i % 3 == 0 ? 2 : 1;
+    return total;
+}
+
+typedef struct {
+    u8 bytes[80];
+} Big;
+
+i32 choose(constexpr type T) {
+    if constexpr (table_size(sizeof(T)) > 64) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+i32 mixed(constexpr type T) {
+    if constexpr (table_size(sizeof(T)) > 64 && sizeof(T) < 1000) return 10;
+    if constexpr (sizeof(T) == 4) return 20;
+    return 30;
+}
+
+export i32 small(void) {
+    return choose(u8);
+}
+export i32 big(void) {
+    return choose(Big);
+}
+export i32 all(void) {
+    return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
+}
+==> value-query-windows/src/size.smith <==
+module size;
+
+static usize long_size(void) {
+    return sizeof(long);
+}
+
+i32 long_is_four(constexpr type T) {
+    if constexpr (long_size() == 4) {
+        static_assert(false, "long is four bytes here");
+        return 4;
+    }
+    return 8;
+}
+
+export i32 use(void) {
+    return long_is_four(i32);
+}
+==> value-query/src/main.smith <==
+#include <stdio.h>
+
+struct Point {
+    i32 x;
+    f32 y;
+};
+struct Grid {
+    i32 cells[2][3];
+    struct Point origin;
+};
+
+constexpr struct Grid grid = {.cells = {{1, 2, 3}, {4, 5, -6}}, .origin = {7, 0.5f}};
+constexpr f64 ratio = 0.1;
+constexpr char name[] = "hi";
+i32 counter = 3;
+
+static i32 twice(i32 n) {
+    return n * 2;
+}
+
+int main(void) {
+    printf("%d\n", twice(21));
     return 0;
 }

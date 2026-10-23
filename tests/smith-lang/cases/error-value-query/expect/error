@@ -1,0 +1,1 @@
+src/main.smith:10:5: in `if constexpr`: the expression is not a constant expression; constexpr evaluation hit maximum step limit; possible infinite loop?; in call to 'forever(1048578)'
