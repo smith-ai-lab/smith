@@ -16,7 +16,8 @@ static bool smith_quiet_full(void) {
 // Whether a line reports a failure: what the executor, the test scripts, the runner and the compiler print.
 static bool smith_quiet_failure_line(const char *line, size_t length) {
     if (strncmp(line, "ok ", 3) == 0 || strncmp(line, "PASS ", 5) == 0) return false; // a check that passed
-    static const char *const marks[] = {"FAILED", "FAIL ", "FAIL\t", "error:", "not ok", "Assertion", "ERROR"};
+    static const char *const marks[] = {"FAILED",    "FAIL ", "FAIL\t",  "error:",        "not ok",
+                                        "Assertion", "ERROR", "cannot ", "failed (status"};
     for (size_t m = 0; m < sizeof marks / sizeof marks[0]; m++) {
         size_t mark = strlen(marks[m]);
         for (size_t at = 0; at + mark <= length; at++) { // bounded by the line
