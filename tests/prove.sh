@@ -138,6 +138,14 @@ expect "loop count: a counter bounded by a constant proves" 0 "$rc"
 prove "$cases/message.m"
 expect_contains "Objective-C: a message send is an error" "$out" "message.m:10: cannot be proved: an Objective-C message send"
 
+# 6b. A proof that grows past its memory limit is stopped, and says so (macOS enforces no RLIMIT_AS, so the parent watches the
+# process's footprint). This one uses about 0.9 GB in its 10 s; 0.3 GB stops it first.
+prove --memory=0.3 "$cases/blowup.c"
+expect "memory: a proof over its limit fails" 1 "$rc"
+expect_contains "memory: ... naming the limit" "$out" "over its memory limit of 0.3 GB"
+expect_contains "memory: ... and the function" "$out" "FAIL  blowup"
+expect_contains "memory: ... and the way out" "$out" "--memory=GB changes the limit"
+
 # 7. A proof that runs out of time fails, like a test that times out. The budget is CPU time (so that a busy machine does
 # not change a verdict), counted as on 8 idle cores: this one query runs on one thread, and 2 s of it is the whole budget.
 prove --budget=2 "$cases/division.c"

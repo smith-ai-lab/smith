@@ -107,6 +107,11 @@ struct Options {
     // Each of those is a CPU time, which does not depend on what else the machine runs. Bitwuzla runs the queries of a
     // proof on that many threads at most, on every machine.
     double budget_seconds = 10;
+    // The most memory one function's proof may use (its process's physical footprint, compressed pages included), in
+    // bytes. macOS enforces no RLIMIT_AS or RLIMIT_DATA, so the parent watches the process and stops it. A proof of a
+    // function that fits its budget uses well under 1 GB; a query that blows up used 37 GB, and with several functions
+    // proved at once a runaway takes the machine with it.
+    double memory_bytes = 8.0 * 1024 * 1024 * 1024;
     static constexpr unsigned solver_threads = 8;
     // The most CPU time the whole process may use before the kernel stops it, the backstop for a solver that does not
     // look at its budget.

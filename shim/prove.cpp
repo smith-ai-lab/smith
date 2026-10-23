@@ -24,6 +24,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <libproc.h>
 #include <string>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -61,6 +62,7 @@ struct Arguments {
     std::fprintf(stderr, "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
                          "  --function=NAME   prove only this function (repeatable)\n"
                          "  --budget=SECONDS  the time one function may take (default 10)\n"
+                         "  --memory=GB       the memory one function may use (default 8)\n"
                          "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
                          "  --no-cache        prove again what a cached proof already proved\n"
                          "  -v                print the functions that are proved too, with their time, the slowest\n"
@@ -91,6 +93,9 @@ Arguments parse(int argc, char **argv) {
         } else if (argument.rfind("--budget=", 0) == 0) {
             arguments.options.budget_seconds = std::strtod(argument.c_str() + 9, nullptr);
             if (arguments.options.budget_seconds <= 0) usage("--budget wants a number of seconds");
+        } else if (argument.rfind("--memory=", 0) == 0) {
+            arguments.options.memory_bytes = std::strtod(argument.c_str() + 9, nullptr) * 1024 * 1024 * 1024;
+            if (arguments.options.memory_bytes <= 0) usage("--memory wants a number of gigabytes");
         } else if (!argument.empty() && argument[0] == '-') {
             usage(("unknown option " + argument).c_str());
         } else {
@@ -508,9 +513,25 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
     double allowed = wall_backstop(options);
     int status = 0;
     rusage used{};
+    int polls = 0;
     for (;;) {
         pid_t done = wait4(child, &status, WNOHANG, &used);
         if (done == child) break;
+        rusage_info_v4 usage{};
+        if (polls++ % 5 == 0 &&
+            proc_pid_rusage(child, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t *>(&usage)) == 0 &&
+            static_cast<double>(usage.ri_phys_footprint) > options.memory_bytes) {
+            kill(child, SIGKILL);
+            wait4(child, &status, 0, &used);
+            std::printf(
+                "FAIL  %s\n  over its memory limit of %.1f GB: the proof's process had reached %.1f GB after %.1f s "
+                "of CPU and was stopped; prove it in smaller pieces (a contract on the function that does most of "
+                "the work lets callers use that instead of its body, and a bound on a loop's count unrolls fewer "
+                "passes); --memory=GB changes the limit\n",
+                label.c_str(), options.memory_bytes / (1024.0 * 1024 * 1024),
+                static_cast<double>(usage.ri_phys_footprint) / (1024.0 * 1024 * 1024), cpu_of(used));
+            return 1;
+        }
         if (std::chrono::duration<double>(Clock::now() - begin).count() > allowed) {
             kill(child, SIGKILL);
             wait4(child, &status, 0, &used);
