@@ -407,6 +407,14 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at = end;
         return true;
     }
+    int64_t constant = 0;
+    if (token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain && token->param == 0 &&
+        cx->host->constant != nullptr &&
+        cx->host->constant(cx->host->context, smith_lang_gt_str(token), token->length, &constant)) {
+        value->number = constant; // a `constexpr` integer the parser has read
+        *at += 1;
+        return true;
+    }
     cx->unknown_name = true;
     cx->unknown_at = *at;
     return smith_lang_cx_fail(cx, "`%s` is not a constant or a type", smith_lang_gt_str(token));

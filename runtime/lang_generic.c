@@ -1540,6 +1540,8 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
     return *count > 0;
 }
 
+#include "lang_constexpr.c"
+
 // The parameter of a generic that a lone identifier names, when its type is one of the generic's types (`auto x`,
 // `typeof(x) y`, `T v`): the type's index, else -1. In an instance's body, that parameter's type is the instance's.
 static int smith_lang_param_type_of(const SmithLangGeneric *generic, SmithLangSpan span) {
@@ -1563,6 +1565,20 @@ typedef struct {
     char written[256];
     char canonical[256];
 } SmithLangArgType;
+
+// Whether a type as the parser wrote it names a typedef of a system header's own (`__size_t`), which a module that
+// does not include that header cannot spell: the type is then written as the compiler's canonical spelling.
+static bool smith_lang_internal_type(const char *written) {
+    for (const char *at = written; *at != 0; at++) { // the words
+        bool begins = (at == written || !(isalnum((unsigned char)at[-1]) || at[-1] == '_')) && at[0] == '_' && at[1] == '_';
+        if (!begins) continue;
+        size_t length = 0;
+        while (isalnum((unsigned char)at[length]) || at[length] == '_')
+            length += 1;
+        if (length > 4 && !(at[length - 1] == '_' && at[length - 2] == '_')) return true;
+    }
+    return false;
+}
 
 // The type of an argument, from the compiler (or, for a parameter of the generic being instanced, from the instance).
 // False with `why` when it cannot be said.
@@ -1604,6 +1620,7 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, const Sm
     }
     memcpy(out->written, type.written, sizeof out->written);
     memcpy(out->canonical, type.canonical, sizeof out->canonical);
+    if (smith_lang_internal_type(out->written)) memcpy(out->written, out->canonical, sizeof out->written);
     return true;
 }
 
@@ -1802,6 +1819,38 @@ static bool smith_lang_literal_fits(const SmithLangLiteral *literal, SmithLangNu
     return !literal->overflow && literal->magnitude <= (uint64_t)1 << smith_lang_significand_bits(to.bits);
 }
 
+// Whether every number of the argument is an integer: the evaluator of `if constexpr` reads those.
+static bool smith_lang_span_integral(SmithLangSpan span) {
+    for (uint32_t at = span.start; at < span.end; at++) { // the tokens
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (token->special != SmithLangGen_Plain) return false;
+        if (token->kind != SmithTokenKind_Number) continue;
+        const char *text = smith_lang_gt_str(token);
+        bool hex = token->length > 1 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
+        for (uint32_t i = 0; i < token->length; i++) {
+            char c = text[i];
+            if (c == '.' || c == 'p' || c == 'P' || (!hex && (c == 'e' || c == 'E' || c == 'f' || c == 'F'))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// An argument that is an integer constant expression of literals and the file's `constexpr` constants
+// (`sim_button_dash | sim_button_block`, `1 << 4`): its value, which is judged as a literal is.
+static bool smith_lang_constant_expression(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                           SmithLangSpan span, uint32_t location, SmithLangLiteral *out) {
+    if (span.end - span.start < 2 || !smith_lang_span_integral(span)) return false;
+    static SmithLangCx evaluation;
+    SmithLangCx *cx = &evaluation;
+    *cx = (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .location = location};
+    int64_t value = 0;
+    if (!smith_lang_cx_eval(cx, span.start, span.end, &value)) return false;
+    *out = (SmithLangLiteral){.negative = value < 0, .magnitude = value < 0 ? 0 - (uint64_t)value : (uint64_t)value};
+    return true;
+}
+
 // The parameter at `position` is `typeof(x) name` for an `auto` x of the generic (it converts its argument): the
 // index of the type, else -1.
 static int smith_lang_converts_to(const SmithLangGeneric *generic, const SmithLangParam *param, size_t position) {
@@ -1812,6 +1861,21 @@ static int smith_lang_converts_to(const SmithLangGeneric *generic, const SmithLa
         return -1;
     }
     return type;
+}
+
+// An expression as the operand of a cast: in parentheses unless it is one name, field chain or literal.
+static void smith_lang_parenthesize(char *text, size_t capacity) {
+    bool simple = text[0] == '-' || text[0] == '+' ? text[1] != 0 : true;
+    for (const char *c = text + (text[0] == '-' || text[0] == '+' ? 1 : 0); *c != 0; c++) {
+        bool part = isalnum((unsigned char)*c) || *c == '_' || *c == '.' || *c == ':' || *c == '\'';
+        simple = simple && part;
+    }
+    size_t length = strlen(text);
+    if (simple || length + 3 > capacity) return;
+    memmove(text + 1, text, length);
+    text[0] = '(';
+    text[length + 1] = ')';
+    text[length + 2] = 0;
 }
 
 // Whether the argument at `span` converts to the staged type unchanged, as the module for `auto` says; the error
@@ -1825,7 +1889,7 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, const 
     SmithLangNumber to = smith_lang_number_of(host, to_spelling);
     if (!to.known) return true;
     SmithLangLiteral literal = {};
-    bool is_literal = smith_lang_literal(host, span, &literal);
+    bool is_literal = smith_lang_literal(host, span, &literal) || smith_lang_constant_expression(lang, host, replay, span, location, &literal);
     SmithLangArgType from = {};
     const char *why = nullptr;
     bool typed = smith_lang_arg_type(lang, host, replay, span, location, &from, &why);
@@ -1847,17 +1911,23 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, const 
     if (is_literal) snprintf(from_spelling, sizeof from_spelling, "%s", literal_type);
     const char *name = smith_lang_str(generic->member);
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
+    char argument_cast[256];
+    char first_cast[256];
+    snprintf(argument_cast, sizeof argument_cast, "%s", argument);
+    snprintf(first_cast, sizeof first_cast, "%s", first);
+    smith_lang_parenthesize(argument_cast, sizeof argument_cast);
+    smith_lang_parenthesize(first_cast, sizeof first_cast);
     if (is_literal) {
         smith_lang_error(lang, host, place,
                          "the argument `%s` of `%s` converts to %s, the type of its first argument `%s`, and changes its "
                          "value; cast it, `(%s)%s`, or the first argument, `(%s)%s`",
-                         argument, name, to_written, first, to_written, argument, from_spelling, first);
+                         argument, name, to_written, first, to_written, argument_cast, from_spelling, first_cast);
         return false;
     }
     smith_lang_error(lang, host, place,
                      "the argument `%s` of `%s` is %s and converts to %s, the type of its first argument `%s`, which "
                      "may change its value; cast it, `(%s)%s`, or the first argument, `(%s)%s`",
-                     argument, name, from_spelling, to_written, first, to_written, argument, from_spelling, first);
+                     argument, name, from_spelling, to_written, first, to_written, argument_cast, from_spelling, first_cast);
     return false;
 }
 
@@ -1964,8 +2034,6 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     }
     return true;
 }
-
-#include "lang_constexpr.c"
 
 // ---- Resolving a name to a generic
 // -----------------------------------------------------------------------------------------

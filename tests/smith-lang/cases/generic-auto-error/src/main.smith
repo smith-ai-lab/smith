@@ -16,6 +16,8 @@ int main(void) {
     f32 r6 = pick::larger(fl, 16777217);
     f32 r7 = pick::larger(fl, neg);
     u32 r8 = pick::larger(big, neg);
+    u8 r9 = pick::larger(small, big + 1);
+    u8 r10 = pick::larger(small, limit + 1);
     // These keep the value.
     u8 ok1 = pick::larger(small, 200);
     f32 ok2 = pick::larger(fl, 0.5);
@@ -23,6 +25,7 @@ int main(void) {
     f32 ok4 = pick::larger(fl, small);
     u32 ok5 = pick::larger(big, small);
     u32 ok6 = pick::larger(big, 1 << 3);
+    u8 ok8 = pick::larger(small, limit - 200);
     u8 ok7 = pick::larger(small, (u8)neg);
-    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + r8 + ok1 + ok2 + ok3 + ok4 + ok5 + ok6 + ok7;
+    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + r8 + r9 + r10 + ok8 + ok1 + ok2 + ok3 + ok4 + ok5 + ok6 + ok7;
 }
