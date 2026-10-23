@@ -12,3 +12,6 @@ query void *: void *, size 8 alignment 8, pointer
 query const Packet * const: const Packet *const, size 8 alignment 8, pointer
 query Missing: unknown
 query int int: unknown
+query int (*)(Packet *): int (*)(Packet *), size 8 alignment 8, pointer
+query Packet [4]: Packet[4], size 64 alignment 8
+query const char * const *: const char *const *, size 8 alignment 8, pointer
