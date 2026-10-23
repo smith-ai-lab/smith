@@ -122,7 +122,19 @@ prove "$cases/nobody.c"
 expect_contains "no body: is an error" "$out" "nobody.c:10: cannot be proved: a call of lookup, which has neither a body nor a contract"
 expect_contains "no body: ... that suggests a trusted boundary" "$out" "this is the edge of the program: put smith_trusted() as the first statement of"
 prove "$cases/unbounded.c"
-expect_contains "loop: with no bound is an error" "$out" "unbounded.c:8: cannot be proved: a loop with no constant bound"
+expect_contains "loop: with no bound is an error" "$out" 'unbounded.c:8: cannot be proved: the loop has no bound the prover can see: its exit depends on `n`'
+expect_contains "loop: ... and says to bound it with a requires" "$out" "contract::requires(n <= ...)"
+prove "$cases/loop_count.c" --function=sum_unbounded
+expect "loop count: no bound fails" 1 "$rc"
+expect_contains "loop count: names the line and the count" "$out" 'loop_count.c:11: cannot be proved: the loop has no bound the prover can see: it runs `count` times'
+expect_contains "loop count: ... and the requires to write" "$out" "state its worst case, contract::requires(count <= ...), which callers then prove"
+prove "$cases/loop_count.c" --function=sum_bounded
+expect "loop count: a requires on the count bounds the loop" 0 "$rc"
+prove "$cases/loop_count.c" --function=digits_divided
+expect_contains "loop count: a divide has no count, and the passes it takes are said" "$out" "a 64-bit value divided by 10 each pass is not a count LLVM can derive"
+expect_contains "loop count: ... with the counter that bounds it" "$out" "at most 20"
+prove "$cases/loop_count.c" --function=digits_counted
+expect "loop count: a counter bounded by a constant proves" 0 "$rc"
 prove "$cases/message.m"
 expect_contains "Objective-C: a message send is an error" "$out" "message.m:10: cannot be proved: an Objective-C message send"
 

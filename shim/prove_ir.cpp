@@ -28,6 +28,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/DebugInfo.h"
@@ -39,6 +40,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
@@ -1536,17 +1538,96 @@ void drop_unsupported_attributes(Function &function) {
 
 // LLVM deletes a loop it can solve (n counted down to 0) and the proof would then say nothing of it, so each loop gets
 // a call the optimizer cannot remove: when unrolling is done, a loop that is left is a loop with no constant bound.
+// The name a variable has in the source: a parameter, or what the debug info calls the value.
+std::string source_name_of(Value *value) {
+    if (auto *argument = dyn_cast<Argument>(value); argument != nullptr && argument->hasName())
+        return argument->getName().str();
+    SmallVector<DbgVariableRecord *, 4> records;
+    findDbgUsers(value, records);
+    for (DbgVariableRecord *record : records) {
+        if (DILocalVariable *variable = record->getVariable(); variable != nullptr && !variable->getName().empty())
+            return variable->getName().str();
+    }
+    return "";
+}
+
+// The variables a loop's trip count depends on, named as in the source. With a count LLVM can compute, the values its
+// expression is built from; without one (a loop that divides its way to zero), the values that its exit tests read,
+// followed back through the loop's own arithmetic.
+void name_loop_controls(Loop *loop, ScalarEvolution &evolution, UnrolledLoop &info) {
+    auto add = [&](Value *value) {
+        std::string name = source_name_of(value);
+        if (name.empty()) return;
+        for (const std::string &known : info.controls)
+            if (known == name) return;
+        info.controls.push_back(name);
+    };
+    const SCEV *count = evolution.getBackedgeTakenCount(loop);
+    if (!isa<SCEVCouldNotCompute>(count)) {
+        info.counted = true;
+        struct Collect {
+            decltype(add) &note;
+            bool follow(const SCEV *expression) {
+                if (auto *unknown = dyn_cast<SCEVUnknown>(expression)) note(unknown->getValue());
+                return true;
+            }
+            bool isDone() {
+                return false;
+            }
+        } collect{add};
+        visitAll(count, collect);
+        return;
+    }
+    for (BasicBlock *block : loop->blocks()) { // a value divided or shifted down to zero takes a known number of passes
+        for (Instruction &instruction : *block) {
+            auto *operation = dyn_cast<BinaryOperator>(&instruction);
+            if (operation == nullptr || info.shrink_passes != 0) continue;
+            auto *by = dyn_cast<ConstantInt>(operation->getOperand(1));
+            if (by == nullptr || by->getValue().ule(1)) continue;
+            unsigned bits = operation->getType()->getIntegerBitWidth();
+            bool shift = operation->getOpcode() == Instruction::LShr || operation->getOpcode() == Instruction::AShr;
+            bool divide = operation->getOpcode() == Instruction::UDiv || operation->getOpcode() == Instruction::SDiv;
+            if (!shift && !divide) continue;
+            double step =
+                shift ? static_cast<double>(by->getZExtValue()) : std::log2(static_cast<double>(by->getZExtValue()));
+            if (shift && by->getZExtValue() >= bits) continue;
+            info.shrink_passes = static_cast<unsigned>(std::ceil(bits / step));
+            info.shrink_what = "a " + std::to_string(bits) + "-bit value " +
+                               (shift ? "shifted right by " : "divided by ") + std::to_string(by->getZExtValue());
+        }
+    }
+    SmallVector<BasicBlock *, 4> exiting;
+    loop->getExitingBlocks(exiting);
+    SmallPtrSet<Value *, 16> seen;
+    SmallVector<std::pair<Value *, unsigned>, 16> work;
+    for (BasicBlock *block : exiting) {
+        if (auto *branch = dyn_cast<CondBrInst>(block->getTerminator())) work.push_back({branch->getCondition(), 0});
+    }
+    while (!work.empty()) {
+        auto [value, depth] = work.pop_back_val();
+        if (!seen.insert(value).second) continue;
+        auto *instruction = dyn_cast<Instruction>(value);
+        if (!isa<ICmpInst>(value)) add(value);
+        if (instruction == nullptr || depth >= 6 || !loop->contains(instruction)) continue;
+        for (Value *operand : instruction->operands())
+            if (!isa<Constant>(operand) && !isa<BasicBlock>(operand)) work.push_back({operand, depth + 1});
+    }
+}
+
 void mark_loops(Analyses &analyses, Function &function, Unit &unit) {
     Module &module = *function.getParent();
-    FunctionCallee marker = module.getOrInsertFunction("smith_loop", Type::getVoidTy(module.getContext()));
+    FunctionCallee marker = module.getOrInsertFunction("smith_loop", Type::getVoidTy(module.getContext()),
+                                                       Type::getInt32Ty(module.getContext()));
     cast<Function>(marker.getCallee())->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
     auto &loops = analyses.functions.getResult<LoopAnalysis>(function);
     auto &evolution = analyses.functions.getResult<ScalarEvolutionAnalysis>(function);
     DenseMap<const Loop *, unsigned> passes; // the passes of a loop in all, its outer loops' passes counted
     for (Loop *loop : loops.getLoopsInPreorder()) {
         BasicBlock *header = loop->getHeader();
-        CallInst::Create(marker, "", header->getFirstInsertionPt());
+        CallInst::Create(marker, {ConstantInt::get(Type::getInt32Ty(module.getContext()), unit.loops.size())}, "",
+                         header->getFirstInsertionPt());
         UnrolledLoop info;
+        name_loop_controls(loop, evolution, info);
         if (DebugLoc location = loop->getStartLoc()) {
             info.file = location->getFilename().str();
             info.line = location.getLine();
@@ -1578,12 +1659,108 @@ void remove_loop_marks(Function &function) {
         mark->eraseFromParent();
 }
 
-// A loop that is still there after unrolling: where it is (a source line, if there is one).
-bool find_loop(Function &function, std::string &where) {
+// What to say of a loop the prover could not bound. A loop LLVM can count is bounded by a `requires` on the variables
+// of its count; one it cannot (it divides its way to zero) needs a counter that a constant bounds.
+void describe_unbounded_loop(const Unit &unit, int index, Unprovable &failure) {
+    const UnrolledLoop *info =
+        index >= 0 && static_cast<size_t>(index) < unit.loops.size() ? &unit.loops[index] : nullptr;
+    if (info != nullptr && failure.line == 0) {
+        failure.file = info->file;
+        failure.line = info->line;
+    }
+    std::string names;
+    if (info != nullptr) {
+        for (const std::string &name : info->controls)
+            names += (names.empty() ? "`" : ", `") + name + "`";
+    }
+    if (info != nullptr && info->counted && !info->controls.empty()) {
+        failure.what = "the loop has no bound the prover can see: it runs " + names + " times";
+        failure.fix = "state its worst case, contract::requires(" + info->controls.front() +
+                      " <= ...), which callers then prove (a loop's count comes from a constant or from a requires "
+                      "that bounds it)";
+    } else if (info != nullptr && info->shrink_passes != 0) {
+        failure.what = "the loop has no bound the prover can see: it ends when " +
+                       (info->controls.empty() ? std::string("a value") : names) + " reaches zero, and " +
+                       info->shrink_what + " each pass is not a count LLVM can derive, so no requires gives one";
+        failure.fix = "count the passes in a variable that a constant bounds: at most " +
+                      std::to_string(info->shrink_passes) + " (a loop `for (usize pass = 0; pass < " +
+                      std::to_string(info->shrink_passes) + "; pass++)` that breaks when the value is zero)";
+    } else if (info != nullptr && !info->controls.empty()) {
+        failure.what = "the loop has no bound the prover can see: its exit depends on " + names;
+        failure.fix = "state the worst case, contract::requires(" + info->controls.front() +
+                      " <= ...), which callers then prove; if the loop still fails, its exit is not a step by a "
+                      "constant, so count the passes in a variable that a constant bounds";
+    } else {
+        failure.what = "the loop has no bound the prover can see";
+        failure.fix = "give it a count: a constant (for (int i = 0; i < 8; i++)) or a variable that "
+                      "contract::requires(count <= ...) bounds";
+    }
+}
+
+// The function's own smith_requires are premises of its proof, so a loop's worst case may come from one:
+// `smith_requires(count <= 5)` before `for (i = 0; i < count; i++)` bounds the loop at 5 passes. The unroller reads a
+// parameter's `range` attribute (SCEV reads an llvm.assume only for a value computed after it, never for a parameter),
+// so each premise of the form `parameter <op> constant`, alone or joined by `&&`, gives the parameter that range for
+// the unrolling. The attribute is removed before the proof, where the premises are assumed anyway, so what is proved
+// is the function as it was, unrolled.
+void collect_ranges(Value *condition, std::map<Argument *, ConstantRange> &ranges) {
+    if (auto *compare = dyn_cast<ICmpInst>(condition)) {
+        auto *argument = dyn_cast<Argument>(compare->getOperand(0));
+        auto *constant = dyn_cast<ConstantInt>(compare->getOperand(1));
+        if (argument == nullptr || constant == nullptr) return;
+        ConstantRange range = ConstantRange::makeExactICmpRegion(compare->getPredicate(), constant->getValue());
+        auto found = ranges.find(argument);
+        if (found == ranges.end())
+            ranges.emplace(argument, range);
+        else
+            found->second = found->second.intersectWith(range);
+    } else if (auto *both = dyn_cast<BinaryOperator>(condition);
+               both != nullptr && both->getOpcode() == Instruction::And) {
+        collect_ranges(both->getOperand(0), ranges);
+        collect_ranges(both->getOperand(1), ranges);
+    } else if (auto *choice = dyn_cast<SelectInst>(condition);
+               choice != nullptr && match(choice->getFalseValue(), PatternMatch::m_Zero())) {
+        collect_ranges(choice->getCondition(), ranges);
+        collect_ranges(choice->getTrueValue(), ranges);
+    }
+}
+
+std::vector<Argument *> assume_requires(Function &function) {
+    std::vector<Argument *> bounded;
+    std::map<Argument *, ConstantRange> ranges;
+    for (Instruction &instruction : instructions(function)) {
+        if (contract_of(&instruction) == Contract::Requires && owner_id(instruction) == function_id(function))
+            collect_ranges(cast<CallBase>(&instruction)->getArgOperand(0), ranges);
+    }
+    for (auto &[argument, range] : ranges) {
+        if (argument->hasAttribute(Attribute::Range) || range.isFullSet() || range.isEmptySet()) continue;
+        argument->addAttr(Attribute::get(function.getContext(), Attribute::Range, range));
+        bounded.push_back(argument);
+    }
+    return bounded;
+}
+
+void remove_loop_ranges(const std::vector<Argument *> &bounded) {
+    for (Argument *argument : bounded)
+        argument->removeAttr(Attribute::Range);
+}
+
+// A loop that is still there after unrolling: where it is (a source line, if there is one), and which of the unit's
+// loops it is (the argument of its mark), or -1. It is the innermost one: an outer loop stays only while an inner does.
+bool find_loop(Function &function, std::string &where, int &index) {
     DominatorTree dominators(function);
     LoopInfo loops(dominators);
     if (loops.empty()) return false;
     Loop *loop = *loops.begin();
+    while (!loop->getSubLoops().empty())
+        loop = loop->getSubLoops().front();
+    index = -1;
+    for (const Instruction &instruction : *loop->getHeader()) {
+        auto *call = dyn_cast<CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() != nullptr &&
+            call->getCalledFunction()->getName() == "smith_loop")
+            index = static_cast<int>(cast<ConstantInt>(call->getArgOperand(0))->getZExtValue());
+    }
     const Instruction *found = loop->getHeader()->getTerminator();
     for (const BasicBlock *block : loop->blocks()) {
         for (const Instruction &instruction : *block) {
@@ -1793,24 +1970,26 @@ Prepared program_prepare(Program &program, const std::string &name) {
     allow_unlimited_unrolling();
     analyses.run_function(function, clean_pipeline, error);
     std::string loop;
+    int index = -1;
+    std::vector<Argument *> bounded = assume_requires(function);
+    analyses.functions.invalidate(function, PreservedAnalyses::none());
     mark_loops(analyses, function, prepared.unit);
-    for (int round = 0; round < 4 && find_loop(function, loop); round++) {
+    for (int round = 0; round < 4 && find_loop(function, loop, index); round++) {
         analyses.run_function(function, unroll_pipeline, error);
     }
-    if (find_loop(function, loop)) {
+    if (find_loop(function, loop, index)) {
         auto failure = std::make_unique<Unprovable>();
         size_t colon = loop.rfind(':');
         if (colon != std::string::npos) {
             failure->file = loop.substr(0, colon);
             failure->line = static_cast<unsigned>(std::stoul(loop.substr(colon + 1)));
         }
-        failure->what = "a loop with no constant bound that LLVM can unroll";
-        failure->fix = "give it a constant bound (for (int i = 0; i < 8; i++)); smith_invariant for loops without one "
-                       "is not checked yet";
+        describe_unbounded_loop(prepared.unit, index, *failure);
         context.unprovable = std::move(failure);
         return finish();
     }
     remove_loop_marks(function);
+    remove_loop_ranges(bounded);
     Normalizer(context).run();
     drop_unsupported_attributes(function);
     analyses.run_function(function, "dce", error);

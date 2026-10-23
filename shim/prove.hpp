@@ -57,6 +57,10 @@ struct UnrolledLoop {
     std::string file;
     unsigned line = 0;
     unsigned passes = 0;
+    bool counted = false;              // LLVM can say how many times the loop runs, as an expression of the names below
+    unsigned shrink_passes = 0;        // with no count: the most passes a divide or shift of a value to zero takes
+    std::string shrink_what;           // "a 64-bit value divided by 10"
+    std::vector<std::string> controls; // the variables that decide the trip count (or, with no count, the exit)
 };
 
 // Something in the code being proved that makes a query costly for the solver, with the line it comes from. Facts of
