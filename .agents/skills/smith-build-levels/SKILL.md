@@ -79,7 +79,7 @@ A task may not be named after a verb (`run`, `test`, `check`, `fmt`, `lint`, `do
 
 The conventions compile with `-Wall -Wextra -Wpedantic ... -Werror`, then your flags, so a `-Wno-...` in `.flags` (or the folder's list) wins and the rest stay on. Turn off as little as you can: a folder's list for files that break a rule on purpose (a linter's fixtures are empty or odd translation units), the app's `.flags` for a construct the whole program uses (a float in a `static_assert`, which clang calls a GNU constant-folding extension under `-Wpedantic`). The two game needed:
 
-```smith
+```smith fragment
 module build;
 
 import smith::build;
@@ -102,7 +102,7 @@ Find the flag's name in the diagnostic: clang ends it with `[-Wname]`, and `-Wno
 
 When you need a step the high level has no field for (a shader, a data-baking step), add it beside the calls: `build::profile_flags(b, "debug")` and `build::source_flags` give the conventions' flags to add yours to, and `build::sources(b, folder)` / `build::objects(b, "debug", folder)` list what the programs compile. When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:
 
-```smith
+```smith fragment
 module build;
 
 import smith::build;

@@ -1,4 +1,6 @@
 // Reverse and forward mode derivatives of toy::f and toy::loss, printed next to the analytic values.
+module main;
+
 import smith::autodiff;
 import smith::io;
 import toy;

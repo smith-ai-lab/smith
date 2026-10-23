@@ -41,7 +41,7 @@ export void build(build::Build *b) {
 
 A `build::Step` is a C struct, so it is written as a declaration (`build::Step step = {...};`) or a compound literal (`(build::Step){...}`); there is no `build::Step{...}` and no `auto step = build::Step{...}`. `build::step` and `build::task` take the step's address and replace its lists with their own copies, so one `Step` is never passed to two calls. A shape you want twice is a function that returns a new `Step` from a designated initializer on each call:
 
-```smith
+```smith fragment
 module build;
 
 import smith::build;

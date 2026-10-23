@@ -1,9 +1,11 @@
 // A test that differentiates too: the tests of an autodiff program are built the same way.
+module toy_test;
+
 import smith::autodiff;
 import smith::test;
 import toy;
 
-void test_loss_gradient(void) {
+export void test_loss_gradient(void) {
     f64 p[2] = {1.0, 3.0};
     f64 dp[2] = {};
     autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)2);

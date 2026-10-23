@@ -23,13 +23,13 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
 
 # A scratch project for the language server, and a nvim-dap that is only a table.
 mkdir "$work/project" && printf 'int main(void) { return 0; }\n' >"$work/project/main.c" && : >"$work/project/build.c"
-printf 'i32 main(void) { u32 x = 1; return (i32)x - missing; }\n' >"$work/project/main.smith"
+printf 'module main;\n\ni32 main(void) { u32 x = 1; return (i32)x - missing; }\n' >"$work/project/main.smith"
 printf '[{"directory":"%s","file":"main.smith","arguments":["smith-cc","-x","c","-c","main.smith"]}]\n' "$work/project" \
     >"$work/project/compile_commands.json"
 # A folder with a .smith file and nothing else: no build.c, no compile_commands.json, no .git.
 # It makes no effect and has no preprocessor (smith-effects and smith-preprocessor would report them), so the one
 # diagnostic is the undefined name.
-mkdir "$work/alone" && printf '// one error, the undefined name\n\ni32 main() {\n  (void)42;\n  return zzz;\n}\n' >"$work/alone/main.smith"
+mkdir "$work/alone" && printf '// one error, the undefined name\nmodule main;\n\ni32 main() {\n  (void)42;\n  return zzz;\n}\n' >"$work/alone/main.smith"
 # Projects made by smith new, which writes no build file (the plugin finds them by their main): a C one that builds, a C
 # one whose main.c does not compile, and one of the default language, .smith.
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1

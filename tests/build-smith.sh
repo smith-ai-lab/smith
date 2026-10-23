@@ -76,12 +76,14 @@ export i32 area(i32 w, i32 h) {
     return w * h;
 }
 EOF
-    cat >"$1/tests/test_box.smith" <<'EOF'
+    cat >"$1/tests/box_test.smith" <<'EOF'
+module box_test;
+
 import smith::test;
 import geometry::box;
 
-void test_area(void) {
-    test::check_equal(box::area(2, 3), 6);
+export void test_area(void) {
+    test::check_equal(i32, box::area(2, 3), 6);
 }
 EOF
 }
@@ -90,9 +92,11 @@ EOF
 sources "$work/shapes"
 cd "$work/shapes" || exit 1
 cat >build.smith <<'EOF'
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});
     build::app_tests(b, &(build::AppTests){.folder = "tests"});
 }
@@ -299,16 +303,18 @@ expect "lint: a clean build.smith passes" 0 "$rc"
 printf '\nstatic int BadName(int x) {\n    return x;\n}\n' >>build.smith
 capture smith lint
 expect "lint: a finding in build.smith fails" 1 "$rc"
-expect_contains "lint: ... at its line, in the name as written" "$out$err" "build.smith:8:12"
+expect_contains "lint: ... at its line, in the name as written" "$out$err" "build.smith:10:12"
 cd "$work" || exit 1
 
 # smith check reads a build.smith too: with no build.c and no main, it still lints and tests.
 mkdir "$work/checked" && cd "$work/checked" || exit 1
 printf 'int main(void) {\n    return 0;\n}\n' >prog.c
 cat >build.smith <<'EOF'
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "prog.c"});
 }
 EOF
@@ -348,9 +354,11 @@ case $err in
 esac
 expect "errors: and never says build.c" none "$named"
 cat >build.smith <<'EOF'
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "prog.c"});
 }
 EOF

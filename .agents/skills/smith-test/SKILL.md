@@ -39,7 +39,7 @@ export void test_sorted_stays_sorted(random::Key key) { // a property test: runs
     }
 }
 
-void test_writes_a_file(io::Io *io) { // a real io, in a scratch folder that is removed when the test passes
+export void test_writes_a_file(io::Io *io) { // a real io, in a scratch folder that is removed when the test passes
     test::check(test::scratch(io) != nullptr);
     io::Error wrote = io::files_write(&io->files, "scratch.txt", "hi", 2, io::Replace);
     test::check_equal(wrote.code, 0);

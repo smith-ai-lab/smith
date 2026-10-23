@@ -600,6 +600,8 @@ expect "editor: a .smith typedef is judged as written (only bad_type is flagged)
 # reported at the `c::` where the source wrote it, with the replacement named; a call that is pure is quiet.
 mkdir -p editor-effects
 cat >editor-effects/fx.smith <<'SMITH'
+module fx;
+
 import <stdio.h>;
 import <string.h>;
 
@@ -613,7 +615,7 @@ void say(void) {
 SMITH
 log=$(client_in "$(cd editor-effects && pwd -P)" open fx.smith)
 expect "editor: smith-effects reports a raw call in a .smith file, as written, and a pure call is quiet" \
-    "diag fx.smith:9:5: \`c::puts\` touches the world: take a \`SmithConsole *\` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)" \
+    "diag fx.smith:11:5: \`c::puts\` touches the world: take a \`SmithConsole *\` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)" \
     "$(printf '%s\n' "$log" | grep '^diag ' | sed 's/ (fix available)$//')"
 
 echo

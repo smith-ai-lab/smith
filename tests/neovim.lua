@@ -177,8 +177,8 @@ function tests.lsp_attach_smith()
     check(not diagnostic.message:find("compiler job", 1, true), "clangd has a compile command: " .. diagnostic.message)
     table.insert(messages, diagnostic.lnum .. ":" .. diagnostic.col .. " " .. diagnostic.message)
   end
-  check(#messages == 1 and messages[1]:find("^0:44 ") and messages[1]:find("missing", 1, true),
-    "the one error is clang's, on line 1: " .. vim.inspect(messages))
+  check(#messages == 1 and messages[1]:find("^2:44 ") and messages[1]:find("missing", 1, true),
+    "the one error is clang's, on line 3: " .. vim.inspect(messages))
   local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
   client:stop(true)
   wait("the server to stop", function() return client:is_stopped() end, 15000)
@@ -198,8 +198,8 @@ function tests.lsp_attach_smith_alone()
     check(not diagnostic.message:find("compiler job", 1, true), "clangd has a compile command: " .. diagnostic.message)
     table.insert(messages, diagnostic.lnum .. ":" .. diagnostic.col .. " " .. diagnostic.message)
   end
-  check(#messages == 1 and messages[1]:find("^4:9 ") and messages[1]:find("zzz", 1, true),
-    "the one error is the undefined name, on line 5: " .. vim.inspect(messages))
+  check(#messages == 1 and messages[1]:find("^5:9 ") and messages[1]:find("zzz", 1, true),
+    "the one error is the undefined name, on line 6: " .. vim.inspect(messages))
   local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
   client:stop(true)
   wait("the server to stop", function() return client:is_stopped() end, 15000)
