@@ -14,4 +14,5 @@ The decisions are in [AGENTS.md](../../../AGENTS.md); these are the habits.
 - **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
 - **`host->read_header` returns a buffer valid only until the next read**, and the lowering's own lookups read others: copy what you need before calling anything that may read a header.
 - **One full `smith check` at a time** on a machine, and say plainly what you did not run.
+- **A test's limits count CPU time, never wall time**: the machine is shared and its load reaches 100 or more; give a test of a CPU limit a large `--wall-timeout`. See [machine-load](../../../knowledge/machine-load.md).
 - **Report friction when you finish.** Besides what you did, say what slowed you down or misled you: a skill that was wrong, missing or hard to find, an error message that did not say the fix, a rule you had to guess, a check that caught you (and whether its message was enough). Name the skill, message or check. Each report is how the skills and the checks get better, and whether a change to them helped shows in the next agent's report.
