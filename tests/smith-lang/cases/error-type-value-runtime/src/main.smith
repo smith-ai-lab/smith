@@ -1,0 +1,15 @@
+typedef struct {
+    char name[8];
+    constexpr type of;
+} Column;
+
+type kinds[2] = {i32, f32};
+Column table = {"a", u8};
+
+int main(void) {
+    type local = i32;
+    Column column = {"b", f64};
+    constexpr type fine = i32;
+    constexpr Column also_fine = {"c", f32};
+    return (int)sizeof(fine) + (int)sizeof(also_fine.of);
+}

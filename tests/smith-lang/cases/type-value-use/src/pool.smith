@@ -1,0 +1,6 @@
+module pool;
+
+// A generic takes a type as its parameter; a `type` value can be the argument.
+export usize width(constexpr type T) {
+    return sizeof(T);
+}

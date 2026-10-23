@@ -1,0 +1,20 @@
+module size;
+
+// An ordinary function over a type: it runs at compile time.
+static bool small(type t) {
+    return sizeof(t) <= 4;
+}
+
+typedef struct { u8 bytes[80]; } Big;
+
+i32 choose(constexpr type T) {
+    if constexpr (small(T)) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+export i32 run(void) {
+    return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
+}
