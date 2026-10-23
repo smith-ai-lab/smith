@@ -5,10 +5,12 @@ module format_test;
 
 import smith::arena;
 import smith::format;
+import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
 import smith::text;
+import scratch;
 
 constexpr usize capacity = 256;
 constexpr i64 i64_max = 9223372036854775807;
@@ -321,4 +323,225 @@ export void test_format_callers(void) {
     (void)format::to(out, sizeof out, "push of ", (usize)8, " bytes (align ", (usize)16, ") with ", (usize)100, " of ",
                      (usize)4096, " bytes used");
     test::check(is(out, expected));
+}
+
+// %g without the trailing zeros the standard says to remove: macOS's printf leaves them after a tie that rounded down
+// (%.2g of 10500 is 1.0e+04), so the reference removes them from the mantissa itself.
+static void remove_trailing_zeros(char *text) {
+    char *point = __builtin_strchr(text, '.');
+    if (point == nullptr) return;
+    char *end = point + __builtin_strcspn(point, "e");
+    char tail[16];
+    __builtin_strcpy(tail, end);
+    char *last = end;
+    while (last > point + 1 && last[-1] == '0') {
+        last -= 1;
+    }
+    if (last == point + 1) last = point;
+    __builtin_strcpy(last, tail);
+}
+
+static void check_general(f64 value, u32 digits) {
+    char out[capacity];
+    char expected[capacity];
+    (void)format::to(out, sizeof out, format::general(value, digits));
+    __builtin_snprintf(expected, sizeof expected, "%.*g", (i32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
+    remove_trailing_zeros(expected);
+    if (!is(out, expected)) {
+        test::check_equal(text::make(out).length, text::make(expected).length); // the failure shows both lengths
+        test::check(is(out, expected));
+    }
+}
+
+static void check_scientific(f64 value, u32 places) {
+    char out[capacity];
+    char expected[capacity];
+    (void)format::to(out, sizeof out, format::scientific(value, places));
+    __builtin_snprintf(expected, sizeof expected, "%.*e", (i32)(places < 40 ? places : 40), value);
+    if (!is(out, expected)) {
+        test::check_equal(text::make(out).length, text::make(expected).length);
+        test::check(is(out, expected));
+    }
+}
+
+export void test_format_general_known(void) {
+    char out[capacity];
+    (void)format::to(out, sizeof out, format::general(0.1, 6), " ", format::general(1e22, 6), " ",
+                     format::general(100000.0, 6), " ", format::general(1000000.0, 6), " ", format::general(0.0001, 6),
+                     " ", format::general(0.00001, 6), " ", format::general(-0.0, 6), " ",
+                     format::general(3.14159265358979, 9), " ", format::general(0.1, 17), " ",
+                     format::general(math::infinity(f64), 6), " ", format::general(2.5, 0));
+    test::check(is(out, "0.1 1e+22 100000 1e+06 0.0001 1e-05 -0 3.14159265 0.10000000000000001 inf 2"));
+}
+
+export void test_format_scientific_known(void) {
+    char out[capacity];
+    (void)format::to(out, sizeof out, format::scientific(12345.678, 2), " ", format::scientific(0.0, 3), " ",
+                     format::scientific(1e300, 0), " ", format::scientific(5e-324, 5), " ",
+                     format::scientific(9.9995, 3), " ", format::scientific(-1.0, 1));
+    test::check(is(out, "1.23e+04 0.000e+00 1e+300 4.94066e-324 9.999e+00 -1.0e+00"));
+}
+
+// Ties: values with an exact binary fraction halfway between two rounded outputs round to even, as printf does.
+export void test_format_general_and_scientific_ties_match_libc(void) {
+    for (u32 digits = 0; digits <= 12; digits++) {
+        for (u32 k = 0; k < 2048; k++) {
+            f64 values[] = {(f64)k / 1024.0, (f64)k / 8.0 + 0.5, (f64)k * 125.0, (f64)k / 64.0 / 1024.0, (f64)k * 1e15};
+            for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+                check_general(values[v], digits);
+                check_general(-values[v], digits);
+                check_scientific(values[v], digits);
+            }
+        }
+    }
+}
+
+export void test_format_general_and_scientific_extremes_match_libc(void) {
+    f64 values[] = {0.0,
+                    1.0,
+                    0.1,
+                    1.0 / 3.0,
+                    1e-5,
+                    99999.95,
+                    999999.5,
+                    1e15,
+                    1e22,
+                    1.7976931348623157e308,
+                    2.2250738585072014e-308,
+                    5e-324,
+                    4.9406564584124654e-324,
+                    123456789.0,
+                    0.5,
+                    9.5,
+                    0.95,
+                    4.35};
+    for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+        for (u32 digits = 0; digits <= 42; digits++) {
+            check_general(values[v], digits);
+            check_general(-values[v], digits);
+            check_scientific(values[v], digits);
+            check_scientific(-values[v], digits);
+        }
+    }
+}
+
+export void test_format_general_and_scientific_match_libc(random::Key key) {
+    u64 bits = random::key_bits(key, 0);
+    f64 value = __builtin_bit_cast(f64, bits);
+    u32 digits = (u32)(random::key_bits(key, 1) % 25);
+    if (!math::is_finite(value)) return;
+    check_general(value, digits);
+    check_scientific(value, digits);
+    f64 near = (f64)(random::key_bits(key, 2) % 100000) / 1000.0; // values with few digits, where rounding is near
+    check_general(near, digits);
+    check_scientific(near, digits);
+}
+
+static void check_padded(const char *expected, format::Padded padded) {
+    char out[capacity];
+    (void)format::to(out, sizeof out, padded);
+    test::check(is(out, expected));
+}
+
+export void test_format_padding_known(void) {
+    check_padded("   42", format::pad(42, 5));
+    check_padded("42   ", format::left(42, 5));
+    check_padded("12345678", format::pad(12345678, 5)); // wider than the column: whole
+    check_padded("  ab", format::pad("ab", 4));
+    check_padded("ab  ", format::left("ab", 4));
+    check_padded("(null) ", format::left((const char *)nullptr, 7));
+    check_padded("   abc", format::pad(format::bytes("abcdef", 3), 6));
+    check_padded("  12.3", format::pad(format::fixed(12.34, 1), 6));
+    check_padded("   0.1", format::pad(0.1, 6));
+    check_padded("  true", format::pad(true, 6));
+    char letter = 'q';
+    check_padded("  q", format::pad(letter, 3));
+    check_padded("   ff", format::pad(format::hex(255, 0), 5));
+    check_padded("  1e+22", format::pad(format::general(1e22, 6), 7));
+    check_padded("", format::pad("", 0));
+    check_padded("   ", format::left("", 3));
+}
+
+// The printf forms the callers use, each against snprintf.
+export void test_format_padding_matches_libc(random::Key key) {
+    char out[capacity];
+    char expected[capacity];
+    u32 width = (u32)(random::key_bits(key, 0) % 14);
+    i64 number = (i64)random::key_bits(key, 1) >> (random::key_bits(key, 2) % 64);
+    u64 unsigned_number = random::key_bits(key, 3) >> (random::key_bits(key, 4) % 64);
+    f64 value = (f64)(random::key_bits(key, 5) % 2000000) / 1000.0 - 1000.0;
+    const char *words[] = {"", "a", "knight", "a longer name than most"};
+    const char *word = words[random::key_bits(key, 6) % 4];
+    __builtin_snprintf(expected, sizeof expected, "[%*lld|%-*lld|%*llu|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width, number,
+                       (i32)width, number, (i32)width, unsigned_number, (i32)width, word, (i32)width, word, (i32)width,
+                       value, (i32)width, value, (i32)width, value);
+    (void)format::to(out, sizeof out, "[", format::pad(number, width), "|", format::left(number, width), "|",
+                     format::pad(unsigned_number, width), "|", format::pad(word, width), "|", format::left(word, width),
+                     "|", format::pad(format::fixed(value, 2), width), "|", format::pad(format::fixed(value, 0), width),
+                     "|", format::pad(format::general(value, 6), width), "]");
+    test::check(is(out, expected));
+}
+
+// What the callers in game and learner write: columns of a report.
+export void test_format_report_rows_match_libc(void) {
+    char out[capacity];
+    char expected[capacity];
+    const char *label = "health taken off the other";
+    u32 a = 12;
+    u32 b = 7;
+    __builtin_snprintf(expected, sizeof expected, "  %-34s %10u %10u\n", label, a, b);
+    (void)format::to(out, sizeof out, "  ", format::left(label, 34), " ", format::pad(a, 10), " ", format::pad(b, 10),
+                     "\n");
+    test::check(is(out, expected));
+    f64 percent = 56.789;
+    __builtin_snprintf(expected, sizeof expected, "    %-16s %5.1f%%  %s\n", "knight", percent, "ok");
+    (void)format::to(out, sizeof out, "    ", format::left("knight", 16), " ",
+                     format::pad(format::fixed(percent, 1), 5), "%  ", "ok", "\n");
+    test::check(is(out, expected));
+    __builtin_snprintf(expected, sizeof expected, "%.9g %g", 0.1F + 0.2F, 1e-7);
+    (void)format::to(out, sizeof out, format::general((f64)(0.1F + 0.2F), 9), " ", format::general(1e-7, 6));
+    test::check(is(out, expected));
+}
+
+export void test_format_print_goes_to_the_console(void) {
+    alignas(arena::align_max) static u8 memory[1 << 20];
+    io::Io io = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7});
+    io::Error ok = format::print(&io.console, "n = ", 3, ", half = ", format::fixed(0.5, 1), "\n");
+    test::check_equal(ok.code, 0);
+    io::Error bad = format::print_error(&io.console, "row ", format::left("a", 3), "|", format::pad(9, 3));
+    test::check_equal(bad.code, 0);
+    test::check(is(io::test_output(&io), "n = 3, half = 0.5\n"));
+    test::check(is(io::test_errors(&io), "row a  |  9"));
+}
+
+export void test_format_print_too_long_prints_nothing(void) {
+    alignas(arena::align_max) static u8 memory[1 << 20];
+    io::Io io = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7});
+    char long_text[5000];
+    __builtin_memset(long_text, 'x', sizeof long_text - 1);
+    long_text[sizeof long_text - 1] = '\0';
+    io::Error error = format::print(&io.console, long_text);
+    test::check(error.code != 0);
+    test::check(is(io::test_output(&io), ""));
+}
+
+// A piece with no rule is a compile-time error that names its position (the instance note lists the types in order).
+export void test_format_no_rule_error_names_the_piece(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lang_project");
+    scratch::write(&p, "bad.smith",
+                   "import smith::format;\n"
+                   "typedef struct { i32 x; } Point;\n"
+                   "i32 main(void) {\n"
+                   "    char buffer[64];\n"
+                   "    Point point = {1};\n"
+                   "    (void)format::to(buffer, sizeof buffer, \"a\", 1, point, 2);\n"
+                   "    return 0;\n"
+                   "}\n");
+    scratch::Run run = scratch::sh(&p, "\"$SMITH_SELF\" cc -I \"$SMITH_REPO/include\" -fsyntax-only bad.smith 2>&1");
+    scratch::expect_contains("format: a piece with no rule is an error", run.out, "static assertion failed");
+    scratch::expect_contains(
+        "format: and it names the third piece", run.out,
+        "format: no rule for the type of piece 3; the note lists the types of the pieces in order");
+    scratch::expect_contains("format: and the note lists the types", run.out,
+                             "in instance smith::format::to(char *, int, Point, int)");
 }

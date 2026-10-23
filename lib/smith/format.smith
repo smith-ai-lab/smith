@@ -3,6 +3,7 @@
 module smith::format;
 
 import smith::arena;
+import smith::io;
 import smith::text;
 
 // <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
@@ -23,6 +24,9 @@ import smith::text;
 //   text::Text                its length of characters, which need no terminator
 //   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
 //   format::Fixed             a fixed number of places, rounded as printf's %.Nf does: format::fixed(value, 3)
+//   format::General           printf's %.Ng: format::general(value, 6), format::Scientific is %.Ne: scientific(value,
+//   3) format::Padded            any of the above in a column of width characters: format::pad(n, 5) is %5d,
+//                             format::left(name, 16) is %-16s, format::pad(format::fixed(x, 1), 6) is %6.1f
 // Anything else (a pointer, an enum, a struct) is an error: convert it to what it means, (u64)(usize)pointer.
 //
 // Writing never stops. The text is cut where the buffer ends, the buffer is always terminated (when it has room for
@@ -259,33 +263,404 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
     return (Written){writer->length, writer->length < writer->capacity};
 }
 
+// A f64 as printf's %.Ng: digits significant digits (1 to 40; 0 is 1), correctly rounded from the exact binary value
+// (ties to even), in the fixed style when the decimal exponent is from -4 up to digits - 1 and in the e style
+// otherwise, with the trailing zeros and a bare point removed: general(0.1, 6) is 0.1, general(1e22, 6) is 1e+22.
+[[smith::c_name("SmithFormatGeneral")]] export typedef struct {
+    f64 value;
+    u32 digits;
+} General;
+
+// A f64 as printf's %.Ne: one digit, a point and places more (at most 40), then e, a sign and at least two exponent
+// digits, correctly rounded as General is: scientific(12345.678, 2) is 1.23e+04.
+[[smith::c_name("SmithFormatScientific")]] export typedef struct {
+    f64 value;
+    u32 places;
+} Scientific;
+
+// A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or Text is
+// referenced (it must outlive the call that writes it), any other piece is held in the 64 characters of the value.
+export constexpr usize padded_capacity = 64;
+[[smith::c_name("SmithFormatPadded")]] export typedef struct {
+    const char *begin;
+    usize length;
+    u32 width;
+    bool left;
+    char characters[padded_capacity];
+} Padded;
+
+[[smith::c_name("smith_format_general")]] export [[nodiscard]] General general(f64 value, u32 digits) {
+    return (General){value, digits};
+}
+
+[[smith::c_name("smith_format_scientific")]] export [[nodiscard]] Scientific scientific(f64 value, u32 places) {
+    return (Scientific){value, places};
+}
+
+constexpr u32 significant_max = 40;
+constexpr usize exact_capacity = 800;
+constexpr usize limbs_capacity = 100;
+constexpr u32 limb_base = 1000000000;
+
+// A natural number in base 10^9, least significant limb first.
+typedef struct {
+    u32 limb[limbs_capacity];
+    usize count;
+} Big;
+
+void big_multiply(Big *big, u32 factor) {
+    u64 carry = 0;
+    for (usize i = 0; i < big->count; i++) {
+        u64 product = (u64)big->limb[i] * factor + carry;
+        big->limb[i] = (u32)(product % limb_base);
+        carry = product / limb_base;
+    }
+    while (carry != 0) {
+        big->limb[big->count++] = (u32)(carry % limb_base);
+        carry /= limb_base;
+    }
+}
+
+// The exact decimal digits of the integer m * 2^e (e >= 0) or m * 5^-e (e < 0), most significant first; returns how
+// many.
+usize exact_digits(u64 m, i32 e, char *digits) {
+    Big big = {};
+    big.limb[0] = (u32)(m % limb_base);
+    big.limb[1] = (u32)((m / limb_base) % limb_base);
+    big.limb[2] = (u32)(m / limb_base / limb_base);
+    big.count = 3;
+    i32 left = e < 0 ? -e : e;
+    u32 step = e < 0 ? 13 : 30;
+    while (left > 0) {
+        u32 now = (u32)left < step ? (u32)left : step;
+        u32 factor = 1;
+        for (u32 j = 0; j < now; j++) {
+            factor *= e < 0 ? 5 : 2;
+        }
+        big_multiply(&big, factor);
+        left -= (i32)now;
+    }
+    while (big.count > 1 && big.limb[big.count - 1] == 0) {
+        big.count -= 1;
+    }
+    usize length = 0;
+    for (usize i = big.count; i-- > 0;) {
+        char chunk[9];
+        u32 rest = big.limb[i];
+        for (usize j = 9; j-- > 0;) {
+            chunk[j] = (char)('0' + rest % 10);
+            rest /= 10;
+        }
+        usize from = 0;
+        while (length == 0 && from < 8 && chunk[from] == '0') {
+            from += 1;
+        }
+        for (usize j = from; j < 9; j++) {
+            digits[length++] = chunk[j];
+        }
+    }
+    return length;
+}
+
+// The first want significant digits of value (finite, not zero), correctly rounded, ties to even, in out; *exponent is
+// the decimal exponent of the first digit (1234.5 with want 3 is 123 and 3).
+void significant_digits(f64 value, u32 want, char *out, i32 *exponent) {
+    u64 abs = __builtin_bit_cast(u64, value) & ~((u64)1 << 63);
+    u64 field = abs >> 52;
+    u64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((u64)1 << 52);
+    i32 e = field == 0 ? -1074 : (i32)field - 1075;
+    char exact[exact_capacity];
+    usize count = exact_digits(m, e, exact);
+    *exponent = (i32)count - 1 - (e < 0 ? -e : 0);
+    for (u32 i = 0; i < want; i++) {
+        out[i] = i < count ? exact[i] : '0';
+    }
+    if (count <= want) return;
+    bool tail_zero = true;
+    for (usize i = want + 1; i < count; i++) {
+        tail_zero = tail_zero && exact[i] == '0';
+    }
+    char next = exact[want];
+    bool odd = (out[want - 1] - '0') % 2 != 0;
+    if (next < '5' || (next == '5' && tail_zero && !odd)) return;
+    u32 i = want;
+    while (i > 0 && out[i - 1] == '9') {
+        out[i - 1] = '0';
+        i -= 1;
+    }
+    if (i > 0) {
+        out[i - 1] += 1;
+    } else {
+        out[0] = '1';
+        *exponent += 1;
+    }
+}
+
+void put_exponent(Writer *writer, i32 exponent) {
+    put_char(writer, 'e');
+    put_char(writer, exponent < 0 ? '-' : '+');
+    u32 magnitude = (u32)(exponent < 0 ? -exponent : exponent);
+    if (magnitude < 10) put_char(writer, '0');
+    put_u64(writer, magnitude);
+}
+
+// The digits as d.ddd and the exponent; a bare point is left out.
+void put_scientific_digits(Writer *writer, const char *digits, u32 count, i32 exponent) {
+    put_char(writer, digits[0]);
+    if (count > 1) {
+        put_char(writer, '.');
+        put_bytes(writer, digits + 1, count - 1);
+    }
+    put_exponent(writer, exponent);
+}
+
+// Sign and digits of a finite value: the first want significant digits (all zeros for zero) and their exponent.
+bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *exponent) {
+    if (!is_finite(value)) {
+        put_unfinite(writer, value);
+        return false;
+    }
+    if ((__builtin_bit_cast(u64, value) >> 63) != 0) put_char(writer, '-');
+    *exponent = 0;
+    if (value == 0) {
+        for (u32 i = 0; i < want; i++) {
+            digits[i] = '0';
+        }
+    } else {
+        significant_digits(value, want, digits, exponent);
+    }
+    return true;
+}
+
+// A Scientific, as scientific() made it.
+[[smith::c_name("smith_format_put_scientific")]] export void put_scientific(Writer *writer, Scientific scientific) {
+    u32 want = (scientific.places < significant_max ? scientific.places : significant_max) + 1;
+    char digits[significant_max + 1];
+    i32 exponent = 0;
+    if (!prepare_digits(writer, scientific.value, want, digits, &exponent)) return;
+    put_scientific_digits(writer, digits, want, exponent);
+}
+
+// A General, as general() made it.
+[[smith::c_name("smith_format_put_general")]] export void put_general(Writer *writer, General general) {
+    u32 want = general.digits == 0 ? 1 : (general.digits < significant_max ? general.digits : significant_max);
+    char digits[significant_max];
+    i32 exponent = 0;
+    if (!prepare_digits(writer, general.value, want, digits, &exponent)) return;
+    u32 count = want;
+    while (count > 1 && digits[count - 1] == '0') {
+        count -= 1;
+    }
+    if (exponent < -4 || exponent >= (i32)want) {
+        put_scientific_digits(writer, digits, count, exponent);
+    } else if (exponent >= 0) {
+        for (u32 i = 0; i <= (u32)exponent; i++) {
+            put_char(writer, i < count ? digits[i] : '0');
+        }
+        if (count > (u32)exponent + 1) {
+            put_char(writer, '.');
+            put_bytes(writer, digits + exponent + 1, count - (u32)exponent - 1);
+        }
+    } else {
+        put_string(writer, "0.");
+        for (i32 i = 1; i < -exponent; i++) {
+            put_char(writer, '0');
+        }
+        put_bytes(writer, digits, count);
+    }
+}
+
+// A Padded, as pad() or left() made it: spaces to the width, on the left of the piece or, for left(), after it.
+[[smith::c_name("smith_format_put_padded")]] export void put_padded(Writer *writer, Padded padded) {
+    const char *characters = padded.begin != nullptr ? padded.begin : padded.characters;
+    usize spaces = padded.width > padded.length ? padded.width - padded.length : 0;
+    if (!padded.left) {
+        for (usize i = 0; i < spaces; i++) {
+            put_char(writer, ' ');
+        }
+    }
+    put_bytes(writer, characters, padded.length);
+    if (padded.left) {
+        for (usize i = 0; i < spaces; i++) {
+            put_char(writer, ' ');
+        }
+    }
+}
+
+// One piece by the rule of its type. `to` is this for each of its arguments; a type with no rule is an error here, and
+// at the position of the piece in `to`.
+export void put(Writer *writer, auto piece) {
+    if constexpr (is_bool(typeof(piece))) {
+        put_string(writer, piece ? "true" : "false");
+    } else if constexpr (typeof(piece) == char) {
+        put_char(writer, piece);
+    } else if constexpr (is_integer(typeof(piece)) && is_signed(typeof(piece))) {
+        put_i64(writer, (i64)piece);
+    } else if constexpr (is_integer(typeof(piece))) {
+        put_u64(writer, (u64)piece);
+    } else if constexpr (typeof(piece) == f32) {
+        put_f32(writer, piece);
+    } else if constexpr (is_float(typeof(piece))) {
+        put_f64(writer, (f64)piece);
+    } else if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
+        put_string(writer, piece);
+    } else if constexpr (typeof(piece) == text::Text) {
+        put_bytes(writer, piece.begin, piece.length);
+    } else if constexpr (typeof(piece) == Hex) {
+        put_hex(writer, piece);
+    } else if constexpr (typeof(piece) == Fixed) {
+        put_fixed(writer, piece);
+    } else if constexpr (typeof(piece) == General) {
+        put_general(writer, piece);
+    } else if constexpr (typeof(piece) == Scientific) {
+        put_scientific(writer, piece);
+    } else if constexpr (typeof(piece) == Padded) {
+        put_padded(writer, piece);
+    } else {
+        static_assert(false, "format: no rule for the type of a piece; see the instance in the note");
+    }
+}
+
+// The piece as text, to be put in a column of width characters (on the right, or on the left when left is true).
+export Padded make_padded(auto piece, u32 width, bool left) {
+    Padded padded = {};
+    padded.width = width;
+    padded.left = left;
+    if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
+        padded.begin = piece != nullptr ? piece : "(null)";
+        padded.length = __builtin_strlen(padded.begin);
+    } else if constexpr (typeof(piece) == text::Text) {
+        padded.begin = piece.begin;
+        padded.length = piece.length;
+    } else {
+        Writer writer = make(padded.characters, padded_capacity);
+        put(&writer, piece);
+        padded.length = writer.length < padded_capacity - 1 ? writer.length : padded_capacity - 1;
+    }
+    return padded;
+}
+
+// The piece in a column of width characters, spaces on its left: pad(n, 5) is printf's %5d, pad(name, 12) is %12s, and
+// pad(format::fixed(x, 1), 6) is %6.1f. A piece wider than the column is written whole. The piece is any of the types
+// `to` has a rule for except a Padded; a string or Text is read when the Padded is written, not when it is made.
+export [[nodiscard]] Padded pad(auto piece, u32 width) {
+    return make_padded(piece, width, false);
+}
+
+// The piece in a column of width characters, spaces after it: left(name, 16) is printf's %-16s.
+export [[nodiscard]] Padded left(auto piece, u32 width) {
+    return make_padded(piece, width, true);
+}
+
 // The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
-// be null) and only measures. See the rules at the top of this file.
+// be null) and only measures. See the rules at the top of this file. A piece with no rule is an error that says which
+// one it is (piece 3 is the third piece after buffer and capacity, counting from 1).
 export Written to(char *buffer, usize capacity, auto... args) {
     Writer writer = {buffer, capacity, 0};
     for constexpr (usize i = 0; i < countof(args); i++) {
-        if constexpr (is_bool(typeof(args[i]))) {
-            put_string(&writer, args[i] ? "true" : "false");
-        } else if constexpr (typeof(args[i]) == char) {
-            put_char(&writer, args[i]);
-        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
-            put_i64(&writer, (i64)args[i]);
-        } else if constexpr (is_integer(typeof(args[i]))) {
-            put_u64(&writer, (u64)args[i]);
-        } else if constexpr (typeof(args[i]) == f32) {
-            put_f32(&writer, args[i]);
-        } else if constexpr (is_float(typeof(args[i]))) {
-            put_f64(&writer, (f64)args[i]);
-        } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char *) {
-            put_string(&writer, args[i]);
-        } else if constexpr (typeof(args[i]) == text::Text) {
-            put_bytes(&writer, args[i].begin, args[i].length);
-        } else if constexpr (typeof(args[i]) == Hex) {
-            put_hex(&writer, args[i]);
-        } else if constexpr (typeof(args[i]) == Fixed) {
-            put_fixed(&writer, args[i]);
+        if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
+            put(&writer, args[i]);
+        } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char * ||
+                             typeof(args[i]) == text::Text) {
+            put(&writer, args[i]);
+        } else if constexpr (typeof(args[i]) == Hex || typeof(args[i]) == Fixed || typeof(args[i]) == General) {
+            put(&writer, args[i]);
+        } else if constexpr (typeof(args[i]) == Scientific || typeof(args[i]) == Padded) {
+            put(&writer, args[i]);
         } else {
-            static_assert(false, "format: no rule for the type of an argument; see the instance in the note");
+            if constexpr (i == 0) {
+                static_assert(
+                    false, "format: no rule for the type of piece 1; the note lists the types of the pieces in order");
+            } else if constexpr (i == 1) {
+                static_assert(
+                    false, "format: no rule for the type of piece 2; the note lists the types of the pieces in order");
+            } else if constexpr (i == 2) {
+                static_assert(
+                    false, "format: no rule for the type of piece 3; the note lists the types of the pieces in order");
+            } else if constexpr (i == 3) {
+                static_assert(
+                    false, "format: no rule for the type of piece 4; the note lists the types of the pieces in order");
+            } else if constexpr (i == 4) {
+                static_assert(
+                    false, "format: no rule for the type of piece 5; the note lists the types of the pieces in order");
+            } else if constexpr (i == 5) {
+                static_assert(
+                    false, "format: no rule for the type of piece 6; the note lists the types of the pieces in order");
+            } else if constexpr (i == 6) {
+                static_assert(
+                    false, "format: no rule for the type of piece 7; the note lists the types of the pieces in order");
+            } else if constexpr (i == 7) {
+                static_assert(
+                    false, "format: no rule for the type of piece 8; the note lists the types of the pieces in order");
+            } else if constexpr (i == 8) {
+                static_assert(
+                    false, "format: no rule for the type of piece 9; the note lists the types of the pieces in order");
+            } else if constexpr (i == 9) {
+                static_assert(
+                    false, "format: no rule for the type of piece 10; the note lists the types of the pieces in order");
+            } else if constexpr (i == 10) {
+                static_assert(
+                    false, "format: no rule for the type of piece 11; the note lists the types of the pieces in order");
+            } else if constexpr (i == 11) {
+                static_assert(
+                    false, "format: no rule for the type of piece 12; the note lists the types of the pieces in order");
+            } else if constexpr (i == 12) {
+                static_assert(
+                    false, "format: no rule for the type of piece 13; the note lists the types of the pieces in order");
+            } else if constexpr (i == 13) {
+                static_assert(
+                    false, "format: no rule for the type of piece 14; the note lists the types of the pieces in order");
+            } else if constexpr (i == 14) {
+                static_assert(
+                    false, "format: no rule for the type of piece 15; the note lists the types of the pieces in order");
+            } else if constexpr (i == 15) {
+                static_assert(
+                    false, "format: no rule for the type of piece 16; the note lists the types of the pieces in order");
+            } else if constexpr (i == 16) {
+                static_assert(
+                    false, "format: no rule for the type of piece 17; the note lists the types of the pieces in order");
+            } else if constexpr (i == 17) {
+                static_assert(
+                    false, "format: no rule for the type of piece 18; the note lists the types of the pieces in order");
+            } else if constexpr (i == 18) {
+                static_assert(
+                    false, "format: no rule for the type of piece 19; the note lists the types of the pieces in order");
+            } else if constexpr (i == 19) {
+                static_assert(
+                    false, "format: no rule for the type of piece 20; the note lists the types of the pieces in order");
+            } else if constexpr (i == 20) {
+                static_assert(
+                    false, "format: no rule for the type of piece 21; the note lists the types of the pieces in order");
+            } else if constexpr (i == 21) {
+                static_assert(
+                    false, "format: no rule for the type of piece 22; the note lists the types of the pieces in order");
+            } else if constexpr (i == 22) {
+                static_assert(
+                    false, "format: no rule for the type of piece 23; the note lists the types of the pieces in order");
+            } else if constexpr (i == 23) {
+                static_assert(
+                    false, "format: no rule for the type of piece 24; the note lists the types of the pieces in order");
+            } else if constexpr (i == 24) {
+                static_assert(
+                    false, "format: no rule for the type of piece 25; the note lists the types of the pieces in order");
+            } else if constexpr (i == 25) {
+                static_assert(
+                    false, "format: no rule for the type of piece 26; the note lists the types of the pieces in order");
+            } else if constexpr (i == 26) {
+                static_assert(
+                    false, "format: no rule for the type of piece 27; the note lists the types of the pieces in order");
+            } else if constexpr (i == 27) {
+                static_assert(
+                    false, "format: no rule for the type of piece 28; the note lists the types of the pieces in order");
+            } else if constexpr (i == 28) {
+                static_assert(
+                    false, "format: no rule for the type of piece 29; the note lists the types of the pieces in order");
+            } else if constexpr (i == 29) {
+                static_assert(
+                    false, "format: no rule for the type of piece 30; the note lists the types of the pieces in order");
+            } else {
+                static_assert(false, "format: no rule for the type of a piece past the 30th");
+            }
         }
     }
     return finish(&writer);
@@ -302,4 +677,28 @@ export text::Text push(arena::Arena *arena, auto... args) {
     char *memory = arena::push_array(arena, char, characters + 1);
     Written written = to(memory, characters + 1, args...);
     return (text::Text){memory, written.length};
+}
+
+constexpr i32 emsgsize = 40; // EMSGSIZE on macOS, which smith runs on
+
+// The text print made, written to stdout or stderr; too long to have fitted is EMSGSIZE and prints nothing.
+[[smith::c_name("smith_format_print_text")]] export io::Error print_text(io::Console *console, bool errors,
+                                                                         const char *characters, Written written) {
+    if (!written.fits) return io::error_make(emsgsize, "print", errors ? "stderr" : "stdout");
+    return errors ? io::console_print_error(console, characters) : io::console_print(console, characters);
+}
+
+// The arguments printed on stdout: print(&io->console, "x = ", x, "\n") is io::console_printf(&io->console, "x = %d\n",
+// x) with the pieces typed. The text is at most 4096 characters, as console_printf's; a longer one prints nothing and
+// is an error (EMSGSIZE). The error is not [[nodiscard]]: a program that prints a report has nowhere else to say that
+// stdout is closed.
+export io::Error print(io::Console *console, auto... args) {
+    char characters[4096];
+    return print_text(console, false, characters, to(characters, sizeof characters, args...));
+}
+
+// As print, on stderr.
+export io::Error print_error(io::Console *console, auto... args) {
+    char characters[4096];
+    return print_text(console, true, characters, to(characters, sizeof characters, args...));
 }
