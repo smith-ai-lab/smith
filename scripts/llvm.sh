@@ -6,10 +6,10 @@
 set -eu
 src=$1 cmake=$2 python=$3 stamp=$4 ninja=$5
 # One configuration serves the compiler, the prover and `.smith` (#20): RTTI and exceptions on (Alive2 needs them), and the
-# token hook (#11). A change to either, or to a patch, is a new folder: r4 is the fourth configuration of 23.1.3 (r3 added
-# the editor's defaults, the `.smith` source extension of clang-format's main include, and the command hook; r4 lets the editor run smith-effects). SMITH_LLVM_NAME builds
+# token hook (#11). A change to either, or to a patch, is a new folder: r5 is the fifth configuration of 23.1.3 (r3 added
+# the editor's defaults, the `.smith` source extension of clang-format's main include, and the command hook; r4 lets the editor run smith-effects; r5 adds the constant evaluator for C function bodies in `.smith` files and clang-format's tuple and slice forms). SMITH_LLVM_NAME builds
 # into another folder (an experiment next to the shared install).
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r4}
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r5}
 mkdir -p "$cache" "$(dirname "$stamp")"
 # --- step: the patches (patches/*.patch): the token hook (issue #11) and clang-format for .smith (issue #25) -------------
 # patches/clang-token-hook.patch is a token transformer on the Preprocessor, for .smith files; off unless smith installs

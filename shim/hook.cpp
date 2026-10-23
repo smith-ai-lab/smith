@@ -2554,6 +2554,8 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
         Presenter::presentToolEngine(nullptr); // what the last .smith file taught the tool's consumer is not this one's
         return nullptr;
     }
+    // A .smith file runs C function bodies in clang's constant evaluator where C requires a constant (patches/clang-constexpr-c.patch).
+    const_cast<LangOptions &>(pp.getLangOpts()).SmithConstexprC = true;
     return std::make_unique<SmithHook>(pp);
 }
 
