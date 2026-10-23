@@ -527,7 +527,8 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   `sizeof(typeof(x))` work as they do for `T`. `typeof` of anything else is C's.
 - **Conversions.** A later argument whose parameter is `typeof(a) b` converts to a's type by C's rules, with one
   addition: a conversion that changes the value is an error at the call, whatever warnings the project has on. A
-  literal and an expression of literals and the file's `constexpr` integers (`1 << 4`, `button_a | button_b`) are
+  literal and an expression of literals, `constexpr` integers (the file's or a C header's, an unsigned one as the
+  unsigned number it is) and enumerators (`1 << 4`, `button_a | button_b`, `c::Style_Count - 1`) are
   judged by their value (`check_equal(my_u8, 300)`, `check_near(my_f32, 0.1)`, `-1` for an unsigned type, `16777217`
   for an `f32` are errors; `0.5` and `0.1f` are fine); any other argument is judged by its type, which must have a
   range inside the target's (`u8` to `u32`, `i32` to `f64` and `u16` to `f32` are fine; `u32` to `u8`, `i32` to `u32`,
