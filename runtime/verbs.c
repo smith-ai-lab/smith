@@ -602,8 +602,8 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
             continue;
         }
         const char *value = arg + 2;
-        bool next = arg[2] == '\0' && i + 1 < split->own_count && split->own[i + 1][0] >= '0' &&
-                    split->own[i + 1][0] <= '9';
+        bool next =
+            arg[2] == '\0' && i + 1 < split->own_count && split->own[i + 1][0] >= '0' && split->own[i + 1][0] <= '9';
         if (next) value = split->own[++i];
         snprintf(keep_going, sizeof keep_going, "-k%s", value[0] != '\0' ? value : "0");
         if (split->option_count < smith_build_args_max) split->options[split->option_count++] = keep_going;

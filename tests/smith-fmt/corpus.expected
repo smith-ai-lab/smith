@@ -2362,6 +2362,24 @@ int main(void) {
     fmt::print(small, negative, 1.5f, (u64)18446744073709551615ULL);
     return 0;
 }
+==> generic-sized-result-sizeof/src/main.smith <==
+import size;
+#include <stdio.h>
+
+int main(void) {
+    u8 buffer[6];
+    u32 n = (u32)sizeof(buffer);
+    printf("%u %u\n", n, size::bytes_of((u16)1, (u16)2));
+    return 0;
+}
+==> generic-sized-result-sizeof/src/size.smith <==
+module size;
+
+// A sized result type before a generic whose parameter is `typeof(x)`, and a cast to a sized type before `sizeof`.
+export u32 bytes_of(auto x, typeof(x) y) {
+    (void)y;
+    return (u32)sizeof(x) + (u32)sizeof y;
+}
 ==> generic-static-assert/src/main.smith <==
 import sa;
 int main(void) {
