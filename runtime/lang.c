@@ -803,6 +803,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // Tuples: `struct { i32, f32 }`, `t[0]`, `countof(t)`.
 #include "lang_tuple.c"
 
+// Types as values: `constexpr type t = i32;`, a type handle, and what is asked of one.
+#include "lang_type.c"
+
 // Bodies, the start and end of the file, and the entry points.
 #include "lang_stream.c"
 

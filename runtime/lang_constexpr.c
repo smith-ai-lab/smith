@@ -15,6 +15,8 @@ constexpr size_t smith_lang_cx_stack_max = 32;
 constexpr size_t smith_lang_cx_types_max = 8;
 constexpr size_t smith_lang_cx_name_max = 256;
 
+static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                                 uint64_t *handle);
 static void smith_lang_word_state(SmithLang *lang, const SmithToken *token, SmithLangWord word);
 static void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
                                 uint32_t location);
@@ -625,6 +627,43 @@ static bool smith_lang_cx_step(SmithLangCx *cx, uint32_t *at, uint32_t last, boo
     return true;
 }
 
+// The handle of the type the parameter at `at` stands for in this instance.
+static bool smith_lang_cx_type_handle(const SmithLangCx *cx, uint32_t at, uint64_t *handle) {
+    char spelling[smith_lang_cx_name_max];
+    if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, spelling, sizeof spelling)) {
+        return false;
+    }
+    for (char *c = spelling; *c != 0; c++) { // the tokens are separated by \x1f
+        if (*c == '\x1f') *c = ' ';
+    }
+    return smith_lang_ty_handle(cx->lang, cx->host, spelling, cx->location, handle);
+}
+
+// Whether the type parameter at `at` is a whole argument of a call to an ordinary function (`small(T)`), where it is a
+// value: the type's handle (runtime/lang_type.c). In `sizeof(T)` and a cast it is a type.
+static bool smith_lang_cx_type_argument(uint32_t first, uint32_t last, uint32_t at) {
+    if (at <= first || at + 1 >= last) return false;
+    const SmithLangGenToken *before = smith_lang_cx_token(at - 1);
+    const SmithLangGenToken *after = smith_lang_cx_token(at + 1);
+    if (!(smith_lang_gt_punct(before, "(") || smith_lang_gt_punct(before, ",")) ||
+        !(smith_lang_gt_punct(after, ")") || smith_lang_gt_punct(after, ","))) {
+        return false;
+    }
+    int depth = 0;
+    for (uint32_t back = at; back > first; back--) { // to the parenthesis the argument is in
+        const SmithLangGenToken *token = smith_lang_cx_token(back - 1);
+        depth += smith_lang_gt_close(token) ? 1 : 0;
+        depth -= smith_lang_gt_open(token) ? 1 : 0;
+        if (depth >= 0) continue;
+        const SmithLangGenToken *callee = back - 1 > first ? smith_lang_cx_token(back - 2) : nullptr;
+        return smith_lang_gt_punct(token, "(") && callee != nullptr && callee->kind == SmithTokenKind_Identifier &&
+               !smith_lang_cx_word(callee, "sizeof") && !smith_lang_cx_word(callee, "alignof") &&
+               !smith_lang_cx_word(callee, "_Alignof") && !smith_lang_cx_word(callee, "typeof") &&
+               !smith_lang_cx_word(callee, "__typeof__");
+    }
+    return false;
+}
+
 // The tokens [first, last) as the compiler is asked about them (separated by \x1f): the type arguments of the instance
 // for its T and the number of a `for constexpr` variable for its name.
 static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
@@ -634,6 +673,10 @@ static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t l
         int64_t number = 0;
         if (cx->replay != nullptr && smith_lang_var_value(cx->replay, at, &number)) {
             snprintf(piece, sizeof piece, "%lld", (long long)number);
+        } else if (smith_lang_cx_token(at)->param != 0 && smith_lang_cx_type_argument(first, last, at)) {
+            uint64_t handle = 0;
+            if (!smith_lang_cx_type_handle(cx, at, &handle)) return false;
+            snprintf(piece, sizeof piece, "%lluULL", (unsigned long long)handle);
         } else if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, piece,
                                           sizeof piece)) {
             return false;

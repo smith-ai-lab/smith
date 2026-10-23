@@ -523,9 +523,10 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
         lang->body_sparse = true;
-        host->watch_mode(host->context, host->maybe_if_constexpr || smith_lang_tuples_on(lang, host)
-                                            ? SmithWatch_All
-                                            : SmithWatch_Braces);
+        host->watch_mode(host->context,
+                         host->maybe_if_constexpr || host->maybe_type_value || smith_lang_tuples_on(lang, host)
+                             ? SmithWatch_All
+                             : SmithWatch_Braces);
     }
     smith_lang_push_brace(lang, host, SmithLangBrace_Function, location);
     lang->in_function = true;

@@ -570,6 +570,7 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_tuple = hasTuple(SM.getBufferData(MainFile));
+        host.maybe_type_value = hasTypeValue(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
@@ -833,6 +834,8 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         auto sized = sizedNames.find(info);
         if (sized == sizedNames.end()) return Fast::No;
+        if (host.maybe_type_value)
+            return Fast::No; // a sized name may be a type value: the lowering reads its neighbours
         if (before == tok::period || before == tok::arrow || before == tok::kw_struct || before == tok::kw_union ||
             before == tok::kw_enum) {
             return Fast::Kept;
@@ -2137,6 +2140,43 @@ class SmithHook final : public TokenHook, public NameSource {
             bool is_for = before >= 3 && text.substr(before - 3, 3) == "for" &&
                           (before == 3 || !isAsciiIdentifierContinue(text[before - 4]));
             if (is_if || is_for) return true;
+        }
+        return false;
+    }
+
+    // Whether the code (not its comments or strings) has `type` before a name or a `*`, other than in a generic's
+    // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
+    static bool hasTypeValue(StringRef text) {
+        int paren = 0;
+        StringRef previous;
+        for (size_t at = 0; at < text.size();) {
+            char c = text[at];
+            if (c == '/' && at + 1 < text.size() && (text[at + 1] == '/' || text[at + 1] == '*')) {
+                bool line = text[at + 1] == '/';
+                size_t end = text.find(line ? "\n" : "*/", at + 2);
+                at = end == StringRef::npos ? text.size() : end + (line ? 1 : 2);
+            } else if (c == '"' || c == '\'') {
+                size_t end = at + 1;
+                while (end < text.size() && text[end] != c && text[end] != '\n')
+                    end += text[end] == '\\' ? 2 : 1;
+                at = end + 1;
+            } else if (isAsciiIdentifierStart(c)) {
+                size_t end = at + 1;
+                while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                    end += 1;
+                StringRef word = text.substr(at, end - at);
+                size_t next = end;
+                while (next < text.size() && isWhitespace(text[next]))
+                    next += 1;
+                bool named = next < text.size() && (isAsciiIdentifierStart(text[next]) || text[next] == '*');
+                if (word == "type" && named && !(paren > 0 && previous == "constexpr")) return true;
+                previous = word;
+                at = end;
+            } else {
+                paren += c == '(';
+                paren -= c == ')' && paren > 0;
+                at += 1;
+            }
         }
         return false;
     }

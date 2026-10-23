@@ -268,6 +268,9 @@ typedef struct {
     // then offers every token, because `struct` is a keyword and a tuple's uses (`t[0]`, `countof(t)`) are found among
     // them.
     bool maybe_tuple;
+    // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
+    // token, because a type value is found by the tokens around a type name.
+    bool maybe_type_value;
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).

@@ -312,6 +312,29 @@ static bool smith_lang_pack_parameter_at(SmithLang *lang, const SmithHost *host,
     return smith_lang_punct(end, ",") || smith_lang_punct(end, ")");
 }
 
+// Whether the bare `type T` at `index` (a parameter that is no `constexpr type T`) names a type of the head: the result
+// type (the identifiers `before` it, outside the parameters) or a later parameter's type is `T`. Then it was meant as a
+// type parameter, and the error says what to write; else it is a type value (runtime/lang_type.c), a parameter of an
+// ordinary function.
+static bool smith_lang_bare_type_used(SmithLang *lang, const SmithHost *host, const SmithToken *const *result,
+                                      size_t result_count, size_t index) {
+    const SmithToken *name = smith_lang_peek(lang, host, index + 1, false);
+    for (size_t i = 0; i < result_count; i++) { // the result type
+        if (result[i]->length == name->length && memcmp(result[i]->text, name->text, name->length) == 0) return true;
+    }
+    int depth = 1;
+    for (size_t at = index + 2; depth > 0 && at < index + smith_lang_generic_scan_max; at++) { // bounded by the head
+        const SmithToken *token = smith_lang_peek(lang, host, at, false);
+        if (token->kind == SmithTokenKind_Eof) break;
+        depth += smith_lang_punct(token, "(") ? 1 : smith_lang_punct(token, ")") ? -1 : 0;
+        if (token->kind == SmithTokenKind_Identifier && token->length == name->length &&
+            memcmp(token->text, name->text, name->length) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
 static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
@@ -319,8 +342,13 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
     int depth = 0;
     bool in_params = false;
     const SmithToken *before = first;
+    const SmithToken *result[8] = {first}; // the identifiers before the parameters: the result type, the name
+    size_t result_count = 1;
     for (size_t index = 0; index < smith_lang_generic_scan_max; index++) { // bounded: a head is short
         const SmithToken *token = smith_lang_peek(lang, host, index, false);
+        if (!in_params && depth == 0 && token->kind == SmithTokenKind_Identifier && result_count < 8) {
+            result[result_count++] = token;
+        }
         if (token->kind == SmithTokenKind_Eof) return false;
         if (token->kind == SmithTokenKind_Punctuator && token->length == 1) {
             char c = token->text[0];
@@ -334,10 +362,12 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
                 return false;
             }
         }
-        bool comes_after_separator =
-            smith_lang_punct(before, "(") || smith_lang_punct(before, ",") || smith_lang_ident(before, "constexpr");
-        if (in_params && depth == 1 && smith_lang_ident(token, "type") && comes_after_separator &&
-            smith_lang_type_parameter_at(lang, host, index)) {
+        // A bare `type t` is a type value (runtime/lang_type.c), a parameter of an ordinary function.
+        bool bare = (smith_lang_punct(before, "(") || smith_lang_punct(before, ",")) &&
+                    smith_lang_ident(token, "type") &&
+                    smith_lang_bare_type_used(lang, host, result, result_count, index);
+        if (in_params && depth == 1 && smith_lang_ident(token, "type") &&
+            (smith_lang_ident(before, "constexpr") || bare) && smith_lang_type_parameter_at(lang, host, index)) {
             return host->lookup(host->context, "type", 4, SmithLookup_Type).kind == SmithLookup_None;
         }
         bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
