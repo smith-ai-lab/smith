@@ -243,6 +243,87 @@ static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*arg
     return failed;
 }
 
+// ---- Quiet runs (issue #78)
+
+// What a part of the check cost: its wall time and the CPU time of this process and of the children it waited for.
+typedef struct {
+    uint64_t wall_ms;
+    uint64_t cpu_ms;
+} SmithCheckClock;
+
+static SmithCheckClock smith_check_clock(void) {
+    struct rusage own = {};
+    struct rusage children = {};
+    getrusage(RUSAGE_SELF, &own);
+    getrusage(RUSAGE_CHILDREN, &children);
+    return (SmithCheckClock){.wall_ms = smith_account_now_ms(),
+                             .cpu_ms = smith_account_ms(own.ru_utime) + smith_account_ms(own.ru_stime) +
+                                       smith_account_ms(children.ru_utime) + smith_account_ms(children.ru_stime)};
+}
+
+// Whether the run prints everything as it happens: `-v` (and `--verbose` for the tests), or SMITH_OUTPUT=full.
+static bool smith_quiet_loud(int count, char **args, bool runner_verbose) {
+    if (smith_quiet_full()) return true;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(args[i], "-v") == 0 || (runner_verbose && strcmp(args[i], "--verbose") == 0)) return true;
+    }
+    return false;
+}
+
+// Runs `smith <verb> <args>` as a child that prints everything (SMITH_OUTPUT=full) into the log of the verb; returns
+// its exit status. The log is `.smith/log/<verb>.log`, written whole by every run.
+static int smith_quiet_child(const char *self, const char *verb, int count, char *const *args, const char *log_path) {
+    static char *argv[smith_build_args_max + 4];
+    if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
+    size_t used = 0;
+    argv[used++] = (char *)self;
+    argv[used++] = (char *)verb;
+    for (int i = 0; i < count; i++)
+        argv[used++] = args[i];
+    argv[used] = nullptr;
+    FILE *log = fopen(log_path, "w");
+    if (log == nullptr) smith_die(smith_exit_missing, "cannot write the log", log_path);
+    setenv("SMITH_OUTPUT", "full", 1);
+    int status = smith_verbs_wait(smith_verbs_start(argv, log));
+    fclose(log);
+    return status;
+}
+
+// What a stage that failed shows: the bounded excerpt of its log and where the rest is.
+static void smith_quiet_failure(const char *label, const char *log_path, const char *text, size_t size) {
+    static char excerpt[smith_quiet_excerpt_max];
+    size_t hidden = 0;
+    size_t length = smith_quiet_excerpt(excerpt, text, size, &hidden);
+    fwrite(excerpt, 1, length, stderr);
+    fprintf(stderr, "%s: %zu more lines; the full output is in %s\n", label, hidden, log_path);
+}
+
+// The smith verb `verb` for a person or an agent: unless it is loud, runs as a child whose output goes to its log and
+// ends with one line (a failure also shows the excerpt and the log's path). Returns -1 when the caller runs it as it
+// is, the child's status otherwise.
+static int smith_quiet_verb(const char *verb, int count, char **args, const char *self, bool runner_verbose) {
+    if (smith_quiet_loud(count, args, runner_verbose)) return -1;
+    char log[PATH_MAX];
+    smith_quiet_log_path(log, sizeof log, verb);
+    SmithCheckClock since = smith_check_clock();
+    int status = smith_quiet_child(self, verb, count, args, log);
+    SmithCheckClock now = smith_check_clock();
+    double wall = (double)(now.wall_ms - since.wall_ms) / 1000.0;
+    size_t size = 0;
+    const char *text = smith_quiet_read(log, &size);
+    char label[32];
+    snprintf(label, sizeof label, "smith %s", verb);
+    if (status == 0) {
+        char detail[128];
+        smith_quiet_detail(verb, text, size, detail, sizeof detail);
+        fprintf(stderr, "%s: ok (%s%s%.1f s)\n", label, detail, detail[0] != '\0' ? ", " : "", wall);
+        return 0;
+    }
+    fprintf(stderr, "%s: FAILED (status %d, %.1f s)\n", label, status, wall);
+    smith_quiet_failure(label, log, text, size);
+    return status;
+}
+
 // ---- fmt
 
 static bool smith_fmt_wanted(const char *name) {
@@ -350,6 +431,8 @@ static size_t smith_verbs_jobs(void) {
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook; the others (the
 // stage0) leave them out and say so once, as `smith cc` refuses them.
 static int smith_lint_project(int count, char **args, const char *self) {
+    int quiet = smith_quiet_verb("lint", count, args, self, false);
+    if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *const targets[] = {"smith_needs", nullptr};
     int status = smith_verb_build(self, split, targets, false);
@@ -556,6 +639,8 @@ static int smith_prove_unit(const char *self, const SmithInfo *info, char *sourc
 // runner), each compiled with the flags the build gives it, less what only instruments or caches (sanitizers and
 // modules). Sources with the same flags are proved together; programs with the same sources once.
 static int smith_prove_project(int count, char **args, const char *self) {
+    int quiet = smith_quiet_verb("prove", count, args, self, false);
+    if (quiet >= 0) return quiet;
     if (!smith_has_prover()) {
         smith_die(smith_exit_usage, "this smith is the stage0, which has no prover; the full smith has it",
                   "smith build llvm, then smith build");
@@ -613,7 +698,12 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
 
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
+    int quiet = smith_quiet_verb("test", count, args, self, true);
+    if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
+    for (size_t i = 0; i < split->own_count; i++) { // -v is the runner's --verbose
+        if (strcmp(split->own[i], "-v") == 0) split->own[i] = (char *)"--verbose";
+    }
     smith_verb_take_keep_going(split);
     const char *const targets[] = {"smith_tests", nullptr};
     // Each task's wall and CPU time and smith starts (runtime/account.c), unless SMITH_ACCOUNT=no; =all lists every
@@ -673,36 +763,34 @@ static int smith_run_project(int count, char **args, const char *self) {
 
 // ---- check
 
-// What a part of the check cost: its wall time and the CPU time of this process and of the children it waited for.
-typedef struct {
-    uint64_t wall_ms;
-    uint64_t cpu_ms;
-} SmithCheckClock;
-
-static SmithCheckClock smith_check_clock(void) {
-    struct rusage own = {};
-    struct rusage children = {};
-    getrusage(RUSAGE_SELF, &own);
-    getrusage(RUSAGE_CHILDREN, &children);
-    return (SmithCheckClock){.wall_ms = smith_account_now_ms(),
-                             .cpu_ms = smith_account_ms(own.ru_utime) + smith_account_ms(own.ru_stime) +
-                                       smith_account_ms(children.ru_utime) + smith_account_ms(children.ru_stime)};
-}
-
+// Reports a part: its line, and for a part whose output went to a log, the detail on success and the excerpt on
+// failure.
 static void smith_check_part(const char *name, int status, SmithCheckClock since, const char **failed,
-                             size_t *failed_count) {
+                             size_t *failed_count, const char *log) {
     SmithCheckClock now = smith_check_clock();
     double wall = (double)(now.wall_ms - since.wall_ms) / 1000.0;
     double cpu = (double)(now.cpu_ms - since.cpu_ms) / 1000.0;
+    size_t size = 0;
+    const char *text = log != nullptr ? smith_quiet_read(log, &size) : "";
     if (status == 0) {
-        fprintf(stderr, "smith check: %s ok (%.1f s wall, %.1f s cpu)\n", name, wall, cpu);
+        char detail[128];
+        smith_quiet_detail(name, text, size, detail, sizeof detail);
+        fprintf(stderr, "smith check: %s ok%s%s (%.1f s wall, %.1f s cpu)\n", name, detail[0] != '\0' ? ": " : "",
+                detail, wall, cpu);
         return;
     }
     fprintf(stderr, "smith check: %s FAILED (status %d) (%.1f s wall, %.1f s cpu)\n", name, status, wall, cpu);
+    if (log != nullptr) smith_quiet_failure("smith check", log, text, size);
     failed[(*failed_count)++] = name;
 }
 
-static int smith_check_child(const char *self, const char *verb, const SmithVerbArgs *split) {
+// Runs `smith <verb>` with the options of the check: its output goes to `.smith/log/<verb>.log` unless the check is
+// loud, when it is the check's own.
+static int smith_check_child(const char *self, const char *verb, const SmithVerbArgs *split, bool loud, char *log) {
+    if (!loud) {
+        smith_quiet_log_path(log, PATH_MAX, verb);
+        return smith_quiet_child(self, verb, (int)split->option_count, split->options, log);
+    }
     static char *argv[smith_build_args_max + 3];
     size_t used = 0;
     argv[used++] = (char *)self;
@@ -713,6 +801,15 @@ static int smith_check_child(const char *self, const char *verb, const SmithVerb
     return smith_verbs_wait(smith_verbs_start(argv, nullptr));
 }
 
+// One part of the check that runs as a child, timed and reported.
+static void smith_check_run(const char *self, const char *verb, const SmithVerbArgs *split, bool loud,
+                            const char **failed, size_t *failed_count) {
+    char log[PATH_MAX];
+    SmithCheckClock since = smith_check_clock();
+    int status = smith_check_child(self, verb, split, loud, log);
+    smith_check_part(verb, status, since, failed, failed_count, loud ? nullptr : log);
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
 static int smith_check_project(int count, char **args, const char *self) {
@@ -721,24 +818,22 @@ static int smith_check_project(int count, char **args, const char *self) {
     if (split->own_count > (every_task ? 1U : 0U))
         smith_die(smith_exit_usage, "takes no arguments but -D options and -v", "check");
     if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
+    bool loud = every_task || smith_quiet_full();      // otherwise each part's output goes to its log
     SmithCheckClock since = {};
     const char *failed[8];
     size_t failed_count = 0;
     since = smith_check_clock();
-    smith_check_part("fmt", smith_fmt_project(self, true), since, failed, &failed_count);
+    smith_check_part("fmt", smith_fmt_project(self, true), since, failed, &failed_count, nullptr);
     since = smith_check_clock();
-    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count);
+    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count, nullptr);
     if (access("build.c", R_OK) != 0 && access("build.smith", R_OK) != 0 && access("main.smith", R_OK) != 0 &&
         access("main.c", R_OK) != 0) {
         fprintf(stderr, "smith check: no build file and no main, so lint, test and prove are skipped\n");
     } else {
-        since = smith_check_clock();
-        smith_check_part("lint", smith_check_child(self, "lint", split), since, failed, &failed_count);
-        since = smith_check_clock();
-        smith_check_part("test", smith_check_child(self, "test", split), since, failed, &failed_count);
+        smith_check_run(self, "lint", split, loud, failed, &failed_count);
+        smith_check_run(self, "test", split, loud, failed, &failed_count);
         if (smith_has_prover()) {
-            since = smith_check_clock();
-            smith_check_part("prove", smith_check_child(self, "prove", split), since, failed, &failed_count);
+            smith_check_run(self, "prove", split, loud, failed, &failed_count);
         } else {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
         }

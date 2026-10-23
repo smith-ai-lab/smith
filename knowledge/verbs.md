@@ -108,9 +108,27 @@ How each verb uses it:
   exactly one program (the others in it, such as links, are built but not run); otherwise `smith run` says how many it
   names and lists them.
 - **check** runs fmt, docs, lint, test and prove in that order, cheapest first, and does not stop at a failure: each part
-  prints `smith check: <part> ok (<n> s wall, <n> s cpu)` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or
+  prints `smith check: <part> ok: <detail> (<n> s wall, <n> s cpu)` or `FAILED (status N)` and the excerpt of its log (Quiet output, below), and the last line is `smith check: ok` or
   `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
   without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c, main.smith or main.c.
+
+**Quiet output** (issue #78): agents pay for every byte a tool prints, and again on every later turn, so `smith check`,
+`smith test`, `smith lint` and a project's `smith prove` print one line per stage and write the rest to a log:
+`smith test: ok (48 tasks, 1530 passed, 83.8 s)`, and in `smith check` `smith check: test ok: 48 tasks, 1530 passed
+(83.8 s wall, 619.1 s cpu)`. A passing `smith check` of smith prints about 8 lines (191,753 bytes before, under 500 now).
+The stage runs as a child with SMITH_OUTPUT=full, its output (build progress, per-test lines, the prover's
+`trusted` lines) in **`.smith/log/<verb>.log`** (`test.log`, `prove.log`, `lint.log`; every run writes it whole, and
+`.smith/` is smith's own folder that git ignores). A failure prints its line, a bounded excerpt of the log (at most 30
+lines of 200 columns, from the first line that reports a failure: `FAILED`, `FAIL `, `error:`, `not ok`; for a step
+that failed, its executor header and command, then what the step reported) and `N more lines; the full output is in
+<log>`. `-v` prints as before (for `smith test`, it is the runner's `--verbose`; `smith prove -v` is the prover's cost
+report; `smith check -v` streams every part and lists every task). SMITH_OUTPUT=full is also the way nested runs
+stay whole: the quiet run exports it, so a test of smith that runs `smith test` or `smith build` reads what it always
+read, and a script of `tests/*.sh` prints its `ok` lines into the log. **`smith build`** (and any build) bounds a failed
+step the same way, unless `-v` or SMITH_OUTPUT=full: the excerpt, and the step's whole output in
+`.smith/log/<its first output, with / as _>.log`. The code is `runtime/quiet.c` (the excerpt, the log path, the detail
+read from the log) and `runtime/verbs.c` (`smith_quiet_verb`, `smith_check_run`). `smith prove` with files (the
+prover itself) is not quiet.
 
 **The verbs are not targets of `smith build`.** `smith build run`, `test`, `check`, `fmt`, `lint`, `docs` and `prove` are
 refused with a pointer to the verb (`smith: test is a verb, not a target of smith build; run `smith test``). The

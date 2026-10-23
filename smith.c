@@ -17,6 +17,7 @@
 // runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
 // shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
 // need.
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -1021,6 +1022,8 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/cache.c"
 // What a run costs: the wall and CPU time of each task, and the smith processes it started.
 #include "runtime/account.c"
+// Quiet output: the logs, the excerpt of a failure and the line of a stage.
+#include "runtime/quiet.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.

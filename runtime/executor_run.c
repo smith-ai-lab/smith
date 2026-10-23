@@ -395,6 +395,30 @@ static void smith_run_report_failure(SmithExec *exec, const SmithJob *job, const
     if (job->message[0] != '\0') smith_run_text(exec, "smith: %s\n", job->message);
 }
 
+// What a failed job printed, bounded (issue #78): a long output shows its excerpt (smith_quiet_excerpt) and the rest is
+// in `.smith/log/<its first output>.log`. False when the output is short, or when this build is verbose, and so is
+// printed whole.
+static bool smith_run_bound_failure(SmithExec *exec, const SmithJob *job, const SmithEdge *edge) {
+    if (exec->options.verbose || smith_quiet_full() ||
+        smith_quiet_count_lines(job->output, job->output_size) <= smith_quiet_lines)
+        return false;
+    char path[PATH_MAX];
+    const char *name = edge->output_count > 0 ? exec->graph.nodes[smith_plan_output(exec, edge, 0)].path : "job";
+    smith_quiet_log_path(path, sizeof path, name);
+    FILE *log = fopen(path, "w");
+    if (log != nullptr) {
+        fwrite(job->output, 1, job->output_size, log);
+        fclose(log);
+    }
+    static char excerpt[smith_quiet_excerpt_max];
+    size_t hidden = 0;
+    size_t length = smith_quiet_excerpt(excerpt, job->output, job->output_size, &hidden);
+    smith_run_emit(exec, excerpt, length);
+    if (log != nullptr)
+        smith_run_text(exec, "smith: %zu more lines of this output; the full output is in %s\n", hidden, path);
+    return true;
+}
+
 static void smith_run_release(SmithExec *exec, SmithJob *job, const SmithEdge *edge) {
     if (edge->pool != 0 && exec->graph.pools[edge->pool - 1].running > 0)
         exec->graph.pools[edge->pool - 1].running -= 1;
@@ -423,7 +447,8 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
         exec->failures += 1;
         if (exec->failures_left > 0) exec->failures_left -= 1;
     }
-    if (job->output_size > 0) smith_run_emit(exec, job->output, job->output_size);
+    if (job->output_size > 0 && (success || !smith_run_bound_failure(exec, job, edge)))
+        smith_run_emit(exec, job->output, job->output_size);
     if (job->truncated)
         smith_run_text(exec, "\nsmith: the output of this job was longer than %zu MiB; its end is cut\n",
                        smith_exec_job_arena >> 20);
