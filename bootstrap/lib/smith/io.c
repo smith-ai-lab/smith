@@ -212,10 +212,10 @@ smith_io_NetApi net_api;
 bool net_loaded;
 dispatch_queue_t net_queue;
 };
-[[nodiscard]] SmithError smith_error_make(__INT32_TYPE__ code, const char *what,
-const char *path);
-[[nodiscard]] SmithError smith_error_make(__INT32_TYPE__ code, const char *what,
-const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_error_make(__INT32_TYPE__ code, const char *what, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_error_make(__INT32_TYPE__ code, const char *what, const char *path) {
 smith_assert(what != nullptr && path != nullptr);
 SmithError error = {.code = code};
 if (code == 0) return error;
@@ -1051,8 +1051,8 @@ op->done = true;
 }
 smith_assert(op->done);
 }
-__SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns);
-__SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns) {
+[[clang::annotate("smith::edge")]] __SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns);
+[[clang::annotate("smith::edge")]] __SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns) {
 smith_assert(io != nullptr);
 return smith_io_loop_run(io->loop, timeout_ns);
 }
@@ -1062,10 +1062,10 @@ smith_assert(op != nullptr && (op->done || op->internal.kind == SmithOpKind_None
 op->internal.kind = kind;
 op->internal.loop = loop;
 }
-void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena,
-const char *path);
-void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena,
-const char *path) {
+[[clang::annotate("smith::edge")]] void
+smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, const char *path);
+[[clang::annotate("smith::edge")]] void
+smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena, const char *path) {
 smith_assert(files != nullptr && arena != nullptr);
 smith_io_op_start(op, files->loop, SmithOpKind_FileRead);
 op->internal.arena = arena;
@@ -1073,10 +1073,10 @@ smith_assert(path != nullptr);
 op->internal.path = path;
 smith_io_loop_submit(files->loop, op);
 }
-void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path,
-const void *data, __SIZE_TYPE__ size, SmithWrite mode);
-void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path,
-const void *data, __SIZE_TYPE__ size, SmithWrite mode) {
+[[clang::annotate("smith::edge")]] void
+smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, __SIZE_TYPE__ size, SmithWrite mode);
+[[clang::annotate("smith::edge")]] void
+smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path, const void *data, __SIZE_TYPE__ size, SmithWrite mode) {
 smith_assert(files != nullptr && (data != nullptr || size == 0));
 smith_io_op_start(op, files->loop, SmithOpKind_FileWrite);
 smith_assert(path != nullptr);
@@ -1086,54 +1086,60 @@ op->internal.input = data;
 op->size = size;
 smith_io_loop_submit(files->loop, op);
 }
-[[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena,
-const char *path);
-[[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena,
-const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_files_read(SmithFiles *files, SmithArena *arena, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_files_read(SmithFiles *files, SmithArena *arena, const char *path) {
 SmithOp op = {};
 smith_files_read_async(files, &op, arena, path);
 if (!op.done) smith_io_loop_wait(files->loop, &op);
 return (SmithRead){.error = op.error, .data = op.data, .size = op.size};
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_files_write(SmithFiles *files, const char *path, const void *data, __SIZE_TYPE__ size, SmithWrite mode);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_files_write(SmithFiles *files, const char *path, const void *data, __SIZE_TYPE__ size, SmithWrite mode) {
 SmithOp op = {};
 smith_files_write_async(files, &op, path, data, size, mode);
 if (!op.done) smith_io_loop_wait(files->loop, &op);
 return op.error;
 }
-[[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
-[[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_files_remove(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_files_remove(SmithFiles *files, const char *path) {
 smith_assert(files != nullptr && path != nullptr);
 if (files->loop->fake != nullptr) return smith_io_fake_remove(files->loop->fake, path);
 return unlink(path) == 0 ? (SmithError){} : smith_error_make(smith_io_errno_now(), "remove", path);
 }
-[[nodiscard]] SmithError smith_files_make_folder(SmithFiles *files,
-const char *path);
-[[nodiscard]] SmithError smith_files_make_folder(SmithFiles *files,
-const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_files_make_folder(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_files_make_folder(SmithFiles *files, const char *path) {
 smith_assert(files != nullptr && path != nullptr);
 if (files->loop->fake != nullptr) return smith_io_fake_make_folder(files->loop->fake, path);
 return smith_io_real_make_folder(path);
 }
-[[nodiscard]] SmithFileInfo smith_files_info(SmithFiles *files, const char *path);
-[[nodiscard]] SmithFileInfo smith_files_info(SmithFiles *files, const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileInfo
+smith_files_info(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileInfo
+smith_files_info(SmithFiles *files, const char *path) {
 smith_assert(files != nullptr && path != nullptr);
 if (files->loop->fake != nullptr) return smith_io_fake_info(files->loop->fake, path);
 return smith_io_real_info(path);
 }
-[[nodiscard]] SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena,
-const char *folder);
-[[nodiscard]] SmithFileList smith_files_list(SmithFiles *files, SmithArena *arena,
-const char *folder) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileList
+smith_files_list(SmithFiles *files, SmithArena *arena, const char *folder);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithFileList
+smith_files_list(SmithFiles *files, SmithArena *arena, const char *folder) {
 smith_assert(files != nullptr && arena != nullptr && folder != nullptr);
 if (files->loop->fake != nullptr) return smith_io_fake_list(files->loop->fake, arena, folder);
 return smith_io_real_list(arena, folder);
 }
-[[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path);
-[[nodiscard]] SmithMapped smith_files_map(SmithFiles *files, const char *path) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithMapped
+smith_files_map(SmithFiles *files, const char *path);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithMapped
+smith_files_map(SmithFiles *files, const char *path) {
 smith_assert(files != nullptr && path != nullptr);
 SmithMapped mapped = {};
 if (files->loop->fake != nullptr) {
@@ -1148,14 +1154,16 @@ if (console->loop->fake != nullptr) return smith_io_fake_capture(console->loop->
 __INT32_TYPE__ code = smith_io_write_all(errors ? smith_io_stderr_fd : smith_io_stdout_fd, text, strlen(text));
 return smith_error_make(code, "write", errors ? "stderr" : "stdout");
 }
-[[nodiscard]] SmithError smith_console_print(SmithConsole *console, const char *text);
-[[nodiscard]] SmithError smith_console_print(SmithConsole *console, const char *text) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_console_print(SmithConsole *console, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_console_print(SmithConsole *console, const char *text) {
 return smith_io_console_write(console, false, text);
 }
-[[nodiscard]] SmithError smith_console_print_error(SmithConsole *console,
-const char *text);
-[[nodiscard]] SmithError smith_console_print_error(SmithConsole *console,
-const char *text) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_console_print_error(SmithConsole *console, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_console_print_error(SmithConsole *console, const char *text) {
 return smith_io_console_write(console, true, text);
 }
 [[gnu::format(printf, 3, 0)]] static SmithError smith_io_console_format(SmithConsole *console, bool errors, const char *format,
@@ -1166,9 +1174,9 @@ if (length < 0) return smith_error_make(smith_io_einval, "format for", errors ? 
 if ((__SIZE_TYPE__)length >= sizeof text) return smith_error_make(smith_io_emsgsize, "print", errors ? "stderr" : "stdout");
 return smith_io_console_write(console, errors, text);
 }
-[[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
 smith_console_printf(SmithConsole *console, const char *format, ...);
-[[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
 smith_console_printf(SmithConsole *console, const char *format, ...) {
 smith_assert(console != nullptr && format != nullptr);
 __builtin_va_list arguments;
@@ -1177,9 +1185,9 @@ SmithError error = smith_io_console_format(console, false, format, arguments);
 __builtin_va_end(arguments);
 return error;
 }
-[[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
 smith_console_eprintf(SmithConsole *console, const char *format, ...);
-[[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
 smith_console_eprintf(SmithConsole *console, const char *format, ...) {
 smith_assert(console != nullptr && format != nullptr);
 __builtin_va_list arguments;
@@ -1188,10 +1196,10 @@ SmithError error = smith_io_console_format(console, true, format, arguments);
 __builtin_va_end(arguments);
 return error;
 }
-void smith_console_read_async(SmithConsole *console, SmithOp *op,
-SmithArena *arena, __SIZE_TYPE__ max);
-void smith_console_read_async(SmithConsole *console, SmithOp *op,
-SmithArena *arena, __SIZE_TYPE__ max) {
+[[clang::annotate("smith::edge")]] void
+smith_console_read_async(SmithConsole *console, SmithOp *op, SmithArena *arena, __SIZE_TYPE__ max);
+[[clang::annotate("smith::edge")]] void
+smith_console_read_async(SmithConsole *console, SmithOp *op, SmithArena *arena, __SIZE_TYPE__ max) {
 smith_assert(console != nullptr && arena != nullptr && max > 0);
 smith_io_op_start(op, console->loop, SmithOpKind_ConsoleRead);
 op->internal.console = console;
@@ -1219,10 +1227,10 @@ smith_io_loop_wait(console->loop, &op);
 *error = op.error;
 return op.error.code == 0 && op.size > 0;
 }
-[[nodiscard]] SmithRead smith_console_read_line(SmithConsole *console,
-SmithArena *arena);
-[[nodiscard]] SmithRead smith_console_read_line(SmithConsole *console,
-SmithArena *arena) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_console_read_line(SmithConsole *console, SmithArena *arena);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_console_read_line(SmithConsole *console, SmithArena *arena) {
 smith_assert(console != nullptr && arena != nullptr);
 smith_io_Grow line = {.arena = arena};
 SmithRead result = {};
@@ -1254,32 +1262,42 @@ smith_assert(result == 0);
 (void)result;
 return (__UINT64_TYPE__)now.tv_sec * smith_io_nanoseconds + (__UINT64_TYPE__)now.tv_nsec;
 }
-[[nodiscard]] __UINT64_TYPE__ smith_clock_now(const SmithClock *clock);
-[[nodiscard]] __UINT64_TYPE__ smith_clock_now(const SmithClock *clock) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] __UINT64_TYPE__
+smith_clock_now(const SmithClock *clock);
+[[clang::annotate("smith::edge")]] [[nodiscard]] __UINT64_TYPE__
+smith_clock_now(const SmithClock *clock) {
 smith_assert(clock != nullptr);
 return clock->loop->fake != nullptr ? clock->loop->fake->monotonic : smith_io_time_ns(smith_io_clock_monotonic);
 }
-[[nodiscard]] __INT64_TYPE__ smith_clock_wall(const SmithClock *clock);
-[[nodiscard]] __INT64_TYPE__ smith_clock_wall(const SmithClock *clock) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] __INT64_TYPE__
+smith_clock_wall(const SmithClock *clock);
+[[clang::annotate("smith::edge")]] [[nodiscard]] __INT64_TYPE__
+smith_clock_wall(const SmithClock *clock) {
 smith_assert(clock != nullptr);
 return clock->loop->fake != nullptr ? clock->loop->fake->wall : (__INT64_TYPE__)smith_io_time_ns(smith_io_clock_realtime);
 }
-void smith_clock_advance(SmithClock *clock, __UINT64_TYPE__ ns);
-void smith_clock_advance(SmithClock *clock, __UINT64_TYPE__ ns) {
+[[clang::annotate("smith::edge")]] void smith_clock_advance(SmithClock *clock,
+__UINT64_TYPE__ ns);
+[[clang::annotate("smith::edge")]] void smith_clock_advance(SmithClock *clock,
+__UINT64_TYPE__ ns) {
 smith_assert(clock != nullptr && clock->loop->fake != nullptr);
 smith_assert(ns <=__extension__({extern __UINT64_TYPE__ smith_math_max__u64(void)__asm__("_smith::math::max(__UINT64_TYPE__)");smith_math_max__u64();}) >> 1);
 clock->loop->fake->monotonic += ns;
 clock->loop->fake->wall += (__INT64_TYPE__)ns;
 }
-void smith_clock_timeout_async(SmithClock *clock, SmithOp *op, __UINT64_TYPE__ ns);
-void smith_clock_timeout_async(SmithClock *clock, SmithOp *op, __UINT64_TYPE__ ns) {
+[[clang::annotate("smith::edge")]] void
+smith_clock_timeout_async(SmithClock *clock, SmithOp *op, __UINT64_TYPE__ ns);
+[[clang::annotate("smith::edge")]] void
+smith_clock_timeout_async(SmithClock *clock, SmithOp *op, __UINT64_TYPE__ ns) {
 smith_assert(clock != nullptr && ns <=__extension__({extern __UINT64_TYPE__ smith_math_max__u64(void)__asm__("_smith::math::max(__UINT64_TYPE__)");smith_math_max__u64();}) >> 1);
 smith_io_op_start(op, clock->loop, SmithOpKind_Timeout);
 op->internal.deadline = ns;
 smith_io_loop_submit(clock->loop, op);
 }
-[[nodiscard]] SmithError smith_clock_sleep(SmithClock *clock, __UINT64_TYPE__ ns);
-[[nodiscard]] SmithError smith_clock_sleep(SmithClock *clock, __UINT64_TYPE__ ns) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_clock_sleep(SmithClock *clock, __UINT64_TYPE__ ns);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_clock_sleep(SmithClock *clock, __UINT64_TYPE__ ns) {
 SmithOp op = {};
 smith_clock_timeout_async(clock, &op, ns);
 smith_io_loop_wait(clock->loop, &op);
@@ -1330,9 +1348,9 @@ return smith_error_make(code, "run", argv[0]);
 static SmithError smith_io_spawn(const char *const *argv, __INT32_TYPE__ out, __INT32_TYPE__ err, __INT32_TYPE__ *id) {
 return smith_io_spawn_in(argv, (smith_io_Spawn){.out = out, .err = err}, id);
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_spawn(SmithProcesses *processes, const char *const *argv, SmithProcess *process);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_spawn(SmithProcesses *processes, const char *const *argv, SmithProcess *process) {
 smith_assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
 smith_io_Fake *fake = processes->loop->fake;
@@ -1341,33 +1359,37 @@ const smith_io_FakeProgram *program = smith_io_fake_program(fake, argv[0], &proc
 if (program == nullptr) return smith_error_make(smith_io_enoent, "run", argv[0]);
 return smith_io_fake_capture(fake, false, program->output);
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv, SmithProcess *process);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *argv, SmithProcess *process) {
 smith_assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
 if (processes->loop->fake != nullptr) return smith_processes_spawn(processes, argv, process);
 return smith_io_spawn_in(argv, (smith_io_Spawn){.out = -1, .err = -1, .terminal = true}, &process->id);
 }
-void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op,
-SmithProcess process);
-void smith_processes_wait_async(SmithProcesses *processes, SmithOp *op,
-SmithProcess process) {
+[[clang::annotate("smith::edge")]] void
+smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process);
+[[clang::annotate("smith::edge")]] void
+smith_processes_wait_async(SmithProcesses *processes, SmithOp *op, SmithProcess process) {
 smith_assert(processes != nullptr && process.id != 0);
 smith_io_op_start(op, processes->loop, SmithOpKind_ProcessWait);
 op->internal.process = process.id;
 smith_io_loop_submit(processes->loop, op);
 }
-void smith_child_wait_async(SmithChild *child, SmithOp *op);
-void smith_child_wait_async(SmithChild *child, SmithOp *op) {
+[[clang::annotate("smith::edge")]] void
+smith_child_wait_async(SmithChild *child, SmithOp *op);
+[[clang::annotate("smith::edge")]] void
+smith_child_wait_async(SmithChild *child, SmithOp *op) {
 smith_assert(child != nullptr && child->process.id != 0);
 smith_io_op_start(op, child->internal.loop, SmithOpKind_ProcessWait);
 op->internal.process = child->process.id;
 op->internal.reaped = &child->internal.reaped;
 smith_io_loop_submit(child->internal.loop, op);
 }
-[[nodiscard]] __SIZE_TYPE__ smith_processes_cores(const SmithProcesses *processes);
-[[nodiscard]] __SIZE_TYPE__ smith_processes_cores(const SmithProcesses *processes) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] __SIZE_TYPE__
+smith_processes_cores(const SmithProcesses *processes);
+[[clang::annotate("smith::edge")]] [[nodiscard]] __SIZE_TYPE__
+smith_processes_cores(const SmithProcesses *processes) {
 smith_assert(processes != nullptr);
 if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
 __INT64_TYPE__ cores = sysconf(smith_io_processors_online);
@@ -1413,19 +1435,19 @@ return (SmithError){};
 }
 return smith_error_make(smith_io_enoent, "run", argv[0]);
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child) {
 smith_assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && child != nullptr);
 *child = (SmithChild){.internal = {.loop = processes->loop, .input = -1, .output = -1}};
 if (processes->loop->fake != nullptr) return smith_io_child_start_fake(processes->loop->fake, argv, child);
 return smith_io_child_start_real(processes->loop, argv, child);
 }
-void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data,
-__SIZE_TYPE__ size);
-void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data,
-__SIZE_TYPE__ size) {
+[[clang::annotate("smith::edge")]] void
+smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, __SIZE_TYPE__ size);
+[[clang::annotate("smith::edge")]] void
+smith_child_write_async(SmithChild *child, SmithOp *op, const void *data, __SIZE_TYPE__ size) {
 smith_assert(child != nullptr && (data != nullptr || size == 0));
 SmithLoop *loop = child->internal.loop;
 smith_io_op_start(op, loop, SmithOpKind_PipeWrite);
@@ -1439,10 +1461,10 @@ op->internal.descriptor = child->internal.input;
 }
 smith_io_loop_submit(loop, op);
 }
-void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer,
-__SIZE_TYPE__ capacity);
-void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer,
-__SIZE_TYPE__ capacity) {
+[[clang::annotate("smith::edge")]] void
+smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, __SIZE_TYPE__ capacity);
+[[clang::annotate("smith::edge")]] void
+smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer, __SIZE_TYPE__ capacity) {
 smith_assert(child != nullptr && buffer != nullptr && capacity > 0);
 SmithLoop *loop = child->internal.loop;
 smith_io_op_start(op, loop, SmithOpKind_PipeRead);
@@ -1457,8 +1479,10 @@ op->internal.descriptor = child->internal.output;
 }
 smith_io_loop_submit(loop, op);
 }
-void smith_child_close_input(SmithChild *child);
-void smith_child_close_input(SmithChild *child) {
+[[clang::annotate("smith::edge")]] void
+smith_child_close_input(SmithChild *child);
+[[clang::annotate("smith::edge")]] void
+smith_child_close_input(SmithChild *child) {
 smith_assert(child != nullptr);
 smith_io_Fake *fake = child->internal.loop->fake;
 if (fake != nullptr) {
@@ -1468,8 +1492,10 @@ close(child->internal.input);
 child->internal.input = -1;
 }
 }
-[[nodiscard]] SmithError smith_child_kill(SmithChild *child, __INT32_TYPE__ signal);
-[[nodiscard]] SmithError smith_child_kill(SmithChild *child, __INT32_TYPE__ signal) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_child_kill(SmithChild *child, __INT32_TYPE__ signal);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_child_kill(SmithChild *child, __INT32_TYPE__ signal) {
 smith_assert(child != nullptr && signal > 0);
 smith_io_Fake *fake = child->internal.loop->fake;
 if (fake != nullptr) {
@@ -1483,8 +1509,8 @@ if (child->internal.reaped) return smith_error_make(smith_io_esrch, "kill", "chi
 if (kill(-child->process.id, signal) != 0) return smith_error_make(smith_io_errno_now(), "kill", "child");
 return (SmithError){};
 }
-void smith_child_close(SmithChild *child);
-void smith_child_close(SmithChild *child) {
+[[clang::annotate("smith::edge")]] void smith_child_close(SmithChild *child);
+[[clang::annotate("smith::edge")]] void smith_child_close(SmithChild *child) {
 smith_assert(child != nullptr);
 if (child->internal.loop->fake != nullptr) return;
 if (child->internal.input >= 0) close(child->internal.input);
@@ -1563,9 +1589,9 @@ result.errors = (const char *)err.grow.data;
 result.errors_size = err.grow.size;
 return result;
 }
-[[nodiscard]] SmithProcessResult
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithProcessResult
 smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *const *argv);
-[[nodiscard]] SmithProcessResult
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithProcessResult
 smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *const *argv) {
 smith_assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr);
 smith_io_Fake *fake = processes->loop->fake;
@@ -1778,10 +1804,10 @@ smith_assert(net != nullptr && connection != nullptr);
 smith_io_op_start(op, net->loop, kind);
 op->internal.connection = connection;
 }
-void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-const char *host, __UINT16_TYPE__ port, bool tls);
-void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-const char *host, __UINT16_TYPE__ port, bool tls) {
+[[clang::annotate("smith::edge")]] void
+smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const char *host, __UINT16_TYPE__ port, bool tls);
+[[clang::annotate("smith::edge")]] void
+smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const char *host, __UINT16_TYPE__ port, bool tls) {
 smith_assert(host != nullptr && host[0] != 0);
 smith_io_net_start(net, op, connection, SmithOpKind_NetConnect);
 *connection = (SmithConnection){};
@@ -1791,10 +1817,10 @@ op->internal.deadline = port;
 smith_io_loop_submit(net->loop, op);
 if (!smith_io_net_scripted(net->loop)) smith_io_net_begin(net->loop, op, connection, host, port, tls);
 }
-void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-const void *data, __SIZE_TYPE__ size);
-void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-const void *data, __SIZE_TYPE__ size) {
+[[clang::annotate("smith::edge")]] void
+smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const void *data, __SIZE_TYPE__ size);
+[[clang::annotate("smith::edge")]] void
+smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection, const void *data, __SIZE_TYPE__ size) {
 smith_assert(data != nullptr || size == 0);
 smith_io_net_start(net, op, connection, SmithOpKind_NetSend);
 op->internal.input = data;
@@ -1807,10 +1833,10 @@ return;
 }
 smith_io_net_send_real(net->loop, op, connection);
 }
-void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-void *buffer, __SIZE_TYPE__ capacity);
-void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-void *buffer, __SIZE_TYPE__ capacity) {
+[[clang::annotate("smith::edge")]] void
+smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection, void *buffer, __SIZE_TYPE__ capacity);
+[[clang::annotate("smith::edge")]] void
+smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection, void *buffer, __SIZE_TYPE__ capacity) {
 smith_assert(buffer != nullptr && capacity > 0 && capacity <=__extension__({extern __UINT32_TYPE__ smith_math_max__u32(void)__asm__("_smith::math::max(__UINT32_TYPE__)");smith_math_max__u32();}));
 smith_io_net_start(net, op, connection, SmithOpKind_NetReceive);
 op->internal.destination = buffer;
@@ -1823,8 +1849,10 @@ return;
 }
 smith_io_net_receive_real(net->loop, op, connection);
 }
-void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
-void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection) {
+[[clang::annotate("smith::edge")]] void
+smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
+[[clang::annotate("smith::edge")]] void
+smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection) {
 smith_io_net_start(net, op, connection, SmithOpKind_NetClose);
 smith_io_loop_submit(net->loop, op);
 if (smith_io_net_scripted(net->loop)) {
@@ -1841,42 +1869,46 @@ api->cancel(connection->internal.handle);
 if (__c11_atomic_load(&connection->internal.closed, smith_io_seq_cst))
 smith_io_net_finish_slot(net->loop, connection, SmithOpKind_NetClose, (SmithError){});
 }
-[[nodiscard]] SmithError smith_net_connect(SmithNet *net, SmithConnection *connection,
-const char *host, __UINT16_TYPE__ port, bool tls);
-[[nodiscard]] SmithError smith_net_connect(SmithNet *net, SmithConnection *connection,
-const char *host, __UINT16_TYPE__ port, bool tls) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, __UINT16_TYPE__ port, bool tls);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, __UINT16_TYPE__ port, bool tls) {
 SmithOp op = {};
 smith_net_connect_async(net, &op, connection, host, port, tls);
 smith_io_loop_wait(net->loop, &op);
 return op.error;
 }
-[[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection,
-const void *data, __SIZE_TYPE__ size);
-[[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection,
-const void *data, __SIZE_TYPE__ size) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_send(SmithNet *net, SmithConnection *connection, const void *data, __SIZE_TYPE__ size);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_send(SmithNet *net, SmithConnection *connection, const void *data, __SIZE_TYPE__ size) {
 SmithOp op = {};
 smith_net_send_async(net, &op, connection, data, size);
 smith_io_loop_wait(net->loop, &op);
 return op.error;
 }
-[[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection,
-void *buffer, __SIZE_TYPE__ capacity);
-[[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection,
-void *buffer, __SIZE_TYPE__ capacity) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_net_receive(SmithNet *net, SmithConnection *connection, void *buffer, __SIZE_TYPE__ capacity);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead
+smith_net_receive(SmithNet *net, SmithConnection *connection, void *buffer, __SIZE_TYPE__ capacity) {
 SmithOp op = {};
 smith_net_receive_async(net, &op, connection, buffer, capacity);
 smith_io_loop_wait(net->loop, &op);
 return (SmithRead){.error = op.error, .data = op.data, .size = op.size, .end = op.end};
 }
-[[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection);
-[[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_close(SmithNet *net, SmithConnection *connection);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_net_close(SmithNet *net, SmithConnection *connection) {
 SmithOp op = {};
 smith_net_close_async(net, &op, connection);
 smith_io_loop_wait(net->loop, &op);
 return op.error;
 }
-[[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server);
-[[nodiscard]] SmithError smith_io_test_add_server(SmithIo *io, SmithNetServer server) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_server(SmithIo *io, SmithNetServer server);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_server(SmithIo *io, SmithNetServer server) {
 smith_assert(io != nullptr && server.host != nullptr &&
 (server.response != nullptr || server.response_size == 0));
 SmithLoop *loop = io->loop;
@@ -1904,10 +1936,10 @@ __builtin_memcpy(tls_failure, server.tls_failure, strlen(server.tls_failure));
 .request =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&io->arena,smith_io_request_max+1);})};
 return (SmithError){};
 }
-[[nodiscard]] const char *smith_io_test_request(const SmithIo *io, const char *host,
-__UINT16_TYPE__ port, __SIZE_TYPE__ n);
-[[nodiscard]] const char *smith_io_test_request(const SmithIo *io, const char *host,
-__UINT16_TYPE__ port, __SIZE_TYPE__ n) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_request(const SmithIo *io, const char *host, __UINT16_TYPE__ port, __SIZE_TYPE__ n);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_request(const SmithIo *io, const char *host, __UINT16_TYPE__ port, __SIZE_TYPE__ n) {
 smith_assert(io != nullptr && host != nullptr);
 if (io->loop->servers == nullptr) return nullptr;
 const smith_io_FakeServer *server = smith_io_net_server_find(io->loop->servers, host, port, n, false);
@@ -1941,9 +1973,9 @@ capture->output = copy;
 capture->done = true;
 return (SmithError){};
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_capture_async(SmithProcesses *processes, SmithArena *arena, const char *const *argv, SmithCapture *capture);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_capture_async(SmithProcesses *processes, SmithArena *arena, const char *const *argv, SmithCapture *capture) {
 smith_assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr &&
 capture != nullptr);
@@ -1993,8 +2025,10 @@ reading->internal.capacity = capture->internal.capacity - capture->output_size -
 smith_io_loop_submit(capture->internal.loop, reading);
 capture->internal.reading = true;
 }
-[[nodiscard]] bool smith_capture_poll(SmithCapture *capture);
-[[nodiscard]] bool smith_capture_poll(SmithCapture *capture) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] bool
+smith_capture_poll(SmithCapture *capture);
+[[clang::annotate("smith::edge")]] [[nodiscard]] bool
+smith_capture_poll(SmithCapture *capture) {
 smith_assert(capture != nullptr);
 if (capture->done) return true;
 smith_io_capture_feed(capture);
@@ -2011,21 +2045,27 @@ capture->output = (const char *)capture->internal.data;
 capture->done = true;
 return true;
 }
-[[nodiscard]] SmithError smith_capture_stop(SmithCapture *capture, __INT32_TYPE__ signal);
-[[nodiscard]] SmithError smith_capture_stop(SmithCapture *capture, __INT32_TYPE__ signal) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_capture_stop(SmithCapture *capture, __INT32_TYPE__ signal);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_capture_stop(SmithCapture *capture, __INT32_TYPE__ signal) {
 smith_assert(capture != nullptr && signal > 0);
 if (capture->done || capture->internal.wait.done || capture->process.id <= 0)
 return smith_error_make(smith_io_esrch, "stop", "capture");
 if (kill(-capture->process.id, signal) != 0) return smith_error_make(smith_io_errno_now(), "stop", "capture");
 return (SmithError){};
 }
-[[nodiscard]] const char *smith_args_get(const SmithArgs *args, __SIZE_TYPE__ i);
-[[nodiscard]] const char *smith_args_get(const SmithArgs *args, __SIZE_TYPE__ i) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_args_get(const SmithArgs *args, __SIZE_TYPE__ i);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_args_get(const SmithArgs *args, __SIZE_TYPE__ i) {
 smith_assert(args != nullptr);
 return i < args->count ? args->values[i] : nullptr;
 }
-[[nodiscard]] const char *smith_args_env(const SmithArgs *args, const char *name);
-[[nodiscard]] const char *smith_args_env(const SmithArgs *args, const char *name) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_args_env(const SmithArgs *args, const char *name);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_args_env(const SmithArgs *args, const char *name) {
 smith_assert(args != nullptr && name != nullptr && name[0] != 0);
 __SIZE_TYPE__ length = strlen(name);
 if (args->environment == nullptr) return getenv(name);
@@ -2077,10 +2117,10 @@ __UINT64_TYPE__ seed = 0;
 if (getentropy(&seed, sizeof seed) != 0) smith_io_stop("getentropy failed");
 return seed;
 }
-[[nodiscard, clang::annotate("smith::main_only")]] SmithIo smith_io_make(__INT32_TYPE__ argc,
-char **argv);
-[[nodiscard, clang::annotate("smith::main_only")]] SmithIo smith_io_make(__INT32_TYPE__ argc,
-char **argv) {
+[[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] SmithIo
+smith_io_make(__INT32_TYPE__ argc, char **argv);
+[[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] SmithIo
+smith_io_make(__INT32_TYPE__ argc, char **argv) {
 smith_assert(argc >= 0);
 void *memory = mmap(nullptr, smith_io_reservation, smith_io_protect_both, smith_io_map_reservation, -1, 0);
 if (memory == (void *)-1)
@@ -2094,16 +2134,18 @@ io.key = smith_key_make(io.seed);
 smith_io_io_link(&io, (__SIZE_TYPE__)argc, (const char *const *)argv, nullptr);
 return io;
 }
-void smith_io_close(SmithIo *io);
-void smith_io_close(SmithIo *io) {
+[[clang::annotate("smith::edge")]] void smith_io_close(SmithIo *io);
+[[clang::annotate("smith::edge")]] void smith_io_close(SmithIo *io) {
 smith_assert(io != nullptr);
 SmithLoop *loop = io->loop;
 if (loop->queue >= 0) close(loop->queue);
 if (loop->memory != nullptr) munmap(loop->memory, loop->memory_size);
 *io = (SmithIo){};
 }
-[[nodiscard]] SmithIo smith_io_make_test(SmithIoTest test);
-[[nodiscard]] SmithIo smith_io_make_test(SmithIoTest test) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithIo
+smith_io_make_test(SmithIoTest test);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithIo
+smith_io_make_test(SmithIoTest test) {
 smith_assert(test.memory != nullptr && test.capacity > 0);
 SmithIo io = {.arena = smith_arena_make(test.memory, test.capacity)};
 io.loop = smith_io_loop_make(&io.arena, true);
@@ -2131,16 +2173,16 @@ fake->cores = test.cores > 0 ? test.cores : 1;
 smith_io_io_link(&io, test.argc, values, variables);
 return io;
 }
-[[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path,
-const char *text);
-[[nodiscard]] SmithError smith_io_test_add_file(SmithIo *io, const char *path,
-const char *text) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_file(SmithIo *io, const char *path, const char *text);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_file(SmithIo *io, const char *path, const char *text) {
 smith_assert(io != nullptr && path != nullptr && text != nullptr);
 return smith_io_fake_write_file(smith_io_fake_of(io->loop), path, text, strlen(text));
 }
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_io_test_add_program(SmithIo *io, const char *program, const char *output, __INT32_TYPE__ status);
-[[nodiscard]] SmithError
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_io_test_add_program(SmithIo *io, const char *program, const char *output, __INT32_TYPE__ status) {
 smith_io_Fake *fake = smith_io_fake_of(io->loop);
 if (fake->program_count == smith_io_fake_programs_max) return smith_error_make(smith_io_enospc, "script", program);
@@ -2152,8 +2194,10 @@ __builtin_memcpy(text, output, strlen(output));
 *entry = (smith_io_FakeProgram){.program = name, .output = text, .status = status};
 return (SmithError){};
 }
-[[nodiscard]] SmithError smith_io_test_add_child(SmithIo *io, SmithChildScript script);
-[[nodiscard]] SmithError smith_io_test_add_child(SmithIo *io, SmithChildScript script) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_child(SmithIo *io, SmithChildScript script);
+[[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
+smith_io_test_add_child(SmithIo *io, SmithChildScript script) {
 smith_io_Fake *fake = smith_io_fake_of(io->loop);
 smith_assert(script.program != nullptr);
 if (fake->child_count == smith_io_fake_children_max) return smith_error_make(smith_io_enospc, "script", script.program);
@@ -2172,20 +2216,24 @@ if (output_size > 0) __builtin_memcpy(output, script.output, output_size);
 .input =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&fake->storage,smith_io_child_input_max+1);})};
 return (SmithError){};
 }
-[[nodiscard]] const char *smith_io_test_child_input(const SmithIo *io,
-__SIZE_TYPE__ n);
-[[nodiscard]] const char *smith_io_test_child_input(const SmithIo *io,
-__SIZE_TYPE__ n) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_child_input(const SmithIo *io, __SIZE_TYPE__ n);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_child_input(const SmithIo *io, __SIZE_TYPE__ n) {
 const smith_io_Fake *fake = smith_io_fake_of(io->loop);
 if (n >= fake->child_count) return nullptr;
 return (const char *)fake->children[n].input;
 }
-[[nodiscard]] const char *smith_io_test_output(const SmithIo *io);
-[[nodiscard]] const char *smith_io_test_output(const SmithIo *io) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_output(const SmithIo *io);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_output(const SmithIo *io) {
 return smith_io_fake_of(io->loop)->output;
 }
-[[nodiscard]] const char *smith_io_test_errors(const SmithIo *io);
-[[nodiscard]] const char *smith_io_test_errors(const SmithIo *io) {
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_errors(const SmithIo *io);
+[[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+smith_io_test_errors(const SmithIo *io) {
 return smith_io_fake_of(io->loop)->errors;
 }
 extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");
