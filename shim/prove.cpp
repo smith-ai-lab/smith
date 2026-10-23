@@ -480,8 +480,9 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
             continue;
         else if (defined)
             std::fprintf(stderr,
-                         "smith: prove: --function=%s: the function has no smith_requires, smith_ensures or "
-                         "smith_invariant, so there is nothing to prove (a function with no contract is not proved; "
+                         "smith: prove: --function=%s: the function has no smith_requires, smith_ensures, "
+                         "smith_invariant or smith_assert, so there is nothing to prove (a function with no contract "
+                         "is not proved; "
                          "give it one)\n",
                          name.c_str());
         else
@@ -648,8 +649,8 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     if (proved + failed + trusted == 0) {
         // A project that has written no contract yet has nothing to prove, which is not a failure (a --function that
         // names nothing was refused above).
-        std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or "
-                    "smith_invariant\n");
+        std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, "
+                    "smith_invariant or smith_assert\n");
         return 0;
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();

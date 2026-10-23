@@ -445,16 +445,30 @@ prove "$cases/bad_caller.c" "$cases/clamp.c"
 expect_contains "cached: a function that fails is never cached" "$out" "bad_caller.c:10: the call of clamp may break smith_requires(low <= high)"
 export XDG_CACHE_HOME=$work/xdg-cache
 
-# 16. A program with no contract of its own (only smith_assert) has nothing to prove, and is not flattened for it; a
-# program with a contract is flattened and proved as before, its asserts included.
+# 16. A function with a smith_assert is in the default set (issue #53), as one with requires, ensures or invariant is: main
+# included. A program with nothing of the four has nothing to prove, and is not flattened for it.
 prove -v "$cases/asserts_only.c"
-expect "gate: asserts alone are not a unit" 0 "$rc"
+expect "asserts only: the function whose assert follows is proved, the other one fails" 1 "$rc"
+expect_contains "asserts only: a function with only an assert is a unit" "$out" "ok    masked  ("
+expect_contains "asserts only: ... one whose assert is not given fails, with its line" "$out" "asserts_only.c:14: assert(x < 1000) may fail"
+case $out in *"ok    main"* | *"FAIL  main"*) expect "asserts only: main has no assert of its own and is not proved" "no" "$out" ;; *) expect "asserts only: main has no assert of its own and is not proved" "no" "no" ;; esac
+prove "$cases/asserts_only.c" --function=masked
+expect "asserts only: --function=masked proves it" 0 "$rc"
+printf 'int main(void) { return 0; }\n' >"$work/nothing.c"
+prove -v "$work/nothing.c"
+expect "gate: no contract and no assert is nothing to prove" 0 "$rc"
 expect_contains "gate: nothing to prove" "$out" "smith: prove: nothing to prove: no function with smith_requires"
-expect_contains "gate: -v counts the functions with only smith_assert" "$out" "phase gate: 0 functions with a contract of their own, 0 trusted, 1 with only smith_assert; skipped flattening"
+expect_contains "gate: -v counts the functions" "$out" "phase gate: 0 functions with a contract of their own, 0 trusted; skipped flattening"
 case $out in *"phase flatten"*) expect "gate: no flattening" "no" "$out" ;; *) expect "gate: no flattening" "no" "no" ;; esac
-prove "$cases/asserts_only.c"
+prove "$work/nothing.c"
 expect_contains "gate: the default output is the same without -v" "$out" "smith: prove: nothing to prove"
 case $out in *phase*) expect "gate: no phase lines without -v" "no" "$out" ;; *) expect "gate: no phase lines without -v" "no" "no" ;; esac
+# 16b. An assert in a function that calls the program's edge: the edge is a declaration marked smith::edge.
+prove "$cases/main_edge.c" --function=run_proved
+expect "edge: an assert is proved across a call of a smith::edge function" 0 "$rc"
+prove "$cases/main_edge.c" --function=run_unproved
+expect "edge: ... and one the contract does not give fails" 1 "$rc"
+expect_contains "edge: ... with its line" "$out" "main_edge.c:33: assert(total <= 24) may fail"
 prove -v "$cases/assertion.c"
 expect_contains "gate: a contract is flattened" "$out" "phase flatten: "
 expect_contains "gate: ... and the module's size before and after" "$out" " instructions before, "

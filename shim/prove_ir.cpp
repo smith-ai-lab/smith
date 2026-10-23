@@ -158,14 +158,35 @@ unsigned owner_id(const Instruction &instruction) {
     return id_of(instruction.getMetadata("smith.owner"));
 }
 
+// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (smith::io's exports)
+// is the edge of the program, as a trusted function is, with no contract: it gets the attribute "smith.edge".
+void mark_edges(Module &module) {
+    GlobalVariable *annotations = module.getGlobalVariable("llvm.global.annotations");
+    if (annotations == nullptr || !annotations->hasInitializer()) return;
+    auto *entries = dyn_cast<ConstantArray>(annotations->getInitializer());
+    if (entries == nullptr) return;
+    for (const Use &entry : entries->operands()) {
+        auto *record = dyn_cast<ConstantStruct>(entry.get());
+        if (record == nullptr || record->getNumOperands() < 2) continue;
+        auto *function = dyn_cast<Function>(record->getOperand(0)->stripPointerCasts());
+        auto *text = dyn_cast<GlobalVariable>(record->getOperand(1)->stripPointerCasts());
+        if (function == nullptr || text == nullptr || !text->hasInitializer()) continue;
+        auto *data = dyn_cast<ConstantDataArray>(text->getInitializer());
+        if (data != nullptr && data->isCString() && data->getAsCString() == "smith::edge")
+            function->addFnAttr("smith.edge");
+    }
+}
+
 // Gives every defined function a number, and every contract call the number of the function it is written in.
 void annotate(Module &module, unsigned &counter) {
+    mark_edges(module);
     for (Function &function : module) {
         if (function.isDeclaration()) continue;
         MDNode *node = id_node(module.getContext(), ++counter);
         function.setMetadata("smith.id", node);
         for (Instruction &instruction : instructions(function)) {
-            if (contract_of(&instruction) != Contract::None) instruction.setMetadata("smith.owner", node);
+            if (contract_of(&instruction) != Contract::None || is_assert_failure(&instruction))
+                instruction.setMetadata("smith.owner", node);
         }
     }
 }
@@ -177,13 +198,15 @@ bool has_own_contract(const Function &function, Contract kind) {
     return false;
 }
 
-// A smith_requires, smith_ensures or smith_invariant the function wrote itself (smith_trusted() is not one, and neither
-// is smith_assert: a function with only asserts is part of its callers, where the asserts are proved, as `assert` was).
+// A smith_requires, smith_ensures, smith_invariant, smith_assert or C `assert` the function wrote itself
+// (smith_trusted() is not one). A function with only asserts is proved as a unit, and callers still inline it, since it
+// has no ensures.
 bool has_any_own_contract(const Function &function) {
     for (const Instruction &instruction : instructions(function)) {
         Contract kind = contract_of(&instruction);
-        if (kind != Contract::None && kind != Contract::Trusted && kind != Contract::Assert &&
-            owner_id(instruction) == function_id(function))
+        bool is_contract = kind != Contract::None && kind != Contract::Trusted;
+        // C's assert (a macro) is the call of its failure function, written in the function that holds it
+        if ((is_contract || is_assert_failure(&instruction)) && owner_id(instruction) == function_id(function))
             return true;
     }
     return false;
@@ -480,24 +503,22 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     Module &module = *program.module;
     double read_seconds = seconds_since(begin);
     // Flattening every function costs far more than reading the module (a program of 300k instructions grew to 100M),
-    // so it is done only when some function has a contract of its own, which is what program_units proves. Asserts in
-    // a proved function, or in a callee inlined into one, are no reason: they are proved with that function.
-    unsigned own = 0, trusted = 0, asserts = 0;
+    // so it is done only when some function has a contract of its own (an assert included), which is what
+    // program_units proves.
+    unsigned own = 0, trusted = 0;
     for (const Function &function : module) {
         if (function.isDeclaration()) continue;
         if (is_unit(function)) {
             own++;
         } else if (is_trusted(function)) {
             trusted++;
-        } else if (has_own_contract(function, Contract::Assert)) {
-            asserts++;
         }
     }
     unsigned before = instruction_count(module);
     if (program.verbose) {
         std::printf("phase read and link: %.2f s, %u instructions\n", read_seconds, before);
-        std::printf("phase gate: %u functions with a contract of their own, %u trusted, %u with only smith_assert%s\n",
-                    own, trusted, asserts, own == 0 ? "; skipped flattening, nothing to prove" : "");
+        std::printf("phase gate: %u functions with a contract of their own, %u trusted%s\n", own, trusted,
+                    own == 0 ? "; skipped flattening, nothing to prove" : "");
     }
     if (own == 0) return true;
     Clock::time_point flatten_begin = Clock::now();
@@ -546,7 +567,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     // everything it knew. It is assumed instead to touch only what its pointer parameters point to (its smith_ensures
     // says what it does to them) and nothing else a proved function can see; inference may only narrow that.
     for (Function &function : module) {
-        if (!is_trusted(function)) continue;
+        if (!is_trusted(function) && !function.hasFnAttribute("smith.edge")) continue;
         function.setMemoryEffects(MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
                                   MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef));
         // It frees nothing the caller can see either, unless it is given a pointer it may write through (it could be
@@ -557,7 +578,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
                 !function.getParamAttribute(argument.getArgNo(), Attribute::ReadOnly).isValid())
                 may_free = true;
         }
-        if (!may_free) function.addFnAttr(Attribute::NoFree);
+        if (!may_free || function.hasFnAttribute("smith.edge")) function.addFnAttr(Attribute::NoFree);
     }
     if (!analyses.run_module(module, "inferattrs,cgscc(function-attrs)", error)) return false;
     if (program.verbose)
@@ -1338,7 +1359,7 @@ bool resolve_calls(UnitContext &context) {
                 }
                 break;
             }
-            if (known_library_function(name)) {
+            if (known_library_function(name) || (callee->isDeclaration() && callee->hasFnAttribute("smith.edge"))) {
                 call->setMetadata("smith.resolved", MDNode::get(function.getContext(), {}));
                 target = nullptr;
                 continue;
@@ -1474,7 +1495,8 @@ class Normalizer {
             // clang gives the trap of a UBSan check a made-up function that names the check, inlined at the source
             // line.
             StringRef scope = location->getScope()->getSubprogram()->getName();
-            if (kind != Kind::Trap && scope.starts_with("smith_") && location->getInlinedAt() != nullptr) {
+            if (kind != Kind::Trap && (scope.starts_with("smith_") || location->getFilename().ends_with("smith/contract.h")) &&
+                location->getInlinedAt() != nullptr) {
                 location = location->getInlinedAt(); // the contract function inlined at the line that wrote it
             } else if (scope.starts_with("__clang_trap_msg") && location->getInlinedAt() != nullptr) {
                 SmallVector<StringRef, 3> parts;

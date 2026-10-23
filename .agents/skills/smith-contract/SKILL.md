@@ -37,7 +37,7 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 | `smith_requires(c)` | the start of a function | a caller must make `c` true |
 | `smith_ensures(c)` | just before a `return` (one return, after one `smith_ensures` per promise) | the function makes `c` true |
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass |
-| `smith_assert(c)` | anywhere in a body | `c` is true here: the statement `assert` was, as a function. `smith prove` proves it where the function is part of a proof (in a function with a contract, or inlined into one), and a program stops on it in the debug and release profiles; the fast profile compiles it away |
+| `smith_assert(c)` | anywhere in a body | `c` is true here: the statement `assert` was, as a function. `smith prove` proves it, and a function with one is in the default set (`main` included); a program stops on it in the debug and release profiles; the fast profile compiles it away |
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
 
 - An old value is a `const` local saved at the top: `const u8 old = moves->len;`. The result is the variable about to be returned.
@@ -52,3 +52,11 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 - **The library is compiled from source with the project's flags**, so `target::assertions` there is the project's: in the fast profile the library's functions are empty, as the header's inline ones are.
 
 Also in this family: [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md).
+
+## Where an assert goes (the roles stay distinct)
+
+- **A precondition at entry is `requires`**, never an `assert`: the caller proves it, the body assumes it. A pointer parameter is already assumed valid and not null, so `assert(p != nullptr)` is deleted, not converted.
+- **A promise about the result is `ensures`**, written before the return (it may name locals).
+- **A fact in the middle that follows from what the function knows stays an `assert`**; a function with only asserts is proved, so it must be provable cheaply.
+- **A check that cannot be proved cheaply is not an assert**: a fact about data, about a libc result or deep in a loop over input becomes `if (!condition) __builtin_trap();`, which stops in every build and puts nothing in the proof set.
+- **A function with a precondition that cannot be proved is `requires` plus `smith_trusted()`** (first statement), with the reason in a comment (smith-prove-trusted).

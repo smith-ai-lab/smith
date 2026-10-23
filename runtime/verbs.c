@@ -552,7 +552,8 @@ static int smith_prove_project(int count, char **args, const char *self) {
         if (one != 0) status = one;
     }
     if (status == 0 && smith_prove_groups_run == 0) {
-        printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant\n");
+        printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, smith_invariant or "
+               "smith_assert\n");
     }
     return status;
 }

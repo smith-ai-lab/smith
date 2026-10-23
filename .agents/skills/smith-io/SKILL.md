@@ -53,3 +53,5 @@ The rest of this skill writes `io.` for a value and `io->` where the io is a poi
 There are no options.
 
 Also in this family: [smith-io-capabilities](../smith-io-capabilities/SKILL.md), [smith-effects](../smith-effects/SKILL.md), [smith-io-errors](../smith-io-errors/SKILL.md), [smith-io-files](../smith-io-files/SKILL.md), [smith-io-processes](../smith-io-processes/SKILL.md), [smith-io-async](../smith-io-async/SKILL.md), [smith-io-net](../smith-io-net/SKILL.md), [smith-io-fake](../smith-io-fake/SKILL.md), [smith-io-c](../smith-io-c/SKILL.md).
+
+A proved function may call io: every export of `smith::io` carries `[[clang::annotate("smith::edge")]]`, so `smith prove` treats a call of one as the edge of the program (smith-prove-trusted). `main` with a `contract::assert` is proved through io calls with no `contract::trusted()` of your own.
