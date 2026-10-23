@@ -33,7 +33,8 @@ typedef struct {
     bool lldb;           // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (scripts/prove-libs.sh), else ""
     bool hook;           // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
-    const char *enzyme;  // the folder with libEnzymeStatic-23.a (scripts/enzyme.sh): smith differentiates at link time, else ""
+    const char
+        *enzyme; // the folder with libEnzymeStatic-23.a (scripts/enzyme.sh): smith differentiates at link time, else ""
 } BuildConfig;
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -145,8 +146,8 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena",  "autodiff", "build", "contract", "io",
-                                                      "math",   "random",   "test",  "text",     nullptr};
+static const char *const build_generated_headers[] = {"arena", "autodiff", "build", "contract", "io",
+                                                      "math",  "random",   "test",  "text",     nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -537,16 +538,16 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
-        .flags =
-            smith_cat(b, config->cflags, (const char *[]){"-DSMITH_COMMIT_LINKED", nullptr},
-                      smith_when(b, in_process,
-                                 (const char *[]){"-DSMITH_IN_PROCESS",
-                                                  smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), nullptr}),
-                      smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
-                      smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
-                      smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-                      smith_when(b, in_process && config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
-                      smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
+        .flags = smith_cat(
+            b, config->cflags, (const char *[]){"-DSMITH_COMMIT_LINKED", nullptr},
+            smith_when(b, in_process,
+                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id),
+                                        nullptr}),
+            smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
+            smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
+            smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+            smith_when(b, in_process && config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
+            smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, nullptr),
     };
     smith_object(b, &object);
@@ -569,16 +570,17 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags = smith_cat(b,
-                           smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr}),
-                           smith_when(b, in_process && config->enzyme[0] != '\0',
-                                      (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
-                           nullptr),
+        .flags = smith_cat(
+            b, smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr}),
+            smith_when(b, in_process && config->enzyme[0] != '\0',
+                       (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
+            nullptr),
         .objects = objects,
         .libraries =
             in_process ? smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
                                    build_enzyme_libraries(b, config), build_clang_libraries(b, config->llvm),
-                                   build_lldb_libraries(b, config), (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
+                                   build_lldb_libraries(b, config),
+                                   (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
                        : nullptr,
     };
     smith_program(b, &program);
@@ -655,6 +657,7 @@ typedef struct {
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
+    {"autodiff", "autodiff", nullptr, nullptr, 1},
     {"bootstrap", "bootstrap", nullptr, nullptr, 0},
     {"build", "build", nullptr, nullptr, 1},
     {"build-smith", "build-smith", nullptr, nullptr, 1},
@@ -890,14 +893,9 @@ static int build_enzyme_run(SmithRun *run, const char *ninja) {
     const char *enzyme = smith_package(
         b, &(SmithPackage){.url = "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v0.0.303.tar.gz",
                            .hash = "sha256:0ca3114d008e524cd3b13152bbc172794b20af643d1628161655373eba4554de"});
-    const char *const argv[] = {"sh",
-                                "scripts/enzyme.sh",
-                                enzyme,
-                                build_cmake_package(b),
-                                smith_fmt(b, "%s/install", build_llvm_folder(b)),
-                                ninja,
-                                build_enzyme_folder(b),
-                                nullptr};
+    const char *const argv[] = {
+        "sh",  "scripts/enzyme.sh",    enzyme, build_cmake_package(b), smith_fmt(b, "%s/install", build_llvm_folder(b)),
+        ninja, build_enzyme_folder(b), nullptr};
     return smith_run_program(run, argv, nullptr);
 }
 

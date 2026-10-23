@@ -9,10 +9,10 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
 #ifdef SMITH_ENZYME
-#include "llvm/Plugins/PassPlugin.h"
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <string>
+#include "llvm/Plugins/PassPlugin.h"
 #endif
 
 LLD_HAS_DRIVER(macho)

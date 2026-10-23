@@ -33,9 +33,8 @@ module smith::autodiff;
 // C: __enzyme_autodiff(void *function, ...)
 [[smith::c_name("__enzyme_autodiff")]] export double reverse(void *function, ...);
 
-// The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and the
-// call returns the tangent of the result.
-// C: __enzyme_fwddiff(void *function, ...)
+// The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and
+// the call returns the tangent of the result. C: __enzyme_fwddiff(void *function, ...)
 [[smith::c_name("__enzyme_fwddiff")]] export double forward(void *function, ...);
 
 // The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.

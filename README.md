@@ -249,6 +249,7 @@ with its own flags (`smith_library` in `build.c`). A library joins smith when tw
   network. A fake io is there for tests.
 - [test](.agents/skills/smith-test/SKILL.md): `smith::test`, checks that print both values, parallel workers, property tests on keys, tests with an io of their own.
 - [contract](.agents/skills/smith-contract/SKILL.md): `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert`.
+- [autodiff](.agents/skills/smith-autodiff/SKILL.md): Enzyme's `reverse` and `forward` derivatives of a function, run when the program is linked.
 - [math](.agents/skills/smith-math/SKILL.md): `is_finite`, `sqrt`, `abs`, and the largest integer, infinity and NaN of a type.
 - [random](.agents/skills/smith-random/SKILL.md): random numbers from keys, so a run can be replayed.
 - [text](.agents/skills/smith-text/SKILL.md): lines, words and numbers in memory.

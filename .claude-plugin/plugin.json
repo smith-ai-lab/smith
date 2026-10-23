@@ -24,6 +24,7 @@
     "./.agents/skills/smith-run-test/",
     "./.agents/skills/smith-build/",
     "./.agents/skills/smith-arena/",
+    "./.agents/skills/smith-autodiff/",
     "./.agents/skills/smith-contract/",
     "./.agents/skills/smith-math/",
     "./.agents/skills/smith-random/",

@@ -970,9 +970,16 @@ typedef struct {
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(autodiff, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, true),
-    SMITH_LIBRARY(json, false), SMITH_LIBRARY(math, true),     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
-    SMITH_LIBRARY(test, true),  SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
+    SMITH_LIBRARY(arena, true),
+    SMITH_LIBRARY(autodiff, true),
+    SMITH_LIBRARY(contract, true),
+    SMITH_LIBRARY(io, true),
+    SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(math, true),
+    SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
+    SMITH_LIBRARY(test, true),
+    SMITH_LIBRARY(text, true),
+    SMITH_LIBRARY(trace, false),
 };
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
@@ -1706,7 +1713,8 @@ static int smith_build_main(int count, char **args, const char *self, const char
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     SmithBuildFile file = smith_build_file();
     smith_cache_hold();
-    setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no", 1); // whether smith::autodiff programs can be built
+    setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no",
+           1);                     // whether smith::autodiff programs can be built
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
     const char *forced = getenv("SMITH_NINJA");
     bool use_ninja = forced != nullptr && *forced != '\0';

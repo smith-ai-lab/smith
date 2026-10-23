@@ -280,6 +280,25 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   libc function with no contract fails with a message that names the call and the function to mark. Errors name their
   cause (a `smith_requires` that reads after a write names both lines), and `--emit-ir=FILE` writes the IR the prover
   checks. Skill: smith-contract.
+- **Enzyme (automatic differentiation of LLVM IR) is linked into smith's lld, and `smith::autodiff` is its raw interface**
+  (skill smith-autodiff). Enzyme v0.0.303 (Apache-2.0 with the LLVM exception, pinned by hash in build.c) is built static by
+  `smith build llvm` (`scripts/enzyme.sh`, after the prover's libraries; `smith build enzyme` alone) into its own folder
+  `~/.cache/smith/enzyme/<version>-<LLVM configuration>/`, never inside an LLVM install, so building it changes no
+  configuration; `patches/enzyme/*.patch` go into a copy of its package (one: Enzyme printed `caching call` to stderr
+  unconditionally). The full smith links `libEnzymeStatic-23.a`, built with `-DENZYME_RUNPASS` (else it hooks no
+  pipeline); the stage0 has none. **Registration:** lld's LTO config has no PassBuilder hook, only `--load-pass-plugin`,
+  so `shim/lld.cpp` adds `--load-pass-plugin=<smith's own path>` and Enzyme's `llvmGetPassPluginInfo` is exported from smith
+  (`-exported_symbol`): lld dlopens the executable itself, so nothing is read from disk. A link with no bitcode never
+  reads the option, and a link with no Enzyme call costs nothing measurable. **The library** is `lib/smith/autodiff.smith`
+  (`__enzyme_autodiff`, `__enzyme_fwddiff`, the `enzyme_*` markers as `extern` and never defined; a source that defines
+  nothing, like math). **A program that reaches it is an autodiff program** (`smith_app`'s scan finds the library as it
+  does every other) and, in every profile and for the tests, links with `-flto=full` (ThinLTO fails), compiles each file with
+  `-Xclang -disable-llvm-passes` (Enzyme wants IR not yet optimized; the link optimizes after it), puts its objects in
+  `build/<profile>/autodiff/`, and **has no sanitizers** (UBSan's handlers break Enzyme, trap mode loses its checks in the
+  gradient, ASan only works after Enzyme; the owner has not decided the policy: `smith_autodiff_flags` in
+  runtime/build_runtime.c is the one place). Programs that do not use it have unchanged commands. A smith with no Enzyme, or
+  run with `SMITH_CLANG` or `SMITH_LINKER`, refuses an autodiff program (`SMITH_ENZYME=no` in the build program's
+  environment). `smith cc` adds no flag: `-flto=full` through smith's lld differentiates.
 - **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
   the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
   `parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.

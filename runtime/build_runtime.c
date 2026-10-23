@@ -3008,14 +3008,19 @@ static bool smith_app_covers(const char *folder, const char *source) {
     return strncmp(source, folder, length) == 0 && (source[length] == '/' || source[length] == '\0');
 }
 
-// ---- Autodiff programs (smith::autodiff, the smith-autodiff skill). Enzyme differentiates LLVM IR when smith links, so
-// ---- an autodiff program is built unlike the others, in this one place: with full LTO (Enzyme must see the function it
-// ---- differentiates and its callees in one module, which ThinLTO's modules do not give it), and each file compiled with
+// ---- Autodiff programs (smith::autodiff, the smith-autodiff skill). Enzyme differentiates LLVM IR when smith links,
+// so
+// ---- an autodiff program is built unlike the others, in this one place: with full LTO (Enzyme must see the function
+// it
+// ---- differentiates and its callees in one module, which ThinLTO's modules do not give it), and each file compiled
+// with
 // ---- the profile's -O level but none of the optimization passes (Enzyme wants IR that is not yet optimized: after -O2
 // ---- its gradient is 3.1 times the hand-written one, before it 1.1 to 1.3 times; the link optimizes afterwards).
 // ---- The sanitizers are left out. What is lost: AddressSanitizer's and UndefinedBehaviorSanitizer's checks in the
-// ---- debug profile. Their run-time handlers break Enzyme (it cannot differentiate a call to __ubsan_handle_*, "No create
-// ---- nofree of empty function"), the trap form of UBSan builds but loses its checks inside the gradient, and AddressSanitizer
+// ---- debug profile. Their run-time handlers break Enzyme (it cannot differentiate a call to __ubsan_handle_*, "No
+// create
+// ---- nofree of empty function"), the trap form of UBSan builds but loses its checks inside the gradient, and
+// AddressSanitizer
 // ---- only works instrumented after Enzyme has run, which the compiler does not do. Change the policy here.
 static bool smith_app_autodiff; // the program or the tests being declared use smith::autodiff
 
