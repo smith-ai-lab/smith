@@ -14,7 +14,7 @@ typedef struct {
 } Board;
 
 // Appends the row of a cell when the cell is 1; reads the board, writes the list.
-static void add_if_set(List *list, const Board *board, uint8_t row, uint8_t col) {
+static void add_if_set(List *restrict list, const Board *restrict board, uint8_t row, uint8_t col) {
     smith_requires(row < 8 && col < 8);
     smith_requires(list->len + 1 <= 16);
     const uint8_t old = list->len;
@@ -23,7 +23,18 @@ static void add_if_set(List *list, const Board *board, uint8_t row, uint8_t col)
 }
 
 // The board is the same after the call: its turn is what it was, though the callee wrote through its other pointer.
-int32_t turn_after(List *list, const Board *board, uint8_t row, uint8_t col) {
+int32_t turn_after(List *restrict list, const Board *restrict board, uint8_t row, uint8_t col) {
+    smith_requires(row < 8 && col < 8);
+    smith_requires(list->len + 1 <= 16);
+    const int32_t turn = board->turn;
+    add_if_set(list, board, row, col);
+    const int32_t after = board->turn;
+    smith_ensures(after == turn);
+    return after;
+}
+
+// Without restrict the list may be the board, and the claim is not proved (issue #57).
+int32_t turn_after_overlapping(List *list, const Board *board, uint8_t row, uint8_t col) {
     smith_requires(row < 8 && col < 8);
     smith_requires(list->len + 1 <= 16);
     const int32_t turn = board->turn;
@@ -34,7 +45,7 @@ int32_t turn_after(List *list, const Board *board, uint8_t row, uint8_t col) {
 }
 
 // A wrong claim about the list is refuted by a value.
-uint8_t grows_by_one(List *list, const Board *board, uint8_t row, uint8_t col) {
+uint8_t grows_by_one(List *restrict list, const Board *restrict board, uint8_t row, uint8_t col) {
     smith_requires(row < 8 && col < 8);
     smith_requires(list->len + 1 <= 16);
     const uint8_t old = list->len;

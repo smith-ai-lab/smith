@@ -302,31 +302,6 @@ uint64_t pointee_bytes(const DIType *type) {
     return (type->getSizeInBits() + 7) / 8;
 }
 
-// What a pointer type points to, stripped of typedefs and qualifiers, when objects of other types cannot share its
-// memory (C's aliasing rules): "" for void and for the character types, which can.
-const DIType *distinct_pointee(const DIType *type) {
-    auto strip = [](const DIType *t) {
-        while (auto *derived = dyn_cast_or_null<DIDerivedType>(t)) {
-            unsigned tag = derived->getTag();
-            if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type &&
-                tag != dwarf::DW_TAG_restrict_type && tag != dwarf::DW_TAG_atomic_type)
-                break;
-            t = derived->getBaseType();
-        }
-        return t;
-    };
-    type = strip(type);
-    auto *pointer = dyn_cast_or_null<DIDerivedType>(type);
-    if (pointer == nullptr || pointer->getTag() != dwarf::DW_TAG_pointer_type) return nullptr;
-    const DIType *pointee = strip(pointer->getBaseType());
-    if (pointee == nullptr) return nullptr;
-    if (auto *basic = dyn_cast<DIBasicType>(pointee)) {
-        if (basic->getEncoding() == dwarf::DW_ATE_signed_char || basic->getEncoding() == dwarf::DW_ATE_unsigned_char)
-            return nullptr;
-    }
-    return pointee;
-}
-
 // A pointer parameter points to a whole object of its type: it is not null and its object is all there. That is the
 // meaning `Moves *moves` has in the contracts of the issue, and a call that passes anything else breaks it.
 void mark_pointer_parameters(Function &function) {
@@ -1424,6 +1399,18 @@ class Normalizer {
                 point(instruction, Kind::Abort, nullptr, false);
             }
         }
+        // Inlining a function with a `restrict` parameter leaves scopes of what it does not alias; Alive2 takes no
+        // metadata argument, and the scopes only say more than the prover assumes.
+        SmallVector<Instruction *, 4> scopes;
+        for (Instruction &instruction : instructions(context.function)) {
+            if (auto *intrinsic = dyn_cast<IntrinsicInst>(&instruction);
+                intrinsic != nullptr && intrinsic->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+                scopes.push_back(intrinsic);
+            instruction.setMetadata(LLVMContext::MD_alias_scope, nullptr);
+            instruction.setMetadata(LLVMContext::MD_noalias, nullptr);
+        }
+        for (Instruction *scope : scopes)
+            scope->eraseFromParent();
         for (Instruction &instruction : instructions(context.function)) { // the bookkeeping is not for Alive2
             instruction.setMetadata("smith.resolved", nullptr);
             instruction.setMetadata("smith.callsite", nullptr);
@@ -1752,17 +1739,28 @@ Prepared program_prepare(Program &program, const std::string &name) {
         prepared.unit.file = subprogram->getFilename().str();
         prepared.unit.line = subprogram->getLine();
     }
-    if (DISubprogram *subprogram = function.getSubprogram();
-        subprogram != nullptr && subprogram->getType() != nullptr) {
-        auto types = subprogram->getType()->getTypeArray();
-        if (types.size() == function.arg_size() + 1) {
-            for (unsigned i = 0; i < function.arg_size(); i++) {
-                for (unsigned j = i + 1; j < function.arg_size(); j++) {
-                    const DIType *first = distinct_pointee(types[i + 1]);
-                    const DIType *second = distinct_pointee(types[j + 1]);
-                    if (first != nullptr && second != nullptr && first != second)
-                        prepared.unit.distinct_pointers.emplace_back(i, j);
-                }
+    // Pointer parameters may be the same object, unless the source says they are not: `restrict` (noalias) on one of
+    // two that are not both only read (issue #57). Alive2 does not take the attribute; what it says is assumed below.
+    for (unsigned i = 0; i < function.arg_size(); i++) {
+        if (!function.getArg(i)->getType()->isPointerTy() || !function.hasParamAttribute(i, Attribute::NoAlias))
+            continue;
+        for (unsigned j = 0; j < function.arg_size(); j++) {
+            if (j == i || !function.getArg(j)->getType()->isPointerTy()) continue;
+            auto only_read = [&](unsigned k) {
+                return function.hasParamAttribute(k, Attribute::ReadOnly) ||
+                       function.hasParamAttribute(k, Attribute::ReadNone);
+            };
+            if (only_read(i) && only_read(j)) continue;
+            prepared.unit.distinct_pointers.emplace_back(std::min(i, j), std::max(i, j));
+        }
+    }
+    for (Function &other : *prepared.module) {
+        for (unsigned i = 0; i < other.arg_size(); i++)
+            other.removeParamAttr(i, Attribute::NoAlias);
+        for (Instruction &instruction : instructions(other)) {
+            if (auto *call = dyn_cast<CallBase>(&instruction)) {
+                for (unsigned i = 0; i < call->arg_size(); i++)
+                    call->removeParamAttr(i, Attribute::NoAlias);
             }
         }
     }

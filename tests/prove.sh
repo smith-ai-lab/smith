@@ -179,9 +179,25 @@ for function in add_if_set turn_after spread spread_then_check; do
     prove --function=$function "$cases/readonly.c"
     expect "readonly: $function is proved" 0 "$rc"
 done
+prove --function=turn_after_overlapping "$cases/readonly.c"
+expect "readonly: a list that is not restrict may be the board, and the claim fails" 1 "$rc"
 prove --function=grows_by_one "$cases/readonly.c"
 expect "readonly: a claim stronger than the contract fails" 1 "$rc"
-expect_contains "readonly: ... with its line" "$out" "readonly.c:43: smith_ensures(now == old + 1) may be false"
+expect_contains "readonly: ... with its line" "$out" "readonly.c:54: smith_ensures(now == old + 1) may be false"
+
+# 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
+# int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects; `restrict`
+# is what says it.
+for function in same_type signed_unsigned member other_struct; do
+    prove --function=$function "$cases/alias.c"
+    expect "alias: $function fails, since its pointers may overlap" 1 "$rc"
+    expect_contains "alias: $function ... on the claim that rests on it" "$out" "smith_ensures("
+done
+
+for function in restricted restricted_other_type reads_both; do
+    prove --function=$function "$cases/alias.c"
+    expect "alias: $function is proved, restrict being what says they are different" 0 "$rc"
+done
 
 # 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
 for function in apply_move count_of bump_count is_step; do

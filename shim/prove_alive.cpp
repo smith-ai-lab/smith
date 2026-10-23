@@ -445,7 +445,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         for (const IR::Value &input : transform.src.getInputs()) {
             if (const IR::State::ValTy *value = state->at(input)) assumptions &= value->domain();
         }
-        // Pointers to objects of different types are different objects.
+        // Pointers the source declares apart (`restrict`) are different objects; any other two may be the same.
         {
             std::vector<const IR::Value *> inputs;
             for (const IR::Value &input : transform.src.getInputs())

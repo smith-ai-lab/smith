@@ -83,8 +83,7 @@ struct Unit {
     std::vector<Cost> costs;                          // filled once the function is prepared
     unsigned instructions = 0, loads = 0, stores = 0; // of the prepared function
     std::vector<std::pair<unsigned, unsigned>>
-        distinct_pointers; // parameters whose pointees cannot be the same object // where LLVM's memory attributes were
-                           // not enough to say what a callee leaves alone
+        distinct_pointers; // parameters the source says are not the same object (`restrict`)
 };
 
 // Why a function cannot be proved at all, which is an error and never an assumption: where, and what would make it

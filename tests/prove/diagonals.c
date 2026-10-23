@@ -74,7 +74,7 @@ static bool added_every_legal_step(const Board *board, const MoveList *list, uin
          (!step_is_legal(board, row, col, -1) || added_that_step(list, old, board, row, col, -1));
 }
 
-void get_valid_diagonals(Moves *moves, const Board *board, uint8_t row, uint8_t col) {
+void get_valid_diagonals(Moves *restrict moves, const Board *restrict board, uint8_t row, uint8_t col) {
   smith_requires(row < rows && col < cols);
   smith_requires(moves->diagonals.len + 2 <= max_moves);
   smith_requires(board->turn == P1 || board->turn == P2);
