@@ -551,6 +551,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.type_query = &SmithHook::typeQuery;
         host.return_type = &SmithHook::returnType;
         host.expr_type = &SmithHook::exprType;
+        host.value_query = &SmithHook::valueQuery;
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
@@ -1889,6 +1890,163 @@ class SmithHook final : public TokenHook, public NameSource {
         const PrintingPolicy &policy = ast.getPrintingPolicy();
         snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
         snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
+        return true;
+    }
+
+    // The value tree of an evaluated constant (runtime/lang.h SmithValue), its nodes taken from the caller's pool. The
+    // reason it cannot be one (a pointer, a union, a wide integer) in `why`.
+    static SmithValue *takeNodes(SmithValueQuery *out, uint32_t count, std::string &why) {
+        if (out->used + count > out->capacity) {
+            why = "the value is too large to read back";
+            return nullptr;
+        }
+        SmithValue *nodes = out->nodes + out->used;
+        out->used += count;
+        for (uint32_t i = 0; i < count; i++)
+            nodes[i] = SmithValue{};
+        return nodes;
+    }
+
+    static bool readValue(const APValue &value, QualType type, SmithValueQuery *out, SmithValue *node,
+                          std::string &why, unsigned depth) {
+        if (depth > 32) {
+            why = "the value is nested too deeply to read back";
+            return false;
+        }
+        type = type.getCanonicalType();
+        if (value.isInt()) {
+            const llvm::APSInt &number = value.getInt();
+            if (number.getBitWidth() > 64) {
+                why = "an integer wider than 64 bits is not a value smith reads back";
+                return false;
+            }
+            llvm::APInt wide =
+                number.isSigned() ? number.sext(number.getBitWidth() + 1) : number.zext(number.getBitWidth() + 1);
+            node->kind = SmithValue_Int;
+            node->is_signed = number.isSigned();
+            node->negative = wide.isNegative();
+            if (node->negative) wide.negate();
+            node->bits = number.getBitWidth();
+            node->magnitude = wide.getLimitedValue();
+            return true;
+        }
+        if (value.isFloat()) {
+            const llvm::fltSemantics &semantics = value.getFloat().getSemantics();
+            bool single = &semantics == &llvm::APFloat::IEEEsingle();
+            if (!single && &semantics != &llvm::APFloat::IEEEdouble()) {
+                why = "only an f32 or an f64 is a float value";
+                return false;
+            }
+            node->kind = SmithValue_Float;
+            node->is_f32 = single;
+            node->real = value.getFloat().convertToDouble();
+            return true;
+        }
+        if (value.isStruct()) {
+            const RecordDecl *record = type->getAsRecordDecl();
+            if (record == nullptr) {
+                why = "the value is a struct the compiler cannot name";
+                return false;
+            }
+            std::vector<const FieldDecl *> fields;
+            for (const FieldDecl *field : record->fields()) {
+                if (field->isUnnamedBitField()) continue;
+                fields.push_back(field);
+            }
+            node->kind = SmithValue_Struct;
+            node->count = fields.size();
+            node->items = fields.empty() ? nullptr : takeNodes(out, node->count, why);
+            if (!fields.empty() && node->items == nullptr) return false;
+            for (size_t i = 0; i < fields.size(); i++) {
+                if (!readValue(value.getStructField(fields[i]->getFieldIndex()), fields[i]->getType(), out,
+                               &node->items[i], why, depth + 1)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (value.isUnion()) {
+            why = "a union is not a value smith reads back";
+            return false;
+        }
+        if (value.isArray()) {
+            const auto *array = type->getAsArrayTypeUnsafe();
+            if (array == nullptr) return false;
+            unsigned size = value.getArraySize();
+            node->kind = SmithValue_Array;
+            node->count = size;
+            node->items = size == 0 ? nullptr : takeNodes(out, size, why);
+            if (size != 0 && node->items == nullptr) return false;
+            for (unsigned i = 0; i < size; i++) {
+                const APValue &element =
+                    i < value.getArrayInitializedElts() ? value.getArrayInitializedElt(i) : value.getArrayFiller();
+                if (!readValue(element, array->getElementType(), out, &node->items[i], why, depth + 1)) return false;
+            }
+            return true;
+        }
+        if (value.isLValue() || value.isMemberPointer()) {
+            why = "a pointer is not a value (C23: a `constexpr` pointer must be null)";
+            return false;
+        }
+        why = "the compiler's value is not an integer, a float, a struct or an array";
+        return false;
+    }
+
+    // The text of why the compiler did not fold an expression: its own notes, as the parser would print them.
+    std::string notConstant(const Expr *expression, ASTContext &ast) {
+        Expr::EvalResult result;
+        SmallVector<PartialDiagnosticAt, 8> notes;
+        result.Diag = &notes;
+        if (expression->EvaluateAsRValue(result, ast, /*InConstantContext=*/true) && !result.HasSideEffects) return "";
+        std::string message = "the expression is not a constant expression";
+        for (const PartialDiagnosticAt &note : notes) {
+            SmallString<256> text;
+            note.second.EmitToString(sema->getDiagnostics(), text);
+            message += "; " + text.str().str();
+        }
+        return message;
+    }
+
+    static bool valueQuery(void *context, const char *tokens, uint32_t length, SmithValueQuery *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        out->used = 0;
+        out->root = SmithValue{};
+        out->why = nullptr;
+        if (self->sema == nullptr) return false;
+        std::string text;
+        for (uint32_t at = 0; at < length; at++)
+            text += tokens[at] == '\x1f' ? ' ' : tokens[at];
+        self->nameSizedTypes(text);
+        DiagnosticsEngine &diags = self->sema->getDiagnostics();
+        bool wasSuppressed = diags.getSuppressAllDiagnostics();
+        diags.setSuppressAllDiagnostics(true);
+        QualType type;
+        const Expr *expression = nullptr;
+        bool good = self->parseTypeof(text, &type, &expression);
+        diags.setSuppressAllDiagnostics(wasSuppressed);
+        if (!good) {
+            self->queryText = "the compiler does not accept it here";
+            DiagnosticCollector collector;
+            std::unique_ptr<DiagnosticConsumer> owned = diags.takeClient();
+            DiagnosticConsumer *client = diags.getClient();
+            diags.setClient(&collector, false);
+            self->parseTypeof(text, &type, &expression);
+            diags.setClient(client, owned.release() != nullptr);
+            if (!collector.first.empty()) self->queryText = collector.first;
+            out->why = self->queryText.c_str();
+            return false;
+        }
+        ASTContext &ast = self->sema->getASTContext();
+        Expr::EvalResult result;
+        if (!expression->EvaluateAsRValue(result, ast, /*InConstantContext=*/true) || result.HasSideEffects) {
+            self->queryText = self->notConstant(expression, ast);
+            out->why = self->queryText.c_str();
+            return false;
+        }
+        if (!readValue(result.Val, expression->getType(), out, &out->root, self->queryText, 0)) {
+            out->why = self->queryText.c_str();
+            return false;
+        }
         return true;
     }
 

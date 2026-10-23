@@ -145,6 +145,36 @@ typedef struct {
     double real;
 } SmithExprType;
 
+// The value of a C expression the compiler evaluated (`value_query`): a tree whose nodes the caller provides.
+typedef enum {
+    SmithValue_Int,
+    SmithValue_Float,
+    SmithValue_Struct, // a struct or a tuple: `items` are its fields in order
+    SmithValue_Array,  // a string is an array of `char`
+} SmithValueKind;
+
+typedef struct SmithValue {
+    SmithValueKind kind;
+    bool is_signed;     // an integer: its signedness
+    bool negative;      // an integer: the value is below zero (`magnitude` is its absolute value)
+    bool is_f32;        // a float: `f32` (else `f64`)
+    uint32_t bits;      // an integer: its width in bits (at most 64)
+    uint64_t magnitude; // an integer
+    double real;        // a float (an `f32` is exact in it)
+    uint32_t count;     // a struct's fields, an array's elements
+    struct SmithValue *items;
+} SmithValue;
+
+// A value query: the caller gives `nodes` (`capacity` of them, `used` is how many the host took); the host fills
+// `root` and the tree below it from them. When it cannot, `why` is the compiler's message (valid until the next call).
+typedef struct {
+    SmithValue *nodes;
+    uint32_t capacity;
+    uint32_t used;
+    SmithValue root;
+    const char *why;
+} SmithValueQuery;
+
 // What a sparse host offers besides the watched identifiers and the end of the file.
 typedef enum {
     SmithWatch_Names,  // nothing else
@@ -187,6 +217,11 @@ typedef struct {
     // calls, anything an expression is), read by the compiler in the scope the parser is in. False with `out->why` when
     // it cannot.
     bool (*expr_type)(void *context, const char *tokens, uint32_t length, SmithExprType *out);
+    // The value of a C expression written as tokens separated by \x1f (as `expr_type`), evaluated by the compiler in the
+    // scope the parser is in: an integer, a float, a struct or an array of them. False with `out->why` when it is not a
+    // constant, or is a pointer (C23: a `constexpr` pointer must be null). Null for a host without a parser: the raw
+    // lowering reports that the expression needs smith's compiler.
+    bool (*value_query)(void *context, const char *tokens, uint32_t length, SmithValueQuery *out);
     // The type of the function being parsed, as the compiler prints it with typedefs looked through (`return {1, 2.0f}`
     // in a function that returns a tuple): false outside a function or for a host without a parser.
     bool (*return_type)(void *context, char *out, uint32_t capacity);
