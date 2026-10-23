@@ -23,6 +23,12 @@ capture() {
     err=$(cat "$work/err")
 }
 
+# A program of the programs folder is a clone of the smith that made it: the same bytes in a file of its own, never a
+# hard link (macOS's policy daemon kills a process when another name of its file is removed; issue #48).
+is_copy() { # path, smith
+    cmp -s "$1" "$2" && [ ! "$1" -ef "$2" ]
+}
+
 expect() { # name, expected, actual
     total=$((total + 1))
     if [ "$2" = "$3" ]; then
@@ -85,7 +91,7 @@ expect "the runtime folder holds no program" no "$(exists "$folder/bin")"
 expect "the programs folder's lib is the runtime folder's" "$folder/lib" "$(readlink "$programs/lib")"
 expect "iOS's runtimes are not carried" no "$(exists "$folder/lib/clang/$major/lib/darwin/libclang_rt.ios.a")"
 for name in clang clang++ ld; do
-    expect "bin/$name is the smith that ran" yes "$([ "$programs/bin/$name" -ef "$smith" ] && echo yes || echo no)"
+    expect "bin/$name is a copy of the smith that ran, with a file of its own" yes "$(is_copy "$programs/bin/$name" "$smith" && echo yes || echo no)"
 done
 expect "no half-written folder is left" "" "$({ ls "$clang_folders"; ls "$program_folders"; } | grep tmp)"
 
@@ -175,8 +181,8 @@ printf '#import <Foundation/Foundation.h>\nint main(void) { @autoreleasepool { p
 capture "$work/smith_b" cc objc2.m -framework Foundation -o objc_b
 expect "a second smith (another LC_UUID) works" "0 7" "$rc $(./objc_b)"
 expect "and has programs folder of its own" 2 "$(ls "$program_folders" | wc -l | tr -d ' ')"
-expect "that hold its own links" yes "$(for f in "$program_folders"/*; do [ "$f/bin/ld" -ef "$work/smith_b" ] && echo yes; done | head -n 1)"
-expect "and the first smith's links are still the first" yes "$([ "$programs/bin/ld" -ef "$smith" ] && echo yes || echo no)"
+expect "that hold its own copies" yes "$(for f in "$program_folders"/*; do is_copy "$f/bin/ld" "$work/smith_b" && echo yes; done | head -n 1)"
+expect "and the first smith's copies are still the first" yes "$(is_copy "$programs/bin/ld" "$smith" && echo yes || echo no)"
 for n in 1 2 3 4 5 6 7 8; do
     (for round in 1 2 3 4 5; do
         "$smith" cc objc2.m -framework Foundation -o "objc_a$n" 2>>"$work/mix$n" && [ "$(./objc_a$n)" = 7 ] || echo bad >>"$work/mix$n.bad"
@@ -185,14 +191,14 @@ for n in 1 2 3 4 5 6 7 8; do
 done
 wait
 expect "eight workers of two smiths, five rounds each, all link and run" 0 "$(cat "$work"/mix*.bad 2>/dev/null | wc -l | tr -d ' ')"
-expect "and the programs are still each its own" yes "$([ "$programs/bin/clang" -ef "$smith" ] && [ "$programs/bin/ld" -ef "$smith" ] && echo yes || echo no)"
+expect "and the programs are still each its own" yes "$(is_copy "$programs/bin/clang" "$smith" && is_copy "$programs/bin/ld" "$smith" && echo yes || echo no)"
 expect "and no half-made folder is left" "" "$(ls "$program_folders" | grep tmp)"
 
 # A programs folder idle for more than 31 days is removed when a new one is made; a recent one, and the runtime folder, stay.
 cp "$work/smith_b" "$work/smith_c"
 perl -0777 -pi -e 's/(\x1b\0\0\0\x18\0\0\0)(.{16})/$1 . ("\xcd" x 16)/se' "$work/smith_c"
 codesign -f -s - "$work/smith_c" >/dev/null 2>&1
-old=$(for f in "$program_folders"/*; do [ "$f/bin/ld" -ef "$work/smith_b" ] && echo "$f"; done)
+old=$(for f in "$program_folders"/*; do is_copy "$f/bin/ld" "$work/smith_b" && echo "$f"; done)
 touch -t 202001010000 "$old"
 mkdir "$program_folders/stale.99.tmp"
 touch -t 202001010000 "$program_folders/stale.99.tmp"

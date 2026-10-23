@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/clonefile.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -517,9 +518,14 @@ static void smith_resource_unpack(const char *folder) {
 // agent's) share one runtime folder, so they live in a folder named for the smith itself, its LC_UUID:
 // <data>/smith/programs/<uuid>/{bin/clang, bin/clang++, bin/ld, lib -> the runtime folder's lib}. Two smiths never
 // share or remake each other's links, and a smith without lld has no `ld` to be found. The driver runs `bin/clang`
-// again with -cc1 for a compile with more than one step, so it must be smith, which runs -cc1 in process; a hard link
-// keeps working when the smith it was made from is replaced or removed, as an install does (a symbolic link across
-// volumes). The folder is built beside its place and renamed into it, so one that exists is whole.
+// again with -cc1 for a compile with more than one step, so it must be smith, which runs -cc1 in process; a copy keeps
+// working when the smith it was made from is replaced or removed, as an install does. It is a clone (APFS copy on
+// write: its own file, no bytes copied), never a hard link: macOS names a running program by the last name of its file
+// that was looked up, and its policy daemon (syspolicyd) reads that name while it assesses the program, seconds
+// later under load; every test's scratch data folder held a name of the same file and was removed, so the daemon
+// found no file and killed the process (SIGKILL, "Killed: 9", issue #48). A hard link, then a symbolic link, is the
+// fallback on a volume that cannot clone. The folder is built beside its place and renamed into it, so one that
+// exists is whole.
 //
 // A folder not used for 31 days is removed when a new one is made (using one touches it once a day), and so is a half
 // built one older than an hour. Only the runtime folder must live forever.
@@ -606,7 +612,8 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
-        if (link(self, path) != 0 && symlink(self, path) != 0) smith_die(smith_exit_usage, "cannot link", path);
+        if (clonefile(self, path, 0) != 0 && link(self, path) != 0 && symlink(self, path) != 0)
+            smith_die(smith_exit_usage, "cannot link", path);
     }
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);

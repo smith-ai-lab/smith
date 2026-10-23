@@ -2169,7 +2169,7 @@ fi
 lang_project() { # copies the corpus case module-three and writes its build.c
     project
     mkdir bin
-    ln -f "$smith" bin/smith-cc 2>/dev/null || cp "$smith" bin/smith-cc
+    cp -c "$smith" bin/smith-cc 2>/dev/null || cp "$smith" bin/smith-cc
     cp -R "$here/smith-lang/cases/module-three/src" src
     cat >build.c <<'C'
 #include <smith/build.h>

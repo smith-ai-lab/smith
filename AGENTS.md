@@ -7,7 +7,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 **Compiler and tools**
 - One compiler, upstream LLVM 23.1.3, built by `smith build llvm` and linked into smith; no LLVM install at run time; Homebrew's pinned `llvm` is only what the stage0 runs; `.metal` goes to Apple's `metal`. [one-compiler](knowledge/one-compiler.md), [llvm-build](knowledge/llvm-build.md)
 - smith compiles in its own process (`clang_main`); `SMITH_CLANG` runs an external clang; a change of compiler rebuilds every object. [one-compiler](knowledge/one-compiler.md)
-- The files the driver looks up are embedded and written once to a runtime folder that smith never removes; the programs are hard links in a per-binary folder. [embedded-files-and-programs-folders](knowledge/embedded-files-and-programs-folders.md)
+- The files the driver looks up are embedded and written once to a runtime folder that smith never removes; the programs are clones (never hard links) in a per-binary folder. [embedded-files-and-programs-folders](knowledge/embedded-files-and-programs-folders.md)
 - The linker is lld in smith's process; the system's other tools (`dsymutil`, `libtool`, `xcrun`) stay the system's. [linker](knowledge/linker.md)
 - The SDK is chosen through the environment, never a flag; the caller's own `SDKROOT`, `-isysroot` and `--config` win. [sdk-rule](knowledge/sdk-rule.md)
 - Sanitized processes start as fast as Apple's, through a two-line compiler-rt patch. [sanitizer-startup](knowledge/sanitizer-startup.md)

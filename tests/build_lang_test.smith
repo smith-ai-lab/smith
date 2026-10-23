@@ -20,7 +20,7 @@ constexpr char compiled_command[] =
 static scratch::Project lang_project(io::Io *io, const char *source) {
     scratch::Project p = scratch::project(io, "p", "lang_project");
     (void)scratch::sh(
-        &p, "mkdir bin && { ln -f \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
+        &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
     char command[512];
     __builtin_snprintf(command, sizeof command, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/%s/src\" src", source);
     (void)scratch::sh(&p, command);

@@ -12,9 +12,9 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [smith build and build.c](build-file.md): smith build runs a project's build.c, which writes a ninja manifest that smith's own executor runs, with everything explicit and no macros.
 - [Contracts are C23 attributes and calls that smith reads](contracts.md): Contracts are calls of smith::contract that smith prove reads from the IR, are not a clang plugin and do not depend on -fbounds-safety.
 - [smith dbg and smith dap](debugger.md): smith dbg and smith dap are lldb and lldb-dap from smith's LLVM with the system's debugserver, and the doc holds how they are built, their cost, and macOS permissions.
-- [The embedded files and the programs folders](embedded-files-and-programs-folders.md): The files clang looks up beside itself are embedded in smith and written once to a runtime folder that smith never removes, and the programs it runs are hard links in a per-binary folder.
+- [The embedded files and the programs folders](embedded-files-and-programs-folders.md): The files clang looks up beside itself are embedded in smith and written once to a runtime folder that smith never removes, and the programs it runs are clones of smith in a per-binary folder.
 - [clang-format, clang-tidy and clangd, from smith's LLVM](format-lint-and-editor-tools.md): smith fmt, lint and lsp are the LLVM tools linked into smith, with smith's defaults where a project has no file, and .smith is C to clang-format.
-- [The linker is lld, in smith's process](linker.md): The driver finds a hard link named ld that runs lld's Mach-O linker inside smith, and the system's other tools stay the system's.
+- [The linker is lld, in smith's process](linker.md): The driver finds a copy of smith named ld that runs lld's Mach-O linker inside smith, and the system's other tools stay the system's.
 - [smith build llvm](llvm-build.md): smith build llvm builds LLVM 23.1.3 static and pinned into a cache that survives clean, with the libraries smith links.
 - [smith mcp](mcp-server.md): smith mcp is the debugger as an MCP server over stdio, on the fake-able io and the generated protocol types, with eleven tools.
 - [Neovim support is this repository](neovim.md): plugin/smith.lua, editors/neovim and tree-sitter/ give the .smith file type, highlighting, the language server, debugging and tests in Neovim.

@@ -56,7 +56,7 @@ export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {
 // a.c and run the real clang (smith build compiles build.c with them as well, which they let pass).
 export void test_build_smith_routes_to_an_external_clang(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "external_clang");
-    (void)scratch::sh(&p, "mkdir smith-bin && { ln -f \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
+    (void)scratch::sh(&p, "mkdir smith-bin && { cp -c \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
                           "\"$SMITH_SELF\" smith-bin/smith-cc; }");
     scratch::Run first = scratch::sh(&p, "env SMITH_CLANG=\"$PWD/bin/w2\" smith build");
     (void)first;
@@ -83,7 +83,7 @@ export void test_build_smith_routes_to_an_external_clang(io::Io *io) {
 // same.
 export void test_build_a_replaced_smith_with_the_same_clang_rebuilds_nothing(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "external_clang");
-    (void)scratch::sh(&p, "mkdir smith-bin && { ln -f \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
+    (void)scratch::sh(&p, "mkdir smith-bin && { cp -c \"$SMITH_SELF\" smith-bin/smith-cc 2>/dev/null || cp "
                           "\"$SMITH_SELF\" smith-bin/smith-cc; }");
     scratch::Run upgrade = scratch::sh(&p, "env -u SMITH_CLANG smith build");
     scratch::expect_contains("smith upgrade: the first build compiles the object", upgrade.out, "a.c");

@@ -30,7 +30,7 @@ smith-debug is the short guide for users; this is how it is built.
 - **smith.c** has two entries in the table of tools, `dbg` and `dap`, and sets, for each the caller has not set:
   `LLDB_DEBUGSERVER_PATH` (the developer directory's, else Xcode's, else the Command Line Tools' debugserver) and
   `LLDB_ARGDUMPER_PATH`. lldb expands a program's arguments through `lldb-argdumper`, which it looks up beside
-  smith; smith is a fourth hard link in the programs folder (`bin/lldb-argdumper`) and, run under that name, prints
+  smith; smith is a fourth clone in the programs folder (`bin/lldb-argdumper`) and, run under that name, prints
   `{"arguments": [...]}` as LLVM's does.
 
 ## The lldb options, and what each costs when off
