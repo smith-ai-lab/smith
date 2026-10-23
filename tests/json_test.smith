@@ -6,6 +6,7 @@
 module json_test;
 
 import smith::arena;
+import smith::format;
 import smith::io;
 import smith::math;
 import smith::random;
@@ -1349,7 +1350,7 @@ export void test_json_conformance_with_jsontestsuite(io::Io *io) {
         usize name_length = c::strlen(name);
         if (name_length < 7 || c::strcmp(name + name_length - 5, ".json") != 0 || name[1] != '_') continue;
         char path[1024];
-        __builtin_snprintf(path, sizeof path, "%s/%s", folder, name);
+        (void)format::to(path, sizeof path, folder, "/", name);
         test::note("file %s", name);
         arena::Scope scope = arena::scope_begin(&io->arena);
         io::Read file = io::files_read(&io->files, &io->arena, path);
@@ -1368,18 +1369,19 @@ export void test_json_conformance_with_jsontestsuite(io::Io *io) {
             const TestJsonImplementationDefined *listed = test_json_find_listed(name);
             totals.i_total += 1;
             if (listing)
-                reported += (usize)__builtin_snprintf(report + reported, test_json_listing_capacity - reported,
-                                                      "%-9s %s\n", accepted ? "accepted" : "refused", name);
+                reported += format::to(report + reported, test_json_listing_capacity - reported,
+                                       format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
+                                .length;
             test::check(listed != nullptr); // a new case must be listed
             totals.i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
             test::check(listed->accepted == accepted);
         }
     }
     if (listing) {
-        reported += (usize)__builtin_snprintf(
-            report + reported, test_json_listing_capacity - reported,
-            "y_: %zu of %zu accepted; n_: %zu of %zu refused; i_: %zu of %zu as listed\n", totals.y_accepted,
-            totals.y_total, totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);
+        reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals.y_accepted,
+                               " of ", totals.y_total, " accepted; n_: ", totals.n_refused, " of ", totals.n_total,
+                               " refused; i_: ", totals.i_as_listed, " of ", totals.i_total, " as listed\n")
+                        .length;
         test::check_equal(io::files_write(&io->files, listing_path, report, reported, io::Replace).code, 0);
     }
     test::note("y %zu/%zu accepted, n %zu/%zu refused, i %zu/%zu as listed", totals.y_accepted, totals.y_total,

@@ -8,6 +8,7 @@
 module inflate_test;
 
 import smith::arena;
+import smith::format;
 import smith::inflate;
 import smith::io;
 import smith::random;
@@ -34,7 +35,7 @@ constexpr usize repeat_size = repeat_period * 10;
 // A fixture's bytes, in the arena of the test's io.
 static const u8 *load(io::Io *io, const char *name, const char *extension, usize *size) {
     char path[128];
-    __builtin_snprintf(path, sizeof path, "tests/fixtures/inflate/%s.%s", name, extension);
+    (void)format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
     io::Read file = io::files_read(&io->files, &io->arena, path);
     test::check_equal(file.error.code, 0);
     *size = file.size;

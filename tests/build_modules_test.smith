@@ -2,6 +2,7 @@
 // .smith/modules and the cache shared in $XDG_CACHE_HOME/smith/modules.
 module build_modules_test;
 
+import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
@@ -17,11 +18,10 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
     char text[2048];
     scratch::Run built = scratch::build(&p, "-v");
     scratch::expect_status("modules: the project builds", 0, &built);
-    __builtin_snprintf(text, sizeof text,
-                       "cc -fmodules -fmodules-cache-path=%s/smith/modules -fmodules-prune-interval=604800 "
-                       "-fmodules-prune-after=2678400 -fmodule-map-file=.smith/modules/inc.modulemap "
-                       "-fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23",
-                       p.cache);
+    (void)format::to(text, sizeof text, "cc -fmodules -fmodules-cache-path=", p.cache,
+                     "/smith/modules -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 "
+                     "-fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap "
+                     "-std=gnu23");
     scratch::expect_contains("modules: the compile has -fmodules", built.out, text);
     scratch::expect_text("modules: the program runs", "2", scratch::sh(&p, "./build/app").out);
     const char *commands = scratch::read(&p, "compile_commands.json");
@@ -32,7 +32,7 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
     scratch::expect_text("modules: a map per folder and one for smith's headers",
                          ".smith/modules/inc.modulemap .smith/modules/smith.modulemap",
                          scratch::sh(&p, "echo .smith/modules/*.modulemap").out);
-    __builtin_snprintf(text, sizeof text, "module inc_b { header \"%s/inc/b.h\" export * }", real_dir(&p));
+    (void)format::to(text, sizeof text, "module inc_b { header \"", real_dir(&p), "/inc/b.h\" export * }");
     scratch::expect_contains("modules: a header is a module of its own",
                              scratch::read(&p, ".smith/modules/inc.modulemap"), text);
     scratch::expect_contains("modules: smith's headers are modules",
