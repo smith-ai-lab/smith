@@ -1,0 +1,4 @@
+.claude-plugin/plugin.json: lists the dev skill p-dev-x, which must not ship
+.claude-plugin/plugin.json: lists gone, which is not a skill on disk
+.claude-plugin/plugin.json: does not list the skill b
+smith docs: 0 concepts, 3 problems

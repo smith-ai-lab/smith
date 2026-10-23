@@ -1,0 +1,7 @@
+{
+  "name": "p",
+  "author": {"name": "Someone"},
+  "skills": [
+    "./.agents/skills/p/"
+  ]
+}

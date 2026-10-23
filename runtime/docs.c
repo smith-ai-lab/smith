@@ -14,6 +14,8 @@
 //   "- [Title](name.md): description" whose description is the concept's own, word for word.
 // - Every skill, .agents/skills/<name>/SKILL.md, has frontmatter with a name matching its folder and a description.
 // - .claude/skills, when there are skills, is a symlink to ../.agents/skills.
+// - .claude-plugin/plugin.json, when it lists skills, lists exactly the skills that are not named <plugin>-dev or
+//   <plugin>-dev-* (the plugin's name is its "name"): those are for changing the project and never ship.
 // - Every relative link in AGENTS.md, knowledge/ and .agents/skills/ resolves to a file or folder (links inside code
 //   are ignored; #anchors are not checked), and a document of knowledge/ never links a skill.
 // - No document has a merge-conflict marker.
@@ -880,6 +882,111 @@ static void smith_docs_skills(SmithDocs *docs) {
     }
 }
 
+// ---- The plugin
+
+constexpr uint32_t smith_docs_plugin_skills_max = 256;
+
+// The offset just after `"key"` and its colon, in the document, or -1: the first place a value for key could start.
+static int64_t smith_docs_json_value(SmithDocsText json, const char *key) {
+    char quoted[128];
+    int written = snprintf(quoted, sizeof quoted, "\"%s\"", key);
+    if (written < 0 || (size_t)written >= sizeof quoted) return -1;
+    uint64_t wanted = strlen(quoted);
+    for (uint64_t at = 0; at + wanted <= json.length; at++) {
+        if (memcmp(json.begin + at, quoted, wanted) != 0) continue;
+        uint64_t next = at + wanted;
+        while (next < json.length && smith_docs_is_space(json.begin[next])) next++;
+        if (next >= json.length || json.begin[next] != ':') continue;
+        return (int64_t)next + 1;
+    }
+    return -1;
+}
+
+// The string that starts at or after `from` (spaces skipped) and the offset after it, or no begin.
+static SmithDocsText smith_docs_json_string(SmithDocsText json, uint64_t *from) {
+    uint64_t at = *from;
+    while (at < json.length && smith_docs_is_space(json.begin[at])) at++;
+    if (at >= json.length || json.begin[at] != '"') return (SmithDocsText){};
+    uint64_t end = at + 1;
+    while (end < json.length && json.begin[end] != '"') end++;
+    if (end >= json.length) return (SmithDocsText){};
+    *from = end + 1;
+    return (SmithDocsText){json.begin + at + 1, end - at - 1};
+}
+
+// Whether the skill is one for changing the project: <plugin>-dev or <plugin>-dev-<anything>.
+static bool smith_docs_dev_skill(SmithDocsText plugin, SmithDocsText skill) {
+    char dev[256];
+    int written = snprintf(dev, sizeof dev, "%.*s-dev", (int)plugin.length, plugin.begin);
+    if (written < 0 || (size_t)written >= sizeof dev - 1) return false;
+    if (smith_docs_is(skill, dev)) return true;
+    dev[written] = '-';
+    dev[written + 1] = '\0';
+    return smith_docs_starts(skill, dev);
+}
+
+// The folder's name of a listed skill, "./.agents/skills/<name>/" -> <name>.
+static SmithDocsText smith_docs_listed_skill(SmithDocsText entry) {
+    while (entry.length > 0 && entry.begin[entry.length - 1] == '/') entry.length -= 1;
+    uint64_t start = entry.length;
+    while (start > 0 && entry.begin[start - 1] != '/') start--;
+    return (SmithDocsText){entry.begin + start, entry.length - start};
+}
+
+static bool smith_docs_names_skill(const SmithDocsText *listed, uint32_t count, const char *folder) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (smith_docs_is(listed[i], folder)) return true;
+    }
+    return false;
+}
+
+// A plugin lists its skills in .claude-plugin/plugin.json, and exactly the ones that are not for changing the project
+// (named <plugin>-dev or <plugin>-dev-*), which stay in the repository only.
+static void smith_docs_plugin(SmithDocs *docs) {
+    constexpr char relative[] = ".claude-plugin/plugin.json";
+    SmithDocsText json = smith_docs_read(docs, relative);
+    if (json.begin == nullptr) return;
+    int64_t name_at = smith_docs_json_value(json, "name");
+    int64_t skills_at = smith_docs_json_value(json, "skills");
+    if (name_at < 0 || skills_at < 0) return;
+    uint64_t from = (uint64_t)name_at;
+    SmithDocsText plugin = smith_docs_json_string(json, &from);
+    if (plugin.begin == nullptr) return;
+    from = (uint64_t)skills_at;
+    while (from < json.length && smith_docs_is_space(json.begin[from])) from++;
+    if (from >= json.length || json.begin[from] != '[') return;
+    from += 1;
+    SmithDocsText *listed = SMITH_DOCS_PUSH(&docs->arena, SmithDocsText, smith_docs_plugin_skills_max);
+    uint32_t count = 0;
+    for (; count < smith_docs_plugin_skills_max; count++) {
+        SmithDocsText entry = smith_docs_json_string(json, &from);
+        if (entry.begin == nullptr) break;
+        listed[count] = smith_docs_listed_skill(entry);
+        while (from < json.length && (smith_docs_is_space(json.begin[from]) || json.begin[from] == ',')) from++;
+    }
+    SmithDocsEntry *entries = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
+    uint32_t total = smith_docs_list(docs, ".agents/skills", entries);
+    for (uint32_t i = 0; i < count; i++) {
+        bool on_disk = false;
+        for (uint32_t j = 0; j < total; j++) {
+            on_disk = on_disk || (entries[j].directory && smith_docs_is(listed[i], entries[j].name));
+        }
+        if (smith_docs_dev_skill(plugin, listed[i])) {
+            smith_docs_report(docs, "%s: lists the dev skill %.*s, which must not ship", relative, (int)listed[i].length,
+                              listed[i].begin);
+        } else if (!on_disk) {
+            smith_docs_report(docs, "%s: lists %.*s, which is not a skill on disk", relative, (int)listed[i].length,
+                              listed[i].begin);
+        }
+    }
+    for (uint32_t j = 0; j < total; j++) {
+        if (!entries[j].directory || smith_docs_dev_skill(plugin, smith_docs_text(entries[j].name))) continue;
+        if (!smith_docs_names_skill(listed, count, entries[j].name)) {
+            smith_docs_report(docs, "%s: does not list the skill %s", relative, entries[j].name);
+        }
+    }
+}
+
 // Claude Code finds a project's skills only in .claude/skills, so with skills in .agents/skills it is a link to them.
 static void smith_docs_claude_link(SmithDocs *docs) {
     constexpr char wanted[] = "../.agents/skills";
@@ -917,6 +1024,7 @@ static void smith_docs_run(SmithDocs *docs) {
     }
     smith_docs_index(docs, names, docs->concepts);
     smith_docs_skills(docs);
+    smith_docs_plugin(docs);
     smith_docs_claude_link(docs);
     const char **documents = SMITH_DOCS_PUSH(&docs->arena, const char *, smith_docs_paths_max * 2 + 1);
     uint32_t count = smith_docs_documents(docs, documents);

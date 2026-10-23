@@ -46,7 +46,8 @@
     "./.agents/skills/smith-mcp/",
     "./.agents/skills/smith-trace/",
     "./.agents/skills/smith-packages/",
-    "./.agents/skills/smith-metal/"
+    "./.agents/skills/smith-metal/",
+    "./.agents/skills/smith-idiom/"
   ],
   "lspServers": {
     "smith": {
