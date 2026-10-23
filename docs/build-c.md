@@ -867,7 +867,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `check_greater_equal`, `check_near(a, b, tolerance)`, `check_same_bits(a, b)` and `expect_abort()`. The type is
   inferred from the arguments (smith-lang-generics): `a` and `b` have one type, a literal or an expression of literals
   adapts, and arithmetic, comparisons and `?:` are typed by C's rules; two different types are the error "conflicting
-  types for `T`", fixed by a cast or by writing the type first (`test::check_equal(u64, a, b)`). They check `bool`,
+  types for `T`", fixed by a cast or by writing the type first (`test::check_equal(a, b)`). They check `bool`,
   `char`, integers, `f32`, `f64` and pointers. A failed one prints `a` and `b` (and the tolerance and the distance of
   `near`) with the sized type name: `a = 3   (u64)`. A NaN is unordered, so every comparison but `check_not_equal` fails
   on one. The macros `SMITH_CHECK`, `SMITH_CHECK_NEAR` and `SMITH_CHECK_SAME_BITS` are gone, and the generated header

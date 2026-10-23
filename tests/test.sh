@@ -932,8 +932,8 @@ void test_pointer_not_null_fails(void) {
 void test_typed_passes(void) {
     u32 small = 3;
     u64 big = 3;
-    test::check_equal(u64, small, big);
-    test::check_less(u64, small, 10);
+    test::check_equal(small, big);
+    test::check_less(small, 10);
 }
 
 void test_expressions_pass(void) {

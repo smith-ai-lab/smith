@@ -212,9 +212,9 @@ export void test_text_integer_edges(void) {
     test::check(text::parse_u64(test_text("0"), &u));
     test::check_equal(u, 0);
     test::check(text::parse_u64(test_text("18446744073709551615"), &u));
-    test::check_equal(u64, u, math::max(u64));
+    test::check_equal(u, math::max(u64));
     test::check(text::parse_u64(test_text("00000000000000000000000000018446744073709551615"), &u));
-    test::check_equal(u64, u, math::max(u64));
+    test::check_equal(u, math::max(u64));
     i64 i = 0;
     test::check(text::parse_i64(test_text("9223372036854775807"), &i));
     test::check_equal(i, i64_max);
@@ -228,9 +228,9 @@ export void test_text_integer_edges(void) {
     test::check(text::parse_hex(test_text("0"), &h));
     test::check_equal(h, 0);
     test::check(text::parse_hex(test_text("ffffffffffffffff"), &h));
-    test::check_equal(u64, h, math::max(u64));
+    test::check_equal(h, math::max(u64));
     test::check(text::parse_hex(test_text("000000000000000000000000000000ffffffffffffffff"), &h));
-    test::check_equal(u64, h, math::max(u64));
+    test::check_equal(h, math::max(u64));
     test::check(!text::parse_hex(test_text("DEAD"), &h)); // lowercase only, as it is written
 }
 

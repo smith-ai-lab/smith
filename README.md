@@ -78,7 +78,7 @@ import primes;
 import smith::test;
 
 export void test_the_first_five_primes_add_up_to_28(void) {
-    test::check_equal(i32, primes::sum(5), 28);
+    test::check_equal(primes::sum(5), 28);
 }
 ```
 

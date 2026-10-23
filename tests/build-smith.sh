@@ -83,7 +83,7 @@ import smith::test;
 import geometry::box;
 
 export void test_area(void) {
-    test::check_equal(i32, box::area(2, 3), 6);
+    test::check_equal(box::area(2, 3), 6);
 }
 EOF
 }

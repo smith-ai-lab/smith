@@ -7,11 +7,12 @@
 // ask today, and the first thing a second project needs beside it is the place to add it.
 module smith::math;
 
-// <smith/math.h>: whether x is neither infinite nor not-a-number. T is f32 or f64, the type of x.
+// <smith/math.h>: whether x is neither infinite nor not-a-number. The type is x's: f32 or f64.
 //
 //   if (math::is_finite(x)) ...
 //
-// The constants are functions of a type, called with the type where a value goes, as `arena::push(&a, Point)` is:
+// The constants are functions of a type no argument carries, called with the type where a value goes, as
+// `arena::push(&a, Point)` is:
 //
 //   math::max(usize)       the largest value of an unsigned integer type
 //   math::infinity(f64)    positive infinity of a floating type (negate it for the other)
@@ -19,18 +20,18 @@ module smith::math;
 //
 // They are always-inline functions of no arguments, so the optimizer folds each to the literal. A generic call is not a
 // constant expression in C: in a `static_assert` or an array size write the number or a `constexpr` of the file.
-export inline bool is_finite(constexpr type T, T x) {
+export inline bool is_finite(auto x) {
     return __builtin_isfinite(x);
 }
 
 // The square root of x, correctly rounded: the same bits as libm's sqrt for f64 and sqrtf for f32, which is what an
-// IEEE machine's square root instruction gives. T is f32 or f64, the type of x.
-export inline T sqrt(constexpr type T, T x) {
+// IEEE machine's square root instruction gives. The result has the type of x, f32 or f64.
+export inline typeof(x) sqrt(auto x) {
     return __builtin_elementwise_sqrt(x);
 }
 
-// The absolute value of x, the sign bit cleared (so the same as libm's fabs and fabsf). T is f32 or f64.
-export inline T abs(constexpr type T, T x) {
+// The absolute value of x, the sign bit cleared (so the same as libm's fabs and fabsf). The type is x's: f32 or f64.
+export inline typeof(x) abs(auto x) {
     return __builtin_elementwise_abs(x);
 }
 

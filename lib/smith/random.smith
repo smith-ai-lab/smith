@@ -571,9 +571,9 @@ u64 origin_double(f64 low, f64 high) {
 // checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[smith::c_name("smith_uniform_float_sample")]] export [[nodiscard]] f32 uniform_float_sample(Key key,
                                                                                               UniformFloat uniform) {
-    contract::assert(math::is_finite(f32, uniform.low) && math::is_finite(f32, uniform.high) &&
+    contract::assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
                      uniform.low < uniform.high);
-    contract::assert(math::is_finite(f32, uniform.high - uniform.low));
+    contract::assert(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_float(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 40, origin, (u64)1 << 24);
     f32 value = uniform.low + mul_float(uniform.high - uniform.low, (f32)grid * 0x1p-24f);
@@ -582,9 +582,9 @@ u64 origin_double(f64 low, f64 high) {
 
 [[smith::c_name("smith_uniform_double_sample")]] export [[nodiscard]] f64 uniform_double_sample(Key key,
                                                                                                 UniformDouble uniform) {
-    contract::assert(math::is_finite(f64, uniform.low) && math::is_finite(f64, uniform.high) &&
+    contract::assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
                      uniform.low < uniform.high);
-    contract::assert(math::is_finite(f64, uniform.high - uniform.low));
+    contract::assert(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_double(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 11, origin, (u64)1 << 53);
     f64 value = uniform.low + mul_double(uniform.high - uniform.low, (f64)grid * 0x1p-53);
@@ -636,12 +636,12 @@ const f64 ppnd16_f[] = {1.0,
 
 f64 ppnd16(f64 p) {
     f64 q = p - 0.5;
-    if (math::abs(f64, q) <= 0.425) {
+    if (__builtin_elementwise_abs(q) <= 0.425) {
         f64 r = 0.180625 - mul_double(q, q);
         return mul_double(q, horner_double(ppnd16_a, 8, r)) / horner_double(ppnd16_b, 8, r);
     }
     f64 tail = q < 0 ? p : 1.0 - p;
-    f64 r = math::sqrt(f64, -log_double(tail));
+    f64 r = __builtin_elementwise_sqrt(-log_double(tail));
     f64 value = 0;
     if (r <= 5.0) {
         r += -1.6;
@@ -664,12 +664,12 @@ const f32 ppnd7_f[] = {1.0f, 0.24197894225f, 0.012258202635f};
 
 f32 ppnd7(f32 p) {
     f32 q = p - 0.5f;
-    if (math::abs(f32, q) <= 0.425f) {
+    if (__builtin_elementwise_abs(q) <= 0.425f) {
         f32 r = 0.180625f - mul_float(q, q);
         return mul_float(q, horner_float(ppnd7_a, 4, r)) / horner_float(ppnd7_b, 4, r);
     }
     f32 tail = q < 0 ? p : 1.0f - p;
-    f32 r = math::sqrt(f32, -log_float(tail));
+    f32 r = __builtin_elementwise_sqrt(-log_float(tail));
     f32 value = 0;
     if (r <= 5.0f) {
         r -= 1.6f;
@@ -695,14 +695,14 @@ f32 normal_u_float(Key key) {
 
 [[smith::c_name("smith_normal_double_sample")]] export [[nodiscard]] f64 normal_double_sample(Key key,
                                                                                               NormalDouble normal) {
-    contract::assert(math::is_finite(f64, normal.mean) && math::is_finite(f64, normal.deviation) &&
+    contract::assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) &&
                      normal.deviation > 0);
     return normal.mean + mul_double(normal.deviation, ppnd16(normal_u_double(key)));
 }
 
 [[smith::c_name("smith_normal_float_sample")]] export [[nodiscard]] f32 normal_float_sample(Key key,
                                                                                             NormalFloat normal) {
-    contract::assert(math::is_finite(f32, normal.mean) && math::is_finite(f32, normal.deviation) &&
+    contract::assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) &&
                      normal.deviation > 0);
     return normal.mean + mul_float(normal.deviation, ppnd7(normal_u_float(key)));
 }
@@ -759,10 +759,10 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
     contract::assert(arena != nullptr && weights != nullptr && count >= 1);
     f64 sum = 0.0;
     for (usize i = 0; i < count; i++) {
-        contract::assert(math::is_finite(f64, weights[i]) && weights[i] >= 0.0);
+        contract::assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0);
         sum += weights[i];
     }
-    contract::assert(math::is_finite(f64, sum) && sum > 0.0);
+    contract::assert(__builtin_isfinite(sum) && sum > 0.0);
     f64 *probability = arena::push_array(arena, f64, count);
     usize *alias = arena::push_array(arena, usize, count);
     for (usize i = 0; i < count; i++) {

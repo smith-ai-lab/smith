@@ -171,7 +171,7 @@ cat >t/typed_call.smith <<'S'
 module t::typed_call;
 import smith::test;
 export void typed_call_test(void) {
-    test::check_equal(u32, 1, 1);
+    test::check_equal(1, 1);
 }
 S
 "$smith" cc --smith-header t/typed_call.smith -o "$work/include/t/typed_call.h" -I "$here/include" 2>"$work/err.typed_call"

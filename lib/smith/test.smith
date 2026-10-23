@@ -80,10 +80,11 @@ import <unistd.h>;
 // the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
 //
 //   test::check(condition)                  fails the test when the condition is false
-//   test::check_equal(a, b)                 a == b; both values print with their type. The type is inferred: a and b
-//   test::check_not_equal(a, b)             have one type (a literal adapts), which is bool, char, an integer, f32,
-//   test::check_less(a, b)                  f64 or a pointer. A NaN is unordered, so every comparison but not_equal
-//   test::check_less_equal(a, b)            fails on one.
+//   test::check_equal(a, b)                 a == b; both values print with their type. The type is a's (`auto a`), which
+//   test::check_not_equal(a, b)             is bool, char, an integer, f32, f64 or a pointer, and b converts to it by C's
+//   test::check_less(a, b)                  rules: `check_equal(count, 3)` works, but a conversion that changes the value
+//   test::check_less_equal(a, b)            (`check_equal(my_u8, 300)`) is an error at the call, naming the cast to write.
+//                                           A NaN is unordered, so every comparison but not_equal fails on one.
 //   test::check_greater(a, b)
 //   test::check_greater_equal(a, b)
 //   test::check_near(a, b, tolerance)       |a - b| <= tolerance, f32 or f64; a NaN fails; equal infinities pass
@@ -305,7 +306,7 @@ export constexpr Op op_greater_equal = 5;
 // The Value of a value of type T: the bridge from a generic check to the comparison below. The type is chosen by
 // _Generic, which needs no compiler to lower, so a module's tests can call the checks too. bool, char, the sized
 // integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
-export [[nodiscard]] Value value_of(constexpr type T, T v) {
+export [[nodiscard]] Value value_of(auto v) {
     return _Generic(v,
         bool: value_bool,
         char: value_char,
@@ -392,7 +393,7 @@ u64 raw_bits(Value value) {
 // The shortest text that reads back as the same real, then its exact value in hex, so a difference in the last bit
 // shows: "0.30000000000000004 [0x1.3333333333334p-2]".
 void format_real(f64 value, bool single, char *text, usize capacity) {
-    if (!math::is_finite(f64, value)) {
+    if (!math::is_finite(value)) {
         __builtin_snprintf(text, capacity, "%g", value);
         return;
     }
@@ -440,8 +441,8 @@ void format_value(Value value, char *text, usize capacity) {
 }
 
 bool finite(Value value) {
-    if (value.kind == kind_f32) return math::is_finite(f32, value.f32_value);
-    if (value.kind == kind_f64) return math::is_finite(f64, value.f64_value);
+    if (value.kind == kind_f32) return math::is_finite(value.f32_value);
+    if (value.kind == kind_f64) return math::is_finite(value.f64_value);
     return true;
 }
 
@@ -675,54 +676,55 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
     if (!holds(op, order(a, b))) fail_compare(a, b);
 }
 
-// a == b. The type is inferred from the arguments (a literal adapts); both values print with it.
-export void check_equal(constexpr type T, T a, T b) {
+// a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
+// values print with it.
+export void check_equal(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a == b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_equal, value_of(T, a), value_of(T, b));
+        check_compare(op_equal, value_of(a), value_of(b));
     }
 }
 
 // a != b. A NaN is not equal to anything, so this passes for one.
-export void check_not_equal(constexpr type T, T a, T b) {
+export void check_not_equal(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a != b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_not_equal, value_of(T, a), value_of(T, b));
+        check_compare(op_not_equal, value_of(a), value_of(b));
     }
 }
 
 // a < b. A NaN is unordered, so this fails for one.
-export void check_less(constexpr type T, T a, T b) {
+export void check_less(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a < b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_less, value_of(T, a), value_of(T, b));
+        check_compare(op_less, value_of(a), value_of(b));
     }
 }
 
-export void check_less_equal(constexpr type T, T a, T b) {
+export void check_less_equal(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a <= b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_less_equal, value_of(T, a), value_of(T, b));
+        check_compare(op_less_equal, value_of(a), value_of(b));
     }
 }
 
-export void check_greater(constexpr type T, T a, T b) {
+export void check_greater(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a > b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_greater, value_of(T, a), value_of(T, b));
+        check_compare(op_greater, value_of(a), value_of(b));
     }
 }
 
-export void check_greater_equal(constexpr type T, T a, T b) {
+export void check_greater_equal(auto a, typeof(a) b) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(a >= b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
-        check_compare(op_greater_equal, value_of(T, a), value_of(T, b));
+        check_compare(op_greater_equal, value_of(a), value_of(b));
     }
 }
 
@@ -760,13 +762,14 @@ f64 distance_f64(f64 a, f64 b) {
     if (raw_bits(value_f64(a)) != raw_bits(value_f64(b))) fail_same_bits(value_f64(a), value_f64(b));
 }
 
-// |a - b| <= tolerance, for f32 or f64 (the type is inferred, and a literal adapts).
-export void check_near(constexpr type T, T a, T b, T tolerance) {
+// |a - b| <= tolerance, for f32 or f64: the type is a's, and b and tolerance convert to it (`0.1` is not an f32: write
+// `0.1f`).
+export void check_near(auto a, typeof(a) b, typeof(a) tolerance) {
     _Generic(a, f32: check_near_f32, f64: check_near_f64)(a, b, tolerance);
 }
 
 // a and b are f32 or f64 with the same bits.
-export void check_same_bits(constexpr type T, T a, T b) {
+export void check_same_bits(auto a, typeof(a) b) {
     _Generic(a, f32: check_same_bits_f32, f64: check_same_bits_f64)(a, b);
 }
 
