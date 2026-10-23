@@ -52,6 +52,12 @@ module.exports = grammar(C, {
     // SMITH_TEST_DEFINE_VALUE(bool, bool, ...) at file scope, whose expansion is a definition: no semicolon
     macro_invocation: $ => prec.dynamic(-2, seq(field('name', $.identifier), $.argument_list)),
 
+    // typeof(*x) f(auto x): the operand of a type-like macro or of typeof may be an expression
+    macro_type_specifier: ($, original) => choice(
+      original,
+      prec.dynamic(-2, seq(field('name', $.identifier), '(', field('argument', $.expression), ')')),
+    ),
+
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),
 

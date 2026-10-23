@@ -53,13 +53,14 @@ constexpr size_t smith_lang_generics_max = 256;            // generics known: th
 constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
 constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameters of one generic
 constexpr size_t smith_lang_call_params_max = 16;          // parameters of one generic
-constexpr size_t smith_lang_entries_max = smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
-constexpr size_t smith_lang_instance_depth_max = 32;       // generics asked for by the instances of generics
-constexpr size_t smith_lang_generic_modules_max = 64;      // modules whose generics were read
-constexpr size_t smith_lang_if_depth_max = 32;             // `if constexpr` blocks open at once
-constexpr size_t smith_lang_constants_max = 256;           // `constexpr` constants a condition may name
-constexpr size_t smith_lang_condition_max = 200;           // tokens of one condition
-constexpr size_t smith_lang_generic_scan_max = 200;        // tokens read ahead to see whether a declaration is generic
+constexpr size_t smith_lang_entries_max =
+    smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
+constexpr size_t smith_lang_instance_depth_max = 32;         // generics asked for by the instances of generics
+constexpr size_t smith_lang_generic_modules_max = 64;        // modules whose generics were read
+constexpr size_t smith_lang_if_depth_max = 32;               // `if constexpr` blocks open at once
+constexpr size_t smith_lang_constants_max = 256;             // `constexpr` constants a condition may name
+constexpr size_t smith_lang_condition_max = 200;             // tokens of one condition
+constexpr size_t smith_lang_generic_scan_max = 200; // tokens read ahead to see whether a declaration is generic
 
 typedef enum {
     SmithLangWord_Other,
