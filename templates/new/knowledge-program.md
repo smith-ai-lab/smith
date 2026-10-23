@@ -6,7 +6,7 @@ tags: [program]
 ---
 # The program
 
-@NAME@ is `main.smith` and the module `primes` (`primes.smith`), that `smith new` wrote as a starting point.
+@NAME@ is the modules `main` (`main.smith`) and `primes` (`primes.smith`), with tests in `tests/primes_test.smith`, that `smith new` wrote as a starting point.
 
 - `primes::sum` adds the first `count` primes. It requires the count to be at most five (`contract::requires`, the
   caller's job) and ensures the total is at most 28 (`contract::ensures`, its promise); `smith prove` proves the promise
@@ -19,7 +19,7 @@ tags: [program]
   what it can do to the world, and a test gives it a fake console (`io::make_test`, which anything may call).
   `smith lint` (the `smith-effects` check) reports a call such as `c::printf` outside a capability's own module.
 - The contracts and the assertion stay on in every build but `fast` (`-DNDEBUG`).
-- `tests/test_primes.smith` tests `primes::sum` with `test::check_equal`, checks that six primes break its contract
+- `tests/primes_test.smith` tests `primes::sum` with `test::check_equal`, checks that six primes break its contract
   (`test::expect_abort()`) and that `primes::report` prints the sum on a fake console; `smith test` runs it, and `smith
   check` does too. A test's signature says what it may touch: `(void)` is pure, `(random::Key key)` a property test,
   `(io::Io *io)` a real io in a scratch folder.

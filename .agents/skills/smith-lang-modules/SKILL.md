@@ -27,6 +27,8 @@ export u64 checksum(const u8 *data, usize size); // no body: defined in C or C++
 
 ## The rules
 
+- **Every `.smith` file starts with its `module` line**, from its path (`smith lint` says which, through `smith-module`): `main.smith` is `module main;`, `tests/primes_test.smith` is `module primes_test;` (`tests/` is a root of its own), `build.smith` is `module build;`. A file with no module line still compiles, as plain C with sized types and `import`, so a renamed `.c` file works; it is the first thing to change in a port.
+
 - `x::name` reaches a module's member (`struct x::Pair`, `x::version`); `x.` is always a value. A variable may share its module's name (`io::Io io = io::make();`): `io` is a binding only where `::` follows, and never inside an attribute (`[[gnu::unused]]`).
 - **An import named like the module's own last name takes `x::`**: in `module build;` with `import smith::build;`, `build::app(...)` is the import's and the module's own `build` is written unqualified (`build(b)`). That is the build file: `export void build(build::Build *b)` in `module build;` keeps the C name `build`.
 - `import` comes before any declaration; `#include` stays allowed anywhere.

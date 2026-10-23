@@ -1,12 +1,14 @@
-// The deterministic idiom checks of issue #47, five clang-tidy checks registered by shim/tidy.cpp beside smith-effects
-// and smith-preprocessor (so `smith lint` and smith lsp's built-in checks, since their names start with smith-). Each
-// message names the fix. They are on in smith's default `.clang-tidy`; the skill is smith-idiom.
+// The deterministic idiom checks of issue #47 (and smith-module, issue #60), clang-tidy checks registered by
+// shim/tidy.cpp beside smith-effects and smith-preprocessor (so `smith lint` and smith lsp's built-in checks, since
+// their names start with smith-). Each message names the fix. They are on in smith's default `.clang-tidy`; the skill
+// is smith-idiom.
 //
 //   smith-sized-types     .smith    uint32_t, size_t, float, unsigned, long, int...: write the sized type (u32, usize,
 //   f32) smith-module-library  .smith    a library that is a module, used through its C header: import smith::arena
 //   smith-bounded-loop    .smith, C a loop with no condition or a constant one, outside main: bound it by a count
 //   smith-c23             .smith, C NULL, _Bool, <stdbool.h>, {0}, __attribute__((noreturn)): nullptr, bool, {},
 //   [[noreturn]] smith-constexpr       .smith, C a file-scope const object with a constant initializer: constexpr
+//   smith-module          .smith    no `module` line: write the one its path implies (module primes_test;)
 //
 // The spellings are read from the file's text with the raw lexer (a typedef's name is gone from the AST, `unsigned` and
 // `uint32_t` are one type; a .smith file's text is what the author wrote), the loops and constants from the AST.
@@ -619,6 +621,73 @@ class DesignatedInitCheck final : public ClangTidyCheck {
 
   private:
     std::set<unsigned> seen;
+};
+
+// ---- smith-module ---------------------------------------------------------------------------------------------------
+
+// The module a file at `path` is, by the rule of the layout: its path from the project's root (the folder the check
+// runs in), without `.smith`, `::` for `/`, and `tests/` is a root of its own (tests/primes_test.smith is primes_test).
+inline std::string module_of(llvm::StringRef path, llvm::StringRef root) {
+    std::string relative = path.str();
+    if (!root.empty() && path.starts_with(root) && path.size() > root.size() && path[root.size()] == '/')
+        relative = path.substr(root.size() + 1).str();
+    if (llvm::StringRef(relative).starts_with("./")) relative = relative.substr(2);
+    if (llvm::StringRef(relative).starts_with("/") || llvm::StringRef(relative).starts_with("../")) {
+        size_t slash = relative.rfind('/');
+        relative = relative.substr(slash + 1);
+    }
+    if (llvm::StringRef(relative).ends_with(".smith")) relative.resize(relative.size() - 6);
+    if (llvm::StringRef(relative).starts_with("tests/") && relative.size() > 6) relative = relative.substr(6);
+    std::string module;
+    for (char c : relative) {
+        if (c == '/') {
+            module += "::";
+        } else {
+            module += c;
+        }
+    }
+    return module;
+}
+
+class ModuleCheck final : public ClangTidyCheck {
+  public:
+    ModuleCheck(llvm::StringRef Name, ClangTidyContext *Context) : ClangTidyCheck(Name, Context) {}
+
+    void registerPPCallbacks(const SourceManager &SM, Preprocessor *PP, Preprocessor *) override {
+        PP->addPPCallbacks(std::make_unique<Callbacks>(*this, SM, *PP));
+    }
+
+  private:
+    class Callbacks final : public PPCallbacks {
+      public:
+        Callbacks(ModuleCheck &check, const SourceManager &sm, Preprocessor &pp) : check(check), sm(sm), pp(pp) {}
+
+        void EndOfMainFile() override {
+            FileID main = sm.getMainFileID();
+            if (!is_smith_file(sm, main) || is_generated(sm, main)) return;
+            Lexed lexed = lex(sm, pp.getLangOpts(), main);
+            for (size_t i = 0; i < lexed.tokens.size(); i++) {
+                if (is_name(lexed.tokens[i], "module") && lexed.tokens[i].isAtStartOfLine() &&
+                    i + 1 < lexed.tokens.size() && lexed.tokens[i + 1].is(tok::raw_identifier))
+                    return;
+            }
+            std::string root;
+            if (auto directory = sm.getFileManager().getVirtualFileSystem().getCurrentWorkingDirectory())
+                root = *directory;
+            OptionalFileEntryRef entry = sm.getFileEntryRefForID(main);
+            std::string module = module_of(entry->getName(), root);
+            SourceLocation at = sm.getLocForStartOfFile(main);
+            check.diag(at, "this file has no `module` line, and every .smith file is a module: write `module %0;` at "
+                           "the top (its path from the project's root, `tests/` being a root of its own), and `export` "
+                           "what other files use")
+                << module;
+        }
+
+      private:
+        ModuleCheck &check;
+        const SourceManager &sm;
+        Preprocessor &pp;
+    };
 };
 
 } // namespace clang::tidy::smith_idiom

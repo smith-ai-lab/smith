@@ -44,7 +44,8 @@ fi
 
 mkdir -p "$work/p/geometry" "$work/p/clean"
 cd "$work/p" || exit 1
-cp "$here/templates/defaults/clang-tidy" .clang-tidy
+# smith-module has its own tests below; the files here are plain or modules as each case needs.
+grep -v '^  smith-module,$' "$here/templates/defaults/clang-tidy" >.clang-tidy
 cat >geometry/box.smith <<'EOF'
 module geometry::box;
 
@@ -725,6 +726,24 @@ idiom/consts.c:2:28: error: \`const\` array \`table\` has a constant initializer
 idiom/consts.smith:3:11: error: \`const\` object \`limit\` has a constant initializer: write \`constexpr\`
 idiom/consts.smith:4:10: error: \`const\` array \`table\` has a constant initializer: write \`constexpr\`"
 expect "smith-constexpr: a file-scope const with a constant initializer, in C and .smith; not a float, a pointer, an external, a local" "$expected" "$(idiom_findings <"$work/consts.out")"
+
+cp "$here/templates/defaults/clang-tidy" .clang-tidy
+# smith-module (issue #60): a .smith file with no module line gets the line its path implies; tests/ is a root of its own.
+mkdir -p "$work/p/tests" "$work/p/mod"
+printf 'u32 helper(u32 n) {\n    return n + 1;\n}\n' >mod/loose.smith
+printf '// The tests.\n\nvoid test_x(void) {}\n' >tests/loose_test.smith
+printf 'i32 main(i32 argc, char *argv[]) {\n    return argc - 1;\n}\n' >main.smith
+printf 'import smith::build;\n\nvoid build(build::Build *b) {\n    build::app(b, &(build::App){});\n}\n' >build.smith
+printf '// A comment first, then the line.\nmodule mod::fine;\n\nexport u32 helper(u32 n) {\n    return n + 1;\n}\n' >mod/fine.smith
+printf 'unsigned helper(unsigned n) { return n; }\n' >mod/plain.c
+idiom smith-module mod/loose.smith tests/loose_test.smith main.smith build.smith mod/fine.smith mod/plain.c >"$work/module.out"
+expected="mod/loose.smith:1:1: error: this file has no \`module\` line, and every .smith file is a module: write \`module mod::loose;\` at the top (its path from the project's root, \`tests/\` being a root of its own), and \`export\` what other files use
+tests/loose_test.smith:1:1: error: this file has no \`module\` line, and every .smith file is a module: write \`module loose_test;\` at the top (its path from the project's root, \`tests/\` being a root of its own), and \`export\` what other files use
+main.smith:1:1: error: this file has no \`module\` line, and every .smith file is a module: write \`module main;\` at the top (its path from the project's root, \`tests/\` being a root of its own), and \`export\` what other files use
+build.smith:1:1: error: this file has no \`module\` line, and every .smith file is a module: write \`module build;\` at the top (its path from the project's root, \`tests/\` being a root of its own), and \`export\` what other files use"
+expect "smith-module: a file with no module line gets the one its path implies (tests/ is a root; main; build); a module, and C, pass" "$(printf '%s\n' "$expected" | sort)" "$(idiom_findings <"$work/module.out" | sort)"
+run mod/loose.smith >"$work/module-default.out"
+expect "smith-module: it is on in smith's defaults" "1" "$(findings <"$work/module-default.out" | grep -c 'smith-module,')"
 
 # The idiom checks are in the template's .clang-tidy, so a .smith file gets them by default.
 printf 'module idiom::all;\n\nexport usize f(usize n) {\n    return n + 1;\n}\n' >idiom/all.smith

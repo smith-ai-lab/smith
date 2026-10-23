@@ -39,11 +39,12 @@ smith's default `.clang-tidy` also lists `smith-preprocessor`: **a `.smith` file
 
 ## The idiom checks
 
-smith's default `.clang-tidy` lists five more `smith-*` checks (issue #47), each message naming the fix; the editor shows them too. They are how `smith check` steers a first draft to idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md) has the rules and a port):
+smith's default `.clang-tidy` lists six more `smith-*` checks (issues #47 and #60), each message naming the fix; the editor shows them too. They are how `smith check` steers a first draft to idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md) has the rules and a port):
 
 | Check | Files | Reports | Says |
 |---|---|---|---|
 | `smith-sized-types` | `.smith` | `uint8_t` to `uint64_t`, `int8_t` to `int64_t`, `size_t`, `ptrdiff_t`, `float`, `double`, `unsigned`, `long`, `short`, `signed` and `int` (not `char`; `main` too: `i32 main(i32 argc, char *argv[])`; a renamed `int main(int argc, char **argv)` compiles and is reported) | the sized type: ``write `u64` `` |
+| `smith-module` | `.smith` | a file with no `module` line (build.smith and the tests included; a leading comment is fine) | the line its path implies, from the project's root with `tests/` a root of its own: ``write `module primes_test;` `` (`main.smith` is `module main;`, `build.smith` `module build;`), and `export` what other files use. The compiler never refuses such a file; `// NOLINT(smith-module)` on line 1 opts out |
 | `smith-module-library` | `.smith` | a library that is a module, used through its C header: `import <smith/arena.h>;`, `c::smith_arena_push(...)`, `c::SmithArena` (the generated header's `// smith-module:` line says it is one) | `import smith::arena;` and the module's name, `arena::push_raw`, `arena::Arena` |
 | `smith-bounded-loop` | `.smith` and C | a loop with no condition or a constant one (`for (;;)`, `while (true)`, `do ... while (1)`) outside `main` | bound it by a count; only `main` runs forever |
 | `smith-c23` | `.smith` and C | `NULL`, `_Bool`, `_Noreturn`, `_Static_assert`, `_Alignas`, `_Alignof`, `<stdbool.h>`, `{0}` as an initializer of a struct or array, and `__attribute__((noreturn))`, `unused`, `warn_unused_result`, `deprecated`, `fallthrough` | `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]` |

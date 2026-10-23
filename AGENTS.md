@@ -334,7 +334,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - **The idiom checks of issue #47 are clang-tidy checks, on in smith's default `.clang-tidy` and its own** (`shim/idiom.h`,
   registered in `shim/tidy.cpp` beside the two above; the editor runs them; skill smith-check, smith-idiom). Each message
   names the fix. `.smith` only: `smith-sized-types` (`uint32_t`, `size_t`, `double`, `unsigned`, `long`, `int`, in `main`'s signature too, which is `i32 main(io::Io *io)` or `i32 main(i32 argc, char *argv[])`: write `u32`, `usize`, `f64`), `smith-module-library` (a library that is a module used through its C header: `import
-  smith::arena;`). `.smith` and C, not C++: `smith-bounded-loop` (no `for (;;)`, `while (true)`, `do ... while (1)` outside `main`),
+  smith::arena;`) and `smith-module` (issue #60: a file with no `module` line is told the one its path implies, `tests/` being a root of its own; the compiler never refuses such a file; `smith new`'s files are modules). `.smith` and C, not C++: `smith-bounded-loop` (no `for (;;)`, `while (true)`, `do ... while (1)` outside `main`),
   `smith-c23` (`NULL`, `_Bool`, `_Static_assert`, `<stdbool.h>`, `{0}`, `__attribute__((noreturn))` and kin: `nullptr`, `bool`, `static_assert`, `{}`,
   `[[noreturn]]`) and `smith-constexpr` (a file-scope `const` with a constant initializer, of arithmetic, enum, array or
   record type, internal linkage in C: `constexpr`). smith's own C passes the C-side ones.
@@ -390,7 +390,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
   input) into the failing line and the call chain; it needs the full smith.
 - `smith new [--language smith|c] [<name>]` writes a ready project into `<name>` (or the current folder), never
-  overwriting: `main.smith`, `primes.smith` and `tests/test_primes.smith` (or `main.c`, `primes.c`, `primes.h` and
+  overwriting: `main.smith` (`module main;`), `primes.smith` and `tests/primes_test.smith` (`module primes_test;`, each test exported) (or `main.c`, `primes.c`, `primes.h` and
   `tests/test_primes.c`), `.gitignore`, `AGENTS.md`, `knowledge/` (an index and a first concept),
   `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith
   plugin and declares its marketplace), then builds once and commits on `main`. No build file, no config file, no

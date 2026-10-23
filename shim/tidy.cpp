@@ -193,6 +193,10 @@ class SmithModule final : public ClangTidyModule {
             attach(Context);
             return std::make_unique<smith_idiom::ConstexprCheck>(Name, Context);
         });
+        Factories.registerCheckFactory("smith-module", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_idiom::ModuleCheck>(Name, Context);
+        });
         Factories.registerCheckFactory("smith-designated-init", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<smith_idiom::DesignatedInitCheck>(Name, Context);

@@ -1,4 +1,6 @@
 // @NAME@. `smith run` builds and runs it.
+module main;
+
 import primes;
 
 import smith::contract;

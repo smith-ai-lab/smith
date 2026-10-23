@@ -47,7 +47,7 @@ $ smith new hello
 smith new: hello
   created  main.smith
   created  primes.smith
-  created  tests/test_primes.smith
+  created  tests/primes_test.smith
   ...
 smith new: hello: 10 created, 0 kept
   git: created a repository on main with one commit
@@ -69,14 +69,16 @@ AddressSanitizer and UBSan), `smith build release` (optimized, assertions on) an
 ### Test, check, format, lint
 
 `smith test` runs the tests in the files under `tests/`, and a new project has some. A test is a plain function; this
-is `tests/test_primes.smith`:
+is `tests/primes_test.smith`, a module whose tests are exported:
 
 ```c
+module primes_test;
+
 import primes;
 import smith::test;
 
-void test_the_first_five_primes_add_up_to_28(void) {
-    test::check_equal(primes::sum(5), 28);
+export void test_the_first_five_primes_add_up_to_28(void) {
+    test::check_equal(i32, primes::sum(5), 28);
 }
 ```
 
@@ -107,7 +109,7 @@ $ smith check
 ...
 2 passed, 0 failed in 0.08 s
 smith docs: 1 concepts, 0 problems
-[4/4] smith lint --quiet -p . main.smith primes.smith tests/test_primes.smith
+[4/4] smith lint --quiet -p . main.smith primes.smith tests/primes_test.smith
 ...
 ```
 

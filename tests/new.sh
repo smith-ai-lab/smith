@@ -68,7 +68,7 @@ commits() { git -C "$1" rev-list --count HEAD 2>/dev/null || echo 0; }
 
 # The files of a new project, in git's order. smith builds by convention: no build file, no .clang-format or
 # .clang-tidy, and no compile_commands.json at the root.
-smith_files=".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md knowledge/program.md main.smith primes.smith tests/test_primes.smith"
+smith_files=".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md knowledge/program.md main.smith primes.smith tests/primes_test.smith"
 c_files=".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md knowledge/program.md main.c primes.c primes.h tests/test_primes.c"
 
 # The verbs on a new project, in the current folder: label, extension (smith or c), and the program's name.
@@ -102,6 +102,7 @@ verbs_on_new_project() {
         expect "$label: ... without skipping it" no "$(has "$out" "nothing to prove")"
     fi
     test_file=tests/test_primes.$ext
+    [ "$ext" = smith ] && test_file=tests/primes_test.smith
     sed 's/sum(5), 28/sum(5), 27/' "$test_file" >"$test_file.new" && mv "$test_file.new" "$test_file"
     capture smith test
     expect "$label: a failing test fails smith test" 1 "$rc"
@@ -165,7 +166,7 @@ cd "$work" || exit 1
 capture smith new hello
 expect "new hello: exits 0" 0 "$rc"
 new_out=$out
-for f in main.smith primes.smith tests/test_primes.smith .gitignore .claude/settings.json AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hello-docs/SKILL.md; do
+for f in main.smith primes.smith tests/primes_test.smith .gitignore .claude/settings.json AGENTS.md knowledge/index.md knowledge/program.md .agents/skills/hello-docs/SKILL.md; do
     expect "new hello: creates $f" yes "$(exists "hello/$f")"
 done
 for f in build.c build.smith .clang-format .clang-tidy compile_commands.json main.c primes.c primes.h; do

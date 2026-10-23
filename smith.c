@@ -1799,8 +1799,8 @@ static constexpr unsigned char smith_new_main_smith[] = {
 static constexpr unsigned char smith_new_primes_smith[] = {
 #embed "templates/new/primes.smith"
 };
-static constexpr unsigned char smith_new_test_primes_smith[] = {
-#embed "templates/new/test_primes.smith"
+static constexpr unsigned char smith_new_primes_test_smith[] = {
+#embed "templates/new/primes_test.smith"
 };
 static constexpr unsigned char smith_new_main_c[] = {
 #embed "templates/new/main.c"
@@ -1869,7 +1869,7 @@ typedef struct {
 static const SmithNewFile smith_new_files[] = {
     SMITH_NEW_ONLY("main.smith", smith_new_main_smith, SmithNewLanguage_Smith, false),
     SMITH_NEW_ONLY("primes.smith", smith_new_primes_smith, SmithNewLanguage_Smith, false),
-    SMITH_NEW_ONLY("tests/test_primes.smith", smith_new_test_primes_smith, SmithNewLanguage_Smith, false),
+    SMITH_NEW_ONLY("tests/primes_test.smith", smith_new_primes_test_smith, SmithNewLanguage_Smith, false),
     SMITH_NEW_ONLY("main.c", smith_new_main_c, SmithNewLanguage_C, false),
     SMITH_NEW_ONLY("primes.h", smith_new_primes_h, SmithNewLanguage_C, false),
     SMITH_NEW_ONLY("primes.c", smith_new_primes_c, SmithNewLanguage_C, false),

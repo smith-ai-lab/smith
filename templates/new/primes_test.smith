@@ -1,30 +1,34 @@
 // The tests of @NAME@, run by `smith test`. A test is a function named test_<name>, defined as below, and its signature
 // says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, `(io::Io *io)` gets a real io.
+// This file is a module, so each test is exported (the runner calls it from outside) and is listed as
+// primes_test::<name>.
+module primes_test;
+
 import primes;
 import smith::arena;
 import smith::io;
 import smith::test;
 import <string.h>;
 
-void test_the_first_five_primes_add_up_to_28(void) {
-    test::check_equal(primes::sum(5), 28);
+export void test_the_first_five_primes_add_up_to_28(void) {
+    test::check_equal(i32, primes::sum(5), 28);
 }
 
-void test_no_primes_add_up_to_nothing(void) {
-    test::check_equal(primes::sum(0), 0);
+export void test_no_primes_add_up_to_nothing(void) {
+    test::check_equal(i32, primes::sum(0), 0);
 }
 
 // There are only five primes to add: asking for a sixth breaks the function's contract, which stops the program.
-void test_six_primes_are_one_too_many(void) {
+export void test_six_primes_are_one_too_many(void) {
     test::expect_abort();
     (void)primes::sum(6);
 }
 
 // report prints through the console it is given, so a test gives it the fake one and reads what it printed.
-void test_report_prints_the_sum(void) {
+export void test_report_prints_the_sum(void) {
     arena::Arena memory = test::memory(1 << 20);
     io::Io io = io::make_test((io::Test){.memory = memory.memory, .capacity = memory.capacity, .seed = 1});
     primes::report(&io.console, 28);
     const char *printed = io::test_output(&io);
-    test::check_equal(c::strcmp(printed, "the first 5 primes add up to 28\nhello from @NAME@\n"), 0);
+    test::check_equal(i32, c::strcmp(printed, "the first 5 primes add up to 28\nhello from @NAME@\n"), 0);
 }
