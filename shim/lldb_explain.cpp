@@ -71,12 +71,44 @@ std::string format_pointer(lldb::SBValue value, int depth) {
     return text + " -> " + format(target, depth - 1);
 }
 
+// A `.smith` enumerator is lowered to C as `<module>_<name>`; the type is named as written (`board::Cell`), so the
+// value is too: `board_DARK_P1` of `board::Cell` is `board::DARK_P1`.
+std::string enumerator_as_written(const std::string &text, lldb::SBType type) {
+    const char *name = type.GetName();
+    std::string full = name != nullptr ? name : "";
+    size_t last = full.rfind("::");
+    if (last == std::string::npos) return text;
+    std::string scope = full.substr(0, last + 2);
+    std::string lowered = scope;
+    for (size_t at = lowered.find("::"); at != std::string::npos; at = lowered.find("::", at + 1))
+        lowered.replace(at, 2, "_");
+    if (text.compare(0, lowered.size(), lowered) != 0) return text;
+    return scope + text.substr(lowered.size());
+}
+
+// A one-byte integer is a number first (lldb shows `'\x02'`), and its character when it prints.
+std::string format_byte(lldb::SBValue value) {
+    int64_t number = value.GetType().IsTypeComplete() && (value.GetType().GetTypeFlags() & lldb::eTypeIsSigned)
+                         ? value.GetValueAsSigned(0)
+                         : static_cast<int64_t>(value.GetValueAsUnsigned(0));
+    char text[32];
+    std::snprintf(text, sizeof text, "%lld", static_cast<long long>(number));
+    if (number >= 32 && number < 127) std::snprintf(text + std::strlen(text), 8, " '%c'", static_cast<char>(number));
+    return text;
+}
+
 std::string format(lldb::SBValue value, int depth) {
     if (!value.IsValid()) return "<invalid>";
     if (value.GetError().Fail()) return "<unreadable>";
     lldb::SBType type = value.GetType();
     if (type.IsPointerType()) return format_pointer(value, depth);
+    lldb::BasicType basic = type.GetBasicType();
+    if (type.GetByteSize() == 1 &&
+        (basic == lldb::eBasicTypeChar || basic == lldb::eBasicTypeSignedChar || basic == lldb::eBasicTypeUnsignedChar))
+        return format_byte(value);
     if (const char *text = value.GetValue()) {
+        if (type.GetCanonicalType().GetTypeClass() == lldb::eTypeClassEnumeration)
+            return enumerator_as_written(text, type);
         if (const char *summary = value.GetSummary()) return std::string(text) + " " + summary;
         return text;
     }

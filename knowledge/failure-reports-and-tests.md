@@ -37,8 +37,9 @@ fast. Each failure is read for at most 5 s (about 0.15 s measured), at most `--e
 and said. `smith test` passes `--explain <smith>` when `smith --smith-explain --available` says the smith has lldb and
 the arguments have no `--no-explain`; a runner started by hand reads nothing unless asked. A refusal (the account may
 not debug, a hardened program) or a smith without lldb is one `note: values not shown: ...` line and the report as it was;
-a crash is never read. Enumerators of a `.smith` enum print as lowered (`boom_test_Green`): the debug names of #27 cover
-types, functions and variables only.
+a crash is never read. An enumerator of a `.smith` enum is lowered to `<module>_<name>` in the debug info, so the shim writes it as its
+type is named (`board::DARK_P1` of `board::Cell`); a one-byte integer prints as a number (and its character when it
+prints), not lldb's `'\x02'`.
 
 `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
 input) into the failing line and the call chain; it needs the full smith.

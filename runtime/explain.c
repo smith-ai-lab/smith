@@ -208,6 +208,33 @@ static bool smith_explain_lookup(size_t frame, const char *label, char *lookup, 
     return used > 0;
 }
 
+// Shortens a path by its last member or index: `a.b[1].c` -> `a.b[1]` -> `a.b` -> `a`. False when nothing is left to
+// cut.
+static bool smith_explain_shorten(char *label) {
+    size_t length = strlen(label);
+    for (size_t at = length; at > 0; at--) { // bounded by the label
+        char c = label[at - 1];
+        bool arrow = c == '>' && at > 1 && label[at - 2] == '-';
+        if (c != '.' && c != '[' && !arrow) continue;
+        label[arrow ? at - 2 : at - 1] = '\0';
+        return label[0] != '\0';
+    }
+    return false;
+}
+
+// Reads one path of the line: the whole path, else the longest start of it that is a variable (a member that debug info
+// does not have is not worth losing the variable for). The label that was read is left in label.
+static bool smith_explain_read_path(size_t frame, char *label, char *text, size_t capacity) {
+    for (size_t step = 0; step < 16; step++) { // a path has a few members and indexes
+        char lookup[smith_explain_name_max];
+        if (smith_explain_lookup(frame, label, lookup, sizeof lookup) &&
+            smith_explain_read(frame, lookup, text, capacity, nullptr) != SmithExplain_Missing)
+            return true;
+        if (!smith_explain_shorten(label)) return false;
+    }
+    return false;
+}
+
 // Reads every path of the line in the frame. A path that is not a variable (a function, a type, a module's name) is
 // dropped. Returns how many values are kept, in values[].
 static size_t smith_explain_read_all(size_t frame, const char *source, SmithExplainValue *values) {
@@ -215,10 +242,9 @@ static size_t smith_explain_read_all(size_t frame, const char *source, SmithExpl
     size_t found = smith_explain_paths(source, paths, sizeof paths / sizeof paths[0]);
     size_t kept = 0;
     for (size_t i = 0; i < found && kept < smith_explain_values_max; i++) {
-        char lookup[smith_explain_name_max];
-        if (!smith_explain_lookup(frame, paths[i].label, lookup, sizeof lookup)) continue;
         char text[smith_explain_value_max];
-        if (smith_explain_read(frame, lookup, text, sizeof text, nullptr) == SmithExplain_Missing) continue;
+        if (!smith_explain_read_path(frame, paths[i].label, text, sizeof text)) continue;
+        if (smith_explain_listed(values, kept, paths[i].label)) continue;
         snprintf(values[kept].label, sizeof values[kept].label, "%s", paths[i].label);
         snprintf(values[kept].value, sizeof values[kept].value, "%s", text);
         kept += 1;
@@ -273,6 +299,7 @@ static int smith_explain_run(long pid, const char *self) {
     size_t kept = smith_explain_read_all(index, source, values);
     smith_explain_detach();
     smith_explain_print(values, kept);
+    if (kept == 0) printf("@! values not shown: no variable of the line could be read\n");
     return 0;
 }
 
