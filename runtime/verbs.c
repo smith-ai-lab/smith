@@ -479,7 +479,9 @@ static bool smith_has_prover(void) {
 }
 
 // The words of a compile that the prover must not see: the depfile and output, and what only instruments or caches
-// (sanitizers, modules, frame pointers, pattern initialization) and would change the IR that is proved.
+// (sanitizers, modules, frame pointers, pattern initialization) and would change the IR that is proved, and the
+// optimization level (the prover compiles with -O0 whatever it is: a unit whose hot sources have -O2 and whose others
+// have none would otherwise be proved in two groups, and a group cannot see the bodies of the other).
 static bool smith_prove_drops(const char *word, bool *skip_next) {
     if (*skip_next) {
         *skip_next = false;
@@ -488,6 +490,10 @@ static bool smith_prove_drops(const char *word, bool *skip_next) {
     if (strcmp(word, "-MF") == 0 || strcmp(word, "-c") == 0 || strcmp(word, "-o") == 0) {
         *skip_next = true;
         return true;
+    }
+    static const char *const levels[] = {"-O0", "-O1", "-O2", "-O3", "-Os", "-Oz"};
+    for (size_t i = 0; i < sizeof levels / sizeof levels[0]; i++) {
+        if (strcmp(word, levels[i]) == 0) return true;
     }
     static const char *const prefixes[] = {
         "-MMD", "-fsanitize", "-fno-sanitize", "-fmodule", "-fno-omit-frame-pointer", "-ftrivial-auto-var-init"};

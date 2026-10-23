@@ -224,6 +224,61 @@ prove --function=past_the_end "$cases/returned_pointer.c"
 expect "returned_pointer: a pointer one past the end is refused where it is returned" 1 "$rc"
 expect_contains "returned_pointer: ... at its return" "$out" "undefined behaviour at \`ret ptr"
 
+# 7c2d. A program whose sources compile with different optimization levels is proved as one unit (#74: learner's
+# hot sources have -O2, the others none, and a caller could not see the body of a callee in the other group).
+levels=$work/levelsproj
+mkdir -p "$levels"
+cat >"$levels/hot.c" <<'EOF'
+#include <smith/contract.h>
+#include <stdint.h>
+
+void hot_begin(uint32_t *counter) {
+    smith_requires(counter != nullptr && *counter < 100);
+    *counter += 1;
+}
+EOF
+cat >"$levels/main.c" <<'EOF'
+#include <smith/contract.h>
+#include <stdint.h>
+
+void hot_begin(uint32_t *counter);
+
+uint32_t twice(uint32_t start) {
+    smith_requires(start < 50);
+    uint32_t value = start;
+    hot_begin(&value);
+    hot_begin(&value);
+    smith_ensures(value == start + 2);
+    return value;
+}
+
+int main(void) { return (int)twice(1) - 3; }
+EOF
+cat >"$levels/build.c" <<EOF
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject hot = {.compiler = "smith-cc", .source = "hot.c", .output = "build/hot.o", .flags = smith_list(b, "-std=gnu23", "-I", "$here/include", "-O2", nullptr)};
+    SmithObject main_object = {.compiler = "smith-cc", .source = "main.c", .output = "build/main.o", .flags = smith_list(b, "-std=gnu23", "-I", "$here/include", nullptr)};
+    smith_object(b, &hot);
+    smith_object(b, &main_object);
+    SmithProgram app = {.linker = "smith-cc", .output = "build/app", .objects = (const SmithObject *[]){&hot, &main_object, nullptr}};
+    smith_program(b, &app);
+    smith_default(b, app.step.outputs);
+}
+EOF
+cd "$levels" && capture "$smith" prove -v; cd "$here"
+expect "levels: a caller of a source with another -O is proved" 0 "$rc"
+expect_contains "levels: ... against the other source's body" "$out" "ok    twice  ("
+
+# 7c2e. The smith_requires of an inlined function (one with no smith_ensures) is reported, not a crash (#74).
+prove --function=caller "$cases/inlined_requires.c"
+expect "inlined_requires: a caller that may break the requires of an inlined helper fails" 1 "$rc"
+expect_contains "inlined_requires: ... at the requires" "$out" "inlined_requires.c:8: smith_requires(x < 10) of an inlined function"
+expect_contains "inlined_requires: ... with the values" "$out" "counterexample: x = "
+prove --function=careful "$cases/inlined_requires.c"
+expect "inlined_requires: a caller that keeps it is proved" 0 "$rc"
+
 # 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
 # int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects; `restrict`
 # is what says it.
