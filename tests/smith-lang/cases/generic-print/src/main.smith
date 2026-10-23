@@ -1,0 +1,13 @@
+module main;
+
+import fmt;
+
+int main(void) {
+    u8 small = 200;
+    i64 negative = -5;
+    fmt::print();
+    fmt::print("hello");
+    fmt::print("x =", 42, "y =", 2.5, "ok:", true);
+    fmt::print(small, negative, 1.5f, (u64)18446744073709551615ULL);
+    return 0;
+}

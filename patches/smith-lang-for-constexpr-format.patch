@@ -1,0 +1,15 @@
+# `for constexpr (...)` in a .smith file (issue #71): clang-format reads the loop as it reads `for`. After clang-format-smith.patch,
+# which gives UnwrappedLineParser its IsSmith.
+diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/UnwrappedLineParser.cpp
+--- a/clang/lib/Format/UnwrappedLineParser.cpp
++++ b/clang/lib/Format/UnwrappedLineParser.cpp
+@@ -3419,6 +3419,9 @@
+     nextToken();
+   if (IsCpp && FormatTok->is(tok::kw_co_await))
+     nextToken();
++  // `for constexpr (...)` of a .smith file (issue #71).
++  if (IsSmith && FormatTok->is(tok::kw_constexpr))
++    nextToken();
+   if (HasParens && FormatTok->is(tok::l_paren)) {
+     // The type is only set for Verilog basically because we were afraid to
+     // change the existing behavior for loops. See the discussion on D121756 for

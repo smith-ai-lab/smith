@@ -1,0 +1,9 @@
+src/main.smith:10:18: a list's shape is known while the body is written: assign it where it is declared, as a statement of its own (a `for constexpr` body counts as that place), never in a branch, a loop or a block that is run at run time
+src/main.smith:11:45: cannot tell the type of `1`, the argument of `shape_changes_in_statement`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:18: `args[2]` is out of range: `args` has 2 elements
+src/main.smith:13:32: cannot tell the type of `1`, the argument of `runtime_index`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:14:18: `for constexpr` ran 1024 turns without ending: is its condition ever false?
+src/main.smith:7:33: cannot tell the type of `3`, the argument of `run_time_bound`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:23: cannot tell the type of `1`, the argument of `bare`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:32: cannot tell the type of `1`, the argument of `shape_changes`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/plain.smith:5:5: `for constexpr` is the loop of a generic function's body, run once for each instance; a plain function's loop is `for`

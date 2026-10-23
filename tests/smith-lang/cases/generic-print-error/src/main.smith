@@ -1,0 +1,13 @@
+module main;
+
+import fmt;
+
+typedef struct {
+    i32 x;
+} Point;
+
+int main(void) {
+    Point p = {1};
+    fmt::print("a point:", p);
+    return 0;
+}

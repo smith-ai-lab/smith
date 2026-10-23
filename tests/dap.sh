@@ -195,6 +195,43 @@ EOF
             failures=$((failures + 1))
             echo "FAIL  the generic program does not build"
         fi
+
+        # A list and `for constexpr` (issue #71): the loop is written out turn by turn, and each binding of the list is the
+        # variables `args_<binding>_<index>`; the steps are at the lines of the generic's own source.
+        mkdir "$work/lists"
+        cat >"$work/lists/gather.smith" <<'EOF'
+module gather;
+
+export i32 sum_with_marker(auto... rest) {
+    auto args = {100};
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        args = {args..., rest[i]};
+    }
+    i32 total = args[0];
+    for constexpr (usize i = 1; i < countof(args); i++) {
+        total += (i32)args[i];
+    }
+    return total;
+}
+EOF
+        cat >"$work/lists/lmain.smith" <<'EOF'
+module lmain;
+import gather;
+int main(void) {
+    return gather::sum_with_marker(1, 2) - 103;
+}
+EOF
+        if (cd "$work/lists" && "$smith" cc -g -O0 lmain.smith gather.smith -o lists); then
+            out=$(cd "$work/lists" && "$smith" dbg -b -o 'br set -r sum_with_marker' -o run -o next -o next -o next -o next -o 'frame variable' -o c lists 2>&1)
+            expect_contains "dbg steps a for constexpr at the generic's own lines" "$out" "total += (i32)args[i];"
+            expect_contains "dbg names the argument list's elements" "$out" "(int) rest_1 = 2"
+            expect_contains "dbg names each binding of a list" "$out" "(int) args_1_1 = 1"
+            expect_contains "dbg names the last binding of a list" "$out" "(int) args_2_2 = 2"
+        else
+            total=$((total + 1))
+            failures=$((failures + 1))
+            echo "FAIL  the list program does not build"
+        fi
     else
         total=$((total + 1))
         failures=$((failures + 1))

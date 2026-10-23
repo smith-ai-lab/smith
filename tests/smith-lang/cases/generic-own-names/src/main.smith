@@ -1,0 +1,15 @@
+module main;
+
+import smith::tools;
+import <stdio.h>;
+
+int main(void) {
+    const i32 value = 5;
+    i32 a = tools::shifted(&value);
+    i32 b = tools::shifted(&value, 1, 2.5);
+    i32 c = tools::table_sum(1, 2, 3);
+    i32 d = tools::table_sum();
+    i32 e = tools::nested(7, 8);
+    c::printf("%d %d %d %d %d\n", a, b, c, d, e);
+    return 0;
+}

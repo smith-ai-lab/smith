@@ -72,6 +72,9 @@ static bool smith_lang_path_matches(const char *file, const char *path) {
     return file_length == total || file[file_length - total - 1] == '/';
 }
 
+static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                   uint32_t location, const SmithLangModuleName *module, bool is_c);
+
 static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
     bool good = smith_lang_read_module_name(lang, host, &name);
@@ -103,6 +106,11 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
     snprintf(lang->prefix, sizeof lang->prefix, "%s_", name.underscored);
     snprintf(lang->symbol, sizeof lang->symbol, "%s::", name.colons);
     lang->module_text = smith_lang_store(lang, name.colons, strlen(name.colons));
+    // The module's own last name is a binding too, so an export is written `tools::dup` as an importer writes it; an
+    // import of that name (`import a::tools;` in `b::tools`) takes the name over.
+    if (smith_lang_add_binding(lang, host, name.last, strlen(name.last), name.location, &name, false)) {
+        smith_lang_binding_find(lang, name.last, strlen(name.last))->is_self = true;
+    }
 }
 
 // ---- Imports
@@ -188,16 +196,18 @@ static bool smith_lang_find_cycle(SmithLang *lang, const SmithHost *host, const 
 
 static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, const SmithLangModuleName *module, bool is_c) {
-    if (smith_lang_binding_find(lang, name, length) != nullptr) {
+    SmithLangBinding *binding = smith_lang_binding_find(lang, name, length);
+    if (binding != nullptr && !binding->is_self) {
         smith_lang_error(lang, host, location, "`%.*s` is already the name of an import", (int)length, name);
         return false;
     }
-    if (lang->bindings_count >= smith_lang_bindings_max) {
+    if (binding == nullptr && lang->bindings_count >= smith_lang_bindings_max) {
         lang->broken = true;
         return false;
     }
     if (host->watch != nullptr) host->watch(host->context, name, (uint32_t)length);
-    SmithLangBinding *binding = &lang->bindings[lang->bindings_count++];
+    if (binding == nullptr) binding = &lang->bindings[lang->bindings_count++];
+    *binding = (SmithLangBinding){};
     binding->name = smith_lang_store(lang, name, length);
     binding->is_c = is_c;
     if (module != nullptr) {

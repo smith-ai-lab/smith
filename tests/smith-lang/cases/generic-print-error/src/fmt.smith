@@ -1,0 +1,27 @@
+module fmt;
+
+import <stdio.h>;
+
+// A type-checked `print`: one `for constexpr` over the arguments, and each one is formatted by its own type, chosen when
+// the instance is written. A type with no format is a `static_assert` in the final `else`, at the call that asked for it.
+export void print(auto... args) {
+    for constexpr (usize i = 0; i < countof(args); i++) {
+        if constexpr (i > 0) {
+            c::putchar(' ');
+        }
+        if constexpr (is_bool(typeof(args[i]))) {
+            c::fputs(args[i] ? "true" : "false", c::stdout);
+        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
+            c::printf("%lld", (long long)args[i]);
+        } else if constexpr (is_integer(typeof(args[i]))) {
+            c::printf("%llu", (unsigned long long)args[i]);
+        } else if constexpr (is_float(typeof(args[i]))) {
+            c::printf("%g", (double)args[i]);
+        } else if constexpr (typeof(args[i]) == char *) {
+            c::fputs(args[i], c::stdout);
+        } else {
+            static_assert(false, "fmt::print: no format for this type");
+        }
+    }
+    c::putchar('\n');
+}

@@ -1,0 +1,1 @@
+src/fmt.smith:23:27: static assertion failed: fmt::print: no format for this type

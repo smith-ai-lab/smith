@@ -1375,7 +1375,7 @@
     "fields": {
       "declarator": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "array_declarator",
@@ -1417,7 +1417,7 @@
       },
       "type": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "type_specifier",
@@ -1436,6 +1436,10 @@
         },
         {
           "type": "attribute_specifier",
+          "named": true
+        },
+        {
+          "type": "list_declaration",
           "named": true
         },
         {
@@ -1717,6 +1721,10 @@
         },
         {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "list_assignment",
           "named": true
         }
       ]
@@ -2446,6 +2454,10 @@
           "named": true
         },
         {
+          "type": "pack_expansion",
+          "named": true
+        },
+        {
           "type": "preproc_call",
           "named": true
         }
@@ -2552,6 +2564,58 @@
         "types": [
           {
             "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "list_assignment",
+    "named": true,
+    "fields": {
+      "left": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "right": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "initializer_list",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "list_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "initializer_list",
             "named": true
           }
         ]

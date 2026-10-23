@@ -443,3 +443,62 @@ int apply(constexpr auto f, auto x, auto... rest) {
             (identifier)
             (pack_expansion
               (identifier))))))))
+
+================================================================================
+for constexpr, a list, and its assignment
+================================================================================
+
+int total(auto... rest) {
+    auto args = {1, 2};
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        args = {args..., rest[i], rest...};
+    }
+    return 0;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (pack_parameter
+            (identifier)))))
+    (compound_statement
+      (declaration
+        (list_declaration
+          (identifier)
+          (initializer_list
+            (number_literal)
+            (number_literal))))
+      (for_statement
+        (declaration
+          (primitive_type)
+          (init_declarator
+            (identifier)
+            (number_literal)))
+        (binary_expression
+          (identifier)
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier))))
+        (update_expression
+          (identifier))
+        (compound_statement
+          (expression_statement
+            (list_assignment
+              (identifier)
+              (initializer_list
+                (pack_expansion
+                  (identifier))
+                (subscript_expression
+                  (identifier)
+                  (identifier))
+                (pack_expansion
+                  (identifier)))))))
+      (return_statement
+        (number_literal)))))

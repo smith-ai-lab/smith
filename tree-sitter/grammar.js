@@ -34,6 +34,7 @@ module.exports = grammar(C, {
     [$.import_declaration, $.type_specifier],
     [$.type_parameter, $.type_specifier],
     [$.type_parameter, $.type_qualifier],
+    [$.storage_class_specifier, $.list_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
   ]),
 
@@ -152,6 +153,19 @@ module.exports = grammar(C, {
       )),
     ),
 
+    // for constexpr (usize i = 0; i < countof(rest); i++) { ... }: C's for, run at compile time
+    for_statement: ($, original) => choice(
+      original,
+      seq('for', 'constexpr', '(', $._for_statement_body, ')', field('body', $.statement)),
+    ),
+
+    // auto args = {a, b}; makes a list (C23 leaves `auto x = {...}` invalid, so a declaration cannot read it)
+    list_declaration: $ => seq('auto', field('name', $.identifier), '=', field('value', $.initializer_list), ';'),
+    declaration: ($, original) => choice(original, prec.dynamic(3, $.list_declaration)),
+
+    // args = {args..., x}; assigns a list (auto args = {...} is a declaration, which C already reads)
+    list_assignment: $ => seq(field('left', $.identifier), '=', field('right', $.initializer_list)),
+    expression_statement: ($, original) => choice(original, prec.dynamic(2, seq($.list_assignment, ';'))),
     // if constexpr (T == const c::V2 *): a condition that compares a type parameter with a type that is no expression.
     constexpr_condition: $ => seq(
       '(',
@@ -248,7 +262,8 @@ module.exports = grammar(C, {
       )),
       '}',
     ),
-    _initializer_item: $ => choice($.initializer_pair, $.expression, $.initializer_list),
+    // {args..., x}: the elements of a list expanded in a list
+    _initializer_item: $ => choice($.initializer_pair, $.expression, prec.dynamic(3, $.pack_expansion), $.initializer_list),
     _directives: $ => repeat1($.preproc_call),
 
     // #if __has_include("lib/io.c")

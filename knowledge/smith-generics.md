@@ -128,7 +128,43 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   instance (`generic function pick::larger`, the head, `instance pick::larger(i32)`), and go-to-definition goes to the
   generic's name. An instance is `pick::larger<i32>` in `smith dbg` and `smith dap`, and its code is the generic's own
   file, line and column, so a breakpoint, a listing and the arguments are those of the source.
+- **Lists and `for constexpr`** (issue #71, skill smith-lang-lists). Smith is C plus compile time, so a list is not a
+  library type: it is names. The lowering keeps, for the instance being written, a table of the lists its body made
+  (`auto args = {...}`) and the loop variables of the `for constexpr` it is inside, and writes plain C.
+  - *`auto name = {a, b, ...};`* declares one variable per element, `[[maybe_unused]] auto name_<binding>_<index> = <the
+    element>;`, in order (an element is evaluated once, where the statement stands, and has its own type from C23's
+    `auto`; `list...` as an element copies the elements of that list; an element is never a type). C23 leaves `auto x =
+    {a, b}` invalid, so this changes nothing valid. A list is never a value: `countof(list)` (a constant the evaluator
+    of `if constexpr` reads too), `list[i]` (the element's variable), `list...` (the comma-separated names), and a bare
+    use is an error that says these three. The argument list `auto... rest` is the same thing with the instance's
+    parameters `rest_0, ...` as its elements; the lowering has one reading of a list for both.
+  - *`name = {...};` makes a new binding* (`name_1_...`, the next number of that name in the instance, never reused),
+    which takes effect after its elements were written (`args = {args..., x}` reads the old one). The new variables are
+    declared where the statement stands, so it must stand at the brace depth the list was declared at, as a statement of
+    its own (the token before it is `;`, `{` or `}`): in a nested block, or after `if (x)` (a branch run at run time
+    would change the list's shape), it is an error. The body of a `for constexpr` that assigns a list (and the block of an
+    `if constexpr` branch that does) is written without its braces for that reason; a body that does not is written in
+    braces, so its locals do not clash from turn to turn.
+  - *`for constexpr (init; condition; step) body`* is the token `for constexpr` in the record (`Y` in the header's
+    `// smith-generic:` line) and, when the instance is written, a frame on the replay stack: the loop variable is a
+    number (every use of it is written as the number, `rest[i]` is the element), the condition and step are read by the
+    evaluator of `if constexpr` (numbers, `countof`, the variable, the operators of C; step `i++`, `i--`, `i += n`,
+    `i -= n`, `i = n`), and each turn is the body pushed above the loop frame, so the loop is not a recursion of C. A turn
+    count of 1024 is the limit. Outside a generic `for constexpr` is an error. There is no range-based `for`: C's `for`
+    with `countof` is what loops over sequences, and a sequence of the language (a list, an array, later a slice) would be
+    the only thing a range form worked on.
+  - *Types.* `typeof(rest[i])` in an `if constexpr` condition is the instance's own type for that argument, so
+    `is_integer(typeof(rest[i]))` and `typeof(rest[i]) == char *` choose per argument (a type-checked formatter is a
+    `for constexpr` over `auto... args` with a `static_assert(false)` in the final `else`). A list made with braces has no
+    type table: the types of its elements are the compiler's, in the C written, so `typeof(args[i])` in a condition is an
+    error, and a list's elements are not typed as arguments of another generic (only `rest...` is forwarded).
+  - *Names.* A variable of the body spelled like an element (`rest_0`, `args_1_0`) is an error, found where the body is
+    read. The debugger shows the elements as variables of that name at the generic's own lines.
+  - *The editor's grammar* reads `for constexpr (...)`, `auto args = {...};`, `args = {...};` and `{rest..., x}`;
+    clang-format reads `for constexpr` (patch smith-lang-for-constexpr-format).
+- **A module's own exports** may be written qualified in its generics and elsewhere in the module (`tools::dup` in
+  `smith::tools`): the module's last name is a binding of itself that an import of that name replaces.
 - **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),
-  `for constexpr` and lists as values (`auto args = {...}`, issue #71), a list in an initializer, `auto *p` and `const auto x` (an `auto` parameter is `auto name`),
+  `auto *p` and `const auto x` (an `auto` parameter is `auto name`),
   overloading, specialization, constraints other than `if constexpr` and `static_assert`,
   pointers to a generic, and a type local to a function as `T`.

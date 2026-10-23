@@ -1681,16 +1681,18 @@ class SmithHook final : public TokenHook, public NameSource {
             self->PP.getIdentifierInfo(StringRef(prefixed, prefixedLength));
     }
 
-    // Whether the text has the word `if` and then `constexpr`, white space between (comments and strings count).
+    // Whether the text has the word `if` or `for` and then `constexpr`, white space between (comments and strings
+    // count).
     static bool hasIfConstexpr(StringRef text) {
         for (size_t at = text.find("constexpr"); at != StringRef::npos; at = text.find("constexpr", at + 9)) {
             size_t before = at;
             while (before > 0 && isWhitespace(text[before - 1]))
                 before -= 1;
-            if (before >= 2 && text.substr(before - 2, 2) == "if" &&
-                (before == 2 || !isAsciiIdentifierContinue(text[before - 3]))) {
-                return true;
-            }
+            bool is_if = before >= 2 && text.substr(before - 2, 2) == "if" &&
+                         (before == 2 || !isAsciiIdentifierContinue(text[before - 3]));
+            bool is_for = before >= 3 && text.substr(before - 3, 3) == "for" &&
+                          (before == 3 || !isAsciiIdentifierContinue(text[before - 4]));
+            if (is_if || is_for) return true;
         }
         return false;
     }

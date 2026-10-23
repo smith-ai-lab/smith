@@ -140,7 +140,8 @@ typedef enum {
     SmithLangGen_Plain,
     SmithLangGen_CallBegin, // a call that may be to a generic: `module::member`, then the whole call, then CallEnd
     SmithLangGen_CallEnd,
-    SmithLangGen_IfConstexpr, // `if constexpr`: the condition and the branch that is kept are chosen for each instance
+    SmithLangGen_IfConstexpr,  // `if constexpr`: the condition and the branch that is kept are chosen for each instance
+    SmithLangGen_ForConstexpr, // `for constexpr`: C's for, run for each instance and written out once per iteration
 } SmithLangGenSpecial;
 
 typedef struct {
@@ -222,6 +223,7 @@ typedef struct {
     SmithLangText module; // game::replay
     bool is_c;
     bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
+    bool is_self;   // the module's own last name (`tools::dup` in smith::tools): an import of that name replaces it
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
     bool in_header; // an exported declaration (or a generic, or an inline body) of the module uses a name written x::
     bool listed;    // the module's header lists its exports (// smith-names:): a name it does not list is no export

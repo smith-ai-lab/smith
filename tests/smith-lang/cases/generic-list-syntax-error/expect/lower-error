@@ -1,0 +1,5 @@
+src/main.smith:10:34: cannot tell the type of `1`, the argument of `generic_literal`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:6:18: in `for constexpr`: the step must be a compile-time constant: `,` is not an operator of constant expressions
+src/main.smith:7:18: `for constexpr` is written `for constexpr (usize i = 0; condition; step) body`: it declares its variable
+src/main.smith:8:24: cannot tell the type of `1`, the argument of `clash`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:18: an element of a list is an expression

@@ -34,6 +34,9 @@ static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, c
 static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host);
 static bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
                                             SmithLangWord word);
+static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                             SmithLangWord word);
+static void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
 static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
@@ -41,6 +44,10 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
     if (word != SmithLangWord_Other) {
         if (lang->recording && smith_lang_ident(token, "if") &&
             smith_lang_generic_if_constexpr(lang, host, token, word)) {
+            return;
+        }
+        if (lang->recording && host->maybe_if_constexpr && smith_lang_ident(token, "for") &&
+            smith_lang_generic_for_constexpr(lang, host, token, word)) {
             return;
         }
         smith_lang_word_state(lang, token, word);
@@ -761,6 +768,9 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     if (!token->foreign && !lang->recording && !smith_lang_capturing(lang)) {
         if (token->kind == SmithTokenKind_Identifier) {
             if (smith_lang_ident(token, "if") && smith_lang_ifc_begin(lang, host, token)) return;
+            if (host->maybe_if_constexpr && smith_lang_ident(token, "for")) {
+                smith_lang_for_constexpr_outside(lang, host, token);
+            }
             if (host->maybe_if_constexpr && smith_lang_ident(token, "constexpr")) smith_lang_ifc_constant(lang, host);
         } else if (lang->ifc_count > 0 && token->kind == SmithTokenKind_Punctuator) {
             lang->ifc_braces += smith_lang_punct(token, "{") ? 1 : 0;

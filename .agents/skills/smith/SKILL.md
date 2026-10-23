@@ -32,7 +32,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 ## The language
 
-[smith-lang](../smith-lang/SKILL.md) (C with modules), [-modules](../smith-lang-modules/SKILL.md), [-c-interop](../smith-lang-c-interop/SKILL.md), [-sized-types](../smith-lang-sized-types/SKILL.md), [-generics](../smith-lang-generics/SKILL.md), [-target](../smith-lang-target/SKILL.md) (no preprocessor, `if constexpr`). Style: [smith-idiom](../smith-idiom/SKILL.md), [-before](../smith-idiom-before/SKILL.md), [-after](../smith-idiom-after/SKILL.md), [-port](../smith-idiom-port/SKILL.md).
+[smith-lang](../smith-lang/SKILL.md) (C with modules), [-modules](../smith-lang-modules/SKILL.md), [-c-interop](../smith-lang-c-interop/SKILL.md), [-sized-types](../smith-lang-sized-types/SKILL.md), [-generics](../smith-lang-generics/SKILL.md), [-lists](../smith-lang-lists/SKILL.md) (`auto... rest`, lists, `for constexpr`), [-target](../smith-lang-target/SKILL.md) (no preprocessor, `if constexpr`). Style: [smith-idiom](../smith-idiom/SKILL.md), [-before](../smith-idiom-before/SKILL.md), [-after](../smith-idiom-after/SKILL.md), [-port](../smith-idiom-port/SKILL.md).
 
 ## The libraries
 
