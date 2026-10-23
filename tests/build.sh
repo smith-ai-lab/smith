@@ -2164,7 +2164,7 @@ if ninja --version >/dev/null 2>&1; then
     expect "upgrade: ninja can take over again, and builds what changed" "0 three" "$rc $(cat output)"
 fi
 
-# 15. .smith modules: smith_object writes each module's header first, then compiles with -I .smith/include (docs/smith-lang.md).
+# 15. .smith modules: smith_object writes each module's header first, then compiles with -I .smith/include (knowledge/smith-language.md).
 # A project of three modules and a C file that includes a module's header.
 lang_project() { # copies the corpus case module-three and writes its build.c
     project

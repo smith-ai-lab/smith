@@ -11,7 +11,7 @@
 //      symbolizer about the object, which has its own DWARF.
 // smith reads the debug map (the second): the objects of a test build are in the build folder when a test fails,
 // nothing has to be made first, and a failure costs the DWARF of one object, not of the program (see the measurements
-// in docs/build-c.md). A dSYM, when one is there and matches, is used first; an object that is gone or has changed
+// in knowledge/build-tests.md). A dSYM, when one is there and matches, is used first; an object that is gone or has changed
 // since the link (its modification time is in the N_OSO entry) is reported, never read.
 #include <sys/stat.h>
 

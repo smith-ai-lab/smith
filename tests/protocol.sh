@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests of the generated protocol code (docs/protocol.md): runtime/protocol/dap.[ch] and mcp.[ch], which scripts/protocol.c
+# Tests of the generated protocol code (knowledge/protocol-generation.md): runtime/protocol/dap.[ch] and mcp.[ch], which scripts/protocol.c
 # writes from DAP's and MCP's schemas, and the tests it writes with them (tests/protocol/test_protocol_*.c: a round
 # trip for every type and a refusal for every missing required member). Usage: sh tests/protocol.sh path/to/smith
 # They are built in a scratch project with smith_tests, in two builds: -O0 under AddressSanitizer and UBSan, and -O2

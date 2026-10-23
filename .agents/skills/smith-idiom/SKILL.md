@@ -39,7 +39,7 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: `smith lint` and the editor, through `smith-bounded-loop` (also in C).
 11. **C23 spellings.** `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]`, never `NULL`, `_Bool`, `<stdbool.h>`, `{0}` or `__attribute__((noreturn))`; a constant is `constexpr`, not a file-scope `const` with a constant initializer.
     - Enforced by: `smith lint` and the editor, through `smith-c23` and `smith-constexpr` (also in C).
-12. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as `smith-development` asks of every agent.
+12. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
 
 ## A C module, and the same as Smith
 

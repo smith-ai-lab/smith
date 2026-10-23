@@ -1,6 +1,6 @@
 #!/bin/sh
 # Writes the bootstrap file of a .smith library: the C that smith's own build compiles in place of the module
-# (docs/smith-lang.md, "The bootstrap"). Usage: sh scripts/bootstrap.sh path/to/smith lib/smith/<name>.smith out.c
+# (knowledge/smith-bootstrap.md). Usage: sh scripts/bootstrap.sh path/to/smith lib/smith/<name>.smith out.c
 # The file is a first line saying where it is from, `// NOLINTBEGIN`, an include of the module's generated header
 # (include/smith/<name>.h, committed), and `smith cc --smith-lower` of the source with what the header already says
 # left out, since a translation unit may include both: the `typedef struct {...} Name;` blocks and the `constexpr`,

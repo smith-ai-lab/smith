@@ -5,7 +5,7 @@ description: "The .smith language: C with modules, a superset of C by opt-in ste
 
 # `.smith` files
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The long reference is [docs/smith-lang.md](../../../docs/smith-lang.md).
+This skill ships in the smith plugin, from `.agents/skills/smith-lang/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The long reference is [knowledge/smith-language.md](../../../knowledge/smith-language.md).
 
 A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant, and compiles to the same code. A file opts into more, one step at a time; none is needed for the one before:
 
@@ -67,7 +67,7 @@ bool poisons_memory(void) {
 }
 ```
 
-The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer` (true only while clang-tidy's analyzer runs). The condition of `if constexpr` is made of `target::` facts, `constexpr` constants (of the file or the function) and literals, with the operators of C; the branches are blocks (`else if constexpr (...) { }` continues a chain). Anything else in a condition is an error at the name (``in `if constexpr`: `n` is not a constant``). The branch not taken is never parsed: no diagnostics and no hover in it. Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them with `if constexpr`: the header gets the `#if` (smith::contract does). `smith cc --smith-lower` has no preprocessor, so it writes macros (`SMITH_TARGET_ARCH`, defined at the top by `#if defined(__aarch64__)`) and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output. Details: docs/smith-lang.md, "The target, and `if constexpr` outside generics".
+The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer` (true only while clang-tidy's analyzer runs). The condition of `if constexpr` is made of `target::` facts, `constexpr` constants (of the file or the function) and literals, with the operators of C; the branches are blocks (`else if constexpr (...) { }` continues a chain). Anything else in a condition is an error at the name (``in `if constexpr`: `n` is not a constant``). The branch not taken is never parsed: no diagnostics and no hover in it. Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them with `if constexpr`: the header gets the `#if` (smith::contract does). `smith cc --smith-lower` has no preprocessor, so it writes macros (`SMITH_TARGET_ARCH`, defined at the top by `#if defined(__aarch64__)`) and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output. Details: knowledge/smith-language.md.
 
 ## Tests and proofs
 

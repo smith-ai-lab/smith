@@ -1,6 +1,6 @@
 // Writes C on <smith/json.h> from a JSON Schema: a struct for every definition, and a parse, a write, an equality and a
 // random-value function for each, plus a test file that round-trips every type and refuses every missing required
-// member. docs/protocol.md has the design; runtime/protocol/protocol.h has what the output stands on.
+// member. knowledge/protocol-generation.md has the design; runtime/protocol/protocol.h has what the output stands on.
 //
 // Usage: protocol NAME SCHEMA LICENSE SOURCE OUT_DIR TEST_DIR [--check]
 //   NAME     dap or mcp: the prefix of every name (SmithDap..., smith_dap_...) and of the files

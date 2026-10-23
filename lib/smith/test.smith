@@ -37,7 +37,7 @@ import <unistd.h>;
 // and `void test_<name>(SmithIo *io) {` by name (`random::Key` and `io::Io` in a `.smith` file), and the runner,
 // which is this module's main, runs them in parallel, with failures printed with both values and their types. `smith
 // test` runs it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
-// --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full (docs/build-c.md).
+// --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full (knowledge/build-tests.md).
 //
 // A property test is run on --seeds keys; the key comes from the run's seed, so a failure prints the seed that replays
 // it. A test that takes an io gets a real one made by the runner for that test alone: its key is made from the run's

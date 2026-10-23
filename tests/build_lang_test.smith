@@ -1,5 +1,5 @@
 // `.smith` modules in `smith build`, from tests/build.sh section 15: smith_object writes each module's header first,
-// then compiles with -I .smith/include (docs/smith-lang.md). A project of three modules and a C file that includes a
+// then compiles with -I .smith/include (knowledge/smith-language.md). A project of three modules and a C file that includes a
 // module's header (the corpus case module-three), its edits, an import cycle, a module whose name does not match its
 // path, a plain `.smith` file, and the compiler's helpers. The shell keeps the checks of a smith with no token hook.
 module build_lang_test;

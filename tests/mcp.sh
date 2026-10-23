@@ -1,12 +1,12 @@
 #!/bin/sh
-# Tests of `smith mcp` (issue #22, docs/mcp.md), in two halves. Usage: sh tests/mcp.sh path/to/smith
+# Tests of `smith mcp` (issue #22, knowledge/mcp-server.md), in two halves. Usage: sh tests/mcp.sh path/to/smith
 #
 # 1. The server on the fake io (tests/mcp_fake.c): a scripted client on the console and a scripted `smith dap` child, in
 #    one process, built in three ways (-O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG). This half needs only
 #    a C compiler and runs for the stage0 too.
 # 2. The server as `smith mcp`, a real adapter and real programs, driven by lines on its standard input: a C program, a
 #    .smith program (its names as written), and a test of a project launched by its name. It launches processes under a
-#    debugger, so it needs a smith with lldb inside and the Developer Tools permission (docs/debugging.md); without
+#    debugger, so it needs a smith with lldb inside and the Developer Tools permission (knowledge/debugger.md); without
 #    them this half is skipped with a message, not failed.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -154,7 +154,7 @@ fi
 probe=$("$smith" dbg -b -o 'b prog.c:10' -o run -o 'frame variable sum' prog 2>&1)
 case $probe in
 *"Developer Tools"* | *"not allowed"* | *"timed out"* | *"unable to attach"*)
-    echo "skipped: this account may not debug (see docs/debugging.md): $probe"
+    echo "skipped: this account may not debug (see knowledge/debugger.md): $probe"
     finish
     ;;
 esac

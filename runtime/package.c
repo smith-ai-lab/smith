@@ -1,6 +1,6 @@
 // Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, included by smith.c
 // (`smith fetch`) and by the build runtime (`smith_package`), and embedded in smith so the runtime finds it next to
-// itself in .smith/. It needs SMITH_ASSERT from its includer. See docs/build-c.md.
+// itself in .smith/. It needs SMITH_ASSERT from its includer. See knowledge/packages.md.
 //
 // The cache is $XDG_CACHE_HOME/smith/packages/<hex>/, or ~/.cache/smith/packages/<hex>/, keyed by the archive's hash. A
 // package is downloaded to a temporary file, verified, extracted into a temporary folder and only then renamed into

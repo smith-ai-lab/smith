@@ -5,7 +5,7 @@ description: "Neovim support from the smith repository: plugin/smith.lua, vim.pa
 
 # Neovim
 
-This skill ships in the smith plugin, from `.agents/skills/smith-neovim/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Reference: `docs/neovim.md` in that repository. It needs Neovim 0.12 and `smith` on the PATH. The plugin enables nothing the user did not ask for and replaces none of their settings.
+This skill ships in the smith plugin, from `.agents/skills/smith-neovim/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Reference: `knowledge/neovim.md` in that repository. It needs Neovim 0.12 and `smith` on the PATH. The plugin enables nothing the user did not ask for and replaces none of their settings.
 
 ## Install
 

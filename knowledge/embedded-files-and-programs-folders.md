@@ -1,0 +1,23 @@
+---
+type: architecture
+title: The embedded files and the programs folders
+description: The files clang looks up beside itself are embedded in smith and written once to a runtime folder that smith never removes, and the programs it runs are hard links in a per-binary folder.
+tags: [compiler, cache]
+---
+# The embedded files and the programs folders
+
+**The files the driver looks up beside itself are embedded** (`scripts/pack.c`, `#embed`, LZFSE; about 20 MB in
+smith): the builtin headers, the sanitizers' ignore lists, the macOS compiler-rt runtimes (not iOS's), and
+`libLTO.dylib`, which the system `ld` loads for `-flto` (lld has LLVM inside and needs none). On first use (about 1 s, then a `stat`) smith writes them
+to `$XDG_DATA_HOME/smith/clang/llvm-<version>-<key>` (else `~/.local/share/...`); the key is the pack's contents
+and the identity of the compiler and linker. The programs the driver runs (`bin/clang`, `bin/clang++`, `bin/ld`,
+hard links to smith itself; it runs `clang` again with `-cc1` for any compile with more than one step) are not in
+it: they are in `$XDG_DATA_HOME/smith/programs/<LC_UUID of the running smith>/`, whose `lib` links to that
+folder's, and the shim passes `-resource-dir` for it. So the installed smith, a dev build and another agent's
+never share or remake each other's links, and a smith without lld has no `ld`. A programs folder idle for 31 days
+is removed when a new one is made (using one touches it once a day); only the runtime folder lives forever.
+
+**That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
+binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and
+an emptied `~/.cache` leave every built binary running. Old folders stay for the binaries built against them (about
+70 MB each); delete one by hand to reclaim it, and its binaries then fail at load, naming the missing library.

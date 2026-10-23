@@ -2,7 +2,7 @@
 # End-to-end tests for `smith dbg` (lldb's driver) and `smith dap` (lldb-dap), both run in smith's own process from the
 # LLVM it links, with the system's debugserver. A smith without them inside (the stage0) is skipped. They launch real
 # processes under a debugger, so they need Developer mode and the Developer Tools permission of the terminal running
-# them (docs/debugging.md); without it the tests are skipped with a message, not failed.
+# them (knowledge/debugger.md); without it the tests are skipped with a message, not failed.
 # Usage: sh tests/dap.sh path/to/smith
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -68,7 +68,7 @@ fi
 out=$("$smith" dbg -b -o 'b prog.c:10' -o run -o 'frame variable sum' -o 'frame variable p' -o 'print p.x' -o bt prog 2>&1)
 case $out in
 *"Developer Tools"* | *"not allowed"* | *"timed out"* | *"unable to attach"*)
-    echo "skipped: this account may not debug (see docs/debugging.md): $out"
+    echo "skipped: this account may not debug (see knowledge/debugger.md): $out"
     exit 0
     ;;
 esac

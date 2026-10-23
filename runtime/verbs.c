@@ -7,7 +7,7 @@
 //   test   the tests smith_tests declares; the arguments go to the runner
 //   run    the program the build's default names; the arguments go to the program
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
-// What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes (docs/build-c.md).
+// What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes (knowledge/verbs.md).
 // Included by smith.c.
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;

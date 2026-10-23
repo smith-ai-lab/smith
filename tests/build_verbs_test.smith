@@ -1,6 +1,6 @@
 // The verbs in `smith build`, from tests/build.sh section 13b (issue #40): no task or alias is named after one, .test
 // marks a project's tests, and every run of build.c writes what the verbs read, .smith/build.info and
-// .smith/compile_commands.json (docs/build-c.md).
+// .smith/compile_commands.json (knowledge/build-execution.md).
 module build_verbs_test;
 
 import smith::io;

@@ -1,7 +1,13 @@
-# smith build: the 23 cases
+---
+type: design
+title: The 23 cases that shaped smith build
+description: Each of 23 build cases in make, ninja, Zig 0.17.0 and a smith build.c, with how they were run and what was verified.
+tags: [build, research]
+---
+# The 23 cases that shaped smith build
 
 Each case is one small build problem, written in four systems: GNU Make, ninja, `build.zig` and a smith `build.c`. They
-were written so the owner can choose the API of `smith build`; the choice is in [build-c.md](build-c.md). The order is
+were written so the owner can choose the API of `smith build`; the choice is in [the build file](build-file.md). The order is
 the build-shootout cases (basic to system2, 18 of them), then smith's own: variants, tool, options, function, platform.
 
 ## How they were run
@@ -18,7 +24,7 @@ the build-shootout cases (basic to system2, 18 of them), then smith's own: varia
   the `build.ninja` that the `build.c` would generate, written by hand and run. Where a decision of v1 changed what
   smith generates (task edges, stamps, `.smith/` paths), the block was updated and not rerun; a sentence under it
   says so. That is the test of whether the design works on ninja. Each
-  smith heading names the API tier the snippet needs (v1, v1.5 or later); the tiers are in [build-c.md](build-c.md).
+  smith heading names the API tier the snippet needs (v1, v1.5 or later); the tiers are in [the build file](build-file.md).
 - In the ninja snippets one rule is written per kind of step, to keep them short. smith would emit one generic `rule
   step { command = $cmd }` and put the fully quoted command on each edge as `cmd = ...`, so each step's command is
   explicit and a change to it reruns the step. The two are equivalent.
@@ -2098,4 +2104,4 @@ void build(SmithBuild *b) {
 ("Darwin", "Linux"; "arm64", "x86_64"), so they match what a Makefile sees. The `strcmp` is the only awkward line. When
 the compile command carries `-target`, `b->os` as the host's OS is wrong for this case. Zig has a separate target and
 host; make's `uname` has the same fault. If cross-compiling matters, `SmithBuild` needs a target OS next to `os` (an
-open decision in [build-c.md](build-c.md)); it is not in v1.
+open decision in [the build file](build-file.md)); it is not in v1.

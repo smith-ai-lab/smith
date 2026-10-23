@@ -1,4 +1,14 @@
-# Neovim
+---
+type: architecture
+title: Neovim support is this repository
+description: plugin/smith.lua, editors/neovim and tree-sitter/ give the .smith file type, highlighting, the language server, debugging and tests in Neovim.
+tags: [neovim, tree-sitter]
+---
+# Neovim support is this repository
+
+**Neovim support is this repository** ([Neovim](neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
+the code and queries are in `editors/neovim`, and the grammar in `tree-sitter/` extends tree-sitter-c (generated
+`parser.c` committed; the plugin compiles it with `smith cc -shared`). It enables nothing the user did not ask for.
 
 Neovim support for `.smith` files and for smith's C comes from this repository, with no fork of any Neovim plugin. It
 needs Neovim 0.12 and `smith` on the `PATH`.
@@ -103,7 +113,7 @@ changes a debug configuration of yours.
 ## The grammar
 
 `tree-sitter-smith` extends tree-sitter-c (v0.24.2) as C++, CUDA and GLSL do, adding what `.smith` adds
-([smith-lang.md](smith-lang.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[smith::c_name]]` attributes before it, on a
+([the language](smith-language.md), issue #11): `module a::b;`, `import a::b [as x];`, `import <h>;`, `export` (with `[[smith::c_name]]` attributes before it, on a
 declaration, a function, a typedef or a tag, at file scope), `a::b` paths in expressions and types, `constexpr type T` parameters,
 `if constexpr`, a type where an argument goes, and the sized types `u8` ... `usize`, `f16`, `f32`, `f64`. It also reads
 what smith's own C needs and tree-sitter-c does not: `#embed`, `_Atomic(T)`, `_BitInt(N)`, `enum : unsigned char`, types

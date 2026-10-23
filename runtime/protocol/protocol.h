@@ -1,7 +1,7 @@
 // What the code scripts/protocol.c generates (runtime/protocol/dap.[ch], mcp.[ch]) stands on: the error a parse
 // reports, the readers, writers, comparisons and random makers of the types a JSON Schema starts from (strings,
 // integers, numbers, booleans, "any JSON"), and the checks the generated code shares. Hand-written, so the generated
-// files stay small; docs/protocol.md has the whole design.
+// files stay small; knowledge/protocol-generation.md has the whole design.
 //
 // Every type, generated or here, has the same four functions, named for the type:
 //   bool parse(SmithArena *arena, const SmithJsonValue *value, T *out, SmithProtocolError *error)

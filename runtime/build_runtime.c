@@ -1,6 +1,6 @@
 // The build program's runtime. `smith build` compiles a project's build.c together with this file, runs the result, and
 // the result writes .smith/build.ninja. Strings and lists live in a static arena (no malloc); the manifest is
-// written only when its bytes change, so ninja's view of it changes only when the build does. See docs/build-c.md.
+// written only when its bytes change, so ninja's view of it changes only when the build does. See knowledge/build-file.md.
 #include <smith/build.h>
 
 #include <dirent.h>
@@ -465,7 +465,7 @@ static void smith_check_task(const SmithStep *step) {
     smith_check_step(step);
 }
 
-// The verbs whose meaning is fixed (docs/build-c.md): a task or alias of their name would say another thing, so
+// The verbs whose meaning is fixed (knowledge/verbs.md): a task or alias of their name would say another thing, so
 // build.c may not declare one. smith_tests makes the task `test` itself.
 static const char *const smith_verb_names[] = {"fmt", "lint", "docs", "prove", "check", "run", "test"};
 static bool smith_verb_task_allowed;
@@ -1503,7 +1503,7 @@ static const char *const *smith_library_flags(SmithBuild *b, const char *source)
     return smith_split_lines(text, size);
 }
 
-// .smith sources (docs/smith-lang.md). A module's generated header is a step of its own, made from the module's tokens
+// .smith sources (knowledge/smith-language.md). A module's generated header is a step of its own, made from the module's tokens
 // alone (`smith-cc --smith-header`), so every header can be written before any compile, and every compile of a .smith
 // source waits for all of them (an order-only input: the stamp of the check below) and gets `-I .smith/include`. What
 // an importer depends on is its depfile: it lists the headers the compile read, and a header is rewritten only when
@@ -1769,7 +1769,7 @@ static bool smith_reads_module_headers(const SmithObject *object) {
 
 // The flags of a module's compile that decide where a C header is found and what it declares (-I, -D, -std, ...): the
 // header pass is given them, because it asks the compiler which of the module's imports declared a name its exports
-// use (docs/smith-lang.md, "The header").
+// use (knowledge/smith-module-headers.md).
 static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObject *object) {
     static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U", nullptr};
     static const char *const joined[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-std=", "-isysroot", "-F", nullptr};
@@ -2098,7 +2098,7 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
     smith_write(b, path, text);
 }
 
-// What the verbs learn from the build (smith lint, prove, test, run and check; docs/build-c.md). Every run of build.c
+// What the verbs learn from the build (smith lint, prove, test, run and check; knowledge/verbs.md). Every run of build.c
 // writes .smith/build.info, one line per fact, and .smith/compile_commands.json for clang-tidy, and the manifest gets
 // two phony targets: smith_needs, the generated files the project's compiles read, and smith_tests, the tests.
 //   compile<TAB>source<TAB>word...   a source of the project's own that the build compiles, with the words of its first
@@ -2562,7 +2562,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     *tests = copy;
 }
 
-// Builds by convention: smith_app and smith_app_tests (docs/build-c.md, "Conventions"). A project that follows the
+// Builds by convention: smith_app and smith_app_tests (knowledge/build-conventions.md). A project that follows the
 // conventions has no build file, and `smith build` then runs a build program of these two calls with their defaults.
 
 // The flags every profile shares: the template of `smith new`, moved here. C2y (for _Countof) with every warning, and

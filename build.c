@@ -43,7 +43,7 @@ static const char *build_variable(SmithBuild *b, const char *name, const char *f
 }
 
 // The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
-// docs/protocol.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed, so a build
+// knowledge/protocol-generation.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed, so a build
 // never needs the network; `smith build protocol` writes them again from the packages, and `smith check` runs
 // check-protocol (a test), which fails when a committed file is not what the generator writes now.
 typedef struct {
@@ -186,7 +186,7 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // source lowers to now. scripts/bootstrap.sh writes a file: a first line saying where it is from, `// NOLINTBEGIN` (it
 // is generated, so `smith lint` leaves it alone, and it ends with `// NOLINTEND`), an include of the module's generated
 // header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
-// It needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The bootstrap").
+// It needs no compiler, so the stage0 writes the same bytes (knowledge/smith-bootstrap.md).
 static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith",
                                                       "lib/smith/contract.smith",
                                                       "lib/smith/inflate.smith",

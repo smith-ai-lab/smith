@@ -212,7 +212,7 @@ twice 21 is 42
   `foo::twice` reaches a member with `::`.
 
 Plain C in a `.smith` file means what it means in a `.c` file. The full language is in
-[docs/smith-lang.md](docs/smith-lang.md).
+[knowledge/smith-language.md](knowledge/smith-language.md).
 
 ## Editors
 
@@ -224,7 +224,7 @@ vim.pack.add({ "git@github.com:adam-r-kowalski/smith" })
 vim.lsp.enable("smith")
 ```
 
-See [docs/neovim.md](docs/neovim.md).
+See [knowledge/neovim.md](knowledge/neovim.md).
 
 **Claude Code.** The plugin brings smith's skills and declares `smith lsp` for C, C++, Objective-C and `.smith` files.
 `smith new` writes a `.claude/settings.json` that enables it. To add it by hand:
@@ -262,8 +262,8 @@ are in `include/smith` and have no skill of their own.
 
 ## Where to read more
 
-- [AGENTS.md](AGENTS.md): the decisions, and why each was made.
-- [docs/](docs/): [build-c.md](docs/build-c.md) (the build file), [smith-lang.md](docs/smith-lang.md),
-  [neovim.md](docs/neovim.md) and [debugging.md](docs/debugging.md).
+- [AGENTS.md](AGENTS.md): the decisions, one line each.
+- [knowledge/](knowledge/index.md): what smith is, one concept per file: [the build file](knowledge/build-file.md),
+  [the language](knowledge/smith-language.md), [Neovim](knowledge/neovim.md) and [the debugger](knowledge/debugger.md).
 - [.agents/skills/](.agents/skills/): short guides to each verb and library.
 - [GitHub issues](https://github.com/adam-r-kowalski/smith/issues): everything planned, and the only place plans live.

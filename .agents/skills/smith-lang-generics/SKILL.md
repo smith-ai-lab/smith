@@ -5,7 +5,7 @@ description: "Generic functions in .smith modules: `constexpr type T` parameters
 
 # Generic functions
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang-generics/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`; modules: `smith-lang-modules`. The long reference is [docs/smith-lang.md](../../../docs/smith-lang.md) ("Generic functions").
+This skill ships in the smith plugin, from `.agents/skills/smith-lang-generics/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`; modules: `smith-lang-modules`. The long reference is [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Generic functions").
 
 A function of a module with `constexpr type T` or `auto x` parameters is written once and compiled for each type it is called with. `constexpr` in a parameter list means compile-time: the parameter is in no generated function. A bare `type T` is an error (``a type parameter is compile-time: write `constexpr type T` ``).
 

@@ -1,8 +1,19 @@
+---
+type: architecture
+title: smith dbg and smith dap
+description: smith dbg and smith dap are lldb and lldb-dap from smith's LLVM with the system's debugserver, and the doc holds how they are built, their cost, and macOS permissions.
+tags: [debugger, lldb]
+---
 # smith dbg and smith dap
+
+**`smith dbg` and `smith dap` are lldb and lldb-dap, from the same LLVM** (linked in; the stage0 runs `$SMITH_LLDB`
+and `$SMITH_LLDB_DAP`), with the system's debugserver (Apple signs it), no Python and no curses
+(the skill is smith-debug). They add about 17 MB to smith and, because the
+frameworks lldb needs load with it, about 9 ms to the start of every smith process.
 
 `smith dbg` is lldb's driver and `smith dap` is lldb-dap's main, both run in smith's process from the LLVM it links
 (23.1.3), each with the arguments unchanged, like `smith fmt`, `smith lint` and `smith lsp`. The skill
-[smith-debug](../.agents/skills/smith-debug/SKILL.md) is the short guide for users; this is how it is built.
+smith-debug is the short guide for users; this is how it is built.
 
 ## How it is built
 

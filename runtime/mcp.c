@@ -2,7 +2,7 @@
 // `smith dap` child process (lldb-dap) that it speaks the Debug Adapter Protocol to, and exposes them as tools:
 // launch, breakpoint, continue, step_over, step_in, step_out, pause, stack, variables, evaluate and stop. Results are
 // compact text an agent reads easily; the program's events (stopped, output, exited) are queued and come back with
-// the next call. The design, the tools and what each returns are in docs/mcp.md and the smith-debug skill.
+// the next call. The design, the tools and what each returns are in knowledge/mcp-server.md and the smith-debug skill.
 //
 // Everything runs on <smith/io.h>: the server's own stdin, every session's pipes and exit, and the clock are ops on
 // one event loop in one thread, and nothing is allocated but in arenas. A tool call is a function that runs the loop
@@ -10,7 +10,7 @@
 // buffered, so a client that pipelines requests is answered in order.
 //
 // Neither protocol is written by hand: every message is a type of the code generated from the official schemas
-// (runtime/protocol/dap.[ch] and mcp.[ch], docs/protocol.md). What is read from a tree by name is what the schemas do
+// (runtime/protocol/dap.[ch] and mcp.[ch], knowledge/protocol-generation.md). What is read from a tree by name is what the schemas do
 // not have: the `initialize` request of the MCP revisions before 2026-07-28, and a tool's arguments, which are the
 // tool's own schema.
 //

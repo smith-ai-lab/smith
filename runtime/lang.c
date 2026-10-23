@@ -1,5 +1,5 @@
 // The lowering of .smith files: C with `module`, `import` and `export`, and sized type names, turned into C. The
-// language is described in docs/smith-lang.md; this file is the state machine, written against runtime/lang.h so that
+// language is described in knowledge/smith-language.md; this file is the state machine, written against runtime/lang.h so that
 // it knows nothing of clang. It is included by smith.c.
 //
 // It is given the tokens of one file in order, after macro expansion, and says what replaces each. Its work:

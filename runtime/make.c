@@ -2,7 +2,7 @@
 // `smith build --dump-config` in a folder with a Makefile and no build file prints the translation. Included by
 // smith.c; the files are runtime/make.c (this one: memory, text, variables), make_expand.c (the expander of $(...)),
 // make_read.c (lines, directives, conditionals, rules), make_graph.c (the targets a build needs) and make_emit.c (the
-// build.c). Docs: docs/build-c.md, "Translating a Makefile".
+// build.c). Docs: knowledge/makefile-translation.md.
 //
 // How it works. The Makefile is evaluated at translation time, as make does, with the files that are there: variables
 // are expanded, `$(wildcard)` is read, a pattern rule is applied to each target that needs one, and each target becomes

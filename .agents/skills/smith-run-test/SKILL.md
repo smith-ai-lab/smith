@@ -22,7 +22,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.
 
 To debug one test: `smith dbg -- build/tests --test <name> --in-process` (the runner is the `runner` line of `.smith/build.info`; in Neovim with nvim-dap, start a session with the cursor in the test function; skill smith-debug).
 
-In Neovim, the `neotest-smith` adapter (docs/neovim.md) runs the nearest test as `smith test --test <name> --verbose`, a `.smith` module's file as `--test <module>::`, a `.c` file and the suite as `smith test`, and shows a failure at its check's line; the dap strategy debugs the nearest test as above.
+In Neovim, the `neotest-smith` adapter (knowledge/neovim.md) runs the nearest test as `smith test --test <name> --verbose`, a `.smith` module's file as `--test <module>::`, a `.c` file and the suite as `smith test`, and shows a failure at its check's line; the dap strategy debugs the nearest test as above.
 
 Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --seed 8022860619270860748`, `smith test --full`.
 

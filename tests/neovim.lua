@@ -448,7 +448,7 @@ function tests.dap_absent()
   check(not require("smith.dap").register(), "nothing registers without nvim-dap")
 end
 
--- ---- neotest-smith (docs/neovim.md). neotest itself is not installed for the tests: a stand-in `nio` and
+-- ---- neotest-smith (knowledge/neovim.md). neotest itself is not installed for the tests: a stand-in `nio` and
 -- `neotest.lib` give the adapter what it asks of them (the parse of positions is the adapter's own query run here).
 
 local function stub_neotest()

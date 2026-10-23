@@ -1,5 +1,5 @@
 /**
- * @file tree-sitter grammar for .smith: tree-sitter-c's grammar plus what .smith adds (docs/smith-lang.md, issue #11),
+ * @file tree-sitter grammar for .smith: tree-sitter-c's grammar plus what .smith adds (knowledge/smith-language.md, issue #11),
  * plus the C23 and clang spellings smith's own C uses that tree-sitter-c does not know (#embed, _Atomic(T), _BitInt,
  * `enum : unsigned char`, types and operators as macro arguments).
  * Plain C stays C: module, import, export and type are keywords only where the added rules want them, and an ordinary

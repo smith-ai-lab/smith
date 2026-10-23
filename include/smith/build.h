@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 // smith/build.h: the API of a project's build file, which `smith build` compiles and runs to write build.ninja.
-// Design: docs/build-c.md. Lists end in nullptr and are never nullptr (an optional field left unset reads as empty).
+// Design: knowledge/build-api.md. Lists end in nullptr and are never nullptr (an optional field left unset reads as empty).
 //
 // Names. The module's names are short, and a build.smith writes them with the module (build::task, build::Step). A
 // build.c writes the C names, which follow from them: a function build::x is smith_x (build::task is smith_task,
@@ -252,7 +252,7 @@ typedef struct {
     SmithStep step;                    // set by build::program: the step it emitted
 } SmithProgram;
 
-// A source that ends in .smith is a module or a plain .smith file (docs/smith-lang.md): a module also gets a step that
+// A source that ends in .smith is a module or a plain .smith file (knowledge/smith-language.md): a module also gets a step that
 // writes its header, .smith/include/a/b.h, through `<compiler> --smith-header`, and every .smith compile gets
 // `-I .smith/include` and waits for all the headers and for a check that fails on an import cycle. The module a::b must
 // be in a file whose path ends in a/b.smith.
@@ -288,7 +288,7 @@ typedef struct {
 
 void smith_modules(SmithBuild *b, const SmithModules *modules);
 
-// Tests: smith's test library (<smith/test.h>, docs/build-c.md) built into a runner with the project's test files.
+// Tests: smith's test library (<smith/test.h>, knowledge/build-tests.md) built into a runner with the project's test files.
 typedef struct {
     const char *compiler;       // compiles and links the tests, by default "smith-cc"
     const char *const *sources; // the test files; every void test_<name>(void) and test_<name>(SmithKey key) in them

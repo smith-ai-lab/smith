@@ -1,0 +1,32 @@
+---
+type: architecture
+title: Enzyme is linked into smith's lld, and smith::autodiff is its raw interface
+description: An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
+tags: [autodiff, enzyme]
+---
+# Enzyme is linked into smith's lld, and smith::autodiff is its raw interface
+
+**Enzyme (automatic differentiation of LLVM IR) is linked into smith's lld, and `smith::autodiff` is its raw interface**
+(skill smith-autodiff). Enzyme v0.0.303 (Apache-2.0 with the LLVM exception, pinned by hash in build.c) is built static by
+`smith build llvm` (`scripts/enzyme.sh`, after the prover's libraries; `smith build enzyme` alone) into its own folder
+`~/.cache/smith/enzyme/<version>-<LLVM configuration>/`, never inside an LLVM install, so building it changes no
+configuration; `patches/enzyme/*.patch` go into a copy of its package (one: Enzyme printed `caching call` to stderr
+unconditionally). The full smith links `libEnzymeStatic-23.a`, built with `-DENZYME_RUNPASS` (else it hooks no
+pipeline); the stage0 has none. **Registration:** lld's LTO config has no PassBuilder hook, only `--load-pass-plugin`,
+so `shim/lld.cpp` adds `--load-pass-plugin=<smith's own path>` and Enzyme's `llvmGetPassPluginInfo` is exported from smith
+(`-exported_symbol`): lld dlopens the executable itself, so nothing is read from disk. A link with no bitcode never
+reads the option, and a link with no Enzyme call costs nothing measurable. **The library** is `lib/smith/autodiff.smith`
+(`__enzyme_autodiff`, `__enzyme_fwddiff`, the `enzyme_*` markers as `extern` and never defined; a source that defines
+nothing, like math). **A program that reaches it is an autodiff program** (`smith_app`'s scan finds the library as it
+does every other) and, in every profile and for the tests, links with `-flto=full` (ThinLTO fails), compiles each file with
+`-Xclang -disable-llvm-passes` (Enzyme wants IR not yet optimized; the link optimizes after it), puts its objects in
+`build/<profile>/autodiff/`, and **debug has AddressSanitizer, run
+after Enzyme, and no UBSan** (owner's decision): debug compiles with `-fsanitize=address -fno-sanitize-recover=address`
+and no passes, so functions carry `sanitize_address` uninstrumented, and `shim/lld.cpp`'s plugin entry (smith's own,
+Enzyme's is weak) registers Enzyme and then ASan at the same full-LTO early extension point, so ASan instruments the
+gradients too (it skips a module that already has `asan.module_ctor`, so it never runs twice); the link keeps lld's
+object (`-Wl,-object_path_lto`) so reports have lines. UBSan's handlers break Enzyme and its trap mode loses its checks
+in the gradient (#59 tracks UB checks after Enzyme). Release and fast have none. `smith_autodiff_flags` in
+runtime/build_runtime.c is the one place. Programs that do not use it have unchanged commands. A smith with no Enzyme, or
+run with `SMITH_CLANG` or `SMITH_LINKER`, refuses an autodiff program (`SMITH_ENZYME=no` in the build program's
+environment). `smith cc` adds no flag: `-flto=full` through smith's lld differentiates.

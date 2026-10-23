@@ -1,9 +1,20 @@
+---
+type: architecture
+title: smith mcp
+description: smith mcp is the debugger as an MCP server over stdio, on the fake-able io and the generated protocol types, with eleven tools.
+tags: [mcp, debugger]
+---
 # smith mcp
 
+**`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [smith mcp](mcp-server.md), skill smith-debug): eleven tools
+(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
+generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp.sh` runs it on the
+fake io and end to end.
+
 `smith mcp` is a Model Context Protocol server over stdio that gives an agent a debugger (issue #22). It holds debug
-sessions, each a `smith dap` child (lldb-dap, [debugging.md](debugging.md)) that it speaks the Debug Adapter Protocol
+sessions, each a `smith dap` child (lldb-dap, [the debugger](debugger.md)) that it speaks the Debug Adapter Protocol
 to, and offers eleven tools: `launch`, `breakpoint`, `continue`, `step_over`, `step_in`, `step_out`, `pause`, `stack`,
-`variables`, `evaluate` and `stop`. The skill [smith-debug](../.agents/skills/smith-debug/SKILL.md) is the short guide
+`variables`, `evaluate` and `stop`. The skill smith-debug is the short guide
 for users; this is how it is built.
 
 It is a feature of the full smith (`-DSMITH_MCP`, which `smith build` passes when clang is inside): the stage0 has the
@@ -22,7 +33,7 @@ events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools
   its time is up; input that arrives meanwhile is buffered, so a client that pipelines requests is answered in order.
   Nothing is allocated but in arenas (the io's), nothing recurses, every loop has a bound.
 - **No protocol is written by hand.** Every message is a type of the code generated from the official schemas
-  (`runtime/protocol/dap.[ch]` and `mcp.[ch]`, [protocol.md](protocol.md)). What is read from a tree by name is what the
+  (`runtime/protocol/dap.[ch]` and `mcp.[ch]`, [the protocol code](protocol-generation.md)). What is read from a tree by name is what the
   schemas do not have: the `initialize` request and result of the MCP revisions before 2026-07-28, and a tool's
   arguments, which are the tool's own schema.
 - **Versions.** It answers `server/discover` (2026-07-28: every request then stands alone) with `supportedVersions:
@@ -69,7 +80,7 @@ Results are text for an agent to read. Examples from the tests (`tests/mcp.sh`),
 
 A tool that is not given what it needs, or has no session, is a result with `isError: true` and the reason
 (`no debug session: call launch first`). `.smith` programs show their names as written (`geometry::box::area`, `b
-(geometry::box::Box)`), as in [debugging.md](debugging.md).
+(geometry::box::Box)`), as in [the debugger](debugger.md).
 
 ## lldb's behaviour that shows
 

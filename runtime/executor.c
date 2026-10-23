@@ -2,7 +2,7 @@
 // ninja. It reads the subset of ninja's language that smith writes, decides what is out of date the way ninja does
 // (mtimes, the command's hash, the depfiles' contents, restat), and runs the jobs on smith's own io: one kqueue loop
 // waits on every job's process and pipe. It is included by smith.c, after the lowering of lib/smith/io.smith
-// (bootstrap/). The design and what it drops compared with ninja are in docs/build-c.md.
+// (bootstrap/). The design and what it drops compared with ninja are in knowledge/executor.md.
 //
 // Memory: the graph and everything else lives in io.arena, which is address space reserved up front, so there is no
 // malloc. A reload of the manifest or a finished job leaves its memory behind; a build is a short-lived process.
