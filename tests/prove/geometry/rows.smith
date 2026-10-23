@@ -1,0 +1,17 @@
+// An array parameter of a module is N objects: an index proved in range needs no other contract (#81).
+module geometry::rows;
+import <smith/contract.h>;
+
+export i32 pick(i32 xs[4], usize i) {
+    c::smith_requires(i < 4);
+    return xs[i];
+}
+
+export f32 corner(f32 m[3][2], usize row) {
+    c::smith_requires(row < 3);
+    return m[row][1];
+}
+
+export i32 unchecked(i32 xs[4], usize i) {
+    return xs[i];
+}

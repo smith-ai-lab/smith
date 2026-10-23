@@ -1,0 +1,45 @@
+module main;
+
+import <stdio.h>;
+import <string.h>;
+
+constexpr usize width = 5;
+
+// A parameter written as an array keeps its size: countof gives it, an index in range is fine, a local array of the
+// same shape is passed on as it is.
+usize sizes(i32 xs[width], f32 m[3][2]) {
+    return countof(xs) + countof(m) * 10 + countof(m[0]) * 100;
+}
+
+i32 last(i32 xs[width]) {
+    return xs[width - 1] + xs[0];
+}
+
+i32 sum(const i32 xs[width]) {
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+i32 pass_on(i32 xs[width]) {
+    return last(xs) + sum(xs);
+}
+
+// A pointer is a pointer: it can move, and the array it points into is any size.
+i32 walk(i32 *xs, usize count) {
+    i32 total = 0;
+    for (usize i = 0; i < count; i++) {
+        total += *xs++;
+    }
+    return total;
+}
+
+i32 main(i32 argc, char **argv) {
+    i32 xs[width] = {1, 2, 3, 4, 5};
+    f32 m[3][2] = {};
+    c::printf("%zu %d %d %d\n", sizes(xs, m), last(xs), pass_on(xs), walk(xs, 3));
+    c::memset(xs, 0, sizeof xs);
+    return argc - 1;
+}

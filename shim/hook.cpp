@@ -6,7 +6,10 @@
 // is in C, in the lowering.
 #include "names.h"
 
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclBase.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticParse.h"
@@ -20,6 +23,7 @@
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
+#include "clang/Sema/ExternalSemaSource.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/Sema.h"
@@ -39,6 +43,7 @@ extern "C" {
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
@@ -332,6 +337,195 @@ class Presenter final : public DiagnosticConsumer {
     }
 };
 
+// ---- Arrays keep their shape in a module (issue #81)
+//
+// A parameter `T xs[N]` of a module's function is N objects, not a pointer: clang adjusts its type to a pointer but
+// keeps the written type (ParmVarDecl::getOriginalType), which is what this reads. Each use that would treat it as a
+// pointer, or break its size, is an error: a constant index out of range, `xs++` and `xs = p`, `sizeof(xs)` (the
+// pointer's size), and a call that passes a pointer or an array of another shape. Nothing here changes what valid C
+// means: it only rejects. It runs when the translation unit is complete, over the functions the module's source
+// defines. (A parameter with no size is rejected by the lowering, at its declaration.)
+class ArrayParameters {
+  public:
+    ArrayParameters(ASTContext &context, SourceManager &manager, std::function<bool(SourceLocation)> generated)
+        : context(context), diagnostics(context.getDiagnostics()), manager(manager), generated(std::move(generated)) {
+        auto error = DiagnosticsEngine::Error;
+        outOfRange = diagnostics.getCustomDiagID(error, "index %0 is out of range for the array parameter '%1' of %2 "
+                                                        "elements");
+        modify = diagnostics.getCustomDiagID(error, "the array parameter '%0' is not a pointer: it cannot be changed "
+                                                    "(write `%1 *%0` for a pointer)");
+        sizeofArray = diagnostics.getCustomDiagID(error, "sizeof of the array parameter '%0' is the size of a pointer "
+                                                         "here: write countof(%0) for its elements");
+        pointerArgument = diagnostics.getCustomDiagID(error, "the parameter '%0' is an array of %1 elements: pass an "
+                                                             "array of that shape, not a pointer");
+        shapeArgument = diagnostics.getCustomDiagID(error, "the parameter '%0' is an array of %1 elements: the "
+                                                           "argument is an array of another shape");
+    }
+
+    void run() {
+        for (Decl *decl : context.getTranslationUnitDecl()->decls()) {
+            auto *function = dyn_cast<FunctionDecl>(decl);
+            if (function == nullptr || !function->doesThisDeclarationHaveABody()) continue;
+            if (!manager.isWrittenInMainFile(manager.getSpellingLoc(function->getLocation()))) continue;
+            std::vector<const Stmt *> pending{function->getBody()}; // a worklist, not a recursion
+            while (!pending.empty()) {
+                const Stmt *statement = pending.back();
+                pending.pop_back();
+                if (statement == nullptr) continue;
+                check(statement);
+                for (const Stmt *child : statement->children())
+                    pending.push_back(child);
+            }
+        }
+    }
+
+  private:
+    void check(const Stmt *statement) {
+        if (auto *subscript = dyn_cast<ArraySubscriptExpr>(statement)) checkSubscript(subscript);
+        if (auto *op = dyn_cast<UnaryOperator>(statement)) checkIncrement(op);
+        if (auto *op = dyn_cast<BinaryOperator>(statement)) checkAssignment(op);
+        if (auto *trait = dyn_cast<UnaryExprOrTypeTraitExpr>(statement)) checkSizeof(trait);
+        if (auto *call = dyn_cast<CallExpr>(statement)) checkCall(call);
+    }
+
+    void checkSubscript(const ArraySubscriptExpr *subscript) {
+        const Expr *base = subscript->getBase()->IgnoreParenImpCasts();
+        const ParmVarDecl *parameter = nullptr;
+        uint64_t size = 0;
+        if (auto *array = parameterArray(base, &parameter)) {
+            size = array->getZExtSize();
+        } else if (auto *inner = dyn_cast<ConstantArrayType>(base->getType().getTypePtr())) {
+            parameter = isa<ArraySubscriptExpr>(base) ? rootParameter(base) : nullptr;
+            size = inner->getZExtSize();
+        }
+        if (parameter == nullptr) return;
+        Expr::EvalResult result;
+        if (!subscript->getIdx()->EvaluateAsInt(result, context)) return;
+        const llvm::APSInt &index = result.Val.getInt();
+        bool below = index.isSigned() && index.isNegative();
+        if (below || index.getZExtValue() >= size) {
+            std::string shown = below ? std::to_string(index.getSExtValue()) : std::to_string(index.getZExtValue());
+            report(subscript->getIdx()->getBeginLoc(), outOfRange, shown, parameter, size);
+        }
+    }
+
+    void checkIncrement(const UnaryOperator *op) {
+        if (!op->isIncrementDecrementOp()) return;
+        const ParmVarDecl *parameter = nullptr;
+        if (parameterArray(op->getSubExpr()->IgnoreParens(), &parameter)) reportModify(op->getOperatorLoc(), parameter);
+    }
+
+    void checkAssignment(const BinaryOperator *op) {
+        if (!op->isAssignmentOp()) return;
+        const ParmVarDecl *parameter = nullptr;
+        if (parameterArray(op->getLHS()->IgnoreParens(), &parameter)) reportModify(op->getOperatorLoc(), parameter);
+    }
+
+    void checkSizeof(const UnaryExprOrTypeTraitExpr *trait) {
+        if (trait->getKind() != UETT_SizeOf || trait->isArgumentType()) return;
+        const ParmVarDecl *parameter = nullptr;
+        if (parameterArray(trait->getArgumentExpr()->IgnoreParens(), &parameter)) {
+            diagnostics.Report(trait->getOperatorLoc(), sizeofArray) << parameter->getName();
+        }
+    }
+
+    void checkCall(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || !fromModule(callee)) return;
+        for (unsigned i = 0; i < callee->getNumParams() && i < call->getNumArgs(); i++) {
+            const ParmVarDecl *parameter = callee->getParamDecl(i);
+            const auto *wanted = dyn_cast<ConstantArrayType>(parameter->getOriginalType().getTypePtr());
+            if (wanted == nullptr) continue;
+            const Expr *argument = call->getArg(i);
+            QualType given = shapeOf(argument->IgnoreParens());
+            std::string count = std::to_string(wanted->getZExtSize());
+            if (given.isNull()) {
+                diagnostics.Report(argument->getBeginLoc(), pointerArgument) << parameter->getName() << count;
+            } else if (!sameShape(parameter->getOriginalType(), given)) {
+                diagnostics.Report(argument->getBeginLoc(), shapeArgument) << parameter->getName() << count;
+            }
+        }
+    }
+
+    ASTContext &context;
+    DiagnosticsEngine &diagnostics;
+    SourceManager &manager;
+    std::function<bool(SourceLocation)> generated;
+    unsigned outOfRange, modify, sizeofArray, pointerArgument, shapeArgument;
+
+    // Whether the function is a module's (declared in the file or a header the lowering made), not C's: C's takes a
+    // pointer, as in C.
+    bool fromModule(const FunctionDecl *function) const {
+        SourceLocation at = function->getLocation();
+        return manager.isWrittenInMainFile(manager.getSpellingLoc(at)) || generated(at);
+    }
+
+    // The array an expression is, when it names a parameter written as an array.
+    const ConstantArrayType *parameterArray(const Expr *expression, const ParmVarDecl **parameter) const {
+        auto *reference = dyn_cast<DeclRefExpr>(expression);
+        if (reference == nullptr) return nullptr;
+        auto *declaration = dyn_cast<ParmVarDecl>(reference->getDecl());
+        if (declaration == nullptr) return nullptr;
+        auto *array = dyn_cast<ConstantArrayType>(declaration->getOriginalType().getTypePtr());
+        if (array != nullptr) *parameter = declaration;
+        return array;
+    }
+
+    // The array parameter at the root of `xs[i][j]`, or null.
+    const ParmVarDecl *rootParameter(const Expr *expression) const {
+        while (auto *subscript = dyn_cast<ArraySubscriptExpr>(expression->IgnoreParenImpCasts()))
+            expression = subscript->getBase();
+        const ParmVarDecl *parameter = nullptr;
+        return parameterArray(expression->IgnoreParenImpCasts(), &parameter) ? parameter : nullptr;
+    }
+
+    // The array an argument is (before it decays), or null when it is a pointer.
+    QualType shapeOf(const Expr *argument) const {
+        auto *cast = dyn_cast<ImplicitCastExpr>(argument);
+        while (cast != nullptr && cast->getCastKind() == CK_NoOp) // `const` added
+            cast = dyn_cast<ImplicitCastExpr>(cast->getSubExpr()->IgnoreParens());
+        if (cast == nullptr) return QualType();
+        const Expr *inner = cast->getSubExpr()->IgnoreParens();
+        if (cast->getCastKind() == CK_ArrayToPointerDecay) return inner->getType();
+        if (cast->getCastKind() == CK_LValueToRValue) { // an array parameter passed on
+            const ParmVarDecl *parameter = nullptr;
+            if (parameterArray(inner, &parameter)) return parameter->getOriginalType();
+        }
+        return QualType();
+    }
+
+    // Whether two array types have the same dimensions and the same elements, apart from `const`.
+    bool sameShape(QualType wanted, QualType given) const {
+        while (true) {
+            auto *a = dyn_cast<ConstantArrayType>(context.getCanonicalType(wanted).getTypePtr());
+            auto *b = dyn_cast<ConstantArrayType>(context.getCanonicalType(given).getTypePtr());
+            if (a == nullptr || b == nullptr) break;
+            if (a->getSize() != b->getSize()) return false;
+            wanted = a->getElementType();
+            given = b->getElementType();
+        }
+        return context.hasSameUnqualifiedType(wanted, given);
+    }
+
+    void report(SourceLocation at, unsigned id, const std::string &index, const ParmVarDecl *parameter, uint64_t size) {
+        diagnostics.Report(at, id) << index << parameter->getName() << std::to_string(size);
+    }
+
+    void reportModify(SourceLocation at, const ParmVarDecl *parameter) {
+        QualType element = cast<ConstantArrayType>(parameter->getOriginalType().getTypePtr())->getElementType();
+        diagnostics.Report(at, modify) << parameter->getName() << element.getAsString();
+    }
+};
+
+class SmithHook;
+
+class ArrayEnd final : public ExternalSemaSource {
+  public:
+    explicit ArrayEnd(SmithHook &hook) : hook(&hook) {}
+    void ReadTentativeDefinitions(SmallVectorImpl<VarDecl *> &) override;
+    SmithHook *hook;
+};
+
 class SmithHook final : public TokenHook, public NameSource {
   public:
     bool holding = false; // this hook has the lowering
@@ -402,6 +596,12 @@ class SmithHook final : public TokenHook, public NameSource {
 
     void semaCreated(Sema &s) override {
         sema = &s;
+        if (!arrayEnd) {
+            // Sema asks an external source for the tentative definitions when the translation unit is complete, which
+            // is when every function is whole: the end of the file, for the checks of a module's array parameters.
+            arrayEnd = new ArrayEnd(*this);
+            s.addExternalSource(arrayEnd);
+        }
     }
     void semaDestroyed() override {
         sema = nullptr;
@@ -438,6 +638,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (replayed(tok)) return false;
         bool end = tok.is(tok::eof); // the lowering is done with its state once it has seen the end of the file
         if (end) reachedEnd = true;
+        if (end) moduleFile = smith_lang_is_module(lang);
         bool consumed = measured(tok);
         if (end) giveBack();
         return consumed;
@@ -2294,6 +2495,19 @@ class SmithHook final : public TokenHook, public NameSource {
         smith::publishQualifier(mainName, qualifier);
     }
     bool reachedEnd = false;
+    IntrusiveRefCntPtr<ArrayEnd> arrayEnd;
+
+  public:
+    // The translation unit is complete (called through Sema's external source).
+    void completed() {
+        if (!moduleFile || sema == nullptr || checked) return;
+        checked = true;
+        ArrayParameters(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
+    }
+
+  private:
+    bool checked = false;
+    bool moduleFile = false; // the file has a `module` line: its array parameters keep their shape
 
     // The lowering goes back to the next file; what it knew of this one stays.
     void giveBack() {
@@ -2301,6 +2515,10 @@ class SmithHook final : public TokenHook, public NameSource {
         Lowering::release(holding);
     }
 };
+
+void ArrayEnd::ReadTentativeDefinitions(SmallVectorImpl<VarDecl *> &) {
+    hook->completed();
+}
 
 #ifdef CLANG_HAS_DEBUG_NAME_HOOK
 // The debugger shows a .smith declaration as the source writes it, with its whole module name, the same in every

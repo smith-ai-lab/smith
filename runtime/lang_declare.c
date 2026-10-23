@@ -194,6 +194,9 @@ static void smith_lang_head_punctuator(SmithLang *lang, const SmithHost *host, c
             decl->in_params = true;
             decl->is_function = true;
             lang->params_count = 0;
+            lang->array_param_count = 0;
+            lang->array_capture = -1;
+            lang->array_after_close = false;
         }
         lang->paren_depth += 1;
     } else if (c == ')') {
@@ -299,11 +302,47 @@ static void smith_lang_head_keyword(SmithLang *lang, const SmithToken *token, Sm
     if (smith_lang_ident(token, "extern")) decl->is_extern = true;
 }
 
+// An array parameter in a private head: the size is kept for `countof`, and the token after its `[` gets a `static`
+// before it (an error when there is none). Runs for each token the head takes.
+static void smith_lang_array_step(SmithLang *lang, const SmithHost *host, SmithToken *token, const SmithLangAct *act,
+                                  bool may_peek, uint32_t bracket_before, bool after_name, bool size_next,
+                                  bool *insert_static) {
+    if (lang->decl.in_params && lang->paren_depth == 1) {
+        bool renamed = act->kind == SmithLangAct_Rename;
+        smith_lang_array_token(lang, host, renamed ? act->text : token->text, renamed ? act->length : token->length,
+                               token->kind, bracket_before, lang->bracket_depth);
+    }
+    lang->decl.prev_ident =
+        token->kind == SmithTokenKind_Identifier && smith_lang_word(token->text, token->length) == SmithLangWord_Other;
+    lang->decl.param_bracket = false;
+    if (!size_next) {
+        if (smith_lang_punct(token, "[")) {
+            lang->decl.param_bracket =
+                after_name && lang->decl.in_params && lang->paren_depth == 1 && lang->bracket_depth == 1;
+        }
+        return;
+    }
+    SmithLangArray size = smith_lang_array_size(token);
+    if (size == SmithLangArray_Unsized) smith_lang_unsized_error(lang, host, token->location);
+    if (size != SmithLangArray_Sized) return;
+    if (may_peek) {
+        smith_lang_emit_code(lang, host, smith_lang_static_keyword(token));
+        token->line_start = false;
+        token->space_before = true;
+    } else {
+        *insert_static = true;
+    }
+}
+
 // One token of a private declaration's head (the state Start is its first token), or Slow if it needs more. A Slow
 // answer has changed nothing. With a look ahead allowed (the slow path), the `static` is written here, so that a
 // name written by the lowering itself comes after it, and the token's layout is changed to follow.
 static SmithLangAct smith_lang_head_step(SmithLang *lang, const SmithHost *host, SmithToken *token, bool may_peek,
                                          bool forced) {
+    // A number's text is read where the host can look ahead: an array parameter's size is kept for countof.
+    if (!may_peek && token->kind == SmithTokenKind_Number && lang->array_capture >= 0) {
+        return smith_lang_act(SmithLangAct_Slow);
+    }
     bool first = lang->state == SmithLangState_Start;
     bool seen_before = lang->seen_declaration;
     bool insert_static = false;
@@ -336,13 +375,16 @@ static SmithLangAct smith_lang_head_step(SmithLang *lang, const SmithHost *host,
         }
     }
     SmithLangAct act = smith_lang_act(SmithLangAct_Keep);
+    bool after_name = lang->decl.prev_ident;
+    uint32_t bracket_before = lang->bracket_depth;
+    bool size_next = lang->decl.param_bracket;
     if (token->kind == SmithTokenKind_Identifier) {
         SmithLangWord word = smith_lang_word(token->text, token->length);
         if (word == SmithLangWord_Other) {
             act = smith_lang_head_name(lang, host, token, may_peek);
         } else {
             smith_lang_head_keyword(lang, token, word);
-            if (smith_lang_ident(token, "static") && lang->decl.static_inserted && !first) {
+            if (smith_lang_ident(token, "static") && lang->decl.static_inserted && !first && lang->bracket_depth == 0) {
                 act.kind = SmithLangAct_Drop;
             }
         }
@@ -356,6 +398,9 @@ static SmithLangAct smith_lang_head_step(SmithLang *lang, const SmithHost *host,
         lang->state = SmithLangState_Start;
         lang->seen_declaration = seen_before;
         return act;
+    }
+    if (act.kind != SmithLangAct_Slow) {
+        smith_lang_array_step(lang, host, token, &act, may_peek, bracket_before, after_name, size_next, &insert_static);
     }
     act.insert_static = insert_static;
     return act;

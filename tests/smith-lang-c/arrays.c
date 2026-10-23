@@ -30,6 +30,16 @@ static size_t of_parameter(int a[10]) {
 static size_t of_element(int a[10]) {
     return sizeof a[0];
 }
+static int unsized(int a[], int n) { // a pointer: it moves, and the array may be any size
+    int s = 0;
+    while (n-- > 0)
+        s += *a++;
+    return s;
+}
+static int past(int a[2]) { // with no module line a[2] is C's pointer arithmetic, not an error
+    a = a + 1;
+    return a[1];
+}
 static size_t of_pointee(char (*p)[7]) {
     return sizeof *p;
 }
@@ -44,5 +54,6 @@ int main(void) {
     printf("%d %d\n", star(4, four), matrix(3, rows));
     printf("%zu %zu %zu %zu\n", of_parameter(ten), of_element(ten), sizeof ten, sizeof(int[10]));
     printf("%zu\n", of_pointee(&seven));
+    printf("%d %d\n", unsized(four, 4), past(four));
     return 0;
 }

@@ -1,0 +1,2 @@
+src/main.smith:4:7: the array parameter 'xs' is not a pointer: it cannot be changed (write `i32 *xs` for a pointer)
+src/main.smith:5:8: the array parameter 'xs' is not a pointer: it cannot be changed (write `i32 *xs` for a pointer)

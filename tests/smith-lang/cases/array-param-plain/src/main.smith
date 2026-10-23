@@ -1,0 +1,26 @@
+import <stdio.h>;
+
+// No module line: a parameter written as an array is C's pointer, exactly as in C.
+i32 unsized(i32 xs[], usize count) {
+    i32 total = 0;
+    for (usize i = 0; i < count; i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+i32 moves(i32 xs[2]) {
+    xs++;
+    return xs[0] + xs[2];
+}
+
+usize size(i32 xs[4]) {
+    return sizeof(xs);
+}
+
+i32 main(i32 argc, char *argv[]) {
+    i32 xs[4] = {1, 2, 3, 4};
+    i32 *p = xs;
+    c::printf("%d %d %zu\n", unsized(xs, 4), moves(p), size(p));
+    return 0;
+}

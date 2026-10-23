@@ -171,7 +171,7 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, cons
         lang->decl.aggregate = true;
         lang->decl.last_tag_enum = smith_lang_ident(token, "enum");
     }
-    if (word == SmithLangWord_Storage) {
+    if (word == SmithLangWord_Storage && lang->bracket_depth == 0) { // `[static N]` in a parameter is no storage
         if (smith_lang_ident(token, "static") || smith_lang_ident(token, "extern")) lang->decl.storage = true;
         if (smith_lang_ident(token, "extern")) lang->decl.is_extern = true;
         if (smith_lang_ident(token, "static") && lang->decl.exported) {
@@ -290,10 +290,125 @@ static bool smith_lang_head_dropped(const SmithLang *lang, size_t index) {
            smith_lang_equals(text, held->text.length, "__inline__");
 }
 
+// ---- An array parameter keeps its size
+//
+// In a module a parameter `T xs[N]` is N objects: the code is written `T xs[static N]`, which clang knows as a pointer
+// that is not null and has N objects (`dereferenceable`), and which `smith prove` reads. The generated header keeps
+// the C declaration. The first dimension only; a parameter with no size is an error.
+
+typedef enum { SmithLangArray_None, SmithLangArray_Sized, SmithLangArray_Unsized } SmithLangArray;
+
+// What the token after the `[` of an array parameter says of its size.
+static SmithLangArray smith_lang_array_size(const SmithToken *token) {
+    if (smith_lang_punct(token, "]")) return SmithLangArray_Unsized;
+    if (smith_lang_punct(token, "*") || smith_lang_punct(token, ".")) return SmithLangArray_None;
+    if (token->kind == SmithTokenKind_Identifier) {
+        SmithLangWord word = smith_lang_word(token->text, token->length);
+        if (word == SmithLangWord_Storage || word == SmithLangWord_Qualifier) return SmithLangArray_None;
+    }
+    return SmithLangArray_Sized;
+}
+
+static void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t location) {
+    smith_lang_error(lang, host, location,
+                     "an array parameter needs its size: write `T xs[N]`, `T xs[..]` for a length known at run time, "
+                     "or `T *xs` for a pointer");
+}
+
+// ---- The size of an array parameter, kept for `countof(xs)`
+//
+// Both ways a head is read (a private one as it streams by, an exported one held) tell this each token of a parameter
+// list, with how deep in `[ ]` it is before and after. The tokens of each dimension are kept as the code wrote them.
+
+static void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
+                                   SmithTokenKind kind, uint32_t before, uint32_t after) {
+    bool open = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == '[';
+    bool close = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == ']';
+    SmithLangArrayParam *param =
+        lang->array_param_count > 0 ? &lang->array_params[lang->array_param_count - 1] : nullptr;
+    if (open && before == 0) {
+        lang->array_capture = -1;
+        if (lang->array_after_close && param != nullptr && param->dims < smith_lang_array_dims_max) {
+            lang->array_capture = (int32_t)param->dims++;
+            param->sizes[lang->array_capture].whole = true;
+        } else if (lang->decl.prev_ident && lang->array_param_count < smith_lang_array_params_max &&
+                   lang->array_pending[0] != 0) {
+            param = &lang->array_params[lang->array_param_count++];
+            *param = (SmithLangArrayParam){.dims = 1};
+            memcpy(param->name, lang->array_pending, sizeof param->name);
+            param->sizes[0].whole = true;
+            lang->array_capture = 0;
+            if (!lang->countof_watched && host->watch != nullptr) {
+                host->watch(host->context, "countof", 7);
+                lang->countof_watched = true;
+            }
+        }
+        lang->array_after_close = false;
+        return;
+    }
+    if (close && after == 0) {
+        lang->array_capture = -1;
+        lang->array_after_close = param != nullptr;
+        return;
+    }
+    lang->array_after_close = false;
+    if (lang->array_capture >= 0 && param != nullptr) {
+        __typeof__(param->sizes[0]) *size = &param->sizes[lang->array_capture];
+        if (size->count < smith_lang_array_tokens_max && length < smith_lang_array_text_max) {
+            size->kinds[size->count] = kind;
+            memcpy(size->texts[size->count], text, length);
+            size->texts[size->count][length] = 0;
+            size->count += 1;
+        } else {
+            size->whole = false;
+        }
+    } else if (before == 0 && kind == SmithTokenKind_Identifier && length < sizeof lang->array_pending) {
+        memcpy(lang->array_pending, text, length);
+        lang->array_pending[length] = 0;
+    }
+}
+
 static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
     size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
+    bool function = lang->decl.is_function && !lang->decl.is_typedef;
+    lang->array_param_count = 0;
+    lang->array_capture = -1;
+    lang->array_after_close = false;
+    size_t brackets = 0;
+    bool param_bracket = false;
     for (size_t i = 0; i < lang->head_count; i++) { // bounded by the head
         if (smith_lang_head_dropped(lang, i)) continue;
+        SmithLangHeld *held = &lang->head[i];
+        SmithToken now = smith_lang_held_token(lang, held);
+        if (param_bracket) {
+            param_bracket = false;
+            SmithLangArray size = smith_lang_array_size(&now);
+            if (size == SmithLangArray_Unsized && !header_too) smith_lang_unsized_error(lang, host, now.location);
+            if (size == SmithLangArray_Sized) {
+                smith_lang_emit_code(lang, host, smith_lang_static_keyword(&now));
+            }
+        }
+        size_t brackets_before = brackets;
+        if (function && smith_lang_punct(&now, "[")) {
+            bool named = false;
+            if (i > 0) {
+                const SmithLangHeld *before = &lang->head[i - 1];
+                named =
+                    before->kind == SmithTokenKind_Identifier &&
+                    smith_lang_word(smith_lang_scratch_str(before->text), before->text.length) == SmithLangWord_Other;
+            }
+            param_bracket = brackets == 0 && held->paren_depth == 1 && named;
+            brackets += 1;
+        } else if (function && smith_lang_punct(&now, "]") && brackets > 0) {
+            brackets -= 1;
+        }
+        if (function && held->paren_depth == 1) {
+            lang->decl.prev_ident = i > 0 && lang->head[i - 1].kind == SmithTokenKind_Identifier &&
+                                    smith_lang_word(smith_lang_scratch_str(lang->head[i - 1].text),
+                                                    lang->head[i - 1].text.length) == SmithLangWord_Other;
+            smith_lang_array_token(lang, host, now.text, now.length, now.kind, (uint32_t)brackets_before,
+                                   (uint32_t)brackets);
+        }
         if (i == static_at) {
             SmithToken first = smith_lang_held_token(lang, &lang->head[i]);
             smith_lang_emit_code(lang, host, smith_lang_static_keyword(&first));

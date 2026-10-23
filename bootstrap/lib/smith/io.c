@@ -1390,7 +1390,7 @@ if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
 __INT64_TYPE__ cores = sysconf(smith_io_processors_online);
 return cores > 0 ? (__SIZE_TYPE__)cores : 1;
 }
-static bool smith_io_pipe_make(__INT32_TYPE__ ends[2]) {
+static bool smith_io_pipe_make(__INT32_TYPE__ ends[static 2]) {
 if (pipe(ends) != 0) return false;
 fcntl(ends[0], smith_io_set_descriptor_flags, smith_io_fd_cloexec);
 fcntl(ends[1], smith_io_set_descriptor_flags, smith_io_fd_cloexec);

@@ -42,6 +42,22 @@ constexpr size_t smith_lang_allowed_max = 16; // the macro names c::X lets expan
 constexpr size_t smith_lang_name_max = 256;
 constexpr size_t smith_lang_params_max = 16;
 constexpr size_t smith_lang_param_max = 64;
+constexpr size_t smith_lang_array_params_max = 8;
+constexpr size_t smith_lang_array_dims_max = 3;
+constexpr size_t smith_lang_array_tokens_max = 4;
+constexpr size_t smith_lang_array_text_max = 24;
+
+// The size of an array parameter, as the tokens that wrote it (`countof(xs)` is that, in parentheses).
+typedef struct {
+    char name[smith_lang_param_max];
+    uint32_t dims;
+    struct {
+        uint32_t count;
+        bool whole; // the size fit: its tokens are all here
+        SmithTokenKind kinds[smith_lang_array_tokens_max];
+        char texts[smith_lang_array_tokens_max][smith_lang_array_text_max];
+    } sizes[smith_lang_array_dims_max];
+} SmithLangArrayParam;
 constexpr size_t smith_lang_message_max = 512;
 constexpr size_t smith_lang_cycle_max = 64;
 constexpr size_t smith_lang_written_max = 8192;
@@ -321,6 +337,8 @@ typedef struct {
     bool prev_star;       // the token before was *
     bool prev_tag;        // the token before was struct, union or enum
     bool static_inserted; // `static` was written before the first token, so a later one is dropped
+    bool prev_ident;      // the token before was a name (not a keyword)
+    bool param_bracket;   // the token before was the `[` of an array parameter: its size follows
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
     SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
     SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
@@ -431,7 +449,13 @@ struct SmithLang {
     bool in_function;     // inside a function body: nothing declared here is the module's
     char params[smith_lang_params_max][smith_lang_param_max]; // the parameters of the function being declared whose
     uint32_t params_count;                                    // names are the module's: kept as written, not prefixed
-    bool agg_pending;                                         // struct, union or enum seen, `{` not yet
+    SmithLangArrayParam array_params[smith_lang_array_params_max]; // the array parameters of that function
+    uint32_t array_param_count;
+    int32_t array_capture;                    // the dimension of an array parameter whose size is being read (-1: none)
+    bool array_after_close;                   // the last token closed a dimension: a `[` continues the parameter
+    bool countof_watched;                     // the host offers `countof`, for the array parameters of a module
+    char array_pending[smith_lang_param_max]; // the last name before a `[`
+    bool agg_pending;                         // struct, union or enum seen, `{` not yet
     bool enum_pending;
     bool init_top;             // an initializer at file scope is being read
     bool tail_declarator;      // after an aggregate's `}` or a comma: names are declarators

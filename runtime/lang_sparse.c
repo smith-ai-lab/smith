@@ -172,6 +172,65 @@ static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *hos
     host->watch_mode(host->context, host->maybe_if_constexpr ? SmithWatch_All : SmithWatch_Names);
 }
 
+// `countof(xs)` where xs is an array parameter of the function being read (`countof(m[0])` for the next dimension): the
+// size the parameter was written with, in parentheses, as a usize. Anything else named countof is the program's.
+static bool smith_lang_countof_parameter(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->array_param_count == 0 || !lang->in_function || lang->recording || !smith_lang_ident(token, "countof") ||
+        smith_lang_sparse_member(lang, host) || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
+        return false;
+    }
+    const SmithToken *name = smith_lang_peek(lang, host, 1, false);
+    if (name->kind != SmithTokenKind_Identifier) return false;
+    SmithLangArrayParam *param = nullptr;
+    for (uint32_t i = 0; i < lang->array_param_count; i++) { // at most 8
+        SmithLangArrayParam *candidate = &lang->array_params[i];
+        if (smith_lang_equals(name->text, name->length, candidate->name)) param = candidate;
+    }
+    if (param == nullptr) return false;
+    size_t at = 2;
+    uint32_t dimension = 0;
+    while (smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") && // `[0]` per dimension, at most 3
+           smith_lang_equals(smith_lang_peek(lang, host, at + 1, false)->text,
+                             smith_lang_peek(lang, host, at + 1, false)->length, "0") &&
+           smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "]") && dimension < param->dims) {
+        dimension += 1;
+        at += 3;
+    }
+    if (!smith_lang_punct(smith_lang_peek(lang, host, at, false), ")")) return false;
+    if (dimension >= param->dims || !param->sizes[dimension].whole) {
+        smith_lang_error(lang, host, token->location,
+                         "countof(%s) cannot say the size of this parameter: it is not an array", param->name);
+        return false;
+    }
+    for (size_t i = 0; i <= at; i++) // the tokens of the call
+        smith_lang_take(lang, host);
+    SmithToken pieces[8 + smith_lang_array_tokens_max];
+    size_t count = 0;
+    static const char *const head[] = {"(", "(", "__SIZE_TYPE__", ")", "("};
+    for (size_t i = 0; i < 5; i++) { // five pieces
+        bool word = i == 2;
+        pieces[count] = smith_lang_synth(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, head[i],
+                                         strlen(head[i]), token);
+        pieces[count].expand = word;
+        pieces[count].space_before = i == 0 ? token->space_before : false;
+        count += 1;
+    }
+    for (uint32_t i = 0; i < param->sizes[dimension].count; i++) { // at most 4
+        pieces[count] = smith_lang_synth(param->sizes[dimension].kinds[i], param->sizes[dimension].texts[i],
+                                         strlen(param->sizes[dimension].texts[i]), token);
+        pieces[count].space_before = false;
+        count += 1;
+    }
+    for (size_t i = 0; i < 2; i++) { // two closing
+        pieces[count] = smith_lang_synth(SmithTokenKind_Punctuator, ")", 1, token);
+        pieces[count].space_before = false;
+        count += 1;
+    }
+    for (size_t i = 0; i < count; i++) // at most 11
+        smith_lang_emit(lang, host, pieces[i]);
+    return true;
+}
+
 static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!token->foreign) smith_lang_sparse_imports_done(lang, host, token);
     if (token->foreign) {
@@ -297,6 +356,7 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
         return;
     }
     bool name = !token->foreign && token->kind == SmithTokenKind_Identifier && !smith_lang_sparse_member(lang, host);
+    if (name && smith_lang_countof_parameter(lang, host, token)) return;
     const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
     // An import named as a name of the module wins when it is written with `::` (`import smith::build;` in `module

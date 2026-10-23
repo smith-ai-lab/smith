@@ -1,0 +1,15 @@
+module main;
+
+i32 vector(i32 xs[2]) {
+    return xs[0] + xs[2] + xs[-1];
+}
+
+f32 matrix(f32 m[3][2]) {
+    return m[2][1] + m[3][0] + m[0][2];
+}
+
+i32 main(void) {
+    i32 xs[2] = {};
+    f32 m[3][2] = {};
+    return vector(xs) + (i32)matrix(m);
+}

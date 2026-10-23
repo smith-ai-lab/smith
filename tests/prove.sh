@@ -388,6 +388,15 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
     prove "$box"
     expect_contains "smith module: all of them" "$out" "1 proved, 3 failed"
 
+    # 11a. A parameter written as an array in a module is N objects (#81): an index in range needs no other contract.
+    rows=$cases/geometry/rows.smith
+    prove --function=geometry::rows::pick "$rows"
+    expect "smith module: xs[i] of an array parameter xs[4] is proved with only i < 4" 0 "$rc"
+    prove --function=geometry::rows::corner "$rows"
+    expect "smith module: m[row][1] of an array parameter m[3][2] is proved with only row < 3" 0 "$rc"
+    prove --function=geometry::rows::unchecked "$rows"
+    expect "smith module: an index that may be past the array is refused" 1 "$rc"
+
     # 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
     # a module and a trusted function written with c::smith_trusted().
     proj=$work/smithproj

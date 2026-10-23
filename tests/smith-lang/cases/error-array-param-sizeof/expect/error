@@ -1,0 +1,1 @@
+src/main.smith:4:12: sizeof of the array parameter 'xs' is the size of a pointer here: write countof(xs) for its elements

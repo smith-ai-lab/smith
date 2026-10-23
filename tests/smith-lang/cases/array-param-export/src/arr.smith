@@ -1,0 +1,10 @@
+module arr;
+
+// The generated header keeps the C declaration of an array parameter.
+export i32 pick(i32 xs[4], usize i) {
+    return xs[i];
+}
+
+export f32 corner(f32 m[3][2]) {
+    return m[2][1];
+}

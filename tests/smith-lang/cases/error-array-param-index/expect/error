@@ -1,0 +1,4 @@
+src/main.smith:4:23: index 2 is out of range for the array parameter 'xs' of 2 elements
+src/main.smith:4:31: index -1 is out of range for the array parameter 'xs' of 2 elements
+src/main.smith:8:24: index 3 is out of range for the array parameter 'm' of 3 elements
+src/main.smith:8:37: index 2 is out of range for the array parameter 'm' of 2 elements
