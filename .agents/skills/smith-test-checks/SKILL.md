@@ -10,6 +10,7 @@ The checks are generic functions of `smith::test`: the type is the first argumen
 ```smith fragment
 test::check(condition)                      // a bool
 test::check_equal(a, b)                     // a == b; bool, char, integers, f32, f64 and pointers; both values print with their type
+test::check_equal(s, t)                     // two structs: field by field (nested structs and fixed arrays too); the first that differs is named, `a.pair.m = 1`, `b.pair.m = 2`
 test::check_not_equal(a, b)                 // a != b (a NaN is not equal to anything, so this passes for one)
 test::check_less(a, b)                      // also check_less_equal, check_greater, check_greater_equal; a NaN is unordered, so these fail on one
 test::check_near(a, b, tolerance)           // |a - b| <= tolerance, f32 or f64; a NaN fails; equal infinities pass

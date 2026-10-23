@@ -128,6 +128,22 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   instance (`generic function pick::larger`, the head, `instance pick::larger(i32)`), and go-to-definition goes to the
   generic's name. An instance is `pick::larger<i32>` in `smith dbg` and `smith dap`, and its code is the generic's own
   file, line and column, so a breakpoint, a listing and the arguments are those of the source.
+- **Reflection: `fields(T)`** (issue #83, skill smith-lang-reflection). A struct's fields are one more compile-time
+  list, read from the parser, never written by hand. `runtime/lang_fields.c` (included by `lang_constexpr.c`) is the
+  whole of it. When an instance is written, the replay (and `smith_lang_pack_expand_range`, for the arguments of a call)
+  asks `smith_lang_fields_use` at each token: `countof(fields(T))` becomes the number, `fields(T)[i].name` a string
+  literal, `.[fields(T)[i]]` and `->[...]` the member name after the operator, `T.[...]` a member of `((T *)0)`; the
+  index is read by the evaluator of `if constexpr`, so it may be the loop variable. The condition's `typeof(x->[F])` is
+  the field's type spelling, asked of the host (`SmithHost.type_field`: status, count, the `index`th named field with its
+  type and whether it is a bit-field; `hook.cpp` `typeField`), and `is_array(...)` is one more type question. T is a
+  type parameter (`fields(T)`) or the type of a parameter (`fields(typeof(x))`, through `smith_lang_param_type_of`).
+  A union, an anonymous member, a type that is no struct and an index out of range are errors; unnamed bit-fields
+  (padding) are not fields. `typeof` of a bit-field is an error in C, so it is written as the field's declared integer
+  type, and the host types an argument that is a bit-field as the integer it promotes to. An argument of a call to a
+  generic that holds `fields` or an expression of an instance's parameter (`*p`, `a.m`) is typed like an argument that
+  holds a call: the parameters are written as `(*(T *)0)` for the compiler to type (a local of the body, a runtime loop
+  variable, cannot be named there). The grammar (`tree-sitter/grammar.js`) reads `x.[e]` and `x->[e]`; clang-format
+  needs nothing. `[..]` fields are #82's.
 - **Lists and `for constexpr`** (issue #71, skill smith-lang-lists). Smith is C plus compile time, so a list is not a
   library type: it is names. The lowering keeps, for the instance being written, a table of the lists its body made
   (`auto args = {...}`) and the loop variables of the `for constexpr` it is inside, and writes plain C.
