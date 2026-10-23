@@ -32,6 +32,47 @@ int main(void) {
     c::printf("%d\n", 1);
     return 0;
 }
+==> c-array-bound/src/grid.smith <==
+module grid;
+import "k.h";
+
+struct Plain {
+    u8 cells[c::SIDE];
+};
+typedef struct {
+    u8 cells[c::SIDE][c::depth];
+    u32 n;
+} Typed;
+struct Nested {
+    struct {
+        u8 x[c::SIDE * 2];
+    } in;
+    u8 y[c::SIDE + 1];
+};
+u8 table[c::SIDE];
+
+export struct Board {
+    u8 cells[c::SIDE * c::SIDE];
+    u32 n;
+};
+
+export usize board_size(void) {
+    return sizeof(struct Board);
+}
+
+export usize other_sizes(void) {
+    return sizeof(struct Plain) + sizeof(Typed) + sizeof(struct Nested) + sizeof table;
+}
+==> c-array-bound/src/main.smith <==
+import grid;
+#include <stdio.h>
+
+int main(void) {
+    struct grid::Board board = {};
+    board.cells[15] = 1;
+    printf("%zu %zu %zu\n", grid::board_size(), grid::other_sizes(), sizeof board.cells);
+    return 0;
+}
 ==> c-macro-argument/src/main.smith <==
 // A C macro written c::NAME inside the argument of another C macro: the preprocessor expands the inner one with the
 // argument, before the lowering reaches the c::. And static_assert, which <assert.h> defines as a macro in some SDKs
@@ -708,6 +749,116 @@ export typeof(value) twice(auto value) {
 export typeof(a) zero_like(auto a) {
     (void)a;
     return (typeof(a)){0};
+}
+==> generic-auto-constants-error/src/main.smith <==
+import pick;
+import "k.h";
+
+int main(void) {
+    u32 count = 7;
+    u8 small = 1;
+    u32 a = pick::larger(count, 4294967296);
+    u32 b = pick::larger(count, -1);
+    u8 r3 = pick::larger(small, 256);
+    u8 d = pick::larger(small, c::failed);
+    u8 e = pick::larger(small, c::Style_Count + 254);
+    return a + b + r3 + d + e;
+}
+==> generic-auto-constants-error/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+
+export T *alloc(i32 bytes, constexpr type T) {
+    (void)bytes;
+    return nullptr;
+}
+
+export T zero(constexpr type T) {
+    return (T){0};
+}
+
+export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
+    (void)b;
+    return a;
+}
+==> generic-auto-constants/src/main.smith <==
+import pick;
+import "k.h";
+#include <stdio.h>
+
+// A constant is judged by its value, and by its own type: all ones in a u32 fits a u32.
+int main(void) {
+    u32 count = 7;
+    u8 small = 1;
+    u64 wide = 1;
+    printf("%u\n", pick::larger(count, c::failed));
+    printf("%u\n", pick::larger(count, c::BIG));
+    printf("%u\n", pick::larger(count, 4294967295u));
+    printf("%u\n", pick::larger(count, 0xFFFFFFFFu));
+    printf("%u\n", pick::larger(count, 0xFFFFFFFF));
+    printf("%u\n", pick::larger(count, 4294967295ull));
+    printf("%u\n", pick::larger(count, 4294967295l));
+    printf("%u\n", pick::larger(count, 037777777777));
+    printf("%u\n", pick::larger(count, c::Style_Count - 1));
+    printf("%u\n", pick::larger(count, c::Style_B));
+    printf("%u\n", pick::larger(small, c::Style_Count - 1));
+    printf("%llu\n", pick::larger(wide, 18446744073709551615ull));
+    return 0;
+}
+==> generic-auto-constants/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+
+export T *alloc(i32 bytes, constexpr type T) {
+    (void)bytes;
+    return nullptr;
+}
+
+export T zero(constexpr type T) {
+    return (T){0};
+}
+
+export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
+    (void)b;
+    return a;
 }
 ==> generic-auto-error/src/main.smith <==
 import pick;
