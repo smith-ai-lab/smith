@@ -305,6 +305,62 @@ int main(void) {
     }
     return 0;
 }
+==> constexpr-modules/src/main.smith <==
+// The evaluator runs under -fmodules: a contract that holds is a no-op at compile time, and the program links the
+// library.
+import <stdio.h>;
+import smith::contract;
+
+static i32 clamp(i32 x, i32 low, i32 high) {
+    contract::requires(low <= high);
+    i32 result = x < low ? low : x > high ? high : x;
+    contract::ensures(low <= result && result <= high);
+    return result;
+}
+
+constexpr i32 limit = clamp(300, 0, 255);
+static_assert(clamp(-5, 0, 9) == 0);
+
+i32 main(void) {
+    c::printf("%d %d\n", limit, clamp(5, 0, 9));
+    return 0;
+}
+==> constexpr-pointers/src/main.smith <==
+// A constexpr object may hold a pointer into a string literal or into another constexpr object (C23 requires null).
+import <stdio.h>;
+
+typedef struct {
+    const char *ptr;
+    i32 len;
+} Str;
+
+constexpr char hello[] = "hello world";
+constexpr i32 nums[4] = {10, 20, 30, 40};
+constexpr const char *word = "abc";
+constexpr const char *inside = &hello[1];
+constexpr const i32 *third = nums + 2;
+constexpr Str small = {"xy", 2};
+constexpr Str prefix = {hello, 5};
+
+static i32 length(const char *p) {
+    i32 n = 0;
+    while (p[n])
+        n++;
+    return n;
+}
+
+static_assert(word[1] == 'b');
+static_assert(inside[0] == 'e');
+static_assert(*third == 30);
+static_assert(small.ptr[1] == 'y' && small.len == 2);
+static_assert(prefix.ptr[4] == 'o');
+static_assert(length(prefix.ptr) == 11);
+
+i32 main(void) {
+    static constexpr const i32 *kept = nums;
+    c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
+    return 0;
+}
 ==> cycle-by-source/src/a.smith <==
 module a;
 import b;
@@ -520,6 +576,54 @@ constexpr int steps = spin(1);
 constexpr int depth = deep(0);
 constexpr int wrapped = overflow(2147483647);
 constexpr int outside = at(9);
+==> error-constexpr-contract-deep/src/main.smith <==
+// A static_assert over a function whose contract::assert fails three calls deep; the evaluator runs under -fmodules
+// too.
+import smith::contract;
+
+static i32 deep3(i32 n) {
+    contract::assert(n > 0);
+    return n;
+}
+static i32 deep2(i32 n) {
+    return deep3(n) + 1;
+}
+static i32 deep1(i32 n) {
+    return deep2(n) + 1;
+}
+
+static_assert(deep1(2) == 4);
+static_assert(deep1(0) == 2);
+==> error-constexpr-contract/src/main.smith <==
+// A failed contract in a compile-time call is a compile error at the outermost call, with the contract's line and the
+// stack of calls, innermost first.
+import smith::contract;
+
+typedef struct {
+    i32 v[4];
+} Table;
+
+static Table make_table(i32 n) {
+    contract::requires(n > 0);
+    Table t = {};
+    for (i32 i = 0; i < 4; i++)
+        t.v[i] = n * i;
+    return t;
+}
+
+constexpr Table good = make_table(3);
+constexpr Table bad = make_table(0);
+==> error-constexpr-pointers/src/main.smith <==
+constexpr char hello[] = "hello";
+constexpr const char *word = "abc";
+constexpr const char *outside = hello + 9;
+static_assert(word[0] == 'z');
+
+i32 main(void) {
+    const i32 automatic[2] = {1, 2};
+    constexpr const i32 *pointer = automatic;
+    return *pointer;
+}
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {
     return 1;

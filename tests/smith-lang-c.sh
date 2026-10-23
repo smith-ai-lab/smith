@@ -137,5 +137,26 @@ constexpr_c() { # name, expected exit of the .c, expected exit of the .smith, ex
 constexpr_c constexpr_host 1 0 8 ""
 constexpr_c constexpr_windows 1 0 4 "--target=x86_64-pc-windows-msvc -nostdinc"
 
+# A constexpr pointer into a string literal or a constexpr object (C23 requires null) is a value in a .smith file; a .c file
+# still reports "constexpr pointer initializer is not null".
+constexpr_pointer() { # name
+    total=$((total + 1))
+    mkdir -p "$work/constexpr"
+    printf 'constexpr char hello[] = "hello";\nconstexpr const char *word = "abc";\nconstexpr const char *inside = &hello[1];\nstatic_assert(word[1] == %sb%s);\nstatic_assert(inside[0] == %se%s);\n' "'" "'" "'" "'" >"$work/constexpr/$1.c"
+    cp "$work/constexpr/$1.c" "$work/constexpr/$1.smith"
+    "$smith" cc -std=gnu23 -fsyntax-only "$work/constexpr/$1.c" 2>"$work/constexpr/$1.err"
+    plain=$?
+    "$smith" cc -std=gnu23 -fsyntax-only "$work/constexpr/$1.smith" 2>/dev/null
+    lowered=$?
+    if [ $plain = 0 ] || [ $lowered != 0 ] || ! grep -q "constexpr pointer initializer is not null" "$work/constexpr/$1.err"; then
+        failures=$((failures + 1))
+        echo "FAIL  $1: exit $plain as .c (not null), $lowered as .smith (0)"
+        head -5 "$work/constexpr/$1.err"
+    else
+        echo "ok    $1"
+    fi
+}
+constexpr_pointer constexpr_pointer
+
 echo "smith-lang-c: $((total - failures)) of $total identical"
 [ $failures = 0 ]

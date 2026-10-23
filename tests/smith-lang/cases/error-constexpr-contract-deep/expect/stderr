@@ -1,0 +1,16 @@
+main.smith:16:15: error: static assertion expression is not an integral constant expression
+   16 | static_assert(deep1(0) == 2);
+      |               ^~~~~~~~~~~~~
+main.smith:5:15: note: assert failed in call to 'contract::assert(false)'
+    5 |     contract::assert(n > 0);
+      |               ^
+main.smith:9:12: note: in call to 'deep3(0)'
+    9 |     return deep3(n) + 1;
+      |            ^~~~~~~~
+main.smith:12:12: note: in call to 'deep2(0)'
+   12 |     return deep2(n) + 1;
+      |            ^~~~~~~~
+main.smith:16:15: note: in call to 'deep1(0)'
+   16 | static_assert(deep1(0) == 2);
+      |               ^~~~~~~~
+1 error generated.

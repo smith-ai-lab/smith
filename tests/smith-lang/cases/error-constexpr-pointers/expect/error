@@ -1,0 +1,3 @@
+src/main.smith:3:23: constexpr variable 'outside' must be initialized by a constant expression
+src/main.smith:4:15: static assertion failed due to requirement 'word[0] == 'z''
+src/main.smith:8:26: constexpr variable 'pointer' must be initialized by a constant expression

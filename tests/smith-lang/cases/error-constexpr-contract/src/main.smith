@@ -1,0 +1,18 @@
+// A failed contract in a compile-time call is a compile error at the outermost call, with the contract's line and the
+// stack of calls, innermost first.
+import smith::contract;
+
+typedef struct {
+    i32 v[4];
+} Table;
+
+static Table make_table(i32 n) {
+    contract::requires(n > 0);
+    Table t = {};
+    for (i32 i = 0; i < 4; i++)
+        t.v[i] = n * i;
+    return t;
+}
+
+constexpr Table good = make_table(3);
+constexpr Table bad = make_table(0);

@@ -1,0 +1,1 @@
+main.smith:18:17: constexpr variable 'bad' must be initialized by a constant expression

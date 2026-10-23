@@ -1,0 +1,10 @@
+main.smith:18:17: error: constexpr variable 'bad' must be initialized by a constant expression
+   18 | constexpr Table bad = make_table(0);
+      |                 ^     ~~~~~~~~~~~~~
+main.smith:10:15: note: requires failed in call to 'contract::requires(false)'
+   10 |     contract::requires(n > 0);
+      |               ^
+main.smith:18:23: note: in call to 'make_table(0)'
+   18 | constexpr Table bad = make_table(0);
+      |                       ^~~~~~~~~~~~~
+1 error generated.

@@ -1,0 +1,10 @@
+constexpr char hello[] = "hello";
+constexpr const char *word = "abc";
+constexpr const char *outside = hello + 9;
+static_assert(word[0] == 'z');
+
+i32 main(void) {
+    const i32 automatic[2] = {1, 2};
+    constexpr const i32 *pointer = automatic;
+    return *pointer;
+}

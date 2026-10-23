@@ -1,0 +1,35 @@
+// A constexpr object may hold a pointer into a string literal or into another constexpr object (C23 requires null).
+import <stdio.h>;
+
+typedef struct {
+    const char *ptr;
+    i32 len;
+} Str;
+
+constexpr char hello[] = "hello world";
+constexpr i32 nums[4] = {10, 20, 30, 40};
+constexpr const char *word = "abc";
+constexpr const char *inside = &hello[1];
+constexpr const i32 *third = nums + 2;
+constexpr Str small = {"xy", 2};
+constexpr Str prefix = {hello, 5};
+
+static i32 length(const char *p) {
+    i32 n = 0;
+    while (p[n])
+        n++;
+    return n;
+}
+
+static_assert(word[1] == 'b');
+static_assert(inside[0] == 'e');
+static_assert(*third == 30);
+static_assert(small.ptr[1] == 'y' && small.len == 2);
+static_assert(prefix.ptr[4] == 'o');
+static_assert(length(prefix.ptr) == 11);
+
+i32 main(void) {
+    static constexpr const i32 *kept = nums;
+    c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
+    return 0;
+}

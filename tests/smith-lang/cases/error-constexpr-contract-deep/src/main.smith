@@ -1,0 +1,16 @@
+// A static_assert over a function whose contract::assert fails three calls deep; the evaluator runs under -fmodules too.
+import smith::contract;
+
+static i32 deep3(i32 n) {
+    contract::assert(n > 0);
+    return n;
+}
+static i32 deep2(i32 n) {
+    return deep3(n) + 1;
+}
+static i32 deep1(i32 n) {
+    return deep2(n) + 1;
+}
+
+static_assert(deep1(2) == 4);
+static_assert(deep1(0) == 2);
