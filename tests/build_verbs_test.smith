@@ -3,6 +3,7 @@
 // .smith/compile_commands.json (knowledge/build-execution.md).
 module build_verbs_test;
 
+import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
@@ -11,31 +12,30 @@ static void refuses_a_task_and_an_alias_named(io::Io *io, const char *verb) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     char text[1024];
     char name[256];
-    __builtin_snprintf(text, sizeof text,
-                       "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                       "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                       "    smith_task(b, \"%s\", &step);\n    smith_default(b, step.outputs);\n}\n",
-                       verb);
+    (void)format::to(text, sizeof text,
+                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                     "    smith_task(b, \"",
+                     verb, "\", &step);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run task = scratch::build(&p, "");
-    __builtin_snprintf(name, sizeof name, "verbs: a task named %s is refused", verb);
+    (void)format::to(name, sizeof name, "verbs: a task named ", verb, " is refused");
     scratch::expect_status(name, 2, &task);
-    __builtin_snprintf(name, sizeof name, "verbs: ... %s names the verb", verb);
-    __builtin_snprintf(text, sizeof text,
-                       "task '%s' is named after a verb; `smith %s` does the same thing in every project", verb, verb);
+    (void)format::to(name, sizeof name, "verbs: ... ", verb, " names the verb");
+    (void)format::to(text, sizeof text, "task '", verb, "' is named after a verb; `smith ", verb,
+                     "` does the same thing in every project");
     scratch::expect_contains(name, task.err, text);
-    __builtin_snprintf(text, sizeof text,
-                       "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                       "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                       "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"%s\", step.outputs);\n"
-                       "    smith_default(b, step.outputs);\n}\n",
-                       verb);
+    (void)format::to(text, sizeof text,
+                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                     "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"",
+                     verb, "\", step.outputs);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run alias = scratch::build(&p, "");
-    __builtin_snprintf(name, sizeof name, "verbs: an alias named %s is refused", verb);
+    (void)format::to(name, sizeof name, "verbs: an alias named ", verb, " is refused");
     scratch::expect_status(name, 2, &alias);
-    __builtin_snprintf(name, sizeof name, "verbs: ... and says alias (%s)", verb);
-    __builtin_snprintf(text, sizeof text, "alias '%s' is named after a verb", verb);
+    (void)format::to(name, sizeof name, "verbs: ... and says alias (", verb, ")");
+    (void)format::to(text, sizeof text, "alias '", verb, "' is named after a verb");
     scratch::expect_contains(name, alias.err, text);
 }
 
@@ -87,7 +87,7 @@ export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests(i
 // How many lines of a file match a pattern, as grep -c counts them ("0" when none).
 static const char *matches(const scratch::Project *p, const char *file, const char *pattern) {
     char command[1024];
-    __builtin_snprintf(command, sizeof command, "grep -c %s %s", pattern, file);
+    (void)format::to(command, sizeof command, "grep -c ", pattern, " ", file);
     return scratch::capture(p, command);
 }
 

@@ -5,6 +5,7 @@
 module scratch;
 
 import smith::arena;
+import smith::format;
 import smith::io;
 import smith::test;
 import <string.h>;
@@ -59,15 +60,11 @@ static Run run_in(const Project *p, const char *command) {
 }
 
 static const char *path_in(const Project *p, const char *name) {
-    char *path = arena::push_array(&p->io->arena, char, 4096);
-    __builtin_snprintf(path, 4096, "%s/%s", p->dir, name);
-    return path;
+    return format::push(&p->io->arena, p->dir, "/", name).begin;
 }
 
 static const char *join(io::Io *io, const char *folder, const char *name) {
-    char *path = arena::push_array(&io->arena, char, 4096);
-    __builtin_snprintf(path, 4096, "%s/%s", folder, name);
-    return path;
+    return format::push(&io->arena, folder, "/", name).begin;
 }
 
 // A project: a folder `name` in the test's scratch folder, with the files of tests/build_fixtures/<fixture> in it
@@ -97,9 +94,7 @@ export Run sh(const Project *p, const char *command) {
 
 // `smith build` with the arguments in a string.
 export Run build(const Project *p, const char *arguments) {
-    char *command = arena::push_array(&p->io->arena, char, 4096);
-    __builtin_snprintf(command, 4096, "smith build %s", arguments);
-    return run_in(p, command);
+    return run_in(p, format::push(&p->io->arena, "smith build ", arguments).begin);
 }
 
 export void write(const Project *p, const char *name, const char *text) {

@@ -1,0 +1,292 @@
+// smith::format, <smith/format.h>: formatted text into a buffer or an arena, in place of snprintf. Written in .smith
+// only: a generic function has no C spelling, so the header declares the types and C keeps snprintf.
+module smith::format;
+
+import smith::arena;
+import smith::text;
+
+// <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
+// order, and the type of each one picks how it is written, when the call is compiled. A type it has no rule for is a
+// compile-time error at the call (the note names the instance, `format::to(char *, usize, Point)`).
+//
+//   format::Written written = format::to(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
+//   if (!written.fits) ...                                   // the text was cut; written.length is what it needed
+//   text::Text path = format::push(&arena, folder, "/", name, ".smith");       // path.begin is terminated too
+//
+// What each type is written as, with no locale and no C library function:
+//   bool                      true or false
+//   char                      the character
+//   i8..i64, u8..u64, usize   decimal digits, a leading - for a negative number (i8 is a number, char is a character)
+//   f32, f64                  text::write_f64's shortest digits that read back as the same value (0.1, 1e22,
+//                             5e-324), a f32 as its f64 value; inf, -inf and nan for what has no number
+//   char *, const char *      the terminated string; a null pointer is (null)
+//   text::Text                its length of characters, which need no terminator
+//   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
+//   format::Fixed             a fixed number of places, rounded as printf's %.Nf does: format::fixed(value, 3)
+// Anything else (a pointer, an enum, a struct) is an error: convert it to what it means, (u64)(usize)pointer.
+//
+// Writing never stops. The text is cut where the buffer ends, the buffer is always terminated (when it has room for
+// the terminator), and the result says how long the whole text is, so a caller can retry with room, as snprintf does.
+// format::push asks the arena for exactly that room (a push the arena cannot serve stops, as every arena push does).
+
+// How a write went. length is the characters of the whole text, whether or not they fit, without the terminator;
+// fits is length < capacity, that is, every character and the terminator were written.
+[[smith::c_name("SmithFormatWritten")]] export typedef struct {
+    usize length;
+    bool fits;
+} Written;
+
+// A number in lowercase hexadecimal, at least width digits (at most 16), zero-padded; made by hex().
+[[smith::c_name("SmithFormatHex")]] export typedef struct {
+    u64 value;
+    u32 width;
+} Hex;
+
+// A f64 with places digits after the point (at most 20), made by fixed().
+[[smith::c_name("SmithFormatFixed")]] export typedef struct {
+    f64 value;
+    u32 places;
+} Fixed;
+
+// value in hexadecimal, width digits at least: hex(255, 4) is 00ff, hex(255, 0) is ff, and hex(0, 0) is 0.
+[[smith::c_name("smith_format_hex")]] export [[nodiscard]] Hex hex(u64 value, u32 width) {
+    return (Hex){value, width};
+}
+
+// value to places digits after the point, correctly rounded from its exact binary value (ties to even), as printf's
+// %.Nf: fixed(2.5, 0) is 2 and fixed(0.125, 2) is 0.12. A negative number that rounds to zero keeps its sign (-0.00),
+// as printf does. A number of 2^63 or more has no fixed rule here and is written as with no wrapper.
+[[smith::c_name("smith_format_fixed")]] export [[nodiscard]] Fixed fixed(f64 value, u32 places) {
+    return (Fixed){value, places};
+}
+
+// The text of length characters at begin, for what a printf wrote as %.*s.
+[[smith::c_name("smith_format_bytes")]] export [[nodiscard]] text::Text bytes(const char *begin, usize length) {
+    return (text::Text){begin, length};
+}
+
+[[smith::c_name("SmithFormatWriter")]] export typedef struct {
+    char *out;
+    usize capacity;
+    usize length;
+} Writer;
+
+// A writer over buffer, which has room for capacity characters (0 and a null buffer measure only). The Writer is what
+// `to` is made of, and C can use it: each put below is a piece of the text, and finish ends it.
+[[smith::c_name("smith_format_make")]] export [[nodiscard]] Writer make(char *buffer, usize capacity) {
+    return (Writer){buffer, capacity, 0};
+}
+
+// One character.
+[[smith::c_name("smith_format_put_char")]] export void put_char(Writer *writer, char c) {
+    if (writer->capacity > 0 && writer->length < writer->capacity - 1) writer->out[writer->length] = c;
+    writer->length += 1;
+}
+
+// length characters at begin.
+[[smith::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char *begin, usize length) {
+    for (usize i = 0; i < length; i++) {
+        put_char(writer, begin[i]);
+    }
+}
+
+// A terminated string; a null pointer is (null).
+[[smith::c_name("smith_format_put_string")]] export void put_string(Writer *writer, const char *string) {
+    if (string == nullptr) string = "(null)";
+    for (usize i = 0; string[i] != '\0'; i++) {
+        put_char(writer, string[i]);
+    }
+}
+
+// Decimal digits.
+[[smith::c_name("smith_format_put_u64")]] export void put_u64(Writer *writer, u64 value) {
+    char digits[text::number_capacity];
+    usize length = text::write_u64(digits, value);
+    put_bytes(writer, digits, length);
+}
+
+// Decimal digits with a leading - for a negative number.
+[[smith::c_name("smith_format_put_i64")]] export void put_i64(Writer *writer, i64 value) {
+    char digits[text::number_capacity + 1];
+    usize length = text::write_i64(digits, value);
+    put_bytes(writer, digits, length);
+}
+
+bool is_finite(f64 value) {
+    u64 bits = __builtin_bit_cast(u64, value);
+    return ((bits >> 52) & 0x7ff) != 0x7ff;
+}
+
+// inf, -inf and nan, which text::write_f64 refuses; nan has no sign here.
+void put_unfinite(Writer *writer, f64 value) {
+    if (value != value) {
+        put_string(writer, "nan");
+    } else if (value < 0) {
+        put_string(writer, "-inf");
+    } else {
+        put_string(writer, "inf");
+    }
+}
+
+// As text::write_f64, and inf, -inf or nan for a value with no number.
+[[smith::c_name("smith_format_put_f64")]] export void put_f64(Writer *writer, f64 value) {
+    if (!is_finite(value)) {
+        put_unfinite(writer, value);
+        return;
+    }
+    char digits[text::f64_capacity];
+    usize length = text::write_f64(digits, value);
+    put_bytes(writer, digits, length);
+}
+
+// A Hex, as hex() made it.
+[[smith::c_name("smith_format_put_hex")]] export void put_hex(Writer *writer, Hex hex) {
+    char digits[16];
+    usize count = 0;
+    u64 rest = hex.value;
+    do {
+        u64 digit = rest & 0xf;
+        digits[count++] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
+        rest >>= 4;
+    } while (rest != 0);
+    u32 width = hex.width < 16 ? hex.width : 16;
+    for (usize pad = count; pad < width; pad++) {
+        put_char(writer, '0');
+    }
+    for (usize i = count; i-- > 0;) {
+        put_char(writer, digits[i]);
+    }
+}
+
+constexpr u32 places_max = 20;
+constexpr u64 whole_limit = (u64)1 << 63;
+constexpr u32 fraction_bits_max = 120;
+
+typedef __uint128_t Wide;
+
+// |value| as a whole part and a fraction n / 2^bits, exactly. A value below 2^-68 has a fraction past 120 bits, but no
+// digit of at most 20 places can then be other than zero (half of 10^-20 is above 2^-68), so it is written as zero.
+typedef struct {
+    u64 whole;
+    Wide fraction;
+    u32 bits;
+} Split;
+
+Split split(f64 value) {
+    u64 abs = __builtin_bit_cast(u64, value) & ~((u64)1 << 63);
+    u64 field = abs >> 52;
+    u64 m = field == 0 ? abs : (abs & 0xfffffffffffffULL) | ((u64)1 << 52);
+    i64 e = field == 0 ? -1074 : (i64)field - 1075;
+    Split result = {0, 0, 0};
+    if (e >= 0) {
+        result.whole = m << (u32)e;
+    } else {
+        u32 shift = (u32)(0 - e);
+        if (shift < 64) {
+            result.whole = m >> shift;
+            result.fraction = m & (((u64)1 << shift) - 1);
+            result.bits = shift;
+        } else if (shift <= fraction_bits_max) {
+            result.fraction = m;
+            result.bits = shift;
+        }
+    }
+    return result;
+}
+
+// places digits of the fraction, rounded to nearest with ties to even; a carry out of the first digit goes to *whole.
+void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
+    Wide n = split.fraction;
+    for (u32 i = 0; i < places; i++) {
+        n *= 10;
+        digits[i] = (char)('0' + (u32)(n >> split.bits));
+        n &= ((Wide)1 << split.bits) - 1;
+    }
+    if (split.bits == 0) return;
+    Wide half = (Wide)1 << (split.bits - 1);
+    u64 last = places > 0 ? (u64)(digits[places - 1] - '0') : *whole;
+    if (n < half || (n == half && (last & 1) == 0)) return;
+    u32 i = places;
+    while (i > 0 && digits[i - 1] == '9') {
+        digits[i - 1] = '0';
+        i -= 1;
+    }
+    if (i > 0)
+        digits[i - 1] += 1;
+    else
+        *whole += 1;
+}
+
+// A Fixed, as fixed() made it.
+[[smith::c_name("smith_format_put_fixed")]] export void put_fixed(Writer *writer, Fixed fixed) {
+    if (!is_finite(fixed.value)) {
+        put_unfinite(writer, fixed.value);
+        return;
+    }
+    u64 bits = __builtin_bit_cast(u64, fixed.value);
+    if ((bits & ~((u64)1 << 63)) >= __builtin_bit_cast(u64, (f64)whole_limit)) {
+        put_f64(writer, fixed.value);
+        return;
+    }
+    u32 places = fixed.places < places_max ? fixed.places : places_max;
+    Split parts = split(fixed.value);
+    char digits[places_max];
+    u64 whole = parts.whole;
+    fraction_digits(parts, places, digits, &whole);
+    if ((bits >> 63) != 0) put_char(writer, '-');
+    put_u64(writer, whole);
+    if (places > 0) put_char(writer, '.');
+    put_bytes(writer, digits, places);
+}
+
+// Ends the text: terminates the buffer where it ends and says how it went (see Written).
+[[smith::c_name("smith_format_finish")]] export [[nodiscard]] Written finish(Writer *writer) {
+    if (writer->capacity > 0) {
+        usize end = writer->length < writer->capacity - 1 ? writer->length : writer->capacity - 1;
+        writer->out[end] = '\0';
+    }
+    return (Written){writer->length, writer->length < writer->capacity};
+}
+
+// The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
+// be null) and only measures. See the rules at the top of this file.
+export Written to(char *buffer, usize capacity, auto... args) {
+    Writer writer = {buffer, capacity, 0};
+    for constexpr (usize i = 0; i < countof(args); i++) {
+        if constexpr (is_bool(typeof(args[i]))) {
+            put_string(&writer, args[i] ? "true" : "false");
+        } else if constexpr (typeof(args[i]) == char) {
+            put_char(&writer, args[i]);
+        } else if constexpr (is_integer(typeof(args[i])) && is_signed(typeof(args[i]))) {
+            put_i64(&writer, (i64)args[i]);
+        } else if constexpr (is_integer(typeof(args[i]))) {
+            put_u64(&writer, (u64)args[i]);
+        } else if constexpr (is_float(typeof(args[i]))) {
+            put_f64(&writer, (f64)args[i]);
+        } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char *) {
+            put_string(&writer, args[i]);
+        } else if constexpr (typeof(args[i]) == text::Text) {
+            put_bytes(&writer, args[i].begin, args[i].length);
+        } else if constexpr (typeof(args[i]) == Hex) {
+            put_hex(&writer, args[i]);
+        } else if constexpr (typeof(args[i]) == Fixed) {
+            put_fixed(&writer, args[i]);
+        } else {
+            static_assert(false, "format: no rule for the type of an argument; see the instance in the note");
+        }
+    }
+    return finish(&writer);
+}
+
+// How many characters the arguments make, without the terminator.
+export usize length(auto... args) {
+    return to(nullptr, 0, args...).length;
+}
+
+// The arguments as text pushed on the arena, with a terminator after it that Text's length does not count.
+export text::Text push(arena::Arena *arena, auto... args) {
+    usize characters = length(args...);
+    char *memory = arena::push_array(arena, char, characters + 1);
+    Written written = to(memory, characters + 1, args...);
+    return (text::Text){memory, written.length};
+}

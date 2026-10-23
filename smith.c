@@ -918,6 +918,12 @@ static constexpr unsigned char smith_autodiff_header[] = {
 static constexpr unsigned char smith_autodiff_source[] = {
 #embed "lib/smith/autodiff.smith"
 };
+static constexpr unsigned char smith_format_header[] = {
+#embed "include/smith/format.h"
+};
+static constexpr unsigned char smith_format_source[] = {
+#embed "lib/smith/format.smith"
+};
 static constexpr unsigned char smith_math_header[] = {
 #embed "include/smith/math.h"
 };
@@ -993,6 +999,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(contract, true),
+    SMITH_LIBRARY(format, true),
     SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),

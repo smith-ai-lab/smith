@@ -38,7 +38,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
 ```
 
 - **What a generic is.** A function with a body at file scope in a module, exported or not, `inline` or not (not
-  `static` or `extern`: `export` is what makes it public). Up to 4 `constexpr type` parameters and 16 parameters. It has
+  `static` or `extern`: `export` is what makes it public). Up to 4 `constexpr type` parameters and 32 parameters (a formatter takes its pieces as `auto... args`). It has
   no symbol and cannot be named without being called (`&arena::push` is an error); C and C++ see a placeholder
   (`[[clang::unavailable]] void arena_push(void);`), and the module's header carries the record of the generic in a
   `// smith-generic:` comment line, which an importer reads (so a header on the include path, as `smith build` writes,

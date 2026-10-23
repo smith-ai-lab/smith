@@ -1,0 +1,321 @@
+// Tests of smith::format, in smith's own test library (the units runner links every tests/*.smith). The C library's
+// snprintf in the C locale is the reference for integers, hexadecimal and fixed places (this program never sets a
+// locale); the shortest float text is checked by reading it back with smith::text and against known strings.
+module format_test;
+
+import smith::arena;
+import smith::format;
+import smith::math;
+import smith::random;
+import smith::test;
+import smith::text;
+
+constexpr usize capacity = 256;
+constexpr i64 i64_max = 9223372036854775807;
+constexpr i64 i64_min = -9223372036854775807 - 1;
+constexpr u64 u64_max = 18446744073709551615ULL;
+
+static bool is(const char *text, const char *expected) {
+    return __builtin_strcmp(text, expected) == 0;
+}
+
+static u64 test_format_draw(random::Key key) {
+    u64 shift = random::key_bits(random::key_derive(key, 1), 0) % 64;
+    return random::key_bits(random::key_derive(key, 0), 0) >> shift;
+}
+
+export void test_format_pieces_in_order(void) {
+    char out[capacity];
+    u32 n = 3;
+    usize total = 10;
+    format::Written written = format::to(out, sizeof out, "count: ", n, " of ", total, "\n");
+    test::check(written.fits);
+    test::check(is(out, "count: 3 of 10\n"));
+    test::check_equal(written.length, __builtin_strlen(out));
+    test::check_equal(format::to(out, sizeof out).length, 0);
+    test::check(is(out, ""));
+}
+
+export void test_format_bool_and_char(void) {
+    char out[capacity];
+    bool yes = true;
+    bool no = false;
+    char letter = 'q';
+    char nul = '\0';
+    (void)format::to(out, sizeof out, yes, " ", no, " ", letter, "|", letter, letter);
+    test::check(is(out, "true false q|qq"));
+    format::Written written = format::to(out, sizeof out, "a", nul, "b"); // a character is a character, a nul too
+    test::check_equal(written.length, 3);
+    test::check_equal(out[1], '\0');
+    test::check_equal(out[2], 'b');
+}
+
+export void test_format_strings_and_text(void) {
+    char out[capacity];
+    const char *path = "src/main.smith";
+    char *mutable_string = out + 128;
+    mutable_string[0] = 'x';
+    mutable_string[1] = '\0';
+    const char *nothing = nullptr;
+    text::Text word = text::make("hello world");
+    word.length = 5;
+    (void)format::to(out, 128, path, ":", mutable_string, ":", word, ":", format::bytes("abcdef", 3), ":", nothing);
+    test::check(is(out, "src/main.smith:x:hello:abc:(null)"));
+    text::Text empty = text::make("");
+    test::check_equal(format::to(out, sizeof out, empty).length, 0);
+}
+
+// Every width, signed and unsigned, at its ends, against snprintf.
+export void test_format_integers_at_their_limits(void) {
+    char out[capacity];
+    char expected[capacity];
+    i8 a = -128;
+    i16 b = -32768;
+    i32 c = -2147483647 - 1;
+    i64 d = i64_min;
+    u8 e = 255;
+    u16 f = 65535;
+    u32 g = 4294967295U;
+    u64 h = u64_max;
+    usize i = (usize)u64_max;
+    isize j = (isize)i64_max;
+    (void)format::to(out, sizeof out, a, " ", b, " ", c, " ", d, " ", e, " ", f, " ", g, " ", h, " ", i, " ", j);
+    __builtin_snprintf(expected, sizeof expected, "%d %d %d %lld %u %u %u %llu %zu %zd", a, b, c, d, e, f, g, h, i, j);
+    test::check(is(out, expected));
+    (void)format::to(out, sizeof out, (i8)0, (u64)0, (i64)-1, (i64)i64_max);
+    test::check(is(out, "00-19223372036854775807"));
+}
+
+export void test_format_signed_matches_libc(random::Key key) {
+    char out[capacity];
+    char expected[capacity];
+    i64 value = (i64)test_format_draw(key);
+    if ((random::key_bits(random::key_derive(key, 2), 0) & 1) != 0) value = -value;
+    (void)format::to(out, sizeof out, value);
+    __builtin_snprintf(expected, sizeof expected, "%lld", value);
+    test::check(is(out, expected));
+}
+
+export void test_format_unsigned_matches_libc(random::Key key) {
+    char out[capacity];
+    char expected[capacity];
+    u64 value = test_format_draw(key);
+    (void)format::to(out, sizeof out, value, "/", (u32)value, "/", (u16)value, "/", (u8)value);
+    __builtin_snprintf(expected, sizeof expected, "%llu/%u/%u/%u", value, (u32)value, (u16)value, (u8)value);
+    test::check(is(out, expected));
+}
+
+export void test_format_hex_matches_libc(random::Key key) {
+    char out[capacity];
+    char expected[capacity];
+    u64 value = test_format_draw(key);
+    u32 width = (u32)(random::key_bits(random::key_derive(key, 3), 0) % 20); // past 16 stops at 16
+    (void)format::to(out, sizeof out, format::hex(value, width));
+    u32 libc_width = width < 16 ? width : 16;
+    __builtin_snprintf(expected, sizeof expected, "%0*llx", (i32)libc_width, value);
+    test::check(is(out, expected));
+}
+
+export void test_format_hex_known(void) {
+    char out[capacity];
+    (void)format::to(out, sizeof out, "0x", format::hex(255, 0), " ", format::hex(255, 4), " ", format::hex(0, 0), " ",
+                     format::hex(u64_max, 16), " ", format::hex(0xabc, 2));
+    test::check(is(out, "0xff 00ff 0 ffffffffffffffff abc"));
+}
+
+// The shortest text that reads back as the same value, and the strings smith::text documents.
+export void test_format_floats_known(void) {
+    char out[capacity];
+    f64 tiny = 5e-324;
+    f64 big = 1e22;
+    f64 negative_zero = -0.0;
+    f32 half = 0.5F;
+    (void)format::to(out, sizeof out, 0.1, " ", 2.5, " ", -3.0, " ", big, " ", tiny, " ", negative_zero, " ", half);
+    test::check(is(out, "0.1 2.5 -3 1e22 5e-324 -0 0.5"));
+    (void)format::to(out, sizeof out, math::infinity(f64), " ", -math::infinity(f64), " ", math::nan(f64), " ",
+                     math::infinity(f32));
+    test::check(is(out, "inf -inf nan inf"));
+}
+
+export void test_format_floats_read_back(random::Key key) {
+    u64 bits = random::key_bits(key, 0);
+    f64 value = __builtin_bit_cast(f64, bits);
+    if (!math::is_finite(value)) return;
+    char out[capacity];
+    format::Written written = format::to(out, sizeof out, value);
+    f64 back = 0;
+    test::check(text::parse_f64((text::Text){out, written.length}, &back));
+    test::check_same_bits(back, value);
+}
+
+static void check_fixed(f64 value, u32 places) {
+    char out[capacity];
+    char expected[capacity];
+    (void)format::to(out, sizeof out, format::fixed(value, places));
+    __builtin_snprintf(expected, sizeof expected, "%.*f", (i32)places, value);
+    if (!is(out, expected)) {
+        test::check_equal(text::make(out).length, text::make(expected).length); // the failure shows both lengths
+        test::check(is(out, expected));
+    }
+}
+
+export void test_format_fixed_known(void) {
+    char out[capacity];
+    (void)format::to(out, sizeof out, format::fixed(3.14159, 2), " ", format::fixed(2.5, 0), " ", format::fixed(3.5, 0),
+                     " ", format::fixed(0.125, 2), " ", format::fixed(-0.001, 2), " ", format::fixed(9.999, 2), " ",
+                     format::fixed(1.0, 3), " ", format::fixed(100, 1));
+    test::check(is(out, "3.14 2 4 0.12 -0.00 10.00 1.000 100.0"));
+}
+
+// Ties, and the numbers just either side of them: a halfway case rounds to even, and one binary digit off does not.
+export void test_format_fixed_ties_match_libc(void) {
+    for (u32 places = 0; places <= 12; places++) {
+        for (u32 k = 0; k < 4096; k++) {
+            check_fixed((f64)k / 1024.0, places);
+            check_fixed(-(f64)k / 1024.0, places);
+            check_fixed((f64)k / 8.0 + 0.5, places);
+        }
+    }
+}
+
+export void test_format_fixed_places_up_to_the_limit(void) {
+    f64 values[] = {0.0,   1.0,        0.1,    0.2,          0.3,   1.0 / 3.0, 2.0 / 3.0,          1e-5,
+                    1e-10, 123456.789, 99.995, 0.9999999999, 4.35,  1e15,      4503599627370496.5, 9007199254740993.0,
+                    1e18,  9.2e18,     3e-20,  2e-20,        4e-21, 5.5e-300};
+    for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
+        for (u32 places = 0; places <= 20; places++) {
+            check_fixed(values[v], places);
+            check_fixed(-values[v], places);
+        }
+    }
+}
+
+export void test_format_fixed_matches_libc(random::Key key) {
+    u64 bits = random::key_bits(key, 0);
+    f64 value = __builtin_bit_cast(f64, bits);
+    u32 places = (u32)(random::key_bits(key, 1) % 21);
+    if (!math::is_finite(value)) return;
+    f64 magnitude = value < 0 ? -value : value;
+    if (magnitude >= 9.2e18) return; // past 2^63 is written as a float
+    check_fixed(value, places);
+    // A value spread over the useful range, which random bits rarely give: a mantissa times a small power of two.
+    u64 mantissa = random::key_bits(key, 2) >> 11;
+    i32 exponent = (i32)(random::key_bits(key, 3) % 80) - 70;
+    f64 near = (f64)mantissa * __builtin_ldexp(1.0, exponent);
+    check_fixed(near, places);
+}
+
+export void test_format_fixed_special_values(void) {
+    char out[capacity];
+    f64 big = 1e30;
+    (void)format::to(out, sizeof out, format::fixed(math::infinity(f64), 2), " ",
+                     format::fixed(-math::infinity(f64), 2), " ", format::fixed(math::nan(f64), 2), " ",
+                     format::fixed(big, 2), " ", format::fixed(-0.0, 1));
+    test::check(is(out, "inf -inf nan 1e30 -0.0"));
+    (void)format::to(out, sizeof out, format::fixed(1.5, 30)); // more than 20 places is 20
+    test::check(is(out, "1.50000000000000000000"));
+}
+
+export void test_format_cut_at_the_capacity(void) {
+    char out[16];
+    __builtin_memset(out, 'x', sizeof out);
+    format::Written written = format::to(out, 5, "hello", " world");
+    test::check(!written.fits);
+    test::check_equal(written.length, 11); // what the whole text needs
+    test::check(is(out, "hell"));
+    test::check_equal(out[5], 'x');        // nothing past the capacity is written
+    written = format::to(out, 6, "hello"); // the characters and the terminator
+    test::check(written.fits);
+    test::check_equal(written.length, 5);
+    test::check(is(out, "hello"));
+    written = format::to(out, 5, "hello"); // the characters but no room for the terminator
+    test::check(!written.fits);
+    test::check_equal(written.length, 5);
+    test::check(is(out, "hell"));
+    written = format::to(out, 1, "hello");
+    test::check(!written.fits);
+    test::check_equal(out[0], '\0');
+}
+
+export void test_format_capacity_zero_measures(void) {
+    format::Written written = format::to(nullptr, 0, "value ", (i64)-12345, " ", format::hex(255, 4), " ", 1.5);
+    test::check(!written.fits);
+    test::check_equal(written.length, 6 + 6 + 1 + 4 + 1 + 3);
+    test::check_equal(format::length("abc", 12345), 8);
+    test::check_equal(format::length(), 0);
+    char sentinel = 'x';
+    written = format::to(&sentinel, 0, "abc");
+    test::check_equal(sentinel, 'x');
+    test::check_equal(written.length, 3);
+}
+
+// A number cut in the middle keeps the digits before the cut, and the length is the whole number's.
+export void test_format_cut_in_a_number(random::Key key) {
+    u64 value = test_format_draw(key);
+    char whole[capacity];
+    usize length = format::to(whole, sizeof whole, value).length;
+    usize room = (usize)(random::key_bits(key, 5) % (length + 2));
+    char out[capacity];
+    format::Written written = format::to(out, room, value);
+    test::check_equal(written.length, length);
+    test::check_equal(written.fits, room > length);
+    if (room > 0) {
+        usize kept = room - 1 < length ? room - 1 : length;
+        test::check_equal(__builtin_memcmp(out, whole, kept), 0);
+        test::check_equal(out[kept], '\0');
+    }
+}
+
+export void test_format_push_on_an_arena(void) {
+    static struct {
+        alignas(arena::align_max) u8 bytes[1024];
+    } memory;
+    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    text::Text path = format::push(&a, "build/meshes/", "ship", ".mesh");
+    test::check_equal(path.length, 22);
+    test::check(is(path.begin, "build/meshes/ship.mesh")); // terminated after its length
+    usize used = a.used;
+    text::Text number = format::push(&a, (u64)42);
+    test::check_equal(number.length, 2);
+    test::check(is(number.begin, "42"));
+    test::check(a.used > used);
+    text::Text nothing = format::push(&a);
+    test::check_equal(nothing.length, 0);
+    test::check_equal(nothing.begin[0], '\0');
+    arena::reset(&a);
+    test::check_equal(a.used, 0);
+}
+
+// What the callers of snprintf wrote, as pieces. Each pair is the old call and the new one.
+export void test_format_callers(void) {
+    char out[capacity];
+    char expected[capacity];
+    const char *folder = "/tmp";
+    const char *name = "build.c";
+    __builtin_snprintf(expected, sizeof expected, "%s/%s", folder, name);
+    (void)format::to(out, sizeof out, folder, "/", name);
+    test::check(is(out, expected));
+    const char *line = "a line";
+    usize length = 4;
+    __builtin_snprintf(expected, sizeof expected, "%.*s", (i32)length, line);
+    (void)format::to(out, sizeof out, format::bytes(line, length));
+    test::check(is(out, expected));
+    u64 key = 0x0123456789abcdefULL;
+    __builtin_snprintf(expected, sizeof expected, "%016llx", key);
+    (void)format::to(out, sizeof out, format::hex(key, 16));
+    test::check(is(out, expected));
+    f64 ratio = 12.0 / 7.0;
+    __builtin_snprintf(expected, sizeof expected, "%.1f (%.0f, %.0f)", ratio, ratio * 3, ratio * 5);
+    (void)format::to(out, sizeof out, format::fixed(ratio, 1), " (", format::fixed(ratio * 3, 0), ", ",
+                     format::fixed(ratio * 5, 0), ")");
+    test::check(is(out, expected));
+    u32 jobs = 8;
+    __builtin_snprintf(expected, sizeof expected, "%u", jobs);
+    (void)format::to(out, sizeof out, jobs);
+    test::check(is(out, expected));
+    __builtin_snprintf(expected, sizeof expected, "push of %zu bytes (align %zu) with %zu of %zu bytes used", (usize)8,
+                       (usize)16, (usize)100, (usize)4096);
+    (void)format::to(out, sizeof out, "push of ", (usize)8, " bytes (align ", (usize)16, ") with ", (usize)100, " of ",
+                     (usize)4096, " bytes used");
+    test::check(is(out, expected));
+}
