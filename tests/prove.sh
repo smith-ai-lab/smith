@@ -214,6 +214,15 @@ expect_contains "readonly: ... with its line" "$out" "readonly.c:54: smith_ensur
 # 7c2b. What a caller reads after a callee with UBSan checks and a contract is a value, not undefined behaviour (#62).
 prove --function=add_row "$cases/after_call.c"
 expect "after_call: add_row is proved" 0 "$rc"
+prove --function=replay_make --library="$here/bootstrap/lib/smith/arena.c" "$cases/arena_sret.c"
+expect "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)" 0 "$rc"
+
+# 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).
+prove --function=offset_in_kind "$cases/returned_pointer.c"
+expect "returned_pointer: a load through a returned pointer is proved with ensures(result != nullptr)" 0 "$rc"
+prove --function=past_the_end "$cases/returned_pointer.c"
+expect "returned_pointer: a pointer one past the end is refused where it is returned" 1 "$rc"
+expect_contains "returned_pointer: ... at its return" "$out" "undefined behaviour at \`ret ptr"
 
 # 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
 # int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects; `restrict`

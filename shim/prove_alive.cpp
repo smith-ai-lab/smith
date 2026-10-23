@@ -335,7 +335,9 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
                 const llvm::Value *object = llvm::getUnderlyingObject(load->getPointerOperand());
                 auto *local = llvm::dyn_cast<llvm::AllocaInst>(object); // one a call was allowed to change
+                auto *returned = llvm::dyn_cast<llvm::CallBase>(object); // a pointer a callee was proved to return
                 if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object) ||
+                    (returned != nullptr && returned->getMetadata("smith.valid_return") != nullptr) ||
                     (local != nullptr && havoced.count(local) != 0))
                     given_memory.insert(llvm_util::value_name(instruction));
             }
@@ -345,6 +347,8 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                                                                  instruction.getDebugLoc().getLine()};
             }
         }
+        for (llvm::Instruction &instruction : llvm::instructions(function))
+            instruction.setMetadata("smith.valid_return", nullptr); // Alive2 does not read it
         auto source = llvm_util::llvm2alive(function, library.getTLI(function), true);
         if (!source) {
             outcome.status = Outcome::Error;
@@ -740,7 +744,10 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 } else if (auto *assume = dynamic_cast<const IR::Assume *>(&instruction)) {
                     auto operands = assume->operands();
                     const IR::State::ValTy *condition = operands.empty() ? nullptr : state->at(*operands[0]);
-                    if (condition != nullptr) {
+                    if (assume->getKind() == IR::Assume::Dereferenceable || assume->getKind() == IR::Assume::Align) { // what the callee returned is a valid object
+                        facts = facts && added;
+                        assumed.push_back({block, added});
+                    } else if (condition != nullptr) {
                         smt::expr holds = condition->val.value == 1 && condition->val.non_poison;
                         facts = facts && holds;
                         assumed.push_back({block, holds});

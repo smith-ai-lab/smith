@@ -394,6 +394,56 @@ void mark_pointer_parameters(Function &function) {
     }
 }
 
+// The alignment of what a pointer type points to, in bytes, from debug info: what C gives the type; 1 when unknown.
+uint64_t type_alignment(const DIType *type, unsigned depth = 0) {
+    if (type == nullptr || depth > 8) return 1;
+    if (auto *derived = dyn_cast<DIDerivedType>(type)) {
+        unsigned tag = derived->getTag();
+        if (tag == dwarf::DW_TAG_pointer_type) return 8;
+        if (derived->getAlignInBits() != 0) return derived->getAlignInBits() / 8;
+        return type_alignment(derived->getBaseType(), depth + 1);
+    }
+    if (auto *composite = dyn_cast<DICompositeType>(type)) {
+        if (composite->getAlignInBits() != 0) return composite->getAlignInBits() / 8;
+        if (composite->getTag() == dwarf::DW_TAG_array_type || composite->getTag() == dwarf::DW_TAG_enumeration_type)
+            return type_alignment(composite->getBaseType(), depth + 1);
+        uint64_t align = 1;
+        for (const Metadata *member : composite->getElements())
+            align = std::max(align, type_alignment(dyn_cast_or_null<DIType>(member), depth + 1));
+        return align;
+    }
+    uint64_t bytes = (type->getSizeInBits() + 7) / 8;
+    return bytes != 0 && (bytes & (bytes - 1)) == 0 ? std::min<uint64_t>(bytes, 16) : 1;
+}
+
+uint64_t pointee_alignment(const DIType *type) {
+    while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
+        unsigned tag = derived->getTag();
+        if (tag == dwarf::DW_TAG_pointer_type) return type_alignment(derived->getBaseType());
+        if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type &&
+            tag != dwarf::DW_TAG_restrict_type && tag != dwarf::DW_TAG_atomic_type)
+            break;
+        type = derived->getBaseType();
+    }
+    return 1;
+}
+
+// A pointer a function returns under an smith_ensures is a whole object of its type or null: proved at each return of
+// the function (a return of anything else is undefined behaviour there), assumed by its callers, which still need an
+// smith_ensures(result != nullptr) to load through it. A trusted function is assumed, never proved, so it is not marked.
+void mark_returned_pointer(Function &function) {
+    DISubprogram *subprogram = function.getSubprogram();
+    if (subprogram == nullptr || subprogram->getType() == nullptr || !function.getReturnType()->isPointerTy()) return;
+    auto types = subprogram->getType()->getTypeArray();
+    if (types.size() == 0 || !has_own_contract(function, Contract::Ensures)) return;
+    uint64_t bytes = pointee_bytes(types[0]);
+    if (bytes == 0) return;
+    uint64_t align = pointee_alignment(types[0]);
+    function.addRetAttr(Attribute::getWithDereferenceableOrNullBytes(function.getContext(), bytes));
+    function.addRetAttr(Attribute::getWithAlignment(function.getContext(), Align(align)));
+    function.addFnAttr("smith.returned", std::to_string(bytes) + ":" + std::to_string(align)); // for the callers
+}
+
 // Whether a const lies between a pointer type and what it points to (a `const Board *`).
 bool points_to_const(const DIType *type) {
     while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
@@ -623,6 +673,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         freeze_locals(function);
         if (!analyses.run_function(function, light_pipeline, error)) return false;
         mark_pointer_parameters(function);
+        if (!is_trusted(function)) mark_returned_pointer(function);
     }
 
     // Callees first. A function that calls itself, directly or through others, is not inlined, and cannot be proved.
@@ -675,15 +726,8 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (!function.getReturnType()->isVoidTy()) function.addRetAttr(Attribute::NoUndef);
         function.setMemoryEffects(MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
                                   MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef));
-        // It frees nothing the caller can see either, unless it is given a pointer it may write through (it could be
-        // free's wrapper); without nofree a caller could not rely on any object it was given still being there.
-        bool may_free = false;
-        for (const Argument &argument : function.args()) {
-            if (argument.getType()->isPointerTy() && !argument.hasAttribute(Attribute::ReadOnly) &&
-                !function.getParamAttribute(argument.getArgNo(), Attribute::ReadOnly).isValid())
-                may_free = true;
-        }
-        if (!may_free || function.hasFnAttribute("smith.edge")) function.addFnAttr(Attribute::NoFree);
+        // It frees nothing either: a store through a pointer parameter after the call must not be undefined behaviour.
+        function.addFnAttr(Attribute::NoFree);
     }
     if (!analyses.run_module(module, "inferattrs,cgscc(function-attrs)", error)) return false;
     if (program.verbose)
@@ -1334,6 +1378,35 @@ void pass_copies_of_readonly(UnitContext &context, CallBase &call, Function &cal
     }
 }
 
+// What the callee was proved to return (see mark_returned_pointer) is assumed of the call's value: an assumption of what
+// it points to when it is not null, or of an object of its own when it is null, so that it holds for both. The
+// callee's return attributes are its obligation, so a caller's module does not carry them: on a call they would be a
+// check of the unknown value the callee returns.
+void assume_returned_pointer(CallBase &call, const Function &callee) {
+    Attribute attribute = callee.getFnAttribute("smith.returned");
+    if (!attribute.isValid() || call.getType() != callee.getReturnType()) return;
+    StringRef text = attribute.getValueAsString();
+    uint64_t size = 0, align = 1;
+    text.split(':').first.getAsInteger(10, size);
+    text.split(':').second.getAsInteger(10, align);
+    LLVMContext &context = call.getContext();
+    Module *module = call.getModule();
+    Type *object_type = ArrayType::get(Type::getInt8Ty(context), size);
+    // For null the assumption is about an object that is there, so that it holds for null and for what is valid.
+    std::string name = "smith.valid." + std::to_string(size) + "." + std::to_string(align);
+    auto *object = module->getGlobalVariable(name, true);
+    if (object == nullptr)
+        object = new GlobalVariable(*module, object_type, false, GlobalValue::PrivateLinkage,
+                                    ConstantAggregateZero::get(object_type), name);
+    object->setAlignment(Align(align));
+    IRBuilder<> builder(call.getNextNode());
+    Value *safe = builder.CreateSelect(builder.CreateIsNull(&call), object, &call);
+    SmallVector<Value *, 2> inputs = {safe, ConstantInt::get(Type::getInt64Ty(context), size)};
+    SmallVector<Value *, 2> aligned = {safe, ConstantInt::get(Type::getInt64Ty(context), align)};
+    builder.CreateAssumption({OperandBundleDef("dereferenceable", inputs), OperandBundleDef("align", aligned)});
+    call.setMetadata("smith.valid_return", MDNode::get(context, {})); // what it points to holds values, as a parameter's
+}
+
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
 bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     auto cached = context.slices.find(&callee);
@@ -1404,6 +1477,7 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
         ensures_call->setDebugLoc(call.getDebugLoc());
         if (!inline_slice(context, *ensures_call, call_site)) return false;
     }
+    assume_returned_pointer(call, callee);
     call.setMetadata("smith.resolved", MDNode::get(function.getContext(), {}));
     return true;
 }
@@ -1660,6 +1734,10 @@ void drop_unsupported_attributes(Function &function) {
         strip_sret(function, i);
     }
     for (Function &callee : *function.getParent()) {
+        if (&callee != &function) {
+            callee.removeRetAttr(Attribute::DereferenceableOrNull);
+            callee.removeRetAttr(Attribute::Alignment);
+        }
         for (unsigned i = 0; i < callee.arg_size(); i++) {
             callee.removeParamAttr(i, Attribute::NoFree);
             callee.removeParamAttr(i, Attribute::Initializes);
@@ -1671,6 +1749,8 @@ void drop_unsupported_attributes(Function &function) {
     for (Instruction &instruction : instructions(function)) {
         auto *call = dyn_cast<CallBase>(&instruction);
         if (call == nullptr) continue;
+        call->removeRetAttr(Attribute::DereferenceableOrNull);
+        call->removeRetAttr(Attribute::Alignment);
         for (unsigned i = 0; i < call->arg_size(); i++) {
             call->removeParamAttr(i, Attribute::NoFree);
             call->removeParamAttr(i, Attribute::Initializes);
@@ -2078,10 +2158,16 @@ Prepared program_prepare(Program &program, const std::string &name) {
         }
     }
     for (Function &other : *prepared.module) {
+        if (&other != &function) { // its callers assume it (assume_returned_pointer), and LLVM must not use it first
+            other.removeRetAttr(Attribute::DereferenceableOrNull);
+            other.removeRetAttr(Attribute::Alignment);
+        }
         for (unsigned i = 0; i < other.arg_size(); i++)
             other.removeParamAttr(i, Attribute::NoAlias);
         for (Instruction &instruction : instructions(other)) {
             if (auto *call = dyn_cast<CallBase>(&instruction)) {
+                call->removeRetAttr(Attribute::DereferenceableOrNull);
+                call->removeRetAttr(Attribute::Alignment);
                 for (unsigned i = 0; i < call->arg_size(); i++)
                     call->removeParamAttr(i, Attribute::NoAlias);
             }
