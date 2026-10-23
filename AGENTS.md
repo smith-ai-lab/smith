@@ -430,15 +430,16 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - Load the [smith-build skill](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included. It ships in the smith plugin, from `.agents/skills`; no project carries a copy.
 - Run the real thing and report numbers. Say plainly what was not tested.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them, build
-  them in scratch copies, and change their sources only with the owner. When smith changes one, leave its agents a
-  note on what changed and why.
+  them in scratch copies. They follow smith: when smith changes its idiom or breaks their code, change them to match
+  (no other agents work on them), and leave their agents a note on what changed and why.
 - **The plugin's skills describe everything smith does today, and nothing it doesn't do yet.** Every command, build.c
   call and library has a skill that another project's agent can learn it from. Plans go in GitHub issues, never in a
   skill. A change that adds or changes something updates its skill in the same commit.
 - `smith new`'s program (`templates/new`) is the example of idiomatic Smith. A change to the idiom (a library becoming a
   module, a new rule) updates `templates/new` in the same commit, and `tests/new.sh` checks that the new project passes
   `smith check`.
-- Small Conventional Commits.
+- Small Conventional Commits. Push `main` after every merge: the plugin's skills come from GitHub, so other agents
+  learn a feature only once it is pushed.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 
 ## checkers (`~/Documents/checkers`)
