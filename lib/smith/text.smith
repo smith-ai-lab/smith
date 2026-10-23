@@ -5,7 +5,6 @@
 // them.
 module smith::text;
 
-import smith::contract;
 
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
@@ -49,12 +48,18 @@ export constexpr usize f64_capacity = 32;
 
 // The text of a terminated string.
 [[smith::c_name("smith_text_make")]] export [[nodiscard]] Text make(const char *string) {
-    contract::assert(string != nullptr);
     usize length = 0;
     while (string[length] != '\0') {
         length += 1;
     }
     return (Text){string, length};
+}
+
+// A check that stays in every build and is no contract: the bignum arithmetic and the float text of this module cost
+// the prover far more than they are worth, so smith prove leaves them out and a failed check traps (the text says what
+// it was; this library names no libc function, so it cannot write it).
+[[noreturn]] void stop([[maybe_unused]] const char *what) {
+    __builtin_trap();
 }
 
 bool is_space(char c) {
@@ -64,7 +69,6 @@ bool is_space(char c) {
 // Takes the next line off text into line, without its newline, a trailing carriage return, or a # comment and the
 // spaces before it. Returns false once text is empty.
 [[smith::c_name("smith_text_take_line")]] export [[nodiscard]] bool take_line(Text *text, Text *line) {
-    contract::assert(text != nullptr && line != nullptr);
     if (text->length == 0) return false;
     usize length = 0;
     while (length < text->length && text->begin[length] != '\n') {
@@ -87,7 +91,6 @@ bool is_space(char c) {
 
 // Takes the next word off line, a run without spaces or tabs, into word. Returns false when only spaces are left.
 [[smith::c_name("smith_text_take_word")]] export [[nodiscard]] bool take_word(Text *line, Text *word) {
-    contract::assert(line != nullptr && word != nullptr);
     while (line->length > 0 && is_space(line->begin[0])) {
         line->begin += 1;
         line->length -= 1;
@@ -105,7 +108,6 @@ bool is_space(char c) {
 
 // Whether word is exactly the terminated string.
 [[smith::c_name("smith_text_is")]] export [[nodiscard]] bool is(Text word, const char *string) {
-    contract::assert(string != nullptr);
     for (usize i = 0; i < word.length; i++) {
         if (string[i] != word.begin[i]) return false; // a shorter string ends in its terminator, which no word has
     }
@@ -122,7 +124,6 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
 // Leading zeros of any number are fine. Each returns false for an empty word, a stray character (a +, a space, a
 // capital hex digit) or a value that doesn't fit.
 [[smith::c_name("smith_text_parse_u64")]] export [[nodiscard]] bool parse_u64(Text word, u64 *value) {
-    contract::assert(value != nullptr);
     if (word.length == 0) return false;
     u64 result = 0;
     for (usize i = 0; i < word.length; i++) {
@@ -137,7 +138,6 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
 }
 
 [[smith::c_name("smith_text_parse_i64")]] export [[nodiscard]] bool parse_i64(Text word, i64 *value) {
-    contract::assert(value != nullptr);
     bool negative = word.length > 0 && word.begin[0] == '-';
     Text digits = negative ? (Text){word.begin + 1, word.length - 1} : word;
     u64 magnitude = 0;
@@ -149,7 +149,6 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
 }
 
 [[smith::c_name("smith_text_parse_hex")]] export [[nodiscard]] bool parse_hex(Text word, u64 *value) {
-    contract::assert(value != nullptr);
     if (word.length == 0) return false;
     u64 result = 0;
     for (usize i = 0; i < word.length; i++) {
@@ -224,7 +223,7 @@ void big_mul_add(Big *big, u32 multiplier, u32 addend) {
         carry = product >> 32;
     }
     if (carry != 0) {
-        contract::assert(big->count < big_limbs);
+        if (big->count >= big_limbs) stop("a number grew past its limbs");
         big->limb[big->count] = (u32)carry;
         big->count += 1;
     }
@@ -254,7 +253,7 @@ void big_shift_left(Big *big, u64 shift) {
     if (big->count == 0 || shift == 0) return;
     usize whole = (usize)(shift / 32);
     u32 part = (u32)(shift % 32);
-    contract::assert(big->count + whole + 1 <= big_limbs);
+    if (big->count + whole + 1 > big_limbs) stop("a shift grew a number past its limbs");
     big->limb[big->count + whole] = 0;
     for (usize i = big->count; i-- > 0;) {
         u64 moved = (u64)big->limb[i] << part;
@@ -296,7 +295,7 @@ void big_subtract(Big *a, const Big *b) {
         borrow = a->limb[i] < take ? 1 : 0;
         a->limb[i] = (u32)((u64)a->limb[i] - take);
     }
-    contract::assert(borrow == 0);
+    if (borrow != 0) stop("a subtraction went below zero");
     while (a->count > 0 && a->limb[a->count - 1] == 0) {
         a->count -= 1;
     }
@@ -522,7 +521,6 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 // any number of digits; "-0" is negative zero. It returns false for no digits, a stray character, or a number too
 // large for an f32 (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
 [[smith::c_name("smith_text_parse_f32")]] export [[nodiscard]] bool parse_f32(Text word, f32 *value) {
-    contract::assert(value != nullptr);
     Decimal decimal;
     decimal_init(&decimal);
     bool negative = false;
@@ -537,7 +535,6 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 // The same for an f64: the f64 nearest the number, ties to even, as strtod gives in the C locale, for any number
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
 [[smith::c_name("smith_text_parse_f64")]] export [[nodiscard]] bool parse_f64(Text word, f64 *value) {
-    contract::assert(value != nullptr);
     Decimal decimal;
     decimal_init(&decimal);
     bool negative = false;
@@ -553,14 +550,13 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 // Writing numbers
 
 [[smith::c_name("smith_text_write_u64")]] export usize write_u64(char *out, u64 value) {
-    contract::assert(out != nullptr);
     char reversed[number_capacity];
     usize count = 0;
     do {
         reversed[count++] = (char)('0' + value % 10);
         value /= 10;
     } while (value != 0 && count < number_capacity);
-    contract::assert(value == 0);
+    if (value != 0) stop("a number has more digits than number_capacity");
     for (usize i = 0; i < count; i++) {
         out[i] = reversed[count - 1 - i];
     }
@@ -568,7 +564,6 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 }
 
 [[smith::c_name("smith_text_write_i64")]] export usize write_i64(char *out, i64 value) {
-    contract::assert(out != nullptr);
     if (value >= 0) return write_u64(out, (u64)value);
     out[0] = '-';
     return 1 + write_u64(out + 1, 0 - (u64)value);
@@ -576,7 +571,6 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 
 // 16 digits, so every hash lines up.
 [[smith::c_name("smith_text_write_hex")]] export usize write_hex(char *out, u64 value) {
-    contract::assert(out != nullptr);
     for (usize i = 0; i < 16; i++) {
         u64 digit = (value >> (60 - 4 * i)) & 0xf;
         out[i] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
@@ -598,7 +592,7 @@ static_assert(f64_capacity >= 1 + f64_digits_max + 1 + 5, "sign, digits, a point
 u64 big_divide(Big *numerator, const Big *denominator) {
     i64 shift = (i64)big_bits(numerator) - (i64)big_bits(denominator);
     if (shift < 0) return 0;
-    contract::assert(shift < 63);
+    if (shift >= 63) stop("a quotient has more than 63 bits");
     Big step = *denominator;
     big_shift_left(&step, (u64)shift);
     u64 q = 0;
@@ -665,8 +659,7 @@ i64 f64_first_exponent(u64 m, i64 e) {
         else
             return first;
     }
-    contract::assert(false);
-    return first;
+    stop("no first digit found for a finite number");
 }
 
 bool f64_reads_back(u64 q, i64 s, u64 bits) {
@@ -682,8 +675,7 @@ bool f64_reads_back(u64 q, i64 s, u64 bits) {
 usize f64_format(char *out, u64 q, u32 p, i64 first) {
     char digits[number_capacity];
     usize count = write_u64(digits, q);
-    contract::assert(count == p);
-    (void)p; // only the assertion reads it
+    if (count != p) stop("the digits are not the precision");
     usize used = 0;
     if (first >= f64_positional_min && first <= f64_positional_max) {
         if (first < 0) {
@@ -714,12 +706,11 @@ usize f64_format(char *out, u64 q, u32 p, i64 first) {
 // An f64 in the fewest digits, at most 17, that parse_f64 reads back as the same bits, signs of zero
 // included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
 // exponent (no plus), always valid JSON. Room for f64_capacity characters; no terminator. The value must be
-// finite (asserted): infinity and nan have no text.
+// finite (checked): infinity and nan have no text.
 [[smith::c_name("smith_text_write_f64")]] export usize write_f64(char *out, f64 value) {
-    contract::assert(out != nullptr);
     u64 bits = __builtin_bit_cast(u64, value);
     u64 field = (bits >> 52) & 0x7ff;
-    contract::assert(field != 0x7ff); // infinity and nan have no text
+    if (field == 0x7ff) stop("infinity and nan have no text");
     usize used = 0;
     if ((bits >> 63) != 0) out[used++] = '-';
     u64 fraction = bits & 0xfffffffffffffULL;
