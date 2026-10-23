@@ -2110,7 +2110,8 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 //   program<TAB>path   the output of a smith_program
 //   unit<TAB>source... the own sources of a program's objects (not of the tests' runner): what `smith prove` proves
 //                      together
-//   library<TAB>source... after each unit line: the sources of smith's own libraries (.smith/lib/...) that program links,
+//   library<TAB>source... after each unit line: the sources of smith's own libraries (.smith/lib/...) that program
+//   links,
 //                      which `smith prove` reads for their contracts and never proves (not io's, whose exports are the
 //                      program's edge, nor contract's or test's)
 //   default<TAB>target a target of smith_default, with the aliases opened

@@ -690,7 +690,17 @@ expect_contains "isolation: ... with the note" "$out" "    note: index 8"
 capture build/tests $iso --test sleeps --wall-timeout 1
 expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1."
 capture build/tests $iso --test spins --timeout 1 --wall-timeout 600
-expect_contains "isolation: a busy test is over its CPU time limit" "$out" "FAIL spins: over its CPU time limit of 1 s (it ran "
+expect_contains "isolation: a busy test is over its CPU time limit" "$out" "FAIL spins: over its CPU time limit of 1 s ("
+expect_contains "isolation: ... and says the wall time, since threads add CPU time" "$out" "s of wall time passed; threads add CPU time)"
+# A worker stopped by a timer before it armed its clocks did not run the test (a left-over timer fired, SIGPROF with the
+# test not started): the test gets a fresh worker, three times, and is never reported as over its CPU time limit.
+if [ -z "$iso" ]; then
+    capture env SMITH_TEST_KILL_WORKERS=2 build/tests --test ok_after --jobs 1 --verbose
+    expect_contains "lost workers: a test whose worker was stopped twice before it began passes in the third" "$out" "PASS ok_after"
+    capture env SMITH_TEST_KILL_WORKERS=20 build/tests --test ok_after --jobs 1
+    expect_contains "lost workers: ... a test that never gets a worker is not reported as over its CPU time limit" "$out" "FAIL ok_after: the test did not run: its worker was stopped by SIGPROF 4 times before the test began"
+    case $out in *"over its CPU time limit"*) expect "lost workers: ... and does not blame the test" "no blame" "$out" ;; *) expect "lost workers: ... and does not blame the test" "no blame" "no blame" ;; esac
+fi
 capture build/tests $iso --test naps --timeout 1 --verbose
 expect_contains "isolation: a blocked test spends no CPU time, so the CPU limit does not end it" "$out" "PASS naps"
 capture build/tests $iso --test naps --timeout 1 --wall-timeout 1

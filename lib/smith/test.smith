@@ -472,11 +472,14 @@ typedef struct {
     usize frames[frames_max];
     usize frame_count;
     bool frames_exact; // frames[0] is the instruction a signal stopped at
+    bool began;        // the worker armed its clocks for this test: whatever ends it after that is the test's own
 } Shared;
 
 Shared fallback;
 Shared *shared = &fallback;
 Shared *shared_slots; // the runner's: one per job, and one more for shrinking
+u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
+                      // the runner)
 u8 *memory_block;
 usize memory_used; // a multiple of arena::align_max
 bool full_run;     // the runner was given --full; set before any test forks, so every child sees it
@@ -874,6 +877,7 @@ typedef struct {
     u64 io_seed; // the seed an io test runs on when --seed is not given: the runner's own
 } Options;
 
+constexpr u32 lost_retries = 3; // fresh workers a test gets when its worker is stopped before the test began
 constexpr u32 wall_factor = 10; // the wall-clock backstop of a test, in CPU time limits
 constexpr u64 seeds_default = 100;
 constexpr u64 seeds_max = 1'000'000'000;
@@ -916,6 +920,8 @@ typedef struct {
     usize frame_count;
     bool frames_exact;
     Output output;
+    bool lost;           // its worker was stopped by a timer before it began the test: not the test's doing
+    u32 lost_count;      // the times that happened, each answered with a fresh worker
     u32 shrink_runs;     // the runs shrinking took, 0 when it did not run
     bool shrink_changed; // it found a smaller failure
     bool shrink_leaked;  // the smaller failure did not reproduce in a fresh worker: attempts leaked state
@@ -1101,6 +1107,7 @@ void arm(const Options *options) {
     struct c::itimerval wall = {.it_value = {.tv_sec = options->wall_timeout}};
     c::setitimer(timer_cpu, &cpu, nullptr);
     c::setitimer(timer_real, &wall, nullptr);
+    shared->began = true;
 }
 
 // An idle worker is not on either clock.
@@ -1215,6 +1222,10 @@ End serve(const Options *options, const Command *command) {
     for (usize served = 0; served < commands_max; served++) {
         Command command;
         if (c::read(control, &command, sizeof command) != (isize)sizeof command) break;
+        if (workers_to_kill != nullptr && *workers_to_kill > 0) { // a test of the runner, with one job: no race
+            *workers_to_kill -= 1;
+            c::kill(c::getpid(), sig_prof);
+        }
         Reply reply = {.end = serve(options, &command)};
         if (c::write(control, &reply, sizeof reply) != (isize)sizeof reply) break;
     }
@@ -1512,6 +1523,9 @@ void finish(const Options *options, usize slot, Run *run, const Reply *reply) {
     }
     run->seconds = seconds(options) - run->start;
     collect(run, block);
+    // A worker the CPU timer or the wall clock's alarm killed before it armed them for this test did not run it: the
+    // timer was left over (the kernel's, not the test's), and the test gets a fresh worker.
+    run->lost = reply == nullptr && !block->began && run->outcome.end == End_Timeout;
     judge_expectation(run, block);
     if (run->scratch[0] != '\0' && run->outcome.end == End_Passed) {
         remove_scratch(options, run->scratch);
@@ -1590,8 +1604,14 @@ void print_reason(const Options *options, const Run *run) {
     const char *name = signal_name(run->outcome.number);
     switch (run->outcome.end) {
     case End_Timeout:
-        if (run->outcome.number == sig_prof)
-            say(options, ": over its CPU time limit of %u s (it ran %.1f s)", options->timeout, run->seconds);
+        if (run->lost)
+            say(options,
+                ": the test did not run: its worker was stopped by %s %u times before the test began, which is a "
+                "left-over timer's doing, not the test's",
+                run->outcome.number == sig_prof ? "SIGPROF" : "SIGALRM", run->lost_count + 1);
+        else if (run->outcome.number == sig_prof)
+            say(options, ": over its CPU time limit of %u s (%.1f s of wall time passed; threads add CPU time)",
+                options->timeout, run->seconds);
         else
             say(options, ": timed out after %.1f s", run->seconds);
         break;
@@ -1895,8 +1915,15 @@ void pump(Plan *plan) {
         i16 output_events = plan->polls[2 * job].revents;
         i16 control_events = plan->polls[2 * job + 1].revents;
         if (plan->running[job] == idle || (output_events == 0 && control_events == 0)) continue;
-        if (service(plan->options, job, &plan->runs[plan->running[job]], output_events, control_events))
-            plan->running[job] = idle;
+        usize chosen = plan->running[job];
+        if (!service(plan->options, job, &plan->runs[chosen], output_events, control_events)) continue;
+        Run *run = &plan->runs[chosen];
+        if (run->lost && run->lost_count < lost_retries) { // the same test again, in a fresh worker
+            *run = (Run){.lost_count = run->lost_count + 1};
+            dispatch(plan->options, job, plan->tests[chosen], run);
+            continue;
+        }
+        plan->running[job] = idle;
     }
 }
 
@@ -2150,6 +2177,11 @@ Plan *make_plan(const Options *options) {
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
     shared_slots = map(Shared, jobs_max + 1, map_shared);
+    const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
+    if (kill_workers != nullptr) {
+        workers_to_kill = map(u32, 1, map_shared);
+        *workers_to_kill = (u32)c::strtoul(kill_workers, nullptr, 10);
+    }
     recorded = map(Draws, 1, map_shared);
     overrides = map(Draws, 1, map_shared);
     return plan;

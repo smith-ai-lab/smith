@@ -467,8 +467,8 @@ static void smith_prove_pass_options(size_t *used) {
     }
 }
 
-// The program's library sources, each as `--library=<source>`, after the files: smith's own code that the proof reads for
-// its contracts and does not prove.
+// The program's library sources, each as `--library=<source>`, after the files: smith's own code that the proof reads
+// for its contracts and does not prove.
 static void smith_prove_libraries(const char *libraries, size_t *used) {
     static char copy[smith_verbs_info_max + 1];
     static char words[smith_verbs_lines_max][PATH_MAX + 16];
@@ -577,8 +577,8 @@ static int smith_prove_project(int count, char **args, const char *self) {
     status = 0;
     for (size_t i = 0; i < info->unit_count; i++) {
         if (repeated[i]) continue;
-        int one = smith_prove_unit(self, info, (char *)info->units[i],
-                                   i < info->library_count ? info->libraries[i] : "");
+        int one =
+            smith_prove_unit(self, info, (char *)info->units[i], i < info->library_count ? info->libraries[i] : "");
         if (one != 0) status = one;
     }
     if (status == 0 && smith_prove_groups_run == 0) {

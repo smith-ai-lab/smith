@@ -163,7 +163,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   ```
 
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a test over its CPU limit is
-  `FAIL name: over its CPU time limit of 10 s (it ran 10.3 s)`, and a blocked one `FAIL name: timed out after 100.0 s` (the wall time it ran: a test that calls `alarm` itself replaces the backstop, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
+  `FAIL name: over its CPU time limit of 10 s (10.3 s of wall time passed; threads add CPU time)` (the CPU time is the process's, every thread's, so the wall time can be shorter), and a blocked one `FAIL name: timed out after 100.0 s` (the wall time it ran: a test that calls `alarm` itself replaces the backstop, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
 - **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own whose keys carry the runner's
   `random::Tap`, which records each `(key, n)` the test asks `random::key_bits` for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest
@@ -252,3 +252,5 @@ smith_tests(b, &tests);                              // tests.step is the task "
   they need, are linked the same way. The explicit part is `.objects`, where a library only the code under test uses goes.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
   flags (`smith lsp --check` on a test file reports no errors).
+
+**A worker stopped by a timer before it began the test did not run it.** The worker marks its block `began` when it arms the clocks for a test. A worker that dies of SIGPROF or SIGALRM with `began` clear (learner's `prop_recur_ssm_run_is_deterministic` once reported `over its CPU time limit of 10 s (it ran 0.0 s)` with seed 0: the worker, idle between tests, was killed by a timer and the death was charged to the test dispatched next) is not the test's: the runner runs the test again in a fresh worker, up to three times, then reports `the test did not run: its worker was stopped by SIGPROF 4 times before the test began`. `SMITH_TEST_KILL_WORKERS=n` makes the next n commands kill their worker before it begins (with one job), which tests/test.sh uses. The kernel's reason for the early signal was not found.

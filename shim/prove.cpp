@@ -60,15 +60,16 @@ struct Arguments {
 
 [[noreturn]] void usage(const char *message) {
     if (message != nullptr) std::fprintf(stderr, "smith: prove: %s\n", message);
-    std::fprintf(stderr, "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
-                         "  --function=NAME   prove only this function (repeatable)\n"
-                         "  --budget=SECONDS  the time one function may take (default 10)\n"
-                         "  --memory=GB       the memory one function may use (default 8)\n"
-                         "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
-                         "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
-                         "  --no-cache        prove again what a cached proof already proved\n"
-                         "  -v                print the functions that are proved too, with their time, the slowest\n"
-                         "                    query of each and, when it took a second, what made it costly\n");
+    std::fprintf(stderr,
+                 "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
+                 "  --function=NAME   prove only this function (repeatable)\n"
+                 "  --budget=SECONDS  the time one function may take (default 10)\n"
+                 "  --memory=GB       the memory one function may use (default 8)\n"
+                 "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
+                 "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
+                 "  --no-cache        prove again what a cached proof already proved\n"
+                 "  -v                print the functions that are proved too, with their time, the slowest\n"
+                 "                    query of each and, when it took a second, what made it costly\n");
     std::exit(2);
 }
 
