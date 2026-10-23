@@ -371,7 +371,7 @@ smith_console_eprintf(SmithConsole *console, const char *format, ...);
 // Nanoseconds since the Unix epoch.
 [[clang::annotate("smith::edge")]] [[nodiscard]] int64_t smith_clock_wall(const SmithClock *clock);
 
-// Moves the fake clock forward, and only the fake clock (asserted). Both the monotonic and the wall time move.
+// Moves the fake clock forward, and only the fake clock (required). Both the monotonic and the wall time move.
 [[clang::annotate("smith::edge")]] void smith_clock_advance(SmithClock *clock, uint64_t ns);
 
 // Completes after ns nanoseconds of the clock. On the fake clock that is when it has been advanced that far.

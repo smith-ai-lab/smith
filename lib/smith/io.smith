@@ -621,13 +621,12 @@ struct Loop {
 // The error for an errno value, with the message "what path: strerror".
 [[smith::c_name("smith_error_make")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 error_make(i32 code, const char *what, const char *path) {
-    contract::assert(what != nullptr && path != nullptr);
     Error error = {.code = code};
     if (code == 0) return error;
     char reason[96] = "";
     if (c::strerror_r(code, reason, sizeof reason) != 0) __builtin_snprintf(reason, sizeof reason, "error %d", code);
     i32 written = __builtin_snprintf(error.message, sizeof error.message, "%s %s: %s", what, path, reason);
-    contract::assert(written > 0);
+    if (!(written > 0)) __builtin_trap();
     return error;
 }
 
@@ -637,7 +636,7 @@ error_make(i32 code, const char *what, const char *path) {
     __builtin_va_start(arguments, format);
     i32 written = __builtin_vsnprintf(error.message, sizeof error.message, format, arguments);
     __builtin_va_end(arguments);
-    contract::assert(written > 0);
+    if (!(written > 0)) __builtin_trap();
     return error;
 }
 
@@ -658,7 +657,7 @@ typedef struct {
 
 // Makes room for at least `extra` more bytes and a NUL.
 void grow_reserve(Grow *grow, usize extra) {
-    contract::assert(grow->arena != nullptr && grow->size <= grow->capacity);
+    if (!(grow->arena != nullptr && grow->size <= grow->capacity)) __builtin_trap();
     if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
     usize wanted = grow->capacity * 2;
     if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
@@ -694,7 +693,6 @@ i32 write_all(i32 descriptor, const void *data, usize size) {
 // ---------------------------------------------------------------- the fake
 
 Fake *fake_of(Loop *loop) {
-    contract::assert(loop != nullptr);
     return loop->fake;
 }
 
@@ -1252,7 +1250,7 @@ void loop_unlink(Loop *loop, Op *op) {
         previous = at;
         at = at->internal.next;
     }
-    contract::assert(at == op);
+    if (!(at == op)) __builtin_trap();
     if (previous == nullptr)
         loop->head = op->internal.next;
     else
@@ -1325,7 +1323,7 @@ bool loop_watch(Loop *loop, Op *op) {
 
 // Queues a freshly filled op. Ops that wait for the kernel are watched; the rest are ready when the loop runs.
 void loop_submit(Loop *loop, Op *op) {
-    contract::assert(loop != nullptr && op->internal.kind != None);
+    if (!(op->internal.kind != None)) __builtin_trap();
     Fake *fake = loop->fake;
     Console *console = op->internal.console;
     bool buffered = console != nullptr && console->end > console->start && !op->internal.fill;
@@ -1531,7 +1529,6 @@ void net_drain(Loop *loop, usize *completed) {
 }
 
 usize loop_run(Loop *loop, i64 timeout_ns) {
-    contract::assert(loop != nullptr);
     usize completed = loop_complete_ready(loop);
     if (loop->fake != nullptr && completed == 0 && timeout_ns > 0) { // the fake waits by letting its clock pass
         loop->fake->monotonic += (u64)timeout_ns;
@@ -1549,7 +1546,7 @@ usize loop_run(Loop *loop, i64 timeout_ns) {
             continue;
         }
         Op *op = events[i].udata;
-        contract::assert(op != nullptr && !op->done);
+        if (!(!op->done)) __builtin_trap();
         if (loop_complete(loop, op)) completed += 1;
     }
     return completed;
@@ -1567,7 +1564,7 @@ void loop_wait(Loop *loop, Op *op) {
             op->done = true;
         }
     }
-    contract::assert(op->done);
+    if (!(op->done)) __builtin_trap();
 }
 
 // Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
@@ -1575,14 +1572,13 @@ void loop_wait(Loop *loop, Op *op) {
 // given a time to wait and nothing is ready it lets that much of its clock pass (that is how it waits) and completes
 // what became ready.
 [[smith::c_name("smith_io_run")]] export [[clang::annotate("smith::edge")]] usize run(Io *io, i64 timeout_ns) {
-    contract::assert(io != nullptr);
     return loop_run(io->loop, timeout_ns);
 }
 
 // ---------------------------------------------------------------- files
 
 void op_start(Op *op, Loop *loop, OpKind kind) {
-    contract::assert(op != nullptr && (op->done || op->internal.kind == None));
+    if (!((op->done || op->internal.kind == None))) __builtin_trap();
     *op = (Op){};
     op->internal.kind = kind;
     op->internal.loop = loop;
@@ -1591,19 +1587,17 @@ void op_start(Op *op, Loop *loop, OpKind kind) {
 // The whole file, in the arena.
 [[smith::c_name("smith_files_read_async")]] export [[clang::annotate("smith::edge")]] void
 files_read_async(Files *files, Op *op, arena::Arena *arena, const char *path) {
-    contract::assert(files != nullptr && arena != nullptr);
     op_start(op, files->loop, FileRead);
     op->internal.arena = arena;
-    contract::assert(path != nullptr);
     op->internal.path = path;
     loop_submit(files->loop, op);
 }
 
 [[smith::c_name("smith_files_write_async")]] export [[clang::annotate("smith::edge")]] void
 files_write_async(Files *files, Op *op, const char *path, const void *data, usize size, Write mode) {
-    contract::assert(files != nullptr && (data != nullptr || size == 0));
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires((data != nullptr || size == 0));
     op_start(op, files->loop, FileWrite);
-    contract::assert(path != nullptr);
     op->internal.path = path;
     op->internal.mode = mode;
     op->internal.input = data;
@@ -1634,7 +1628,6 @@ files_write(Files *files, const char *path, const void *data, usize size, Write 
 // Deletes a file (not a folder: EPERM).
 [[smith::c_name("smith_files_remove")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 files_remove(Files *files, const char *path) {
-    contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_remove(files->loop->fake, path);
     return c::unlink(path) == 0 ? (Error){} : error_make(errno_now(), "remove", path);
 }
@@ -1642,7 +1635,6 @@ files_remove(Files *files, const char *path) {
 // Makes the folder and the ones above it that are missing; one that is there already is success.
 [[smith::c_name("smith_files_make_folder")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 files_make_folder(Files *files, const char *path) {
-    contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_make_folder(files->loop->fake, path);
     return real_make_folder(path);
 }
@@ -1650,7 +1642,6 @@ files_make_folder(Files *files, const char *path) {
 // What is at the path (symbolic links followed).
 [[smith::c_name("smith_files_info")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileInfo
 files_info(Files *files, const char *path) {
-    contract::assert(files != nullptr && path != nullptr);
     if (files->loop->fake != nullptr) return fake_info(files->loop->fake, path);
     return real_info(path);
 }
@@ -1658,7 +1649,6 @@ files_info(Files *files, const char *path) {
 // What is in a folder.
 [[smith::c_name("smith_files_list")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] FileList
 files_list(Files *files, arena::Arena *arena, const char *folder) {
-    contract::assert(files != nullptr && arena != nullptr && folder != nullptr);
     if (files->loop->fake != nullptr) return fake_list(files->loop->fake, arena, folder);
     return real_list(arena, folder);
 }
@@ -1668,7 +1658,6 @@ files_list(Files *files, arena::Arena *arena, const char *folder) {
 // lasts as long as the program, and an empty file is EINVAL. The fake gives a copy.
 [[smith::c_name("smith_files_map")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Mapped
 files_map(Files *files, const char *path) {
-    contract::assert(files != nullptr && path != nullptr);
     Mapped mapped = {};
     if (files->loop->fake != nullptr) {
         mapped.error = fake_map(files->loop->fake, path, &mapped);
@@ -1680,7 +1669,6 @@ files_map(Files *files, const char *path) {
 // ---------------------------------------------------------------- console
 
 Error console_write(Console *console, bool errors, const char *text) {
-    contract::assert(console != nullptr && text != nullptr);
     if (console->loop->fake != nullptr) return fake_capture(console->loop->fake, errors, text);
     i32 code = write_all(errors ? stderr_fd : stdout_fd, text, c::strlen(text));
     return error_make(code, "write", errors ? "stderr" : "stdout");
@@ -1712,7 +1700,6 @@ console_print_error(Console *console, const char *text) {
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
 [[smith::c_name("smith_console_printf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
 console_printf(Console *console, const char *format, ...) {
-    contract::assert(console != nullptr && format != nullptr);
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, false, format, arguments);
@@ -1722,7 +1709,6 @@ console_printf(Console *console, const char *format, ...) {
 
 [[smith::c_name("smith_console_eprintf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
 console_eprintf(Console *console, const char *format, ...) {
-    contract::assert(console != nullptr && format != nullptr);
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, true, format, arguments);
@@ -1733,7 +1719,8 @@ console_eprintf(Console *console, const char *format, ...) {
 // Completes with whatever is available, at most max bytes, in the arena; size 0 and end set mean the input is over.
 [[smith::c_name("smith_console_read_async")]] export [[clang::annotate("smith::edge")]] void
 console_read_async(Console *console, Op *op, arena::Arena *arena, usize max) {
-    contract::assert(console != nullptr && arena != nullptr && max > 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(max > 0);
     op_start(op, console->loop, ConsoleRead);
     op->internal.console = console;
     op->internal.arena = arena;
@@ -1767,7 +1754,6 @@ bool console_fill(Console *console, Error *error) {
 // newline is still returned first.
 [[smith::c_name("smith_console_read_line")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
 console_read_line(Console *console, arena::Arena *arena) {
-    contract::assert(console != nullptr && arena != nullptr);
     Grow line = {.arena = arena};
     Read result = {};
     bool newline = false;
@@ -1797,7 +1783,7 @@ console_read_line(Console *console, arena::Arena *arena) {
 u64 time_ns(c::clockid_t which) {
     struct c::timespec now = {};
     i32 result = c::clock_gettime(which, &now);
-    contract::assert(result == 0);
+    if (!(result == 0)) __builtin_trap();
     (void)result;
     return (u64)now.tv_sec * nanoseconds + (u64)now.tv_nsec;
 }
@@ -1807,22 +1793,22 @@ u64 time_ns(c::clockid_t which) {
 // Monotonic nanoseconds: they never go back, and mean nothing but as a difference.
 [[smith::c_name("smith_clock_now")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] u64
 clock_now(const Clock *clock) {
-    contract::assert(clock != nullptr);
     return clock->loop->fake != nullptr ? clock->loop->fake->monotonic : time_ns(clock_monotonic);
 }
 
 // Nanoseconds since the Unix epoch.
 [[smith::c_name("smith_clock_wall")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] i64
 clock_wall(const Clock *clock) {
-    contract::assert(clock != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     return clock->loop->fake != nullptr ? clock->loop->fake->wall : (i64)time_ns(clock_realtime);
 }
 
-// Moves the fake clock forward, and only the fake clock (asserted). Both the monotonic and the wall time move.
+// Moves the fake clock forward, and only the fake clock (required). Both the monotonic and the wall time move.
 [[smith::c_name("smith_clock_advance")]] export [[clang::annotate("smith::edge")]] void clock_advance(Clock *clock,
                                                                                                       u64 ns) {
-    contract::assert(clock != nullptr && clock->loop->fake != nullptr); // only the fake clock can be advanced
-    contract::assert(ns <= math::max(u64) >> 1);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(clock->loop->fake != nullptr); // only the fake clock can be advanced
+    contract::requires(ns <= math::max(u64) >> 1);
     clock->loop->fake->monotonic += ns;
     clock->loop->fake->wall += (i64)ns;
 }
@@ -1830,7 +1816,8 @@ clock_wall(const Clock *clock) {
 // Completes after ns nanoseconds of the clock. On the fake clock that is when it has been advanced that far.
 [[smith::c_name("smith_clock_timeout_async")]] export [[clang::annotate("smith::edge")]] void
 clock_timeout_async(Clock *clock, Op *op, u64 ns) {
-    contract::assert(clock != nullptr && ns <= math::max(u64) >> 1);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(ns <= math::max(u64) >> 1);
     op_start(op, clock->loop, Timeout);
     op->internal.deadline = ns; // relative; the fake adds its clock on submit, kqueue takes it relative
     loop_submit(clock->loop, op);
@@ -1905,7 +1892,8 @@ Error spawn(const char *const *argv, i32 out, i32 err, i32 *id) {
 // Starts argv[0] with no stdin and the program's own stdout and stderr, without waiting.
 [[smith::c_name("smith_processes_spawn")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_spawn(Processes *processes, const char *const *argv, Process *process) {
-    contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
     Fake *fake = processes->loop->fake;
     if (fake == nullptr) return spawn(argv, -1, -1, &process->id);
     const FakeProgram *program = fake_program(fake, argv[0], &process->id);
@@ -1917,7 +1905,8 @@ processes_spawn(Processes *processes, const char *const *argv, Process *process)
 // reaches it: for a program that talks to the person at the terminal. Without waiting.
 [[smith::c_name("smith_processes_spawn_terminal")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_spawn_terminal(Processes *processes, const char *const *argv, Process *process) {
-    contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && process != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
     if (processes->loop->fake != nullptr) return processes_spawn(processes, argv, process);
     return spawn_in(argv, (Spawn){.out = -1, .err = -1, .terminal = true}, &process->id);
 }
@@ -1925,7 +1914,8 @@ processes_spawn_terminal(Processes *processes, const char *const *argv, Process 
 // Completes when the process has exited, with op->exit_status or op->signal.
 [[smith::c_name("smith_processes_wait_async")]] export [[clang::annotate("smith::edge")]] void
 processes_wait_async(Processes *processes, Op *op, Process process) {
-    contract::assert(processes != nullptr && process.id != 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(process.id != 0);
     op_start(op, processes->loop, ProcessWait);
     op->internal.process = process.id;
     loop_submit(processes->loop, op);
@@ -1936,7 +1926,8 @@ processes_wait_async(Processes *processes, Op *op, Process process) {
 // where it is until the op is done.
 [[smith::c_name("smith_child_wait_async")]] export [[clang::annotate("smith::edge")]] void
 child_wait_async(Child *child, Op *op) {
-    contract::assert(child != nullptr && child->process.id != 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(child->process.id != 0);
     op_start(op, child->internal.loop, ProcessWait);
     op->internal.process = child->process.id;
     op->internal.reaped = &child->internal.reaped;
@@ -1946,7 +1937,6 @@ child_wait_async(Child *child, Op *op) {
 // How many processes can run at once: the machine's logical cores. The fake has what io::Test.cores says, or 1.
 [[smith::c_name("smith_processes_cores")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] usize
 processes_cores(const Processes *processes) {
-    contract::assert(processes != nullptr);
     if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
     i64 cores = c::sysconf(processors_online);
     return cores > 0 ? (usize)cores : 1;
@@ -2003,7 +1993,8 @@ Error child_start_fake(Fake *fake, const char *const *argv, Child *child) {
 // otherwise ENOENT.
 [[smith::c_name("smith_processes_start_piped")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_start_piped(Processes *processes, const char *const *argv, Child *child) {
-    contract::assert(processes != nullptr && argv != nullptr && argv[0] != nullptr && child != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
     *child = (Child){.internal = {.loop = processes->loop, .input = -1, .output = -1}};
     if (processes->loop->fake != nullptr) return child_start_fake(processes->loop->fake, argv, child);
     return child_start_real(processes->loop, argv, child);
@@ -2015,7 +2006,8 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
 // program that also reads its output (io::child_read_async) cannot deadlock on it.
 [[smith::c_name("smith_child_write_async")]] export [[clang::annotate("smith::edge")]] void
 child_write_async(Child *child, Op *op, const void *data, usize size) {
-    contract::assert(child != nullptr && (data != nullptr || size == 0));
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires((data != nullptr || size == 0));
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeWrite);
     op->internal.input = data;
@@ -2023,7 +2015,7 @@ child_write_async(Child *child, Op *op, const void *data, usize size) {
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
-        contract::assert(child->internal.input >= 0);
+        if (!(child->internal.input >= 0)) __builtin_trap();
         op->internal.descriptor = child->internal.input;
     }
     loop_submit(loop, op);
@@ -2034,7 +2026,8 @@ child_write_async(Child *child, Op *op, const void *data, usize size) {
 // and nothing was read.
 [[smith::c_name("smith_child_read_async")]] export [[clang::annotate("smith::edge")]] void
 child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
-    contract::assert(child != nullptr && buffer != nullptr && capacity > 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(capacity > 0);
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeRead);
     op->internal.destination = buffer;
@@ -2043,7 +2036,7 @@ child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
-        contract::assert(child->internal.output >= 0);
+        if (!(child->internal.output >= 0)) __builtin_trap();
         op->internal.descriptor = child->internal.output;
     }
     loop_submit(loop, op);
@@ -2052,7 +2045,6 @@ child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
 // Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
 [[smith::c_name("smith_child_close_input")]] export [[clang::annotate("smith::edge")]] void
 child_close_input(Child *child) {
-    contract::assert(child != nullptr);
     Fake *fake = child->internal.loop->fake;
     if (fake != nullptr) {
         fake_child_of(fake, child->process.id)->input_closed = true;
@@ -2066,7 +2058,8 @@ child_close_input(Child *child) {
 // sent, once the wait of io::child_wait_async has completed, since the id could then be another program's.
 [[smith::c_name("smith_child_kill")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 child_kill(Child *child, i32 signal) {
-    contract::assert(child != nullptr && signal > 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(signal > 0);
     Fake *fake = child->internal.loop->fake;
     if (fake != nullptr) {
         FakeChild *script = fake_child_of(fake, child->process.id);
@@ -2084,7 +2077,6 @@ child_kill(Child *child, i32 signal) {
 // Closes what is still open of the pipes. It does not kill or wait: wait for the exit first (the pipes close with the
 // child anyway), and call this once, after the last op on the child is done.
 [[smith::c_name("smith_child_close")]] export [[clang::annotate("smith::edge")]] void child_close(Child *child) {
-    contract::assert(child != nullptr);
     if (child->internal.loop->fake != nullptr) return;
     if (child->internal.input >= 0) c::close(child->internal.input);
     if (child->internal.output >= 0) c::close(child->internal.output);
@@ -2156,7 +2148,7 @@ ProcessResult run_real(Loop *loop, arena::Arena *arena, const char *const *argv)
         if (!out.open && !err.open && ended.done) break;
         loop_run(loop, forever);
     }
-    contract::assert(ended.done);
+    if (!(ended.done)) __builtin_trap();
     result.error = ended.error;
     result.exit_status = ended.exit_status;
     result.signal = ended.signal;
@@ -2173,7 +2165,8 @@ ProcessResult run_real(Loop *loop, arena::Arena *arena, const char *const *argv)
 // read in doubling blocks, so it may use up to twice the output's size.
 [[smith::c_name("smith_processes_run")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] ProcessResult
 processes_run(Processes *processes, arena::Arena *arena, const char *const *argv) {
-    contract::assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
     Fake *fake = processes->loop->fake;
     if (fake == nullptr) return run_real(processes->loop, arena, argv);
     ProcessResult result = {};
@@ -2244,7 +2237,7 @@ const NetApi *net_api(Loop *loop) {
 void net_wake(Loop *loop) {
     struct c::kevent trigger = {.ident = wakeup, .filter = evfilt_user, .fflags = note_trigger};
     i32 result = c::kevent(loop->queue, &trigger, 1, nullptr, 0, nullptr);
-    contract::assert(result == 0);
+    if (!(result == 0)) __builtin_trap();
     (void)result;
 }
 
@@ -2262,7 +2255,7 @@ void net_finish(Loop *loop, Op *op, Error error) {
 // The op waiting in a connection's slot, taken so that exactly one caller finishes it; nullptr if none is.
 Op *net_take(Connection *connection, OpKind kind) {
     usize slot = (usize)(kind - NetConnect);
-    contract::assert(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
+    if (!(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0])) __builtin_trap();
     return __c11_atomic_exchange(&connection->internal.waiting[slot], nullptr, seq_cst);
 }
 
@@ -2422,7 +2415,6 @@ void net_send_real(Loop *loop, Op *op, Connection *connection) {
 // --- the calls
 
 void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
-    contract::assert(net != nullptr && connection != nullptr);
     op_start(op, net->loop, kind);
     op->internal.connection = connection;
 }
@@ -2431,7 +2423,8 @@ void net_start(Net *net, Op *op, Connection *connection, OpKind kind) {
 // completes when the connection is ready, or fails.
 [[smith::c_name("smith_net_connect_async")]] export [[clang::annotate("smith::edge")]] void
 net_connect_async(Net *net, Op *op, Connection *connection, const char *host, u16 port, bool tls) {
-    contract::assert(host != nullptr && host[0] != 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(host[0] != 0);
     net_start(net, op, connection, NetConnect);
     *connection = (Connection){};
     connection->internal.loop = net->loop;
@@ -2444,7 +2437,8 @@ net_connect_async(Net *net, Op *op, Connection *connection, const char *host, u1
 // Sends all size bytes (the library copies them, so they need not outlive the call).
 [[smith::c_name("smith_net_send_async")]] export [[clang::annotate("smith::edge")]] void
 net_send_async(Net *net, Op *op, Connection *connection, const void *data, usize size) {
-    contract::assert(data != nullptr || size == 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(data != nullptr || size == 0);
     net_start(net, op, connection, NetSend);
     op->internal.input = data;
     op->size = size;
@@ -2461,7 +2455,8 @@ net_send_async(Net *net, Op *op, Connection *connection, const void *data, usize
 // NUL-terminated); op->end is true when the peer is done sending and nothing was read.
 [[smith::c_name("smith_net_receive_async")]] export [[clang::annotate("smith::edge")]] void
 net_receive_async(Net *net, Op *op, Connection *connection, void *buffer, usize capacity) {
-    contract::assert(buffer != nullptr && capacity > 0 && capacity <= math::max(u32));
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(capacity > 0 && capacity <= math::max(u32));
     net_start(net, op, connection, NetReceive);
     op->internal.destination = buffer;
     op->internal.capacity = capacity;
@@ -2532,8 +2527,8 @@ net_close(Net *net, Connection *connection) {
 // Adds a scripted server for the net (see io::NetServer).
 [[smith::c_name("smith_io_test_add_server")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 test_add_server(Io *io, NetServer server) {
-    contract::assert(io != nullptr && server.host != nullptr &&
-                     (server.response != nullptr || server.response_size == 0));
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(server.host != nullptr && (server.response != nullptr || server.response_size == 0));
     Loop *loop = io->loop;
     if (loop->servers == nullptr) loop->servers = arena::push(&io->arena, FakeNet);
     FakeNet *net = loop->servers;
@@ -2564,7 +2559,6 @@ test_add_server(Io *io, NetServer server) {
 // was no such connection.
 [[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
 test_request(const Io *io, const char *host, u16 port, usize n) {
-    contract::assert(io != nullptr && host != nullptr);
     if (io->loop->servers == nullptr) return nullptr;
     const FakeServer *server = net_server_find(io->loop->servers, host, port, n, false);
     return server != nullptr && server->used ? server->request : nullptr;
@@ -2608,8 +2602,8 @@ Error capture_fake(Fake *fake, arena::Arena *arena, const char *const *argv, Cap
 // program is ENOENT). The output is read in doubling blocks into the arena, so it may use up to twice its size.
 [[smith::c_name("smith_processes_capture_async")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 processes_capture_async(Processes *processes, arena::Arena *arena, const char *const *argv, Capture *capture) {
-    contract::assert(processes != nullptr && arena != nullptr && argv != nullptr && argv[0] != nullptr &&
-                     capture != nullptr);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argv[0] != nullptr);
     Loop *loop = processes->loop;
     *capture = (Capture){};
     capture->internal.loop = loop;
@@ -2669,7 +2663,6 @@ void capture_feed(Capture *capture) {
 // io::run for every capture still running.
 [[smith::c_name("smith_capture_poll")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] bool
 capture_poll(Capture *capture) {
-    contract::assert(capture != nullptr);
     if (capture->done) return true;
     capture_feed(capture);
     Op *ended = &capture->internal.wait;
@@ -2692,7 +2685,8 @@ capture_poll(Capture *capture) {
 // ends on its own or when the caller gives up on the output.
 [[smith::c_name("smith_capture_stop")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 capture_stop(Capture *capture, i32 signal) {
-    contract::assert(capture != nullptr && signal > 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(signal > 0);
     // Once the wait has completed the process is reaped and its id may be another program's; a fake capture is done at
     // once.
     if (capture->done || capture->internal.wait.done || capture->process.id <= 0)
@@ -2708,7 +2702,6 @@ capture_stop(Capture *capture, i32 signal) {
 // The argument i (0 is the program), or nullptr past the end.
 [[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
 args_get(const Args *args, usize i) {
-    contract::assert(args != nullptr);
     return i < args->count ? args->values[i] : nullptr;
 }
 
@@ -2716,7 +2709,8 @@ args_get(const Args *args, usize i) {
 // process's environment each time, so a setenv after io::make shows.
 [[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
 args_env(const Args *args, const char *name) {
-    contract::assert(args != nullptr && name != nullptr && name[0] != 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(name[0] != 0);
     usize length = c::strlen(name);
     if (args->environment == nullptr) return c::getenv(name); // the real io asks the process, which setenv may change
     for (usize i = 0; i < entries_max && args->environment[i] != nullptr; i++) {
@@ -2760,6 +2754,7 @@ void io_link(Io *io, usize argc, const char *const *argv, const char *const *env
 
 // $SMITH_SEED replays a run; otherwise the seed is 64 bits of the system's entropy.
 u64 seed_read(void) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     const char *text = c::getenv("SMITH_SEED");
     if (text != nullptr) {
         char *end = nullptr;
@@ -2781,7 +2776,8 @@ u64 seed_read(void) {
 [[smith::c_name("smith_io_make")]] export
     [[clang::annotate("smith::edge")]] [[nodiscard, clang::annotate("smith::main_only")]] Io
     make(i32 argc, char **argv) {
-    contract::assert(argc >= 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(argc >= 0);
     void *memory = c::mmap(nullptr, reservation, protect_both, map_reservation, -1, 0);
     if (memory == (void *)-1)
         stop("cannot reserve memory for the arena"); // NOLINT(performance-no-int-to-ptr): MAP_FAILED
@@ -2797,7 +2793,6 @@ u64 seed_read(void) {
 
 // Releases the reservation and the event loop. A program need not call it: the process ends.
 [[smith::c_name("smith_io_close")]] export [[clang::annotate("smith::edge")]] void close(Io *io) {
-    contract::assert(io != nullptr);
     Loop *loop = io->loop;
     if (loop->queue >= 0) c::close(loop->queue);
     if (loop->memory != nullptr) c::munmap(loop->memory, loop->memory_size);
@@ -2810,7 +2805,8 @@ u64 seed_read(void) {
 // files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
 [[smith::c_name("smith_io_make_test")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Io
 make_test(Test test) {
-    contract::assert(test.memory != nullptr && test.capacity > 0);
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
+    contract::requires(test.memory != nullptr && test.capacity > 0);
     Io io = {.arena = arena::make(test.memory, test.capacity)};
     io.loop = loop_make(&io.arena, true);
     io.seed = test.seed;
@@ -2824,7 +2820,7 @@ make_test(Test test) {
     }
     const char **values = arena::push_array(&io.arena, const char *, test.argc + 1);
     for (usize i = 0; i < test.argc; i++) {
-        contract::assert(test.argv != nullptr);
+        if (test.argv == nullptr) __builtin_trap();
         values[i] = test.argv[i];
     }
     usize entries = 0;
@@ -2841,7 +2837,6 @@ make_test(Test test) {
 // Adds an in-memory file (the text is copied), replacing one of the same path.
 [[smith::c_name("smith_io_test_add_file")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 test_add_file(Io *io, const char *path, const char *text) {
-    contract::assert(io != nullptr && path != nullptr && text != nullptr);
     return fake_write_file(fake_of(io->loop), path, text, c::strlen(text));
 }
 
@@ -2862,8 +2857,9 @@ test_add_program(Io *io, const char *program, const char *output, i32 status) {
 // Scripts a child of the fake io (see io::ChildScript).
 [[smith::c_name("smith_io_test_add_child")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 test_add_child(Io *io, ChildScript script) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     Fake *fake = fake_of(io->loop);
-    contract::assert(script.program != nullptr);
+    contract::requires(script.program != nullptr);
     if (fake->child_count == fake_children_max) return error_make(enospc, "script", script.program);
     FakeChild *entry = &fake->children[fake->child_count++];
     usize output_size = script.output != nullptr ? c::strlen(script.output) : 0;

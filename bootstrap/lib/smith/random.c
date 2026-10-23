@@ -392,7 +392,8 @@ SmithUniformFloat uniform);
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key,
 SmithUniformFloat uniform) {
 smith_trusted();
-smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
+uniform.low < uniform.high);
 smith_requires(__builtin_isfinite(uniform.high - uniform.low));
 __UINT64_TYPE__ origin = smith_random_origin_float(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (__UINT64_TYPE__)1 << 24);
@@ -404,7 +405,8 @@ SmithUniformDouble uniform);
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key,
 SmithUniformDouble uniform) {
 smith_trusted();
-smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
+uniform.low < uniform.high);
 smith_requires(__builtin_isfinite(uniform.high - uniform.low));
 __UINT64_TYPE__ origin = smith_random_origin_double(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (__UINT64_TYPE__)1 << 53);

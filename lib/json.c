@@ -1,7 +1,7 @@
 #include "../include/smith/json.h"
 
-#include "../include/smith/contract.h"
 #include <stdint.h>
+#include "../include/smith/contract.h"
 
 const char *smith_json_reason_text(SmithJsonReason reason) {
     switch (reason) {
@@ -149,7 +149,8 @@ enum {
 };
 
 SmithJsonReader smith_json_reader_make(SmithText input, SmithJsonLimits limits) {
-    smith_trusted(); // the prover cannot yet translate a struct returned through sret; the body is a field-by-field copy
+    smith_trusted(); // the prover cannot yet translate a struct returned through sret; the body is a field-by-field
+                     // copy
     smith_requires(limits.depth <= smith_json_depth_max);
     smith_requires(input.begin != nullptr || input.length == 0);
     SmithJsonReader reader = {.input = input, .limits = limits, .state = SmithJsonState_Top};

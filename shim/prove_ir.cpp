@@ -1497,7 +1497,8 @@ class Normalizer {
             // clang gives the trap of a UBSan check a made-up function that names the check, inlined at the source
             // line.
             StringRef scope = location->getScope()->getSubprogram()->getName();
-            if (kind != Kind::Trap && (scope.starts_with("smith_") || location->getFilename().ends_with("smith/contract.h")) &&
+            if (kind != Kind::Trap &&
+                (scope.starts_with("smith_") || location->getFilename().ends_with("smith/contract.h")) &&
                 location->getInlinedAt() != nullptr) {
                 location = location->getInlinedAt(); // the contract function inlined at the line that wrote it
             } else if (scope.starts_with("__clang_trap_msg") && location->getInlinedAt() != nullptr) {

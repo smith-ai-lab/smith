@@ -5,7 +5,6 @@
 // them.
 module smith::text;
 
-
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
 // pointer and a length, never a terminated string, so a file read into memory is read where it lies, and every loop is

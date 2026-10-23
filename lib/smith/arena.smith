@@ -228,7 +228,8 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Ends a scope: frees what was pushed since it began.
 [[smith::c_name("smith_arena_scope_end")]] export void scope_end(Scope scope) {
-    contract::trusted(); // the arena is a pointer inside a struct passed by value, which a proof does not know to be valid
+    contract::trusted(); // the arena is a pointer inside a struct passed by value, which a proof does not know to be
+                         // valid
     contract::requires(scope.arena->scopes > 0);                // more ends than begins
     contract::requires(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
     contract::requires(scope.used <= scope.arena->used);
