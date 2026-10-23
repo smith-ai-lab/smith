@@ -1,9 +1,10 @@
 // The lowering of .smith files, and the interface between it and the program that gives it tokens.
 //
-// A .smith file is C with `module`, `import` and `export`, and sized type names (knowledge/smith-language.md). The lowering is a
-// state machine over the file's tokens: it is given one token at a time and answers with the C tokens that replace
-// it. It knows nothing of clang. A host feeds it: the clang hook in shim/hook.cpp (tokens after macro expansion, with
-// questions to the parser), or the plain lexer of runtime/lang_lex.c (a header written without compiling the module).
+// A .smith file is C with `module`, `import` and `export`, and sized type names (knowledge/smith-language.md). The
+// lowering is a state machine over the file's tokens: it is given one token at a time and answers with the C tokens
+// that replace it. It knows nothing of clang. A host feeds it: the clang hook in shim/hook.cpp (tokens after macro
+// expansion, with questions to the parser), or the plain lexer of runtime/lang_lex.c (a header written without
+// compiling the module).
 #pragma once
 
 #include <stddef.h>
@@ -120,8 +121,8 @@ typedef enum {
     SmithWatch_All,    // every token
 } SmithWatch;
 
-// The facts of the target that `target::` names ask the compiler (module `target`, knowledge/smith-target-facts.md). The values
-// of `arch` and `os` are SmithTargetArch_* and SmithTargetOs_*; a boolean fact is 0 or 1.
+// The facts of the target that `target::` names ask the compiler (module `target`, knowledge/smith-target-facts.md).
+// The values of `arch` and `os` are SmithTargetArch_* and SmithTargetOs_*; a boolean fact is 0 or 1.
 typedef enum {
     SmithTarget_Arch,
     SmithTarget_Os,

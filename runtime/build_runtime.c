@@ -1,6 +1,7 @@
 // The build program's runtime. `smith build` compiles a project's build.c together with this file, runs the result, and
 // the result writes .smith/build.ninja. Strings and lists live in a static arena (no malloc); the manifest is
-// written only when its bytes change, so ninja's view of it changes only when the build does. See knowledge/build-file.md.
+// written only when its bytes change, so ninja's view of it changes only when the build does. See
+// knowledge/build-file.md.
 #include <smith/build.h>
 
 #include <dirent.h>
@@ -1503,13 +1504,13 @@ static const char *const *smith_library_flags(SmithBuild *b, const char *source)
     return smith_split_lines(text, size);
 }
 
-// .smith sources (knowledge/smith-language.md). A module's generated header is a step of its own, made from the module's tokens
-// alone (`smith-cc --smith-header`), so every header can be written before any compile, and every compile of a .smith
-// source waits for all of them (an order-only input: the stamp of the check below) and gets `-I .smith/include`. What
-// an importer depends on is its depfile: it lists the headers the compile read, and a header is rewritten only when
-// its bytes change (restat), so an edit to a module's body recompiles that module alone, and an edit to its exports
-// recompiles its importers. The check reads each header's `// smith-module:` and `// smith-imports:` lines and fails
-// on an import cycle, naming it, before any compile starts.
+// .smith sources (knowledge/smith-language.md). A module's generated header is a step of its own, made from the
+// module's tokens alone (`smith-cc --smith-header`), so every header can be written before any compile, and every
+// compile of a .smith source waits for all of them (an order-only input: the stamp of the check below) and gets `-I
+// .smith/include`. What an importer depends on is its depfile: it lists the headers the compile read, and a header is
+// rewritten only when its bytes change (restat), so an edit to a module's body recompiles that module alone, and an
+// edit to its exports recompiles its importers. The check reads each header's `// smith-module:` and `//
+// smith-imports:` lines and fails on an import cycle, naming it, before any compile starts.
 
 constexpr size_t smith_lang_modules_max = 4096;
 constexpr size_t smith_lang_name_max = 256;
@@ -2098,9 +2099,10 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
     smith_write(b, path, text);
 }
 
-// What the verbs learn from the build (smith lint, prove, test, run and check; knowledge/verbs.md). Every run of build.c
-// writes .smith/build.info, one line per fact, and .smith/compile_commands.json for clang-tidy, and the manifest gets
-// two phony targets: smith_needs, the generated files the project's compiles read, and smith_tests, the tests.
+// What the verbs learn from the build (smith lint, prove, test, run and check; knowledge/verbs.md). Every run of
+// build.c writes .smith/build.info, one line per fact, and .smith/compile_commands.json for clang-tidy, and the
+// manifest gets two phony targets: smith_needs, the generated files the project's compiles read, and smith_tests, the
+// tests.
 //   compile<TAB>source<TAB>word...   a source of the project's own that the build compiles, with the words of its first
 //                      compile after the compiler; not a generated file, not under .smith/, not an absolute path (a
 //                      package)

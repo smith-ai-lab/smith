@@ -10,9 +10,9 @@
 // buffered, so a client that pipelines requests is answered in order.
 //
 // Neither protocol is written by hand: every message is a type of the code generated from the official schemas
-// (runtime/protocol/dap.[ch] and mcp.[ch], knowledge/protocol-generation.md). What is read from a tree by name is what the schemas do
-// not have: the `initialize` request of the MCP revisions before 2026-07-28, and a tool's arguments, which are the
-// tool's own schema.
+// (runtime/protocol/dap.[ch] and mcp.[ch], knowledge/protocol-generation.md). What is read from a tree by name is what
+// the schemas do not have: the `initialize` request of the MCP revisions before 2026-07-28, and a tool's arguments,
+// which are the tool's own schema.
 //
 // The files, in the order they are included:
 //   mcp_text.c    text a result is built in, and the readers of a tool's arguments

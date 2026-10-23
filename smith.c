@@ -14,8 +14,9 @@
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
-// runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache` shows and cleans
-// the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents need.
+// runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
+// shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
+// need.
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -924,8 +925,9 @@ static constexpr unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
 // The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
-// the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, knowledge/smith-language.md), written to
-// .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds .smith/include/smith.
+// the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, knowledge/smith-language.md),
+// written to .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds
+// .smith/include/smith.
 static constexpr unsigned char smith_embedded_contract_source[] = {
 #embed "bootstrap/lib/smith/contract.c"
 };
@@ -1102,11 +1104,12 @@ static void smith_quote_word(char *out, size_t capacity, const char *word) {
     out[used] = '\0';
 }
 
-// A project with no build file is built by convention (knowledge/build-conventions.md): the build program is the two calls of the
-// conventions with their defaults, compiled like any build.c, from this file.
+// A project with no build file is built by convention (knowledge/build-conventions.md): the build program is the two
+// calls of the conventions with their defaults, compiled like any build.c, from this file.
 static constexpr char smith_conventions_path[] = ".smith/conventions.c";
 static constexpr char smith_conventions_source[] =
-    "// The build of a project that has no build file: smith's conventions, with their defaults (knowledge/build-conventions.md).\n"
+    "// The build of a project that has no build file: smith's conventions, with their defaults "
+    "(knowledge/build-conventions.md).\n"
     "#include <smith/build.h>\n"
     "\n"
     "void build(SmithBuild *b) {\n"
@@ -1609,10 +1612,10 @@ static void smith_build_refuse_verbs(int count, char **args) {
     }
 }
 
-// `smith build --dump-config`: the build file that does what the conventions do, written out (knowledge/build-conventions.md). Its
-// language is the entry point's: a main.smith gets a build.smith, a main.c a build.c, each in the highest-level API
-// with the defaults spelled out as fields. It goes to stdout, so `smith build --dump-config > build.smith` makes it the
-// project's; everything else goes to stderr.
+// `smith build --dump-config`: the build file that does what the conventions do, written out
+// (knowledge/build-conventions.md). Its language is the entry point's: a main.smith gets a build.smith, a main.c a
+// build.c, each in the highest-level API with the defaults spelled out as fields. It goes to stdout, so `smith build
+// --dump-config > build.smith` makes it the project's; everything else goes to stderr.
 
 // The folder's name, which is the program's by default (smith_app's .name), as the text of a C string.
 static void smith_dump_name(void) {
@@ -1638,14 +1641,15 @@ static void smith_dump_call(const char *open, const char *entry, const char *clo
 }
 
 static void smith_dump_smith(void) {
-    fputs("// build.smith: what `smith build` does with no build file (knowledge/build-conventions.md), written out by\n"
-          "// `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.\n"
-          "module build;\n"
-          "\n"
-          "import smith::build;\n"
-          "\n"
-          "export void build(build::Build *b) {\n",
-          stdout);
+    fputs(
+        "// build.smith: what `smith build` does with no build file (knowledge/build-conventions.md), written out by\n"
+        "// `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.\n"
+        "module build;\n"
+        "\n"
+        "import smith::build;\n"
+        "\n"
+        "export void build(build::Build *b) {\n",
+        stdout);
     smith_dump_call("    build::app(b, &(build::App){\n", "main.smith", "    });\n");
     fputs("    build::app_tests(b, &(build::AppTests){.folder = \"tests\"});\n}\n", stdout);
 }
@@ -2723,8 +2727,8 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
-// text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked from its lowering in bootstrap/),
-// and on the io included above.
+// text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked from its lowering in
+// bootstrap/), and on the io included above.
 #ifdef SMITH_MCP
 #include "lib/json.c"
 #include "runtime/mcp.c"
@@ -2827,7 +2831,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
 #ifdef SMITH_MCP
         return smith_mcp_main(argc - 2, argv + 2, self);
 #else
-        fprintf(stderr, "smith: mcp needs the full smith (clang inside); this one is the stage0 (knowledge/mcp-server.md)\n");
+        fprintf(stderr,
+                "smith: mcp needs the full smith (clang inside); this one is the stage0 (knowledge/mcp-server.md)\n");
         return smith_exit_missing;
 #endif
     case SmithVerb_Docs:

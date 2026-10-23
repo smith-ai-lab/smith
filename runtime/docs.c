@@ -895,7 +895,8 @@ static int64_t smith_docs_json_value(SmithDocsText json, const char *key) {
     for (uint64_t at = 0; at + wanted <= json.length; at++) {
         if (memcmp(json.begin + at, quoted, wanted) != 0) continue;
         uint64_t next = at + wanted;
-        while (next < json.length && smith_docs_is_space(json.begin[next])) next++;
+        while (next < json.length && smith_docs_is_space(json.begin[next]))
+            next++;
         if (next >= json.length || json.begin[next] != ':') continue;
         return (int64_t)next + 1;
     }
@@ -905,10 +906,12 @@ static int64_t smith_docs_json_value(SmithDocsText json, const char *key) {
 // The string that starts at or after `from` (spaces skipped) and the offset after it, or no begin.
 static SmithDocsText smith_docs_json_string(SmithDocsText json, uint64_t *from) {
     uint64_t at = *from;
-    while (at < json.length && smith_docs_is_space(json.begin[at])) at++;
+    while (at < json.length && smith_docs_is_space(json.begin[at]))
+        at++;
     if (at >= json.length || json.begin[at] != '"') return (SmithDocsText){};
     uint64_t end = at + 1;
-    while (end < json.length && json.begin[end] != '"') end++;
+    while (end < json.length && json.begin[end] != '"')
+        end++;
     if (end >= json.length) return (SmithDocsText){};
     *from = end + 1;
     return (SmithDocsText){json.begin + at + 1, end - at - 1};
@@ -927,9 +930,11 @@ static bool smith_docs_dev_skill(SmithDocsText plugin, SmithDocsText skill) {
 
 // The folder's name of a listed skill, "./.agents/skills/<name>/" -> <name>.
 static SmithDocsText smith_docs_listed_skill(SmithDocsText entry) {
-    while (entry.length > 0 && entry.begin[entry.length - 1] == '/') entry.length -= 1;
+    while (entry.length > 0 && entry.begin[entry.length - 1] == '/')
+        entry.length -= 1;
     uint64_t start = entry.length;
-    while (start > 0 && entry.begin[start - 1] != '/') start--;
+    while (start > 0 && entry.begin[start - 1] != '/')
+        start--;
     return (SmithDocsText){entry.begin + start, entry.length - start};
 }
 
@@ -953,7 +958,8 @@ static void smith_docs_plugin(SmithDocs *docs) {
     SmithDocsText plugin = smith_docs_json_string(json, &from);
     if (plugin.begin == nullptr) return;
     from = (uint64_t)skills_at;
-    while (from < json.length && smith_docs_is_space(json.begin[from])) from++;
+    while (from < json.length && smith_docs_is_space(json.begin[from]))
+        from++;
     if (from >= json.length || json.begin[from] != '[') return;
     from += 1;
     SmithDocsText *listed = SMITH_DOCS_PUSH(&docs->arena, SmithDocsText, smith_docs_plugin_skills_max);
@@ -962,7 +968,8 @@ static void smith_docs_plugin(SmithDocs *docs) {
         SmithDocsText entry = smith_docs_json_string(json, &from);
         if (entry.begin == nullptr) break;
         listed[count] = smith_docs_listed_skill(entry);
-        while (from < json.length && (smith_docs_is_space(json.begin[from]) || json.begin[from] == ',')) from++;
+        while (from < json.length && (smith_docs_is_space(json.begin[from]) || json.begin[from] == ','))
+            from++;
     }
     SmithDocsEntry *entries = SMITH_DOCS_PUSH(&docs->arena, SmithDocsEntry, smith_docs_entries_max);
     uint32_t total = smith_docs_list(docs, ".agents/skills", entries);
@@ -972,8 +979,8 @@ static void smith_docs_plugin(SmithDocs *docs) {
             on_disk = on_disk || (entries[j].directory && smith_docs_is(listed[i], entries[j].name));
         }
         if (smith_docs_dev_skill(plugin, listed[i])) {
-            smith_docs_report(docs, "%s: lists the dev skill %.*s, which must not ship", relative, (int)listed[i].length,
-                              listed[i].begin);
+            smith_docs_report(docs, "%s: lists the dev skill %.*s, which must not ship", relative,
+                              (int)listed[i].length, listed[i].begin);
         } else if (!on_disk) {
             smith_docs_report(docs, "%s: lists %.*s, which is not a skill on disk", relative, (int)listed[i].length,
                               listed[i].begin);

@@ -43,9 +43,9 @@ static const char *build_variable(SmithBuild *b, const char *name, const char *f
 }
 
 // The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
-// knowledge/protocol-generation.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed, so a build
-// never needs the network; `smith build protocol` writes them again from the packages, and `smith check` runs
-// check-protocol (a test), which fails when a committed file is not what the generator writes now.
+// knowledge/protocol-generation.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed,
+// so a build never needs the network; `smith build protocol` writes them again from the packages, and `smith check`
+// runs check-protocol (a test), which fails when a committed file is not what the generator writes now.
 typedef struct {
     const char *name;    // dap or mcp: the prefix of the generated names and files
     const char *url;     // the package: the project's release, a tag
