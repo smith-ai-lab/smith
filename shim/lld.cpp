@@ -12,7 +12,11 @@
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <string>
+#include "llvm/IR/Module.h"
+#include "llvm/Passes/OptimizationLevel.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 #endif
 
 LLD_HAS_DRIVER(macho)
@@ -23,7 +27,47 @@ LLD_HAS_DRIVER(macho)
 // dlopens the file and asks it for llvmGetPassPluginInfo. The file is smith itself: dlopen of an executable's own path
 // answers its handle, and Enzyme's llvmGetPassPluginInfo is exported from it (build.c, -exported_symbol; the pointer
 // below keeps it from being stripped). Nothing is loaded from disk, and a link with no bitcode never reads the option.
-extern "C" llvm::PassPluginLibraryInfo llvmGetPassPluginInfo();
+//
+// The entry is smith's own (Enzyme's is weak, so this one wins): it registers Enzyme, then AddressSanitizer at the same
+// extension point, so that ASan runs right after Enzyme and before the optimizer. An autodiff program is compiled with
+// `-fsanitize=address -Xclang -disable-llvm-passes`: its functions carry `sanitize_address` and are not yet
+// instrumented, which instrumenting before Enzyme would break (the `enzyme_*` marker loads are hidden, and the
+// gradients are left unchecked). The pass does nothing for a module with no such function, so a link of another
+// program is unchanged, and it cannot run twice: a module that clang already instrumented has `asan.module_ctor`,
+// and the pass leaves it alone.
+extern "C" void registerEnzyme(llvm::PassBuilder &PB);
+
+namespace {
+// What clang's debug profile gives ASan (-fno-sanitize-recover=all, use-after-scope on, stack use after return decided
+// by the runtime, globals dead stripping on, no ODR indicator, destructors global).
+struct SmithAsanAfterEnzyme : llvm::PassInfoMixin<SmithAsanAfterEnzyme> {
+    llvm::PreservedAnalyses run(llvm::Module &module, llvm::ModuleAnalysisManager &manager) {
+        bool wanted = false;
+        for (llvm::Function &function : module)
+            wanted |= function.hasFnAttribute(llvm::Attribute::SanitizeAddress);
+        if (module.getFunction("asan.module_ctor") != nullptr) wanted = false;
+        if (!wanted) return llvm::PreservedAnalyses::all();
+        llvm::AddressSanitizerOptions options;
+        options.CompileKernel = false;
+        options.Recover = false;
+        options.UseAfterScope = true;
+        options.UseAfterReturn = llvm::AsanDetectStackUseAfterReturnMode::Runtime;
+        return llvm::AddressSanitizerPass(options, /*UseGlobalGC=*/true, /*UseOdrIndicator=*/false,
+                                          llvm::AsanDtorKind::Global)
+            .run(module, manager);
+    }
+};
+
+void smith_register_enzyme_and_asan(llvm::PassBuilder &builder) {
+    registerEnzyme(builder);
+    builder.registerFullLinkTimeOptimizationEarlyEPCallback(
+        [](llvm::ModulePassManager &passes, llvm::OptimizationLevel) { passes.addPass(SmithAsanAfterEnzyme()); });
+}
+} // namespace
+
+extern "C" llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
+    return {LLVM_PLUGIN_API_VERSION, "SmithEnzymeAsan", "v0.1", smith_register_enzyme_and_asan};
+}
 [[gnu::used]] static llvm::PassPluginLibraryInfo (*const smith_enzyme_entry)() = llvmGetPassPluginInfo;
 #endif
 
