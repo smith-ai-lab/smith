@@ -784,7 +784,8 @@ static void smith_lang_dispatch(SmithLang *lang, const SmithHost *host, const Sm
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
-    if (!token->foreign && lang->recording && smith_lang_ident(token, "struct")) smith_lang_tuple_in_generic(lang, host, token);
+    if (!token->foreign && lang->recording && smith_lang_ident(token, "struct"))
+        smith_lang_tuple_in_generic(lang, host, token);
     if (!token->foreign && !lang->recording) {
         bool capturing = smith_lang_capturing(lang); // the arguments of a call to a generic are kept, and typed later
         if (token->kind == SmithTokenKind_Identifier) {

@@ -476,8 +476,8 @@ static void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const
     lang->tuples_seen = true;
 }
 
-// A generic's body is kept as written and replayed for each instance, and a tuple type in it would reach the compiler as
-// written. Until the tuple is a type a generic can take (issue #95, ticket 6), it is named outside: a typedef.
+// A generic's body is kept as written and replayed for each instance, and a tuple type in it would reach the compiler
+// as written. Until the tuple is a type a generic can take (issue #95, ticket 6), it is named outside: a typedef.
 static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (smith_lang_tuple_extent(lang, host) == 0) return;
     smith_lang_error(lang, host, token->location,
