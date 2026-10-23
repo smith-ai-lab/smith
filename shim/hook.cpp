@@ -1907,8 +1907,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return nodes;
     }
 
-    static bool readValue(const APValue &value, QualType type, SmithValueQuery *out, SmithValue *node,
-                          std::string &why, unsigned depth) {
+    static bool readValue(const APValue &value, QualType type, SmithValueQuery *out, SmithValue *node, std::string &why,
+                          unsigned depth) {
         if (depth > 32) {
             why = "the value is nested too deeply to read back";
             return false;

@@ -217,10 +217,10 @@ typedef struct {
     // calls, anything an expression is), read by the compiler in the scope the parser is in. False with `out->why` when
     // it cannot.
     bool (*expr_type)(void *context, const char *tokens, uint32_t length, SmithExprType *out);
-    // The value of a C expression written as tokens separated by \x1f (as `expr_type`), evaluated by the compiler in the
-    // scope the parser is in: an integer, a float, a struct or an array of them. False with `out->why` when it is not a
-    // constant, or is a pointer (C23: a `constexpr` pointer must be null). Null for a host without a parser: the raw
-    // lowering reports that the expression needs smith's compiler.
+    // The value of a C expression written as tokens separated by \x1f (as `expr_type`), evaluated by the compiler in
+    // the scope the parser is in: an integer, a float, a struct or an array of them. False with `out->why` when it is
+    // not a constant, or is a pointer (C23: a `constexpr` pointer must be null). Null for a host without a parser: the
+    // raw lowering reports that the expression needs smith's compiler.
     bool (*value_query)(void *context, const char *tokens, uint32_t length, SmithValueQuery *out);
     // The type of the function being parsed, as the compiler prints it with typedefs looked through (`return {1, 2.0f}`
     // in a function that returns a tuple): false outside a function or for a host without a parser.

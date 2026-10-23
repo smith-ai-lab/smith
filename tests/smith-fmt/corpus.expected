@@ -4797,6 +4797,26 @@ export i32 big(void) {
 export i32 all(void) {
     return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
 }
+==> value-query-plain/src/main.smith <==
+#include <stdio.h>
+static int f(int n) {
+    return n * 2;
+}
+struct C {
+    int count;
+};
+constexpr struct C cfg = {.count = 3};
+int main(void) {
+    if constexpr (f(3) > 5) {
+        puts("big");
+    } else {
+        puts("small");
+    }
+    if constexpr (cfg.count == 3) {
+        puts("three");
+    }
+    return 0;
+}
 ==> value-query-windows/src/size.smith <==
 module size;
 

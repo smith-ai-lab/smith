@@ -710,7 +710,8 @@ static void smith_lang_ask_value(const SmithHost *host, const char *text, size_t
     SmithValueQuery query = {.nodes = nodes, .capacity = smith_lang_ask_nodes};
     char expression[512];
     snprintf(expression, sizeof expression, "%.*s", (int)length, text);
-    if (host->value_query == nullptr || !host->value_query(host->context, expression, (uint32_t)strlen(expression), &query)) {
+    if (host->value_query == nullptr ||
+        !host->value_query(host->context, expression, (uint32_t)strlen(expression), &query)) {
         fprintf(stderr, "value %s: error: %s\n", expression, query.why != nullptr ? query.why : "unknown");
         return;
     }
@@ -721,7 +722,7 @@ static void smith_lang_ask_value(const SmithHost *host, const char *text, size_t
     stack[0] = &query.root;
     next[0] = UINT32_MAX; // not yet opened
     depth = 1;
-    for (size_t guard = 0; depth > 0 && guard < smith_lang_ask_nodes * 4; guard++) { // bounded by the tree
+    for (size_t guard = 0; depth > 0 && guard < (size_t)smith_lang_ask_nodes * 4; guard++) { // bounded by the tree
         const SmithValue *value = stack[depth - 1];
         bool aggregate = value->kind == SmithValue_Struct || value->kind == SmithValue_Array;
         if (!aggregate) {
