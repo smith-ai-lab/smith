@@ -66,11 +66,11 @@ static u8 *exact_copy(arena::Arena *arena, const u8 *bytes, usize size) {
 
 // A status is compared as its type, so a failure prints the numbers of both.
 static void expect(inflate::Status actual, inflate::Status expected) {
-    test::check_equal(inflate::Status, actual, expected);
+    test::check_equal(actual, expected);
 }
 
 static void expect_not(inflate::Status actual, inflate::Status unexpected) {
-    test::check_not_equal(inflate::Status, actual, unexpected);
+    test::check_not_equal(actual, unexpected);
 }
 
 static i64 between(random::Key key, i64 low, i64 high) {
