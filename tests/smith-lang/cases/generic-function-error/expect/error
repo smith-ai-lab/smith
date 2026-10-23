@@ -1,0 +1,6 @@
+src/apply.smith:5:17: too few arguments to function call, expected 2, have 1
+src/main.smith:17:26: the argument `pointer` of `twice` is not a function: the parameter `f` is `constexpr auto`, which takes a function by its name (a pointer is known only when the program runs)
+src/main.smith:18:26: the argument `&inc` of `twice` is not a function: the parameter `f` is `constexpr auto`, which takes a function by its name (a pointer is known only when the program runs)
+src/main.smith:19:26: the argument `number` of `twice` is not a function: the parameter `f` is `constexpr auto`, which takes a function by its name (a pointer is known only when the program runs)
+src/main.smith:20:26: the argument `(inc)` of `twice` is a function, but not written as its name: write the name of the function (`loss`, `module::loss`), not an expression
+src/main.smith:21:26: cannot tell what `missing`, the argument of `twice`, is: use of undeclared identifier 'missing'; the parameter `f` is `constexpr auto` and takes the name of a function

@@ -53,6 +53,7 @@ constexpr size_t smith_lang_generics_max = 256;            // generics known: th
 constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
 constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameters of one generic
 constexpr size_t smith_lang_call_params_max = 16;          // parameters of one generic
+constexpr size_t smith_lang_entries_max = smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
 constexpr size_t smith_lang_instance_depth_max = 32;       // generics asked for by the instances of generics
 constexpr size_t smith_lang_generic_modules_max = 64;      // modules whose generics were read
 constexpr size_t smith_lang_if_depth_max = 32;             // `if constexpr` blocks open at once
@@ -155,6 +156,16 @@ typedef struct {
     uint32_t covers;  // with `written`: how many tokens, this one included, the lowered call took
 } SmithLangGenToken;
 
+// What a compile-time parameter of a generic is: `constexpr type T`, `auto x`, `constexpr auto f` (a function known at
+// compile time) or `auto... rest` (the last parameter: the types of the arguments that remain).
+typedef enum {
+    SmithLangSlot_Plain, // an ordinary parameter (only of a parameter, never of a slot)
+    SmithLangSlot_Type,
+    SmithLangSlot_Auto,
+    SmithLangSlot_Function,
+    SmithLangSlot_Pack,
+} SmithLangSlot;
+
 typedef struct {
     SmithLangText module;  // game::replay
     SmithLangText member;  // push
@@ -170,7 +181,7 @@ typedef struct {
     uint8_t type_count;
     uint8_t type_token[smith_lang_type_params_max];    // the T of each `type T`: the index of its token in the head
     uint8_t type_position[smith_lang_type_params_max]; // and which parameter it is
-    bool type_auto[smith_lang_type_params_max];        // an `auto x` parameter's type, told from the argument (no name)
+    uint8_t type_kind[smith_lang_type_params_max];     // a SmithLangSlot
     bool is_inline;
     bool exported;
     bool own; // the module being lowered defines it (else an import's)

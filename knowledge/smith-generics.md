@@ -66,6 +66,17 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   in the body and in the return type, which is written before the name as in C: `export typeof(x) sqrt(auto x);`. It
   is one token of the record, replaced by the instance's type, so `if constexpr (typeof(x) == f32)` and
   `sizeof(typeof(x))` work as they do for `T`. `typeof` of anything else is C's.
+- **Function parameters** (issue #69). `constexpr auto f` takes a function known at compile time: the argument is a
+  function designator (a function's name, `module::name`, `c::name`), and each distinct function is its own instance, so
+  in the instance `f` is that function's name: a call through it is direct, `(void *)f` and `&f` are its address. The
+  parameter is in no generated function, like `constexpr type T`, and counts toward the 4 compile-time parameters. The
+  compiler says what the argument is (the host's `SmithExprType` says whether the expression is a function before it
+  decays to a pointer): a function pointer variable, `&f`, a number or an expression is an error at the call that names
+  the parameter (``the argument `pointer` of `twice` is not a function: the parameter `f` is `constexpr auto`, ...``).
+  Whether `f` takes the other arguments is the body's call, checked by clang at the instance
+  (`(void)sizeof(f(x, rest...))` writes it explicitly). An instance is identified by the function's spelling (`inc` and
+  `main_inc` are the same function written two ways, and so two instances) and named `twice<apply::triple, int>` in the
+  debugger. Its symbol carries the file too, because a `static` function of two files may share a name.
 - **Conversions.** A later argument whose parameter is `typeof(a) b` converts to a's type by C's rules, with one
   addition: a conversion that changes the value is an error at the call, whatever warnings the project has on. A
   literal and an expression of literals, `constexpr` integers (the file's or a C header's, an unsigned one as the

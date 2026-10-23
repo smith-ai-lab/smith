@@ -1647,6 +1647,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         ASTContext &ast = self->sema->getASTContext();
         foldedValue(expression, ast, out);
+        out->is_function = type->isFunctionType();
         type = self->finishType(type);
         const PrintingPolicy &policy = ast.getPrintingPolicy();
         snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());

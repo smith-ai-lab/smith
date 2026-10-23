@@ -1456,6 +1456,119 @@ module num;
 export T add(constexpr type T, T a, T b) {
     return a + b;
 }
+==> generic-function-error/src/apply.smith <==
+module apply;
+
+// A function known at compile time: each distinct function is an instance, and `f` in it is that function's name.
+export typeof(x) twice(constexpr auto f, auto x) {
+    return f(f(x));
+}
+
+// The function's address is what `(void *)f` and `&f` are, and a call through it is direct.
+export usize address_matches(constexpr auto f, auto x) {
+    (void)x;
+    return (void *)f == (void *)&f ? 1 : 0;
+}
+
+// An exported function of the module, the argument of a generic of this module.
+export i32 triple(i32 x) {
+    return x * 3;
+}
+
+// A generic passes its own function on to another generic.
+export typeof(x) again(constexpr auto f, auto x) {
+    return twice(f, x);
+}
+
+// The signature is checked at the instance, as the body calls it.
+export f64 call_with_pair(constexpr auto f, auto x, typeof(x) y) {
+    return (f64)f(x, y);
+}
+==> generic-function-error/src/main.smith <==
+module main;
+
+import apply;
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+int main(void) {
+    i32 (*pointer)(i32) = inc;
+    i32 number = 3;
+    // A pointer is known only when the program runs: the parameter takes a function by its name.
+    i32 a = apply::twice(pointer, 5);
+    i32 b = apply::twice(&inc, 5);
+    i32 c = apply::twice(number, 5);
+    i32 d = apply::twice((inc), 5);
+    i32 e = apply::twice(missing, 5);
+    // The signature is checked by the body's call, in the instance asked for here.
+    i32 f = apply::twice(plus, 5);
+    i32 ok = apply::twice(inc, 5);
+    return a + b + c + d + e + f + ok;
+}
+==> generic-function/src/apply.smith <==
+module apply;
+
+// A function known at compile time: each distinct function is an instance, and `f` in it is that function's name.
+export typeof(x) twice(constexpr auto f, auto x) {
+    return f(f(x));
+}
+
+// The function's address is what `(void *)f` and `&f` are, and a call through it is direct.
+export usize address_matches(constexpr auto f, auto x) {
+    (void)x;
+    return (void *)f == (void *)&f ? 1 : 0;
+}
+
+// An exported function of the module, the argument of a generic of this module.
+export i32 triple(i32 x) {
+    return x * 3;
+}
+
+// A generic passes its own function on to another generic.
+export typeof(x) again(constexpr auto f, auto x) {
+    return twice(f, x);
+}
+
+// The signature is checked at the instance, as the body calls it.
+export f64 call_with_pair(constexpr auto f, auto x, typeof(x) y) {
+    return (f64)f(x, y);
+}
+==> generic-function/src/main.smith <==
+module main;
+
+import apply;
+import <stdio.h>;
+import <stdlib.h>;
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+static f64 half(f64 x) {
+    return x / 2;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+int main(void) {
+    i32 a = apply::twice(inc, 5);
+    i32 b = apply::twice(apply::triple, 2);
+    f64 c = apply::twice(half, 10.0);
+    i32 d = apply::twice(c::abs, -3);
+    i32 e = apply::again(inc, 0);
+    usize f = apply::address_matches(inc, 1);
+    f64 g = apply::call_with_pair(plus, 3, 4);
+    c::printf("%d %d %.2f %d %d %zu %.1f\n", a, b, c, d, e, f, g);
+    return 0;
+}
 ==> generic-if-constexpr-analyzer/src/guard.smith <==
 module guard;
 

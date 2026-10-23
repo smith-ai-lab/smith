@@ -119,6 +119,7 @@ typedef struct {
     bool is_float;
     bool negative;
     bool overflow;
+    bool is_function; // the expression is a function (a designator), before it becomes a pointer to one
     uint64_t magnitude;
     double real;
 } SmithExprType;
