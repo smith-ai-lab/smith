@@ -76,6 +76,10 @@ for name in arena io http untar; do
     compare "test_$name" "tests/$name.c" ""
 done
 compare templates_main templates/new/main.c "-std=gnu2y"
+# Where C does not require a constant, the evaluator that runs C functions for .smith (patches/clang-constexpr-c.patch) does nothing.
+compare folding tests/smith-lang-c/folding.c ""
+compare folding_o2 tests/smith-lang-c/folding.c "-O2 -Wall -Wpedantic -Wvla -Wgnu-folding-constant"
+compare folding_c17 tests/smith-lang-c/folding.c "-std=c17"
 
 # A program that prints: the same output as .c and as .smith, and the one in its .out file.
 behave() { # name
@@ -108,6 +112,30 @@ behave() { # name
 for name in arrays names ordinary sized_names; do
     behave "$name"
 done
+
+# Where C requires a constant, a .smith file runs the function; a .c file reports the error it always did; the target is the
+# target's own (a `long` of a Windows target is 4 bytes).
+constexpr_c() { # name, expected exit of the .c, expected exit of the .smith, extra flags
+    total=$((total + 1))
+    mkdir -p "$work/constexpr"
+    printf 'static unsigned long width(void) { return sizeof(long); }\nstatic int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }\nconstexpr int x = fib(10);\nstatic_assert(x == 55);\nstatic_assert(width() == %s);\n' "$4" >"$work/constexpr/$1.c"
+    cp "$work/constexpr/$1.c" "$work/constexpr/$1.smith"
+    # shellcheck disable=SC2086
+    "$smith" cc -std=gnu23 -fsyntax-only $5 "$work/constexpr/$1.c" 2>/dev/null
+    plain=$?
+    # shellcheck disable=SC2086
+    "$smith" cc -std=gnu23 -fsyntax-only $5 "$work/constexpr/$1.smith" 2>"$work/constexpr/$1.err"
+    lowered=$?
+    if [ $plain = 0 ] || [ $lowered != 0 ]; then
+        failures=$((failures + 1))
+        echo "FAIL  $1: exit $plain as .c (an error), $lowered as .smith (0)"
+        head -5 "$work/constexpr/$1.err"
+    else
+        echo "ok    $1"
+    fi
+}
+constexpr_c constexpr_host 1 0 8 ""
+constexpr_c constexpr_windows 1 0 4 "--target=x86_64-pc-windows-msvc -nostdinc"
 
 echo "smith-lang-c: $((total - failures)) of $total identical"
 [ $failures = 0 ]

@@ -1,0 +1,1 @@
+src/main.smith:10:9: invalid operand for inline asm constraint 'i'

@@ -1,0 +1,20 @@
+static int spin(int n) {
+    while (n > 0)
+        n = n + 1 - 1;
+    return n;
+}
+static int deep(int n) {
+    return deep(n + 1) + 1;
+}
+static int overflow(int n) {
+    return n + 1;
+}
+static int at(int i) {
+    int a[4] = {1, 2, 3, 4};
+    return a[i];
+}
+
+constexpr int steps = spin(1);
+constexpr int depth = deep(0);
+constexpr int wrapped = overflow(2147483647);
+constexpr int outside = at(9);

@@ -1,0 +1,13 @@
+#include <stdio.h>
+
+// An "i" operand needs a literal constant: a call is still an error, as in C (asm is not a place the evaluator is used).
+static int forty(void) {
+    return 40 + 2;
+}
+
+int main(void) {
+    int r;
+    asm("mov %w0, %1" : "=r"(r) : "i"(forty()));
+    printf("%d\n", r);
+    return 0;
+}

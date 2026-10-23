@@ -1,0 +1,4 @@
+src/main.smith:17:15: constexpr variable 'steps' must be initialized by a constant expression
+src/main.smith:18:15: constexpr variable 'depth' must be initialized by a constant expression
+src/main.smith:19:15: constexpr variable 'wrapped' must be initialized by a constant expression
+src/main.smith:20:15: constexpr variable 'outside' must be initialized by a constant expression
