@@ -5,7 +5,7 @@ description: "Using smith::format (import smith::format; format::to, format::pus
 
 # Formatted text with no format string: smith::format
 
-This skill ships in the smith plugin, from `.agents/skills/smith-format/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses the generics of `smith-lang-generics` and `smith-lang-lists`, and `smith-text-numbers` and `smith-arena`.
+This skill ships in the smith plugin, from `.agents/skills/smith-format/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses the generics of `smith-lang-generics` and `smith-lang-rest`, and `smith-text-numbers` and `smith-arena`.
 
 There is no format string, so none can disagree with its arguments: the arguments are the pieces, in order, and each one's **type picks how it is written, when the call is compiled**. Write `format::to(buf, sizeof buf, "count: ", n, " of ", total)`, never `snprintf(buf, sizeof buf, "count: %d of %zu", ...)`.
 

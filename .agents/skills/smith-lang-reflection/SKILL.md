@@ -5,7 +5,7 @@ description: "Reflection on a struct in a generic's body: `fields(T)` and `field
 
 # Reflection: `fields(T)`
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang-reflection/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Lists and `for constexpr`: `smith-lang-lists`; generics: `smith-lang-generics`. The long reference is [knowledge/smith-generics.md](../../../knowledge/smith-generics.md) ("Reflection").
+This skill ships in the smith plugin, from `.agents/skills/smith-lang-reflection/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. `auto... rest` and `for constexpr`: `smith-lang-rest`; generics: `smith-lang-generics`. The long reference is [knowledge/smith-generics.md](../../../knowledge/smith-generics.md) ("Reflection").
 
 Code that should work for any struct is written once, as regular C run at compile time: `fields(T)` is a compile-time list like `rest`, and every use is written as plain member access, so nothing is left for run time. They work in the body of a generic in a module, with a compiler (the stage0 and a bootstrapped module cannot write them).
 

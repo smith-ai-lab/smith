@@ -69,7 +69,7 @@
     "./.agents/skills/smith-lang-c-interop/",
     "./.agents/skills/smith-lang-constexpr/",
     "./.agents/skills/smith-lang-generics/",
-    "./.agents/skills/smith-lang-lists/",
+    "./.agents/skills/smith-lang-rest/",
     "./.agents/skills/smith-lang-reflection/",
     "./.agents/skills/smith-lang-modules/",
     "./.agents/skills/smith-lang-sized-types/",

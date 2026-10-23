@@ -78,15 +78,17 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   `main_inc` are the same function written two ways, and so two instances) and named `twice<apply::triple, int>` in the
   debugger. Its symbol carries the file too, because a `static` function of two files may share a name.
 - **Argument lists** (issue #70). `auto... rest` is the last parameter and takes the arguments that remain, each of its
-  own type; each distinct list of types (with the other slots') is one instance. In the instance the list is a
-  compile-time value, written as the C that it lowers to: the parameters `rest_0, rest_1, ...` (marked
-  `[[maybe_unused]]`, since a list may only be counted), `rest...` is `rest_0, rest_1` wherever a call's arguments go (an
-  empty list takes a comma with it), `rest[i]` is `rest_i` with `i` a compile-time constant (the evaluator of
+  own type; each distinct list of types (with the other slots') is one instance. In the instance `rest` is the tuple
+  of the arguments, written as the C that it lowers to: the parameters `rest_0, rest_1, ...` (marked
+  `[[maybe_unused]]`, since they may only be counted), `rest...` is `rest_0, rest_1` wherever a call's arguments go (an
+  empty `rest` takes a comma with it), `rest[i]` is `rest_i` with `i` a compile-time constant (the evaluator of
   `if constexpr`: a number, `countof(rest)`, a `constexpr` of the file; a runtime index or one out of range is an
-  error naming the list), and `countof(rest)` is its size, a number the compiler and `if constexpr` conditions both read
-  (C2y's `_Countof`). A list used any other way is an error that says the three ways. `rest...` in the arguments of a
+  error naming `rest`), and `countof(rest)` is its size, a number the compiler and `if constexpr` conditions both read
+  (C2y's `_Countof`). `rest` used any other way (`g(rest)`) is an error that says to spread it with `rest...`: passing
+  the tuple whole or returning it would need a struct of the pack in the instance's signature, which waits for a
+  concrete use (issue #101). `rest...` in the arguments of a
   call to another generic is expanded before that call is read, so `forward(f, x, rest...)` types each element by its
-  own type; a call of the generic needs at least the parameters before the list. No value-changing conversion check
+  own type; a call of the generic needs at least the parameters before `rest`. No value-changing conversion check
   applies (no `typeof` target). The debugger names the instance with every type, `gradient<loss, Params *, Batch *>`.
 - **`typeof` of an expression in the result type.** The result type is written before the parameters, where C does not
   know them, so an `auto` parameter's name inside a `typeof(...)` there stands for a value of its type, `(*(T *)0)`
@@ -144,39 +146,30 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   holds a call: the parameters are written as `(*(T *)0)` for the compiler to type (a local of the body, a runtime loop
   variable, cannot be named there). The grammar (`tree-sitter/grammar.js`) reads `x.[e]` and `x->[e]`; clang-format
   needs nothing. `[..]` fields are #82's.
-- **Lists and `for constexpr`** (issue #71, skill smith-lang-lists). Smith is C plus compile time, so a list is not a
-  library type: it is names. The lowering keeps, for the instance being written, a table of the lists its body made
-  (`auto args = {...}`) and the loop variables of the `for constexpr` it is inside, and writes plain C.
-  - *`auto name = {a, b, ...};`* declares one variable per element, `[[maybe_unused]] auto name_<binding>_<index> = <the
-    element>;`, in order (an element is evaluated once, where the statement stands, and has its own type from C23's
-    `auto`; `list...` as an element copies the elements of that list; an element is never a type). C23 leaves `auto x =
-    {a, b}` invalid, so this changes nothing valid. A list is never a value: `countof(list)` (a constant the evaluator
-    of `if constexpr` reads too), `list[i]` (the element's variable), `list...` (the comma-separated names), and a bare
-    use is an error that says these three. The argument list `auto... rest` is the same thing with the instance's
-    parameters `rest_0, ...` as its elements; the lowering has one reading of a list for both.
-  - *`name = {...};` makes a new binding* (`name_1_...`, the next number of that name in the instance, never reused),
-    which takes effect after its elements were written (`args = {args..., x}` reads the old one). The new variables are
-    declared where the statement stands, so it must stand at the brace depth the list was declared at, as a statement of
-    its own (the token before it is `;`, `{` or `}`): in a nested block, or after `if (x)` (a branch run at run time
-    would change the list's shape), it is an error. The body of a `for constexpr` that assigns a list (and the block of an
-    `if constexpr` branch that does) is written without its braces for that reason; a body that does not is written in
-    braces, so its locals do not clash from turn to turn.
+- **`for constexpr`** (issue #71, skill smith-lang-rest). Smith is C plus compile time. The lowering keeps, for the
+  instance being written, the loop variables of the `for constexpr` it is inside, and writes plain C.
+  - *Built lists are gone* (issue #101). `auto name = {a, b};` and `name = {name..., x};` made a list of variables
+    `name_<binding>_<index>` whose shape the lowering tracked (about 1000 lines of the replay and of the evaluator).
+    Tuples (skill smith-lang-tuples) hold values of different types, so the owner dropped them: in a generic's body the
+    two statements are an error that says built lists are gone and points to a struct or a tuple type written out
+    (`smith_lang_list_gone` in `runtime/lang_generic.c`). Only the argument list `auto... rest` is left of the lists. A
+    tuple type written in a generic, and `t[0]` or `countof(t)` on a tuple inside a generic's body, are not built (they
+    keep their clear errors) until a use needs them.
   - *`for constexpr (init; condition; step) body`* is the token `for constexpr` in the record (`Y` in the header's
     `// smith-generic:` line) and, when the instance is written, a frame on the replay stack: the loop variable is a
     number (every use of it is written as the number, `rest[i]` is the element), the condition and step are read by the
     evaluator of `if constexpr` (numbers, `countof`, the variable, the operators of C; step `i++`, `i--`, `i += n`,
     `i -= n`, `i = n`), and each turn is the body pushed above the loop frame, so the loop is not a recursion of C. A turn
     count of 1024 is the limit. Outside a generic `for constexpr` is an error. There is no range-based `for`: C's `for`
-    with `countof` is what loops over sequences, and a sequence of the language (a list, an array, later a slice) would be
-    the only thing a range form worked on.
+    with `countof` is what loops over sequences, and a sequence of the language (a tuple, an array, later a slice) would be
+    the only thing a range form worked on. A body that is one statement is written in braces of its own, so its locals do
+    not clash from turn to turn.
   - *Types.* `typeof(rest[i])` in an `if constexpr` condition is the instance's own type for that argument, so
     `is_integer(typeof(rest[i]))` and `typeof(rest[i]) == char *` choose per argument (a type-checked formatter is a
-    `for constexpr` over `auto... args` with a `static_assert(false)` in the final `else`). A list made with braces has no
-    type table: the types of its elements are the compiler's, in the C written, so `typeof(args[i])` in a condition is an
-    error, and a list's elements are not typed as arguments of another generic (only `rest...` is forwarded).
-  - *Names.* A variable of the body spelled like an element (`rest_0`, `args_1_0`) is an error, found where the body is
-    read. The debugger shows the elements as variables of that name at the generic's own lines.
-  - *The editor's grammar* reads `for constexpr (...)`, `auto args = {...};`, `args = {...};` and `{rest..., x}`;
+    `for constexpr` over `auto... args` with a `static_assert(false)` in the final `else`).
+  - *Names.* A variable of the body spelled like an argument (`rest_0`) is an error, found where the body is
+    read. The debugger shows the arguments as variables of that name at the generic's own lines.
+  - *The editor's grammar* reads `for constexpr (...)` and `{rest..., x}`;
     clang-format reads `for constexpr` (patch smith-lang-for-constexpr-format).
 - **Private names in an exported generic's body** (issue #75). The body may name the module's private functions, variables, types, constants and generics: the header's instance section declares what the instance needs, and the module's compile gives the functions and variables a symbol (design: "The instance section" of [smith-module-headers](smith-module-headers.md)). The lowering keeps the names each generic's body writes, chooses at the end of the file what the exported generics reach (through private generics too) and writes only that. The importer still cannot write them.
 - **A call as the argument of a call, in an instance's body** (`twice(f, twice(f, x))`). The arguments of such a call are written to the pool first, with the instance's parameters as values (`(*(int *)0)`), so that the compiler types them where the instance is not declared yet; then the call is written from the arguments as they were. Frames of the replay do it in turn (`TypedStart`, `TypedFinish`), so it is no recursion of C.
