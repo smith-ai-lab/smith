@@ -212,6 +212,11 @@ smith_io_NetApi net_api;
 bool net_loaded;
 dispatch_queue_t net_queue;
 };
+static void smith_io_check(bool holds) {
+smith_trusted();
+smith_assert(holds);
+if (!holds) __builtin_trap();
+}
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_error_make(__INT32_TYPE__ code, const char *what, const char *path);
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
@@ -221,7 +226,7 @@ if (code == 0) return error;
 char reason[96] = "";
 if (strerror_r(code, reason, sizeof reason) != 0) __builtin_snprintf(reason, sizeof reason, "error %d", code);
 __INT32_TYPE__ written = __builtin_snprintf(error.message, sizeof error.message, "%s %s: %s", what, path, reason);
-if (!(written > 0)) __builtin_trap();
+smith_io_check(written > 0);
 return error;
 }
 [[gnu::format(printf, 2, 3)]] static SmithError smith_io_error_text(__INT32_TYPE__ code, const char *format, ...) {
@@ -230,7 +235,7 @@ __builtin_va_list arguments;
 __builtin_va_start(arguments, format);
 __INT32_TYPE__ written = __builtin_vsnprintf(error.message, sizeof error.message, format, arguments);
 __builtin_va_end(arguments);
-if (!(written > 0)) __builtin_trap();
+smith_io_check(written > 0);
 return error;
 }
 [[noreturn]] static void smith_io_stop(const char *message) {
@@ -244,7 +249,7 @@ __SIZE_TYPE__ size;
 __SIZE_TYPE__ capacity;
 } smith_io_Grow;
 static void smith_io_grow_reserve(smith_io_Grow *grow, __SIZE_TYPE__ extra) {
-if (!(grow->arena != nullptr && grow->size <= grow->capacity)) __builtin_trap();
+smith_io_check(grow->arena != nullptr && grow->size <= grow->capacity);
 if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
 __SIZE_TYPE__ wanted = grow->capacity * 2;
 if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
@@ -765,7 +770,7 @@ for (__SIZE_TYPE__ i = 0; i < loop->pending && at != op; i++) {
 previous = at;
 at = at->internal.next;
 }
-if (!(at == op)) __builtin_trap();
+smith_io_check(at == op);
 if (previous == nullptr)
 loop->head = op->internal.next;
 else
@@ -828,7 +833,7 @@ struct kevent change = {
 return kevent(loop->queue, &change, 1, nullptr, 0, nullptr) == 0;
 }
 static void smith_io_loop_submit(SmithLoop *loop, SmithOp *op) {
-if (!(op->internal.kind != SmithOpKind_None)) __builtin_trap();
+smith_io_check(op->internal.kind != SmithOpKind_None);
 smith_io_Fake *fake = loop->fake;
 SmithConsole *console = op->internal.console;
 bool buffered = console != nullptr && console->end > console->start && !op->internal.fill;
@@ -1031,7 +1036,7 @@ smith_io_net_drain(loop, &completed);
 continue;
 }
 SmithOp *op = events[i].udata;
-if (!(!op->done)) __builtin_trap();
+smith_io_check(!op->done);
 if (smith_io_loop_complete(loop, op)) completed += 1;
 }
 return completed;
@@ -1046,14 +1051,14 @@ op->error = smith_error_make(smith_io_edeadlk, "wait", "in the test io, which no
 op->done = true;
 }
 }
-if (!(op->done)) __builtin_trap();
+smith_io_check(op->done);
 }
 [[clang::annotate("smith::edge")]] __SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns);
 [[clang::annotate("smith::edge")]] __SIZE_TYPE__ smith_io_run(SmithIo *io, __INT64_TYPE__ timeout_ns) {
 return smith_io_loop_run(io->loop, timeout_ns);
 }
 static void smith_io_op_start(SmithOp *op, SmithLoop *loop, SmithOpKind kind) {
-if (!((op->done || op->internal.kind == SmithOpKind_None))) __builtin_trap();
+smith_io_check(op->done || op->internal.kind == SmithOpKind_None);
 *op = (SmithOp){};
 op->internal.kind = kind;
 op->internal.loop = loop;
@@ -1244,7 +1249,7 @@ return result;
 static __UINT64_TYPE__ smith_io_time_ns(clockid_t which) {
 struct timespec now = {};
 __INT32_TYPE__ result = clock_gettime(which, &now);
-if (!(result == 0)) __builtin_trap();
+smith_io_check(result == 0);
 (void)result;
 return (__UINT64_TYPE__)now.tv_sec * smith_io_nanoseconds + (__UINT64_TYPE__)now.tv_nsec;
 }
@@ -1448,7 +1453,7 @@ op->internal.capacity = size;
 if (loop->fake != nullptr) {
 op->internal.child = smith_io_fake_child_of(loop->fake, child->process.id);
 } else {
-if (!(child->internal.input >= 0)) __builtin_trap();
+smith_io_check(child->internal.input >= 0);
 op->internal.descriptor = child->internal.input;
 }
 smith_io_loop_submit(loop, op);
@@ -1467,7 +1472,7 @@ op->data = buffer;
 if (loop->fake != nullptr) {
 op->internal.child = smith_io_fake_child_of(loop->fake, child->process.id);
 } else {
-if (!(child->internal.output >= 0)) __builtin_trap();
+smith_io_check(child->internal.output >= 0);
 op->internal.descriptor = child->internal.output;
 }
 smith_io_loop_submit(loop, op);
@@ -1569,7 +1574,7 @@ smith_io_stream_feed(loop, &err);
 if (!out.open && !err.open && ended.done) break;
 smith_io_loop_run(loop, smith_io_forever);
 }
-if (!(ended.done)) __builtin_trap();
+smith_io_check(ended.done);
 result.error = ended.error;
 result.exit_status = ended.exit_status;
 result.signal = ended.signal;
@@ -1640,7 +1645,7 @@ return loop->net_loaded ? &loop->net_api : nullptr;
 static void smith_io_net_wake(SmithLoop *loop) {
 struct kevent trigger = {.ident = smith_io_wakeup, .filter = smith_io_evfilt_user, .fflags = smith_io_note_trigger};
 __INT32_TYPE__ result = kevent(loop->queue, &trigger, 1, nullptr, 0, nullptr);
-if (!(result == 0)) __builtin_trap();
+smith_io_check(result == 0);
 (void)result;
 }
 static void smith_io_net_finish(SmithLoop *loop, SmithOp *op, SmithError error) {
@@ -1654,7 +1659,7 @@ smith_io_net_wake(loop);
 }
 static SmithOp *smith_io_net_take(SmithConnection *connection, SmithOpKind kind) {
 __SIZE_TYPE__ slot = (__SIZE_TYPE__)(kind - SmithOpKind_NetConnect);
-if (!(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0])) __builtin_trap();
+smith_io_check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
 return __c11_atomic_exchange(&connection->internal.waiting[slot], nullptr, smith_io_seq_cst);
 }
 static void smith_io_net_finish_slot(SmithLoop *loop, SmithConnection *connection, SmithOpKind kind, SmithError error) {
@@ -2156,7 +2161,7 @@ fake->input = copy;
 }
 const char **values =__extension__({extern const char**smith_arena_push_array_type__const_char_P(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(const char *)");smith_arena_push_array_type__const_char_P(&io.arena,test.argc+1);});
 for (__SIZE_TYPE__ i = 0; i < test.argc; i++) {
-if (test.argv == nullptr) __builtin_trap();
+smith_io_check(test.argv != nullptr);
 values[i] = test.argv[i];
 }
 __SIZE_TYPE__ entries = 0;

@@ -618,6 +618,15 @@ struct Loop {
 
 // ---------------------------------------------------------------- errors
 
+// A check that stays in every build: this library is the edge, which a proof never reads, and trusted, a check's body
+// is not read either. The assert writes the failure report (the call's line and the stack) in a build with assertions;
+// the trap after it stops one without them (`fast`).
+void check(bool holds) {
+    contract::trusted();
+    contract::assert(holds);
+    if (!holds) __builtin_trap();
+}
+
 // The error for an errno value, with the message "what path: strerror".
 [[smith::c_name("smith_error_make")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
 error_make(i32 code, const char *what, const char *path) {
@@ -626,7 +635,7 @@ error_make(i32 code, const char *what, const char *path) {
     char reason[96] = "";
     if (c::strerror_r(code, reason, sizeof reason) != 0) __builtin_snprintf(reason, sizeof reason, "error %d", code);
     i32 written = __builtin_snprintf(error.message, sizeof error.message, "%s %s: %s", what, path, reason);
-    if (!(written > 0)) __builtin_trap();
+    check(written > 0);
     return error;
 }
 
@@ -636,7 +645,7 @@ error_make(i32 code, const char *what, const char *path) {
     __builtin_va_start(arguments, format);
     i32 written = __builtin_vsnprintf(error.message, sizeof error.message, format, arguments);
     __builtin_va_end(arguments);
-    if (!(written > 0)) __builtin_trap();
+    check(written > 0);
     return error;
 }
 
@@ -657,7 +666,7 @@ typedef struct {
 
 // Makes room for at least `extra` more bytes and a NUL.
 void grow_reserve(Grow *grow, usize extra) {
-    if (!(grow->arena != nullptr && grow->size <= grow->capacity)) __builtin_trap();
+    check(grow->arena != nullptr && grow->size <= grow->capacity);
     if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
     usize wanted = grow->capacity * 2;
     if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
@@ -1250,7 +1259,7 @@ void loop_unlink(Loop *loop, Op *op) {
         previous = at;
         at = at->internal.next;
     }
-    if (!(at == op)) __builtin_trap();
+    check(at == op);
     if (previous == nullptr)
         loop->head = op->internal.next;
     else
@@ -1323,7 +1332,7 @@ bool loop_watch(Loop *loop, Op *op) {
 
 // Queues a freshly filled op. Ops that wait for the kernel are watched; the rest are ready when the loop runs.
 void loop_submit(Loop *loop, Op *op) {
-    if (!(op->internal.kind != None)) __builtin_trap();
+    check(op->internal.kind != None);
     Fake *fake = loop->fake;
     Console *console = op->internal.console;
     bool buffered = console != nullptr && console->end > console->start && !op->internal.fill;
@@ -1546,7 +1555,7 @@ usize loop_run(Loop *loop, i64 timeout_ns) {
             continue;
         }
         Op *op = events[i].udata;
-        if (!(!op->done)) __builtin_trap();
+        check(!op->done);
         if (loop_complete(loop, op)) completed += 1;
     }
     return completed;
@@ -1564,7 +1573,7 @@ void loop_wait(Loop *loop, Op *op) {
             op->done = true;
         }
     }
-    if (!(op->done)) __builtin_trap();
+    check(op->done);
 }
 
 // Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
@@ -1578,7 +1587,7 @@ void loop_wait(Loop *loop, Op *op) {
 // ---------------------------------------------------------------- files
 
 void op_start(Op *op, Loop *loop, OpKind kind) {
-    if (!((op->done || op->internal.kind == None))) __builtin_trap();
+    check(op->done || op->internal.kind == None);
     *op = (Op){};
     op->internal.kind = kind;
     op->internal.loop = loop;
@@ -1783,7 +1792,7 @@ console_read_line(Console *console, arena::Arena *arena) {
 u64 time_ns(c::clockid_t which) {
     struct c::timespec now = {};
     i32 result = c::clock_gettime(which, &now);
-    if (!(result == 0)) __builtin_trap();
+    check(result == 0);
     (void)result;
     return (u64)now.tv_sec * nanoseconds + (u64)now.tv_nsec;
 }
@@ -2015,7 +2024,7 @@ child_write_async(Child *child, Op *op, const void *data, usize size) {
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
-        if (!(child->internal.input >= 0)) __builtin_trap();
+        check(child->internal.input >= 0);
         op->internal.descriptor = child->internal.input;
     }
     loop_submit(loop, op);
@@ -2036,7 +2045,7 @@ child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
-        if (!(child->internal.output >= 0)) __builtin_trap();
+        check(child->internal.output >= 0);
         op->internal.descriptor = child->internal.output;
     }
     loop_submit(loop, op);
@@ -2148,7 +2157,7 @@ ProcessResult run_real(Loop *loop, arena::Arena *arena, const char *const *argv)
         if (!out.open && !err.open && ended.done) break;
         loop_run(loop, forever);
     }
-    if (!(ended.done)) __builtin_trap();
+    check(ended.done);
     result.error = ended.error;
     result.exit_status = ended.exit_status;
     result.signal = ended.signal;
@@ -2237,7 +2246,7 @@ const NetApi *net_api(Loop *loop) {
 void net_wake(Loop *loop) {
     struct c::kevent trigger = {.ident = wakeup, .filter = evfilt_user, .fflags = note_trigger};
     i32 result = c::kevent(loop->queue, &trigger, 1, nullptr, 0, nullptr);
-    if (!(result == 0)) __builtin_trap();
+    check(result == 0);
     (void)result;
 }
 
@@ -2255,7 +2264,7 @@ void net_finish(Loop *loop, Op *op, Error error) {
 // The op waiting in a connection's slot, taken so that exactly one caller finishes it; nullptr if none is.
 Op *net_take(Connection *connection, OpKind kind) {
     usize slot = (usize)(kind - NetConnect);
-    if (!(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0])) __builtin_trap();
+    check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
     return __c11_atomic_exchange(&connection->internal.waiting[slot], nullptr, seq_cst);
 }
 
@@ -2820,7 +2829,7 @@ make_test(Test test) {
     }
     const char **values = arena::push_array(&io.arena, const char *, test.argc + 1);
     for (usize i = 0; i < test.argc; i++) {
-        if (test.argv == nullptr) __builtin_trap();
+        check(test.argv != nullptr);
         values[i] = test.argv[i];
     }
     usize entries = 0;

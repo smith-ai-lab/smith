@@ -3,6 +3,15 @@
 #include <stdint.h>
 #include "../include/smith/contract.h"
 
+// A check that stays in every build: an invariant of this file, not a contract a proof of a caller should read.
+// Trusted, its body is never read, so the assert is a run-time check that writes the failure report (the call's line
+// and the stack) in a build with assertions; the trap after it stops one without them.
+static void smith_json_check(bool holds) {
+    smith_trusted();
+    smith_assert(holds);
+    if (!holds) __builtin_trap();
+}
+
 const char *smith_json_reason_text(SmithJsonReason reason) {
     switch (reason) {
     case SmithJsonReason_None:
@@ -494,7 +503,7 @@ bool smith_json_skip(SmithJsonReader *reader) {
         SmithJsonToken token = smith_json_read(reader);
         if (token == SmithJsonToken_Error) return false;
         if (reader->depth == outside) return true;
-        if (token == SmithJsonToken_End) __builtin_trap();
+        smith_json_check(token != SmithJsonToken_End);
     }
     return false;
 }
@@ -512,7 +521,7 @@ static size_t smith_json_decode_step(SmithText raw, size_t *at, char *out) {
     uint32_t code = 0;
     SmithJsonReason reason = SmithJsonReason_None;
     size_t step = smith_json_escape(raw, *at, &code, &reason);
-    if (step == 0) __builtin_trap();
+    smith_json_check(step != 0);
     *at += step;
     return smith_json_encode(code, out);
 }
@@ -523,7 +532,7 @@ static SmithText smith_json_decode_into(const SmithJsonReader *reader, char *des
     while (at < reader->text.length) {
         used += smith_json_decode_step(reader->text, &at, destination + used);
     }
-    if (used != reader->length) __builtin_trap();
+    smith_json_check(used == reader->length);
     destination[used] = '\0';
     return (SmithText){destination, used};
 }
@@ -627,7 +636,7 @@ static void smith_json_build_close(SmithJsonBuild *build, size_t depth) {
         items[i] = &build->nodes[child];
         child += build->nodes[child].span;
     }
-    if (child != build->next) __builtin_trap();
+    smith_json_check(child == build->next);
 }
 
 static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader *reader) {
@@ -668,7 +677,7 @@ static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader 
         break;
     case SmithJsonToken_Error:
     case SmithJsonToken_End:
-        __builtin_trap();
+        smith_json_check(false); // the first pass read the same bytes, so neither is a value
         break;
     }
 }
@@ -705,10 +714,10 @@ bool smith_json_parse(SmithArena *arena, SmithText input, SmithJsonLimits limits
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     for (SmithJsonToken token = smith_json_read(&reader); token != SmithJsonToken_End;
          token = smith_json_read(&reader)) {
-        if (token == SmithJsonToken_Error) __builtin_trap(); // the first pass read the same bytes
+        smith_json_check(token != SmithJsonToken_Error); // the first pass read the same bytes
         smith_json_build_token(&build, &reader);
     }
-    if (build.next != size.values || build.bytes_used != size.bytes) __builtin_trap();
+    smith_json_check(build.next == size.values && build.bytes_used == size.bytes);
     *root = build.nodes;
     return true;
 }
@@ -1030,7 +1039,7 @@ void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value
         current = top->container->items[top->next++];
         if (object) smith_json_write_key(writer, current->key);
     }
-    __builtin_trap(); // span does not count the tree
+    smith_json_check(false); // span does not count the tree
 }
 
 bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output) {

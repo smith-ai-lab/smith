@@ -5,6 +5,8 @@
 // them.
 module smith::text;
 
+import smith::contract;
+
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
 // pointer and a length, never a terminated string, so a file read into memory is read where it lies, and every loop is
@@ -54,11 +56,14 @@ export constexpr usize f64_capacity = 32;
     return (Text){string, length};
 }
 
-// A check that stays in every build and is no contract: the bignum arithmetic and the float text of this module cost
-// the prover far more than they are worth, so smith prove leaves them out and a failed check traps (the text says what
-// it was; this library names no libc function, so it cannot write it).
-[[noreturn]] void stop([[maybe_unused]] const char *what) {
-    __builtin_trap();
+// A check that stays in every build and is no contract the prover reads: the bignum arithmetic and the float text of
+// this module cost the prover far more than they are worth, so a proof of a caller assumes the check held. Trusted, its
+// body is never read, so the assert is a run-time check: it writes the failure report (the line of the call and the
+// stack) in a build with assertions, and the trap after it stops a build without them (`fast`), as it always did.
+void check(bool holds) {
+    contract::trusted();
+    contract::assert(holds);
+    if (!holds) __builtin_trap();
 }
 
 bool is_space(char c) {
@@ -222,7 +227,7 @@ void big_mul_add(Big *big, u32 multiplier, u32 addend) {
         carry = product >> 32;
     }
     if (carry != 0) {
-        if (big->count >= big_limbs) stop("a number grew past its limbs");
+        check(big->count < big_limbs); // a number grew past its limbs
         big->limb[big->count] = (u32)carry;
         big->count += 1;
     }
@@ -252,7 +257,7 @@ void big_shift_left(Big *big, u64 shift) {
     if (big->count == 0 || shift == 0) return;
     usize whole = (usize)(shift / 32);
     u32 part = (u32)(shift % 32);
-    if (big->count + whole + 1 > big_limbs) stop("a shift grew a number past its limbs");
+    check(big->count + whole + 1 <= big_limbs); // a shift grew a number past its limbs
     big->limb[big->count + whole] = 0;
     for (usize i = big->count; i-- > 0;) {
         u64 moved = (u64)big->limb[i] << part;
@@ -294,7 +299,7 @@ void big_subtract(Big *a, const Big *b) {
         borrow = a->limb[i] < take ? 1 : 0;
         a->limb[i] = (u32)((u64)a->limb[i] - take);
     }
-    if (borrow != 0) stop("a subtraction went below zero");
+    check(borrow == 0); // a subtraction went below zero
     while (a->count > 0 && a->limb[a->count - 1] == 0) {
         a->count -= 1;
     }
@@ -555,7 +560,7 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
         reversed[count++] = (char)('0' + value % 10);
         value /= 10;
     } while (value != 0 && count < number_capacity);
-    if (value != 0) stop("a number has more digits than number_capacity");
+    check(value == 0); // a number has more digits than number_capacity
     for (usize i = 0; i < count; i++) {
         out[i] = reversed[count - 1 - i];
     }
@@ -591,7 +596,7 @@ static_assert(f64_capacity >= 1 + f64_digits_max + 1 + 5, "sign, digits, a point
 u64 big_divide(Big *numerator, const Big *denominator) {
     i64 shift = (i64)big_bits(numerator) - (i64)big_bits(denominator);
     if (shift < 0) return 0;
-    if (shift >= 63) stop("a quotient has more than 63 bits");
+    check(shift < 63); // a quotient has more than 63 bits
     Big step = *denominator;
     big_shift_left(&step, (u64)shift);
     u64 q = 0;
@@ -658,7 +663,8 @@ i64 f64_first_exponent(u64 m, i64 e) {
         else
             return first;
     }
-    stop("no first digit found for a finite number");
+    check(false); // no first digit found for a finite number
+    return first;
 }
 
 bool f64_reads_back(u64 q, i64 s, u64 bits) {
@@ -674,7 +680,7 @@ bool f64_reads_back(u64 q, i64 s, u64 bits) {
 usize f64_format(char *out, u64 q, u32 p, i64 first) {
     char digits[number_capacity];
     usize count = write_u64(digits, q);
-    if (count != p) stop("the digits are not the precision");
+    check(count == p); // the digits are not the precision
     usize used = 0;
     if (first >= f64_positional_min && first <= f64_positional_max) {
         if (first < 0) {
@@ -709,7 +715,7 @@ usize f64_format(char *out, u64 q, u32 p, i64 first) {
 [[smith::c_name("smith_text_write_f64")]] export usize write_f64(char *out, f64 value) {
     u64 bits = __builtin_bit_cast(u64, value);
     u64 field = (bits >> 52) & 0x7ff;
-    if (field == 0x7ff) stop("infinity and nan have no text");
+    check(field != 0x7ff); // infinity and nan have no text
     usize used = 0;
     if ((bits >> 63) != 0) out[used++] = '-';
     u64 fraction = bits & 0xfffffffffffffULL;

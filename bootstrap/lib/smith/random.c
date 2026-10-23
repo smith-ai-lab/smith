@@ -557,10 +557,10 @@ smith_trusted();
 smith_requires(count >= 1);
 double sum = 0.0;
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
-if (!(__builtin_isfinite(weights[i]) && weights[i] >= 0.0)) __builtin_trap();
+smith_assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0);
 sum += weights[i];
 }
-if (!(__builtin_isfinite(sum) && sum > 0.0)) __builtin_trap();
+smith_assert(__builtin_isfinite(sum) && sum > 0.0);
 double *probability =__extension__({extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");smith_arena_push_array_type__f64(arena,count);});
 __SIZE_TYPE__ *alias =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
 for (__SIZE_TYPE__ i = 0; i < count; i++) {

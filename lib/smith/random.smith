@@ -775,10 +775,10 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
     contract::requires(count >= 1);
     f64 sum = 0.0;
     for (usize i = 0; i < count; i++) {
-        if (!(__builtin_isfinite(weights[i]) && weights[i] >= 0.0)) __builtin_trap(); // data, not a parameter
+        contract::assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0); // data, not a parameter
         sum += weights[i];
     }
-    if (!(__builtin_isfinite(sum) && sum > 0.0)) __builtin_trap();
+    contract::assert(__builtin_isfinite(sum) && sum > 0.0);
     f64 *probability = arena::push_array(arena, f64, count);
     usize *alias = arena::push_array(arena, usize, count);
     for (usize i = 0; i < count; i++) {
