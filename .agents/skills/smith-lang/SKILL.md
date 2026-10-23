@@ -1,11 +1,9 @@
 ---
 name: smith-lang
-description: "The .smith language: C with modules, a superset of C by opt-in steps. Load when a file ends in .smith, when a build or message mentions .smith, `module`, `import` or `export` in C source, `smith cc --smith-header`, `--smith-lower`, the token hook, or 'needs a smith whose clang has the token hook'."
+description: "The .smith language: C with modules, a superset of C by opt-in steps, what it needs, how it formats, lints, builds and shows errors. Load when a file ends in .smith, on `module`, `import` or `export` in C source, smith cc --smith-header or --smith-lower, or 'needs a smith whose clang has the token hook'."
 ---
 
 # `.smith` files
-
-This skill ships in the smith plugin, from `.agents/skills/smith-lang/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The long reference is [knowledge/smith-language.md](../../../knowledge/smith-language.md).
 
 A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant, and compiles to the same code. A file opts into more, one step at a time; none is needed for the one before:
 
@@ -41,33 +39,7 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
 
-A project's build file can be `.smith` too: a root `build.smith` that is `module build;` with `import smith::build;` and `export void build(build::Build *b)` calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build` ("build.smith").
-
-## The target and `if constexpr`: no preprocessor in `.smith`
-
-A `.smith` file needs no `#if`. A fact of the target the file is compiled for is a constant of the module `target` (a module that is no file; `import target;` first), and a choice between code that may not compile on every target is `if constexpr`:
-
-```smith
-import target;
-
-constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
-static_assert(target::f32_mantissa_bits == 24 && target::float_radix == 2);
-
-i32 opaque(i32 value) {
-    if constexpr (target::arch == target::aarch64) {        // the branch not taken is dropped: it may not compile here
-        __asm__("" : "+w"(value));
-    } else {
-        __asm__("" : "+X"(value));
-    }
-    return value;
-}
-
-bool poisons_memory(void) {
-    return sanitized;
-}
-```
-
-The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer` (true only while clang-tidy's analyzer runs). The condition of `if constexpr` is made of `target::` facts, `constexpr` constants (of the file or the function) and literals, with the operators of C; the branches are blocks (`else if constexpr (...) { }` continues a chain). Anything else in a condition is an error at the name (``in `if constexpr`: `n` is not a constant``). The branch not taken is never parsed: no diagnostics and no hover in it. Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them with `if constexpr`: the header gets the `#if` (smith::contract does). `smith cc --smith-lower` has no preprocessor, so it writes macros (`SMITH_TARGET_ARCH`, defined at the top by `#if defined(__aarch64__)`) and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output. Details: knowledge/smith-language.md.
+A project's build file can be `.smith` too: a root `build.smith` that is `module build;` with `import smith::build;` and `export void build(build::Build *b)` calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build-smith` ("build.smith").
 
 ## Tests and proofs
 
@@ -85,3 +57,5 @@ The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanit
 ## Errors
 
 Every error points at the `.smith` text. A C keyword used as a name (``i32 double(i32 x)``, `Box double` for a typedef of the module) is ``double` is a C keyword; it cannot name a function``, at the name, and nothing follows it (after a typedef from a C header, clang's own message). A module that is not found is one error that lists what was tried, and its uses report nothing more. `smith: ... is a C name; write c::...` and the module errors are in `smith-lang-modules`. If a `.smith` file fails in a way that looks like plain C, it is C: fix it as C.
+
+Also in this family: [smith-lang-target](../smith-lang-target/SKILL.md).
