@@ -13,6 +13,7 @@ The decisions are in [AGENTS.md](../../../AGENTS.md); these are the habits.
 - **Effects come through capabilities.** No raw call to the world outside a capability's own module (`smith-effects`); a function takes the part of `io::Io` (`SmithIo` in C) it needs as a parameter.
 - **Never signal a process that is not your own unwaited child**, and never `pkill` or `killall`: a reparented pid may already be another test's compile.
 - **`host->read_header` returns a buffer valid only until the next read**, and the lowering's own lookups read others: copy what you need before calling anything that may read a header.
+- **Never read `tree-sitter/src/`** (`parser.c` is about 185,000 lines, `grammar.json` and `node-types.json` thousands): tree-sitter generates it from `tree-sitter/grammar.js`, which is the file to read and edit. Regenerate it, and to check one rule, `grep` it for a line.
 - **One full `smith check` at a time** on a machine, and say plainly what you did not run.
 - **The only full check is `lockf /private/tmp/smith-full-check.lock build/Darwin-arm64/smith check`**, from your worktree, once at the end, its output in a file.
 - **An implementer never runs `smith build llvm` and never touches `~/.cache/smith/llvm`.**
