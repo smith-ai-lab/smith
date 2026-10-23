@@ -334,7 +334,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             if (!instruction.hasName()) instruction.setName("t");
             if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
                 const llvm::Value *object = llvm::getUnderlyingObject(load->getPointerOperand());
-                auto *local = llvm::dyn_cast<llvm::AllocaInst>(object); // one a call was allowed to change
+                auto *local = llvm::dyn_cast<llvm::AllocaInst>(object);  // one a call was allowed to change
                 auto *returned = llvm::dyn_cast<llvm::CallBase>(object); // a pointer a callee was proved to return
                 if (llvm::isa<llvm::Argument>(object) || llvm::isa<llvm::GlobalVariable>(object) ||
                     (returned != nullptr && returned->getMetadata("smith.valid_return") != nullptr) ||
@@ -744,7 +744,8 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 } else if (auto *assume = dynamic_cast<const IR::Assume *>(&instruction)) {
                     auto operands = assume->operands();
                     const IR::State::ValTy *condition = operands.empty() ? nullptr : state->at(*operands[0]);
-                    if (assume->getKind() == IR::Assume::Dereferenceable || assume->getKind() == IR::Assume::Align) { // what the callee returned is a valid object
+                    if (assume->getKind() == IR::Assume::Dereferenceable ||
+                        assume->getKind() == IR::Assume::Align) { // what the callee returned is a valid object
                         facts = facts && added;
                         assumed.push_back({block, added});
                     } else if (condition != nullptr) {

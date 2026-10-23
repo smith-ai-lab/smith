@@ -389,7 +389,8 @@ void mark_pointer_parameters(Function &function) {
         if (!argument->getType()->isPointerTy() || argument->hasStructRetAttr() || argument->hasByValAttr()) continue;
         uint64_t bytes = pointee_bytes(types[i - hidden + 1]);
         if (bytes == 0) continue;
-        // `T p[static N]` is N objects: clang says so with its own dereferenceable, which the type's size must not shrink.
+        // `T p[static N]` is N objects: clang says so with its own dereferenceable, which the type's size must not
+        // shrink.
         bytes = std::max<uint64_t>(bytes, argument->getDereferenceableBytes());
         argument->addAttr(Attribute::getWithDereferenceableBytes(function.getContext(), bytes));
         argument->addAttr(Attribute::NonNull);
@@ -432,7 +433,8 @@ uint64_t pointee_alignment(const DIType *type) {
 
 // A pointer a function returns under an smith_ensures is a whole object of its type or null: proved at each return of
 // the function (a return of anything else is undefined behaviour there), assumed by its callers, which still need an
-// smith_ensures(result != nullptr) to load through it. A trusted function is assumed, never proved, so it is not marked.
+// smith_ensures(result != nullptr) to load through it. A trusted function is assumed, never proved, so it is not
+// marked.
 void mark_returned_pointer(Function &function) {
     DISubprogram *subprogram = function.getSubprogram();
     if (subprogram == nullptr || subprogram->getType() == nullptr || !function.getReturnType()->isPointerTy()) return;
@@ -1380,8 +1382,8 @@ void pass_copies_of_readonly(UnitContext &context, CallBase &call, Function &cal
     }
 }
 
-// What the callee was proved to return (see mark_returned_pointer) is assumed of the call's value: an assumption of what
-// it points to when it is not null, or of an object of its own when it is null, so that it holds for both. The
+// What the callee was proved to return (see mark_returned_pointer) is assumed of the call's value: an assumption of
+// what it points to when it is not null, or of an object of its own when it is null, so that it holds for both. The
 // callee's return attributes are its obligation, so a caller's module does not carry them: on a call they would be a
 // check of the unknown value the callee returns.
 void assume_returned_pointer(CallBase &call, const Function &callee) {
@@ -1406,7 +1408,8 @@ void assume_returned_pointer(CallBase &call, const Function &callee) {
     SmallVector<Value *, 2> inputs = {safe, ConstantInt::get(Type::getInt64Ty(context), size)};
     SmallVector<Value *, 2> aligned = {safe, ConstantInt::get(Type::getInt64Ty(context), align)};
     builder.CreateAssumption({OperandBundleDef("dereferenceable", inputs), OperandBundleDef("align", aligned)});
-    call.setMetadata("smith.valid_return", MDNode::get(context, {})); // what it points to holds values, as a parameter's
+    call.setMetadata("smith.valid_return",
+                     MDNode::get(context, {})); // what it points to holds values, as a parameter's
 }
 
 // Replaces a call of `callee` by its contract: the slices inlined around the call.

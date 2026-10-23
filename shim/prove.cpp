@@ -195,7 +195,8 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
         switch (point.kind) {
         case prove::Kind::Requires: {
             if (point.call_site < 0 || static_cast<size_t>(point.call_site) >= unit.call_sites.size()) {
-                // the smith_requires of a function with no smith_ensures, which is inlined: there is no call of a contract
+                // the smith_requires of a function with no smith_ensures, which is inlined: there is no call of a
+                // contract
                 std::printf("  %s: smith_requires(%s) of an inlined function may be broken by its caller\n",
                             at(point.file, point.line).c_str(), point.text.c_str());
                 break;
