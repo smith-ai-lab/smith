@@ -298,9 +298,22 @@ expect "the name clang++ acts as smith c++" "$(lines "clang++ argv0=$work/bin/cl
 # project, and the folder has none.
 mkdir "$work/empty"
 for verb in lint run test; do
-    capture sh -c "cd '$work/empty' && '$smith' $verb -DX=1"
+    capture sh -c "cd '$work/empty' && SMITH_OUTPUT=full '$smith' $verb -DX=1"
     expect "$verb -DX=1: the project's verb, which needs a build.c" "smith: no build.c in this folder, and no main.smith or main.c to build by convention" \
         "$(printf '%s\n' "$err" | head -1)"
+done
+# Quiet output (#78): with SMITH_OUTPUT unset, a failing verb says it failed and still prints the error that tells the
+# user what to do, with the path of the log; with SMITH_OUTPUT=full it prints only the error.
+for verb in lint test; do
+    capture sh -c "cd '$work/empty' && env -u SMITH_OUTPUT '$smith' $verb -DX=1"
+    expect "$verb -DX=1, quiet: says it failed" "smith $verb: FAILED (status 2, " "$(printf '%s\n' "$err" | head -1 | sed 's/[0-9.]* s)$//')"
+    case $err in
+    *"smith: no build.c in this folder, and no main.smith or main.c to build by convention"*) found=yes ;;
+    *) found=no ;;
+    esac
+    expect "$verb -DX=1, quiet: ... and prints the error that says what to do" yes "$found"
+    case $err in *".smith/log/$verb.log"*) found=yes ;; *) found=no ;; esac
+    expect "$verb -DX=1, quiet: ... and the log's path" yes "$found"
 done
 # fmt lists the files git sees, and the folder is no repository.
 capture sh -c "cd '$work/empty' && GIT_CEILING_DIRECTORIES='$work' '$smith' fmt"

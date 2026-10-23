@@ -799,7 +799,9 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
 }
 
 // The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
-// waits for.
+// waits for. Each script runs with SMITH_OUTPUT=full, what `smith check` and `smith test` set beneath them (#78): the
+// scripts read the full output of the smith under test, so `smith build install` (which sets nothing) runs the same
+// tests as `smith check`. The quiet form is tested with the variable unset (tests/run.sh).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     build_check_test_parts(b);
     const char *units = config->hook ? build_units(b, binary, folder) : "";
@@ -810,12 +812,12 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
         const BuildTestScript *row = &build_test_scripts[i];
         const char *mode = row->mode != nullptr ? row->mode : "";
         SmithStep step = {
-            .command =
-                smith_cat(b,
-                          smith_list(b, "env", smith_fmt(b, "CC=%s", config->cc), smith_fmt(b, "UNITS=%s", units), "sh",
-                                     smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
-                          smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)),
-                          smith_when(b, row->shard != nullptr, smith_list(b, row->shard, nullptr)), nullptr),
+            .command = smith_cat(b,
+                                 smith_list(b, "env", smith_fmt(b, "CC=%s", config->cc),
+                                            smith_fmt(b, "UNITS=%s", units), "SMITH_OUTPUT=full", "sh",
+                                            smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
+                                 smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)),
+                                 smith_when(b, row->shard != nullptr, smith_list(b, row->shard, nullptr)), nullptr),
             .description =
                 smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
             .inputs = (const char *[]){binary,
