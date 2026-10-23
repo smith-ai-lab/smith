@@ -182,6 +182,7 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
     smith_lang_track_attribute(lang, token);
     lang->prev_member = false;
     lang->prev_tag = false;
+    char before = lang->prev_char; // the token before this one
     lang->prev_char = token->kind == SmithTokenKind_Punctuator && token->length > 0 ? token->text[0] : 0;
     if (token->kind == SmithTokenKind_Identifier) {
         SmithLangWord word = smith_lang_word(token->text, token->length);
@@ -196,8 +197,8 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
         return;
     }
     if (smith_lang_punct(token, "*")) return;
-    if (smith_lang_punct(token, "[") && lang->prev_char == '[') lang->in_attribute = true;
-    if (smith_lang_punct(token, "]") && lang->prev_char == ']') lang->in_attribute = false;
+    if (smith_lang_punct(token, "[") && before == '[') lang->in_attribute = true;
+    if (smith_lang_punct(token, "]") && before == ']') lang->in_attribute = false;
     lang->prev_member = smith_lang_punct(token, ".") || smith_lang_punct(token, "->");
     lang->typeish = false;
     lang->prev_name_length = 0;

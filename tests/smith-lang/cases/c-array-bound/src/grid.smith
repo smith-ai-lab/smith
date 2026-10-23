@@ -1,0 +1,17 @@
+module grid;
+import "k.h";
+
+struct Plain { u8 cells[c::SIDE]; };
+typedef struct { u8 cells[c::SIDE][c::depth]; u32 n; } Typed;
+struct Nested { struct { u8 x[c::SIDE * 2]; } in; u8 y[c::SIDE + 1]; };
+u8 table[c::SIDE];
+
+export struct Board { u8 cells[c::SIDE * c::SIDE]; u32 n; };
+
+export usize board_size(void) {
+    return sizeof(struct Board);
+}
+
+export usize other_sizes(void) {
+    return sizeof(struct Plain) + sizeof(Typed) + sizeof(struct Nested) + sizeof table;
+}

@@ -1,0 +1,9 @@
+import grid;
+#include <stdio.h>
+
+int main(void) {
+    struct grid::Board board = {};
+    board.cells[15] = 1;
+    printf("%zu %zu %zu\n", grid::board_size(), grid::other_sizes(), sizeof board.cells);
+    return 0;
+}
