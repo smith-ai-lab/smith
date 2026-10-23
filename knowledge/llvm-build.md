@@ -11,4 +11,4 @@ tags: [llvm, build]
 `~/.cache/smith/llvm/23.1.3-r5/{build,install}` (`scripts/llvm.sh`; it survives `smith build clean`). `check` and a plain
 build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
 install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
-which smith links. Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+which smith links. The configuration `23.1.3-r5` adds `patches/clang-constexpr-c.patch` (C function bodies in the constant evaluator for `.smith`, #97) and clang-format's tuple and slice forms (`patches/clang-format-smith.patch`, #96, #82). Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.

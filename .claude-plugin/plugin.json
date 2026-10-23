@@ -67,6 +67,7 @@
     "./.agents/skills/smith-lang/",
     "./.agents/skills/smith-lang-arrays/",
     "./.agents/skills/smith-lang-c-interop/",
+    "./.agents/skills/smith-lang-constexpr/",
     "./.agents/skills/smith-lang-generics/",
     "./.agents/skills/smith-lang-lists/",
     "./.agents/skills/smith-lang-reflection/",
