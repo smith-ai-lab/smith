@@ -107,7 +107,7 @@ if [ $hook = yes ]; then
 fi
 capture "$work/fast" assert
 expect "refusal: a normal with deviation 0 aborts" 134 "$rc"
-expect_contains "refusal: ... a failed assert, as a contract fails" "$err" "smith-trace begin assert failed"
+expect_contains "refusal: ... a failed requires, as a contract fails" "$err" "smith-trace begin requires failed"
 expect_contains "refusal: ... in the function that asked" "$err" "smith_normal_double_sample"
 
 # 5. A project gets random and the arena with smith_library (the library is a .smith module: it needs the hook).

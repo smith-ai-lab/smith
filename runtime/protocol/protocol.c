@@ -2,7 +2,11 @@
 #include "protocol.h"
 
 #include <string.h>
+#if __has_include(<smith/contract.h>)
+#include <smith/contract.h>
+#else
 #include "../../include/smith/contract.h"
+#endif
 
 const char *smith_protocol_reason_text(SmithProtocolReason reason) {
     switch (reason) {
