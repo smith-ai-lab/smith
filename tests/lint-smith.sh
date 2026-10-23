@@ -445,7 +445,7 @@ export u64 wide(usize n, u32 x, u64 y, f64 d, f32 f) {
     return n + x + y + (u64)d + (u64)f + byte + (u64)count + (u64)plain + (u64)half + (u64)letter;
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     return argc + (argv == nullptr);
 }
 EOF2
@@ -469,7 +469,7 @@ expect "smith-sized-types: every C type of a .smith file, at its place, with the
 expect "smith-sized-types: char stays, and the C spelling of main is reported like any int" "2" "$(grep -c 'sized.smith:\(1[3-9]\|2[0-9]\)' "$work/sized.out")"
 expect "smith-sized-types: the message lists the sized types" "14" "$(grep -c '(u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)' "$work/sized.out")"
 idiom smith-sized-types idiom/sized_ok.smith >"$work/sized-ok.out"
-expect "smith-sized-types: sized types, char and i32 main(i32 argc, char *argv[]) are clean" "" "$(idiom_findings <"$work/sized-ok.out")"
+expect "smith-sized-types: sized types, char and i32 main(i32 argc, char **argv) are clean" "" "$(idiom_findings <"$work/sized-ok.out")"
 printf 'unsigned f(unsigned long x) { return (unsigned)x; }\n' >idiom/sized_plain.c
 idiom smith-sized-types idiom/sized_plain.c >"$work/sized-plain.out"
 expect "smith-sized-types: a .c file is left alone" "" "$(idiom_findings <"$work/sized-plain.out")"
