@@ -1,0 +1,95 @@
+// smith_modules in `smith build`, from tests/build.sh section 11b: Clang modules, one module per header, the maps in
+// .smith/modules and the cache shared in $XDG_CACHE_HOME/smith/modules.
+module build_modules_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+// The folder of the project with its links resolved, which is how the maps name a header.
+static const char *real_dir(const scratch::Project *p) {
+    return scratch::capture(p, "pwd -P");
+}
+
+export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_dependencies(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "clang_modules");
+    char text[2048];
+    scratch::Run built = scratch::build(&p, "-v");
+    scratch::expect_status("modules: the project builds", 0, &built);
+    __builtin_snprintf(text, sizeof text,
+                       "cc -fmodules -fmodules-cache-path=%s/smith/modules -fmodules-prune-interval=604800 "
+                       "-fmodules-prune-after=2678400 -fmodule-map-file=.smith/modules/inc.modulemap "
+                       "-fmodule-map-file=.smith/modules/smith.modulemap -std=gnu23",
+                       p.cache);
+    scratch::expect_contains("modules: the compile has -fmodules", built.out, text);
+    scratch::expect_text("modules: the program runs", "2", scratch::sh(&p, "./build/app").out);
+    const char *commands = scratch::read(&p, "compile_commands.json");
+    scratch::expect_contains("modules: compile_commands.json has the module flags the build uses", commands,
+                             "-fmodules-cache-path=");
+    scratch::expect_contains("modules: compile_commands.json has the module flags the build uses (the shared cache)",
+                             commands, "smith/modules");
+    scratch::expect_text("modules: a map per folder and one for smith's headers",
+                         ".smith/modules/inc.modulemap .smith/modules/smith.modulemap",
+                         scratch::sh(&p, "echo .smith/modules/*.modulemap").out);
+    __builtin_snprintf(text, sizeof text, "module inc_b { header \"%s/inc/b.h\" export * }", real_dir(&p));
+    scratch::expect_contains("modules: a header is a module of its own",
+                             scratch::read(&p, ".smith/modules/inc.modulemap"), text);
+    scratch::expect_contains("modules: smith's headers are modules",
+                             scratch::read(&p, ".smith/modules/smith.modulemap"), "module smith_arena {");
+    const char *deps = scratch::sh(&p, "smith build -t deps build/y.o").out;
+    scratch::expect_contains("modules: the depfile lists the header y.c uses", deps, "inc/c.h");
+    scratch::expect_lacks("modules: y.c depends on no other header (a.h)", deps, "inc/a.h");
+    scratch::expect_lacks("modules: y.c depends on no other header (b.h)", deps, "inc/b.h");
+    deps = scratch::sh(&p, "smith build -t deps build/x.o").out;
+    scratch::expect_contains("modules: the depfile lists the module map", deps, ".smith/modules/inc.modulemap");
+    scratch::expect_contains("modules: the depfile lists b.h, which x.c includes", deps, "inc/b.h");
+    scratch::expect_contains("modules: the depfile lists a.h, which b.h includes", deps, "inc/a.h");
+    scratch::expect_lacks("modules: x.c does not depend on c.h", deps, "inc/c.h");
+    scratch::Run again = scratch::build(&p, "");
+    scratch::expect_contains("modules: a no-op rebuild does nothing", again.out, "no work to do");
+}
+
+export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_shared(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "clang_modules");
+    (void)scratch::build(&p, "");
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "echo '// edited' >>inc/c.h");
+    scratch::Run edit_c = scratch::build(&p, "-v");
+    scratch::expect_contains("modules: editing c.h rebuilds y.c", edit_c.out, "-c y.c");
+    scratch::expect_lacks("modules: editing c.h rebuilds only y.c (x.c)", edit_c.out, "-c x.c");
+    scratch::expect_lacks("modules: editing c.h rebuilds only y.c (ab.c)", edit_c.out, "-c ab.c");
+
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "echo '// edited' >>inc/a.h");
+    scratch::Run edit_a = scratch::build(&p, "-v");
+    scratch::expect_contains("modules: editing a.h rebuilds x.c, which reaches it through b.h", edit_a.out, "-c x.c");
+    scratch::expect_contains("modules: editing a.h rebuilds ab.c", edit_a.out, "-c ab.c");
+    scratch::expect_lacks("modules: editing a.h does not rebuild y.c", edit_a.out, "-c y.c");
+    scratch::expect_text("modules: the program still runs", "2", scratch::sh(&p, "./build/app").out);
+
+    scratch::sleep(&p, 1000);
+    scratch::write(&p, "inc/d.h", "#pragma once\nint d_value(void);\n");
+    scratch::Run added = scratch::build(&p, "-v");
+    scratch::expect_contains("modules: a new header changes the map and rebuilds x.c", added.out, "-c x.c");
+    scratch::expect_contains("modules: a new header rebuilds y.c", added.out, "-c y.c");
+    scratch::Run settled = scratch::build(&p, "");
+    scratch::expect_contains("modules: then a no-op again", settled.out, "no work to do");
+    scratch::Run flag = scratch::build(&p, "-DEXTRA=-DOTHER -v");
+    scratch::expect_status("modules: a flag change builds", 0, &flag);
+    scratch::expect_contains("modules: a flag change recompiles", flag.out, "-DOTHER");
+    scratch::expect_text("modules: the program runs after the flag change", "2", scratch::sh(&p, "./build/app").out);
+    (void)scratch::sh(&p, "rm -rf build");
+    scratch::Run cleaned = scratch::build(&p, "");
+    scratch::expect_status("modules: the cache survives a clean of build/ and is reused", 0, &cleaned);
+    scratch::expect_contains("modules: the cache is the shared one",
+                             scratch::sh(&p, "ls \"$XDG_CACHE_HOME/smith/modules\"").out, "modules.timestamp");
+    scratch::expect_text("modules: and nothing is cached under .smith", "no",
+                         scratch::exists(&p, ".smith/cache") ? "yes" : "no");
+    if (scratch::sh(&p, "smith lsp --version").status == 0) {
+        // The sample is not what smith-effects tests; its checks are off.
+        scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
+        scratch::Run lsp = scratch::sh(
+            &p, "smith lsp --check=\"$(pwd -P)/x.c\" 2>&1 >/dev/null | grep -v 'tweak:' | grep 'E\\[' || true");
+        scratch::expect_text("modules: clangd reports no errors in x.c", "", lsp.out);
+    }
+}

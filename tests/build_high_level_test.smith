@@ -1,0 +1,76 @@
+// The high level of build.c, from tests/build.sh section 9h: smith_object, smith_program and smith_compile_commands:
+// the commands -v shows, compile_commands.json whole, what a no-op and an edit rebuild, and the entry for build.c
+// itself.
+module build_high_level_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+// The mtime of a file in seconds, as perl reads it.
+static const char *mtime(const scratch::Project *p, const char *file) {
+    char command[256];
+    __builtin_snprintf(command, sizeof command, "perl -e 'print((stat(\"%s\"))[9])'", file);
+    return scratch::capture(p, command);
+}
+
+export void test_build_high_level_objects_programs_and_the_compile_database(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "high_level");
+    (void)scratch::sh(&p, "cc -c extra.c -o extra.o && ar rcs libextra.a extra.o");
+    scratch::Run built = scratch::build(&p, "-v");
+    scratch::expect_status("high level: the program builds", 0, &built);
+    scratch::expect_text("high level: the program runs", "hi 7", scratch::sh(&p, "./build/app 2>/dev/null").out);
+    scratch::expect_contains(
+        "high level: -v shows the compile", built.out,
+        "cc -std=gnu23 '-DGREETING=\"hi\"' -MMD -MF build/main.d -c 'src dir/main.c' -o build/main.o");
+    scratch::expect_contains("high level: -v shows the link", built.out,
+                             "cc build/main.o build/util.o -lm -framework Foundation libextra.a -o build/app");
+    (void)scratch::sh(&p, "sed \"s|@DIR@|$(pwd -P)|\" expected.json.in >expected.json");
+    scratch::expect_text("compile_commands.json: the whole file", scratch::read(&p, "expected.json"),
+                         scratch::read(&p, "compile_commands.json"));
+    scratch::expect_text("compile_commands.json: ends with a newline", "]",
+                         scratch::capture(&p, "tail -c 2 compile_commands.json | tr -d '\\n' | tail -c 1"));
+    const char *before = mtime(&p, "compile_commands.json");
+    scratch::sleep(&p, 1000);
+    scratch::Run noop = scratch::build(&p, "");
+    scratch::expect_contains("high level: a no-op build does nothing", noop.out, "no work to do");
+    scratch::expect_text("compile_commands.json: the mtime is unchanged on a no-op", before,
+                         mtime(&p, "compile_commands.json"));
+    scratch::sleep(&p, 1000);
+    scratch::write(&p, "util.h", "int util_value(void);\n// edited\n");
+    scratch::Run header = scratch::build(&p, "-v");
+    scratch::expect_contains("high level: a header edit rebuilds the includer", header.out, "build/util.o");
+    scratch::expect_contains("high level: a header edit relinks", header.out, "-o build/app");
+    scratch::expect_text("high level: a header only util.c includes does not rebuild main", "no",
+                         scratch::contains(header.out, "src dir/main.c") ? "yes" : "no");
+    scratch::expect_text("high level: a header edit leaves compile_commands.json alone", before,
+                         mtime(&p, "compile_commands.json"));
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "touch libextra.a");
+    scratch::Run library = scratch::build(&p, "-v");
+    scratch::expect_contains("high level: a changed library file relinks", library.out, "-o build/app");
+    (void)scratch::build(&p, "");
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "touch Foundation");
+    scratch::Run framework = scratch::build(&p, "");
+    scratch::expect_contains("high level: -framework X's name is not a file", framework.out, "no work to do");
+    (void)scratch::sh(&p,
+                      "sed -i.bak 's/\"-std=gnu23\", \"-DGREETING/\"-std=gnu23\", \"-Wall\", \"-DGREETING/' build.c");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("compile_commands.json: a changed flag changes it", "yes",
+                         scratch::contains(scratch::read(&p, "compile_commands.json"), "\"-Wall\"") ? "yes" : "no");
+    // the build.c entry compiles build.c with exactly these arguments
+    const char *arguments = "$(sed -n '/\"file\": \"build.c\"/,/^    \\]/p' compile_commands.json | sed -n 's/^      "
+                            "\"\\(.*\\)\",\\{0,1\\}$/\\1/p' | "
+                            "tail -n +2 | grep -v '^-c$' | grep -v '^build.c$')";
+    char command[1024];
+    __builtin_snprintf(command, sizeof command, "smith cc %s -fsyntax-only build.c 2>&1; echo \"$?\"", arguments);
+    scratch::expect_text("build.c entry: clang -fsyntax-only with its arguments succeeds", "0",
+                         scratch::sh(&p, command).out);
+    __builtin_snprintf(command, sizeof command, "echo %s", arguments);
+    const char *entry_flags = scratch::capture(&p, command);
+    const char *bootstrap_flags = scratch::capture(
+        &p, "sed -n 's/.*command = [^ ]* \\(cc \\)\\{0,1\\}\\(-std=gnu23.*-I \\.smith\\/include\\) -MMD.*/\\2/p' "
+            ".smith/bootstrap/build.ninja | head -n 1");
+    scratch::expect_text("build.c entry: its flags are the bootstrap's", bootstrap_flags, entry_flags);
+}

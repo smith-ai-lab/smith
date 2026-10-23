@@ -1,0 +1,3 @@
+#!/bin/sh
+case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\nidentity %s\n' "$(cat "$0.id")" ;; *) echo "$0" >>runs ;; esac
+while [ $# -gt 0 ]; do if [ "$1" = -o ]; then : >"$2"; fi; shift; done

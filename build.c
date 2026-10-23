@@ -637,10 +637,9 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
-    smith_compile_command(b, config->cc, "tests/arena_test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "tests/contract_test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "tests/json_test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "tests/text_test.smith", smith_flags);
+    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)); // the units runner's files
+    for (size_t i = 0; tests[i] != nullptr; i++)
+        smith_compile_command(b, config->cc, tests[i], smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -764,7 +763,7 @@ static const char *build_units(SmithBuild *b, const char *folder) {
                                           "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
     SmithTests tests = {
         .compiler = compiler,
-        .sources = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr)),
+        .sources = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
         .output = smith_fmt(b, "%s/units/tests", folder),

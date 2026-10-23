@@ -17,3 +17,4 @@ tests/protocol/test_protocol_mcp.c
 bootstrap/**
 # The owner's scan reference, copied as it is (the hash of each file is in tests/autodiff/scan/COPIED.sha256).
 tests/autodiff/scan/**
+tests/build_fixtures/**

@@ -1,0 +1,50 @@
+[
+  {
+    "directory": "@DIR@",
+    "file": "src dir/main.c",
+    "output": "build/main.o",
+    "arguments": [
+      "cc",
+      "-std=gnu23",
+      "-DGREETING=\"hi\"",
+      "-MMD",
+      "-MF",
+      "build/main.d",
+      "-c",
+      "src dir/main.c",
+      "-o",
+      "build/main.o"
+    ]
+  },
+  {
+    "directory": "@DIR@",
+    "file": "util.c",
+    "output": "build/util.o",
+    "arguments": [
+      "cc",
+      "-MMD",
+      "-MF",
+      "build/util.d",
+      "-c",
+      "util.c",
+      "-o",
+      "build/util.o"
+    ]
+  },
+  {
+    "directory": "@DIR@",
+    "file": "build.c",
+    "arguments": [
+      "smith-cc",
+      "-std=gnu23",
+      "-g",
+      "-O0",
+      "-Wall",
+      "-Wextra",
+      "-I",
+      ".smith/include",
+      "-c",
+      "build.c"
+    ]
+  }
+]

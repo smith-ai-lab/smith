@@ -1,0 +1,3 @@
+#!/bin/sh
+case " $* " in *" a.c "*) echo "w3" >>wrapped ;; esac
+exec cc "$@"

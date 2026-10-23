@@ -1,0 +1,138 @@
+// `.smith` modules in `smith build`, from tests/build.sh section 15: smith_object writes each module's header first,
+// then compiles with -I .smith/include (docs/smith-lang.md). A project of three modules and a C file that includes a
+// module's header (the corpus case module-three), its edits, an import cycle, a module whose name does not match its
+// path, a plain `.smith` file, and the compiler's helpers. The shell keeps the checks of a smith with no token hook.
+module build_lang_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char expected_output[] =
+    "frames=15 name=last.replay length=11 version=3 mode=1 root=4.0 eof=-1\ncounter=8\nchecksum=1026";
+
+// What a -v build ran: the objects it compiled, as a sorted list of the sources.
+constexpr char compiled_command[] =
+    "smith build -v 2>&1 | sed -n 's/.* -c \\(src\\/[^ ]*\\) -o .*/\\1/p' | sort | tr '\\n' ' '";
+
+// Copies the corpus case's sources and the program that builds them, with a smith-cc of its own next to them.
+static scratch::Project lang_project(io::Io *io, const char *source) {
+    scratch::Project p = scratch::project(io, "p", "lang_project");
+    (void)scratch::sh(
+        &p, "mkdir bin && { ln -f \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
+    char command[512];
+    __builtin_snprintf(command, sizeof command, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/%s/src\" src", source);
+    (void)scratch::sh(&p, command);
+    return p;
+}
+
+export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("modules: a project of three modules and a C file builds", 0, &built);
+    scratch::expect_text("modules: and runs", expected_output, scratch::sh(&p, "./build/app 2>&1").out);
+    scratch::expect_text("modules: each module has its header in .smith/include", "yes yes",
+                         scratch::sh(&p, "[ -f .smith/include/lib/text.h ] && printf yes; printf ' '; [ -f "
+                                         ".smith/include/game/replay.h ] && printf yes")
+                             .out);
+    scratch::expect_contains("modules: a header lists the modules it imports",
+                             scratch::read(&p, ".smith/include/game/replay.h"), "// smith-imports: lib::text");
+    scratch::expect_contains("modules: compile_commands.json lists a .smith source with -I .smith/include",
+                             scratch::read(&p, "compile_commands.json"), "\"file\": \"src/game/replay.smith\"");
+    scratch::expect_contains("modules: with its flags, and the language clangd is told",
+                             scratch::sh(&p, "tr -d ' \\n' <compile_commands.json").out,
+                             "\"arguments\":[\"bin/smith-cc\",\"-x\",\"c\",\"-I\",\".smith/include\",\"-std=gnu23\"");
+    scratch::Run second = scratch::build(&p, "");
+    scratch::expect_contains("modules: the second build does nothing", second.out, "no work to do");
+    // A C object that reads a module's header waits for every header, as a .smith compile does: its header may include
+    // another that its inputs do not name, and one written after the compile started would make the next build compile
+    // it again (found under load: the second build recompiled src/checksum.c and relinked).
+    scratch::expect_text("modules: a C object that reads a module's header waits for all the headers", "yes",
+                         scratch::sh(&p, "grep -A3 '^build build/src/checksum.c.o' .smith/build.ninja | grep -q '|| "
+                                         ".smith/imports.stamp' && echo yes")
+                             .out);
+
+    const char *header_time_command = "stat -f %m .smith/include/lib/text.h";
+    const char *header_time = scratch::sh(&p, header_time_command).out;
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "printf '\\nusize other_helper(void) {\\n    return 5;\\n}\\n' >>src/lib/text.smith");
+    scratch::expect_text("modules: an edit to a module's body recompiles that module alone", "src/lib/text.smith ",
+                         scratch::sh(&p, compiled_command).out);
+    scratch::expect_text("modules: and leaves its header's time alone", header_time,
+                         scratch::sh(&p, header_time_command).out);
+    scratch::expect_text("modules: and the program still runs", expected_output,
+                         scratch::sh(&p, "./build/app 2>&1").out);
+
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "printf '\\nexport usize extra(void) {\\n    return 2;\\n}\\n' >>src/game/replay.smith");
+    scratch::expect_text("modules: an edit to a module's exports recompiles it and its importers, and the C file that "
+                         "includes the header",
+                         "src/checksum.c src/game/replay.smith src/main.smith ", scratch::sh(&p, compiled_command).out);
+    scratch::expect_text("modules: and the program still runs after an export is added", expected_output,
+                         scratch::sh(&p, "./build/app 2>&1").out);
+    scratch::Run settled = scratch::build(&p, "");
+    scratch::expect_contains("modules: then it settles", settled.out, "no work to do");
+
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p, "printf '\\n// a comment\\n' >>src/main.smith");
+    scratch::expect_text("modules: an edit to an importer's body recompiles it alone", "src/main.smith ",
+                         scratch::sh(&p, compiled_command).out);
+    scratch::expect_contains("modules: the header steps are in the manifest", scratch::read(&p, ".smith/build.ninja"),
+                             "bin/smith-cc --smith-header src/lib/text.smith -o .smith/include/lib/text.h");
+}
+
+// An import cycle is found from the headers, before any compile starts, and named.
+export void test_build_lang_an_import_cycle_fails_the_build(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    (void)scratch::sh(&p, "rm -rf src && mkdir -p src && cp -R "
+                          "\"$SMITH_REPO/tests/smith-lang/cases/error-import-cycle/src/cycle\" src/cycle");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("modules: an import cycle fails the build", &run);
+    char both[8192];
+    __builtin_snprintf(both, sizeof both, "%s%s", run.out, run.err);
+    scratch::expect_contains("modules: and names the cycle", both, "import cycle: cycle::a -> cycle::b -> cycle::a");
+    scratch::expect_text("modules: before any compile runs", "", scratch::sh(&p, "ls build/src/cycle 2>/dev/null").out);
+}
+
+// A module whose name does not match its path is found once, when build.c runs.
+export void test_build_lang_a_module_that_does_not_match_its_path_fails_the_build(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    scratch::write(&p, "src/wrong.smith", "module right::name;\n\nexport int f(void) { return 1; }\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("modules: a module that does not match its path fails the build", &run);
+    scratch::expect_contains("modules: and says where it must be", run.err,
+                             "src/wrong.smith declares module right::name, so its path must end in right/name.smith");
+}
+
+// A plain .smith file (no module line) compiles with the same flags and needs no header.
+export void test_build_lang_a_plain_smith_file_builds_with_no_header(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    (void)scratch::sh(&p, "rm -rf src && mkdir -p src && cp "
+                          "\"$SMITH_REPO/tests/smith-lang/cases/sized-types/src/main.smith\" src/main.smith");
+    scratch::Run run = scratch::build(&p, "");
+    char status[32];
+    __builtin_snprintf(status, sizeof status, "%d %s", run.status,
+                       scratch::exists(&p, ".smith/include/main.h") ? "yes" : "no");
+    scratch::expect_text("modules: a plain .smith file builds, with no header", "0 no", status);
+}
+
+// The helpers are under the compiler; the top level is only verbs.
+export void test_build_lang_the_helpers_are_under_the_compiler(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    scratch::Run header =
+        scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h; echo \"$? $(sed -n 3p header.h)\"");
+    scratch::expect_text("modules: smith cc --smith-header writes a header", "0 // smith-module: lib::text",
+                         header.out);
+    (void)scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h; cp header.h header.copy; touch -t "
+                          "200001010000 header.h");
+    (void)scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h");
+    scratch::expect_text("modules: an unchanged header is not written again", "200001010000",
+                         scratch::sh(&p, "stat -f %Sm -t %Y%m%d%H%M header.h").out);
+    scratch::Run gone = scratch::sh(&p, "smith --smith-header src/lib/text.smith -o header.h");
+    scratch::expect_failure("modules: the top-level --smith-header is gone", &gone);
+    scratch::expect_contains("modules: with the way to run it", gone.err, "smith cc --smith-header");
+    scratch::Run lower_gone = scratch::sh(&p, "smith --smith-lower src/lib/text.smith");
+    scratch::expect_failure("modules: the top-level --smith-lower is gone", &lower_gone);
+    scratch::Run lowered = scratch::sh(&p, "smith cc --smith-lower src/lib/text.smith");
+    scratch::expect_contains("modules: smith cc --smith-lower prints the lowering", lowered.out, "lib_text_make");
+}

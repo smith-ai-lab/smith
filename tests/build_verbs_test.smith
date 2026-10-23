@@ -1,0 +1,133 @@
+// The verbs in `smith build`, from tests/build.sh section 13b (issue #40): no task or alias is named after one, .test
+// marks a project's tests, and every run of build.c writes what the verbs read, .smith/build.info and
+// .smith/compile_commands.json (docs/build-c.md).
+module build_verbs_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static void refuses_a_task_and_an_alias_named(io::Io *io, const char *verb) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    char text[1024];
+    char name[256];
+    __builtin_snprintf(text, sizeof text,
+                       "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                       "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                       "    smith_task(b, \"%s\", &step);\n    smith_default(b, step.outputs);\n}\n",
+                       verb);
+    scratch::write(&p, "build.c", text);
+    scratch::Run task = scratch::build(&p, "");
+    __builtin_snprintf(name, sizeof name, "verbs: a task named %s is refused", verb);
+    scratch::expect_status(name, 2, &task);
+    __builtin_snprintf(name, sizeof name, "verbs: ... %s names the verb", verb);
+    __builtin_snprintf(text, sizeof text,
+                       "task '%s' is named after a verb; `smith %s` does the same thing in every project", verb, verb);
+    scratch::expect_contains(name, task.err, text);
+    __builtin_snprintf(text, sizeof text,
+                       "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                       "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                       "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"%s\", step.outputs);\n"
+                       "    smith_default(b, step.outputs);\n}\n",
+                       verb);
+    scratch::write(&p, "build.c", text);
+    scratch::Run alias = scratch::build(&p, "");
+    __builtin_snprintf(name, sizeof name, "verbs: an alias named %s is refused", verb);
+    scratch::expect_status(name, 2, &alias);
+    __builtin_snprintf(name, sizeof name, "verbs: ... and says alias (%s)", verb);
+    __builtin_snprintf(text, sizeof text, "alias '%s' is named after a verb", verb);
+    scratch::expect_contains(name, alias.err, text);
+}
+
+export void test_build_verbs_fmt_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "fmt");
+}
+
+export void test_build_verbs_lint_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "lint");
+}
+
+export void test_build_verbs_docs_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "docs");
+}
+
+export void test_build_verbs_prove_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "prove");
+}
+
+export void test_build_verbs_check_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "check");
+}
+
+export void test_build_verbs_run_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "run");
+}
+
+export void test_build_verbs_test_is_not_a_task_or_an_alias(io::Io *io) {
+    refuses_a_task_and_an_alias_named(io, "test");
+}
+
+export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "verbs_step");
+    scratch::Run first = scratch::build(&p, "smith_tests");
+    scratch::expect_status("verbs: .test on a step: smith_tests builds it", 0, &first);
+    scratch::expect_count("verbs: ... it ran once", 1, scratch::lines(&p, "runs"));
+    scratch::expect_text(
+        "verbs: ... smith_tests names its output", "yes",
+        scratch::sh(&p, "grep -q '^build smith_tests: phony build/checked$' .smith/build.ninja && echo yes || echo no")
+            .out);
+    (void)scratch::build(&p, "smith_tests");
+    scratch::expect_count("verbs: ... a second run is incremental (a task would rerun)", 1, scratch::lines(&p, "runs"));
+    scratch::sleep(&p, 50);
+    scratch::write(&p, "in.txt", "y\n");
+    (void)scratch::build(&p, "smith_tests");
+    scratch::expect_count("verbs: ... and an edited input reruns it", 2, scratch::lines(&p, "runs"));
+}
+
+// How many lines of a file match a pattern, as grep -c counts them ("0" when none).
+static const char *matches(const scratch::Project *p, const char *file, const char *pattern) {
+    char command[1024];
+    __builtin_snprintf(command, sizeof command, "grep -c %s %s", pattern, file);
+    return scratch::capture(p, command);
+}
+
+export void test_build_verbs_build_info_and_the_compile_database_say_what_the_verbs_read(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "verbs_info");
+    scratch::Run run = scratch::build(&p, "build/main.o");
+    scratch::expect_status("verbs: build.c runs with a task test made by smith_tests", 0, &run);
+    const char *info = ".smith/build.info";
+    scratch::expect_text("verbs: build.info has the first compile of main.c, once, with its flags", "1",
+                         matches(&p, info, "'^compile\tmain.c\t-DFIRST\t-MMD'"));
+    scratch::expect_text("verbs: ... not its second compile", "0", matches(&p, info, "-e -DSECOND"));
+    scratch::expect_text("verbs: ... helper.c, which reads a generated file", "1",
+                         matches(&p, info, "'^compile\thelper.c\t'"));
+    scratch::expect_text("verbs: ... other.c, which smith_compile_command declares", "1",
+                         matches(&p, info, "'^compile\tother.c\t.*-DOTHER'"));
+    scratch::expect_text("verbs: ... the tests' source", "1", matches(&p, info, "'^compile\ttests/test_one.c\t'"));
+    scratch::expect_text("verbs: ... build.c itself", "1", matches(&p, info, "'^compile\tbuild.c\t'"));
+    scratch::expect_text("verbs: ... no generated source", "0", matches(&p, info, "made.c"));
+    scratch::expect_text("verbs: ... no source under .smith/", "0", matches(&p, info, "'^compile\t.smith/'"));
+    scratch::expect_text("verbs: ... the task of smith_tests is a test", "1", matches(&p, info, "'^test\ttest$'"));
+    scratch::expect_text("verbs: ... the programs", "1", matches(&p, info, "'^program\tbuild/program$'"));
+    scratch::expect_text("verbs: ... the runner smith_tests makes, named as the runner", "1",
+                         matches(&p, info, "'^runner\tbuild/tests$'"));
+    scratch::expect_text("verbs: ... the runner is also a program, with no unit line of its own", "1",
+                         matches(&p, info, "'^program\tbuild/tests$'"));
+    scratch::expect_text("verbs: ... the default, its alias opened", "1",
+                         matches(&p, info, "'^default\tbuild/program$'"));
+    const char *database = ".smith/compile_commands.json";
+    scratch::expect_text("verbs: the compile database lists main.c once", "1",
+                         matches(&p, database, "'\"file\": \"main.c\"'"));
+    scratch::expect_text("verbs: ... with the first compile's flags", "1", matches(&p, database, "-e -DFIRST"));
+    scratch::expect_text("verbs: ... not the second's", "0", matches(&p, database, "-e -DSECOND"));
+    scratch::expect_text(
+        "verbs: smith_needs is the generated files the compiles read", "yes",
+        scratch::sh(&p, "grep -q '^build smith_needs: phony build/made.c' .smith/build.ninja && echo yes || echo no")
+            .out);
+    scratch::expect_text(
+        "verbs: smith_tests is the test tasks", "yes",
+        scratch::sh(&p, "grep -q '^build smith_tests: phony test$' .smith/build.ninja && echo yes || echo no").out);
+    (void)scratch::build(&p, "smith_needs");
+    scratch::expect_text("verbs: building smith_needs makes the generated file", "yes",
+                         scratch::exists(&p, "build/made.c") ? "yes" : "no");
+}
