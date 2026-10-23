@@ -447,7 +447,8 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
 - Small Conventional Commits. Push `main` after every merge: the plugin's skills come from GitHub, so other agents
   learn a feature only once it is pushed. The commit that finishes an issue says `Closes #N` in its message, so the push
   closes it; a partial step says `Part of #N`.
-- Finish open issues before starting new work; a new idea becomes an issue, not a branch.
+- Finish open issues before starting new work; a new idea becomes an issue, not a branch. The order is the pinned
+  roadmap, #73: take the first unchecked item of a track nothing running blocks, and give a new issue its place there.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 
 ## checkers (`~/Documents/checkers`)
