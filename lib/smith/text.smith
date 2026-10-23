@@ -765,7 +765,7 @@ bool f32_reads_back(u64 q, i64 s, u32 bits) {
 [[smith::c_name("smith_text_write_f32")]] export usize write_f32(char *out, f32 value) {
     u32 bits = __builtin_bit_cast(u32, value);
     u32 field = (bits >> 23) & 0xff;
-    if (field == 0xff) stop("infinity and nan have no text");
+    check(field != 0xff); // infinity and nan have no text
     usize used = 0;
     if ((bits >> 31) != 0) out[used++] = '-';
     u32 fraction = bits & 0x7fffff;

@@ -602,7 +602,7 @@ __SIZE_TYPE__ smith_text_write_f32(char *out, float value);
 __SIZE_TYPE__ smith_text_write_f32(char *out, float value) {
 __UINT32_TYPE__ bits = __builtin_bit_cast(__UINT32_TYPE__, value);
 __UINT32_TYPE__ field = (bits >> 23) & 0xff;
-if (field == 0xff) smith_text_stop("infinity and nan have no text");
+smith_text_check(field != 0xff);
 __SIZE_TYPE__ used = 0;
 if ((bits >> 31) != 0) out[used++] = '-';
 __UINT32_TYPE__ fraction = bits & 0x7fffff;
