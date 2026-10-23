@@ -41,7 +41,7 @@ A smith whose clang has the token hook (patches/clang-token-hook.patch, applied 
 
 `smith_object(b, &(SmithObject){.compiler = "smith-cc", .source = "src/game/replay.smith", ...})` in build.c is all a project does: `smith build` writes each module's header first (`.smith/include/a/b.h`, only when it changes), then compiles with `-I .smith/include`, reports an import cycle before any compile, and rebuilds only what an edit touches (a module's body: that module; its exports: its importers). See `smith-build` (".smith sources").
 
-A project's build file can be `.smith` too: a root `build.smith` with `import smith::build;` and a plain `void build(build::Build *b)` (no `module` line, so no `export`) calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build` ("build.smith").
+A project's build file can be `.smith` too: a root `build.smith` that is `module build;` with `import smith::build;` and `export void build(build::Build *b)` calls the build API by module names (`build::app`, `build::object`, `build::Build`; `smith build --dump-config` prints one). The full smith is needed to compile it. See `smith-build` ("build.smith").
 
 ## The target and `if constexpr`: no preprocessor in `.smith`
 

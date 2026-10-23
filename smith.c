@@ -1623,9 +1623,11 @@ static void smith_dump_call(const char *open, const char *entry, const char *clo
 static void smith_dump_smith(void) {
     fputs("// build.smith: what `smith build` does with no build file (docs/build-c.md, Conventions), written out by\n"
           "// `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.\n"
+          "module build;\n"
+          "\n"
           "import smith::build;\n"
           "\n"
-          "void build(build::Build *b) {\n",
+          "export void build(build::Build *b) {\n",
           stdout);
     smith_dump_call("    build::app(b, &(build::App){\n", "main.smith", "    });\n");
     fputs("    build::app_tests(b, &(build::AppTests){.folder = \"tests\"});\n}\n", stdout);

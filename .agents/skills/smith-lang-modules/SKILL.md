@@ -28,6 +28,7 @@ export u64 checksum(const u8 *data, usize size); // no body: defined in C or C++
 ## The rules
 
 - `x::name` reaches a module's member (`struct x::Pair`, `x::version`); `x.` is always a value. A variable may share its module's name (`io::Io io = io::make();`): `io` is a binding only where `::` follows, and never inside an attribute (`[[gnu::unused]]`).
+- **An import named like the module's own last name takes `x::`**: in `module build;` with `import smith::build;`, `build::app(...)` is the import's and the module's own `build` is written unqualified (`build(b)`). That is the build file: `export void build(build::Build *b)` in `module build;` keeps the C name `build`.
 - `import` comes before any declaration; `#include` stays allowed anywhere.
 - **One command builds a few modules**: `smith cc main.smith foo.smith -o prog`. `import foo` with no `foo.h` on the include path reads `foo.smith`: among the `.smith` files of the command first, then at `dir/foo.smith` for a module whose root is `dir` (`a::b` is `dir/a/b.smith`; the root of `module game::main;` in `src/game/main.smith` is `src`, and a file with no `module` line has its own folder). `smith cc -c main.smith` alone finds `foo.smith` by that path. The interface is made in memory and nothing is written; link every source, as in C. `smith build` writes the headers instead and they win.
 - `export` applies to functions, typedefs, struct/union/enum tags, enum constants, `constexpr` constants and globals, one name per declaration. Everything else in a module is private (`static`).

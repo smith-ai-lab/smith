@@ -204,6 +204,8 @@ capture smith build --dump-config
 expect "dump: a .smith project: status 0" 0 "$rc"
 printf '%s\n' "$out" >"$work/dumped.smith"
 expect_contains "dump: ... is a build.smith of the high-level calls" "$out" "import smith::build;"
+expect_contains "dump: ... is the module build" "$out" "module build;"
+expect_contains "dump: ... exports the entry point" "$out" "export void build(build::Build *b) {"
 expect_contains "dump: ... names the entry" "$out" '.entry = "main.smith",'
 expect_contains "dump: ... and the program" "$out" '.name = "dump",'
 expect_contains "dump: ... and the tests folder" "$out" 'build::app_tests(b, &(build::AppTests){.folder = "tests"});'

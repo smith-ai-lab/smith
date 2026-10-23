@@ -25,12 +25,14 @@ A folder with no `build.c` and a `main.smith` or `main.c` at its root builds, ru
 
 ## build.smith: the same build file in `.smith`
 
-A root `build.smith` is the build file when there is no `build.c` (both is an error naming both; smith's own repository stays `build.c`). The full smith compiles it as a `.smith` file; the stage0 refuses it (`build.smith needs the full smith`). The verbs, `smith lint` included (it lints the file as written), work on it as on a build.c. It has no `module` line, so it defines a plain `void build(build::Build *b)` (no `export`):
+A root `build.smith` is the build file when there is no `build.c` (both is an error naming both; smith's own repository stays `build.c`). The full smith compiles it as a `.smith` file; the stage0 refuses it (`build.smith needs the full smith`). The verbs, `smith lint` included (it lints the file as written), work on it as on a build.c. It is `module build;` and defines `export void build(build::Build *b)`, which keeps the C name `build` that smith's build program calls (a file with no `module` line and a plain `void build(...)` still works, but `smith lint` suggests the module line). Inside `module build;` the import `build` wins when written with `::`: `build::app` is the API's, and the module's own `build` is written unqualified:
 
 ```smith
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});
     build::app_tests(b, &(build::AppTests){});
     build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hi", nullptr)});
@@ -40,6 +42,8 @@ void build(build::Build *b) {
 A `build::Step` is a C struct, so it is written as a declaration (`build::Step step = {...};`) or a compound literal (`(build::Step){...}`); there is no `build::Step{...}` and no `auto step = build::Step{...}`. `build::step` and `build::task` take the step's address and replace its lists with their own copies, so one `Step` is never passed to two calls. A shape you want twice is a function that returns a new `Step` from a designated initializer on each call:
 
 ```smith
+module build;
+
 import smith::build;
 
 // One shape, a new Step on every call.
@@ -47,7 +51,7 @@ build::Step greet(build::Build *b, const char *word) {
     return (build::Step){.command = build::list(b, "echo", word, nullptr)};
 }
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::Step app = {
         .command = build::list(b, "smith-cc", "-std=gnu2y", "$in", "-o", "$out", nullptr),
         .inputs = build::list(b, "main.smith", nullptr),

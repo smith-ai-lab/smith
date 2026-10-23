@@ -590,6 +590,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (body) {
             auto renamed = renames.find(info);
             if (renamed != renames.end()) {
+                if (smith_lang_import_name(lang, info->getNameStart(), info->getLength())) return Fast::No;
                 bool parameter = smith_lang_param_name(lang, info->getNameStart(), info->getLength());
                 if (before != tok::period && before != tok::arrow && !parameter) tok.setIdentifierInfo(renamed->second);
                 return Fast::Kept;

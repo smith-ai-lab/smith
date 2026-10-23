@@ -1147,14 +1147,18 @@ inputs, and defer (`smith_defer`) what a generated Makefile (game's `build/meshe
 **`build.smith`.** A project's root may hold `build.smith` instead of `build.c` (issue #43). It is the same build file
 in `.smith`: `smith build` compiles it as a `.smith` file (C2y, `smith cc build.smith`, through the same bootstrap
 manifest as a build.c and the embedded `.smith/conventions.c`) and links it with the same runtime, so the verbs (`run`,
-`test`, `lint`, `prove`, `check`, `docs`) work on it exactly as on a build.c. It has no `module` line: a file without
-one lowers nothing, so `void build(build::Build *b)` is the function the runtime calls, and `export` is not used (a
-file with no `module` line has no exports). `import smith::build;` gives the API:
+`test`, `lint`, `prove`, `check`, `docs`) work on it exactly as on a build.c. It is `module build;`, and the
+function the runtime calls is `export void build(build::Build *b)`: in a module named `build` that one export keeps the
+C name `build` (no `[[smith::c_name]]` needed), and the import `build` wins over the module's own name when written
+with `::` (`build::app` is the API's, the module's `build` is written unqualified). A file with no `module` line and a
+plain `void build(...)` still builds. `import smith::build;` gives the API:
 
 ```c
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});
     build::app_tests(b, &(build::AppTests){.folder = "tests"});
     build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hello", nullptr)});
@@ -1202,9 +1206,11 @@ API and the language of the entry point, with the defaults spelled out as fields
 $ smith build --dump-config > build.smith     # a main.smith project
 // build.smith: what `smith build` does with no build file (docs/build-c.md, Conventions), written out by
 // `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){
         .entry = "main.smith",
         .name = "hello",

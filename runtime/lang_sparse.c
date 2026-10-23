@@ -299,6 +299,13 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
     bool name = !token->foreign && token->kind == SmithTokenKind_Identifier && !smith_lang_sparse_member(lang, host);
     const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
+    // An import named as a name of the module wins when it is written with `::` (`import smith::build;` in `module
+    // build;`: `build::app` is the import's, `build(b)` the module's).
+    if (known != nullptr && smith_lang_binding_find(lang, token->text, token->length) != nullptr &&
+        smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) {
+        smith_lang_sparse_ident(lang, host, token);
+        return;
+    }
     if (known != nullptr && smith_lang_is_param(lang, token->text, token->length)) {
         smith_lang_emit_kept(lang, host, token);
         return;
@@ -317,6 +324,10 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
 
 bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length) {
     return lang->in_function && smith_lang_is_param(lang, name, length);
+}
+
+bool smith_lang_import_name(SmithLang *lang, const char *name, size_t length) {
+    return lang->bindings_count > 0 && smith_lang_binding_find(lang, name, length) != nullptr;
 }
 
 bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length) {

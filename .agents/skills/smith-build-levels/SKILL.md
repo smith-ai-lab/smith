@@ -27,9 +27,11 @@ It prints exactly what level 0 does and changes nothing (on a project that has a
 
 ```smith
 // build.smith
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::app(b, &(build::App){
         .entry = "main.smith",
         .name = "hello",
@@ -38,7 +40,7 @@ void build(build::Build *b) {
 }
 ```
 
-(`build.c` is the same with `#include <smith/build.h>`, `SmithBuild`, `smith_app(b, &(SmithApp){...})`, `smith_app_tests(b, &(SmithAppTests){...})`.) A `build.smith` has no `module` line and defines `void build(build::Build *b)`; `build::X` is `SmithX` and `build::x` is `smith_x`. It needs the full smith.
+(`build.c` is the same with `#include <smith/build.h>`, `SmithBuild`, `smith_app(b, &(SmithApp){...})`, `smith_app_tests(b, &(SmithAppTests){...})`.) A `build.smith` is `module build;` and defines `export void build(build::Build *b)` (the one export of a module named `build` that keeps its plain C name `build`; a file with no module line and a plain `void build` works too); `build::X` is `SmithX` and `build::x` is `smith_x`. It needs the full smith.
 
 Edit the fields; each applies to all three profiles:
 
@@ -78,9 +80,11 @@ A task may not be named after a verb (`run`, `test`, `check`, `fmt`, `lint`, `do
 The conventions compile with `-Wall -Wextra -Wpedantic ... -Werror`, then your flags, so a `-Wno-...` in `.flags` (or the folder's list) wins and the rest stay on. Turn off as little as you can: a folder's list for files that break a rule on purpose (a linter's fixtures are empty or odd translation units), the app's `.flags` for a construct the whole program uses (a float in a `static_assert`, which clang calls a GNU constant-folding extension under `-Wpedantic`). The two game needed:
 
 ```smith
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     build::defaults(b, &(build::Defaults){
         .folders = (const build::Folder[]){{.path = "fixtures", .flags = build::list(b, "-Wno-empty-translation-unit", nullptr)}, {}},
     });
@@ -99,9 +103,11 @@ Find the flag's name in the diagnostic: clang ends it with `[-Wname]`, and `-Wno
 When you need a step the high level has no field for (a shader, a data-baking step), add it beside the calls: `build::profile_flags(b, "debug")` and `build::source_flags` give the conventions' flags to add yours to, and `build::sources(b, folder)` / `build::objects(b, "debug", folder)` list what the programs compile. When you need one program with other flags than another, a source outside the scan, a generated file, or a step between compile and link, replace `build::app` (or `smith_app`) with what it expands to. `docs/build-c.md` ("`smith_app`: the program") gives the expansion; for a program of two modules in `build.smith`:
 
 ```smith
+module build;
+
 import smith::build;
 
-void build(build::Build *b) {
+export void build(build::Build *b) {
     auto flags = build::list(b, "-std=gnu2y", "-Wall", "-Wextra", "-Werror", "-I", ".", "-I", ".smith/include", "-g", "-O0",
                              "-fsanitize=address,undefined", nullptr);
     build::Object primes = {.compiler = "smith-cc", .source = "primes.smith", .output = "build/primes.o", .flags = flags};

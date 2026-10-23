@@ -323,6 +323,13 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
     // `extern T name;` without `export` is a symbol that C defines: it keeps its C name, in the module as in C.
     bool symbol = kind == SmithLangName_Function || kind == SmithLangName_Value;
     if (symbol && !exported && lang->decl.is_extern && !lang->decl.is_typedef) return nullptr;
+    // The build file's entry point is the symbol `build`, which smith's build program calls: in `module build;` the
+    // exported function `build` keeps that C name with no attribute.
+    if (kind == SmithLangName_Function && exported && lang->is_module && lang->decl.c_name.length == 0 &&
+        strcmp(lang->module, "build") == 0 && smith_lang_equals(name, length, "build")) {
+        lang->decl.c_name = smith_lang_store(lang, "build", 5);
+        lang->decl.c_name_location = location;
+    }
     SmithLangName *known = smith_lang_name_find(lang, name, length);
     if (known == nullptr) {
         smith_lang_declare_new(lang, host, name, length, location, kind, exported);
