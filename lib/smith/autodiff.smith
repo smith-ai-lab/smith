@@ -31,11 +31,11 @@ module smith::autodiff;
 
 // <smith/autodiff.h>: the reverse mode derivative of a function: `autodiff::reverse(f, marker, argument, ...)`.
 // C: __enzyme_autodiff(void *function, ...)
-[[smith::c_name("__enzyme_autodiff")]] export double reverse(void *function, ...);
+[[smith::c_name("__enzyme_autodiff")]] export f64 reverse(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and
 // the call returns the tangent of the result. C: __enzyme_fwddiff(void *function, ...)
-[[smith::c_name("__enzyme_fwddiff")]] export double forward(void *function, ...);
+[[smith::c_name("__enzyme_fwddiff")]] export f64 forward(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.
 [[smith::c_name("enzyme_const")]] export extern i32 constant;

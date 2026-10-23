@@ -12,11 +12,11 @@ extern "C" {
 #endif
 // <smith/autodiff.h>: the reverse mode derivative of a function: `autodiff::reverse(f, marker, argument, ...)`.
 // C: __enzyme_autodiff(void *function, ...)
-double __enzyme_autodiff(void *function, ...);
+double __enzyme_autodiff(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and
 // the call returns the tangent of the result. C: __enzyme_fwddiff(void *function, ...)
-double __enzyme_fwddiff(void *function, ...);
+double __enzyme_fwddiff(void *function, ...); // NOLINT(bugprone-reserved-identifier)
 
 // The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.
 extern int32_t enzyme_const;
