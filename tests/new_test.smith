@@ -183,6 +183,32 @@ static void in_folder(const scratch::Project *p, const char *dir, const char *fo
     (void)run_in(p, dir, command);
 }
 
+// An assert in main that sum's ensures does not give fails smith prove, naming it.
+static void a_wrong_assert_in_main_fails(const scratch::Project *p, const char *dir, const char *label,
+                                         const char *main_file) {
+    char command[1024];
+    __builtin_snprintf(command, sizeof command, "sed 's/(sum <= 28);/(sum <= 27);/' %s >%s.new && mv %s.new %s",
+                       main_file, main_file, main_file, main_file);
+    (void)run_in(p, dir, command);
+    scratch::Run wrong = run_in(p, dir, "smith prove");
+    scratch::expect_status(say(label, "... an assert in main that sum's ensures does not give fails"), 1, &wrong);
+    scratch::expect_contains(say(label, "... naming the assert"), wrong.out, "(sum <= 27) may fail");
+    in_folder(p, dir, "cp %s.orig %s", main_file, main_file, "");
+}
+
+// smith prove on the new project: sum's contract, and main's assert from it.
+static void prove_the_template(const scratch::Project *p, const char *dir, const char *label, const char *main_file) {
+    scratch::Run proved = run_in(p, dir, "smith prove -v");
+    if (!scratch::contains(proved.err, "has no prover")) {
+        scratch::expect_status(say(label, "smith prove succeeds"), 0, &proved);
+        scratch::expect_contains(say(label, "... and proves the contract of sum, and main's assert from it"),
+                                 proved.out, "2 proved, 0 failed");
+        scratch::expect_contains(say(label, "... main is in the proof set"), proved.out, "ok    main  (");
+        scratch::expect_lacks(say(label, "... without skipping it"), proved.out, "nothing to prove");
+        a_wrong_assert_in_main_fails(p, dir, label, main_file);
+    }
+}
+
 // The verbs on a new project, in `dir`. Everything here ends with the files as they began, in git.
 static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, bool smith_language) {
     const char *main_file = smith_language ? "main.smith" : "main.c";
@@ -208,22 +234,7 @@ static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, c
                              smith_language ? "4 passed, 0 failed" : "2 passed, 0 failed");
     scratch::Run one = run_in(p, dir, "smith test --test no_primes");
     scratch::expect_contains(say(label, "smith test --test runs one test"), one.out, "1 passed, 0 failed");
-    scratch::Run proved = run_in(p, dir, "smith prove -v");
-    if (!scratch::contains(proved.err, "has no prover")) {
-        scratch::expect_status(say(label, "smith prove succeeds"), 0, &proved);
-        scratch::expect_contains(say(label, "... and proves the contract of sum, and main's assert from it"),
-                                 proved.out, "2 proved, 0 failed");
-        scratch::expect_contains(say(label, "... main is in the proof set"), proved.out, "ok    main  (");
-        scratch::expect_lacks(say(label, "... without skipping it"), proved.out, "nothing to prove");
-        __builtin_snprintf(both, sizeof both,
-                           "sed 's/(sum <= 28);/(sum <= 27);/' %s >%s.new && mv %s.new %s", main_file, main_file,
-                           main_file, main_file);
-        (void)run_in(p, dir, both);
-        scratch::Run wrong = run_in(p, dir, "smith prove");
-        scratch::expect_status(say(label, "... an assert in main that sum's ensures does not give fails"), 1, &wrong);
-        scratch::expect_contains(say(label, "... naming the assert"), wrong.out, "(sum <= 27) may fail");
-        in_folder(p, dir, "cp %s.orig %s", main_file, main_file, "");
-    }
+    prove_the_template(p, dir, label, main_file);
     __builtin_snprintf(both, sizeof both, "sed 's/sum(5), 28/sum(5), 27/' %s >%s.new && mv %s.new %s", test_file,
                        test_file, test_file, test_file);
     (void)run_in(p, dir, both);
