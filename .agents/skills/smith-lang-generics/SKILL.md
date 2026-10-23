@@ -7,7 +7,7 @@ description: "Generic functions in .smith modules: `constexpr type T` parameters
 
 This skill ships in the smith plugin, from `.agents/skills/smith-lang-generics/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`; modules: `smith-lang-modules`; lists and `for constexpr`: `smith-lang-lists`. The long reference is [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Generic functions").
 
-A function of a module with `constexpr type T` or `auto x` parameters is written once and compiled for each type it is called with. `constexpr` in a parameter list means compile-time: the parameter is in no generated function. A bare `type T` is an error (``a type parameter is compile-time: write `constexpr type T` ``).
+A function of a module with `constexpr type T` or `auto x` parameters is written once and compiled for each type it is called with. `constexpr` in a parameter list means compile-time: the parameter is in no generated function. A bare `type T` that the head uses as a type is an error (``a type parameter is compile-time: write `constexpr type T` ``); a bare `type t` that is only a value is a type value (`smith-lang-type-values`), and `T` can be passed to an ordinary function over `type` in a condition: `if constexpr (small(T))`.
 
 ```smith fragment
 module arena;

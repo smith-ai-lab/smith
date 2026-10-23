@@ -15,6 +15,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 6. **`main` with the io:** `i32 main(io::Io *io)` (with `import smith::io;`) is written as a `static` function and a C `main` that makes the io, calls it and closes the io, returning its status; the C forms (`i32 main(i32 argc, char **argv)` (in a file with no `module` line also `char *argv[]`), `int main(void)`) still compile as they do. `io::make` in a file with the io form is an error. Load `smith-io`.
 7. **Tuples:** `struct { i32, f32 }`, a struct whose fields have no names, one type wherever it is written; `t[0]`, `countof(t)`, `return {a, b}` (load `smith-lang-tuples`).
 8. **Functions at compile time:** `constexpr i32 x = fib(10);` and `static_assert(f() == 3)` run an ordinary C function in the compiler (load `smith-lang-constexpr`).
+9. **Types as values:** `constexpr type t = i32;`, a struct member `constexpr type of;`, `sizeof(t)`, `t x;`, a function over `type` (load `smith-lang-type-values`).
 
 It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
 
