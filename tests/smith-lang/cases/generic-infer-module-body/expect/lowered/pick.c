@@ -1,1 +1,0 @@
-[ [ clang :: unavailable ( "pick::larger is a generic function: call it from a .smith module" ) ] ] void pick_larger ( void ) ; [ [ clang :: unavailable ( "pick::alloc is a generic function: call it from a .smith module" ) ] ] void pick_alloc ( void ) ; [ [ clang :: unavailable ( "pick::zero is a generic function: call it from a .smith module" ) ] ] void pick_zero ( void ) ;

@@ -165,8 +165,8 @@ EOF
         cat >"$work/generic/pick.smith" <<'EOF'
 module pick;
 
-export T larger(constexpr type T, T a, T b) {
-    T result = a > b ? a : b;
+export typeof(a) larger(auto a, typeof(a) b) {
+    typeof(a) result = a > b ? a : b;
     return result;
 }
 EOF
@@ -184,7 +184,7 @@ EOF
             expect_contains "dbg stops in an instance" "$out" "stop reason = breakpoint 1.1"
             expect_contains "dbg's frame is the instance, named with its types" "$out" "generic\`pick::larger<i32>(a=3, b=8) at pick.smith:4"
             expect_contains "dbg's other instance has its own types" "$out" "generic\`pick::larger<f64>(a=2.5, b=1.5) at pick.smith:4"
-            expect_contains "dbg lists the generic's own source" "$out" "T result = a > b ? a : b;"
+            expect_contains "dbg lists the generic's own source" "$out" "typeof(a) result = a > b ? a : b;"
             expect_contains "dbg shows the parameter's type as written" "$out" "(i32) a = 3"
             case $out in
             *"checksum mismatch"* | *smith-instance*) total=$((total + 1)); failures=$((failures + 1)); echo "FAIL  dbg shows the compiler's copy of the tokens" ;;

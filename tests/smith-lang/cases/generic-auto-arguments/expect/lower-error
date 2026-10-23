@@ -1,0 +1,7 @@
+src/main.smith:10:21: `alloc` is called without its type `T`; pass the type: pick::alloc(4, T)
+src/main.smith:11:20: `zero` is called without its type `T`; pass the type: pick::zero(T)
+src/main.smith:12:19: `pair` is called without its type `T`; pass the type: pick::pair(small, 1, T)
+src/main.smith:13:23: `larger` takes 2 arguments, and the call has 1
+src/main.smith:14:23: `larger` takes 2 arguments, and the call has 3
+src/main.smith:7:27: cannot tell the type of `neg++`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:27: cannot tell the type of `missing`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable

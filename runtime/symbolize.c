@@ -380,7 +380,7 @@ static SmithSymChain smith_sym_chain(const SmithSymRow *rows, size_t count) {
     return chain;
 }
 
-// A generic check may be given its type first, `test::check_equal(u64, a, b)`: that argument names no value.
+// A generic check may be given its type first, `test::check_equal(a, b)`: that argument names no value.
 static size_t smith_sym_drop_type(char arguments[smith_sym_arguments_max][128], size_t count) {
     static const char *const types[] = {"bool",  "char",  "i8",     "i16",    "i32",       "i64",    "isize", "u8",
                                         "u16",   "u32",   "u64",    "usize",  "f32",       "f64",    "int",   "long",

@@ -1,5 +1,0 @@
-src/main.smith:10:26: cannot tell `T` from `a`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:6:28: cannot tell `T` from `a`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:7:20: cannot tell `T` from the arguments of `alloc`: no parameter has the form `T x`; write the type as an argument
-src/main.smith:8:19: cannot tell `T` from the arguments of `zero`: no parameter has the form `T x`; write the type as an argument
-src/main.smith:9:26: cannot tell `T` from `a`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

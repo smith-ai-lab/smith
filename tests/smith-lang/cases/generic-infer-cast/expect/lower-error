@@ -1,4 +1,0 @@
-src/main.smith:10:33: cannot tell `T` from `(isize)-4`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:106: cannot tell `T` from `(u16)3`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:39: cannot tell `T` from `(usize)p % 64`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:76: cannot tell `T` from `(u8)200`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

@@ -1,0 +1,8 @@
+src/main.smith:11:33: the argument `300` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)300`, or the first argument, `(i32)small`
+src/main.smith:12:33: the argument `limit` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)limit`, or the first argument, `(i32)small`
+src/main.smith:13:33: the argument `big` of `larger` is u32 and converts to u8, the type of its first argument `small`, which may change its value; cast it, `(u8)big`, or the first argument, `(u32)small`
+src/main.smith:14:33: the argument `-1` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)-1`, or the first argument, `(i32)small`
+src/main.smith:15:31: the argument `0.1` of `larger` converts to f32, the type of its first argument `fl`, and changes its value; cast it, `(f32)0.1`, or the first argument, `(f64)fl`
+src/main.smith:16:31: the argument `16777217` of `larger` converts to f32, the type of its first argument `fl`, and changes its value; cast it, `(f32)16777217`, or the first argument, `(i32)fl`
+src/main.smith:17:31: the argument `neg` of `larger` is i32 and converts to f32, the type of its first argument `fl`, which may change its value; cast it, `(f32)neg`, or the first argument, `(i32)fl`
+src/main.smith:18:32: the argument `neg` of `larger` is i32 and converts to u32, the type of its first argument `big`, which may change its value; cast it, `(u32)neg`, or the first argument, `(i32)big`

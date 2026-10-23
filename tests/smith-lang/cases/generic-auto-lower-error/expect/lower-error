@@ -1,0 +1,1 @@
+src/main.smith:5:30: cannot tell the type of `big`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable

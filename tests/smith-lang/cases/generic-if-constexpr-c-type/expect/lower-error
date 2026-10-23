@@ -1,4 +1,4 @@
-src/main.smith:9:38: cannot tell `T` from `a`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:51: cannot tell `T` from `f`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:64: cannot tell `T` from `p`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:77: cannot tell `T` from `7`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
+src/main.smith:9:38: cannot tell the type of `a`, the argument of `of`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:51: cannot tell the type of `f`, the argument of `of`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:64: cannot tell the type of `p`, the argument of `of`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:77: cannot tell the type of `7`, the argument of `of`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable

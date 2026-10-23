@@ -1,1 +1,0 @@
-src/box.smith:7:25: cannot tell `T` from `a + 1`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

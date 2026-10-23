@@ -2,14 +2,14 @@ module kind;
 
 import "shape.h";
 
-// T names a struct and a vector of a C header, which `if constexpr` reads like any type.
-export i32 of(constexpr type T, T value) {
+// The type of `value` names a struct and a vector of a C header, which `if constexpr` reads like any type.
+export i32 of(auto value) {
     (void)value;
-    if constexpr (T == c::V2) {
+    if constexpr (typeof(value) == c::V2) {
         return 2;
-    } else if constexpr (T == c::F4) {
+    } else if constexpr (typeof(value) == c::F4) {
         return 4;
-    } else if constexpr (T == const c::V2 *) {
+    } else if constexpr (typeof(value) == const c::V2 *) {
         return 20;
     } else {
         return 0;

@@ -176,8 +176,8 @@ EOF
 cat >pick.smith <<'EOF'
 module pick;
 
-// The larger of two values of one type; T is told from the arguments, or written.
-export T larger(constexpr type T, T a, T b) {
+// The larger of two values of one type: a's, and b converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
 EOF
@@ -188,9 +188,9 @@ import pick;
 export int f(void) {
     i32 a = 3;
     i32 b = 8;
-    i32 inferred = pick::larger(a, b);
-    f64 written = pick::larger(f64, 1.5, 2.5);
-    return inferred + (int)written;
+    i32 first = pick::larger(a, b);
+    f64 second = pick::larger(1.5, 2.5);
+    return first + (int)second;
 }
 EOF
 cat >util.c <<'EOF'
@@ -274,16 +274,16 @@ expect "symbols: a module's names, as written, each once" \
 
 # A call to a generic: the compiler sees an instance there, so the layer answers for the lowering: the hover shows the
 # generic as its module wrote it and the instance asked for, and go-to-definition goes to the generic's name.
-log=$(client open genuse.smith pick.smith -- hover genuse.smith 7 31 -- definition genuse.smith 7 31 pick.smith:4:10 -- \
-    hover genuse.smith 8 31 -- definition genuse.smith 8 31 pick.smith:4:10)
+log=$(client open genuse.smith pick.smith -- hover genuse.smith 7 26 -- definition genuse.smith 7 26 pick.smith:4:18 -- \
+    hover genuse.smith 8 26 -- definition genuse.smith 8 26 pick.smith:4:18)
 expect_line "generic call: no diagnostics" "$log" "diagnostics genuse.smith"
 expect "generic call: and nothing else is reported" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
-expect_line "generic call: hover shows the generic as written and the instance, with T inferred" "$log" \
-    'hover genuse.smith:7:31: generic function pick::larger |  | T pick::larger(constexpr type T, T a, T b) |  | instance pick::larger(i32)'
+expect_line "generic call: hover shows the generic as written and the instance, with the type told from the argument" "$log" \
+    'hover genuse.smith:7:26: generic function pick::larger |  | typeof(a) pick::larger(auto a, typeof(a) b) |  | instance pick::larger(i32)'
 expect_line "generic call: go-to-definition is the generic's name in its module" "$log" \
-    "definition genuse.smith:7:31 -> pick.smith:4:10"
-expect_line "generic call: hover, T written" "$log" \
-    'hover genuse.smith:8:31: generic function pick::larger |  | T pick::larger(constexpr type T, T a, T b) |  | instance pick::larger(f64)'
+    "definition genuse.smith:7:26 -> pick.smith:4:18"
+expect_line "generic call: hover, the second instance" "$log" \
+    'hover genuse.smith:8:26: generic function pick::larger |  | typeof(a) pick::larger(auto a, typeof(a) b) |  | instance pick::larger(f64)'
 
 # `if constexpr` outside a generic: the branch taken is ordinary code (hover works in it), the branch not taken is never
 # given to the parser, so an undeclared name there is no diagnostic and hover there is empty (as in a generic's instance

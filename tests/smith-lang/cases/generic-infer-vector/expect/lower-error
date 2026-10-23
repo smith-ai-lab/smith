@@ -1,3 +1,0 @@
-src/main.smith:10:31: cannot tell `T` from `v.yx`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:36: cannot tell `T` from `v.x`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument
-src/main.smith:9:60: cannot tell `T` from `v.r`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 write the types out); write the type as the argument

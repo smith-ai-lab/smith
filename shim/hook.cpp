@@ -352,7 +352,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
-        host.maybe_generic = SM.getBufferData(MainFile).contains("type ");
+        host.maybe_generic = SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
@@ -1743,8 +1743,10 @@ class SmithHook final : public TokenHook, public NameSource {
             typeWhy = "`." + name + "` needs a struct, a union or a vector";
             return QualType();
         }
-        for (const FieldDecl *field : record->fields()) {
-            if (field->getName() == name) return field->getType();
+        if (const RecordDecl *definition = record->getDefinition()) {
+            for (const NamedDecl *member : definition->lookup(&PP.getIdentifierTable().get(name))) { // anonymous members too
+                if (const auto *field = dyn_cast<ValueDecl>(member)) return field->getType();
+            }
         }
         typeWhy = "no field `" + name + "`";
         return QualType();
@@ -1777,9 +1779,23 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         if (token == "true" || token == "false") return literalType(token);
         if (token == "nullptr") return sema->getASTContext().NullPtrTy;
-        if (token == "__extension__") { // how the lowering writes a call to a generic
-            typeWhy = "a call to a generic function is not typed";
-            return QualType();
+        if (token == "__extension__") { // how the lowering writes a call to a generic: its type is the declared result's
+            size_t open = begin + 1;
+            size_t name = open + 3;
+            while (open + 2 < end && t[open] == "(" && t[open + 1] == "{" && t[open + 2] == "extern" && name < end &&
+                   t[name] != "(") {
+                name += 1; // to the `(` of the declaration's parameters
+            }
+            std::string spelling;
+            for (size_t at = open + 3; open + 3 < name && at + 1 < name && name < end; at++)
+                spelling += (at > open + 3 ? " " : "") + t[at];
+            QualType result = spelling.empty() ? QualType() : readType(spelling);
+            if (result.isNull()) {
+                typeWhy = "a call to a generic function is not typed";
+                return QualType();
+            }
+            *next = closingOf(t, open, end) + 1;
+            return result;
         }
         if (token == "sizeof" || token == "alignof" || token == "_Alignof" || token == "_Countof") {
             *next = begin + 1 < end && t[begin + 1] == "(" ? closingOf(t, begin + 1, end) + 1 : begin + 2;

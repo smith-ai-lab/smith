@@ -1,5 +1,0 @@
-src/main.smith:10:29: cannot tell `T` from `missing`: `missing` is not a name the compiler knows here; write the type as the argument
-src/main.smith:6:31: conflicting types for `T`: i32 and f64; write the type as the argument
-src/main.smith:7:20: cannot tell `T` from the arguments of `alloc`: no parameter has the form `T x`; write the type as an argument
-src/main.smith:8:19: cannot tell `T` from the arguments of `zero`: no parameter has the form `T x`; write the type as an argument
-src/main.smith:9:29: cannot tell `T` from `a++`: `++` is not understood in this expression; write the type as the argument

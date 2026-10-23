@@ -296,7 +296,7 @@ export usize size(const char *text) {
 }
 
 // An instance is compiled in the file that calls it, and is the code of this module: its raw call is the module's own.
-export void emit(constexpr type T, Dev *dev, T value) {
+export void emit(Dev *dev, auto value) {
     (void)dev;
     (void)value;
     c::fputs("x", c::stdout);

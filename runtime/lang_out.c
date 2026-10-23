@@ -101,6 +101,7 @@ static bool smith_lang_capturing(const SmithLang *lang) {
 }
 
 static void smith_lang_capture_mark(SmithLang *lang, uint32_t index);
+static void smith_lang_capture_fold(SmithLang *lang);
 
 // runtime/lang_generic.c: the token is part of an exported generic's record
 static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token);
@@ -114,6 +115,9 @@ static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
         return;
     }
     if (lang->recording && token->kind == SmithTokenKind_Identifier) smith_lang_capture_mark(lang, index);
+    if (lang->recording && token->kind == SmithTokenKind_Punctuator && token->length == 1 && token->text[0] == ')') {
+        smith_lang_capture_fold(lang);
+    }
 }
 
 // runtime/lang_lex.c: the next directive that `smith cc --smith-lower` keeps and that comes before `before`

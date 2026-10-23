@@ -621,6 +621,421 @@ i32 main(void) {
               (unsigned long long)table::chosen_value(5), (unsigned long long)table::hook(8));
     return 0;
 }
+==> generic-auto-arguments/src/main.smith <==
+import pick;
+
+int main(void) {
+    u8 small = 5;
+    i32 neg = -1;
+    // The type of the first argument must be known.
+    i32 q1 = pick::larger(neg++, neg);
+    i32 q2 = pick::larger(missing, 1);
+    // The type is passed where it stands, and no other argument may be left out.
+    i32 *p1 = pick::alloc(4);
+    i32 z1 = pick::zero();
+    u8 pr = pick::pair(small, 1);
+    i32 count = pick::larger(neg);
+    i32 extra = pick::larger(neg, neg, neg);
+    return q1 + q2 + *p1 + z1 + pr + count + extra;
+}
+==> generic-auto-arguments/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+
+export T *alloc(i32 bytes, constexpr type T) {
+    (void)bytes;
+    return nullptr;
+}
+
+export T zero(constexpr type T) {
+    return (T){0};
+}
+
+export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
+    (void)b;
+    return a;
+}
+==> generic-auto-cast/src/main.smith <==
+import pick;
+#include <stdio.h>
+
+int main(void) {
+    i32 x = 0;
+    i32 *p = &x;
+    usize m = (usize)p % 64;
+    // A cast is the type, and the first argument's: usize, u8, u16 and the rest.
+    printf("%d %d %d\n", pick::larger((usize)p % 64, 0) == m, pick::larger((u8)200, (u8)7), pick::larger((u16)3, 9));
+    printf("%d\n", pick::larger((isize)-4, 2) == 2);
+    return 0;
+}
+==> generic-auto-cast/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+==> generic-auto-error/src/main.smith <==
+import pick;
+
+constexpr i32 limit = 300;
+
+int main(void) {
+    u8 small = 5;
+    u32 big = 7;
+    i32 neg = -1;
+    f32 fl = 1.5f;
+    // A later argument that converts with a change of value is an error at the call.
+    u8 r1 = pick::larger(small, 300);
+    u8 r2 = pick::larger(small, limit);
+    u8 r3 = pick::larger(small, big);
+    u8 r4 = pick::larger(small, -1);
+    f32 r5 = pick::larger(fl, 0.1);
+    f32 r6 = pick::larger(fl, 16777217);
+    f32 r7 = pick::larger(fl, neg);
+    u32 r8 = pick::larger(big, neg);
+    // These keep the value.
+    u8 ok1 = pick::larger(small, 200);
+    f32 ok2 = pick::larger(fl, 0.5);
+    f32 ok3 = pick::larger(fl, 0.1f);
+    f32 ok4 = pick::larger(fl, small);
+    u32 ok5 = pick::larger(big, small);
+    u32 ok6 = pick::larger(big, 1 << 3);
+    u8 ok7 = pick::larger(small, (u8)neg);
+    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + r8 + ok1 + ok2 + ok3 + ok4 + ok5 + ok6 + ok7;
+}
+==> generic-auto-error/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+
+export T *alloc(i32 bytes, constexpr type T) {
+    (void)bytes;
+    return nullptr;
+}
+
+export T zero(constexpr type T) {
+    return (T){0};
+}
+
+export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
+    (void)b;
+    return a;
+}
+==> generic-auto-lower-error/src/main.smith <==
+import pick;
+
+int main(void) {
+    u64 big = 5;
+    return (int)pick::larger(big, 1);
+}
+==> generic-auto-lower-error/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+==> generic-auto-module-body/src/box.smith <==
+module box;
+
+import pick;
+
+// A module's header is written without a compiler: the call in this body, whose type nothing can tell there, is
+// skipped.
+export i32 bigger(i32 a, i32 b) {
+    return pick::larger(a + 1, b * 2);
+}
+==> generic-auto-module-body/src/main.smith <==
+import box;
+#include <stdio.h>
+
+int main(void) {
+    printf("%d %d\n", box::bigger(3, 8), box::bigger(30, 8));
+    return 0;
+}
+==> generic-auto-module-body/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+==> generic-auto-typeof/src/main.smith <==
+import num;
+#include <stdio.h>
+
+int main(void) {
+    f32 f = 1.5f;
+    u64 w = 5;
+    u8 b = 1;
+    i32 *p = nullptr;
+    printf("%u %u %u %u\n", num::kind(f), num::kind(w), num::kind(b), num::kind(p));
+    printf("%llu %d %g\n", num::add(w, 2), num::add(-3, 1), num::add(f, 0.5));
+    printf("%g %g\n", num::mix(b, f), num::mix(w, b));
+    printf("%d\n", num::make(b, i32, 4) == nullptr);
+    printf("%zu %zu\n", num::width(f), num::width(w));
+    return 0;
+}
+==> generic-auto-typeof/src/num.smith <==
+module num;
+
+export typedef struct {
+    i32 x;
+    i32 y;
+} Pair;
+
+// `typeof(x)` is the parameter's type in later parameters, in the body and in the return type written before the name.
+export typeof(a) add(auto a, typeof(a) b) {
+    typeof(a) sum = a + b;
+    return sum;
+}
+
+// `if constexpr` tests `typeof(x)` as it tests a `T`.
+export u32 kind(auto v) {
+    if constexpr (typeof(v) == f32) {
+        return 1;
+    } else if constexpr (is_integer(typeof(v)) && sizeof(typeof(v)) == 8) {
+        return 2;
+    } else if constexpr (is_pointer(typeof(v))) {
+        return 4;
+    } else {
+        return 3;
+    }
+}
+
+// Two `auto` parameters make one instance for each pair of types.
+export f64 mix(auto a, auto b) {
+    f64 sum = (f64)a + (f64)b;
+    return sum;
+}
+
+// An `auto` beside a `constexpr type`: the type is passed, and the other is told from its argument.
+export typeof(a) *make(auto a, constexpr type T, usize count) {
+    (void)a;
+    (void)count;
+    return (typeof(a) *)(T *)nullptr;
+}
+
+// `typeof` of a parameter that is no `auto` is plain C.
+export i32 first(const Pair *p, typeof(p) other) {
+    return p != nullptr ? p->x : other->y;
+}
+
+export usize width(auto v) {
+    (void)v;
+    return sizeof(typeof(v));
+}
+==> generic-auto-vector/src/main.smith <==
+import pick;
+import "v2.h";
+#include <stdio.h>
+
+int main(void) {
+    c::F4 v = {1, 2, 3, 4};
+    c::F2 w = {5, 6};
+    // The lanes of an ext-vector: one lane is its element, several are a vector.
+    printf("%g %g\n", pick::larger(v.x, v.w), pick::larger(v.r, 0.5f));
+    c::F2 both = pick::larger(v.yx, w);
+    printf("%g %g\n", both.x, both.y);
+    return 0;
+}
+==> generic-auto-vector/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+==> generic-auto-written/src/main.smith <==
+import pick;
+
+int main(void) {
+    i32 a = 3;
+    // The argument is quoted as written, a nested call to a generic included; a nested call has its result's type.
+    i32 r = pick::larger(a, pick::larger(a, 3) + 1 + __builtin_abs(a));
+    i32 s = pick::larger(pick::zero_like(a), 2);
+    u16 x = 1;
+    u32 y = 2;
+    i32 t = pick::larger(x, y);
+    i32 u = pick::larger(++a, 1);
+    return r + s + t + u;
+}
+==> generic-auto-written/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
+==> generic-auto/src/main.smith <==
+import pick;
+#include <stdio.h>
+
+typedef struct {
+    i32 x;
+    i32 y;
+} Point;
+
+static f64 half(f64 v) {
+    return v / 2;
+}
+
+int main(void) {
+    i32 a = 3;
+    i32 b = 8;
+    f64 d = 2.5;
+    Point p = {10, 20};
+    Point *pp = &p;
+    i32 numbers[3] = {7, 8, 9};
+    u8 byte = 200;
+    const i32 fixed = 4;
+    // The first argument is the type: a name, a field chain, `*e`, `e[i]`, a call; qualifiers are dropped.
+    printf("%d %g\n", pick::larger(a, b), pick::larger(d, 1.5));
+    printf("%d %d %d\n", pick::larger(p.x, pp->y), pick::larger(p.x, 3), pick::larger(numbers[1], fixed));
+    printf("%d %g %zu\n", pick::larger(fixed, 100), pick::larger(half(9), d), pick::size_of_value(byte));
+    printf("%d %zu\n", pick::larger(*numbers, 1), pick::size_of_value((u16)3));
+    // The second argument converts to the first's type, by C's rules, when the value is kept.
+    u64 big = 5;
+    printf("%llu %d %d\n", pick::larger(big, 7), pick::larger(a, (i32)big), pick::larger(a, 1 << 3));
+    printf("%d %d\n", pick::twice(a), pick::zero_like(p).y);
+    printf("%d %g\n", pick::larger(a + 1, b * 2), pick::larger(d * 2, d + 1));
+    return 0;
+}
+==> generic-auto/src/pick.smith <==
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
 ==> generic-bare-type-then-code/src/num.smith <==
 module num;
 
@@ -662,28 +1077,24 @@ int main(void) {
 ==> generic-braceless/src/pick.smith <==
 module pick;
 
-// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
-export T larger(constexpr type T, T a, T b) {
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
 
-export T first_of(constexpr type T, const T *values, usize count) {
-    return count > 0 ? values[0] : (T){0};
-}
-
-export void set(constexpr type T, T *out, T value) {
-    *out = value;
-}
-
-export usize size_of_value(constexpr type T, T value) {
+export usize size_of_value(auto value) {
     (void)value;
-    return sizeof(T);
+    return sizeof(typeof(value));
 }
 
-// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
-// type, so a call there says it).
-export T twice(constexpr type T, T value) {
-    return larger(T, value, value);
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
 }
 ==> generic-braceless/src/twice.smith <==
 module twice;
@@ -692,8 +1103,8 @@ import pick;
 
 // Braceless statements in a generic: the instance keeps the lines of the generic, so the compiler's
 // -Wmisleading-indentation (the case's flags make it an error) has nothing to say.
-export T bigger_twice(constexpr type T, T a, T b) {
-    T r = a;
+export typeof(a) bigger_twice(auto a, typeof(a) b) {
+    typeof(a) r = a;
     if (a > b) r = pick::larger(a, b);
     if (a > b) r += 1;
     for (i32 i = 0; i < 2; i++)
@@ -859,14 +1270,14 @@ module kind;
 
 import "shape.h";
 
-// T names a struct and a vector of a C header, which `if constexpr` reads like any type.
-export i32 of(constexpr type T, T value) {
+// The type of `value` names a struct and a vector of a C header, which `if constexpr` reads like any type.
+export i32 of(auto value) {
     (void)value;
-    if constexpr (T == c::V2) {
+    if constexpr (typeof(value) == c::V2) {
         return 2;
-    } else if constexpr (T == c::F4) {
+    } else if constexpr (typeof(value) == c::F4) {
         return 4;
-    } else if constexpr (T == const c::V2 *) {
+    } else if constexpr (typeof(value) == const c::V2 *) {
         return 20;
     } else {
         return 0;
@@ -982,253 +1393,6 @@ int main(void) {
     printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
     return 0;
 }
-==> generic-infer-cast/src/main.smith <==
-import pick;
-#include <stdio.h>
-
-int main(void) {
-    i32 x = 0;
-    i32 *p = &x;
-    usize m = (usize)p % 64;
-    // A cast to a sized type is the type: usize, u8, u16 and the rest.
-    printf("%d %d %d\n", pick::larger((usize)p % 64, 0) == m, pick::larger((u8)200, (u8)7), pick::larger((u16)3, 9));
-    printf("%d\n", pick::larger((isize)-4, 2) == 2);
-    return 0;
-}
-==> generic-infer-cast/src/pick.smith <==
-module pick;
-
-// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T first_of(constexpr type T, const T *values, usize count) {
-    return count > 0 ? values[0] : (T){0};
-}
-
-export void set(constexpr type T, T *out, T value) {
-    *out = value;
-}
-
-export usize size_of_value(constexpr type T, T value) {
-    (void)value;
-    return sizeof(T);
-}
-
-// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
-// type, so a call there says it).
-export T twice(constexpr type T, T value) {
-    return larger(T, value, value);
-}
-==> generic-infer-error/src/main.smith <==
-import pick;
-
-int main(void) {
-    i32 a = 3;
-    f64 d = 2.5;
-    i32 sum = pick::larger(a, d);
-    i32 *p = pick::alloc(4);
-    i32 z = pick::zero();
-    i32 q = pick::larger(a, a++);
-    i32 r = pick::larger(a, missing);
-    return sum + z + q + r + *p;
-}
-==> generic-infer-error/src/pick.smith <==
-module pick;
-
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T *alloc(i32 bytes, constexpr type T) {
-    (void)bytes;
-    return nullptr;
-}
-
-export T zero(constexpr type T) {
-    return (T){0};
-}
-==> generic-infer-lower-error/src/main.smith <==
-import pick;
-
-int main(void) {
-    u64 big = 5;
-    return (int)pick::larger(big, 1);
-}
-==> generic-infer-lower-error/src/pick.smith <==
-module pick;
-
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T *alloc(i32 bytes, constexpr type T) {
-    (void)bytes;
-    return nullptr;
-}
-
-export T zero(constexpr type T) {
-    return (T){0};
-}
-==> generic-infer-module-body/src/box.smith <==
-module box;
-
-import pick;
-
-// A module's header is written without a compiler: the call in this body, whose type nothing can tell there, is
-// skipped.
-export i32 bigger(i32 a, i32 b) {
-    return pick::larger(a + 1, b * 2);
-}
-==> generic-infer-module-body/src/main.smith <==
-import box;
-#include <stdio.h>
-
-int main(void) {
-    printf("%d %d\n", box::bigger(3, 8), box::bigger(30, 8));
-    return 0;
-}
-==> generic-infer-module-body/src/pick.smith <==
-module pick;
-
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T *alloc(i32 bytes, constexpr type T) {
-    (void)bytes;
-    return nullptr;
-}
-
-export T zero(constexpr type T) {
-    return (T){0};
-}
-==> generic-infer-vector/src/main.smith <==
-import pick;
-import "v2.h";
-#include <stdio.h>
-
-int main(void) {
-    c::F4 v = {1, 2, 3, 4};
-    c::F2 w = {5, 6};
-    // The lanes of an ext-vector: one lane is its element, several are a vector.
-    printf("%g %g\n", pick::larger(v.x, v.w), pick::larger(v.r, 0.5f));
-    c::F2 both = pick::larger(v.yx, w);
-    printf("%g %g\n", both.x, both.y);
-    return 0;
-}
-==> generic-infer-vector/src/pick.smith <==
-module pick;
-
-// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T first_of(constexpr type T, const T *values, usize count) {
-    return count > 0 ? values[0] : (T){0};
-}
-
-export void set(constexpr type T, T *out, T value) {
-    *out = value;
-}
-
-export usize size_of_value(constexpr type T, T value) {
-    (void)value;
-    return sizeof(T);
-}
-
-// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
-// type, so a call there says it).
-export T twice(constexpr type T, T value) {
-    return larger(T, value, value);
-}
-==> generic-infer-written/src/main.smith <==
-import pick;
-
-int main(void) {
-    i32 a = 3;
-    // The argument is quoted as written, a nested call to a generic included, and the types with Smith's names.
-    i32 r = pick::larger(a, pick::larger(a, 3) + 1 + __builtin_abs(a));
-    i32 s = pick::larger(pick::zero(i32), pick::zero(f64));
-    u16 x = 1;
-    u32 y = 2;
-    i32 t = pick::larger(x, y);
-    return r + s + t;
-}
-==> generic-infer-written/src/pick.smith <==
-module pick;
-
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T zero(constexpr type T) {
-    return (T){0};
-}
-==> generic-infer/src/main.smith <==
-import pick;
-#include <stdio.h>
-
-typedef struct {
-    i32 x;
-    i32 y;
-} Point;
-
-static f64 half(f64 v) {
-    return v / 2;
-}
-
-int main(void) {
-    i32 a = 3;
-    i32 b = 8;
-    f64 d = 2.5;
-    Point p = {10, 20};
-    Point *pp = &p;
-    i32 numbers[3] = {7, 8, 9};
-    u8 byte = 200;
-    const i32 fixed = 4;
-    printf("%d %g\n", pick::larger(a, b), pick::larger(d, 1.5));
-    printf("%d %d %d\n", pick::larger(p.x, pp->y), pick::larger(p.x, 3), pick::larger(numbers[1], fixed));
-    printf("%d %g %zu\n", pick::larger(a, 100), pick::larger(half(9), d), pick::size_of_value(byte));
-    printf("%d %zu\n", pick::first_of(numbers, 3), pick::size_of_value((u16)3));
-    i32 slot = 0;
-    pick::set(&slot, 42);
-    printf("%d %d\n", slot, pick::twice(i32, slot));
-    // Arithmetic, comparison and conditional expressions are typed by C's rules; an expression of literals adapts.
-    u64 big = 5;
-    printf("%d %g %d %d\n", pick::larger(a + 1, b * 2), pick::larger(d * 2, d + 1), pick::larger(a, 1 << 3),
-           pick::larger(a > 2 ? a : b, 5));
-    printf("%llu %d\n", pick::larger(big + a, 2 + 2), pick::larger((i32)big - 1, a));
-    return 0;
-}
-==> generic-infer/src/pick.smith <==
-module pick;
-
-// T is written at none of the calls in main.smith: the compiler tells it from the arguments.
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T first_of(constexpr type T, const T *values, usize count) {
-    return count > 0 ? values[0] : (T){0};
-}
-
-export void set(constexpr type T, T *out, T value) {
-    *out = value;
-}
-
-export usize size_of_value(constexpr type T, T value) {
-    (void)value;
-    return sizeof(T);
-}
-
-// A call to another generic inside a generic, with the type written (inside a body the compiler does not see a local's
-// type, so a call there says it).
-export T twice(constexpr type T, T value) {
-    return larger(T, value, value);
-}
 ==> generic-nested/src/arena.smith <==
 module arena;
 
@@ -1302,8 +1466,8 @@ int main(void) {
 }
 ==> generic-static-assert/src/sa.smith <==
 module sa;
-export T twice(constexpr type T, T v) {
-    if constexpr (is_integer(T)) {
+export typeof(v) twice(auto v) {
+    if constexpr (is_integer(typeof(v))) {
         return v * 2;
     } else {
         static_assert(false, "twice needs an integer");

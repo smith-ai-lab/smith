@@ -1,0 +1,16 @@
+import pick;
+
+int main(void) {
+    u8 small = 5;
+    i32 neg = -1;
+    // The type of the first argument must be known.
+    i32 q1 = pick::larger(neg++, neg);
+    i32 q2 = pick::larger(missing, 1);
+    // The type is passed where it stands, and no other argument may be left out.
+    i32 *p1 = pick::alloc(4);
+    i32 z1 = pick::zero();
+    u8 pr = pick::pair(small, 1);
+    i32 count = pick::larger(neg);
+    i32 extra = pick::larger(neg, neg, neg);
+    return q1 + q2 + *p1 + z1 + pr + count + extra;
+}

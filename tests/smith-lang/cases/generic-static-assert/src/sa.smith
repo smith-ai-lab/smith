@@ -1,6 +1,6 @@
 module sa;
-export T twice(constexpr type T, T v) {
-    if constexpr (is_integer(T)) {
+export typeof(v) twice(auto v) {
+    if constexpr (is_integer(typeof(v))) {
         return v * 2;
     } else {
         static_assert(false, "twice needs an integer");

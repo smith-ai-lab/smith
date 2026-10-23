@@ -1,0 +1,3 @@
+src/main.smith:10:31: cannot tell the type of `v.yx`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:36: cannot tell the type of `v.x`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:60: cannot tell the type of `v.r`, the argument of `larger`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1,0 +1,15 @@
+import num;
+#include <stdio.h>
+
+int main(void) {
+    f32 f = 1.5f;
+    u64 w = 5;
+    u8 b = 1;
+    i32 *p = nullptr;
+    printf("%u %u %u %u\n", num::kind(f), num::kind(w), num::kind(b), num::kind(p));
+    printf("%llu %d %g\n", num::add(w, 2), num::add(-3, 1), num::add(f, 0.5));
+    printf("%g %g\n", num::mix(b, f), num::mix(w, b));
+    printf("%d\n", num::make(b, i32, 4) == nullptr);
+    printf("%zu %zu\n", num::width(f), num::width(w));
+    return 0;
+}

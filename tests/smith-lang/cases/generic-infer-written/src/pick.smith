@@ -1,9 +1,0 @@
-module pick;
-
-export T larger(constexpr type T, T a, T b) {
-    return a > b ? a : b;
-}
-
-export T zero(constexpr type T) {
-    return (T){0};
-}
