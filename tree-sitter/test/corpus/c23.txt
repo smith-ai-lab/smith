@@ -300,3 +300,47 @@ void f(void) {
                   (assignment_expression
                     (identifier)
                     (identifier)))))))))))
+
+================================================================================
+auto local and typeof of a member in a parameter
+================================================================================
+
+u32 f(struct P *p, typeof(p->x) y) {
+  auto q = y;
+  auto n = 4;
+  return q + n;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (struct_specifier
+            (type_identifier))
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (macro_type_specifier
+            (identifier)
+            (field_expression
+              (identifier)
+              (field_identifier)))
+          (identifier))))
+    (compound_statement
+      (declaration
+        (auto_declaration
+          (identifier)
+          (identifier)))
+      (declaration
+        (auto_declaration
+          (identifier)
+          (number_literal)))
+      (return_statement
+        (binary_expression
+          (identifier)
+          (identifier))))))

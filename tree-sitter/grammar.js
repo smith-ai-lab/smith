@@ -34,7 +34,7 @@ module.exports = grammar(C, {
     [$.import_declaration, $.type_specifier],
     [$.type_parameter, $.type_specifier],
     [$.type_parameter, $.type_qualifier],
-    [$.storage_class_specifier, $.list_declaration],
+    [$.storage_class_specifier, $.list_declaration, $.auto_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
   ]),
 
@@ -161,7 +161,15 @@ module.exports = grammar(C, {
 
     // auto args = {a, b}; makes a list (C23 leaves `auto x = {...}` invalid, so a declaration cannot read it)
     list_declaration: $ => seq('auto', field('name', $.identifier), '=', field('value', $.initializer_list), ';'),
-    declaration: ($, original) => choice(original, prec.dynamic(3, $.list_declaration)),
+    // auto x = expr; (C23's type inference; there is no type for a declaration to read)
+    auto_declaration: $ => seq(
+      'auto',
+      field('name', $.identifier),
+      '=',
+      field('value', $.expression),
+      ';',
+    ),
+    declaration: ($, original) => choice(original, prec.dynamic(3, $.list_declaration), prec.dynamic(2, $.auto_declaration)),
 
     // args = {args..., x}; assigns a list (auto args = {...} is a declaration, which C already reads)
     list_assignment: $ => seq(field('left', $.identifier), '=', field('right', $.initializer_list)),

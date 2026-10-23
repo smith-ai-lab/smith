@@ -3054,6 +3054,14 @@
             "type": "SYMBOL",
             "name": "list_declaration"
           }
+        },
+        {
+          "type": "PREC_DYNAMIC",
+          "value": 2,
+          "content": {
+            "type": "SYMBOL",
+            "name": "auto_declaration"
+          }
         }
       ]
     },
@@ -10654,6 +10662,39 @@
         }
       ]
     },
+    "auto_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "="
+        },
+        {
+          "type": "FIELD",
+          "name": "value",
+          "content": {
+            "type": "SYMBOL",
+            "name": "expression"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ";"
+        }
+      ]
+    },
     "list_assignment": {
       "type": "SEQ",
       "members": [
@@ -11048,7 +11089,8 @@
     ],
     [
       "storage_class_specifier",
-      "list_declaration"
+      "list_declaration",
+      "auto_declaration"
     ],
     [
       "_declaration_modifiers",
