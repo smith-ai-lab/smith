@@ -40,5 +40,9 @@ printf("%d %d\n", h.pair[0], h.list[1][0]);
 printf("%d %f\n", list[1][0], (double)list[1][1]);
 printf("%d %d %d\n", (__INT32_TYPE__)countof(t), (__INT32_TYPE__)countof(n), (__INT32_TYPE__)countof(n[1]));
 printf("%d\n", (__INT32_TYPE__)(sizeof(struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; }) == sizeof t));
+__INT32_TYPE__ xs[3] = {4, 5, 6};
+__INT32_TYPE__ *pointer = xs;
+struct { __INT32_TYPE__ a; __INT32_TYPE__ b; } plain = {1, 2};
+printf("%d %d %d %d\n", xs[1], pointer[2], (__INT32_TYPE__)_Countof(xs), plain.b);
 return 0;
 }

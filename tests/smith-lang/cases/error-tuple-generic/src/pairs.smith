@@ -1,0 +1,14 @@
+module pairs;
+
+export typedef struct { i32, f32 } Pair;
+
+// A tuple type is named outside a generic: a typedef of it works inside.
+export i32 first(auto x) {
+    Pair p = {1, 2.0f};
+    return (i32)x + p._0;
+}
+
+export i32 second(constexpr type T, T x) {
+    struct { T, i32 } q = {x, 1};
+    return q._1;
+}

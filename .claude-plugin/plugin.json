@@ -74,6 +74,7 @@
     "./.agents/skills/smith-lang-modules/",
     "./.agents/skills/smith-lang-sized-types/",
     "./.agents/skills/smith-lang-target/",
+    "./.agents/skills/smith-lang-tuples/",
     "./.agents/skills/smith-lsp/",
     "./.agents/skills/smith-math/",
     "./.agents/skills/smith-mcp/",

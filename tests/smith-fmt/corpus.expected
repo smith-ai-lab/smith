@@ -899,6 +899,21 @@ struct { i32 (*)(i32), f32 } function;
 struct {
     i32,
 } trailing;
+==> error-tuple-generic/src/pairs.smith <==
+module pairs;
+
+export typedef struct { i32, f32 } Pair;
+
+// A tuple type is named outside a generic: a typedef of it works inside.
+export i32 first(auto x) {
+    Pair p = {1, 2.0f};
+    return (i32)x + p._0;
+}
+
+export i32 second(constexpr type T, T x) {
+    struct { T, i32 } q = {x, 1};
+    return q._1;
+}
 ==> error-tuple-index/src/main.smith <==
 import <stdio.h>;
 
@@ -4537,6 +4552,14 @@ i32 main(void) {
     c::printf("%d %f\n", list[1][0], (double)list[1][1]);
     c::printf("%d %d %d\n", (i32)countof(t), (i32)countof(n), (i32)countof(n[1]));
     c::printf("%d\n", (i32)(sizeof(struct { i32, f32 }) == sizeof t));
+    // Arrays and pointers in a file with tuples are what they were: only a tuple is indexed as fields.
+    i32 xs[3] = {4, 5, 6};
+    i32 *pointer = xs;
+    struct {
+        i32 a;
+        i32 b;
+    } plain = {1, 2}; // a struct with named fields is no tuple
+    c::printf("%d %d %d %d\n", xs[1], pointer[2], (i32) _Countof(xs), plain.b);
     return 0;
 }
 ==> tuple-c/src/geo/a.smith <==

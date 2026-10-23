@@ -13,7 +13,8 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 4. **Generic functions** in a module: parameters marked `constexpr type T` (called as `arena::push(&a, Point)`) or `auto x` (the argument's type, `typeof(x)` names it: `check_equal(auto a, typeof(a) b)`), and `if constexpr` in their bodies (load `smith-lang-generics`); `auto... rest`, lists (`auto args = {...}`) and `for constexpr` loops over them (load `smith-lang-lists`); `fields(T)`, a struct's fields as a compile-time list (load `smith-lang-reflection`).
 5. **The target, and `if constexpr` in any function body**, in place of the preprocessor: `import target;`, then `target::arch == target::aarch64`, `target::address_sanitizer` (below).
 6. **`main` with the io:** `i32 main(io::Io *io)` (with `import smith::io;`) is written as a `static` function and a C `main` that makes the io, calls it and closes the io, returning its status; the C forms (`i32 main(i32 argc, char **argv)` (in a file with no `module` line also `char *argv[]`), `int main(void)`) still compile as they do. `io::make` in a file with the io form is an error. Load `smith-io`.
-7. **Functions at compile time:** `constexpr i32 x = fib(10);` and `static_assert(f() == 3)` run an ordinary C function in the compiler (load `smith-lang-constexpr`).
+7. **Tuples:** `struct { i32, f32 }`, a struct whose fields have no names, one type wherever it is written; `t[0]`, `countof(t)`, `return {a, b}` (load `smith-lang-tuples`).
+8. **Functions at compile time:** `constexpr i32 x = fib(10);` and `static_assert(f() == 3)` run an ordinary C function in the compiler (load `smith-lang-constexpr`).
 
 It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
 

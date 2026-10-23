@@ -48,5 +48,10 @@ i32 main(void) {
     c::printf("%d %f\n", list[1][0], (double)list[1][1]);
     c::printf("%d %d %d\n", (i32)countof(t), (i32)countof(n), (i32)countof(n[1]));
     c::printf("%d\n", (i32)(sizeof(struct { i32, f32 }) == sizeof t));
+    // Arrays and pointers in a file with tuples are what they were: only a tuple is indexed as fields.
+    i32 xs[3] = {4, 5, 6};
+    i32 *pointer = xs;
+    struct { i32 a; i32 b; } plain = {1, 2}; // a struct with named fields is no tuple
+    c::printf("%d %d %d %d\n", xs[1], pointer[2], (i32)_Countof(xs), plain.b);
     return 0;
 }

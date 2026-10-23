@@ -1,0 +1,1 @@
+src/pairs.smith:12:5: a tuple type cannot be written in a generic function yet: name it outside the generic with a typedef (`typedef struct { i32, f32 } Pair;`)
