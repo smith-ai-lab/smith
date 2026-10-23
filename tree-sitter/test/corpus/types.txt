@@ -502,3 +502,61 @@ int total(auto... rest) {
                   (identifier)))))))
       (return_statement
         (number_literal)))))
+
+================================================================================
+a tuple type
+================================================================================
+
+typedef struct { i32, f32 } Pair;
+struct { i32, struct { f32, f32 } } nest(struct { i32, f32 } *p) {
+    return (struct { i32, f32 }){1, 2.0f};
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (type_definition
+    (struct_specifier
+      (tuple_field_list
+        (tuple_field
+          (primitive_type))
+        (tuple_field
+          (primitive_type))))
+    (type_identifier))
+  (function_definition
+    (struct_specifier
+      (tuple_field_list
+        (tuple_field
+          (primitive_type))
+        (tuple_field
+          (struct_specifier
+            (tuple_field_list
+              (tuple_field
+                (primitive_type))
+              (tuple_field
+                (primitive_type)))))))
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (struct_specifier
+            (tuple_field_list
+              (tuple_field
+                (primitive_type))
+              (tuple_field
+                (primitive_type))))
+          (pointer_declarator
+            (identifier)))))
+    (compound_statement
+      (return_statement
+        (compound_literal_expression
+          (type_descriptor
+            (struct_specifier
+              (tuple_field_list
+                (tuple_field
+                  (primitive_type))
+                (tuple_field
+                  (primitive_type)))))
+          (initializer_list
+            (number_literal)
+            (number_literal)))))))

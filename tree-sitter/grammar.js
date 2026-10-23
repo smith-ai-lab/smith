@@ -36,6 +36,7 @@ module.exports = grammar(C, {
     [$.type_parameter, $.type_qualifier],
     [$.storage_class_specifier, $.list_declaration, $.auto_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
+    [$.pointer_field_declarator, $.tuple_field],
   ]),
 
   rules: {
@@ -64,6 +65,9 @@ module.exports = grammar(C, {
       prec(C.PREC.FIELD, seq(field('argument', $.expression), field('operator', choice('.', '->')))),
       field('field', choice($._field_identifier, seq('[', $.expression, ']'))),
     ),
+
+    // return {a, b}; in a function that returns a tuple
+    return_statement: ($, original) => choice(original, seq('return', $.initializer_list, ';')),
 
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),
@@ -222,9 +226,19 @@ module.exports = grammar(C, {
           field('body', optional($.field_declaration_list)),
         ),
         field('body', $.field_declaration_list),
+        field('body', $.tuple_field_list),
       ),
       optional($.attribute_specifier),
     )),
+
+    // struct { i32, f32 }: a struct whose fields have no names, a list of types (issue #96)
+    // (a type name, stars and qualifiers: the parts of a field's type before its name, so that the parser reads `u8 *a;`
+    // and `u8 *,` with the same states up to the name or the comma)
+    tuple_field_list: $ => seq('{', commaSep1($.tuple_field), '}'),
+    tuple_field: $ => seq(
+      $._declaration_specifiers,
+      repeat(seq('*', repeat($.type_qualifier))),
+    ),
 
     union_specifier: $ => prec.right(seq(
       'union',

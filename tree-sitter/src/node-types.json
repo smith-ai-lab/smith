@@ -3835,6 +3835,10 @@
         {
           "type": "expression",
           "named": true
+        },
+        {
+          "type": "initializer_list",
+          "named": true
         }
       ]
     }
@@ -4062,6 +4066,10 @@
         "types": [
           {
             "type": "field_declaration_list",
+            "named": true
+          },
+          {
+            "type": "tuple_field_list",
             "named": true
           }
         ]
@@ -4316,6 +4324,63 @@
         },
         {
           "type": "while_statement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tuple_field",
+    "named": true,
+    "fields": {
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_specifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "attribute_declaration",
+          "named": true
+        },
+        {
+          "type": "attribute_specifier",
+          "named": true
+        },
+        {
+          "type": "ms_declspec_modifier",
+          "named": true
+        },
+        {
+          "type": "storage_class_specifier",
+          "named": true
+        },
+        {
+          "type": "type_qualifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "tuple_field_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "tuple_field",
           "named": true
         }
       ]

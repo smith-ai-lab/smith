@@ -92,7 +92,7 @@ expect "samples: text that is wrong on purpose has an ERROR or MISSING node" "" 
 # grammar is tree-sitter-c's, which has neither C23's `auto` as a type nor C2y's `_Countof`: the three cases that use
 # them are left out until the grammar learns them.
 lang=${SMITH_LANG_CASES:-$here/tests/smith-lang/cases}
-bad='/error-import-eof/src/main\.smith$|/error-keyword-module/src/shapes\.smith$|/generic-call-unclosed/src/main\.smith$|/generic-call-unclosed-statement/src/main\.smith$|/generic-list-semicolon-error/src/bad\.smith$|/generic-list-syntax-error/src/bad\.smith$'
+bad='/error-import-eof/src/main\.smith$|/error-tuple-field/src/main\.smith$|/error-keyword-module/src/shapes\.smith$|/generic-call-unclosed/src/main\.smith$|/generic-call-unclosed-statement/src/main\.smith$|/generic-list-semicolon-error/src/bad\.smith$|/generic-list-syntax-error/src/bad\.smith$'
 gap='/session-two-modules/src/main\.smith$|/session-missing-module/src/main\.smith$|/std-default-c2y/src/main\.smith$'
 if [ -d "$lang" ]; then
     find "$lang" -name '*.smith' | sort >"$work/lang.txt"
