@@ -384,7 +384,7 @@ expect_contains "trusted: ... one with no contract at all too" "$out" "trusted  
 expect_contains "trusted: ... the callers are proved from its contract" "$out" "ok    scaled  ("
 expect_contains "trusted: ... the one that wants more than the contract gives fails" "$out" "FAIL  scaled_too_far  ("
 expect_contains "trusted: ... with the value the contract allows" "$out" "percent = "
-expect_contains "trusted: ... and the counts say so" "$out" "2 proved, 1 failed, 2 trusted"
+expect_contains "trusted: ... and the counts say so" "$out" "3 proved, 1 failed, 2 trusted"
 case $out in *"inline assembly"*) expect "trusted: the body of a trusted function is not read" "no error" "$out" ;; *) expect "trusted: the body of a trusted function is not read" "no error" "no error" ;; esac
 case $out in *"ok    sensor_percent"* | *"ok    announce"*) expect "trusted: a trusted function is never listed as proved" "not proved" "$out" ;; *) expect "trusted: a trusted function is never listed as proved" "not proved" "not proved" ;; esac
 case $out in *"main"* | *"ok    helper"* | *"FAIL  helper"*) expect "default set: main and a function with no contract are not proved" "neither" "$out" ;; *) expect "default set: main and a function with no contract are not proved" "neither" "neither" ;; esac
