@@ -166,6 +166,66 @@ for mode in "c -std=gnu23" "c++ -std=c++23"; do
     ok "u/deep/farther.h compiles with no include path (${mode%% *})" $?
 done
 
+# A generic called with its type written in a body needs no instance in a header: it stays a plain call
+cat >t/typed_call.smith <<'S'
+module t::typed_call;
+import smith::test;
+export void typed_call_test(void) {
+    test::check_equal(u32, 1, 1);
+}
+S
+"$smith" cc --smith-header t/typed_call.smith -o "$work/include/t/typed_call.h" -I "$here/include" 2>"$work/err.typed_call"
+ok "typed_call: a generic with its type written in a body does not stop the header" $?
+cat "$work/err.typed_call" | head -5
+
+# A module's imports are read, and theirs: a chain longer than the old limit of eight modules, by source and by header
+mkdir -p chain
+i=0
+while [ $i -lt 20 ]; do
+    {
+        echo "module chain::m$i;"
+        [ $i -lt 19 ] && echo "import chain::m$((i + 1));"
+        if [ $i -lt 19 ]; then echo "export u32 m$i(void) { return m$((i + 1))::m$((i + 1))() + 1; }"; else echo "export u32 m$i(void) { return 1; }"; fi
+    } >chain/m$i.smith
+    i=$((i + 1))
+done
+"$smith" cc --smith-header chain/m0.smith -o "$work/chain-source.h" 2>"$work/err.chain"
+ok "chain: twenty modules read by source" $?
+head -3 "$work/err.chain"
+mkdir -p "$work/include/chain"
+i=19
+while [ $i -ge 1 ]; do
+    "$smith" cc --smith-header chain/m$i.smith -o "$work/include/chain/m$i.h" -I "$work/include" 2>>"$work/err.chain"
+    i=$((i - 1))
+done
+"$smith" cc --smith-header chain/m0.smith -o "$work/chain-headers.h" -I "$work/include" 2>>"$work/err.chain"
+ok "chain: twenty modules read by header" $?
+cat >chain/last.smith <<'S'
+module chain::last;
+import chain::m0;
+import t::point;
+export point::Point last(void) {
+    return point::origin();
+}
+S
+"$smith" cc --smith-header chain/last.smith -o "$work/chain-last.h" -I "$work/include" 2>"$work/err.last"
+ok "chain: an import after twenty others is still found" $?
+head -3 "$work/err.last"
+mkdir -p deep
+i=0
+while [ $i -lt 140 ]; do
+    {
+        echo "module deep::m$i;"
+        [ $i -lt 139 ] && echo "import deep::m$((i + 1));"
+        echo "export u32 m$i(void);"
+    } >deep/m$i.smith
+    i=$((i + 1))
+done
+"$smith" cc --smith-header deep/m0.smith -o "$work/deep.h" 2>"$work/err.deep"
+status=$?
+[ $status -ne 0 ] && grep -q "smith_raw_modules_max" "$work/err.deep"
+ok "deep: more modules than the limit is an error that names it" $?
+
 echo
 echo "$total header checks, $failures failed"
 [ "$failures" -eq 0 ]

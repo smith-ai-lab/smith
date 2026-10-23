@@ -755,7 +755,7 @@ static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spelling
 // it). A module found neither way is accepted unread, as before, so its names are lowered by the prefix rule alone.
 // The nested read borrows the tables the run is in the middle of (the source, the comments), so they are kept aside.
 
-constexpr size_t smith_raw_modules_max = 8;
+constexpr size_t smith_raw_modules_max = 128;
 constexpr size_t smith_raw_meta_max = (size_t)1 << 17;
 
 static struct {
@@ -765,6 +765,14 @@ static struct {
 } smith_raw_modules[smith_raw_modules_max];
 static size_t smith_raw_modules_count;
 static bool smith_raw_run_active; // `--smith-header` or `--smith-lower` is lowering: its cache is its own
+
+[[noreturn]] static void smith_raw_modules_full(void) {
+    fprintf(stderr,
+            "smith: the raw lowering reads at most %zu modules (smith_raw_modules_max in runtime/lang_lex.c), counting "
+            "everything the file imports, directly and through its imports\n",
+            smith_raw_modules_max);
+    exit(1);
+}
 
 static void smith_raw_interface_enter(void) {
     if (!smith_raw_run_active) smith_raw_modules_count = 0;
@@ -904,7 +912,8 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
             char path[PATH_MAX];
             bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(relative) - 2),
                                          relative) < sizeof path;
-            if (!known && cursor > name && fits && *count < smith_raw_modules_max - smith_raw_modules_count) {
+            if (!known && cursor > name && fits) {
+                if (*count >= smith_raw_modules_max - smith_raw_modules_count) smith_raw_modules_full();
                 snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);
                 snprintf(wanted[*count].path, sizeof wanted[0].path, "%s", path);
                 *count += 1;
@@ -928,7 +937,7 @@ static void smith_raw_prefetch(const char *file, const char *text, size_t length
         if (got != SIZE_MAX) smith_raw_want(wanted[at].path, source, got, wanted, &count);
     }
     for (size_t at = count; at > 0; at--) { // each after what it imports
-        if (smith_raw_modules_count >= smith_raw_modules_max) return;
+        if (smith_raw_modules_count >= smith_raw_modules_max) smith_raw_modules_full();
         size_t slot = smith_raw_modules_count++;
         snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", wanted[at - 1].relative);
         smith_raw_modules[slot].text = smith_raw_module_text[slot];
@@ -971,7 +980,7 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
         return true;
     }
     if (slot == SIZE_MAX) {
-        if (smith_raw_modules_count >= smith_raw_modules_max) return false;
+        if (smith_raw_modules_count >= smith_raw_modules_max) smith_raw_modules_full();
         slot = smith_raw_modules_count++;
         char *into = smith_raw_module_text[slot];
         snprintf(smith_raw_modules[slot].path, sizeof smith_raw_modules[0].path, "%s", relative);
