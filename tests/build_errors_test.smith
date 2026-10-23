@@ -1,0 +1,107 @@
+// What `smith build` says and does when build.c is wrong or missing (tests/build.sh sections 9 and 9g): no build.c, no
+// default, an empty default, a failing step, a compile error, an unimplemented field, and a step, a task or an alias
+// declared twice.
+module build_errors_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *first_line(const char *text) {
+    static char line[512];
+    usize length = 0;
+    while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof line)
+        length++;
+    __builtin_memcpy(line, text, length);
+    line[length] = '\0';
+    return line;
+}
+
+export void test_build_errors_no_build_c_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("errors: no build.c fails", 2, &run);
+    scratch::expect_text("errors: no build.c message",
+                         "smith: no build.c in this folder, and no main.smith or main.c to build by convention",
+                         first_line(run.err));
+}
+
+export void test_build_errors_no_default_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "errors_no_default");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("errors: no smith_default fails", 2, &run);
+    scratch::expect_contains("errors: no smith_default message", run.err, "no default; call smith_default");
+}
+
+// An empty default, such as a glob that matched nothing, builds nothing rather than every target.
+export void test_build_errors_an_empty_default_builds_nothing_and_ninja_arguments_are_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "errors_empty_default");
+    scratch::Run run = scratch::build(&p, "");
+    char text[64];
+    __builtin_snprintf(text, sizeof text, "%d %s", run.status, scratch::exists(&p, "x") ? "present" : "absent");
+    scratch::expect_text("empty default: builds nothing and exits 0", "0 absent", text);
+    scratch::Run file = scratch::build(&p, "-f other.ninja");
+    scratch::expect_status("errors: -f is refused", 2, &file);
+    scratch::expect_contains("errors: -f message", file.err, "smith build names the manifest itself");
+    scratch::Run folder = scratch::build(&p, "-Cdir");
+    scratch::expect_status("errors: -CX is refused", 2, &folder);
+}
+
+export void test_build_errors_a_failing_step_makes_smith_build_fail(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "errors_failing_step");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("errors: a failing step makes smith build fail", &run);
+}
+
+export void test_build_errors_a_compile_error_in_build_c_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "build.c", "int build(void) { return ; }\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("errors: a compile error in build.c fails", &run);
+    char both[8192];
+    __builtin_snprintf(both, sizeof both, "%s%s", run.out, run.err);
+    scratch::expect_contains("errors: clang's message is shown", both, "error:");
+}
+
+export void test_build_errors_an_unimplemented_field_exits_2(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "errors_content_hash");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("errors: an unimplemented field exits 2", 2, &run);
+    scratch::expect_contains("errors: the unimplemented message", run.err,
+                             "smith: build.c: .content_hash is not implemented yet");
+}
+
+// 9g. A step, a task or an alias declared twice.
+export void test_build_twice_identical_steps_tasks_and_aliases_are_one_and_a_different_step_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "twice_steps");
+    scratch::Run first = scratch::build(&p, "");
+    char text[64];
+    __builtin_snprintf(text, sizeof text, "%d %zu", first.status, scratch::lines(&p, "runs"));
+    scratch::expect_text("twice: identical steps are accepted and run once", "0 1", text);
+    scratch::Run tool = scratch::build(&p, "tool");
+    __builtin_snprintf(text, sizeof text, "%d %zu", tool.status, scratch::lines(&p, "tasks"));
+    scratch::expect_text("twice: identical tasks and aliases are one task", "0 1", text);
+    scratch::Run group = scratch::build(&p, "group");
+    __builtin_snprintf(text, sizeof text, "%d %zu", group.status, scratch::lines(&p, "tasks"));
+    scratch::expect_text("twice: and the alias names it", "0 2", text);
+    scratch::Run differ = scratch::build(&p, "-Ddiffer");
+    scratch::expect_status("twice: a step that differs is an error", 2, &differ);
+    scratch::expect_contains("twice: the error names the output and the field", differ.err,
+                             "the output 'shared.o' is already made by an earlier step whose .description differs");
+}
+
+export void test_build_twice_a_task_that_differs_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "twice_task");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("twice: a task that differs is an error", 2, &run);
+    scratch::expect_contains("twice: the task error names the field", run.err,
+                             "task tool: the task is already declared and its .command differs");
+}
+
+export void test_build_twice_an_alias_with_other_targets_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "twice_alias");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("twice: an alias with other targets is an error", 2, &run);
+    scratch::expect_contains("twice: the alias error", run.err,
+                             "alias group: the alias is already declared and its targets differ");
+}
