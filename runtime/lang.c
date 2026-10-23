@@ -303,6 +303,8 @@ typedef struct {
     bool line_start;
     bool space_before;
     bool expand;
+    bool synthetic; // the lowering made it: it has no token of its own in the source (a tuple's tag, fields and
+                    // semicolons)
     bool after_member;
     bool after_tag;
     bool typeish;
@@ -363,8 +365,11 @@ typedef struct {
 
 struct SmithLang {
     bool broken;
-    bool io_import; // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
-    bool io_main;   // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
+    bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
+                       // (runtime/lang_tuple.c)
+    bool tuples_seen;  // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
+    bool io_import;    // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
+    bool io_main;      // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
     uint32_t io_main_location; // of that function's name
     SmithLangText io_type; // how this file's lowering writes `io::Io` (SmithIo, or the module's name without a header)
     bool io_make_seen;     // `io::make` was written somewhere in the file
@@ -686,6 +691,12 @@ static const SmithLangSized smith_lang_sized[] = {
     {"usize", "__SIZE_TYPE__", "size_t"},
 };
 
+// Whether the file has tuples (the text has one, or an import's header does): the host offers every token, and `t[0]`
+// and `countof(t)` are asked of the compiler (runtime/lang_tuple.c).
+static bool smith_lang_tuples_on(const SmithLang *lang, const SmithHost *host) {
+    return lang->tuples_seen || host->maybe_tuple;
+}
+
 // ---- Small helpers ----------------------------------------------------------------------------------------------
 
 [[gnu::always_inline]] static inline bool smith_lang_equals(const char *text, size_t length, const char *literal) {
@@ -788,6 +799,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // A module's private declarations, read as they stream by.
 #include "lang_declare.c"
+
+// Tuples: `struct { i32, f32 }`, `t[0]`, `countof(t)`.
+#include "lang_tuple.c"
 
 // Bodies, the start and end of the file, and the entry points.
 #include "lang_stream.c"

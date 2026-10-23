@@ -549,6 +549,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.declared_by = &SmithHook::declaredBy;
         host.type_info = &SmithHook::typeInfo;
         host.type_query = &SmithHook::typeQuery;
+        host.return_type = &SmithHook::returnType;
         host.expr_type = &SmithHook::exprType;
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
@@ -567,6 +568,7 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto ") ||
                              SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
+        host.maybe_tuple = hasTuple(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
@@ -1890,6 +1892,17 @@ class SmithHook final : public TokenHook, public NameSource {
         return true;
     }
 
+    // The return type of the function whose body is being parsed.
+    static bool returnType(void *context, char *out, uint32_t capacity) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (self->sema == nullptr) return false;
+        const FunctionDecl *function = self->sema->getCurFunctionDecl(true);
+        if (function == nullptr) return false;
+        QualType type = function->getReturnType().getCanonicalType();
+        snprintf(out, capacity, "%s", type.getAsString(self->sema->getASTContext().getPrintingPolicy()).c_str());
+        return true;
+    }
+
     static bool fieldOf(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
                         const char **field_name, const char **field_type) {
         auto *self = static_cast<SmithHook *>(context);
@@ -1966,6 +1979,28 @@ class SmithHook final : public TokenHook, public NameSource {
             bool is_for = before >= 3 && text.substr(before - 3, 3) == "for" &&
                           (before == 3 || !isAsciiIdentifierContinue(text[before - 4]));
             if (is_if || is_for) return true;
+        }
+        return false;
+    }
+
+    // Whether the text has `struct {` and, before the matching `}`, no `;`: a tuple type (comments and strings count).
+    static bool hasTuple(StringRef text) {
+        for (size_t at = text.find("struct"); at != StringRef::npos; at = text.find("struct", at + 6)) {
+            if (at > 0 && isAsciiIdentifierContinue(text[at - 1])) continue;
+            size_t open = at + 6;
+            while (open < text.size() && isWhitespace(text[open]))
+                open += 1;
+            if (open >= text.size() || text[open] != '{') continue;
+            int depth = 0;
+            bool semicolon = false;
+            size_t close = open;
+            for (; close < text.size(); close++) {
+                depth += text[close] == '{';
+                depth -= text[close] == '}';
+                semicolon = semicolon || text[close] == ';';
+                if (depth == 0 || semicolon) break;
+            }
+            if (!semicolon && close < text.size()) return true;
         }
         return false;
     }

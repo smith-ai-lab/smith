@@ -549,6 +549,8 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
         if (name->c_name.length > 0) used = smith_lang_append(out, capacity, used, "=%s", smith_lang_str(name->c_name));
     }
     used = smith_lang_append(out, capacity, used, "\n");
+    if (lang->tuples_seen)
+        used = smith_lang_append(out, capacity, used, "// smith-tuples\n"); // an importer indexes them
     used = smith_lang_generic_lines(lang, out, capacity, used);
     used = smith_lang_priv_linked_line(lang, out, capacity, used);
     return smith_lang_priv_hidden_line(lang, out, capacity, used);
@@ -572,6 +574,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
     used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
+    smith_lang_tuple_hoist(smith_lang_header_body, &lang->header_used, smith_lang_header_max);
     used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
     used = smith_lang_priv_section(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");
@@ -781,20 +784,38 @@ static void smith_lang_dispatch(SmithLang *lang, const SmithHost *host, const Sm
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
-    if (!token->foreign && !lang->recording && !smith_lang_capturing(lang)) {
+    if (!token->foreign && !lang->recording) {
+        bool capturing = smith_lang_capturing(lang); // the arguments of a call to a generic are kept, and typed later
         if (token->kind == SmithTokenKind_Identifier) {
-            if (smith_lang_ident(token, "if") && smith_lang_ifc_begin(lang, host, token)) return;
-            if (host->maybe_if_constexpr && smith_lang_ident(token, "for")) {
+            if (smith_lang_ident(token, "struct")) smith_lang_tuple_begin(lang, host, token);
+            if (smith_lang_tuples_on(lang, host) && host->previous != nullptr && smith_lang_ident(token, "countof") &&
+                !smith_lang_sparse_member(lang, host) && smith_lang_tuple_countof(lang, host, token)) {
+                return;
+            }
+            if (!capturing && smith_lang_ident(token, "return") && smith_lang_tuples_on(lang, host)) {
+                smith_lang_tuple_return(lang, host, token);
+            }
+            if (!capturing && smith_lang_ident(token, "if") && smith_lang_ifc_begin(lang, host, token)) return;
+            if (!capturing && host->maybe_if_constexpr && smith_lang_ident(token, "for")) {
                 smith_lang_for_constexpr_outside(lang, host, token);
             }
-            if (host->maybe_if_constexpr && smith_lang_ident(token, "constexpr")) smith_lang_ifc_constant(lang, host);
-        } else if (lang->ifc_count > 0 && token->kind == SmithTokenKind_Punctuator) {
+            if (!capturing && host->maybe_if_constexpr && smith_lang_ident(token, "constexpr")) {
+                smith_lang_ifc_constant(lang, host);
+            }
+        } else if (smith_lang_punct(token, "[") && smith_lang_tuples_on(lang, host) &&
+                   smith_lang_tuple_subscript(lang, host, token)) {
+            return;
+        } else if (!capturing && lang->ifc_count > 0 && token->kind == SmithTokenKind_Punctuator) {
             lang->ifc_braces += smith_lang_punct(token, "{") ? 1 : 0;
             lang->ifc_braces -= smith_lang_punct(token, "}") ? 1 : 0;
             closes = smith_lang_punct(token, "}") && lang->ifc_braces == lang->ifc[lang->ifc_count - 1].target;
         }
     }
     smith_lang_dispatch(lang, host, token);
+    if (host->previous != nullptr && smith_lang_tuples_on(lang, host) &&
+        (lang->recent_count == 0 || lang->recent[0].text != token->text)) {
+        smith_lang_remember(lang, token); // `t[0]` asks for the tokens before it, and the host may not have them yet
+    }
     if (closes) smith_lang_ifc_close(lang, host);
 }
 
@@ -802,6 +823,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
 SmithLang *smith_lang_new(void) {
     SmithLang *lang = &smith_lang_instance;
     memset(lang, 0, sizeof *lang);
+    smith_lang_tuple_used = 0;
     smith_lang_word_buckets();
     lang->started = true;
     lang->pending = SIZE_MAX;
@@ -836,7 +858,11 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
         SmithToken next = smith_lang_take(lang, host);
         if (next.kind == SmithTokenKind_Eof) smith_lang_generic_unclosed(lang, host);
         smith_lang_process(lang, host, &next);
-        smith_lang_generic_advance(lang, host, &next);
+        if (lang->advance_skip) {
+            lang->advance_skip = false;
+        } else {
+            smith_lang_generic_advance(lang, host, &next);
+        }
     }
     if (lang->broken && !lang->broken_reported) { // a table filled: say so, once, since the rest is passed through
         lang->broken_reported = true;

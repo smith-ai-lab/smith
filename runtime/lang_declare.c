@@ -189,6 +189,14 @@ static void smith_lang_head_punctuator(SmithLang *lang, const SmithHost *host, c
     char c = token->length == 1 ? token->text[0] : 0;
     decl->prev_star = c == '*';
     decl->prev_tag = false;
+    if (token->tuple_brace) { // a tuple's definition is part of the head, as a parenthesis is
+        if (c == '{') {
+            lang->paren_depth += 1;
+        } else if (lang->paren_depth > 0) {
+            lang->paren_depth -= 1;
+        }
+        return;
+    }
     if (c == '(') {
         if (decl->name_found && lang->paren_depth == 0 && lang->bracket_depth == 0) {
             decl->in_params = true;
@@ -540,6 +548,10 @@ static SmithLangAct smith_lang_fast_stream(SmithLang *lang, const SmithHost *hos
 SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->broken || token->kind == SmithTokenKind_Eof || token->foreign) return smith_lang_act(SmithLangAct_Slow);
     lang->recent_count = 0;
+    if (token->kind == SmithTokenKind_Identifier && smith_lang_tuples_on(lang, host) &&
+        smith_lang_ident(token, "struct")) {
+        return smith_lang_act(SmithLangAct_Slow); // a tuple is read ahead
+    }
     if (lang->is_module && !lang->body_sparse) {
         if (lang->state == SmithLangState_Stream) return smith_lang_fast_stream(lang, host, token);
         bool declaring = lang->state == SmithLangState_Start || lang->state == SmithLangState_Declare;

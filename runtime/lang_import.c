@@ -227,12 +227,24 @@ static bool smith_lang_import_is_target(SmithLang *lang, const char *module, con
     return true;
 }
 
+// A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
+// the host offers it every token.
+static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length) {
+    if (text == nullptr || memmem(text, length, "// smith-tuples", 15) == nullptr) return;
+    lang->tuples_seen = true;
+    if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
+}
+
 // The header an `import a;` found is a C header, not the one smith writes for module `a` (it has no `// smith-module:`
 // line): a C header with the module's name is on the include path ahead of the module's. The import is the one error.
 static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, const SmithLangModuleName *name,
                                        const char *bind, size_t bind_length, const char *header, const char *text,
                                        uint32_t length) {
-    if (text == nullptr || length == 0 || memmem(text, length, "// smith-module:", 16) != nullptr) return false;
+    if (text == nullptr || length == 0) return false;
+    if (memmem(text, length, "// smith-module:", 16) != nullptr) { // a module's header
+        smith_lang_import_tuples(lang, host, text, length);
+        return false;
+    }
     SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
     if (failed != nullptr) failed->missing = true;
     smith_lang_error(lang, host, name->location,

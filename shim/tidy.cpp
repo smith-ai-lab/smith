@@ -85,6 +85,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
 
   protected:
     std::optional<FailureInfo> getDeclFailureInfo(const NamedDecl *Decl, const SourceManager &SM) const override {
+        if (isTuplePart(Decl)) return std::nullopt;
         const smith::WrittenName *written = writtenName(Decl, SM);
         if (written == nullptr || written->member.empty()) return (inner.*reach(DeclFn{}))(Decl, SM);
         // The first declaration of an exported function is the lowering's copy of its prototype, which is in no file
@@ -118,6 +119,16 @@ class SmithNaming final : public RenamerClangTidyCheck {
     // A generic instance is written `push_array<f64>`; the name the rules judge is the generic's, `push_array`.
     static StringRef judgedName(StringRef member) {
         return member.substr(0, member.find('<'));
+    }
+
+    // A tuple `struct { i32, f32 }` is lowered to a struct named for its fields (`smith_tuple_i32__f32`) whose fields
+    // are
+    // `_0`, `_1`: names the lowering made and the program never wrote, so no rule of naming applies to them.
+    static bool isTuplePart(const NamedDecl *Decl) {
+        constexpr StringRef prefix = "smith_tuple_";
+        if (const auto *record = dyn_cast<RecordDecl>(Decl)) return record->getName().starts_with(prefix);
+        if (const auto *field = dyn_cast<FieldDecl>(Decl)) return field->getParent()->getName().starts_with(prefix);
+        return false;
     }
 
     static const NamedDecl *definitionOf(const NamedDecl *Decl) {

@@ -58,6 +58,7 @@ typedef struct {
     bool expand;       // emitted: macro-expand it when it re-enters the stream (the X of `c.X`)
     bool synthetic;    // emitted: it has no counterpart in the source (a `static`, a symbol label, a prototype's copy)
     bool copy;         // emitted: part of a copy of a declaration's head (the prototype of a definition), all of it
+    bool tuple_brace;  // emitted: the `{` or `}` of a tuple\'s definition (a head holds it like a parenthesis)
     bool name;         // emitted: the name a declaration introduces
     uint32_t instance; // emitted: the generic instance whose body the token belongs to (0: none)
     uint32_t location; // the host's source location, kept by every token derived from this one
@@ -186,6 +187,9 @@ typedef struct {
     // calls, anything an expression is), read by the compiler in the scope the parser is in. False with `out->why` when
     // it cannot.
     bool (*expr_type)(void *context, const char *tokens, uint32_t length, SmithExprType *out);
+    // The type of the function being parsed, as the compiler prints it with typedefs looked through (`return {1, 2.0f}`
+    // in a function that returns a tuple): false outside a function or for a host without a parser.
+    bool (*return_type)(void *context, char *out, uint32_t capacity);
     // A generic instance is about to be emitted (`id` is in the tokens that follow): the instance whose body asked for
     // it (0: the file's own code), the call that did, how to name it in a note, and the place of the generic's name.
     void (*instance)(void *context, uint32_t id, uint32_t parent, uint32_t call_location, const char *description,
@@ -225,6 +229,10 @@ typedef struct {
     // Whether the file's text may contain an `if constexpr` (the words in that order): the host then offers every token
     // of a function body, because `if` and `else` are keywords and a sparse host is offered only identifiers.
     bool maybe_if_constexpr;
+    // Whether the file's text may contain a tuple type (`struct {` and a list with no `;` before the `}`): the host
+    // then offers every token, because `struct` is a keyword and a tuple's uses (`t[0]`, `countof(t)`) are found among
+    // them.
+    bool maybe_tuple;
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).

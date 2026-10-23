@@ -14,6 +14,7 @@ static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHe
     token.line_start = held->line_start;
     token.space_before = held->space_before;
     token.expand = held->expand;
+    token.synthetic = held->synthetic;
     token.via = held->via;
     token.name = held->role == SmithLangRole_Declared;
     token.location = held->location;
@@ -41,6 +42,7 @@ static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangR
     lang->carry_line_start = false;
     held->space_before = token->space_before;
     held->expand = token->expand;
+    held->synthetic = token->synthetic;
     held->via = token->via;
     held->after_member = context->after_member;
     held->after_tag = context->after_tag;
@@ -184,6 +186,14 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, cons
 }
 
 static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
+    if (token->tuple_brace) { // a tuple's definition is part of the head, as a parenthesis is
+        if (smith_lang_punct(token, "{")) {
+            lang->paren_depth += 1;
+        } else if (lang->paren_depth > 0) {
+            lang->paren_depth -= 1;
+        }
+        return false;
+    }
     if (smith_lang_punct(token, "(")) {
         if (lang->decl.params_next && lang->paren_depth == 0) {
             lang->decl.in_params = true;
@@ -513,7 +523,9 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
         lang->body_sparse = true;
-        host->watch_mode(host->context, host->maybe_if_constexpr ? SmithWatch_All : SmithWatch_Braces);
+        host->watch_mode(host->context, host->maybe_if_constexpr || smith_lang_tuples_on(lang, host)
+                                            ? SmithWatch_All
+                                            : SmithWatch_Braces);
     }
     smith_lang_push_brace(lang, host, SmithLangBrace_Function, location);
     lang->in_function = true;
