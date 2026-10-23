@@ -752,32 +752,45 @@ static void build_check_test_parts(SmithBuild *b) {
     }
 }
 
-// smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `tests/*_test.smith` linked into one
+// smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `tests/*.smith` linked into one
 // runner, built once under AddressSanitizer and UBSan, whose workers run the tests in process, one per core, where a
-// script starts smith for each case. Needs a smith that compiles `.smith` (the stage0 has none). A test that needs a
-// build or a process of its own (a stop, a sanitizer's catch) stays in its script. Returns the runner's path.
-static const char *build_units(SmithBuild *b, const char *folder) {
-    const char *compiler = smith_fmt(b, "%s/smith-cc", folder); // the smith under test, not the installed one
-    const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow",
-                                          "-Wconversion", "-Werror", "-fsanitize=address,undefined",
-                                          "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
-    SmithTests tests = {
-        .compiler = compiler,
-        .sources = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)),
-        .flags = flags,
-        .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
-        .output = smith_fmt(b, "%s/units/tests", folder),
-        .name = "test-units",
+// script starts smith for each case. It is a project of its own (tests/units/build.c, in `<folder>/units-project`,
+// whose `tests` is a link to ours) built and run by the smith under test, so the libraries and headers it compiles
+// against are that smith's, whatever smith runs this build.c: adding a library needs no two-step install. `units-build`
+// builds the runner (scripts that use it wait for that), `test-units` runs it with `smith test`. Needs a smith that
+// compiles
+// `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
+// in its script. Returns the runner's path.
+static const char *build_units(SmithBuild *b, const char *binary, const char *folder) {
+    static const char setup[] =
+        "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && "
+        "{ cmp -s tests/units/build.c \"$p/build.c\" || cp tests/units/build.c \"$p/build.c\"; } && cd \"$p\" && ";
+    const char *self = smith_fmt(b, "$repo/%s", binary);
+    const char *environment =
+        smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", folder, self);
+    const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
+    SmithStep build_step = {
+        .command =
+            (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" build build/tests", setup, environment, self),
+                             "sh", folder, nullptr},
+        .inputs = inputs,
     };
-    smith_tests(b, &tests);
-    return tests.output;
+    smith_task(b, "units-build", &build_step);
+    SmithStep run = {
+        .command = (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" test", setup, environment, self), "sh",
+                                    folder, nullptr},
+        .inputs = (const char *[]){"units-build", nullptr},
+        .test = true,
+    };
+    smith_task(b, "test-units", &run);
+    return smith_fmt(b, "%s/units-project/build/tests", folder);
 }
 
 // The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
 // waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     build_check_test_parts(b);
-    const char *units = config->hook ? build_units(b, folder) : "";
+    const char *units = config->hook ? build_units(b, binary, folder) : "";
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++)
         names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
@@ -796,7 +809,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
             .inputs = (const char *[]){binary,
                                        units[0] != '\0' &&
                                                (strcmp(row->script, "json") == 0 || strcmp(row->script, "inflate") == 0)
-                                           ? units
+                                           ? "units-build"
                                            : nullptr,
                                        nullptr},
             .test = true,
