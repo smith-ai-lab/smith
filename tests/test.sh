@@ -2263,6 +2263,128 @@ if "$smith" dbg --version >/dev/null 2>&1; then
 fi
 fi
 
+if part explain; then
+# 12b. A failed check or contract shows the variables of its line, read from the stopped test by lldb (--explain <smith>:
+# `smith test` passes it): `check(a == b)` prints a and b, a member chain, an array element, an enum and a pointer print
+# too, a crash reports as before, and a machine that refuses to debug (or a smith with no debugger) gets the report and
+# one note saying why.
+if ! "$smith" --smith-explain --available; then
+    echo "skip  explain: this smith has no debugger"
+else
+project "$work/explain"
+cat >tests/test_explain.smith <<'C'
+import smith::contract;
+import smith::test;
+
+typedef struct {
+    u64 count;
+    u64 capacity;
+} Moves;
+
+typedef enum : u8 { Red, Green } Color;
+
+typedef struct {
+    i32 cells[3][3];
+    Moves *moves;
+    Color color;
+} Board;
+
+static i32 clamp(usize count) {
+    contract::requires(count <= 5);
+    return (i32)count;
+}
+
+void test_ex_member(void) {
+    Moves moves = {.count = 7, .capacity = 9};
+    u64 expected = 8;
+    test::check(moves.count == expected);
+}
+
+void test_ex_board(void) {
+    Moves moves = {.count = 7, .capacity = 9};
+    Board board = {.cells = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}, .moves = &moves, .color = Green};
+    Board *b = &board;
+    usize row = 1;
+    usize col = 2;
+    test::check(b->cells[row][col] == 7 && b->color == Red && b->moves != nullptr);
+}
+
+void test_ex_contract(void) {
+    usize count = 6;
+    (void)clamp(count);
+}
+
+void test_ex_equal(void) {
+    u64 count = 3;
+    test::check_equal(count, 4);
+}
+
+void test_ex_crash(void) {
+    i32 *p = nullptr;
+    test::check_equal(*p, 1);
+}
+C
+cat >tests/test_explain_c.c <<'C'
+#include <smith/test.h>
+#include <stdint.h>
+
+typedef struct {
+    uint64_t count;
+    uint64_t capacity;
+} Moves;
+
+void test_exc_member(void) {
+    Moves moves = {7, 9};
+    uint64_t expected = 8;
+    smith_check(moves.count == expected);
+}
+C
+capture "$smith" build
+expect "explain: the runner builds" 0 "$rc"
+explained() { # runner arguments: the report smith test prints, with the values read from the stopped test
+    build/tests $iso --trace --explain "$smith" "$@" 2>&1 | "$smith" symbolize 2>&1 | plain | tr -s ' '
+}
+out=$(explained --test ex_member)
+case $out in
+*"values not shown"*)
+    expect_contains "explain: a machine that may not debug gets a note and the report" "$out" "check failed at tests/test_explain.smith:"
+    echo "skip  explain: this account may not debug ($(printf '%s\n' "$out" | grep 'values not shown'))"
+    ;;
+*)
+    expect_contains "explain: check(a == b) prints the member chain" "$out" "moves.count = 7"
+    expect_contains "explain: ... and the other variable" "$out" "expected = 8"
+    expect_lacks "explain: ... and not the sentence the values replace" "$out" "the condition is false"
+    out=$(explained --test ex_board)
+    expect_contains "explain: an array element, an index read from a variable" "$out" "b->cells[row][col] = 6"
+    expect_contains "explain: an enum prints its name" "$out" "b->color = "
+    expect_contains "explain: ... Green" "$out" "Green"
+    expect_contains "explain: a pointer prints its address and what it points to" "$out" "b->moves = 0x"
+    expect_contains "explain: ... and the pointee" "$out" "-> (count = 7, capacity = 9)"
+    out=$(explained --test ex_contract)
+    expect_contains "explain: a failed contract prints the variable of its line" "$out" "count = 6"
+    expect_lacks "explain: ... without repeating the heading" "$out" "requires failed
+"
+    out=$(explained --test exc_member)
+    expect_contains "explain: the same in C" "$out" "moves.count = 7"
+    expect_contains "explain: ... both variables" "$out" "expected = 8"
+    out=$(explained --test ex_equal)
+    expect_contains "explain: check_equal keeps its own two values" "$out" "count = 3, 4 (u64)"
+    expect_lacks "explain: ... and reads nothing" "$out" "@"
+    plain_crash=$(build/tests $iso --test ex_crash 2>&1 | plain | grep -v 'smith-trace')
+    read_crash=$(build/tests $iso --explain "$smith" --test ex_crash 2>&1 | plain | grep -v 'smith-trace')
+    expect "explain: a crash reports as it did" "$plain_crash" "$read_crash"
+    out=$(explained --test ex_ --jobs 1 --explain-max 1)
+    expect_contains "explain: a run reads at most --explain-max failures" "$out" "more failures were not read in the debugger (--explain-max 1)"
+    out=$(build/tests $iso --trace --test ex_member --explain "$smith" --no-explain 2>&1 | "$smith" symbolize 2>&1)
+    expect_contains "explain: --no-explain gives the report as before" "$out" "the condition is false"
+    expect_lacks "explain: ... without the values" "$out" "moves.count = 7"
+    ;;
+esac
+capture "$smith" test $iso --test ex_member
+expect_contains "explain: smith test reads the values without being asked" "$out" "expected    = 8"
+fi
+fi
+
 # 13. Tests in .smith files: found by name in a file with no module line and in a module (`export void test_x(void) {`,
 # its C name a_b_test_x and its symbol a::b::test_x), shown and selected by the name as written, and a failure's report
 # names the .smith line and the function as written. A library in the module `smith::test` is machinery, like the C one.

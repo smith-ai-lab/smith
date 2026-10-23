@@ -35,6 +35,8 @@ Only the protocol was exercised by a script (`tests/dap_client.c`); the editors'
 - The account needs Developer mode on: `DevToolsSecurity -status`; `sudo DevToolsSecurity -enable` and membership in the `_developer` group (`dseditgroup -o edit -a $USER -t user _developer`). The first debug asks to let "Developer Tools Access" take control of another process: allow it, once.
 - A smith-built program is ad-hoc signed by the linker and debuggable as it is. A hardened-runtime or notarized one fails with "Not allowed to attach to process": re-sign it for debugging, `codesign -s - -f --options runtime --entitlements get-task-allow.plist app`, with `com.apple.security.get-task-allow` true in the plist.
 
+`smith test` uses the same permission to show the variables of a failed check (`smith-test-workers`); when the machine refuses it prints `note: values not shown: the debugger could not attach (...)` and the report as before.
+
 ## Agents: smith mcp
 
 An agent debugs with the tools of `smith mcp` (launch, breakpoint, continue, steps, stack, variables, evaluate, stop); load `smith-mcp`. Without its server an agent runs `smith dbg -b` as above.

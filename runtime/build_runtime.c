@@ -3657,6 +3657,14 @@ static const char *const *smith_tests_environment(SmithRun *run, const char *sel
     return environment;
 }
 
+// `smith --smith-explain --available`: this smith has lldb, which reads the variables of a failed check.
+static bool smith_tests_can_explain(SmithRun *run, const char *self) {
+    const char *argv[] = {self, "--smith-explain", "--available", nullptr};
+    for (size_t i = 0; run->args != nullptr && run->args[i] != nullptr; i++) // --no-explain is the way out
+        if (strcmp(run->args[i], "--no-explain") == 0) return false;
+    return smith_run_status(run, argv, nullptr) == 0;
+}
+
 static int smith_tests_exit_code(int status) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
@@ -3667,6 +3675,8 @@ static int smith_tests_run(SmithRun *run) {
     if (self == nullptr || !smith_tests_can_symbolize(run, self)) return smith_run_program(run, run->args, nullptr);
     const char *const *runner = smith_cat(run->b, run->args, smith_list(run->b, "--trace", nullptr), nullptr);
     if (isatty(STDOUT_FILENO) != 0) runner = smith_cat(run->b, runner, smith_list(run->b, "--color", nullptr), nullptr);
+    if (smith_tests_can_explain(run, self))
+        runner = smith_cat(run->b, runner, smith_list(run->b, "--explain", self, nullptr), nullptr);
     const char *const filter[] = {self, "symbolize", nullptr};
     int ends[2];
     if (pipe(ends) != 0) smith_fail("smith_tests: cannot make a pipe");

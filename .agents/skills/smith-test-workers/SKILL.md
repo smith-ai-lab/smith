@@ -25,6 +25,18 @@ FAIL moves_every_step
     .smith/lib/smith/test.smith:1065   smith_test_execute
 ```
 
+**Values of the failing line.** For a `test::check(cond)`, a failed contract or an `assert`, `smith test` starts the runner with `--explain <smith>`: when the check fails, the test process waits while `smith --smith-explain` attaches lldb to it, reads the variables the source line names and lets it go, and the report prints them under the line, so `check(moves.count == expected)` shows both:
+
+```text
+FAIL moves_every_step
+  check failed at tests/moves_test.smith:42
+       42 |     test::check(moves.count == expected);
+            moves.count = 7
+            expected    = 8
+```
+
+It reads only: locals, parameters, members, indexes (an index that is a variable is read first) and pointers (address, then the pointee); never a call. An optimized-away variable says `<optimized out>`, a function, a type and a name that is no variable are dropped. It costs about 0.15 s per failure, only on a failure; it reads at most `--explain-max <n>` (5) failures a run and says how many it skipped, and each at most 5 s. A property test is read once, on its shrunk failure. `smith test --no-explain` turns it off. With no debugger (the stage0), or a machine that refuses to debug (`smith-debug`: Developer mode, hardened programs), the report is the same as before with one line, `note: values not shown: ...`. A crash (SIGSEGV) is not read. By hand: `build/tests --trace --explain "$(command -v smith)" | smith symbolize`.
+
 An `assert` is `aborted at file:line`, a segfault `crashed at file:line`, with inlined frames in the chain. AddressSanitizer and
 UBSan stacks have lines too: smith answers their symbolizer protocol. A runner run by hand prints the raw `smith-trace` lines for a
 failed check; `smith symbolize [--binary <program>] [<log>]` turns a saved log back into the report. A property test says `with seed 6387777158891554393` after FAIL, and its last line is `rerun: smith test --test <name> --seed 6387777158891554393`.

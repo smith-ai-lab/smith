@@ -20,6 +20,10 @@
 //   smith-trace frame 0x1000014c0 [name+off] a return address; its call is the instruction before it
 //   smith-trace end
 //
+// A detail line that starts `@ ` is not a failed check's value but a variable read from the stopped frame by lldb
+// (`@ moves.count = 7`), written by the test runner's debugger step; `@! text` says why none was read. smith symbolize
+// prints them under the source line (`smith test` reads them with `smith --smith-explain`).
+//
 // name+off is the nearest exported symbol, written when the writer was not in a signal handler; it names the frames
 // of system libraries, whose debug info is not on disk. Frames are listed innermost first.
 //

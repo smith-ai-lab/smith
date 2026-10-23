@@ -98,6 +98,15 @@ same bytes with and without the patch. What the hook returns, and what lldb does
 Compiling a `.smith` file with debug info in one command (`smith cc -g a.smith b.smith -o prog`) leaves lldb with no
 objects to read, as it does for C files (`dsymutil` is not run); compile each to a `.o` and link, as `smith build` does.
 
+## Reading a failed check
+
+`smith --smith-explain --pid <pid>` (`runtime/explain.c`, `shim/lldb_explain.cpp`) uses lldb's SB API in smith's process
+to attach to a stopped test, read variables of one frame by path and detach: the test runner runs it on its own
+worker when a check fails, so `check(a == b)` shows `a` and `b` ([failure reports](failure-reports-and-tests.md)). It
+needs what `smith dbg` needs (the permissions above) and degrades to a note when the machine refuses. Measured here:
+the attach, the frame's symbols and the reads take 0.13 to 0.16 s; a debugger killed in the middle of its attach left the
+process running (debugserver detaches when its client goes).
+
 ## Tests
 
 `tests/dap.sh` runs `smith dbg -b` on a small program and `tests/dap_client.c`, a DAP client that writes the requests as

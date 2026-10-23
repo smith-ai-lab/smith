@@ -113,6 +113,11 @@ smith_tests(b, &tests);                              // tests.step is the task "
   worker (or the child of `--isolate`), whose end the runner reads, as for any crash; `--in-process`, which has no
   process to end, jumps to its loop. A second call in a test is harmless. The test's output is shown only for a failure,
   as always.
+- **`--explain <smith>`, `--explain-max <n>`, `--no-explain`.** `smith test` starts the runner with `--explain <smith>` so that
+  a failed `test::check`, contract or `assert` shows the variables its line names, read from the stopped test with lldb
+  ([failure reports](failure-reports-and-tests.md)); `--explain-max` (default 5) caps the failures read in a run, and the
+  runner prints how many it left; `--no-explain` (to `smith test`) turns it off. `--stats` adds `explained: N failures in
+  S s`. With `--in-process` the runner explains itself, so a test run under `smith dbg` does not pass `--explain`.
 - **`test::note(format, ...)`** (`smith_test_note`) prints under a failure, whether a failed check, a crash or a timeout; each note
   replaces the last. **`test::memory(capacity)`** (`smith_test_arena`) is the test's memory, from a block the runner reserved once with
   `mmap`, given back before each test and each key.

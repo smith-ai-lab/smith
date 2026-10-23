@@ -24,6 +24,7 @@ import <sys/resource.h>;
 import <sys/socket.h>;
 import <sys/time.h>;
 import <sys/wait.h>;
+import <time.h>;
 import <unistd.h>;
 
 // <smith/test.h>: tests, written once and done well. A test is a plain function in a file build.c names. Its signature
@@ -37,7 +38,9 @@ import <unistd.h>;
 // and `void test_<name>(SmithIo *io) {` by name (`random::Key` and `io::Io` in a `.smith` file), and the runner,
 // which is this module's main, runs them in parallel, with failures printed with both values and their types. `smith
 // test` runs it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
-// --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full (knowledge/build-tests.md).
+// --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full (knowledge/build-tests.md). A failed check or
+// contract shows the variables of its line when smith started the runner with --explain <smith> (below); --no-explain
+// turns it off.
 //
 // A property test is run on --seeds keys; the key comes from the run's seed, so a failure prints the seed that replays
 // it. A test that takes an io gets a real one made by the runner for that test alone: its key is made from the run's
@@ -73,6 +76,12 @@ import <unistd.h>;
 // A test whose heavy checks have a full size reads test::full(): false by default, true when the run was asked for it
 // (`smith test --full`). The test picks its size from it and checks the same properties either way; the default run
 // keeps `smith test` fast, and --full is the slow pass.
+//
+// The variables of the failing line. A `check(a == b)` prints no values, so when smith starts the runner with --explain
+// <smith> (`smith test` does), a failed check, contract or assert makes the test process wait while `smith
+// --smith-explain` attaches lldb to it, reads the variables the failing source line names, as a debugger would, and
+// lets it go; the report prints them under the line. Nothing is captured in the program. It costs about 0.15 s per
+// failure, reads at most --explain-max (5) failures a run, and --no-explain turns it off (knowledge/build-tests.md).
 //
 // The checks are plain functions. A failure shows the line that called the check, read from the source file, and the
 // call chain that led to it: the program records the addresses of its stack (<smith/trace.h>), and smith turns them
@@ -140,34 +149,36 @@ import <unistd.h>;
 // ---------------------------------------------------------------------------------------------------------------
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 
-constexpr i32 sig_abrt = c::SIGABRT;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_alrm = c::SIGALRM;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_bus = c::SIGBUS;            // NOLINT(smith-preprocessor)
-constexpr i32 sig_fpe = c::SIGFPE;            // NOLINT(smith-preprocessor)
-constexpr i32 sig_ill = c::SIGILL;            // NOLINT(smith-preprocessor)
-constexpr i32 sig_kill = c::SIGKILL;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_pipe = c::SIGPIPE;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_prof = c::SIGPROF;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_segv = c::SIGSEGV;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_trap = c::SIGTRAP;          // NOLINT(smith-preprocessor)
-constexpr i32 sig_xfsz = c::SIGXFSZ;          // NOLINT(smith-preprocessor)
-constexpr i32 on_stack = c::SA_ONSTACK;       // NOLINT(smith-preprocessor)
-constexpr i32 with_info = c::SA_SIGINFO;      // NOLINT(smith-preprocessor)
-constexpr i32 stdout_fd = c::STDOUT_FILENO;   // NOLINT(smith-preprocessor)
-constexpr i32 stderr_fd = c::STDERR_FILENO;   // NOLINT(smith-preprocessor)
-constexpr i32 protect_read = c::PROT_READ;    // NOLINT(smith-preprocessor)
-constexpr i32 protect_write = c::PROT_WRITE;  // NOLINT(smith-preprocessor)
-constexpr i32 map_anonymous = c::MAP_ANON;    // NOLINT(smith-preprocessor)
-constexpr i32 map_private = c::MAP_PRIVATE;   // NOLINT(smith-preprocessor)
-constexpr i32 map_shared = c::MAP_SHARED;     // NOLINT(smith-preprocessor)
-constexpr i32 set_flags = c::F_SETFL;         // NOLINT(smith-preprocessor)
-constexpr i32 non_blocking = c::O_NONBLOCK;   // NOLINT(smith-preprocessor)
-constexpr i16 poll_in = c::POLLIN;            // NOLINT(smith-preprocessor)
-constexpr i32 files_limit = c::RLIMIT_NOFILE; // NOLINT(smith-preprocessor)
-constexpr i32 timer_real = c::ITIMER_REAL;    // NOLINT(smith-preprocessor)
-constexpr i32 timer_cpu = c::ITIMER_PROF;     // NOLINT(smith-preprocessor)
-constexpr i32 again = c::EAGAIN;              // NOLINT(smith-preprocessor)
-constexpr i32 interrupted = c::EINTR;         // NOLINT(smith-preprocessor)
+constexpr i32 sig_abrt = c::SIGABRT;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_alrm = c::SIGALRM;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_bus = c::SIGBUS;                           // NOLINT(smith-preprocessor)
+constexpr i32 sig_fpe = c::SIGFPE;                           // NOLINT(smith-preprocessor)
+constexpr i32 sig_ill = c::SIGILL;                           // NOLINT(smith-preprocessor)
+constexpr i32 sig_kill = c::SIGKILL;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_pipe = c::SIGPIPE;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_prof = c::SIGPROF;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_segv = c::SIGSEGV;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_trap = c::SIGTRAP;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_xfsz = c::SIGXFSZ;                         // NOLINT(smith-preprocessor)
+constexpr i32 on_stack = c::SA_ONSTACK;                      // NOLINT(smith-preprocessor)
+constexpr i32 with_info = c::SA_SIGINFO;                     // NOLINT(smith-preprocessor)
+constexpr i32 stdout_fd = c::STDOUT_FILENO;                  // NOLINT(smith-preprocessor)
+constexpr i32 stderr_fd = c::STDERR_FILENO;                  // NOLINT(smith-preprocessor)
+constexpr i32 protect_read = c::PROT_READ;                   // NOLINT(smith-preprocessor)
+constexpr i32 protect_write = c::PROT_WRITE;                 // NOLINT(smith-preprocessor)
+constexpr i32 map_anonymous = c::MAP_ANON;                   // NOLINT(smith-preprocessor)
+constexpr i32 map_private = c::MAP_PRIVATE;                  // NOLINT(smith-preprocessor)
+constexpr i32 map_shared = c::MAP_SHARED;                    // NOLINT(smith-preprocessor)
+constexpr i32 set_flags = c::F_SETFL;                        // NOLINT(smith-preprocessor)
+constexpr i32 non_blocking = c::O_NONBLOCK;                  // NOLINT(smith-preprocessor)
+constexpr i16 poll_in = c::POLLIN;                           // NOLINT(smith-preprocessor)
+constexpr i32 files_limit = c::RLIMIT_NOFILE;                // NOLINT(smith-preprocessor)
+constexpr i32 timer_real = c::ITIMER_REAL;                   // NOLINT(smith-preprocessor)
+constexpr i32 timer_cpu = c::ITIMER_PROF;                    // NOLINT(smith-preprocessor)
+constexpr i32 again = c::EAGAIN;                             // NOLINT(smith-preprocessor)
+constexpr i32 interrupted = c::EINTR;                        // NOLINT(smith-preprocessor)
+constexpr i32 write_only = c::O_WRONLY;                      // NOLINT(smith-preprocessor)
+constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC; // NOLINT(smith-preprocessor)
 
 // A status from waitpid, as the signal that ended the process (or 0) and its exit status (or 0). The low seven bits
 // are the signal, 0 for an exit and 0x7f for a stop; an exit's status is the next byte.
@@ -184,7 +195,7 @@ i32 status_code(i32 status) {
 
 constexpr usize frames_max = c::smith_trace_frames_max;
 constexpr usize note_capacity = 4096;
-constexpr usize detail_capacity = 1024;
+constexpr usize detail_capacity = 4096;
 constexpr usize text_capacity = 128;          // one formatted value
 constexpr usize memory_capacity = 256U << 20; // every test arena of one test, or of one key, together
 constexpr usize output_capacity = 64U << 10;  // what a failing test shows of its output
@@ -487,6 +498,10 @@ bool worker;       // this process is a worker: a failed check unwinds to its lo
 c::sigjmp_buf loop_jump;
 bool in_process;               // --in-process: the runner is its own worker, and an expected abort jumps to its loop
 u64 *forks;                    // the forks of the whole run, counted in memory every process shares
+const char *explain_path;      // --explain <smith>: the program that reads the failing frame (smith --smith-explain)
+u64 explain_limit;             // the failures one run explains
+bool explaining;               // the test this process runs is explained when a check fails in it
+u64 *explained;                // shared by every process: failures explained, failures not (the cap), nanoseconds spent
 bool hooking;                  // the next process forked draws its words through the runner's tap
 const random::Tap *active_tap; // the tap this process gives its property tests' keys, or nullptr
 volatile c::sig_atomic_t abort_signal; // --in-process: the signal an expected abort raised
@@ -598,6 +613,115 @@ void write_values(Line *lines, usize count) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Reading the failing frame. A check whose message holds no values (check, a contract) fails with the process still
+// whole, so the process starts `smith --smith-explain --pid <its own pid>` and waits: that attaches lldb to it, reads
+// the variables of the line that failed, as a debugger does, and detaches. Nothing is captured in the program. The
+// answer is lines of `@ name = value` (or `@! why not`) that join the failure's detail, and `smith symbolize` prints
+// them under the source line. A run explains at most --explain-max failures and each for at most explain_seconds, and a
+// smith with no debugger, or a machine that refuses to debug, gives a note and the report as it was.
+
+constexpr u64 explain_seconds = 5;
+constexpr u64 explain_max_default = 5;
+constexpr u64 explain_stat_explained = 0;
+constexpr u64 explain_stat_skipped = 1;
+constexpr u64 explain_stat_nanoseconds = 2;
+constexpr usize explain_stats = 3;
+
+u64 explain_now_ns(void) {
+    return c::clock_gettime_nsec_np(clock_monotonic);
+}
+
+// Starts the debugger on this process, its answer going down a pipe: the pipe's read end, or -1 and no child.
+i32 explain_start(c::pid_t *child) {
+    i32 ends[2];
+    if (c::pipe(ends) != 0) return -1;
+    char pid_text[24];
+    __builtin_snprintf(pid_text, sizeof pid_text, "%d", c::getpid());
+    c::fflush(nullptr);
+    *child = c::fork();
+    if (*child == 0) {
+        c::dup2(ends[1], stdout_fd);
+        c::close(ends[0]);
+        c::close(ends[1]);
+        i32 quiet = c::open("/dev/null", write_only);
+        if (quiet >= 0) c::dup2(quiet, stderr_fd);
+        char program[path_capacity];
+        char verb[] = "--smith-explain";
+        char option[] = "--pid";
+        __builtin_snprintf(program, sizeof program, "%s", explain_path);
+        char *arguments[] = {program, verb, option, pid_text, nullptr};
+        c::execv(program, arguments);
+        c::_exit(127);
+    }
+    c::close(ends[1]);
+    if (*child < 0) {
+        c::close(ends[0]);
+        return -1;
+    }
+    return ends[0];
+}
+
+// Reads the debugger's answer until it ends or the time is up. True when the time was up.
+bool explain_read(i32 from, char *text, usize *used, u64 began) {
+    for (usize round = 0; round < detail_capacity; round++) { // each read takes bytes or ends
+        u64 elapsed = (explain_now_ns() - began) / 1'000'000;
+        if (elapsed >= explain_seconds * 1000) return true;
+        struct c::pollfd wait = {.fd = from, .events = poll_in};
+        if (c::poll(&wait, 1, (i32)(explain_seconds * 1000 - elapsed)) < 0 && *c::__error() != interrupted)
+            return false;
+        if (wait.revents == 0) continue;
+        isize got = c::read(from, text + *used, detail_capacity - 1 - *used);
+        if (got <= 0) return false;
+        *used += (usize)got;
+        if (*used >= detail_capacity - 1) return false;
+    }
+    return false;
+}
+
+// Joins the debugger's answer to the failure's detail: whole lines only, and a note when there is none.
+void explain_join(const char *text, usize used, bool late, i32 status) {
+    usize at = c::strlen(shared->detail);
+    if (late) {
+        detail_add(&at, "@! values not shown: the debugger took more than %llu s\n", explain_seconds);
+    } else if (used == 0) {
+        detail_add(&at, "@! values not shown: the debugger gave no answer (status %d)\n", status_code(status));
+    }
+    for (usize start = 0; start < used;) {
+        const char *end = (const char *)c::memchr(text + start, '\n', used - start);
+        if (end == nullptr) break; // a line the debugger did not finish
+        if (text[start] != '@') {  // anything else lldb said is not an answer
+            start = (usize)(end - text) + 1;
+            continue;
+        }
+        usize length = (usize)(end - (text + start)) + 1;
+        if (at + length >= detail_capacity) break;
+        detail_add(&at, "%.*s", (i32)length, text + start);
+        start += length;
+    }
+}
+
+[[gnu::noinline]] void explain_failure(void) {
+    if (!explaining || explain_path == nullptr || explained == nullptr) return;
+    if (__atomic_fetch_add(explained + explain_stat_explained, 1, __ATOMIC_RELAXED) >= explain_limit) {
+        __atomic_fetch_add(explained + explain_stat_skipped, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    u64 began = explain_now_ns();
+    c::pid_t child = 0;
+    i32 from = explain_start(&child);
+    if (from < 0) return;
+    char text[detail_capacity];
+    usize used = 0;
+    bool late = explain_read(from, text, &used, began);
+    if (late) c::kill(child, sig_kill);
+    c::close(from);
+    i32 status = 0;
+    c::waitpid(child, &status, 0);
+    explain_join(text, used, late, status);
+    __atomic_fetch_add(explained + explain_stat_nanoseconds, explain_now_ns() - began, __ATOMIC_RELAXED);
+}
+
 // Ends the test with a failed check. In a worker the test unwinds to the worker's loop; a process-per-test child exits.
 [[noreturn]] void stop(void) {
     c::fflush(nullptr);
@@ -612,6 +736,7 @@ void write_values(Line *lines, usize count) {
 
 [[noreturn]] void fail_condition(void) {
     __builtin_snprintf(shared->detail, detail_capacity, "the condition is false\n");
+    explain_failure();
     stop();
 }
 
@@ -651,6 +776,7 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
         shared->frames[i] = frames[i];
     shared->frames_exact = false;
     __builtin_snprintf(shared->detail, detail_capacity, "%s\n", c::smith_failure_heading(kind));
+    explain_failure();
     stop();
 }
 
@@ -865,6 +991,10 @@ typedef struct {
     bool wall_given;    // --wall-timeout was passed
     bool trace;         // print a failure's stack as a trace block, for smith to turn into the report
     bool stats;         // print the forks the run made
+    const char
+        *explain;     // --explain <smith>: the program that reads the failing frame of a check (smith --smith-explain)
+    u64 explain_max;  // the failures explained in a run; the others are counted, not read
+    bool explain_now; // set in the copy of the options of the run that explains the final failure of a property test
     bool shuffle_given; // run the tests in an order drawn from shuffle_seed
     u64 shuffle_seed;
     // What the runner touches the world with, from the Runner it was handed: its io's console and clock, the Runner
@@ -932,6 +1062,7 @@ typedef struct {
     u32 test; // the row of table
     bool seed_given;
     u64 seed;
+    bool explain; // a check that fails in this run is read from the stopped frame (explain_failure)
 } Command;
 
 // What a worker sends back when a test ended in it without ending the worker: a pass or a failed check. A worker that
@@ -1164,6 +1295,7 @@ void run_io(const Test *test, const Options *options, const Command *command) {
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
 [[gnu::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
     c::smith_trace_stop = (usize)__builtin_frame_address(0);
+    explaining = command->explain;
     if (test->plain != nullptr) {
         reset();
         arm(options);
@@ -1378,10 +1510,20 @@ void start_isolated(const Test *test, const Options *options, usize slot, const 
     processes[slot] = (Process){.pid = forked, .control = -1, .output = ends[0]};
 }
 
+// Whether a check that fails in this run is read from the stopped frame. Not for a property test that is going to be
+// shrunk: its final failure is run again for it (explain_rerun), so the attempts are not slowed.
+bool explain_wanted(const Options *options, const Test *test) {
+    if (options->explain == nullptr) return false;
+    return options->explain_now || test->property == nullptr || !options->shrink || options->in_process;
+}
+
 // Starts the test in the slot: a command to its worker (forked first if it has none), or its own child with --isolate.
 void dispatch(const Options *options, usize slot, const Test *test, Run *run) {
     shared_slots[slot] = (Shared){};
-    Command command = {.test = (u32)(test - table), .seed_given = options->seed_given, .seed = options->seed};
+    Command command = {.test = (u32)(test - table),
+                       .seed_given = options->seed_given,
+                       .seed = options->seed,
+                       .explain = explain_wanted(options, test)};
     if (options->isolate) {
         start_isolated(test, options, slot, &command);
         run->start = seconds(options);
@@ -1635,7 +1777,12 @@ void print_reason(const Options *options, const Run *run) {
 
 // The values of the failed check, under where it failed.
 void print_detail(const Options *options, const Run *run) {
-    print_indented(options, run->detail, c::strlen(run->detail), "    ");
+    for (const char *at = run->detail; *at != '\0';) { // a value read from the frame is "@ name = value": no marker
+        usize length = c::strcspn(at, "\n");
+        usize marker = at[0] == '@' ? (at[1] == '!' ? 3 : 2) : 0;
+        say(options, "    %.*s\n", (i32)(length - marker), at + marker);
+        at += length + (at[length] == '\n' ? 1 : 0);
+    }
 }
 
 // The failure's stack as a trace block, for smith to turn into the failing line and the call chain (smith symbolize).
@@ -1873,11 +2020,37 @@ void shrink_run(const Test *test, const Options *options, Run *run) {
     shrink_finish(shrink, changed && !leaked, leaked, run);
 }
 
+// The final failure of a property test, shrunk or not, run once more in a fresh worker with the failing frame read:
+// the key (and, when shrinking made the case smaller, the draws it left in the override table) replays it. A failure
+// that does not come back keeps its report, with a note.
+void explain_rerun(const Test *test, const Options *options, Run *run) {
+    if (options->explain == nullptr || run->outcome.end != End_Check) return;
+    Options replay = *options;
+    replay.seed_given = true;
+    replay.seed = run->seed;
+    replay.explain_now = true;
+    if (!run->shrink_changed) draws_clear(overrides);
+    discard(&processes[shrink_slot]);
+    Run *rerun = &tries[0];
+    *rerun = (Run){};
+    dispatch(&replay, shrink_slot, test, rerun);
+    wait_for(&replay, shrink_slot, rerun);
+    if (same_failure(run, rerun)) {
+        __builtin_memcpy(run->detail, rerun->detail, detail_capacity);
+        return;
+    }
+    usize used = c::strlen(run->detail);
+    if (used + 128 < detail_capacity)
+        __builtin_snprintf(run->detail + used, detail_capacity - used,
+                           "@! values not shown: the failure did not come back when the test ran again\n");
+}
+
 // The time shrinking takes counts toward the test's, for the list of the slowest.
 void shrink_failure(const Test *test, const Options *options, Run *run) {
     if (!shrinkable(test, options, run)) return;
     f64 began = seconds(options);
     shrink_run(test, options, run);
+    explain_rerun(test, options, run);
     run->seconds += seconds(options) - began;
 }
 
@@ -1992,7 +2165,10 @@ void run_in_process(Plan *plan) {
         Run *run = &plan->runs[plan->order[i]];
         const Test *test = plan->tests[plan->order[i]];
         *block = (Shared){};
-        Command command = {.test = (u32)(test - table), .seed_given = options->seed_given, .seed = options->seed};
+        Command command = {.test = (u32)(test - table),
+                           .seed_given = options->seed_given,
+                           .seed = options->seed,
+                           .explain = options->explain != nullptr};
         run->start = seconds(options);
         run->outcome = (Outcome){.end = serve(options, &command)};
         if (run->outcome.end == End_Signal) run->outcome.number = abort_signal;
@@ -2070,10 +2246,18 @@ bool parse_value(Options *options, const char *flag, const char *value) {
         parse_filter(options, value);
         return true;
     }
+    if (c::strcmp(flag, "--explain") == 0) {
+        options->explain = value;
+        return value[0] != '\0';
+    }
     if (!parse(value, &number)) return false;
     if (c::strcmp(flag, "--seed") == 0) {
         options->seed = number;
         options->seed_given = true;
+        return true;
+    }
+    if (c::strcmp(flag, "--explain-max") == 0) {
+        options->explain_max = number;
         return true;
     }
     if (c::strcmp(flag, "--seeds") == 0) {
@@ -2127,6 +2311,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->stats = true;
         } else if (c::strcmp(flag, "--trace") == 0) {
             options->trace = true;
+        } else if (c::strcmp(flag, "--no-explain") == 0) {
+            options->explain = nullptr;
         } else if (c::strcmp(flag, "--color") == 0) {
             options->color = true;
         } else if (i + 1 >= argc || !parse_value(options, flag, argv[i + 1])) {
@@ -2197,6 +2383,17 @@ void raise_files(usize jobs) {
     c::setrlimit(files_limit, &limit);
 }
 
+// How many failures the debugger did not read (the cap), and with --stats what reading the others cost.
+void say_explained(const Options *options) {
+    u64 skipped = explained[explain_stat_skipped];
+    if (skipped > 0)
+        say(options, "%llu more failures were not read in the debugger (--explain-max %llu)\n", skipped,
+            options->explain_max);
+    if (options->stats && options->explain != nullptr)
+        say(options, "explained: %llu failures in %.3f s\n", explained[explain_stat_explained] - skipped,
+            (f64)explained[explain_stat_nanoseconds] * 1e-9);
+}
+
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.
 [[smith::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
@@ -2215,6 +2412,7 @@ void raise_files(usize jobs) {
         .scratch_base = base != nullptr && base[0] != '\0' ? base : "/tmp",
         .runner_pid = c::getpid(),
         .io_seed = io->seed,
+        .explain_max = explain_max_default,
     };
     if (options.jobs > jobs_max) options.jobs = jobs_max;
     if (!parse_options(runner->argc, runner->argv, &options)) {
@@ -2222,7 +2420,8 @@ void raise_files(usize jobs) {
                  "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
                  "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
                  "[--shuffle <seed>] [--isolate] "
-                 "[--in-process] [--full] [--list] [--verbose] [--stats] [--trace] [--color]\n",
+                 "[--in-process] [--full] [--list] [--verbose] [--stats] [--trace] [--color] "
+                 "[--explain <smith>] [--explain-max <n>] [--no-explain]\n",
                  runner->argv[0], seeds_max, jobs_max);
         return usage_status;
     }
@@ -2236,6 +2435,10 @@ void raise_files(usize jobs) {
     raise_files(options.jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
     forks = map(u64, 1, map_shared);
+    explained = map(u64, explain_stats, map_shared);
+    explain_path = options.explain;
+    explain_limit = options.explain_max;
+
     memory_block = map(u8, memory_capacity, map_private);
     Plan *plan = make_plan(&options);
     if (options.list) {
@@ -2256,6 +2459,7 @@ void raise_files(usize jobs) {
         failed += plan->runs[i].outcome.end != End_Passed ? 1 : 0;
     print_slowest(plan);
     say(&options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(&options) - start);
+    say_explained(&options);
     if (options.stats) say(&options, "forks: %llu\n", *forks);
     return failed == 0 ? 0 : 1;
 }

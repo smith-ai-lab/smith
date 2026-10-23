@@ -1013,6 +1013,8 @@ static const SmithLibrary smith_libraries[] = {
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
 #include "runtime/symbolize.c"
+// `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
+#include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
@@ -2979,6 +2981,12 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
+    if (strcmp(argv[1], "--smith-explain") == 0) {
+#ifdef __APPLE__
+        smith_debugserver_environment();
+#endif
+        return smith_explain_main(argc - 2, argv + 2, self);
+    }
     if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-account") == 0) return smith_account_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);

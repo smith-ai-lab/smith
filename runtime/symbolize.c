@@ -15,6 +15,9 @@
 //     tests/moves_test.c:42  moves_every_step
 //     lib/test.c:812         smith_test_execute
 //
+// Detail lines that start `@ ` are variables the test runner read from the stopped frame with lldb (runtime/explain.c):
+// they print under the source line, one `name = value` each, and `@! text` becomes a `note:`.
+//
 // The failing frame is the first frame that is not smith's own check, contract and abort machinery (a function whose
 // name starts with smith_test_, smith_check, smith_requires, smith_ensures, smith_invariant, smith_assert,
 // smith_failure, smith_contract_, smith_trace_, or the library as a module: smith::test::, smith::contract:: or
@@ -32,6 +35,7 @@ constexpr size_t smith_sym_line_max = 4096;
 constexpr size_t smith_sym_notes_max = 4;
 constexpr size_t smith_sym_chain_max = 32;
 constexpr size_t smith_sym_details_max = 8;
+constexpr size_t smith_sym_values_max = 16;
 constexpr size_t smith_sym_arguments_max = 4;
 constexpr int smith_sym_exit_unavailable = 3;
 
@@ -95,6 +99,9 @@ typedef struct {
     char site[1024];
     char details[smith_sym_details_max][256]; // what was wrong: the values of a failed check
     size_t detail_count;
+    char values[smith_sym_values_max][384]; // `name = value` read from the stopped frame (smith --smith-explain)
+    size_t value_count;
+    char problem[256]; // why no values were read, or ""
     SmithSymImage images[smith_sym_images_max];
     size_t image_count;
     SmithSymFrame frames[smith_sym_frames_max];
@@ -200,12 +207,24 @@ static void smith_sym_parse_frame(SmithSymTrace *trace, const char *rest, bool e
     trace->frame_count += 1;
 }
 
+// A detail line is a failed check's value (`a = 3   (u64)`), or, from the debugger step of the runner, `@ name = value`
+// (a value read from the stopped frame) or `@! text` (why none was read).
+static void smith_sym_apply_detail(SmithSymTrace *trace, const char *rest) {
+    if (smith_sym_starts(rest, "@! ")) {
+        smith_sym_copy(trace->problem, sizeof trace->problem, rest + 3);
+    } else if (smith_sym_starts(rest, "@ ")) {
+        if (trace->value_count < smith_sym_values_max)
+            smith_sym_copy(trace->values[trace->value_count++], sizeof trace->values[0], rest + 2);
+    } else if (trace->detail_count < smith_sym_details_max) {
+        smith_sym_copy(trace->details[trace->detail_count++], sizeof trace->details[0], rest);
+    }
+}
+
 // Applies one line of a block. False at the block's end.
 static bool smith_sym_apply(SmithSymTrace *trace, const char *word, const char *rest) {
     if (smith_sym_starts(word, "end")) return false;
     if (smith_sym_starts(word, "site ")) smith_sym_copy(trace->site, sizeof trace->site, rest);
-    if (smith_sym_starts(word, "detail ") && trace->detail_count < smith_sym_details_max)
-        smith_sym_copy(trace->details[trace->detail_count++], sizeof trace->details[0], rest);
+    if (smith_sym_starts(word, "detail ")) smith_sym_apply_detail(trace, rest);
     if (smith_sym_starts(word, "image ")) smith_sym_parse_image(trace, rest);
     if (smith_sym_starts(word, "pc ")) smith_sym_parse_frame(trace, rest, true);
     if (smith_sym_starts(word, "frame ")) smith_sym_parse_frame(trace, rest, false);
@@ -459,7 +478,7 @@ static void smith_sym_named(char *out, size_t capacity, const char *name, const 
 
 // What was wrong, under the source line, aligned with its text: two values of one type on one line (`count = 3,
 // expected = 4   (u64)`), else a line each.
-static void smith_sym_print_values(FILE *out, const char *indent, const SmithSymTrace *trace, const char *source) {
+static void smith_sym_print_details(FILE *out, const char *indent, const SmithSymTrace *trace, const char *source) {
     char arguments[smith_sym_arguments_max][128] = {};
     size_t argument_count = smith_sym_arguments(source, arguments);
     char lines[smith_sym_details_max][256];
@@ -480,7 +499,10 @@ static void smith_sym_print_values(FILE *out, const char *indent, const SmithSym
         fprintf(out, "%s%s, %s   %s\n", indent, first, second, types[0]);
         return;
     }
-    for (size_t i = 0; i < trace->detail_count; i++) {
+    bool bare = trace->detail_count == 1 && trace->value_count > 0 &&
+                (strcmp(trace->details[0], "the condition is false") == 0 ||
+                 strcmp(trace->details[0], trace->heading) == 0); // the values say it better
+    for (size_t i = 0; i < trace->detail_count && !bare; i++) {
         char named[300];
         if (labels[i] == nullptr) {
             fprintf(out, "%s%s\n", indent, trace->details[i]);
@@ -492,6 +514,14 @@ static void smith_sym_print_values(FILE *out, const char *indent, const SmithSym
         smith_sym_named(named, sizeof named, smith_sym_name(labels[i], arguments, argument_count), values[i]);
         fprintf(out, "%s%s   %s\n", indent, named, types[i]);
     }
+}
+
+// The values read from the stopped frame, one line each, and the note when none could be.
+static void smith_sym_print_values(FILE *out, const char *indent, const SmithSymTrace *trace, const char *source) {
+    smith_sym_print_details(out, indent, trace, source);
+    for (size_t i = 0; i < trace->value_count; i++)
+        fprintf(out, "%s%s\n", indent, trace->values[i]);
+    if (trace->problem[0] != '\0') fprintf(out, "%snote: %s\n", indent, trace->problem);
 }
 
 // The source line, what was wrong under it, and a note if the file is newer than the program.

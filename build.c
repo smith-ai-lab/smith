@@ -411,15 +411,15 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[11];
+    SmithObject objects[12];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",     "lld",  "format", "tidy", "clangd",
-                                   "symbolize", "hook", "lsp",    "lldb", "lldb_dap"};
+    const char *const sources[] = {"clang", "lld", "format", "tidy",     "clangd",      "symbolize",
+                                   "hook",  "lsp", "lldb",   "lldb_dap", "lldb_explain"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0;
@@ -466,6 +466,8 @@ static const char *const build_smith_inputs[] = {
     "runtime/untar.c",
     "runtime/cache.c",
     "runtime/symbolize.c",
+    "runtime/explain.c",
+    "shim/lldb_explain.h",
     "runtime/mcp.c",
     "runtime/mcp_text.c",
     "runtime/mcp_dap.c",
@@ -570,7 +572,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .output = smith_fmt(b, "%s/text.o", folder),
         .flags = config->cflags,
     };
-    const SmithObject *objects[19] = {&object, &commit};
+    const SmithObject *objects[20] = {&object, &commit};
     if (in_process) {
         smith_object(b, &text);
         objects[2] = &text;
@@ -710,7 +712,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
     {"test", "test", nullptr, nullptr, 1},
     {"isolate-main", "test", "isolate", "main", 1},
-    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess,lang", 1},
+    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess,explain,lang", 1},
     {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
     {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
     {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
