@@ -552,6 +552,74 @@ export [[nodiscard]] Padded left(auto piece, u32 width) {
     return make_padded(piece, width, true);
 }
 
+// The error for a piece `to` has no rule for: Slot is char[n] for the n-th piece, counting from 1, so the message can
+// name it (a static_assert message is a literal, and a number cannot be a compile-time parameter).
+export void no_rule(constexpr type Slot) {
+    if constexpr (sizeof(Slot) == 1) {
+        static_assert(false, "format: no rule for the type of piece 1; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 2) {
+        static_assert(false, "format: no rule for the type of piece 2; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 3) {
+        static_assert(false, "format: no rule for the type of piece 3; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 4) {
+        static_assert(false, "format: no rule for the type of piece 4; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 5) {
+        static_assert(false, "format: no rule for the type of piece 5; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 6) {
+        static_assert(false, "format: no rule for the type of piece 6; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 7) {
+        static_assert(false, "format: no rule for the type of piece 7; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 8) {
+        static_assert(false, "format: no rule for the type of piece 8; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 9) {
+        static_assert(false, "format: no rule for the type of piece 9; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 10) {
+        static_assert(false, "format: no rule for the type of piece 10; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 11) {
+        static_assert(false, "format: no rule for the type of piece 11; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 12) {
+        static_assert(false, "format: no rule for the type of piece 12; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 13) {
+        static_assert(false, "format: no rule for the type of piece 13; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 14) {
+        static_assert(false, "format: no rule for the type of piece 14; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 15) {
+        static_assert(false, "format: no rule for the type of piece 15; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 16) {
+        static_assert(false, "format: no rule for the type of piece 16; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 17) {
+        static_assert(false, "format: no rule for the type of piece 17; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 18) {
+        static_assert(false, "format: no rule for the type of piece 18; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 19) {
+        static_assert(false, "format: no rule for the type of piece 19; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 20) {
+        static_assert(false, "format: no rule for the type of piece 20; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 21) {
+        static_assert(false, "format: no rule for the type of piece 21; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 22) {
+        static_assert(false, "format: no rule for the type of piece 22; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 23) {
+        static_assert(false, "format: no rule for the type of piece 23; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 24) {
+        static_assert(false, "format: no rule for the type of piece 24; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 25) {
+        static_assert(false, "format: no rule for the type of piece 25; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 26) {
+        static_assert(false, "format: no rule for the type of piece 26; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 27) {
+        static_assert(false, "format: no rule for the type of piece 27; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 28) {
+        static_assert(false, "format: no rule for the type of piece 28; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 29) {
+        static_assert(false, "format: no rule for the type of piece 29; the note lists the types in order");
+    } else if constexpr (sizeof(Slot) == 30) {
+        static_assert(false, "format: no rule for the type of piece 30; the note lists the types in order");
+    } else {
+        static_assert(false, "format: no rule for the type of a piece past the 30th");
+    }
+}
+
 // The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
 // be null) and only measures. See the rules at the top of this file. A piece with no rule is an error that says which
 // one it is (piece 3 is the third piece after buffer and capacity, counting from 1).
@@ -568,99 +636,7 @@ export Written to(char *buffer, usize capacity, auto... args) {
         } else if constexpr (typeof(args[i]) == Scientific || typeof(args[i]) == Padded) {
             put(&writer, args[i]);
         } else {
-            if constexpr (i == 0) {
-                static_assert(
-                    false, "format: no rule for the type of piece 1; the note lists the types of the pieces in order");
-            } else if constexpr (i == 1) {
-                static_assert(
-                    false, "format: no rule for the type of piece 2; the note lists the types of the pieces in order");
-            } else if constexpr (i == 2) {
-                static_assert(
-                    false, "format: no rule for the type of piece 3; the note lists the types of the pieces in order");
-            } else if constexpr (i == 3) {
-                static_assert(
-                    false, "format: no rule for the type of piece 4; the note lists the types of the pieces in order");
-            } else if constexpr (i == 4) {
-                static_assert(
-                    false, "format: no rule for the type of piece 5; the note lists the types of the pieces in order");
-            } else if constexpr (i == 5) {
-                static_assert(
-                    false, "format: no rule for the type of piece 6; the note lists the types of the pieces in order");
-            } else if constexpr (i == 6) {
-                static_assert(
-                    false, "format: no rule for the type of piece 7; the note lists the types of the pieces in order");
-            } else if constexpr (i == 7) {
-                static_assert(
-                    false, "format: no rule for the type of piece 8; the note lists the types of the pieces in order");
-            } else if constexpr (i == 8) {
-                static_assert(
-                    false, "format: no rule for the type of piece 9; the note lists the types of the pieces in order");
-            } else if constexpr (i == 9) {
-                static_assert(
-                    false, "format: no rule for the type of piece 10; the note lists the types of the pieces in order");
-            } else if constexpr (i == 10) {
-                static_assert(
-                    false, "format: no rule for the type of piece 11; the note lists the types of the pieces in order");
-            } else if constexpr (i == 11) {
-                static_assert(
-                    false, "format: no rule for the type of piece 12; the note lists the types of the pieces in order");
-            } else if constexpr (i == 12) {
-                static_assert(
-                    false, "format: no rule for the type of piece 13; the note lists the types of the pieces in order");
-            } else if constexpr (i == 13) {
-                static_assert(
-                    false, "format: no rule for the type of piece 14; the note lists the types of the pieces in order");
-            } else if constexpr (i == 14) {
-                static_assert(
-                    false, "format: no rule for the type of piece 15; the note lists the types of the pieces in order");
-            } else if constexpr (i == 15) {
-                static_assert(
-                    false, "format: no rule for the type of piece 16; the note lists the types of the pieces in order");
-            } else if constexpr (i == 16) {
-                static_assert(
-                    false, "format: no rule for the type of piece 17; the note lists the types of the pieces in order");
-            } else if constexpr (i == 17) {
-                static_assert(
-                    false, "format: no rule for the type of piece 18; the note lists the types of the pieces in order");
-            } else if constexpr (i == 18) {
-                static_assert(
-                    false, "format: no rule for the type of piece 19; the note lists the types of the pieces in order");
-            } else if constexpr (i == 19) {
-                static_assert(
-                    false, "format: no rule for the type of piece 20; the note lists the types of the pieces in order");
-            } else if constexpr (i == 20) {
-                static_assert(
-                    false, "format: no rule for the type of piece 21; the note lists the types of the pieces in order");
-            } else if constexpr (i == 21) {
-                static_assert(
-                    false, "format: no rule for the type of piece 22; the note lists the types of the pieces in order");
-            } else if constexpr (i == 22) {
-                static_assert(
-                    false, "format: no rule for the type of piece 23; the note lists the types of the pieces in order");
-            } else if constexpr (i == 23) {
-                static_assert(
-                    false, "format: no rule for the type of piece 24; the note lists the types of the pieces in order");
-            } else if constexpr (i == 24) {
-                static_assert(
-                    false, "format: no rule for the type of piece 25; the note lists the types of the pieces in order");
-            } else if constexpr (i == 25) {
-                static_assert(
-                    false, "format: no rule for the type of piece 26; the note lists the types of the pieces in order");
-            } else if constexpr (i == 26) {
-                static_assert(
-                    false, "format: no rule for the type of piece 27; the note lists the types of the pieces in order");
-            } else if constexpr (i == 27) {
-                static_assert(
-                    false, "format: no rule for the type of piece 28; the note lists the types of the pieces in order");
-            } else if constexpr (i == 28) {
-                static_assert(
-                    false, "format: no rule for the type of piece 29; the note lists the types of the pieces in order");
-            } else if constexpr (i == 29) {
-                static_assert(
-                    false, "format: no rule for the type of piece 30; the note lists the types of the pieces in order");
-            } else {
-                static_assert(false, "format: no rule for the type of a piece past the 30th");
-            }
+            no_rule(char[i + 1]);
         }
     }
     return finish(&writer);

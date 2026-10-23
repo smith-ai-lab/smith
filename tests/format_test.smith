@@ -467,7 +467,7 @@ export void test_format_padding_matches_libc(random::Key key) {
     char out[capacity];
     char expected[capacity];
     u32 width = (u32)(random::key_bits(key, 0) % 14);
-    i64 number = (i64)random::key_bits(key, 1) >> (random::key_bits(key, 2) % 64);
+    i64 number = (i64)(random::key_bits(key, 1) >> (random::key_bits(key, 2) % 64));
     u64 unsigned_number = random::key_bits(key, 3) >> (random::key_bits(key, 4) % 64);
     f64 value = (f64)(random::key_bits(key, 5) % 2000000) / 1000.0 - 1000.0;
     const char *words[] = {"", "a", "knight", "a longer name than most"};
@@ -541,7 +541,7 @@ export void test_format_no_rule_error_names_the_piece(io::Io *io) {
     scratch::expect_contains("format: a piece with no rule is an error", run.out, "static assertion failed");
     scratch::expect_contains(
         "format: and it names the third piece", run.out,
-        "format: no rule for the type of piece 3; the note lists the types of the pieces in order");
+        "format: no rule for the type of piece 3; the note lists the types in order");
     scratch::expect_contains("format: and the note lists the types", run.out,
                              "in instance smith::format::to(char *, int, Point, int)");
 }
