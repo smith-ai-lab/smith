@@ -13,6 +13,7 @@ static const char *real_dir(const scratch::Project *p) {
 
 export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_dependencies(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "clang_modules");
+    scratch::own_cache(&p);
     char text[2048];
     scratch::Run built = scratch::build(&p, "-v");
     scratch::expect_status("modules: the project builds", 0, &built);
@@ -51,6 +52,7 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
 
 export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_shared(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "clang_modules");
+    scratch::own_cache(&p);
     (void)scratch::build(&p, "");
     scratch::sleep(&p, 1000);
     (void)scratch::sh(&p, "echo '// edited' >>inc/c.h");

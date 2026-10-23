@@ -14,6 +14,18 @@ constexpr char git_environment[] =
     "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com "
     "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com; mkdir -p \"$HOME\"; ";
 
+// `generate <name> [flags]` puts a copy of the project `smith new` makes in the folder, as `smith new` leaves it
+// (built, committed): it is made once for each smith under test, in the tests' cache, so the tests that only need a
+// project to work on do not each make one. The tests of `smith new` itself run it.
+constexpr char generate_function[] =
+    "generate() { name=$1; shift; key=$(stat -f %m-%z \"$SMITH_SELF\"); t=$SMITH_TEST_CACHE/new-$key/$name; "
+    "if [ ! -d \"$t\" ]; then find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'new-*' -mtime +1 -exec rm -rf {} + "
+    "2>/dev/null; "
+    "tmp=$SMITH_TEST_CACHE/new-$key.$$; mkdir -p \"$tmp\" && (cd \"$tmp\" && smith new \"$@\" \"$name\" >/dev/null "
+    "2>&1) && "
+    "mkdir -p \"$SMITH_TEST_CACHE/new-$key\" && { [ -d \"$t\" ] || mv \"$tmp/$name\" \"$t\"; }; rm -rf \"$tmp\"; fi; "
+    "cp -Rpc \"$t\" \"./$name\"; }; ";
+
 static scratch::Run run(const scratch::Project *p, const char *command) {
     char text[8192];
     __builtin_snprintf(text, sizeof text, "%s%s", git_environment, command);
@@ -21,6 +33,13 @@ static scratch::Run run(const scratch::Project *p, const char *command) {
 }
 
 // The output of a command in the folder `in`, as $(...) gives it.
+static void generated(const scratch::Project *p, const char *command) {
+    char text[2048];
+    __builtin_snprintf(text, sizeof text, "%s%s", generate_function, command);
+    scratch::Run made = run(p, text);
+    test::check_equal(made.status, 0);
+}
+
 static const char *capture(const scratch::Project *p, const char *in, const char *command) {
     char text[8192];
     __builtin_snprintf(text, sizeof text, "%scd \"%s\" && %s", git_environment, in, command);
@@ -137,7 +156,8 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
 // 2. A second run creates nothing.
 export void test_new_a_second_run_creates_nothing(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new hello");
+    (void)run(&p,
+              "smith new hello"); // not a copy: the bytes of a project a second run leaves alone are the ones it made
     const char *sum =
         "cd hello && find . -path ./.git -prune -o \\( -type f -o -type l \\) -print | sort | while read -r f; do "
         "if [ -L \"$f\" ]; then echo \"$f -> $(readlink \"$f\")\"; else echo \"$f $(cksum <\"$f\")\"; fi; done";
@@ -241,6 +261,7 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
     char expected[256];
     char text[256];
     const char *main_file = smith_language ? "main.smith" : "main.c";
+    (void)run_in(p, dir, "smith build"); // a copy of a generated project: its compile database names the paths again
     scratch::Run lsp = run_in(p, dir, "smith lsp --version");
     if (lsp.status == 0) {
         __builtin_snprintf(command, sizeof command, "smith lsp --check=%s 2>&1 | grep -c 'E\\['; true", main_file);
@@ -280,13 +301,13 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
 
 export void test_new_hello_the_verbs_on_a_new_smith_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new hello");
+    generated(&p, "generate hello");
     verbs_on_a_new_project(&p, "hello", "new hello", true);
 }
 
 export void test_new_hello_the_profiles_of_a_new_smith_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new hello");
+    generated(&p, "generate hello");
     profiles_of_a_new_project(&p, "hello", "new hello", true);
 }
 
@@ -332,13 +353,13 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
 
 export void test_new_language_c_the_verbs_on_a_new_c_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new --language c hellc");
+    generated(&p, "generate hellc --language c");
     verbs_on_a_new_project(&p, "hellc", "new --language c", false);
 }
 
 export void test_new_language_c_the_profiles_of_a_new_c_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new --language c hellc");
+    generated(&p, "generate hellc --language c");
     profiles_of_a_new_project(&p, "hellc", "new --language c", false);
 }
 
@@ -372,8 +393,8 @@ static void assert_false_stops(io::Io *io, const char *dir, const char *language
     scratch::Project p = fresh(io);
     char command[1024];
     char label[256];
-    __builtin_snprintf(command, sizeof command, "smith new %s %s", language_flag, dir);
-    (void)run(&p, command);
+    __builtin_snprintf(command, sizeof command, "generate %s %s", dir, language_flag);
+    generated(&p, command);
     __builtin_snprintf(command, sizeof command,
                        "sed \"s/%s(sum == 28);/%s(false);/\" %s/main.%s >abort.new && mv abort.new %s/main.%s", macro,
                        macro, dir, extension, dir, extension);
@@ -403,8 +424,8 @@ export void test_new_assert_false_stops_debug_and_release_in_c(io::Io *io) {
 // run, found from the #include alone.
 export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p,
-              "smith new --language c hellc && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/tests libs/ && "
+    generated(&p,
+              "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/tests libs/ && "
               "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
@@ -423,7 +444,7 @@ export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io)
 // reports what clang-tidy finds, and check reports every part that fails.
 static scratch::Project verbs_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new --language c hellc && mkdir verbs && (cd hellc && tar cf - --exclude .git --exclude build "
+    generated(&p, "generate hellc --language c && mkdir verbs && (cd hellc && tar cf - --exclude .git --exclude build "
                   "--exclude .smith .) | "
                   "(cd verbs && tar xf -)");
     (void)run_in(&p, "verbs", "git init -q -b main && git add -A && git commit -q -m first");
@@ -670,7 +691,7 @@ export void test_new_an_existing_gitignore_and_settings_are_kept(io::Io *io) {
 // 13. Docs. The new project has knowledge, a skill and AGENTS.md, and smith docs and smith check hold them.
 export void test_new_the_docs_of_a_new_project(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new hello");
+    generated(&p, "generate hello");
     const char *agents = scratch::read(&p, "hello/AGENTS.md");
     scratch::expect_text("docs: the skill is named for the program", "name: hello-docs",
                          scratch::capture(&p, "grep '^name:' hello/.agents/skills/hello-docs/SKILL.md"));
@@ -730,7 +751,7 @@ static void broken(const scratch::Project *p, const char *name, const char *mess
 
 export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "smith new hello");
+    generated(&p, "generate hello");
     broken(&p, "a type the project does not allow",
            "knowledge/program.md: type 'poem' is not one of convention, architecture, contract, design",
            "sed 's/^type: .*/type: poem/' knowledge/program.md >p && mv p knowledge/program.md");

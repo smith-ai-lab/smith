@@ -139,7 +139,15 @@ static size_t test_tar_length(const uint8_t *data, size_t size) {
     return at + 2 * smith_untar_block;
 }
 
-static int test_mode_prefixes(const char *archive, const char *scratch) {
+// Every prefix is tried when `step` is 1; else every step-th one, and every one in the first two blocks and within two
+// bytes of a block boundary (where a header or a padding ends), which are the ones that differ.
+static bool test_prefix_wanted(size_t length, size_t step) {
+    size_t in_block = length % smith_untar_block;
+    return step <= 1 || length < 2 * smith_untar_block || in_block <= 2 || in_block + 2 >= smith_untar_block ||
+           length % step == 0;
+}
+
+static int test_mode_prefixes(const char *archive, const char *scratch, size_t step) {
     if (!test_read_archive(archive)) return 2;
     size_t limit = test_original_size;
     const char *refused = nullptr;
@@ -147,6 +155,7 @@ static int test_mode_prefixes(const char *archive, const char *scratch) {
         limit = test_tar_length(test_original, test_original_size);
     }
     for (size_t length = 0; length < limit; length++) {
+        if (!test_prefix_wanted(length, step)) continue;
         SmithPackageError error = {};
         if (test_extract_bytes(scratch, test_original, length, &error)) {
             fprintf(stderr, "a prefix of %zu of %zu bytes was accepted\n", length, test_original_size);
@@ -326,7 +335,8 @@ static int test_mode_vectors(void) {
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "vectors") == 0) return test_mode_vectors();
     if (argc == 4 && strcmp(argv[1], "extract") == 0) return test_mode_extract(argv[2], argv[3]);
-    if (argc == 4 && strcmp(argv[1], "prefixes") == 0) return test_mode_prefixes(argv[2], argv[3]);
+    if ((argc == 4 || argc == 5) && strcmp(argv[1], "prefixes") == 0)
+        return test_mode_prefixes(argv[2], argv[3], argc == 5 ? (size_t)strtoul(argv[4], nullptr, 10) : 1);
     if (argc == 6 && strcmp(argv[1], "fuzz") == 0) {
         return test_mode_fuzz(argv[2], argv[3], strtoull(argv[4], nullptr, 10), strtoull(argv[5], nullptr, 10));
     }

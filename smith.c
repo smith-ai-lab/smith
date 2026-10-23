@@ -2409,6 +2409,12 @@ static void smith_defaults_path(const unsigned char *bytes, size_t size, const c
     for (size_t i = 0; i < size; i++)
         key = (key ^ bytes[i]) * 1099511628211ULL; // FNV-1a
     char folder[PATH_MAX];
+    for (char *slash = strchr(base + 1, '/'); slash != nullptr;
+         slash = strchr(slash + 1, '/')) { // a fresh HOME has no .local
+        *slash = '\0';
+        mkdir(base, 0777);
+        *slash = '/';
+    }
     mkdir(base, 0777);
     snprintf(folder, sizeof folder, "%s/smith", base);
     smith_make_folder(folder);

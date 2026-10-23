@@ -618,7 +618,7 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 
 // Sources the build never compiles on their own, which `smith lint` (and the editor) still read with the flags the
 // scripts give them: the libraries and their tests. tests/stub.c is built (build_other_objects) with its -D.
-static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
+static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const *flags = smith_cat(b, config->cflags, smith_list(b, "-I", "include", nullptr), nullptr);
     const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
@@ -637,9 +637,17 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
-    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)); // the units runner's files
-    for (size_t i = 0; tests[i] != nullptr; i++)
-        smith_compile_command(b, config->cc, tests[i], smith_flags);
+    // The units runner's files are built in the project of tests/units (by the smith under test); here they are objects
+    // nobody asks for, so that their modules' headers are written (by the smith under test too) and lint reads them.
+    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr));
+    SmithObject units[64] = {};
+    for (size_t i = 0; tests[i] != nullptr && i < _Countof(units); i++) {
+        units[i] = (SmithObject){.compiler = smith_fmt(b, "%s/smith-cc", folder),
+                                 .source = tests[i],
+                                 .output = smith_fmt(b, "%s/lint/%zu.o", folder, i),
+                                 .flags = smith_flags};
+        smith_object(b, &units[i]);
+    }
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -1095,7 +1103,7 @@ void build(SmithBuild *b) {
 
     SmithStep smith = build_programs(b, &config, folder);
     build_other_objects(b, &config, folder);
-    build_unbuilt_sources(b, &config);
+    build_unbuilt_sources(b, &config, folder);
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
     build_headers(b, &config);

@@ -104,8 +104,9 @@ export void test_build_lines_an_empty_file_is_an_empty_list_and_a_missing_one_ex
 }
 
 // 11c. Modules: the parallel build, ten clean builds in a row, 80 sources sharing the modules.
-export void test_build_modules_ten_clean_parallel_builds_with_a_cold_cache_succeed(io::Io *io) {
+export void test_build_modules_clean_parallel_builds_with_a_cold_cache_succeed(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "modules_parallel");
+    scratch::own_cache(&p);
     (void)scratch::sh(
         &p,
         "mkdir inc; for n in 1 2 3 4 5 6 7 8; do "
@@ -117,10 +118,12 @@ export void test_build_modules_ten_clean_parallel_builds_with_a_cold_cache_succe
         "int f%s(void) { return top() + h%s(%s); }\\n' $((n % 8 + 1)) $(((n + 3) % 8 + 1)) \"$n\" $((n % 8 + 1)) "
         "\"$n\" >\"s$n.c\"; done");
     usize ok = 0;
-    for (usize round = 1; round <= 10; round++) {
+    usize rounds = test::full() ? 10 : 3; // ten with --full
+    for (usize round = 1; round <= rounds; round++) {
         (void)scratch::sh(&p, "rm -rf build \"$XDG_CACHE_HOME/smith/modules\"");
         scratch::Run built = scratch::build(&p, "-j 16");
         ok += built.status == 0 ? 1U : 0U;
     }
-    scratch::expect_count("modules: ten clean parallel builds with a cold cache succeed", 10, ok);
+    scratch::expect_count("modules: clean parallel builds with a cold cache succeed (three; ten with --full)", rounds,
+                          ok);
 }

@@ -2,8 +2,10 @@
 # Tests of the generated protocol code (docs/protocol.md): runtime/protocol/dap.[ch] and mcp.[ch], which scripts/protocol.c
 # writes from DAP's and MCP's schemas, and the tests it writes with them (tests/protocol/test_protocol_*.c: a round
 # trip for every type and a refusal for every missing required member). Usage: sh tests/protocol.sh path/to/smith
-# They are built in a scratch project with smith_tests, in three builds: -O0 under AddressSanitizer and UBSan, -O2,
-# and -O2 -DNDEBUG, with the strictest warnings smith uses, and run on 100 keys each (the asan build on more).
+# They are built in a scratch project with smith_tests, in two builds: -O0 under AddressSanitizer and UBSan, and -O2
+# -DNDEBUG (which also stands for -O2: the optimizer's own warnings and the code without its assertions), with the
+# strictest warnings smith uses, and run on 100 keys each. The 500-key run under the sanitizers is by hand: `./build/tests
+# --seeds 500` in the asan build (issue #31: the check is CPU-bound, and these builds are most of this script).
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -93,19 +95,13 @@ C
 summary_of() { printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//'; }
 
 count=$(cat tests/test_protocol_*.c | grep -c '^void test_')
-for mode in asan fast ndebug; do
+for mode in asan ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the generated code and its tests build" 0 "$rc"
     capture ./build/tests
     expect "$mode: all $count generated tests pass" "$count passed, 0 failed" "$(summary_of)"
     printf '%s\n' "$out" | grep ' passed, ' | sed 's/^/      /'
 done
-
-# More keys under the sanitizers: the keys are the values the random makers draw.
-capture smith build -DMODE=asan
-capture ./build/tests --seeds 500
-expect "asan: all $count generated tests pass on 500 keys each" "$count passed, 0 failed" "$(summary_of)"
-printf '%s\n' "$out" | grep ' passed, ' | sed 's/^/      /'
 
 echo "$total tests, $failures failed"
 [ "$failures" -eq 0 ]

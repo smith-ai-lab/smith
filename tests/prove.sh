@@ -9,6 +9,12 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
+# The proofs are cached by content and by the prover's identity (shim/prove.cpp), so the proofs of these programs are kept
+# between runs, in the tests' own cache (never the real one): a run with an unchanged prover reuses them, and `smith check`
+# spends its CPU on what changed (issue #31). The cases that test the cache or a cold proof (15, 17) use a cache of their
+# own, and a proof that fails is never cached.
+proof_cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/proofs
+mkdir -p "$proof_cache" "$XDG_CACHE_HOME/smith" && ln -s "$proof_cache" "$XDG_CACHE_HOME/smith/proofs"
 failures=0
 total=0
 out=

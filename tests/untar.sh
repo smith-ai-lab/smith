@@ -370,6 +370,10 @@ if ! $cc $flags "$here/tests/untar.c" -o "$work/untar" 2>"$work/compile.log"; th
     echo "FAIL  tests/untar.c does not compile"
     exit 1
 fi
+# Every prefix of a plain tar is extracted with the sanitizers on, which takes most of this script's time, so by default every
+# 5th is, with all the ones near a block boundary and in the first two blocks; UNTAR_FULL=1 tries every one (issue #31).
+prefix_step=5
+[ -z "${UNTAR_FULL:-}" ] || prefix_step=1
 # Smaller seeds, so that every prefix is quick: a few files and a short random one.
 mkdir -p "$work/seed/pkg-1.0/lib"
 printf 'hello\n' >"$work/seed/pkg-1.0/hello.txt"
@@ -390,16 +394,16 @@ for seed in seed.tar seed.tar.gz single.gz seed.tar.xz sha256.tar.xz; do
     capture "$work/untar" extract "$work/seeds/$seed" "$work/untar-out"
     expect "sanitizers: $seed extracts" "0 ok" "$rc $out"
     rm -rf "$work/untar-out" && mkdir "$work/untar-out"
-    capture "$work/untar" prefixes "$work/seeds/$seed" "$work/scratch"
+    capture "$work/untar" prefixes "$work/seeds/$seed" "$work/scratch" $prefix_step
     expect_contains "sanitizers: every shorter prefix of $seed is refused" "$rc $out $err" "0 "
     expect_contains "sanitizers: ... and the count says so" "$out" "prefixes refused"
     capture "$work/untar" fuzz "$work/seeds/$seed" "$work/scratch" 1500 1
     expect_contains "sanitizers: 1500 damaged copies of $seed do no harm" "$rc $out $err" "0 1500 damaged archives"
 done
 if [ -f "$arc/apple.tar.gz" ]; then
-    capture "$work/untar" prefixes "$arc/apple.tar.gz" "$work/scratch"
+    capture "$work/untar" prefixes "$arc/apple.tar.gz" "$work/scratch" $prefix_step
     expect_contains "sanitizers: every shorter prefix of the AppleDouble tar.gz is refused" "$rc $out" "0 "
-    capture "$work/untar" prefixes "$arc/apple.tar" "$work/scratch"
+    capture "$work/untar" prefixes "$arc/apple.tar" "$work/scratch" $prefix_step
     expect_contains "sanitizers: every shorter prefix of the AppleDouble tar is refused" "$rc $out" "0 "
     capture "$work/untar" fuzz "$arc/apple.tar" "$work/scratch" 800 6
     expect_contains "sanitizers: damaged AppleDouble entries do no harm" "$rc $out $err" "0 800 damaged archives"
