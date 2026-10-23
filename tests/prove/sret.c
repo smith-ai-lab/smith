@@ -20,6 +20,15 @@ int use_wide(int a) {
     return wide.c;
 }
 
+// A pointer parameter of a function that returns through sret is a whole, aligned object like any other: the source's
+// parameters are matched to the function's with the hidden result pointer left out.
+Wide wide_from(const int *value) {
+    smith_requires(*value >= 0 && *value < 1000);
+    Wide wide = {*value, 0, *value, 0, 0, 7};
+    smith_ensures(wide.c == *value);
+    return wide;
+}
+
 Wide wrong_wide(int a) {
     Wide wide = {a, 0, 0, 0, 0, 0};
     smith_ensures(wide.b == 1);

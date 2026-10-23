@@ -326,7 +326,8 @@ const char *const light_pipeline = "sroa<modify-cfg>,simplifycfg,dce";
 // reach a fixpoint", a check of its own idempotence that a result still refining the program does not need (#74).
 const char *const unroll_pipeline =
     "loop-simplify,lcssa,loop(indvars),loop-unroll<O3;full-unroll-max=1000000;no-partial;no-runtime;upperbound>,"
-    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>,simplifycfg,dse,dce";
+    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>,"
+    "simplifycfg,dse,dce";
 
 void set_option(const char *name, const char *value) {
     auto &options = cl::getRegisteredOptions();
@@ -380,11 +381,13 @@ void mark_pointer_parameters(Function &function) {
     DISubprogram *subprogram = function.getSubprogram();
     if (subprogram == nullptr || subprogram->getType() == nullptr) return;
     auto types = subprogram->getType()->getTypeArray();
-    if (types.size() != function.arg_size() + 1) return;
-    for (unsigned i = 0; i < function.arg_size(); i++) {
+    // A function that returns a large struct has the pointer it writes it through first, which the source never names.
+    unsigned hidden = function.arg_size() > 0 && function.getArg(0)->hasStructRetAttr() ? 1 : 0;
+    if (types.size() != function.arg_size() + 1 - hidden) return;
+    for (unsigned i = hidden; i < function.arg_size(); i++) {
         Argument *argument = function.getArg(i);
         if (!argument->getType()->isPointerTy() || argument->hasStructRetAttr() || argument->hasByValAttr()) continue;
-        uint64_t bytes = pointee_bytes(types[i + 1]);
+        uint64_t bytes = pointee_bytes(types[i - hidden + 1]);
         if (bytes == 0) continue;
         argument->addAttr(Attribute::getWithDereferenceableBytes(function.getContext(), bytes));
         argument->addAttr(Attribute::NonNull);
@@ -417,8 +420,9 @@ void mark_accessed_parameters(Function &function) {
     DISubprogram *subprogram = function.getSubprogram();
     if (subprogram == nullptr || subprogram->getType() == nullptr) return;
     auto types = subprogram->getType()->getTypeArray();
-    if (types.size() != function.arg_size() + 1) return;
-    for (unsigned i = 0; i < function.arg_size(); i++) {
+    unsigned hidden = function.arg_size() > 0 && function.getArg(0)->hasStructRetAttr() ? 1 : 0;
+    if (types.size() != function.arg_size() + 1 - hidden) return;
+    for (unsigned i = hidden; i < function.arg_size(); i++) {
         Argument *argument = function.getArg(i);
         if (!argument->getType()->isPointerTy() || !argument->hasAttribute(Attribute::NonNull)) continue;
         Align widest(1);
@@ -445,7 +449,7 @@ void mark_accessed_parameters(Function &function) {
             }
         }
         if (widest > Align(1)) argument->addAttr(Attribute::getWithAlignment(function.getContext(), widest));
-        if (stored && !points_to_const(types[i + 1])) argument->addAttr(Attribute::Writable);
+        if (stored && i >= hidden && !points_to_const(types[i - hidden + 1])) argument->addAttr(Attribute::Writable);
     }
 }
 
@@ -1632,10 +1636,9 @@ class Normalizer {
 
 // Attributes LLVM 23 infers that the Alive2 this was built with does not know. Dropping nofree only loses what it said.
 // Alive2 cannot translate `sret(T)`, the pointer a function that returns a large struct writes its result through. It
-// becomes a pointer that is `dereferenceable` for T: the same object, which the caller owns. What `sret` also says, that
-// nothing else points to it, was recorded as the `noalias` assumption before this (issue #74).
-template <typename Callee>
-void strip_sret(Callee &callee, unsigned index) {
+// becomes a pointer that is `dereferenceable` for T: the same object, which the caller owns. What `sret` also says,
+// that nothing else points to it, was recorded as the `noalias` assumption before this (issue #74).
+template <typename Callee> void strip_sret(Callee &callee, unsigned index) {
     Type *type = callee.getParamStructRetType(index);
     if (type == nullptr) return;
     uint64_t size = callee.getDataLayout().getTypeAllocSize(type).getFixedValue();
@@ -2059,10 +2062,11 @@ Prepared program_prepare(Program &program, const std::string &name) {
         prepared.unit.line = subprogram->getLine();
     }
     // Pointer parameters may be the same object, unless the source says they are not: `restrict` (noalias) on one of
-    // two that are not both only read (issue #57). Alive2 does not take the attribute; what it says is assumed below.
+    // two that are not both only read (issue #57), and the `sret` result of a function, which is its caller's own
+    // object. Alive2 does not take the attribute; what it says is assumed below.
     for (unsigned i = 0; i < function.arg_size(); i++) {
-        if (!function.getArg(i)->getType()->isPointerTy() || !function.hasParamAttribute(i, Attribute::NoAlias))
-            continue;
+        bool distinct = function.hasParamAttribute(i, Attribute::NoAlias) || function.getArg(i)->hasStructRetAttr();
+        if (!function.getArg(i)->getType()->isPointerTy() || !distinct) continue;
         for (unsigned j = 0; j < function.arg_size(); j++) {
             if (j == i || !function.getArg(j)->getType()->isPointerTy()) continue;
             auto only_read = [&](unsigned k) {

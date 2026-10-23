@@ -51,7 +51,6 @@ align, arena->used, arena->capacity);
 }
 [[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity);
 [[nodiscard]] SmithArena smith_arena_make(void *memory, __SIZE_TYPE__ capacity) {
-smith_trusted();
 smith_requires(((__SIZE_TYPE__)memory & (smith_arena_align_max - 1)) == 0);
 smith_requires(capacity > 0);
 return (SmithArena){.memory = memory, .capacity = capacity};
@@ -123,7 +122,6 @@ if (smith_arena_sanitized) smith_arena_poison_unused(arena);
 }
 [[nodiscard]] SmithArenaScope smith_arena_scope_begin(SmithArena *arena);
 [[nodiscard]] SmithArenaScope smith_arena_scope_begin(SmithArena *arena) {
-smith_trusted();
 smith_requires(arena->used <= arena->capacity);
 smith_requires(arena->scopes <__extension__({extern __SIZE_TYPE__ smith_math_max__usize(void)__asm__("_smith::math::max(__SIZE_TYPE__)");smith_math_max__usize();}));
 SmithArenaScope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};

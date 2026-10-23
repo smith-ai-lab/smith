@@ -116,7 +116,6 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // An arena over memory, which must be aligned to align_max and hold capacity bytes.
 [[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
-    contract::trusted(); // the prover cannot yet translate a struct returned through sret
     contract::requires(((usize)memory & (align_max - 1)) == 0);
     contract::requires(capacity > 0);
     return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
@@ -190,7 +189,8 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 // one for the run). Running out of the parent's capacity is the same stop as a push. Requires that the parent has no
 // scope open, since the end of the scope would hand the carved memory back.
 [[smith::c_name("smith_arena_carve")]] export [[nodiscard]] Arena carve(Arena *parent, usize capacity) {
-    contract::trusted(); // the prover cannot yet translate a struct returned through sret
+    contract::trusted(); // a push that does not fit ends in smith_failure_format, a variable argument list a proof
+                         // cannot read
     contract::requires(capacity > 0);
     contract::requires(parent->scopes == 0); // ending a scope would give the carved memory back
     usize start = (parent->used + align_max - 1) & ~(align_max - 1);
@@ -218,7 +218,6 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Begins a scope.
 [[smith::c_name("smith_arena_scope_begin")]] export [[nodiscard]] Scope scope_begin(Arena *arena) {
-    contract::trusted(); // the prover cannot yet translate a struct returned through sret
     contract::requires(arena->used <= arena->capacity);
     contract::requires(arena->scopes < math::max(usize));
     Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};
