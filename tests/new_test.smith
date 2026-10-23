@@ -1,0 +1,821 @@
+// `smith new` and the project it writes (issue #43), ported from tests/new.sh: what it creates and commits, the verbs
+// on the new project (run, test, prove, fmt, lint, check, the three profiles), the libraries under the conventions'
+// flags, a project with its own build file or another build system, git's states, the docs checks and the rules of the
+// templates. Git is isolated from the user's configuration: HOME is a folder of the test, and the identity comes from
+// the environment except in the no-identity case. Each test is a project of its own, so they run side by side.
+module new_test;
+
+import smith::arena;
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char git_environment[] =
+    "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com "
+    "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com; mkdir -p \"$HOME\"; ";
+
+static scratch::Run run(const scratch::Project *p, const char *command) {
+    char text[8192];
+    __builtin_snprintf(text, sizeof text, "%s%s", git_environment, command);
+    return scratch::sh(p, text);
+}
+
+// The output of a command in the folder `in`, as $(...) gives it.
+static const char *capture(const scratch::Project *p, const char *in, const char *command) {
+    char text[8192];
+    __builtin_snprintf(text, sizeof text, "%scd \"%s\" && %s", git_environment, in, command);
+    return scratch::capture(p, text);
+}
+
+static scratch::Run run_in(const scratch::Project *p, const char *in, const char *command) {
+    char text[8192];
+    __builtin_snprintf(text, sizeof text, "cd \"%s\" && %s", in, command);
+    return run(p, text);
+}
+
+static const char *yes_if(bool condition) {
+    return condition ? "yes" : "no";
+}
+
+static const char *exists_in(const scratch::Project *p, const char *path) {
+    char text[1024];
+    __builtin_snprintf(text, sizeof text, "if [ -e '%s' ] || [ -L '%s' ]; then echo yes; else echo no; fi", path, path);
+    return scratch::capture(p, text);
+}
+
+static scratch::Project fresh(io::Io *io) {
+    return scratch::project(io, "p", nullptr);
+}
+
+static void expect_exists(const scratch::Project *p, const char *label, const char *path, const char *expected) {
+    scratch::expect_text(label, expected, exists_in(p, path));
+}
+
+static const char *named(const char *format, const char *a, const char *b) {
+    static char text[1024];
+    __builtin_snprintf(text, sizeof text, format, a, b);
+    return text;
+}
+
+constexpr char smith_files[] =
+    ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    "knowledge/program.md main.smith primes.smith tests/primes_test.smith";
+constexpr char c_files[] =
+    ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
+    "knowledge/program.md main.c primes.c primes.h tests/test_primes.c";
+
+// 1. smith new hello: a .smith project, the default.
+export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) {
+    scratch::Project p = fresh(io);
+    scratch::Run created = run(&p, "smith new hello");
+    scratch::expect_status("new hello: exits 0", 0, &created);
+    const char *files[] = {"main.smith",         "primes.smith",          "tests/primes_test.smith",
+                           ".gitignore",         ".claude/settings.json", "AGENTS.md",
+                           "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
+    for (usize i = 0; i < _Countof(files); i++) {
+        char path[256];
+        __builtin_snprintf(path, sizeof path, "hello/%s", files[i]);
+        expect_exists(&p, named("new hello: creates %s%s", files[i], ""), path, "yes");
+    }
+    const char *absent[] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                            "main.c",  "primes.c",    "primes.h"};
+    for (usize i = 0; i < _Countof(absent); i++) {
+        char path[256];
+        __builtin_snprintf(path, sizeof path, "hello/%s", absent[i]);
+        expect_exists(&p, named("new hello: writes no %s%s", absent[i], ""), path, "no");
+    }
+    scratch::expect_contains("new hello: primes.smith names the program", scratch::read(&p, "hello/primes.smith"),
+                             "io::console_print(console, \"hello from hello\\n\");");
+    scratch::expect_text(
+        "new hello: no placeholder is left", "",
+        scratch::capture(
+            &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
+    scratch::expect_text("new hello: .gitignore is the template",
+                         scratch::capture(&p, "cat \"$SMITH_REPO/templates/new/gitignore\""),
+                         scratch::read(&p, "hello/.gitignore"));
+    scratch::expect_text("new hello: .claude/settings.json is the template",
+                         scratch::capture(&p, "cat \"$SMITH_REPO/templates/new/claude-settings.json\""),
+                         scratch::read(&p, "hello/.claude/settings.json"));
+    scratch::expect_text("new hello: .claude/settings.json is exactly the plugin settings",
+                         "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
+                         "{\n    \"smith\": {\n"
+                         "      \"source\": {\n        \"source\": \"github\",\n        \"repo\": "
+                         "\"adam-r-kowalski/smith\"\n      }\n    }\n  }\n}",
+                         scratch::read(&p, "hello/.claude/settings.json"));
+    scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
+                         scratch::capture(&p, "readlink hello/.claude/skills"));
+    expect_exists(&p, "new hello: no CLAUDE.md, Claude Code reads AGENTS.md", "hello/CLAUDE.md", "no");
+    scratch::expect_contains("new hello: AGENTS.md says there is no build file", scratch::read(&p, "hello/AGENTS.md"),
+                             "There is no build file and no config file");
+    scratch::expect_contains("new hello: ... and how to take over a default", scratch::read(&p, "hello/AGENTS.md"),
+                             "smith fmt --dump-config > .clang-format");
+    scratch::expect_contains("new hello: the concept describes the .smith program",
+                             scratch::read(&p, "hello/knowledge/program.md"), "primes::sum");
+    scratch::expect_contains("new hello: the summary names the plugin", created.out,
+                             "/plugin marketplace add adam-r-kowalski/smith");
+    scratch::expect_contains("new hello: the summary names the install", created.out, "/plugin install smith@smith");
+    scratch::expect_lacks("new hello: no missing-entry report", created.out, "lacks \"smith@smith\"");
+    scratch::expect_text("new hello: git is on main", "main",
+                         capture(&p, ".", "git -C hello symbolic-ref --short HEAD"));
+    scratch::expect_text("new hello: one commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
+    scratch::expect_text("new hello: the commit message", "chore: create hello with smith new",
+                         capture(&p, ".", "git -C hello log -1 --format=%s"));
+    scratch::expect_text("new hello: git tracks exactly the written files", smith_files,
+                         capture(&p, ".", "git -C hello ls-files | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text("new hello: the tree is clean after the commit", "",
+                         capture(&p, ".", "git -C hello status --porcelain"));
+    expect_exists(&p, "new hello: the first build made the debug program", "hello/build/debug/hello", "yes");
+    scratch::expect_text("new hello: the summary names the next step", "yes",
+                         yes_if(scratch::contains(created.out, "smith run")));
+    (void)run_in(&p, "hello", "smith run >../run.out 2>&1");
+    scratch::expect_text("new hello: smith run prints the greeting", "hello from hello",
+                         scratch::capture(&p, "tail -n 1 run.out"));
+    scratch::expect_text("new hello: ... after the line of the sum", "the first 5 primes add up to 28",
+                         scratch::capture(&p, "tail -n 2 run.out | head -n 1"));
+}
+
+// 2. A second run creates nothing.
+export void test_new_a_second_run_creates_nothing(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new hello");
+    const char *sum =
+        "cd hello && find . -path ./.git -prune -o \\( -type f -o -type l \\) -print | sort | while read -r f; do "
+        "if [ -L \"$f\" ]; then echo \"$f -> $(readlink \"$f\")\"; else echo \"$f $(cksum <\"$f\")\"; fi; done";
+    const char *before = scratch::capture(&p, sum);
+    scratch::Run again = run(&p, "smith new hello");
+    scratch::expect_status("second run: exits 0", 0, &again);
+    scratch::expect_text("second run: changes no bytes", before, scratch::capture(&p, sum));
+    scratch::expect_text("second run: no new commit", "1", capture(&p, ".", "git -C hello rev-list --count HEAD"));
+    scratch::expect_contains("second run: everything is kept", again.out, "0 created, 10 kept");
+}
+
+// The label of a check on a new project: "<label>: <what>".
+static const char *say(const char *label, const char *what) {
+    static char text[1024];
+    __builtin_snprintf(text, sizeof text, "%s: %s", label, what);
+    return text;
+}
+
+static void in_folder(const scratch::Project *p, const char *dir, const char *format, const char *a, const char *b,
+                      const char *c) {
+    char command[2048];
+    __builtin_snprintf(command, sizeof command, format, a, b, c);
+    (void)run_in(p, dir, command);
+}
+
+// The verbs on a new project, in `dir`. Everything here ends with the files as they began, in git.
+static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, bool smith_language) {
+    const char *main_file = smith_language ? "main.smith" : "main.c";
+    const char *test_file = smith_language ? "tests/primes_test.smith" : "tests/test_primes.c";
+    const char *primes_file = smith_language ? "primes.smith" : "primes.c";
+    char both[16384];
+    in_folder(p, dir, "cp %s %s.orig", main_file, main_file, "");
+    scratch::write(p, "args-main",
+                   smith_language ? "import <stdio.h>;\n\ni32 main(i32 argc, char *argv[]) {\n    for (i32 i = 1; i < "
+                                    "argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n"
+                                  : "#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < "
+                                    "argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n");
+    in_folder(p, dir, "mv ../args-main %s", main_file, "", "");
+    scratch::expect_text(say(label, "smith run passes its arguments to the program, -D after --"),
+                         "a\nb c\nx;y\n5%\n-Dkeep",
+                         capture(p, dir, "smith run a \"b c\" 'x;y' '5%' -- -Dkeep | grep -v '^\\['"));
+    scratch::expect_text(say(label, "smith run with none passes none"), "",
+                         capture(p, dir, "smith run | grep -v '^\\[' | tr -d '\\n'"));
+    in_folder(p, dir, "cp %s.orig %s", main_file, main_file, "");
+    scratch::Run tested = run_in(p, dir, "smith test");
+    scratch::expect_status(say(label, "smith test passes out of the box"), 0, &tested);
+    scratch::expect_contains(say(label, "... on the tests of the template"), tested.out,
+                             smith_language ? "4 passed, 0 failed" : "2 passed, 0 failed");
+    scratch::Run one = run_in(p, dir, "smith test --test no_primes");
+    scratch::expect_contains(say(label, "smith test --test runs one test"), one.out, "1 passed, 0 failed");
+    scratch::Run proved = run_in(p, dir, "smith prove -v");
+    if (!scratch::contains(proved.err, "has no prover")) {
+        scratch::expect_status(say(label, "smith prove succeeds"), 0, &proved);
+        scratch::expect_contains(say(label, "... and proves the contract of sum"), proved.out, "1 proved, 0 failed");
+        scratch::expect_lacks(say(label, "... without skipping it"), proved.out, "nothing to prove");
+    }
+    __builtin_snprintf(both, sizeof both, "sed 's/sum(5), 28/sum(5), 27/' %s >%s.new && mv %s.new %s", test_file,
+                       test_file, test_file, test_file);
+    (void)run_in(p, dir, both);
+    scratch::Run failing = run_in(p, dir, "smith test");
+    scratch::expect_status(say(label, "a failing test fails smith test"), 1, &failing);
+    __builtin_snprintf(both, sizeof both, "%s%s", failing.out, failing.err);
+    scratch::expect_contains(say(label, "... and shows both values"), both, "sum(5) = 28");
+    scratch::Run check_failing = run_in(p, dir, "smith check");
+    scratch::expect_text(say(label, "smith check fails when a test does"), "yes", yes_if(check_failing.status != 0));
+    in_folder(p, dir, "git checkout -q -- %s", test_file, "", "");
+    scratch::Run takes = run_in(p, dir, "smith check x");
+    scratch::expect_contains(say(label, "smith check takes no arguments"), takes.err, "takes no arguments");
+    scratch::Run refused = run_in(p, dir, "smith build check");
+    scratch::expect_contains(say(label, "smith build check is refused for the verb"), refused.err,
+                             "check is a verb, not a target of smith build; run `smith check`");
+    scratch::Run checked = run_in(p, dir, "smith check");
+    scratch::expect_status(say(label, "smith check passes on the new project"), 0, &checked);
+    scratch::Run formatted = run_in(p, dir, "smith fmt --dry-run");
+    scratch::expect_status(say(label, "smith fmt --dry-run is clean with smith's style"), 0, &formatted);
+    scratch::Run linted = run_in(p, dir, "smith lint");
+    scratch::expect_status(say(label, "smith lint is clean with smith's checks"), 0, &linted);
+    in_folder(p, dir, "printf 'int   misformatted;\\n' >>%s", main_file, "", "");
+    scratch::Run misformatted = run_in(p, dir, "smith check");
+    __builtin_snprintf(both, sizeof both, "%s%s", misformatted.out, misformatted.err);
+    scratch::expect_contains(say(label, "smith check fails on a misformatted file"), both, "misformatted");
+    scratch::expect_text(say(label, "... with a nonzero status"), "yes", yes_if(misformatted.status != 0));
+    scratch::Run rewritten = run_in(p, dir, "smith fmt");
+    scratch::expect_status(say(label, "smith fmt rewrites the sources"), 0, &rewritten);
+    char command[512];
+    __builtin_snprintf(command, sizeof command, "tail -n 1 %s", main_file);
+    scratch::expect_contains(say(label, "... to smith's style"), capture(p, dir, command), "int misformatted;");
+    in_folder(p, dir, "cp %s.orig %s && rm %s.orig", main_file, main_file, main_file);
+    in_folder(p, dir, "printf 'int   BadName = 0;\\n' >>%s", primes_file, "", "");
+    scratch::Run bad_lint = run_in(p, dir, "smith lint");
+    scratch::expect_status(say(label, "smith lint fails on what clang-tidy finds"), 1, &bad_lint);
+    __builtin_snprintf(both, sizeof both, "%s%s", bad_lint.out, bad_lint.err);
+    scratch::expect_contains(say(label, "... naming the check"), both, "readability-identifier-naming");
+    in_folder(p, dir, "git checkout -q -- %s", primes_file, "", "");
+}
+
+// The three profiles of a new project and what each compiles with.
+static void profiles_of_a_new_project(const scratch::Project *p, const char *dir, const char *label,
+                                      bool smith_language) {
+    char command[1024];
+    char expected[256];
+    char text[256];
+    const char *main_file = smith_language ? "main.smith" : "main.c";
+    scratch::Run lsp = run_in(p, dir, "smith lsp --version");
+    if (lsp.status == 0) {
+        __builtin_snprintf(command, sizeof command, "smith lsp --check=%s 2>&1 | grep -c 'E\\['; true", main_file);
+        scratch::expect_text(say(label, "clangd reports no errors in the main file, from .smith/compile_commands.json"),
+                             "0", capture(p, dir, command));
+        scratch::expect_text(say(label, "... with no compile_commands.json at the root"), "no",
+                             capture(p, dir, "[ -e compile_commands.json ] && echo yes || echo no"));
+    }
+    scratch::Run built = run_in(p, dir, "smith build release fast");
+    scratch::expect_status(say(label, "smith build release fast exits 0"), 0, &built);
+    const char *modes[] = {"debug", "release", "fast"};
+    for (usize i = 0; i < _Countof(modes); i++) {
+        __builtin_snprintf(command, sizeof command, "[ -e build/%s/$(basename \"$PWD\") ] && echo yes || echo no",
+                           modes[i]);
+        __builtin_snprintf(text, sizeof text, "the %s program exists", modes[i]);
+        scratch::expect_text(say(label, text), "yes", capture(p, dir, command));
+        __builtin_snprintf(command, sizeof command, "build/%s/$(basename \"$PWD\") | tail -n 1", modes[i]);
+        __builtin_snprintf(text, sizeof text, "the %s program runs and prints its line", modes[i]);
+        __builtin_snprintf(expected, sizeof expected, "hello from %s", dir);
+        scratch::expect_text(say(label, text), expected, capture(p, dir, command));
+    }
+    __builtin_snprintf(command, sizeof command, "grep -q '\"%s\"' .smith/compile_commands.json && echo yes || echo no",
+                       main_file);
+    scratch::expect_text(say(label, "the commands are in .smith/compile_commands.json"), "yes",
+                         capture(p, dir, command));
+    const char *debug = capture(p, dir, "smith build -t commands build/debug/main.o");
+    scratch::expect_contains(say(label, "debug has the sanitizers"), debug, "-fsanitize=address,undefined");
+    scratch::expect_contains(say(label, "... compiles with -std=gnu2y"), debug, "-std=gnu2y");
+    scratch::expect_lacks(say(label, "... and has no -DNDEBUG"), debug, "-DNDEBUG");
+    const char *release = capture(p, dir, "smith build -t commands build/release/main.o");
+    scratch::expect_contains(say(label, "release is -O2"), release, " -O2 ");
+    scratch::expect_lacks(say(label, "... with assertions on"), release, "-DNDEBUG");
+    scratch::expect_lacks(say(label, "... and no sanitizers"), release, "-fsanitize");
+    scratch::expect_contains(say(label, "fast has -DNDEBUG"),
+                             capture(p, dir, "smith build -t commands build/fast/main.o"), "-DNDEBUG");
+}
+
+export void test_new_hello_the_verbs_on_a_new_smith_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new hello");
+    verbs_on_a_new_project(&p, "hello", "new hello", true);
+}
+
+export void test_new_hello_the_profiles_of_a_new_smith_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new hello");
+    profiles_of_a_new_project(&p, "hello", "new hello", true);
+}
+
+// 1a. smith new --language c hellc: a C project, the same by convention.
+export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io) {
+    scratch::Project p = fresh(io);
+    scratch::Run created = run(&p, "smith new --language c hellc");
+    scratch::expect_status("new --language c: exits 0", 0, &created);
+    const char *files[] = {"main.c",
+                           "primes.c",
+                           "primes.h",
+                           "tests/test_primes.c",
+                           ".gitignore",
+                           ".claude/settings.json",
+                           "AGENTS.md",
+                           "knowledge/index.md",
+                           "knowledge/program.md",
+                           ".agents/skills/hellc-docs/SKILL.md"};
+    for (usize i = 0; i < _Countof(files); i++) {
+        char path[256];
+        __builtin_snprintf(path, sizeof path, "hellc/%s", files[i]);
+        expect_exists(&p, named("new --language c: creates %s%s", files[i], ""), path, "yes");
+    }
+    const char *absent[] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                            "main.smith", "primes.smith"};
+    for (usize i = 0; i < _Countof(absent); i++) {
+        char path[256];
+        __builtin_snprintf(path, sizeof path, "hellc/%s", absent[i]);
+        expect_exists(&p, named("new --language c: writes no %s%s", absent[i], ""), path, "no");
+    }
+    scratch::expect_contains("new --language c: main.c names the program", scratch::read(&p, "hellc/main.c"),
+                             "smith_console_print(console, \"hello from hellc\\n\");");
+    scratch::expect_contains("new --language c: the concept describes the C program",
+                             scratch::read(&p, "hellc/knowledge/program.md"), "primes_sum");
+    scratch::expect_text("new --language c: git tracks exactly the written files", c_files,
+                         capture(&p, ".", "git -C hellc ls-files | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text("new --language c: the tree is clean after the commit", "",
+                         capture(&p, ".", "git -C hellc status --porcelain"));
+    expect_exists(&p, "new --language c: the first build made the debug program", "hellc/build/debug/hellc", "yes");
+    scratch::expect_text("new --language c: smith run prints the greeting", "hello from hellc",
+                         scratch::capture(&p, "cd hellc && smith run | tail -n 1"));
+}
+
+export void test_new_language_c_the_verbs_on_a_new_c_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new --language c hellc");
+    verbs_on_a_new_project(&p, "hellc", "new --language c", false);
+}
+
+export void test_new_language_c_the_profiles_of_a_new_c_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new --language c hellc");
+    profiles_of_a_new_project(&p, "hellc", "new --language c", false);
+}
+
+export void test_new_the_language_flag(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir langs");
+    scratch::Run eq = run_in(&p, "langs", "smith new --language=c eq");
+    scratch::expect_status("new --language=c: exits 0", 0, &eq);
+    expect_exists(&p, "new --language=c: writes the C program", "langs/eq/main.c", "yes");
+    (void)run_in(&p, "langs", "smith new --language smith explicit");
+    expect_exists(&p, "new --language smith: writes the .smith program", "langs/explicit/main.smith", "yes");
+    (void)run_in(&p, "langs", "smith new explicit_first --language c");
+    expect_exists(&p, "new <name> --language c: the flag may follow the name", "langs/explicit_first/main.c", "yes");
+    scratch::Run bad = run_in(&p, "langs", "smith new --language rust bad");
+    scratch::expect_status("new --language rust: exit status", 2, &bad);
+    scratch::expect_contains("new --language rust: names both languages", bad.err, "--language is smith or c, not");
+    scratch::expect_contains("new --language rust: ... and the value", bad.err, "rust");
+    expect_exists(&p, "new --language rust: creates nothing", "langs/bad", "no");
+    scratch::Run missing = run_in(&p, "langs", "smith new --language");
+    scratch::expect_status("new --language with no value: exit status", 2, &missing);
+    scratch::expect_contains("new --language with no value: says so", missing.err,
+                             "--language needs a value: smith or c");
+    scratch::Run help = run_in(&p, "langs", "smith new --help");
+    scratch::expect_status("new --help: exits 0", 0, &help);
+    scratch::expect_contains("new --help: shows the flag", help.out, "--language smith|c");
+}
+
+// 1b. assert(false) stops debug and release and not fast, in a scratch copy of each generated project.
+static void assert_false_stops(io::Io *io, const char *dir, const char *language_flag, const char *extension,
+                               const char *macro) {
+    scratch::Project p = fresh(io);
+    char command[1024];
+    char label[256];
+    __builtin_snprintf(command, sizeof command, "smith new %s %s", language_flag, dir);
+    (void)run(&p, command);
+    __builtin_snprintf(command, sizeof command,
+                       "sed \"s/%s(sum == 28);/%s(false);/\" %s/main.%s >abort.new && mv abort.new %s/main.%s", macro,
+                       macro, dir, extension, dir, extension);
+    (void)run(&p, command);
+    scratch::Run built = run_in(&p, dir, "smith build && smith build release fast");
+    __builtin_snprintf(label, sizeof label, "assert(false) in %s: the three build", extension);
+    scratch::expect_status(label, 0, &built);
+    const char *modes[] = {"debug", "release", "fast"};
+    const char *statuses[] = {"134", "134", "0"};
+    const char *meanings[] = {"debug stops", "release stops", "fast does not stop"};
+    for (usize i = 0; i < _Countof(modes); i++) {
+        __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
+        __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
+        scratch::expect_text(label, statuses[i], capture(&p, dir, command));
+    }
+}
+
+export void test_new_assert_false_stops_debug_and_release_in_smith(io::Io *io) {
+    assert_false_stops(io, "hello", "", "smith", "contract::assert");
+}
+
+export void test_new_assert_false_stops_debug_and_release_in_c(io::Io *io) {
+    assert_false_stops(io, "hellc", "--language c", "c", "assert");
+}
+
+// 1c. smith's libraries build under the conventions' flags (gnu2y, every warning an error) in all three profiles and
+// run, found from the #include alone.
+export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p,
+              "smith new --language c hellc && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/tests libs/ && "
+              "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
+    scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
+    scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
+    const char *modes[] = {"debug", "release", "fast"};
+    for (usize i = 0; i < _Countof(modes); i++) {
+        char command[256];
+        char label[256];
+        __builtin_snprintf(command, sizeof command, "build/%s/libs", modes[i]);
+        __builtin_snprintf(label, sizeof label, "libraries: the %s program runs", modes[i]);
+        scratch::expect_text(label, "libraries ok", capture(&p, "libs", command));
+    }
+}
+
+// 1d. The verbs read what the build compiles, in a git copy of the generated C project: prove proves the contracts of
+// the sources that are compiled, fmt formats what git sees (and leaves out .gitignore and .clang-format-ignore), lint
+// reports what clang-tidy finds, and check reports every part that fails.
+static scratch::Project verbs_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new --language c hellc && mkdir verbs && (cd hellc && tar cf - --exclude .git --exclude build "
+                  "--exclude .smith .) | "
+                  "(cd verbs && tar xf -)");
+    (void)run_in(&p, "verbs", "git init -q -b main && git add -A && git commit -q -m first");
+    (void)run_in(
+        &p, "verbs",
+        "printf '#pragma once\\n#include <stdint.h>\\n\\nint32_t clamp(int32_t x, int32_t low, int32_t high);\\n"
+        "int32_t draw_health(int32_t health, int32_t max_health);\\nint32_t pinned(int32_t x);\\n' >clamp.h; "
+        "{ printf '#include \"clamp.h\"\\n'; cat \"$SMITH_REPO/tests/prove/clamp.c\"; } >clamp.c; "
+        "sed 's|#include \"primes.h\"|#include \"clamp.h\"\\n#include \"primes.h\"|' main.c >main.c.new && mv "
+        "main.c.new main.c");
+    return p;
+}
+
+export void test_new_the_verbs_prove_the_compiled_sources(io::Io *io) {
+    scratch::Project p = verbs_project(io);
+    scratch::Run proved = run_in(&p, "verbs", "smith prove");
+    if (!scratch::contains(proved.err, "has no prover")) {
+        scratch::expect_status("new verbs: smith prove proves the contracts of the compiled sources", 0, &proved);
+        scratch::expect_contains("new verbs: ... both functions, and the template's primes_sum", proved.out,
+                                 "3 proved, 0 failed");
+        (void)run_in(&p, "verbs",
+                     "printf '#include <smith/contract.h>\\n\\n#include \"clamp.h\"\\n\\nint32_t pinned(int32_t x) "
+                     "{\\n    smith_requires(x >= 0);\\n"
+                     "    return clamp(x, 10, 5);\\n}\\n' >bad_caller.c; printf '#pragma once\\n#include "
+                     "\"clamp.h\"\\n' >bad_caller.h; "
+                     "sed 's|#include \"clamp.h\"|#include \"bad_caller.h\"\\n#include \"clamp.h\"|' main.c "
+                     ">main.c.new && mv main.c.new main.c");
+        scratch::Run bad = run_in(&p, "verbs", "smith prove");
+        scratch::expect_status("new verbs: a caller that breaks a contract fails smith prove", 1, &bad);
+        scratch::expect_contains("new verbs: ... at the call", bad.out,
+                                 "bad_caller.c:7: the call of clamp may break smith_requires(low <= high)");
+        (void)run_in(&p, "verbs",
+                     "rm bad_caller.c bad_caller.h; sed '/#include \"bad_caller.h\"/d' main.c >main.c.new && mv "
+                     "main.c.new main.c");
+    }
+}
+
+export void test_new_the_verbs_format_lint_and_check_what_git_sees(io::Io *io) {
+    scratch::Project p = verbs_project(io);
+    scratch::Run formatted = run_in(&p, "verbs", "smith fmt");
+    scratch::expect_status("new verbs: smith fmt formats the files of a tree", 0, &formatted);
+    (void)run_in(&p, "verbs",
+                 "printf 'int   untracked_file;\\n' >extra.c; printf 'int   ignored_file;\\n' >ignored.c; "
+                 "printf 'int   left_alone;\\n' >left.c; printf 'ignored.c\\n' >>.gitignore; printf 'left.c\\n' "
+                 ">.clang-format-ignore; smith fmt");
+    scratch::expect_text("new verbs: smith fmt formats a file git has not seen yet", "int untracked_file;",
+                         scratch::read(&p, "verbs/extra.c"));
+    scratch::expect_text("new verbs: ... not one .gitignore leaves out", "int   ignored_file;",
+                         scratch::read(&p, "verbs/ignored.c"));
+    scratch::expect_text("new verbs: ... nor one .clang-format-ignore names", "int   left_alone;",
+                         scratch::read(&p, "verbs/left.c"));
+    // Options alone are the project's verb (with standard input closed a clang-format waiting for it would fail, and
+    // with a terminal it would hang); a .metal file is formatted too, as C++.
+    (void)run_in(&p, "verbs",
+                 "rm extra.c ignored.c left.c .clang-format-ignore; "
+                 "printf 'kernel   void  f( device float*a [[buffer(0)]] ){ a[0]=1;}\\n' >shader.metal");
+    scratch::Run dry = run_in(&p, "verbs", "smith fmt --dry-run </dev/null");
+    scratch::expect_status("new verbs: smith fmt --dry-run is the project's check, and a .metal file fails it", 1,
+                           &dry);
+    char both[8192];
+    __builtin_snprintf(both, sizeof both, "%s%s", dry.out, dry.err);
+    scratch::expect_contains("new verbs: ... naming the .metal file", both, "shader.metal");
+    (void)run_in(&p, "verbs", "smith fmt </dev/null");
+    scratch::expect_text("new verbs: smith fmt formats a .metal file", "kernel void f(device float *a [[buffer(0)]]) {",
+                         capture(&p, "verbs", "head -n 1 shader.metal"));
+    scratch::Run again = run_in(&p, "verbs", "smith fmt --dry-run </dev/null");
+    scratch::expect_status("new verbs: ... and then the dry run passes", 0, &again);
+    scratch::Run quiet = run_in(&p, "verbs", "smith lint --quiet </dev/null");
+    scratch::expect_status("new verbs: smith lint --quiet is the project's lint", 0, &quiet);
+    (void)run_in(&p, "verbs",
+                 "rm shader.metal; git checkout -q -- .gitignore; printf 'int   BadName = 0;\\n' >>primes.c");
+    scratch::Run lint = run_in(&p, "verbs", "smith lint");
+    scratch::expect_status("new verbs: smith lint fails on what clang-tidy finds", 1, &lint);
+    __builtin_snprintf(both, sizeof both, "%s%s", lint.out, lint.err);
+    scratch::expect_contains("new verbs: ... naming the check", both, "readability-identifier-naming");
+    scratch::expect_contains("new verbs: ... and how many files", lint.err, "clang-tidy failed on 1 of");
+    scratch::Run check = run_in(&p, "verbs", "smith check");
+    scratch::expect_status("new verbs: smith check fails when parts do", 1, &check);
+    scratch::expect_contains("new verbs: ... names the parts that failed, in order", check.err,
+                             "smith check: failed: fmt lint");
+    scratch::expect_contains("new verbs: ... and the parts that passed", check.err, "smith check: test ok");
+}
+
+// 1e. Two programs that link one source: each proof of it gets the full flags (the first once cut the compile's flags
+// for every later proof of the same source, which then failed to find its header).
+export void test_new_two_programs_that_link_one_source_are_each_proved_with_the_full_flags(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "new_shared");
+    scratch::Run proved = run(&p, "smith prove");
+    if (!scratch::contains(proved.err, "has no prover")) {
+        scratch::expect_status("new shared: smith prove proves a source two programs link, both times", 0, &proved);
+        scratch::expect_contains("new shared: ... the contract of shared.c is proved", proved.out,
+                                 "1 proved, 0 failed");
+        char both[8192];
+        __builtin_snprintf(both, sizeof both, "%s%s", proved.out, proved.err);
+        scratch::expect_lacks("new shared: ... and the header is found by both proofs", both, "file not found");
+    }
+}
+
+// 3. No argument: the folder's name, and its own main.c kept, with no program of the template beside it.
+export void test_new_with_no_argument_the_folders_name_and_its_own_main(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir demo && printf 'int main(void) { return 0; }\\n' >demo/main.c");
+    scratch::Run created = run_in(&p, "demo", "smith new");
+    scratch::expect_status("no argument: exits 0", 0, &created);
+    scratch::expect_text("no argument: keeps main.c", "int main(void) { return 0; }", scratch::read(&p, "demo/main.c"));
+    expect_exists(&p, "no argument: names the program demo", "demo/build/debug/demo", "yes");
+    scratch::expect_lacks("no argument: leaves out cd", created.out, "cd demo");
+    expect_exists(&p, "no argument: no concept about a main.c it did not write", "demo/knowledge/program.md", "no");
+    scratch::expect_lacks("no argument: the index lists no such concept", scratch::read(&p, "demo/knowledge/index.md"),
+                          "program.md");
+    scratch::Run docs = run_in(&p, "demo", "smith docs .");
+    scratch::expect_status("no argument: the docs pass", 0, &docs);
+    scratch::expect_text("no argument: writes no program beside the project's own", "",
+                         capture(&p, "demo", "ls primes.* main.smith tests 2>/dev/null"));
+    (void)run(&p, "mkdir own_smith && printf 'int main(void) {\\n    return 0;\\n}\\n' >own_smith/main.smith");
+    scratch::Run own = run(&p, "smith new --language c own_smith");
+    scratch::expect_status("an own main.smith: exits 0", 0, &own);
+    scratch::expect_text("an own main.smith: --language c writes no C program beside it", "",
+                         scratch::capture(&p, "ls own_smith/main.c own_smith/primes.* 2>/dev/null"));
+}
+
+// 4. Inside an existing repository. 5. No git identity.
+export void test_new_inside_a_repository_and_with_no_git_identity(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir outer && git -C outer init -q -b main && git -C outer commit -q --allow-empty -m first");
+    scratch::Run inner = run_in(&p, "outer", "smith new inner");
+    scratch::expect_status("inside a repository: exits 0", 0, &inner);
+    expect_exists(&p, "inside a repository: no new repository", "outer/inner/.git", "no");
+    scratch::expect_text("inside a repository: no commit", "1", capture(&p, ".", "git -C outer rev-list --count HEAD"));
+    scratch::expect_text("inside a repository: nothing staged", "",
+                         capture(&p, ".", "git -C outer diff --cached --name-only"));
+    (void)run(&p, "mkdir noid");
+    scratch::Run noid =
+        scratch::sh(&p, "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1; mkdir -p \"$HOME\"; "
+                        "unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL; "
+                        "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.useConfigOnly GIT_CONFIG_VALUE_0=true; "
+                        "cd noid && smith new proj; echo \"status $?\"");
+    scratch::expect_contains("no identity: exits 0", noid.out, "status 0");
+    expect_exists(&p, "no identity: files written", "noid/proj/main.smith", "yes");
+    scratch::expect_text(
+        "no identity: files staged", "yes",
+        capture(&p, ".", "git -C noid/proj diff --cached --name-only | grep -q '^main.smith$' && echo yes || echo no"));
+    scratch::expect_text("no identity: no commit", "0",
+                         capture(&p, ".", "git -C noid/proj rev-list --count HEAD 2>/dev/null || echo 0"));
+    scratch::expect_contains("no identity: the message says the commit was skipped", noid.out, "commit skipped");
+}
+
+// 6. Errors.
+export void test_new_errors(io::Io *io) {
+    scratch::Project p = fresh(io);
+    scratch::Run bad = run(&p, "smith new -bad");
+    scratch::expect_status("bad name: exit status", 2, &bad);
+    scratch::expect_text("bad name: message", "smith: -bad cannot name a program; use letters, digits, _, . and -",
+                         bad.err);
+    scratch::Run space = run(&p, "smith new 'a b'");
+    scratch::expect_status("bad name with a space: exit status", 2, &space);
+    (void)run(&p, "mkdir 'bad name'");
+    scratch::Run folder = run_in(&p, "bad name", "smith new");
+    scratch::expect_status("bad folder name: exit status", 2, &folder);
+    scratch::expect_contains("bad folder name: names the parent folder way", folder.err,
+                             "smith new <name> from the parent folder picks another name");
+    expect_exists(&p, "bad folder name: writes nothing", "bad name/main.smith", "no");
+    scratch::Run two = run(&p, "smith new one two");
+    scratch::expect_status("two arguments: exit status", 2, &two);
+    scratch::expect_contains("two arguments: usage", two.err, "at most one name");
+    expect_exists(&p, "two arguments: creates nothing", "one", "no");
+}
+
+// 9. An existing build.c is kept and gets no program; the first build is the project's own.
+export void test_new_an_existing_build_c_is_kept(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir has_build");
+    scratch::write(&p, "has_build/build.c",
+                   "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n    SmithStep stamp = {\n"
+                   "        .command = (const char *[]){\"touch\", \"$out\", nullptr},\n"
+                   "        .outputs = (const char *[]){\"own.stamp\", nullptr},\n    };\n    smith_step(b, &stamp);\n"
+                   "    smith_default(b, stamp.outputs);\n}\n");
+    const char *before = scratch::read(&p, "has_build/build.c");
+    scratch::Run created = run(&p, "smith new has_build");
+    scratch::expect_status("existing build.c: exits 0", 0, &created);
+    scratch::expect_text("existing build.c: kept", before, scratch::read(&p, "has_build/build.c"));
+    expect_exists(&p, "existing build.c: no main.smith", "has_build/main.smith", "no");
+    expect_exists(&p, "existing build.c: no config is written", "has_build/.clang-tidy", "no");
+    expect_exists(&p, "existing build.c: the project's own build ran", "has_build/own.stamp", "yes");
+}
+
+// 10. Another build system: no program, no build file and no first build.
+export void test_new_another_build_system_gets_no_program(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir has_make && printf 'all:\\n\\t@echo made\\n' >has_make/Makefile && "
+                  "printf 'int main(void) { return 0; }\\n' >has_make/other.c");
+    scratch::Run created = run(&p, "smith new has_make");
+    scratch::expect_status("Makefile: exits 0", 0, &created);
+    expect_exists(&p, "Makefile: writes no build.c", "has_make/build.c", "no");
+    expect_exists(&p, "Makefile: no main.smith", "has_make/main.smith", "no");
+    expect_exists(&p, "Makefile: no first build", "has_make/.smith", "no");
+    expect_exists(&p, "Makefile: no concept about the program", "has_make/knowledge/program.md", "no");
+    scratch::expect_text("Makefile: the index lists nothing but is there", "okf_version",
+                         scratch::capture(&p, "sed -n 's/^\\(okf_version\\):.*/\\1/p' has_make/knowledge/index.md"));
+    scratch::expect_contains("Makefile: the index ends with its text, not a dangling item",
+                             scratch::capture(&p, "tail -n 1 has_make/knowledge/index.md"), "Read only the concepts");
+    expect_exists(&p, "Makefile: writes no rules", "has_make/.clang-format", "no");
+    expect_exists(&p, "Makefile: writes the plugin settings", "has_make/.claude/settings.json", "yes");
+    scratch::expect_contains("Makefile: the message names the Makefile", created.out,
+                             "This project builds with a Makefile, so smith new wrote no program");
+    scratch::expect_contains("Makefile: the message says to port it", created.out,
+                             "write a build.c that does what the Makefile does");
+    scratch::expect_contains("Makefile: the message names the skill", created.out, "smith-build skill");
+    scratch::expect_text("Makefile: commits only the files written",
+                         ".agents/skills/has-make-docs/SKILL.md .claude/settings.json .claude/skills .gitignore "
+                         "AGENTS.md knowledge/index.md",
+                         capture(&p, ".", "git -C has_make ls-files | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::Run docs = run(&p, "smith docs has_make");
+    scratch::expect_status("Makefile: the docs pass", 0, &docs);
+    (void)run(&p, "mkdir has_cmake && : >has_cmake/CMakeLists.txt");
+    scratch::Run cmake = run(&p, "smith new has_cmake");
+    scratch::expect_contains("CMakeLists.txt: the message names it", cmake.out,
+                             "This project builds with a CMakeLists.txt, so smith new wrote no program");
+    expect_exists(&p, "CMakeLists.txt: no main.smith", "has_cmake/main.smith", "no");
+}
+
+// 11. An existing .gitignore is kept; the lines it lacks are reported. 11b. The same for .claude/settings.json.
+export void test_new_an_existing_gitignore_and_settings_are_kept(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "mkdir has_ignore && printf '/build/  \\nnode_modules/\\n' >has_ignore/.gitignore");
+    scratch::Run created = run(&p, "smith new has_ignore");
+    scratch::expect_text("gitignore: kept untouched", "/build/  \nnode_modules/",
+                         scratch::read(&p, "has_ignore/.gitignore"));
+    scratch::expect_contains("gitignore: reports /.cache/", created.out, "lacks /.cache/");
+    scratch::expect_lacks("gitignore: does not report /build/ (trailing spaces ignored)", created.out, "lacks /build/");
+    (void)run(&p,
+              "mkdir -p has_settings/.claude && printf '{\"permissions\": {}}\\n' >has_settings/.claude/settings.json");
+    scratch::Run settings = run(&p, "smith new has_settings");
+    scratch::expect_text("settings: kept untouched", "{\"permissions\": {}}",
+                         scratch::read(&p, "has_settings/.claude/settings.json"));
+    scratch::expect_contains("settings: reports the missing entry", settings.out, "lacks \"smith@smith\"");
+    scratch::expect_contains("settings: says what to add", settings.out, "\"smith@smith\": true under enabledPlugins");
+    (void)run(&p, "mkdir -p has_settings2/.claude && printf '{\"enabledPlugins\": {\"smith@smith\": false}}\\n' "
+                  ">has_settings2/.claude/settings.json");
+    scratch::Run second = run(&p, "smith new has_settings2");
+    scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
+}
+
+// 13. Docs. The new project has knowledge, a skill and AGENTS.md, and smith docs and smith check hold them.
+export void test_new_the_docs_of_a_new_project(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new hello");
+    const char *agents = scratch::read(&p, "hello/AGENTS.md");
+    scratch::expect_text("docs: the skill is named for the program", "name: hello-docs",
+                         scratch::capture(&p, "grep '^name:' hello/.agents/skills/hello-docs/SKILL.md"));
+    scratch::expect_contains("docs: AGENTS.md links the skill", agents, "(.agents/skills/hello-docs/SKILL.md)");
+    scratch::expect_contains("docs: AGENTS.md links the knowledge", agents, "(knowledge/index.md)");
+    char expected[1024];
+    __builtin_snprintf(expected, sizeof expected, "- [The program](program.md): %s",
+                       scratch::capture(&p, "sed -n 's/^description: //p' hello/knowledge/program.md"));
+    scratch::expect_text("docs: the index lists the concept with its own description", expected,
+                         scratch::capture(&p, "grep '^- \\[' hello/knowledge/index.md"));
+    scratch::Run docs = run_in(&p, "hello", "smith docs");
+    scratch::expect_status("docs: smith docs passes on a new project", 0, &docs);
+    scratch::expect_contains("docs: ... on the concept of the template", docs.out,
+                             "smith docs: 1 concepts, 0 problems");
+    scratch::expect_contains("docs: the allowed types are declared in the index",
+                             scratch::read(&p, "hello/knowledge/index.md"),
+                             "types: convention, architecture, contract, design");
+    (void)run_in(
+        &p, "hello",
+        "sed 's/^types: .*/types: contract/' knowledge/index.md >index.new && mv index.new knowledge/index.md");
+    scratch::Run refused = run_in(&p, "hello", "smith docs");
+    scratch::expect_contains("docs: a type the index no longer declares is refused", refused.err,
+                             "type 'architecture' is not one of contract");
+    (void)run_in(&p, "hello", "git checkout -q -- knowledge/index.md");
+    scratch::Run dot = run_in(&p, "hello", "smith docs .");
+    scratch::expect_status("docs: smith docs . checks with the default types", 0, &dot);
+    scratch::Run build_docs = run_in(&p, "hello", "smith build docs");
+    scratch::expect_status("docs: smith build docs is refused, the verb runs it", 2, &build_docs);
+    // smith check holds the docs: a conflict marker fails it.
+    (void)run_in(&p, "hello", "printf '=======\\n' >>knowledge/program.md");
+    scratch::Run marker = run_in(&p, "hello", "smith check");
+    scratch::expect_text("docs: smith check fails on a document with a conflict marker", "yes",
+                         yes_if(marker.status != 0));
+    char both[16384];
+    __builtin_snprintf(both, sizeof both, "%s%s", marker.out, marker.err);
+    scratch::expect_contains("docs: ... and says where", both, "knowledge/program.md:");
+    (void)run_in(&p, "hello", "git checkout -q -- knowledge/program.md");
+    scratch::Run passes = run_in(&p, "hello", "smith check");
+    scratch::expect_status("docs: smith check passes again", 0, &passes);
+}
+
+// Breaking each rule fails smith docs, in a copy.
+static void broken(const scratch::Project *p, const char *name, const char *message, const char *commands) {
+    char command[2048];
+    char label[512];
+    __builtin_snprintf(
+        command, sizeof command,
+        "rm -rf brk && mkdir brk && (cd hello && tar cf - --exclude .git --exclude build --exclude .smith .) | "
+        "(cd brk && tar xf -) && (cd brk && %s) >/dev/null 2>&1; smith docs brk",
+        commands);
+    scratch::Run run_docs = run(p, command);
+    __builtin_snprintf(label, sizeof label, "docs breaks: %s: exits 1", name);
+    scratch::expect_status(label, 1, &run_docs);
+    __builtin_snprintf(label, sizeof label, "docs breaks: %s: says so", name);
+    scratch::expect_contains(label, run_docs.err, message);
+}
+
+export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
+    scratch::Project p = fresh(io);
+    (void)run(&p, "smith new hello");
+    broken(&p, "a type the project does not allow",
+           "knowledge/program.md: type 'poem' is not one of convention, architecture, contract, design",
+           "sed 's/^type: .*/type: poem/' knowledge/program.md >p && mv p knowledge/program.md");
+    broken(&p, "a concept without a title", "knowledge/program.md: frontmatter lacks title",
+           "grep -v '^title:' knowledge/program.md >p && mv p knowledge/program.md");
+    broken(&p, "a concept without a description", "knowledge/program.md: frontmatter lacks description",
+           "grep -v '^description:' knowledge/program.md >p && mv p knowledge/program.md");
+    broken(&p, "a concept without frontmatter", "knowledge/program.md: no frontmatter",
+           "printf '# Program\\n' >knowledge/program.md");
+    broken(&p, "a concept that is not kebab-case", "knowledge/Program_Two.md: file name is not kebab-case",
+           "cp knowledge/program.md knowledge/Program_Two.md");
+    broken(&p, "a concept the index does not list", "knowledge/index.md: does not list second.md",
+           "cp knowledge/program.md knowledge/second.md");
+    broken(&p, "an index item that is no concept", "knowledge/index.md: lists ghost.md, which is not a concept on disk",
+           "printf -- '- [Ghost](ghost.md): Nothing.\\n' >>knowledge/index.md");
+    broken(&p, "an index description that differs",
+           "knowledge/index.md: description of program.md differs from its own",
+           "sed 's/promise\\./promise, more./' knowledge/index.md >p && mv p knowledge/index.md");
+    broken(&p, "an index without okf_version", "knowledge/index.md: frontmatter lacks okf_version",
+           "grep -v '^okf_version' knowledge/index.md >p && mv p knowledge/index.md");
+    broken(&p, "a skill whose name is not its folder",
+           ".agents/skills/hello-docs/SKILL.md: name 'other' does not match its folder",
+           "sed 's/^name: .*/name: other/' .agents/skills/hello-docs/SKILL.md >p && mv p "
+           ".agents/skills/hello-docs/SKILL.md");
+    broken(&p, "a skill without a description", ".agents/skills/hello-docs/SKILL.md: frontmatter lacks description",
+           "grep -v '^description:' .agents/skills/hello-docs/SKILL.md >p && mv p .agents/skills/hello-docs/SKILL.md");
+    broken(&p, "a broken link", "AGENTS.md: broken link nowhere.md", "printf '[x](nowhere.md)\\n' >>AGENTS.md");
+    broken(&p, "a conflict marker", "AGENTS.md:", "printf '<<<<<<< HEAD\\n' >>AGENTS.md");
+    broken(&p, "knowledge linking a skill",
+           "knowledge/program.md: links the skill ../.agents/skills/hello-docs/SKILL.md; knowledge never links skills",
+           "printf '[how](../.agents/skills/hello-docs/SKILL.md)\\n' >>knowledge/program.md");
+    broken(&p, "no .claude/skills", ".claude/skills: missing; it must be a symlink to ../.agents/skills",
+           "rm .claude/skills");
+    broken(&p, "a .claude/skills that points elsewhere", ".claude/skills: links to ../skills, not ../.agents/skills",
+           "rm .claude/skills && ln -s ../skills .claude/skills");
+    broken(&p, "a .claude/skills that is a folder", ".claude/skills: is not a symlink",
+           "rm .claude/skills && mkdir .claude/skills");
+    // A name with more than letters: the skill's name is kebab-case and everything passes.
+    scratch::Run named_run = run(&p, "smith new My_Proj.x");
+    scratch::expect_status("docs: a name with _ and . exits 0", 0, &named_run);
+    expect_exists(&p, "docs: ... its skill is my-proj-x-docs", "My_Proj.x/.agents/skills/my-proj-x-docs/SKILL.md",
+                  "yes");
+    scratch::expect_text("docs: ... its skill's name is its folder", "name: my-proj-x-docs",
+                         scratch::capture(&p, "grep '^name:' My_Proj.x/.agents/skills/my-proj-x-docs/SKILL.md"));
+    scratch::expect_contains("docs: ... its concept names the program",
+                             scratch::read(&p, "My_Proj.x/knowledge/program.md"), "hello from My_Proj.x");
+    scratch::Run docs = run_in(&p, "My_Proj.x", "smith docs");
+    scratch::expect_status("docs: ... smith docs passes", 0, &docs);
+}
+
+// 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's. Allowed
+// differences: smith-only assert macro, typedef names, unity-build include check, and smith-effects.CFiles (smith's C
+// is being ported to .smith, so smith checks .smith only; the template checks C files too).
+constexpr char tidy_functions[] =
+    "tidy_items() { awk '/^Checks:/ { mode = \"checks\"; next } /^[A-Za-z]+:/ && !/^CheckOptions:/ { mode = \"\"; next "
+    "} "
+    "/^CheckOptions:/ { mode = \"options\"; next } mode == \"checks\" && /^  [^ #]/ { gsub(/[ ,]/, \"\"); print "
+    "\"check \" $0 } "
+    "mode == \"options\" && /^  [a-zA-Z]/ { sub(/:.*/, \"\"); gsub(/ /, \"\"); print \"option \" $0 }' \"$1\"; }; "
+    "missing_rules() { tidy_items \"$1\" | grep -v -e 'bugprone-suspicious-include' -e "
+    "'bugprone-assert-side-effect.AssertMacros' "
+    "-e 'readability-identifier-naming.TypedefIgnoredRegexp' -e 'smith-effects.CFiles' | while read -r kind item; do "
+    "tidy_items \"$2\" | grep -qxF \"$kind $item\" || echo \"$kind $item\"; done; }; ";
+
+export void test_new_the_templates_rules_stay_smiths(io::Io *io) {
+    scratch::Project p = fresh(io);
+    char command[4096];
+    __builtin_snprintf(command, sizeof command,
+                       "%s missing_rules \"$SMITH_REPO/.clang-tidy\" \"$SMITH_REPO/templates/defaults/clang-tidy\"",
+                       tidy_functions);
+    scratch::expect_text("rules: the template keeps every rule of smith's .clang-tidy", "",
+                         scratch::capture(&p, command));
+    __builtin_snprintf(command, sizeof command,
+                       "%s grep -v 'readability-function-size.LineThreshold' "
+                       "\"$SMITH_REPO/templates/defaults/clang-tidy\" >tidy-without; "
+                       "missing_rules \"$SMITH_REPO/.clang-tidy\" tidy-without",
+                       tidy_functions);
+    scratch::expect_contains("rules: a missing option is caught", scratch::capture(&p, command),
+                             "readability-function-size.LineThreshold");
+    __builtin_snprintf(command, sizeof command,
+                       "%s grep -v 'misc-no-recursion' \"$SMITH_REPO/templates/defaults/clang-tidy\" >tidy-without; "
+                       "missing_rules \"$SMITH_REPO/.clang-tidy\" tidy-without",
+                       tidy_functions);
+    scratch::expect_contains("rules: a missing check is caught", scratch::capture(&p, command), "misc-no-recursion");
+    scratch::expect_text("rules: the template's .clang-format has smith's rules, comments aside",
+                         scratch::capture(&p, "grep -v '^#' \"$SMITH_REPO/.clang-format\""),
+                         scratch::capture(&p, "grep -v '^#' \"$SMITH_REPO/templates/defaults/clang-format\""));
+}

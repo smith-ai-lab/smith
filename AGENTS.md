@@ -400,7 +400,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `tests/test_primes.c`), `.gitignore`, `AGENTS.md`, `knowledge/` (an index and a first concept),
   `.agents/skills/<name>-docs` with the `.claude/skills` link, and `.claude/settings.json` (which enables the smith
   plugin and declares its marketplace), then builds once and commits on `main`. No build file, no config file, no
-  skills copied. `tests/new.sh` tests it.
+  skills copied. `tests/new_test.smith` tests it.
 - `smith fetch <url>` downloads a package archive into the cache (`$XDG_CACHE_HOME/smith/packages/<hex>/`, else
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
   a hash, fetched with smith's own HTTPS client and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`, a `.gz` of one file; no other
@@ -442,7 +442,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   call and library has a skill that another project's agent can learn it from. Plans go in GitHub issues, never in a
   skill. A change that adds or changes something updates its skill in the same commit.
 - `smith new`'s program (`templates/new`) is the example of idiomatic Smith. A change to the idiom (a library becoming a
-  module, a new rule) updates `templates/new` in the same commit, and `tests/new.sh` checks that the new project passes
+  module, a new rule) updates `templates/new` in the same commit, and `tests/new_test.smith` checks that the new project passes
   `smith check`.
 - Small Conventional Commits. Push `main` after every merge: the plugin's skills come from GitHub, so other agents
   learn a feature only once it is pushed. The commit that finishes an issue says `Closes #N` in its message, so the push

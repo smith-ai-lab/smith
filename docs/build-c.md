@@ -1125,7 +1125,7 @@ translate it or delete it. The output is the low-level API
   function for each run of targets (`part_1`, `part_2`, ...), with the options, the arrays and the objects as `static`
   variables at the top, a list of more than 30 words in pieces (`name = smith_cat(b, name, ...)`), and `build()` calling
   the parts. A single declaration longer than a function (one recipe of a hundred lines) cannot be split, and lint says
-  so. `tests/make.sh` lints and format-checks every translation.
+  so. `tests/make_test.smith` lints and format-checks every translation.
 - **Reported, not guessed**, on standard error as `smith: Makefile:12: not translated: ...` and in a comment at the top of
   the file: `vpath` and `VPATH`, `.SECONDEXPANSION`, double-colon rules, target-specific and pattern-specific variables,
   `$(eval)` in a recipe, `export`, `!=`, a variable on a `$(MAKE)` command line, `$(shell ...)` other than the platform
@@ -1133,7 +1133,7 @@ translate it or delete it. The output is the low-level API
   a rule makes (its variables stay empty: it is generated, and not read), a `$(wildcard $(OPTION))` (read with the option at its
   default) and a suffix rule. The translation still exits 0 and the file still builds.
 - **Notes**, in the same comment: `-include` of dependency files (`.d`) is dropped, since smith tracks headers itself.
-- **Checked** by `tests/make.sh` (`smith build test-make`): one small Makefile for each construct, the build.c checked for what
+- **Checked** by `tests/make_test.smith` (the units runner, `smith test`): one small Makefile for each construct, the build.c checked for what
   it says, built, and compared with what make makes (the values a program prints, the files a recipe writes, and the
   compile and link commands against `make -n -B`).
 
