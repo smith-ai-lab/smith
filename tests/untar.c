@@ -71,7 +71,7 @@ static bool test_extract_bytes(const char *scratch, const uint8_t *data, size_t 
         exit(2);
     }
     SmithExtracted extracted;
-    return smith_package_extract(archive, folder, &extracted, error);
+    return smith_package_extract(archive, "file", folder, &extracted, error);
 }
 
 static int test_check_box_entry(const char *path, const struct stat *info, int type, struct FTW *where) {
@@ -119,7 +119,7 @@ static bool test_box_is_clean(const char *scratch) {
 static int test_mode_extract(const char *archive, const char *folder) {
     SmithPackageError error = {};
     SmithExtracted extracted;
-    if (!smith_package_extract(archive, folder, &extracted, &error)) {
+    if (!smith_package_extract(archive, "file", folder, &extracted, &error)) {
         printf("%s\n", error.text);
         return 1;
     }

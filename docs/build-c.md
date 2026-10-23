@@ -631,7 +631,9 @@ const char *cmake = smith_package(b, &(SmithPackage){
 
 `smith_package` reads `.tar`, `.tar.gz` (or `.tgz`) and `.tar.xz`, told apart by their first bytes, never by the name.
 These are the formats today's packages use: CMake's `.tar.gz`, Python's standalone build as `.tar.gz`, and LLVM's source
-as `.tar.xz`. A zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd; nothing needs them.
+as `.tar.xz`. A `.gz` whose content is not a tar (the first 512 bytes are no tar header) is one file: the package is a
+folder holding it, named as the URL without `.gz` (`file` when nothing is left), mode 0644, as tree-sitter's release is. A
+zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd; nothing needs them.
 
 - **The code is smith's own**, not a vendored library: `runtime/gzip.c` (gzip, DEFLATE, CRC-32; about 480 lines),
   `runtime/xz.c` (the xz container, LZMA2, CRC-64 and SHA-256 checks; about 670) and `runtime/untar.c` (tar and the safe

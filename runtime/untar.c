@@ -1,10 +1,11 @@
 // tar extraction in C: smith's own reader, so `smith_package` runs no other process. Included by runtime/package.c
 // after runtime/gzip.c and runtime/xz.c, whose decoders push their output to smith_untar_feed.
 //
-// Formats: a .tar, .tar.gz (also .tgz) or .tar.xz, told apart by their first bytes, never by the name. The tar may be
-// ustar (with its prefix field), GNU (long names, 'L' and 'K') or pax (extended headers with path, linkpath, size and
-// mtime; other keys are ignored). Entries are regular files, folders, symlinks and hard links; a device, a FIFO, a
-// sparse file or any other type is an error that names it. zip, bzip2 and zstd are refused by name.
+// Formats: a .tar, .tar.gz (also .tgz), .tar.xz, or a .gz of one file that is no tar, told apart by their first bytes,
+// never by the name. The tar may be ustar (with its prefix field), GNU (long names, 'L' and 'K') or pax (extended
+// headers with path, linkpath, size and mtime; other keys are ignored). Entries are regular files, folders, symlinks
+// and hard links; a device, a FIFO, a sparse file or any other type is an error that names it. zip, bzip2 and zstd are
+// refused by name.
 //
 // What it will not do, as bsdtar does not, and every one is an error that names the entry and the reason:
 //   - write outside the folder it was given: absolute names and any ".." are refused, a path is never followed through
@@ -725,22 +726,82 @@ typedef struct {
     char climbing[PATH_MAX]; // the first symlink that leaves its top-level folder, else ""
 } SmithExtracted;
 
-static bool smith_archive_decode(SmithUntar *untar, const uint8_t *data, size_t size, SmithPackageError *error) {
+// A gzip's content is a tar, or else one file: the first block of what it holds says which. Until then the bytes
+// wait here; a file is written to `name` in the extraction folder (mode 0644, never through a symlink).
+typedef struct {
+    SmithUntar *untar;
+    const char *name;
+    uint8_t probe[smith_untar_block];
+    size_t filled;
+    bool decided;
+    int file; // the single file, or -1 when the content is a tar
+} SmithGzipContent;
+
+static bool smith_gzip_content_file(SmithGzipContent *content) {
+    SmithUntar *untar = content->untar;
+    int fd = openat(untar->root, content->name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0) return smith_package_fail(untar->error, "cannot make %.200s: %s", content->name, strerror(errno));
+    content->file = fd;
+    return true;
+}
+
+static bool smith_gzip_content_decide(SmithGzipContent *content) {
+    content->decided = true;
+    bool tar = content->filled == smith_untar_block && smith_untar_header_checksum_ok(content->probe) &&
+               !smith_untar_is_zero(content->probe, smith_untar_block);
+    if (tar) return smith_untar_feed(content->untar, content->probe, content->filled);
+    return smith_gzip_content_file(content) &&
+           (content->filled == 0 || smith_untar_write(content->file, content->probe, content->filled) ||
+            smith_package_fail(content->untar->error, "cannot write %.200s: %s", content->name, strerror(errno)));
+}
+
+static bool smith_gzip_content_feed(void *context, const uint8_t *data, size_t size) {
+    SmithGzipContent *content = context;
+    if (!content->decided) {
+        size_t take = smith_untar_block - content->filled;
+        if (take > size) take = size;
+        memcpy(content->probe + content->filled, data, take);
+        content->filled += take;
+        data += take;
+        size -= take;
+        if (content->filled < smith_untar_block) return true;
+        if (!smith_gzip_content_decide(content)) return false;
+    }
+    if (size == 0) return true;
+    if (content->file < 0) return smith_untar_feed(content->untar, data, size);
+    return smith_untar_write(content->file, data, size) ||
+           smith_package_fail(content->untar->error, "cannot write %.200s: %s", content->name, strerror(errno));
+}
+
+static bool smith_gzip_content(SmithUntar *untar, const char *name, const uint8_t *data, size_t size,
+                               SmithPackageError *error) {
+    SmithGzipContent content = {.untar = untar, .name = name, .file = -1};
+    bool ok = smith_gzip_decode(data, size, smith_gzip_content_feed, &content, error);
+    ok = ok && (content.decided || smith_gzip_content_decide(&content));
+    if (content.file >= 0) {
+        close(content.file);
+        return ok;
+    }
+    return ok && smith_untar_finish(untar);
+}
+
+static bool smith_archive_decode(SmithUntar *untar, const char *name, const uint8_t *data, size_t size,
+                                 SmithPackageError *error) {
     const char *refused = nullptr;
     SmithArchiveFormat format = smith_archive_format(data, size, &refused);
     if (format == SmithArchive_Tar) return smith_untar_feed(untar, data, size) && smith_untar_finish(untar);
-    if (format == SmithArchive_Gzip || format == SmithArchive_Xz) {
-        bool decoded = format == SmithArchive_Gzip ? smith_gzip_decode(data, size, smith_untar_feed, untar, error)
-                                                   : smith_xz_decode(data, size, smith_untar_feed, untar, error);
-        return decoded && smith_untar_finish(untar);
-    }
+    if (format == SmithArchive_Gzip) return smith_gzip_content(untar, name, data, size, error);
+    if (format == SmithArchive_Xz)
+        return smith_xz_decode(data, size, smith_untar_feed, untar, error) && smith_untar_finish(untar);
     if (refused != nullptr)
-        return smith_package_fail(error, "%s archives are not supported (tar, tar.gz and tar.xz are)", refused);
-    return smith_package_fail(error, "not a tar, tar.gz or tar.xz archive");
+        return smith_package_fail(error, "%s archives are not supported (tar, tar.gz, tar.xz and a single .gz are)",
+                                  refused);
+    return smith_package_fail(error, "not a tar, tar.gz, tar.xz or gzip archive");
 }
 
-// Extracts the archive file into the existing folder. `extracted` says what the caller must check afterwards.
-static bool smith_package_extract(const char *archive, const char *folder, SmithExtracted *extracted,
+// Extracts the archive file into the existing folder. `extracted` says what the caller must check afterwards. `name`
+// is the file a gzip of one file (not a tar) becomes.
+static bool smith_package_extract(const char *archive, const char *name, const char *folder, SmithExtracted *extracted,
                                   SmithPackageError *error) {
     int fd = open(archive, O_RDONLY | O_CLOEXEC);
     struct stat info;
@@ -761,7 +822,7 @@ static bool smith_package_extract(const char *archive, const char *folder, Smith
     untar.file = -1;
     untar.root = open(folder, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     bool ok = untar.root >= 0 || smith_package_fail(error, "cannot open %s: %s", folder, strerror(errno));
-    ok = ok && smith_archive_decode(&untar, map, (size_t)info.st_size, error);
+    ok = ok && smith_archive_decode(&untar, name, map, (size_t)info.st_size, error);
     snprintf(extracted->climbing, sizeof extracted->climbing, "%s", untar.climbing);
     smith_untar_close(&untar);
     munmap(map, (size_t)info.st_size);

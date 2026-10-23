@@ -30,7 +30,7 @@ smith_object(b, &o);
 
 (`build::package(b, &(build::Package){...})` in a build.smith.)
 
-- The first call fetches, checks the hash and extracts (`.tar`, `.tar.gz`, `.tar.xz`, in smith itself; **a zip is refused**); later calls only look the folder up, so builds work offline. An archive with one top-level folder is returned as that folder's contents. The path is stable: use it in steps, `-I` flags and objects.
+- The first call fetches, checks the hash and extracts (`.tar`, `.tar.gz`, `.tar.xz`, in smith itself; **a zip is refused**). A `.gz` that holds one file, not a tar (a release binary), is a package folder with that file in it, named as the URL without `.gz` and mode 0644 (`chmod +x` a copy); a `.xz` of one file is not read; later calls only look the folder up, so builds work offline. An archive with one top-level folder is returned as that folder's contents. The path is stable: use it in steps, `-I` flags and objects.
 - Extraction refuses absolute names, `..`, a path through a symlink and a symlink that points outside the package. File modes and times are kept.
 - `smith_package` runs every time build.c runs, before the executor: it is a lookup when cached.
 - A wrong hash is an error with both hashes (and the URL): paste the actual one only after you have confirmed the archive is the one you meant. `-DOFFLINE` turns a package missing from the cache into an error that names its URL, with no fetch (`smith build -DOFFLINE`). macOS only for now.

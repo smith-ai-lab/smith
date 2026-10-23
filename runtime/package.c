@@ -433,6 +433,23 @@ static void smith_package_temps(SmithPackageTemps *temps) {
     smith_package_remove(temps->extract);
 }
 
+// The name a gzip of one file gets: the last part of the URL (no query or fragment) without ".gz".
+static void smith_package_file_name(const char *url, char *name, size_t size) {
+    size_t length = strcspn(url, "?#");
+    size_t start = length;
+    while (start > 0 && url[start - 1] != '/')
+        start--;
+    size_t count = length - start;
+    if (count > 3 && memcmp(url + length - 3, ".gz", 3) == 0) count -= 3;
+    if (count == 0 || count >= size || (count == 1 && url[start] == '.') ||
+        (count == 2 && url[start] == '.' && url[start + 1] == '.')) {
+        snprintf(name, size, "file");
+        return;
+    }
+    memcpy(name, url + start, count);
+    name[count] = '\0';
+}
+
 // Verifies the downloaded archive, extracts it and moves it to its folder. The temporaries are the caller's to remove.
 static bool smith_package_install(const char *url, const char *wanted, const SmithPackageTemps *temps, char *folder,
                                   char hash[smith_package_hash_size], SmithPackageError *error) {
@@ -449,7 +466,9 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     if (smith_package_is_folder(folder)) return true;
     if (mkdir(temps->extract, 0777) != 0) return smith_package_fail(error, "cannot make %s", temps->extract);
     SmithExtracted extracted;
-    if (!smith_package_extract(temps->download, temps->extract, &extracted, error)) {
+    char name[256];
+    smith_package_file_name(url, name, sizeof name);
+    if (!smith_package_extract(temps->download, name, temps->extract, &extracted, error)) {
         char reason[smith_package_error_size];
         snprintf(reason, sizeof reason, "%s", error->text);
         return smith_package_fail(error, "cannot extract %s: %s", url, reason);

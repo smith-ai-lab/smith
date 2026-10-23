@@ -281,7 +281,7 @@ else
 fi
 
 # 4. Damaged archives.
-refuse "not an archive" "$work/src/pkg-1.0/hello.txt" "not a tar, tar.gz or tar.xz archive"
+refuse "not an archive" "$work/src/pkg-1.0/hello.txt" "not a tar, tar.gz, tar.xz or gzip archive"
 : >"$arc/empty"
 refuse "an empty file" "$arc/empty" "the archive is empty"
 (cd "$work/src" && zip -qr "$arc/pkg.zip" pkg-1.0)
@@ -301,6 +301,36 @@ refuse "an xz without its footer" "$arc/cut-footer.tar.xz" "footer"
 size=$(wc -c <"$arc/a.tar" | tr -d ' ')
 head -c 3000 "$arc/a.tar" >"$arc/cut.tar"
 refuse "a truncated tar" "$arc/cut.tar" "cut off"
+
+# A .gz of one file that is no tar (a release binary, as tree-sitter's): the package is a folder holding that file,
+# named after the URL without ".gz", with the bytes as they were and mode 0644. A gzip of a tar is still a tar.
+mkdir -p "$work/single"
+head -c 200000 /dev/urandom >"$work/single/tool-bin"
+awk 'BEGIN { for (i = 0; i < 3000; i++) printf "line %d of a text that repeats\n", i % 11 }' >"$work/single/text"
+printf 'tiny\n' >"$work/single/tiny"
+: >"$work/single/nothing"
+for f in tool-bin text tiny nothing; do gzip -c "$work/single/$f" >"$arc/$f.gz"; done
+for f in tool-bin text tiny nothing; do
+    fetch "$arc/$f.gz"
+    expect "single gz $f: extracts" 0 "$rc"
+    expect "single gz $f: one file, named without .gz" "$f" "$(ls "${package:-/nonexistent}" 2>/dev/null)"
+    expect "single gz $f: the same bytes" "$(shasum -a 256 <"$work/single/$f")" "$(shasum -a 256 <"$package/$f" 2>/dev/null)"
+    expect "single gz $f: mode 0644" "-rw-r--r--" "$(stat -f %Sp "$package/$f" 2>/dev/null)"
+done
+cp "$arc/text.gz" "$arc/noext"
+fetch "$arc/noext"
+expect "single gz with no .gz in its name keeps the name" "noext" "$(ls "${package:-/nonexistent}" 2>/dev/null)"
+fetch "$arc/a.tar.gz"
+expect "a gz of a tar is still a tar" yes "$([ -f "${package:-/nonexistent}/hello.txt" ] && echo yes || echo no)"
+size=$(wc -c <"$arc/tool-bin.gz" | tr -d ' ')
+head -c $((size / 2)) "$arc/tool-bin.gz" >"$arc/cut-single.gz"
+refuse "a truncated single gz" "$arc/cut-single.gz" "gzip:"
+head -c $((size - 4)) "$arc/tool-bin.gz" >"$arc/cut-single-trailer.gz"
+refuse "a single gz without its trailer" "$arc/cut-single-trailer.gz" "trailer is cut off"
+{ head -c $((size - 8)) "$arc/tool-bin.gz"; printf '\1\2\3\4'; tail -c 4 "$arc/tool-bin.gz"; } >"$arc/crc-single.gz"
+refuse "a single gz with a wrong CRC" "$arc/crc-single.gz" "CRC-32"
+{ head -c $((size - 4)) "$arc/tool-bin.gz"; printf '\1\2\3\4'; } >"$arc/len-single.gz"
+refuse "a single gz with a wrong size" "$arc/len-single.gz" "size of the data"
 
 # A byte changed at a place that only a check can notice: gzip's CRC-32 and size, and xz's check of each kind. The
 # random archive stores its data, so a changed byte in the middle is still well-formed LZMA2 or DEFLATE.
@@ -349,13 +379,14 @@ ln -s ../hello.txt "$work/seed/pkg-1.0/lib/link"
 mkdir -p "$work/seeds"
 (cd "$work/seed" && tar --format pax -cf "$work/seeds/seed.tar" pkg-1.0)
 gzip -c "$work/seeds/seed.tar" >"$work/seeds/seed.tar.gz"
+head -c 3000 /dev/urandom | gzip -c >"$work/seeds/single.gz"
 xz --check=crc64 -c "$work/seeds/seed.tar" >"$work/seeds/seed.tar.xz"
 xz --check=sha256 -c "$work/seeds/seed.tar" >"$work/seeds/sha256.tar.xz"
 mkdir "$work/scratch"
 mkdir "$work/untar-out"
 capture "$work/untar" vectors
 expect "sanitizers: known gzip (fixed Huffman codes) and xz streams, and each of their prefixes refused" "0 vectors ok" "$rc $out"
-for seed in seed.tar seed.tar.gz seed.tar.xz sha256.tar.xz; do
+for seed in seed.tar seed.tar.gz single.gz seed.tar.xz sha256.tar.xz; do
     capture "$work/untar" extract "$work/seeds/$seed" "$work/untar-out"
     expect "sanitizers: $seed extracts" "0 ok" "$rc $out"
     rm -rf "$work/untar-out" && mkdir "$work/untar-out"
