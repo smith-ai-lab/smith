@@ -28,7 +28,15 @@ input; it can still write a module's header (`smith cc --smith-header`). The com
 (`--smith-header`, `--smith-lower`, `--smith-which`), since smith's top level is only verbs. `smith build` builds the
 modules itself: a header step per module, and every `.smith` compile, and every C compile that names a header of `.smith/include` as an input or puts that folder on its include path, waits for all of them (knowledge/build-file.md).
 
-A `.smith` file is C with modules. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant. A file opts
+A `.smith` file is C with modules. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant.
+**The C rule:** valid C in a `.smith` file without a `module` line means exactly what it means in C. A new feature uses
+syntax that is invalid C (`::`, `import x;`, `auto` and `constexpr type` parameters, `if constexpr`); a `module` line may
+reject valid C (it defines exports and private names) but never silently changes what a construct means. A module-only
+rejection gets an error case in the corpus (`tests/smith-lang/cases/error-*`), and `tests/smith-lang-c.sh` pins the rule:
+smith's own C sources, and the programs of `tests/smith-lang-c/` (array parameters, `sizeof` of one, an `int a[*]`
+prototype, the language's words as names, ordinary constructs), give the same code and output as `.c` and as `.smith`. Known exceptions, both issues: an enum
+constant or function named like a sized type fails loudly (#91), and the default dialect is C2y, not the `.c` default (#92).
+A file opts
 into more, step by step: imports and sized type names work in any `.smith` file; a `module` line makes it a module, with
 exports and private names, and a function with `constexpr type T` or `auto` parameters is generic. The design and the issues it answers are in
 [issue #11](https://github.com/adam-r-kowalski/smith/issues/11); this page is what is built.

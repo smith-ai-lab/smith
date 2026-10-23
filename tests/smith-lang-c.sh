@@ -5,8 +5,9 @@
 # #includes find what they found), and the two results must be identical. They are compared as assembly (-S), which is
 # stricter than objects and shows where they differ; the one thing that may differ is the file's own name, where a
 # program prints it (its extension): __FILE__ is set to one name, and ".smith" at the end of a name in a string is read
-# as ".c" on both sides. The test needs a smith with clang inside; a stage0
-# skips it.
+# as ".c" on both sides. Then each program in tests/smith-lang-c/ (array parameters and sizeof of one, a [*]
+# prototype, the language's words as names, ordinary constructs) is built and run as x.c and as x.smith, and both must
+# print what x.out holds. The test needs a smith with clang inside; a stage0 skips it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -74,6 +75,38 @@ for name in arena io http untar; do
     compare "test_$name" "tests/$name.c" ""
 done
 compare templates_main templates/new/main.c "-std=gnu2y"
+
+# A program that prints: the same output as .c and as .smith, and the one in its .out file.
+behave() { # name
+    total=$((total + 1))
+    src="tests/smith-lang-c/$1"
+    mkdir -p "$work/run"
+    cp "$src.c" "$src.smith"
+    status=ok
+    # shellcheck disable=SC2086
+    "$smith" cc $flags -w "$src.c" -o "$work/run/$1.c.bin" 2>"$work/run/$1.c.err" || status="the .c does not build"
+    # shellcheck disable=SC2086
+    "$smith" cc $flags -w "$src.smith" -o "$work/run/$1.smith.bin" 2>"$work/run/$1.smith.err" || status="the .smith does not build"
+    rm -f "$src.smith"
+    if [ "$status" = ok ]; then
+        "$work/run/$1.c.bin" >"$work/run/$1.c.out" 2>&1
+        "$work/run/$1.smith.bin" >"$work/run/$1.smith.out" 2>&1
+        cmp -s "$work/run/$1.c.out" "$src.out" || status="the .c prints other than $1.out"
+        cmp -s "$work/run/$1.smith.out" "$src.out" || status="the .smith prints other than $1.out"
+    fi
+    if [ "$status" = ok ]; then
+        echo "ok    run $1"
+    else
+        failures=$((failures + 1))
+        echo "FAIL  run $1: $status"
+        head -5 "$work/run/$1.smith.err"
+        diff "$src.out" "$work/run/$1.smith.out" | head -5
+    fi
+}
+
+for name in arrays names ordinary; do
+    behave "$name"
+done
 
 echo "smith-lang-c: $((total - failures)) of $total identical"
 [ $failures = 0 ]
