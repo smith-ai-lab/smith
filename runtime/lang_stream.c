@@ -157,6 +157,13 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 
 static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
+    SmithToken shown = *token;
+    if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static
+        smith_lang_emit(lang, host, smith_lang_static_keyword(token));
+        shown.line_start = false;
+        shown.space_before = true;
+        token = &shown;
+    }
     if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next) {
         smith_lang_declare_process(lang, host, token); // a private one streams
         return;
@@ -707,6 +714,7 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
         smith_lang_end_declaration(lang);
     }
     smith_lang_generic_instances(lang, host);
+    smith_lang_finish_io_main(lang, host);
     smith_lang_ask(lang, host);
     smith_lang_finish(lang);
     smith_lang_emit_kept(lang, host, token);
@@ -947,6 +955,10 @@ bool smith_lang_holds(const SmithLang *lang) {
 
 bool smith_lang_is_module(const SmithLang *lang) {
     return lang->is_module;
+}
+
+bool smith_lang_io_import(const SmithLang *lang) {
+    return lang->io_import;
 }
 
 unsigned smith_lang_errors(const SmithLang *lang) {

@@ -128,6 +128,19 @@ becomes `#if B`). A `#define` whose body has `::` or a sized type is an error at
 compiler as written ("make it a function"). The compiler's own run needs none of this (it has preprocessed them); a
 `#pragma` such as `STDC FP_CONTRACT` reaches the hook as an annotation token and goes to the parser as it is.
 
+## `main` with the io
+
+`i32 main(io::Io *io)` in a `.smith` file (it needs `import smith::io;`, under any name) is the program's body, with the
+io made for it: the lowering writes it as `static int32_t smith_user_main(SmithIo *io) { ... }` (the module's prefix is
+never put on it) and, at the end of the file, `int main(int argc, char **argv)` that makes `SmithIo io =
+smith_io_make(argc, argv)`, calls `smith_user_main(&io)`, runs `smith_io_close(&io)` and returns the status. It is found
+by looking ahead from the `i32` that begins a file-scope declaration (`i32`, `main`, `(`, the binding, `::`, `Io`, `*`,
+a name, `)`), in a file with a `module` line or none and in `--smith-lower`; the queued `main` is renamed, so the rest
+of the lowering sees a private function. The C `main` has the location of the name you wrote (the debugger shows
+it at your `main`'s line), the table of names says `smith_user_main` is written `main`, and `io::make` anywhere in the
+file is the error "main already has the io". The C forms (`i32 main(i32 argc, char *argv[])`, `int main(void)`) lower
+as they always did, and `.c` files are never rewritten. Tests: the cases `main-io*` and `error-main-io-make`.
+
 ## The bootstrap
 
 smith's own build compiles some `.smith` sources (the libraries `smith::arena`, `contract`, `io`, `random` and `text` today; the others follow as they are ported),

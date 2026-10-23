@@ -30,12 +30,28 @@ Nested modules do not exist, so a capability's functions are `io::<capability>_<
 ```smith
 import smith::io;
 
+i32 main(io::Io *io) {
+    (void)io::console_printf(&io->console, "seed %llu\n", io->seed);
+    return 0; // the arguments are io->args.count and io->args.values
+}
+```
+
+In a `.smith` file `main` may take the io: smith makes it, calls your `main` with a pointer to it, closes it after, and the status you return is the program's (an early `return` is fine). The lowering writes `static int32_t smith_user_main(SmithIo *io) { ... }` for your function and, at the end of the file, a C `main(int argc, char **argv)` that runs `smith_io_make(argc, argv)`, `smith_user_main(&io)`, `smith_io_close(&io)` and returns the status. The debugger shows that `main` at the line of yours, and your body as `smith_user_main`. The form is exactly `i32 main(io::Io *name)` with `import smith::io;` (under whatever name the file binds it); `io::make` anywhere in a file with this `main` is an error ("main already has the io"), since the io is made already. A program has one `main`.
+
+The C form stays, and it is how a renamed `.c` file works unchanged; it makes and closes the io itself, and so does `main` in a `.c` file (the io form is for `.smith`):
+
+```smith
+import smith::io;
+
 i32 main(i32 argc, char *argv[]) {
     io::Io io = io::make(argc, argv);
     (void)io::console_printf(&io.console, "seed %llu\n", io.seed);
+    io::close(&io);
     return 0;
 }
 ```
+
+The rest of this skill writes `io.` for a value and `io->` where the io is a pointer (the parameter of the io form).
 
 `io` holds every capability as a field:
 
@@ -112,7 +128,7 @@ The rules:
 2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls (`contract::assert` included) and the checks of `smith::test` are allowed everywhere.
 3. **Raw effects are allowed in a capability's implementation.** A capability is a type marked `[[clang::annotate("smith::capability")]]`: `io::Io`, `io::Console`, `io::Files`, `io::Clock`, `io::Processes`, `io::Net` and `io::Args` (the process's inputs: the live environment), and the handles `io::Op`, `io::Capture`, `io::Child` and `io::Connection`. (`random::Key` and `arena::Arena` are values, not capabilities.) Its implementation is the module that defines it: the `.smith` module file, or for C the `.c` file beside the header that defines it (`io.c` with `io.h`; `lib/io.c` or `src/io.c` with a header under the `include/` beside them); `smith::io` is itself a `.smith` module, so it is its own implementation. Every function there, private helpers included, may make raw calls.
 4. **An exported function of that module that reaches a raw effect, directly or through the module's own static functions, must take or return a capability** (or a struct holding one). Otherwise make it `static`.
-5. **A main-only constructor may be called only inside `main`:** `io::make`, marked `[[clang::annotate("smith::main_only")]]`. `io::make_test` is not: tests make fakes anywhere.
+5. **A main-only constructor may be called only inside `main`:** `io::make`, marked `[[clang::annotate("smith::main_only")]]`. `io::make_test` is not: tests make fakes anywhere. The io form of `main` (`i32 main(io::Io *io)`) is lowered to a `main` that calls `io::make`, so it satisfies the rule; the capability comes from its parameter.
 6. **No capability in static storage:** a global or `static` local of a capability type, a pointer to one, or a struct that holds one.
 
 One option, `smith-effects.CFiles` (default true): `false` makes the check skip `.c` and `.m` files and read `.smith` only (smith's own `.clang-tidy` does this while its C is ported).

@@ -106,6 +106,13 @@ static bool smith_lang_sparse_typeish(SmithLang *lang, const SmithHost *host) {
 }
 
 static void smith_lang_sparse_sized(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    SmithToken shown = *token;
+    if (smith_lang_sparse_at_start(lang, host) && smith_lang_io_main_begin(lang, host, token)) {
+        smith_lang_emit(lang, host, smith_lang_static_keyword(token));
+        shown.line_start = false;
+        shown.space_before = true;
+        token = &shown;
+    }
     const SmithLangSized *sized = smith_lang_find_sized(token->text, token->length);
     SmithToken before;
     bool tag = smith_lang_previous(lang, host, 1, &before) && before.kind == SmithTokenKind_Identifier &&

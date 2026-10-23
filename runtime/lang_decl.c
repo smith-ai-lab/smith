@@ -108,6 +108,11 @@ static bool smith_lang_param_here(SmithLang *lang, const SmithLangName *known, c
     return true;
 }
 
+// Whether the binding is the import of smith::io, under whatever name the file gave it.
+static bool smith_lang_is_io_binding(const SmithLangBinding *binding) {
+    return !binding->is_c && smith_lang_equals(smith_lang_str(binding->module), binding->module.length, "smith::io");
+}
+
 static SmithLangBinding *smith_lang_binding_find(SmithLang *lang, const char *text, size_t length) {
     for (size_t i = 0; i < lang->bindings_count; i++) { // bounded by the table
         SmithLangBinding *binding = &lang->bindings[i];
@@ -311,7 +316,10 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
 // C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                       uint32_t location, SmithLangNameKind kind, bool exported) {
-    if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) return nullptr;
+    if (kind == SmithLangName_Function &&
+        (smith_lang_equals(name, length, "main") || smith_lang_equals(name, length, smith_lang_io_main_name))) {
+        return nullptr;
+    }
     // `extern T name;` without `export` is a symbol that C defines: it keeps its C name, in the module as in C.
     bool symbol = kind == SmithLangName_Function || kind == SmithLangName_Value;
     if (symbol && !exported && lang->decl.is_extern && !lang->decl.is_typedef) return nullptr;
@@ -381,6 +389,18 @@ static void smith_lang_check_listed(SmithLang *lang, const SmithHost *host, cons
     host->hint(host->context, taken->location, message);
 }
 
+// `io::make` and `io::Io` as the file writes them: the first make is refused in a file whose main has the io, and the
+// type is what the `main` written at the end of that file names.
+static void smith_lang_note_io_use(SmithLang *lang, const SmithToken *member, size_t total) {
+    if (!lang->io_make_seen && smith_lang_equals(member->text, member->length, "make")) {
+        lang->io_make_seen = true;
+        lang->io_make_location = member->location;
+    }
+    if (lang->io_type.length == 0 && smith_lang_equals(member->text, member->length, "Io")) {
+        lang->io_type = smith_lang_store(lang, lang->tmp, total);
+    }
+}
+
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
@@ -446,6 +466,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
         }
         *result = smith_lang_made(name, lang->tmp, total, false);
+        if (smith_lang_is_io_binding(binding)) smith_lang_note_io_use(lang, &taken, total);
         result->location = taken.location;
         result->via = (uint16_t)(binding - lang->bindings + 1);
         smith_lang_written_access(lang, binding, total, taken.text, taken.length);

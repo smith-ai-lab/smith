@@ -260,7 +260,8 @@ static SmithLangAct smith_lang_head_name(SmithLang *lang, const SmithHost *host,
     if (smith_lang_declarator_here(lang)) { // the name the declaration introduces (or a redeclaration of it)
         decl->name_found = true;
         decl->prev_star = false;
-        if (!decl->is_typedef && smith_lang_equals(token->text, token->length, "main")) {
+        if (!decl->is_typedef && (smith_lang_equals(token->text, token->length, "main") ||
+                                  smith_lang_equals(token->text, token->length, smith_lang_io_main_name))) {
             return smith_lang_act(SmithLangAct_Keep);
         }
         const char *prefixed = smith_lang_declare(lang, host, token->text, token->length, token->location,
@@ -364,6 +365,10 @@ static SmithLangActKind smith_lang_sized_act(SmithLang *lang, const SmithHost *h
                                              const char **spelling) {
     const SmithLangSized *sized = smith_lang_find_sized(token->text, token->length);
     if (sized == nullptr) return SmithLangAct_Slow;
+    if (lang->io_import && !lang->is_module && !lang->body_sparse &&
+        smith_lang_equals(token->text, token->length, "i32")) {
+        return SmithLangAct_Slow; // `i32 main(io::Io *io)` is read whole (runtime/lang_sparse.c)
+    }
     SmithToken before;
     if (smith_lang_previous(lang, host, 1, &before)) {
         if (smith_lang_punct(&before, ".") || smith_lang_punct(&before, "->")) return SmithLangAct_Keep;

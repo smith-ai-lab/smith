@@ -603,6 +603,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
         if (mayEndType(before)) return Fast::No;
+        if (!body && smith_lang_io_import(lang) && info->getName() == "i32") return Fast::No; // `i32 main(io::Io *io)`
         ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;
     }

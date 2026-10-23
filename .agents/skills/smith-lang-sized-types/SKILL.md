@@ -31,4 +31,4 @@ A diagnostic names the type as written, with what it is: ``initializing 'i32' (a
 
 A C keyword used as a name after a sized type, `i32 double(i32 x)`, is ``double` is a C keyword; it cannot name a function`` (likewise a variable, parameter, field or type), at the name.
 
-`main` is spelled with them too: `i32 main(i32 argc, char *argv[])`, or `i32 main(void)`. `i32` is a typedef of `int`, so the compiler takes both spellings and a `.c` file renamed to `.smith` still builds; `smith lint` reports the `int`s (`smith-sized-types`).
+`main` is spelled with them too: `i32 main(i32 argc, char *argv[])`, `i32 main(void)`, or, to have smith make the io, `i32 main(io::Io *io)` (smith-io). `i32` is a typedef of `int`, so the compiler takes both spellings and a `.c` file renamed to `.smith` still builds; `smith lint` reports the `int`s (`smith-sized-types`).

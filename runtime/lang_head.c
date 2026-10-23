@@ -423,6 +423,98 @@ static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) 
 // runtime/lang_generic.c
 static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator);
 
+// ---- main with the io
+// ----------------------------------------------------------------------------------------------------
+//
+// `i32 main(io::Io *io) { ... }` is written as `static int32_t smith_user_main(SmithIo *io) { ... }` and, at the end of
+// the file, `int main(int argc, char **argv)` makes the io, calls it, closes the io and returns its status. The host
+// of a file with no `module` line sees the head as it is read (runtime/lang_sparse.c); here the head is held whole.
+
+// `i32` that begins `i32 main(io::Io *name)`: the declaration is the program's body, a static function.
+static bool smith_lang_io_main_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!lang->io_import || !smith_lang_equals(token->text, token->length, "i32")) return false;
+    if (!smith_lang_ident(smith_lang_peek(lang, host, 0, false), "main") ||
+        !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) {
+        return false;
+    }
+    const SmithToken *alias = smith_lang_peek(lang, host, 2, false);
+    SmithLangBinding *binding =
+        alias->kind == SmithTokenKind_Identifier ? smith_lang_binding_find(lang, alias->text, alias->length) : nullptr;
+    return binding != nullptr && smith_lang_is_io_binding(binding) &&
+           smith_lang_punct(smith_lang_peek(lang, host, 3, false), "::") &&
+           smith_lang_ident(smith_lang_peek(lang, host, 4, false), "Io") &&
+           smith_lang_punct(smith_lang_peek(lang, host, 5, false), "*") &&
+           smith_lang_peek(lang, host, 6, false)->kind == SmithTokenKind_Identifier &&
+           smith_lang_punct(smith_lang_peek(lang, host, 7, false), ")");
+}
+
+// The first token of a declaration: when it is `i32 main(io::Io *name)`, the `main` still queued is renamed (it then
+// goes through whatever path the file takes as the name of an ordinary function, which is `static` where the file's
+// private functions are) and the file's end writes the C `main`. Returns whether it was one.
+static bool smith_lang_io_main_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+    if (!smith_lang_io_main_ahead(lang, host, first)) return false;
+    SmithToken *name = &lang->queue[lang->queue_head];
+    name->text = smith_lang_io_main_name;
+    name->length = sizeof smith_lang_io_main_name - 1;
+    name->handle = smith_token_no_handle;
+    lang->io_main = true;
+    lang->io_main_location = name->location;
+    // The debugger and the editor show it as the program wrote it.
+    smith_lang_written_add(lang, smith_lang_io_main_name, sizeof smith_lang_io_main_name - 1, "main", 4, 0,
+                           lang->module_text, true, "main", 4);
+    return true;
+}
+
+// The C `main` that makes the io, runs the function the program wrote with it, closes it and returns its status.
+static void smith_lang_emit_io_main(SmithLang *lang, const SmithHost *host) {
+    static const char *const pieces[] = {"int",    "main",
+                                         "(",      "int",
+                                         "argc",   ",",
+                                         "char",   "*",
+                                         "*",      "argv",
+                                         ")",      "{",
+                                         "",       "io",
+                                         "=",      "smith_io_make",
+                                         "(",      "argc",
+                                         ",",      "argv",
+                                         ")",      ";",
+                                         "int",    "status",
+                                         "=",      smith_lang_io_main_name,
+                                         "(",      "&",
+                                         "io",     ")",
+                                         ";",      "smith_io_close",
+                                         "(",      "&",
+                                         "io",     ")",
+                                         ";",      "return",
+                                         "status", ";",
+                                         "}"};
+    SmithToken like = {};
+    like.location = lang->io_main_location;
+    bool tight = true;                                              // after `(` and `&` the next token is not spaced
+    for (size_t i = 0; i < sizeof pieces / sizeof pieces[0]; i++) { // 45 pieces
+        const char *text = pieces[i];
+        if (i == 12) text = lang->io_type.length > 0 ? smith_lang_str(lang->io_type) : "SmithIo";
+        bool word = (text[0] >= 'a' && text[0] <= 'z') || (text[0] >= 'A' && text[0] <= 'Z') || text[0] == '_';
+        SmithToken made =
+            smith_lang_synth(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, text, strlen(text), &like);
+        made.synthetic = true;
+        made.line_start = i == 0;
+        made.space_before = i != 0 && !tight && strchr("),;", text[0]) == nullptr;
+        smith_lang_emit(lang, host, made);
+        tight = text[0] == '(' || text[0] == '&';
+    }
+}
+
+// The end of the file: the `main` of an io-form one, unless the file also made an io of its own.
+static void smith_lang_finish_io_main(SmithLang *lang, const SmithHost *host) {
+    if (!lang->io_main) return;
+    if (lang->io_make_seen) {
+        smith_lang_error(lang, host, lang->io_make_location,
+                         "main already has the io: use `io`, the parameter of `main`, instead of `io::make`");
+    }
+    smith_lang_emit_io_main(lang, host);
+}
+
 // The head is complete: the terminator says what follows. Writes the head, then the terminator, and picks the state.
 static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
     if (lang->decl.generic) { // recorded, not written

@@ -328,14 +328,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
     `io::<capability>_<name>`.
 - **The idiom checks of issue #47 are clang-tidy checks, on in smith's default `.clang-tidy` and its own** (`shim/idiom.h`,
   registered in `shim/tidy.cpp` beside the two above; the editor runs them; skill smith-check, smith-idiom). Each message
-  names the fix. `.smith` only: `smith-sized-types` (`uint32_t`, `size_t`, `double`, `unsigned`, `long`, `int`, in `main`'s signature too, which is `i32 main(i32 argc, char *argv[])`: write `u32`, `usize`, `f64`), `smith-module-library` (a library that is a module used through its C header: `import
+  names the fix. `.smith` only: `smith-sized-types` (`uint32_t`, `size_t`, `double`, `unsigned`, `long`, `int`, in `main`'s signature too, which is `i32 main(io::Io *io)` or `i32 main(i32 argc, char *argv[])`: write `u32`, `usize`, `f64`), `smith-module-library` (a library that is a module used through its C header: `import
   smith::arena;`). `.smith` and C, not C++: `smith-bounded-loop` (no `for (;;)`, `while (true)`, `do ... while (1)` outside `main`),
   `smith-c23` (`NULL`, `_Bool`, `_Static_assert`, `<stdbool.h>`, `{0}`, `__attribute__((noreturn))` and kin: `nullptr`, `bool`, `static_assert`, `{}`,
   `[[noreturn]]`) and `smith-constexpr` (a file-scope `const` with a constant initializer, of arithmetic, enum, array or
   record type, internal linkage in C: `constexpr`). smith's own C passes the C-side ones.
 - **`smith-effects` is a clang-tidy check that a program touches the world only through capabilities passed down from
   `main`** (`shim/effects.h`, registered in `shim/tidy.cpp` beside `SmithNaming`, so `smith lint` and `smith lsp` both
-  run it, `.smith` names as written; skill smith-io). `main` makes `io::Io io = io::make(argc, argv)` (`SmithIo io = smith_io_make(argc, argv)` in C) and a function
+  run it, `.smith` names as written; skill smith-io). `main` makes `io::Io io = io::make(argc, argv)` (`SmithIo io = smith_io_make(argc, argv)` in C), or in a `.smith` file is `i32 main(io::Io *io)`, which the lowering turns into a `static` function and a C `main` that makes, passes and closes the io (issue #52; `io::make` in it is refused), and a function
   takes the part it needs, so its signature says what it can do. Decided function by function from the source, with no
   lists of files:
   - **A raw effect is a call into a system header that is not on the pure allow list** (in `shim/effects.h`, each

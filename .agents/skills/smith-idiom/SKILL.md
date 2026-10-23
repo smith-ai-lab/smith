@@ -144,10 +144,9 @@ module main;
 import rolls;
 import smith::io;
 
-i32 main(i32 argc, char *argv[]) {
-    io::Io io = io::make(argc, argv);
-    rolls::Rolls dice = rolls::make(&io.arena, io.key, 10);
-    rolls::print(&io.console, &dice);
+i32 main(io::Io *io) {
+    rolls::Rolls dice = rolls::make(&io->arena, io->key, 10);
+    rolls::print(&io->console, &dice);
     return 0;
 }
 ```
@@ -155,6 +154,7 @@ i32 main(i32 argc, char *argv[]) {
 What changed, by rule:
 - 1: `uint32_t`, `size_t`, `uint64_t`, `double` became `u32`, `usize`, `u64`, `f64`.
 - 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import smith::io;`, `io::Console`, `io::console_printf`, `io::Io`, `io::make`); `<smith/io.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
+- `main` takes the io (`i32 main(io::Io *io)`): smith makes it and closes it after (smith-io); `i32 main(i32 argc, char *argv[])` with `io::make` is still accepted, and is what a renamed `.c` file has.
 - 3: `rolls.h` is gone; `import smith::arena;`, `import smith::io;` and `import smith::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`, `SmithConsole` is `io::Console`). `main` imports `rolls`.
 - 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_array(arena, u32, count)`: the size and alignment cannot disagree, and the result is typed.
 - 5: `ROLLS_SIDES` is `constexpr i64 sides`.

@@ -263,6 +263,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     }
     if (!smith_lang_add_binding(lang, host, bind, bind_length, name.location, &name, false)) return;
     if (smith_lang_import_is_target(lang, name.colons, bind, bind_length)) return;
+    if (strcmp(name.colons, "smith::io") == 0) lang->io_import = true; // its `main` may take the io
     if (lang->is_module && strcmp(name.colons, lang->module) == 0) {
         smith_lang_error(lang, host, name.location, "module `%s` imports itself", name.colons);
         smith_lang_binding_find(lang, bind, bind_length)->missing = true;

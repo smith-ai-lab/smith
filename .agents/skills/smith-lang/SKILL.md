@@ -14,6 +14,7 @@ A `.smith` file is C. Renaming `x.c` to `x.smith` changes nothing: the file mean
 3. **A `module` line** at the top makes the file a module with exports and private names (load `smith-lang-modules`).
 4. **Generic functions** in a module: parameters marked `constexpr type T`, called as `arena::push(&a, Point)` or with `T` inferred, and `if constexpr` in their bodies (load `smith-lang-generics`).
 5. **The target, and `if constexpr` in any function body**, in place of the preprocessor: `import target;`, then `target::arch == target::aarch64`, `target::address_sanitizer` (below).
+6. **`main` with the io:** `i32 main(io::Io *io)` (with `import smith::io;`) is written as a `static` function and a C `main` that makes the io, calls it and closes the io, returning its status; the C forms (`i32 main(i32 argc, char *argv[])`, `int main(void)`) still compile as they do. `io::make` in a file with the io form is an error. Load `smith-io`.
 
 It is C2y, compiled with `smith cc x.smith`: the extension makes it `-x c -std=gnu2y` (`::` must lex as one token, and `auto` and `_Countof` work), with the other flags as for any C file. A `-std=` of yours wins. A small program is one command:
 

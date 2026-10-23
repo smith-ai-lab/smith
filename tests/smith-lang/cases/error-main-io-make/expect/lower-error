@@ -1,0 +1,1 @@
+src/main.smith:4:24: main already has the io: use `io`, the parameter of `main`, instead of `io::make`
