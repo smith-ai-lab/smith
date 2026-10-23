@@ -897,6 +897,12 @@ static constexpr unsigned char smith_text_source[] = {
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
+static constexpr unsigned char smith_autodiff_header[] = {
+#embed "include/smith/autodiff.h"
+};
+static constexpr unsigned char smith_autodiff_source[] = {
+#embed "lib/smith/autodiff.smith"
+};
 static constexpr unsigned char smith_math_header[] = {
 #embed "include/smith/math.h"
 };
@@ -964,7 +970,7 @@ typedef struct {
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 static const SmithLibrary smith_libraries[] = {
-    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, true),
+    SMITH_LIBRARY(arena, true), SMITH_LIBRARY(autodiff, true), SMITH_LIBRARY(contract, true), SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false), SMITH_LIBRARY(math, true),     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(test, true),  SMITH_LIBRARY(text, true),     SMITH_LIBRARY(trace, false),
 };
@@ -1682,6 +1688,16 @@ static int smith_build_dump_config(void) {
     return 0;
 }
 
+// Whether this smith can build a smith::autodiff program: Enzyme is linked into its linker (shim/lld.cpp), and the
+// compile and the link run in its own process (SMITH_CLANG and SMITH_LINKER run external ones, which have no Enzyme).
+static bool smith_can_differentiate(void) {
+#if defined(SMITH_ENZYME) && defined(SMITH_IN_PROCESS)
+    return smith_runs_in_process("SMITH_CLANG") && !smith_has_linker_override();
+#else
+    return false;
+#endif
+}
+
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
 // nullptr: its targets are smith's own, smith_needs and smith_tests).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
@@ -1690,6 +1706,7 @@ static int smith_build_main(int count, char **args, const char *self, const char
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     SmithBuildFile file = smith_build_file();
     smith_cache_hold();
+    setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no", 1); // whether smith::autodiff programs can be built
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
     const char *forced = getenv("SMITH_NINJA");
     bool use_ninja = forced != nullptr && *forced != '\0';

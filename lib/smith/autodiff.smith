@@ -1,0 +1,45 @@
+// smith::autodiff, <smith/autodiff.h>: Enzyme's own interface, as Enzyme documents it, declared and never defined.
+// Enzyme differentiates LLVM IR: it finds a call to __enzyme_autodiff (reverse mode) or __enzyme_fwddiff (forward mode)
+// when smith links the program, writes the derivative of the function it is given, and replaces the call with it. So
+// nothing here has a body, and nothing may: a marker that had a definition would be folded to its value before Enzyme
+// reads it. A program that imports this module (or includes the header) is an autodiff program, and smith builds it as
+// one (the smith-autodiff skill): full LTO, each file compiled with the profile's -O level and no optimization passes.
+//
+// The names follow Enzyme's; a .smith file writes the module's (autodiff::reverse), C the names of the header.
+//
+//   double f(double x, double y);
+//   double dx = 0, dy = 0;
+//   autodiff::reverse(f, autodiff::out, x, autodiff::out, y);   // C: __enzyme_autodiff((void *)f, enzyme_out, x, ...)
+//
+// Each argument of the differentiated function is written after a marker that says how it is differentiated:
+//
+//   autodiff::constant  the argument is not differentiated: it follows as it is
+//   autodiff::dup       a pointer: the pointer, then a pointer of the same shape that receives its derivative
+//                       (reverse mode adds the derivative into it, so zero it first; forward mode reads the tangent
+//                       from it and writes the derivative of the result's matching memory)
+//   autodiff::out       a scalar whose derivative the call returns (reverse mode only; the argument is a double)
+//   autodiff::dup_no_need   as dup, for a result the caller does not read
+//
+// The calls are declared to return double: the derivative of the first autodiff::out argument (reverse mode) or the
+// tangent of a double result (forward mode); the value is meaningless when there is neither, and may be ignored. Enzyme
+// builds the return value from the call's own type, so for a struct of several derivatives, or a float, call through a
+// pointer of the type you want, `((Pair (*)(void *, ...))autodiff::reverse)(...)`. The first argument is the function,
+// as `void *`: cast a function pointer to it. The markers are variables of type int that nothing defines, and the
+// functions are variadic, so the compiler checks no argument after the first. A float passed after a marker is
+// promoted to double by C's rules for variadic calls: pass the types the function takes (a double for a double).
+module smith::autodiff;
+
+// <smith/autodiff.h>: the reverse mode derivative of a function: `autodiff::reverse(f, marker, argument, ...)`.
+// C: __enzyme_autodiff(void *function, ...)
+[[smith::c_name("__enzyme_autodiff")]] export double reverse(void *function, ...);
+
+// The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and the
+// call returns the tangent of the result.
+// C: __enzyme_fwddiff(void *function, ...)
+[[smith::c_name("__enzyme_fwddiff")]] export double forward(void *function, ...);
+
+// The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.
+[[smith::c_name("enzyme_const")]] export extern i32 constant;
+[[smith::c_name("enzyme_dup")]] export extern i32 dup;
+[[smith::c_name("enzyme_out")]] export extern i32 out;
+[[smith::c_name("enzyme_dupnoneed")]] export extern i32 dup_no_need;

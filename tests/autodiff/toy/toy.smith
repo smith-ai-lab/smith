@@ -1,0 +1,19 @@
+// The functions that main differentiates: a module of .smith, calling a C function and the math library.
+module toy;
+
+import <math.h>;
+import "kernel.h";
+
+// f(x, y) = x^2 sin(y) + 3xy
+export f64 f(f64 x, f64 y) {
+    return c::kernel_weighted_square(c::sin(y), x) + 3.0 * x * y;
+}
+
+// loss(p, n) = sum of w_i p_i^2 with w_i = i + 1, over n values
+export f64 loss(const f64 *p, usize n) {
+    f64 total = 0.0;
+    for (usize i = 0; i < n; i++) {
+        total += c::kernel_weighted_square((f64)(i + 1), p[i]);
+    }
+    return total;
+}

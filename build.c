@@ -33,6 +33,7 @@ typedef struct {
     bool lldb;           // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (scripts/prove-libs.sh), else ""
     bool hook;           // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
+    const char *enzyme;  // the folder with libEnzymeStatic-23.a (scripts/enzyme.sh): smith differentiates at link time, else ""
 } BuildConfig;
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -144,8 +145,8 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena",  "build", "contract", "io",   "math",
-                                                      "random", "test",  "text",     nullptr};
+static const char *const build_generated_headers[] = {"arena",  "autodiff", "build", "contract", "io",
+                                                      "math",   "random",   "test",  "text",     nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -245,6 +246,12 @@ static const char *const *build_lldb_libraries(SmithBuild *b, const BuildConfig 
                      nullptr);
 }
 
+// Enzyme (scripts/enzyme.sh), before LLVM's libraries: shim/lld.cpp registers it with the linker's LTO pipeline.
+static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfig *config) {
+    if (config->enzyme[0] == '\0') return smith_list(b, nullptr);
+    return smith_list(b, smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", config->enzyme), nullptr);
+}
+
 // shim/clang.cpp, which gives smith.c clang's main. The LLVM headers are system headers, so the build's warnings stay
 // smith's own.
 static void build_shim(SmithBuild *b, const BuildConfig *config, const char *folder, const char *source,
@@ -259,7 +266,8 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
                                        "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
                                        "-isystem", smith_fmt(b, "%s/include", config->llvm), nullptr},
                       smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
-                      smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}), nullptr),
+                      smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+                      smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
     };
     smith_object(b, shim);
 }
@@ -467,6 +475,8 @@ static const char *const build_smith_inputs[] = {
     "runtime/protocol/mcp.c",
     "include/smith/arena.h",
     "lib/smith/arena.smith",
+    "include/smith/autodiff.h",
+    "lib/smith/autodiff.smith",
     "bootstrap/lib/smith/arena.c",
     "include/smith/io.h",
     "lib/smith/io.smith",
@@ -535,6 +545,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
                       smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
                       smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
                       smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+                      smith_when(b, in_process && config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
                       smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, nullptr),
     };
@@ -558,12 +569,16 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags = smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr}),
+        .flags = smith_cat(b,
+                           smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr}),
+                           smith_when(b, in_process && config->enzyme[0] != '\0',
+                                      (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
+                           nullptr),
         .objects = objects,
         .libraries =
             in_process ? smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
-                                   build_clang_libraries(b, config->llvm), build_lldb_libraries(b, config),
-                                   (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
+                                   build_enzyme_libraries(b, config), build_clang_libraries(b, config->llvm),
+                                   build_lldb_libraries(b, config), (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
                        : nullptr,
     };
     smith_program(b, &program);
@@ -604,6 +619,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     // The modules are linted as written, and `.smith` is C2y (as `smith cc` compiles it), so `_Countof` works.
     const char *const *smith_flags = smith_cat(b, flags, smith_list(b, "-std=gnu2y", nullptr), nullptr);
     smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
@@ -798,6 +814,13 @@ static const char *build_llvm_folder(SmithBuild *b) {
     return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r4"));
 }
 
+// Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
+// building it leaves the LLVM install alone (scripts/enzyme.sh).
+static const char *build_enzyme_folder(SmithBuild *b) {
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r4"));
+}
+
 static const char *build_cmake_package(SmithBuild *b) {
     return smith_package(
         b, &(SmithPackage){
@@ -860,6 +883,32 @@ static int build_bitwuzla_run(SmithRun *run, const char *ninja) {
     return smith_run_program(run, argv, nullptr);
 }
 
+// Enzyme v0.0.303 (Apache-2.0 with the LLVM exception), pinned by hash and built static beside the LLVM install by
+// scripts/enzyme.sh, with patches/enzyme/*.patch applied to a copy.
+static int build_enzyme_run(SmithRun *run, const char *ninja) {
+    SmithBuild *b = run->b;
+    const char *enzyme = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v0.0.303.tar.gz",
+                           .hash = "sha256:0ca3114d008e524cd3b13152bbc172794b20af643d1628161655373eba4554de"});
+    const char *const argv[] = {"sh",
+                                "scripts/enzyme.sh",
+                                enzyme,
+                                build_cmake_package(b),
+                                smith_fmt(b, "%s/install", build_llvm_folder(b)),
+                                ninja,
+                                build_enzyme_folder(b),
+                                nullptr};
+    return smith_run_program(run, argv, nullptr);
+}
+
+// `smith build enzyme`: only Enzyme, for an LLVM that is already built (`smith build llvm` runs it last too).
+static int build_enzyme_only(SmithRun *run) {
+    int status = build_enzyme_run(run, smith_fmt(run->b, "%s/tools/ninja", build_llvm_folder(run->b)));
+    if (status != 0) return status;
+    const char *const done[] = {"sh", "-c", ": >\"$0\"", run->outputs[0], nullptr};
+    return smith_run_program(run, done, nullptr);
+}
+
 // The pinned LLVM (`smith build llvm`): the sources, CMake and Python by hash, built once into the package cache by
 // scripts/llvm.sh, and then the prover's libraries beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run
 // step, so the packages are fetched only when this target runs, not on every smith build.
@@ -888,6 +937,8 @@ static int build_llvm_run(SmithRun *run) {
     if (status != 0) return status;
     status = build_bitwuzla_run(run, ninja);
     if (status != 0) return status;
+    status = build_enzyme_run(run, ninja);
+    if (status != 0) return status;
     const char *const done[] = {"sh", "-c", "cp \"$1\" \"$2\"", "sh", stamp, run->outputs[0], nullptr};
     return smith_run_program(run, done, nullptr);
 }
@@ -898,7 +949,8 @@ static void build_llvm(SmithBuild *b) {
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
         .inputs =
             (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh", "scripts/prove-libs.sh",
-                             "scripts/bitwuzla.sh", "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
+                             "scripts/bitwuzla.sh", "scripts/enzyme.sh", "patches/enzyme/quiet-caching-call.patch",
+                             "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
                              "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
                              "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
@@ -906,6 +958,14 @@ static void build_llvm(SmithBuild *b) {
     };
     smith_step(b, &llvm);
     smith_alias(b, "llvm", llvm.outputs);
+    SmithStep enzyme = {
+        .run = build_enzyme_only,
+        .description = "building Enzyme (static, against the LLVM install)",
+        .inputs = (const char *[]){"scripts/enzyme.sh", "patches/enzyme/quiet-caching-call.patch", nullptr},
+        .outputs = (const char *[]){"build/enzyme.stamp", nullptr},
+    };
+    smith_step(b, &enzyme);
+    smith_alias(b, "enzyme", enzyme.outputs);
 }
 
 // Whether the LLVM install has the token hook (patches/clang-token-hook.patch), which `smith build llvm` applies: an
@@ -948,6 +1008,14 @@ static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
     return linkable ? folder : "";
 }
 
+// Enzyme's static library, built beside the LLVM install (scripts/enzyme.sh); "" when there is none, and the smith
+// cannot differentiate.
+static const char *build_enzyme_install(SmithBuild *b, const char *llvm) {
+    if (llvm[0] == '\0') return "";
+    const char *folder = build_enzyme_folder(b);
+    return access(smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", folder), R_OK) == 0 ? folder : "";
+}
+
 void build(SmithBuild *b) {
     const char *std = build_variable(b, "STD", "gnu23", "the C standard");
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
@@ -972,6 +1040,7 @@ void build(SmithBuild *b) {
     config.cxx = smith_option_value(b, "CXX", smith_fmt(b, "%s/bin/clang++", config.llvm), "compiles shim/clang.cpp");
     config.prove = build_prove_folder(b, config.llvm);
     config.hook = config.llvm[0] != '\0' && build_has_hook(b, config.llvm);
+    config.enzyme = build_enzyme_install(b, config.llvm);
     config.lldb = config.llvm[0] != '\0' && access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},

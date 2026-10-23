@@ -3008,6 +3008,50 @@ static bool smith_app_covers(const char *folder, const char *source) {
     return strncmp(source, folder, length) == 0 && (source[length] == '/' || source[length] == '\0');
 }
 
+// ---- Autodiff programs (smith::autodiff, the smith-autodiff skill). Enzyme differentiates LLVM IR when smith links, so
+// ---- an autodiff program is built unlike the others, in this one place: with full LTO (Enzyme must see the function it
+// ---- differentiates and its callees in one module, which ThinLTO's modules do not give it), and each file compiled with
+// ---- the profile's -O level but none of the optimization passes (Enzyme wants IR that is not yet optimized: after -O2
+// ---- its gradient is 3.1 times the hand-written one, before it 1.1 to 1.3 times; the link optimizes afterwards).
+// ---- The sanitizers are left out. What is lost: AddressSanitizer's and UndefinedBehaviorSanitizer's checks in the
+// ---- debug profile. Their run-time handlers break Enzyme (it cannot differentiate a call to __ubsan_handle_*, "No create
+// ---- nofree of empty function"), the trap form of UBSan builds but loses its checks inside the gradient, and AddressSanitizer
+// ---- only works instrumented after Enzyme has run, which the compiler does not do. Change the policy here.
+static bool smith_app_autodiff; // the program or the tests being declared use smith::autodiff
+
+static bool smith_autodiff_dropped(const char *flag) {
+    return strncmp(flag, "-fsanitize", strlen("-fsanitize")) == 0 ||
+           strncmp(flag, "-fno-sanitize", strlen("-fno-sanitize")) == 0 || strcmp(flag, "-flto=thin") == 0 ||
+           strcmp(flag, "-flto") == 0;
+}
+
+// `flags` as an autodiff program takes them: without the sanitizers and ThinLTO, with full LTO, and for a compile with
+// no optimization passes.
+static const char *const *smith_autodiff_flags(SmithBuild *b, const char *const *flags, bool compile) {
+    const char **kept = smith_new_list(smith_count(flags));
+    size_t used = 0;
+    for (size_t i = 0; flags[i] != nullptr; i++) {
+        if (!smith_autodiff_dropped(flags[i])) kept[used++] = flags[i];
+    }
+    kept[used] = nullptr;
+    return smith_cat(b, kept, smith_list(b, "-flto=full", nullptr),
+                     smith_when(b, compile, smith_list(b, "-Xclang", "-disable-llvm-passes", nullptr)), nullptr);
+}
+
+// Whether the libraries the scan found include smith::autodiff; the smith that builds it must have Enzyme.
+static bool smith_app_found_autodiff(void) {
+    for (size_t i = 0; i < smith_app_found.queue.count; i++) {
+        if (strcmp(smith_app_found.queue.names[i], "autodiff") != 0) continue;
+        const char *enzyme = getenv("SMITH_ENZYME");
+        if (enzyme == nullptr || strcmp(enzyme, "yes") != 0)
+            smith_fail("smith::autodiff needs a smith with Enzyme linked in; this one has none (the stage0, or built "
+                       "before `smith build llvm` made Enzyme): run `smith build llvm`, then `smith build` in the "
+                       "smith repository, and use that smith");
+        return true;
+    }
+    return false;
+}
+
 // The compile flags of a profile: the shared ones, the profile's own, the project's (build::defaults), the rows of
 // build::defaults that cover `source` (nullptr: none), then `more`, a program's own.
 static const char *const *smith_app_flags(SmithBuild *b, const char *profile, const char *source,
@@ -3019,31 +3063,44 @@ static const char *const *smith_app_flags(SmithBuild *b, const char *profile, co
         if (smith_app_covers(rows[i].path, source))
             folders = smith_cat(b, folders, smith_or_empty(b, rows[i].flags), nullptr);
     }
-    return smith_cat(b, smith_profile_warnings, smith_list(b, "-ffp-contract=off", nullptr),
-                     smith_when(b, apple_silicon, smith_list(b, "-mcpu=apple-m1", nullptr)),
-                     smith_list(b, "-I", ".", "-I", ".smith/include", nullptr), smith_app_profile(profile),
-                     smith_or_empty(b, smith_app_state.defaults.flags), folders, smith_or_empty(b, more), nullptr);
+    const char *const *flags =
+        smith_cat(b, smith_profile_warnings, smith_list(b, "-ffp-contract=off", nullptr),
+                  smith_when(b, apple_silicon, smith_list(b, "-mcpu=apple-m1", nullptr)),
+                  smith_list(b, "-I", ".", "-I", ".smith/include", nullptr), smith_app_profile(profile),
+                  smith_or_empty(b, smith_app_state.defaults.flags), folders, smith_or_empty(b, more), nullptr);
+    return smith_app_autodiff ? smith_autodiff_flags(b, flags, true) : flags;
 }
 
 static const char *const *smith_app_link_flags(SmithBuild *b, const char *profile, const char *const *more) {
     bool sanitized = strcmp(profile, "debug") == 0;
     bool optimized = !sanitized;
-    return smith_cat(b, smith_when(b, sanitized, smith_list(b, "-fsanitize=address,undefined", nullptr)),
-                     smith_when(b, optimized, smith_list(b, "-flto=thin", nullptr)),
-                     smith_or_empty(b, smith_app_state.defaults.link_flags), smith_or_empty(b, more), nullptr);
+    const char *const *flags =
+        smith_cat(b, smith_when(b, sanitized, smith_list(b, "-fsanitize=address,undefined", nullptr)),
+                  smith_when(b, optimized, smith_list(b, "-flto=thin", nullptr)),
+                  smith_or_empty(b, smith_app_state.defaults.link_flags), smith_or_empty(b, more), nullptr);
+    return smith_app_autodiff ? smith_autodiff_flags(b, flags, false) : flags;
 }
 
+// The public conventions (a low-level step that starts from them) are never an autodiff program's.
 const char *const *smith_profile_flags(SmithBuild *b, const char *profile) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
-    return smith_app_flags(b, profile, nullptr, nullptr);
+    bool saved = smith_app_autodiff;
+    smith_app_autodiff = false;
+    const char *const *flags = smith_app_flags(b, profile, nullptr, nullptr);
+    smith_app_autodiff = saved;
+    return flags;
 }
 
 const char *const *smith_profile_link_flags(SmithBuild *b, const char *profile) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     (void)smith_app_profile(profile);
-    return smith_app_link_flags(b, profile, nullptr);
+    bool saved = smith_app_autodiff;
+    smith_app_autodiff = false;
+    const char *const *flags = smith_app_link_flags(b, profile, nullptr);
+    smith_app_autodiff = saved;
+    return flags;
 }
 
 const char *const *smith_source_flags(SmithBuild *b, const char *profile, const char *source) {
@@ -3121,7 +3178,9 @@ static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const c
         under = source + strlen(library);
         if (strncmp(under, "smith/", strlen("smith/")) != 0) under = smith_text("smith/%s", under);
     }
-    const char *output = smith_replace_extension(b, smith_text("build/%s/%s", profile, under), ".o");
+    // An autodiff program's objects are made with other flags, so they are beside the others, never the same file.
+    const char *output = smith_replace_extension(
+        b, smith_text("build/%s/%s%s", profile, smith_app_autodiff ? "autodiff/" : "", under), ".o");
     for (size_t i = 0; i < smith_object_row_count; i++) {
         SmithObjectRow *row = &smith_object_rows[i];
         if (strcmp(row->object.output, output) != 0) continue;
@@ -3222,10 +3281,12 @@ void smith_app(SmithBuild *b, SmithApp *app) {
     smith_app_include_dirs(copy.flags);
     smith_app_add(copy.entry, true);
     smith_app_follow(b);
+    smith_app_autodiff = smith_app_found_autodiff();
     if (smith_modules_flags == nullptr && smith_object_row_count == 0) smith_modules(b, &(SmithModules){});
     SmithStep debug = smith_app_program(b, &copy, "debug"); // first, so the editor reads the debug flags
     SmithStep release = smith_app_program(b, &copy, "release");
     SmithStep fast = smith_app_program(b, &copy, "fast");
+    smith_app_autodiff = false;
     smith_app_alias_add(b, "release", release.outputs);
     smith_app_alias_add(b, "fast", fast.outputs);
     if (copy.tool)
@@ -3281,6 +3342,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
     for (size_t i = 0; helpers[i] != nullptr; i++)
         smith_app_add(helpers[i], true);
     smith_app_follow(b);
+    smith_app_autodiff = smith_app_found_autodiff();
     const char *const *flags = smith_app_flags(b, "debug", smith_text("%s/", copy.folder), smith_app_state.flags);
     size_t room = smith_app_found.file_count + smith_app_found.queue.count;
     const SmithObject **objects = (const SmithObject **)smith_new_list(room);
@@ -3304,6 +3366,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
         .inputs = copy.inputs,
     };
     smith_tests(b, &run);
+    smith_app_autodiff = false;
     copy.step = run.step;
     *tests = copy;
 }

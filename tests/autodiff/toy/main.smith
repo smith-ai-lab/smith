@@ -1,0 +1,27 @@
+// Reverse and forward mode derivatives of toy::f and toy::loss, printed next to the analytic values.
+import smith::autodiff;
+import smith::io;
+import toy;
+import <math.h>;
+
+i32 main(i32 argc, char *argv[]) {
+    io::Io io = io::make(argc, argv);
+    f64 x = 1.7;
+    f64 y = 0.4;
+    f64 dx = autodiff::reverse((void *)toy::f, autodiff::out, x, autodiff::out, y);
+    f64 tx = autodiff::forward((void *)toy::f, autodiff::dup, x, 1.0, autodiff::dup, y, 0.0);
+    f64 ty = autodiff::forward((void *)toy::f, autodiff::dup, x, 0.0, autodiff::dup, y, 1.0);
+    f64 p[3] = {0.5, -1.5, 2.0};
+    f64 dp[3] = {};
+    autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)3);
+    f64 analytic_x = 2.0 * x * c::sin(y) + 3.0 * y;
+    f64 analytic_y = x * x * c::cos(y) + 3.0 * x;
+    (void)io::console_printf(&io.console, "reverse dx %.12f %.12f\n", dx, analytic_x);
+    (void)io::console_printf(&io.console, "forward dx %.12f %.12f\n", tx, analytic_x);
+    (void)io::console_printf(&io.console, "forward dy %.12f %.12f\n", ty, analytic_y);
+    for (usize i = 0; i < 3; i++) {
+        (void)io::console_printf(&io.console, "loss dp[%zu] %.12f %.12f\n", i, dp[i], 2.0 * (f64)(i + 1) * p[i]);
+    }
+    io::close(&io);
+    return 0;
+}

@@ -1,0 +1,12 @@
+--- a/enzyme/Enzyme/GradientUtils.cpp
++++ b/enzyme/Enzyme/GradientUtils.cpp
+@@ -4403,7 +4403,8 @@
+ 
+   // cache a call, assuming its longer to run that
+   if (isa<CallInst>(val)) {
+-    llvm::errs() << " caching call: " << *val << "\n";
++    if (EnzymePrint)
++      llvm::errs() << " caching call: " << *val << "\n";
+     // cast<CallInst>(val)->getCalledFunction()->dump();
+     return false;
+   }
