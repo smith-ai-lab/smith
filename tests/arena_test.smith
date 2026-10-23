@@ -24,12 +24,12 @@ export void test_arena_pushes_are_zeroed(void) {
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
     u8 *bytes = arena::push_raw(&a, 100, 1);
     for (usize i = 0; i < 100; i++)
-        test::check_equal(bytes[i], (u8)0);
+        test::check_equal(bytes[i], 0);
     __builtin_memset(bytes, 0xBB, 100);
     arena::reset(&a);
     u8 *again = arena::push_raw(&a, 100, 1);
     for (usize i = 0; i < 100; i++)
-        test::check_equal(again[i], (u8)0); // a push after a reset is zeroed too
+        test::check_equal(again[i], 0); // a push after a reset is zeroed too
 }
 
 export void test_arena_pushes_are_aligned(void) {
@@ -39,7 +39,7 @@ export void test_arena_pushes_are_aligned(void) {
         u8 *odd = arena::push_raw(&a, 1, 1); // knock the cursor off every alignment
         test::check_condition(odd != nullptr);
         void *aligned = arena::push_raw(&a, 3, align);
-        test::check_equal((usize)aligned & (align - 1), (usize)0);
+        test::check_equal((usize)aligned & (align - 1), 0);
     }
 }
 
@@ -54,7 +54,7 @@ export void test_arena_typed_and_array_pushes(void) {
         test::check_equal(records[i].count, 0);
         records[i].count = (i32)i; // all ten are writable
     }
-    test::check_equal((usize)records & (alignof(Record) - 1), (usize)0);
+    test::check_equal((usize)records & (alignof(Record) - 1), 0);
     u8 *none = arena::push_array(&a, u8, 0); // an empty array is a valid push
     test::check_condition(none != nullptr);
 }
@@ -66,17 +66,17 @@ export void test_arena_typed_pushes_keep_every_alignment(void) {
     u8 *odd = arena::push(&a, u8);
     test::check_condition(odd != nullptr);
     Record *record = arena::push(&a, Record);
-    test::check_equal((usize)record & (alignof(Record) - 1), (usize)0);
+    test::check_equal((usize)record & (alignof(Record) - 1), 0);
     test::check_equal(record->count, 0);
     test::check_equal(record->value, 0.0);
     Record *records = arena::push_array(&a, Record, 5);
-    test::check_equal((usize)records & (alignof(Record) - 1), (usize)0);
+    test::check_equal((usize)records & (alignof(Record) - 1), 0);
     for (usize i = 0; i < 5; i++) {
         test::check_equal(records[i].count, 0);
         test::check_equal(records[i].value, 0.0);
     }
     f64 *wide = arena::push(&a, f64);
-    test::check_equal((usize)wide & (alignof(f64) - 1), (usize)0);
+    test::check_equal((usize)wide & (alignof(f64) - 1), 0);
     test::check_equal(*wide, 0.0);
 }
 
@@ -109,19 +109,19 @@ export void test_arena_reset_and_scopes_give_memory_back(void) {
     test::check_condition(first != nullptr);
     usize outer_used = a.used;
     arena::Scope inner = arena::scope_begin(&a);
-    test::check_equal(a.scopes, (usize)2);
+    test::check_equal(a.scopes, 2);
     u8 *second = arena::push_raw(&a, 30, 1);
     test::check_condition(second != nullptr);
     arena::scope_end(inner);
     test::check_equal(a.used, outer_used);
-    test::check_equal(a.scopes, (usize)1);
+    test::check_equal(a.scopes, 1);
     u8 *third = arena::push_raw(&a, 30, 1);
     test::check_equal(third, second); // the inner scope's memory is handed out again
     arena::scope_end(outer);
     test::check_equal(a.used, base_used);
-    test::check_equal(a.scopes, (usize)0);
+    test::check_equal(a.scopes, 0);
     arena::reset(&a);
-    test::check_equal(a.used, (usize)0);
+    test::check_equal(a.used, 0);
 }
 
 // The same pushes lay out the same way in two arenas, whatever their addresses.
@@ -148,12 +148,12 @@ export void test_arena_carve_makes_separate_arenas(void) {
     arena::Arena first = arena::carve(&parent, 1000);
     arena::Arena second = arena::carve(&parent, 2000);
     u8 *after = arena::push_raw(&parent, 10, 1);
-    test::check_equal(first.capacity, (usize)1000);
-    test::check_equal(second.capacity, (usize)2000);
-    test::check_equal(first.used, (usize)0);
-    test::check_equal(second.used, (usize)0);
-    test::check_equal((usize)first.memory % arena::align_max, (usize)0);
-    test::check_equal((usize)second.memory % arena::align_max, (usize)0);
+    test::check_equal(first.capacity, 1000);
+    test::check_equal(second.capacity, 2000);
+    test::check_equal(first.used, 0);
+    test::check_equal(second.used, 0);
+    test::check_equal((usize)first.memory % arena::align_max, 0);
+    test::check_equal((usize)second.memory % arena::align_max, 0);
     test::check_condition(first.memory > before);
     test::check_condition(second.memory >= first.memory + 1000);
     test::check_condition(after >= second.memory + 2000);
@@ -164,9 +164,9 @@ export void test_arena_carve_makes_separate_arenas(void) {
     __builtin_memset(b, 2, 1900);
     after[9] = 3;
     arena::reset(&first); // a reset gives back its own memory only
-    test::check_equal(b[1899], (u8)2);
-    test::check_equal(after[9], (u8)3);
+    test::check_equal(b[1899], 2);
+    test::check_equal(after[9], 3);
     u8 *again = arena::push_array(&first, u8, 900);
     test::check_equal(again, a);
-    test::check_equal(again[0], (u8)0); // zeroed again
+    test::check_equal(again[0], 0); // zeroed again
 }

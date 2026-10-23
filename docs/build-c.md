@@ -1063,8 +1063,8 @@ smith_tests(b, &tests);                              // tests.step is the task "
   random, a failure's report uses trace, and code under test that makes a contract calls the contract library. Each is
   compiled by `smith_tests` with the test flags, unless `.objects` holds the project's own object of it (compiled from
   `smith_library(b, "arena")` and so on), so nothing is defined twice and a test of code with contracts links with
-  nothing added. The explicit part is `.objects`, where a library the code under test uses and these do not cover
-  (io, text, json) goes.
+  nothing added. The libraries the test files import or include (`import smith::inflate;`, `<smith/json.h>`), and those
+  they need, are linked the same way. The explicit part is `.objects`, where a library only the code under test uses goes.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
   flags (`smith lsp --check` on a test file reports no errors).
 

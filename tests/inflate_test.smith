@@ -551,7 +551,10 @@ typedef enum {
 export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
     arena::Arena arena = test::memory(arena_size);
     bool empty = between(random::key_derive(key, StoreDraw_Empty), 0, 5) == 0;
-    usize size = empty ? 0 : (usize)between(random::key_derive(key, StoreDraw_Size), 0, 199'999);
+    // 200,000 bytes with --full, else 70,000: still past the 65,535 a stored block holds, and a third of the time under
+    // ASan
+    usize size =
+        empty ? 0 : (usize)between(random::key_derive(key, StoreDraw_Size), 0, test::full() ? 199'999 : 69'999);
     bool short_blocks =
         random::bernoulli_sample(random::key_derive(key, StoreDraw_BlockWide), (random::Bernoulli){.probability = 0.5});
     u32 block = (u32)between(random::key_derive(key, StoreDraw_Block), 1, short_blocks ? 70 : block_max);
@@ -600,7 +603,7 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
     u8 *window = arena::push_raw(arena, inflate::window, 1);
     for (usize trial = 0; trial < trials; trial++) {
         random::Key key = random::key_derive(io->key, trial);
-        test::note("seed %llu, trial %zu", (unsigned long long)io->seed, trial);
+        test::note("seed %llu, trial %zu", io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(random::key_derive(key, CutDraw_Vector), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
@@ -649,7 +652,7 @@ export void test_inflate_survives_corrupt_input(io::Io *io) {
     u8 *window = arena::push_raw(arena, inflate::window, 1);
     for (usize trial = 0; trial < trials; trial++) {
         random::Key key = random::key_derive(io->key, trial);
-        test::note("seed %llu, trial %zu", (unsigned long long)io->seed, trial);
+        test::note("seed %llu, trial %zu", io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(random::key_derive(key, CorruptDraw_Vector), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;

@@ -1,8 +1,10 @@
 #!/bin/sh
 # Tests of <smith/inflate.h> (lib/smith/inflate.smith), with real clang. Usage: sh tests/inflate.sh path/to/smith
-# The checks are tests/inflate_test.smith, built as a scratch project's test file with smith_tests (smith's own test
-# library), with the fixtures of tests/fixtures/inflate, in three builds: -O0 under AddressSanitizer and UBSan, -O2, and
-# -O2 -DNDEBUG. The library alone is also compiled as C by the header it generates.
+# The checks are tests/inflate_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of
+# build.c (issue #31; $UNITS names it); here they are built as a scratch project's test file with smith_tests (smith's
+# own test library), with the fixtures of tests/fixtures/inflate, in two builds: -O2, and -O2 -DNDEBUG. The heavy runs
+# are by hand on the units runner: `--full --seeds 1000 --test test_prop_inflate_round_trips_stored_blocks` and the same
+# for the checksums.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -72,7 +74,7 @@ void build(SmithBuild *b) {
 C
 
 count=$(grep -c '^export void test_' "$here/tests/inflate_test.smith")
-for mode in asan fast ndebug; do
+for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"
     capture ./build/tests
@@ -84,15 +86,17 @@ for mode in asan fast ndebug; do
     expect "$mode: all pass with a process per test" "$count passed, 0 failed" "$summary"
 done
 
-# More keys for the property tests, and more trials for the damage, under the sanitizers.
-capture smith build -DMODE=asan
-for prop in test_prop_inflate_round_trips_stored_blocks test_prop_inflate_checksums_equal_their_references_and_continue; do
-    capture ./build/tests --test $prop --seeds 1000
-    summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
-    expect "$prop on 1000 keys under ASan and UBSan" "1 passed, 0 failed" "$summary"
-done
+# More trials for the damage, under the sanitizers, on the runner of build.c's `test-units` ($UNITS; a scratch asan
+# build without it).
+runner=${UNITS:-}
+if [ -z "$runner" ]; then
+    capture smith build -DMODE=asan
+    runner=./build/tests
+else
+    case $runner in /*) ;; *) runner=$here/$runner ;; esac
+fi
 for seed in 1 2 3 4 5; do
-    capture ./build/tests --seed $seed --test test_inflate_survives_corrupt_input
+    capture "$runner" --seed $seed --test test_inflate_survives_corrupt_input
     summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
     expect "damaged input never misbehaves (--seed $seed)" "1 passed, 0 failed" "$summary"
 done

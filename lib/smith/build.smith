@@ -292,7 +292,8 @@ module smith::build;
 //     The objects are in <output>_objects/. smith's arena, random, trace and contract libraries are compiled here with
 //     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
 //     build::library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
-//     under test uses and these four do not cover (io, text, json) is the project's, in .objects.
+//     under test uses and the test files do not import or include (found as smith_app finds a program's libraries) is
+//     the project's, in .objects; a library a test file imports (text, json, inflate) is compiled and linked here too.
 //   the task <name> (a .run task, on the console, with .test: `smith test` runs it): runs <output> with
 //     the arguments `smith test` was given (build::args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after

@@ -757,26 +757,14 @@ static void build_check_test_parts(SmithBuild *b) {
 // runner, built once under AddressSanitizer and UBSan, whose workers run the tests in process, one per core, where a
 // script starts smith for each case. Needs a smith that compiles `.smith` (the stage0 has none). A test that needs a
 // build or a process of its own (a stop, a sanitizer's catch) stays in its script. Returns the runner's path.
-static const char *build_units(SmithBuild *b, const BuildConfig *config, const char *folder) {
+static const char *build_units(SmithBuild *b, const char *folder) {
     const char *compiler = smith_fmt(b, "%s/smith-cc", folder); // the smith under test, not the installed one
     const char *const *flags = smith_list(b, "-std=gnu2y", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow",
                                           "-Wconversion", "-Werror", "-fsanitize=address,undefined",
                                           "-fno-sanitize-recover=all", "-I", ".smith/include", nullptr);
-    const char *const *names = smith_list(b, "text", "json", nullptr);
-    SmithObject objects[2] = {};
-    const SmithObject *linked[3] = {};
-    for (size_t i = 0; names[i] != nullptr; i++) {
-        objects[i] = (SmithObject){.compiler = compiler,
-                                   .source = smith_library(b, names[i]),
-                                   .output = smith_fmt(b, "%s/units/%s.o", folder, names[i]),
-                                   .flags = flags};
-        smith_object(b, &objects[i]);
-        linked[i] = &objects[i];
-    }
     SmithTests tests = {
         .compiler = compiler,
         .sources = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr)),
-        .objects = linked,
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
         .output = smith_fmt(b, "%s/units/tests", folder),
@@ -790,7 +778,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
 // waits for.
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     build_check_test_parts(b);
-    const char *units = config->hook ? build_units(b, config, folder) : "";
+    const char *units = config->hook ? build_units(b, folder) : "";
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++)
         names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
@@ -806,7 +794,11 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                           smith_when(b, row->shard != nullptr, smith_list(b, row->shard, nullptr)), nullptr),
             .description =
                 smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
-            .inputs = (const char *[]){binary, units[0] != '\0' && strcmp(row->script, "json") == 0 ? units : nullptr,
+            .inputs = (const char *[]){binary,
+                                       units[0] != '\0' &&
+                                               (strcmp(row->script, "json") == 0 || strcmp(row->script, "inflate") == 0)
+                                           ? units
+                                           : nullptr,
                                        nullptr},
             .test = true,
         };

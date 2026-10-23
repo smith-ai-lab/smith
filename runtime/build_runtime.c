@@ -2474,6 +2474,31 @@ static const char *const *smith_tests_arguments(SmithBuild *b, const char *runne
     return smith_cat(b, smith_list(b, program, nullptr), smith_args(b), nullptr);
 }
 
+static const char *const *smith_tests_imported(SmithBuild *b, const char *const *sources);
+
+// The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
+// memory from them), trace (a failure's report), contract (<smith/contract.h>) and io, then those the test files
+// import. Each is compiled here, with the test flags, unless the project links it itself in .objects, so no library is
+// defined twice. Returns the new count of objects.
+static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const SmithTests *tests,
+                                    const char *const *imported, const char **objects, size_t used) {
+    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io"};
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+        const char *source = smith_library(b, libraries[i]); // C or a .smith module
+        if (smith_tests_links(tests, source)) continue;
+        objects[used++] = (const char *)smith_tests_object(b, copy, source, copy->flags, nullptr);
+    }
+    for (size_t i = 0; imported[i] != nullptr; i++) {
+        const char *source = smith_library(b, imported[i]);
+        bool listed = false;
+        for (size_t j = 0; j < sizeof libraries / sizeof libraries[0]; j++)
+            listed = listed || strcmp(imported[i], libraries[j]) == 0;
+        if (listed || smith_tests_links(tests, source)) continue;
+        objects[used++] = (const char *)smith_tests_object(b, copy, source, copy->flags, nullptr);
+    }
+    return used;
+}
+
 void smith_tests(SmithBuild *b, SmithTests *tests) {
     SMITH_ASSERT(b != nullptr && tests != nullptr);
     smith_tests_check(tests);
@@ -2500,22 +2525,18 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     const char *const *test_flags = smith_cat(
         b, copy.flags, smith_list(b, "-include", list_header, "-Werror=missing-prototypes", nullptr), nullptr);
     size_t count = smith_count(copy.sources);
-    const char **objects = smith_new_list(count + 7 + smith_count((const char *const *)tests->objects));
+    // The libraries the test files import or include, and those they use, besides the five below: found as smith_app
+    // finds a program's, so a test of smith::inflate links it with nothing named.
+    const char *const *imported = smith_tests_imported(b, copy.sources);
+    const char **objects =
+        smith_new_list(count + 7 + smith_app_libraries_max + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
                                                            smith_list(b, list_header, nullptr));
     objects[used++] = (const char *)smith_tests_object(b, &copy, list_table, copy.flags, nullptr);
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
-    // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
-    // memory from them), trace (a failure's report) and contract (<smith/contract.h>). Each is compiled here, with the
-    // test flags, unless the project links it itself in .objects, so no library is defined twice.
-    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io"};
-    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
-        const char *source = smith_library(b, libraries[i]); // C or a .smith module
-        if (smith_tests_links(tests, source)) continue;
-        objects[used++] = (const char *)smith_tests_object(b, &copy, source, copy.flags, nullptr);
-    }
+    used = smith_tests_libraries(b, &copy, tests, imported, objects, used);
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++)
         objects[used++] = (const char *)tests->objects[i];
     SmithProgram program = {
@@ -2951,6 +2972,21 @@ static void smith_app_follow(SmithBuild *b) {
             return;
     }
     smith_fail("the program's files and libraries are too many to follow");
+}
+
+// The libraries the test files import or include, in the order found.
+static const char *const *smith_tests_imported(SmithBuild *b, const char *const *sources) {
+    SmithLibraryQueue saved = smith_app_found.queue; // the app's own queue is put back
+    smith_app_found.queue = (SmithLibraryQueue){};
+    for (size_t i = 0; sources[i] != nullptr; i++)
+        smith_app_scan(sources[i], true);
+    const char **names = smith_new_list(smith_app_found.queue.count);
+    for (size_t i = 0; i < smith_app_found.queue.count; i++)
+        names[i] = smith_app_found.queue.names[i];
+    names[smith_app_found.queue.count] = nullptr;
+    smith_app_found.queue = saved;
+    (void)b;
+    return names;
 }
 
 // The libraries a library of smith's uses, directly or not, in the order found and not itself (io: random and arena;
