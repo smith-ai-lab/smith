@@ -2653,11 +2653,64 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
     return smith_exit_missing;
 }
 
+// `smith fmt <files>` rewrites the files, as `smith fmt` does: clang-format's own default prints the formatted text of
+// every file to standard output, which no one wants of a file they named (agents lost their context to it). Any
+// option that chooses another mode (-n, --dry-run, --lines, --assume-filename, --output-replacements-xml, ...) keeps
+// clang-format's meaning, and so does `smith fmt < x.c`, which names no file. Adds -i to the arguments when it applies.
+static char *smith_fmt_rewrite_argv[smith_defaults_args_max];
+
+static bool smith_fmt_names_a_file_only(int argc, char **argv) {
+    static const char *const modes[] = {"i",
+                                        "n",
+                                        "dry-run",
+                                        "lines",
+                                        "offset",
+                                        "length",
+                                        "cursor",
+                                        "assume-filename",
+                                        "dump-config",
+                                        "list-ignored",
+                                        "output-replacements-xml",
+                                        "files",
+                                        "version",
+                                        "help",
+                                        "h",
+                                        "print-config",
+                                        nullptr};
+    static const char *const valued[] = {"style", "fallback-style", nullptr};
+    bool file = false;
+    for (int i = 2; i < argc; i++) { // bounded by the arguments
+        const char *arg = argv[i];
+        if (arg[0] != '-' || arg[1] == '\0') {
+            file = file || arg[0] != '-';
+            continue;
+        }
+        for (size_t k = 0; modes[k] != nullptr; k++)
+            if (smith_defaults_is(arg, modes[k])) return false;
+        if (smith_defaults_takes_value(arg, valued) && i + 1 < argc) i++;
+    }
+    return file;
+}
+
+static void smith_fmt_rewrite(int *argc, char ***argv) {
+    if (*argc >= smith_defaults_args_max - 2 || !smith_fmt_names_a_file_only(*argc, *argv)) return;
+    int out = 0;
+    smith_fmt_rewrite_argv[out++] = (*argv)[0];
+    smith_fmt_rewrite_argv[out++] = (*argv)[1];
+    smith_fmt_rewrite_argv[out++] = (char *)"-i";
+    for (int i = 2; i < *argc; i++)
+        smith_fmt_rewrite_argv[out++] = (*argv)[i];
+    smith_fmt_rewrite_argv[out] = nullptr;
+    *argc = out;
+    *argv = smith_fmt_rewrite_argv;
+}
+
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
     int before = -1;
+    if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
     } else if (strcmp(tool->command, "lsp") == 0 && argc < smith_defaults_args_max - 2 &&
@@ -2874,7 +2927,7 @@ static void smith_usage(FILE *out) {
           "  build [<target>]        build the project from its build.c\n"
           "  run, test, check        run the project's program, its tests, or all its checks\n"
           "  fmt, lint               with no arguments, format or lint the project; with arguments, clang-format and\n"
-          "                          clang-tidy\n"
+          "                          clang-tidy (`fmt <files>` rewrites them in place)\n"
           "  lsp                     clangd\n"
           "  dbg, dap                lldb, and lldb-dap (the Debug Adapter Protocol server)\n"
           "  mcp                     the debugger as an MCP server over stdio (agents: launch, breakpoint, stack...)\n"

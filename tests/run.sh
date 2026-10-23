@@ -208,14 +208,14 @@ if [ "$in_process" = yes ]; then
     "clang-format version 23."*) expect "in-process: fmt is clang-format 23" yes yes ;;
     *) expect "in-process: fmt is clang-format 23" "clang-format version 23." "$out" ;;
     esac
-    capture env -u SMITH_CLANG_FORMAT "$smith" fmt --style=LLVM "$work/tools/a.c"
-    expect "in-process: fmt formats a file to stdout" "$(lines 'int main() { return 0; }')" "$out"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt --style=LLVM --assume-filename="$work/tools/a.c" <"$work/tools/a.c"
+    expect "in-process: fmt formats standard input to stdout" "$(lines 'int main() { return 0; }')" "$out"
     printf 'IndentWidth: 8\nUseTab: Never\nAllowShortFunctionsOnASingleLine: None\n' >"$work/tools/.clang-format"
     printf 'int main() {\nreturn 0;\n}\n' >"$work/tools/b.c"
-    capture env -u SMITH_CLANG_FORMAT "$smith" fmt "$work/tools/b.c"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt --assume-filename="$work/tools/b.c" <"$work/tools/b.c"
     expect "in-process: fmt reads the project's .clang-format" "$(lines 'int main() {' '        return 0;' '}')" "$out"
-    capture env -u SMITH_CLANG_FORMAT "$smith" fmt -i "$work/tools/b.c"
-    expect "in-process: fmt -i rewrites the file" "$(lines 'int main() {' '        return 0;' '}')" "$(cat "$work/tools/b.c")"
+    capture env -u SMITH_CLANG_FORMAT "$smith" fmt "$work/tools/b.c"
+    expect "in-process: fmt of a named file rewrites it (as -i)" "$(lines 'int main() {' '        return 0;' '}')" "$(cat "$work/tools/b.c")"
     capture env -u SMITH_CLANG_TIDY "$smith" lint --version
     case $out in
     *"LLVM version 23."*) expect "in-process: lint is clang-tidy 23" yes yes ;;
