@@ -10,7 +10,7 @@ Every operation reports success or an `io::Error`: `code` is 0 or an errno value
 ```smith
 import smith::io;
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     io::Read text = io::files_read(&io.files, &io.arena, "config.txt"); // data is NUL-terminated
     if (text.error.code != 0) {

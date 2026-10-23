@@ -166,8 +166,25 @@ by looking ahead from the `i32` that begins a file-scope declaration (`i32`, `ma
 a name, `)`), in a file with a `module` line or none and in `--smith-lower`; the queued `main` is renamed, so the rest
 of the lowering sees a private function. The C `main` has the location of the name you wrote (the debugger shows
 it at your `main`'s line), the table of names says `smith_user_main` is written `main`, the debug info names it `main` (the debug-name hook of `shim/hook.cpp`, with a module line or none, `tests/dap.sh`), and `io::make` anywhere in the
-file is the error "main already has the io". The C forms (`i32 main(i32 argc, char *argv[])`, `int main(void)`) lower
+file is the error "main already has the io". The C forms (`i32 main(i32 argc, char **argv)` in a module, `char *argv[]` too in a file with no `module` line, and `int main(void)`) lower
 as they always did, and `.c` files are never rewritten. Tests: the cases `main-io*` and `error-main-io-make`.
+
+**Array parameters keep their size in a module** (issue #81). Valid C in a file with no `module` line means what it means in
+C, so only a file with a `module` line is changed, and each change is a rejection. A parameter `T xs[N]` is N objects:
+the lowering writes it `T xs[static N]` in the code (`smith_lang_array_size`, `runtime/lang_head.c` for a held head,
+`smith_lang_head_step` for a private one; the generated header keeps `T xs[N]`), which clang turns into a non-null,
+`dereferenceable(N * sizeof(T))` pointer that `smith prove` reads (#74's `[static N]` mechanism, no second one). A parameter
+with no size is an error at its declaration. `countof(xs)` is rewritten, in the module's bodies (`smith_lang_countof_parameter`,
+`runtime/lang_sparse.c`), to the parameter's own size tokens (kept by `smith_lang_array_token` as the head streams by,
+three dimensions of four tokens, eight parameters per function); the host watches `countof` once a function has one.
+The other rejections are about the AST, so they cannot be tokens: `ArrayParameters` (`shim/hook.cpp`) walks the functions
+the module defines when the translation unit is complete (the hook is Sema's external source and does its work when
+Sema asks for the tentative definitions, at the end of the unit: no destructor of Sema's is called with `-disable-free`),
+reading `ParmVarDecl::getOriginalType`, which clang keeps under the pointer: a constant index out of range, `++`, `--` and
+assignment of the parameter, `sizeof(xs)`, and an argument to a module's function (declared in the file or in a
+generated header; a C function takes the pointer) that is a pointer or an array of another shape. Tests: the cases
+`array-param*` and `error-array-param-*`, and section 11a of `tests/prove.sh`. In an editor (`smith lsp`) the AST checks
+depend on clangd reaching the end of the unit.
 
 `smith_object` takes a `.smith` source like any other (knowledge/build-file.md). For each module it adds a
 step that writes the module's header (`smith-cc --smith-header src/a/b.smith -o .smith/include/a/b.h`, restat: the file

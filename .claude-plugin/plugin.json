@@ -65,6 +65,7 @@
     "./.agents/skills/smith-json/",
     "./.agents/skills/smith-json-pull-write/",
     "./.agents/skills/smith-lang/",
+    "./.agents/skills/smith-lang-arrays/",
     "./.agents/skills/smith-lang-c-interop/",
     "./.agents/skills/smith-lang-generics/",
     "./.agents/skills/smith-lang-lists/",

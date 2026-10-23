@@ -38,7 +38,7 @@ void editor_open(Editor *editor, const char *path) {
     (void)io::console_printf(editor->console, "%zu\n", mesh.vertices);
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
     Editor editor = {&io.files, &io.console, &io.arena};

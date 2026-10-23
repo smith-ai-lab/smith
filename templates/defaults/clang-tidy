@@ -22,7 +22,7 @@
 # on a line that must keep one. Delete smith-preprocessor from Checks to opt out.
 #
 # The idiom checks (issue #47), each message naming the fix:
-#   smith-sized-types: a .smith file writes u32, usize, f64, never uint32_t, size_t, double, unsigned, long or int (main is i32 main(i32 argc, char *argv[])).
+#   smith-sized-types: a .smith file writes u32, usize, f64, never uint32_t, size_t, double, unsigned, long or int (main is i32 main(i32 argc, char **argv)).
 #   smith-module-library: a library that is a module is imported (import smith::arena;), never used through its C header.
 #   smith-bounded-loop: a loop has a count to end it; only main runs forever (for (;;), while (true), do ... while (1)).
 #   smith-c23: nullptr, bool, {} and [[noreturn]], never NULL, _Bool, <stdbool.h>, {0} or __attribute__((noreturn)).

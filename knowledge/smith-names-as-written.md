@@ -107,7 +107,7 @@ given (`tests/lint-smith.sh`).
 - **`smith-module`** (issue #60; `shim/idiom.h`): a `.smith` file whose text has no `module` line (the raw lexer; comments are skipped) is reported at its first byte with the line its path implies, from the folder the check runs in (the project's root), `tests/` being a root of its own. The compiler never refuses such a file.
 - **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
   `smith-sized-types` and `smith-module-library` read the `.smith` file's text with the raw lexer (a typedef's name is
-  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`main` included: `i32 main(i32 argc, char *argv[])`) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
+  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`main` included: `i32 main(i32 argc, char **argv)`) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
   module's, the `import <smith/arena.h>;` and every `c::` name of its `// smith-names:` pairs with the module's call.
   `smith-bounded-loop` and `smith-constexpr` match the AST (a loop whose condition is absent or a true constant outside
   `main`; a file-scope `const` of arithmetic, enum, or an array or record of them with a constant initializer, which a

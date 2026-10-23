@@ -29,7 +29,7 @@ The C form stays, and it is how a renamed `.c` file works unchanged; it makes an
 ```smith
 import smith::io;
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     (void)io::console_printf(&io.console, "seed %llu\n", io.seed);
     io::close(&io);
