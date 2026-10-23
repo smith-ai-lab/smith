@@ -74,13 +74,13 @@ extern "C" {
 // it reports every index a contract bounds. Under target::static_analyzer (true only there) each is an assumption, as
 // the failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as
 // above.
-void smith_contract_requires(bool condition);
+[[clang::annotate("smith_compile_check")]] void smith_contract_requires(bool condition);
 
-void smith_contract_ensures(bool condition);
+[[clang::annotate("smith_compile_check")]] void smith_contract_ensures(bool condition);
 
-void smith_contract_invariant(bool condition);
+[[clang::annotate("smith_compile_check")]] void smith_contract_invariant(bool condition);
 
-void smith_contract_assert(bool condition);
+[[clang::annotate("smith_compile_check")]] void smith_contract_assert(bool condition);
 
 // A marker for `smith prove`, which reads the call in the IR: a trusted function is assumed, not proved. It checks
 // nothing, at run time or anywhere else.

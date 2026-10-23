@@ -219,6 +219,7 @@ class Presenter final : public DiagnosticConsumer {
             if (declared.isValid()) at = declared;
         }
         DiagnosticConsumer::HandleDiagnostic(level, info);
+        if (link->source != nullptr && !tool && failureReport(level, info, at)) return;
         if (link->source == nullptr || !present(level, info, at)) inner->HandleDiagnostic(level, info);
     }
 
@@ -230,8 +231,85 @@ class Presenter final : public DiagnosticConsumer {
     std::vector<std::pair<SourceLocation, std::string>> pendingNotes; // of the error just passed on
     const DiagnosticsEngine *engine = nullptr;
 
+    // ---- A failed contract or check at compile time, in the form of the run-time failure report
+    //
+    // The evaluator stops at a call of a function annotated smith_compile_error or smith_compile_check (the contracts'
+    // and the checks' failure paths) with one note per call, innermost first: the failing function, the inline
+    // wrappers a contract goes through (`smith_requires`), then the compile-time calls that led there. The run-time
+    // report names the failure and skips that machinery (<smith/trace.h>), so this does too: the machinery's notes
+    // become one, "<heading> in call to '<the contract as written>'", at the line of the contract in the user's code,
+    // and the notes after it are the stack, innermost first, with their file, line and arguments.
+    struct HeldFailure {
+        bool active = false;
+        std::string heading; // "requires failed"
+        std::string call;    // the machinery's outermost call, as the source writes it
+        SourceLocation where;
+        const DiagnosticsEngine *engine = nullptr;
+    } held;
+
+    static std::string failureHeading(StringRef call) {
+        if (call.starts_with("smith_contract_requires(")) return "requires failed";
+        if (call.starts_with("smith_contract_ensures(")) return "ensures failed";
+        if (call.starts_with("smith_contract_invariant(")) return "invariant failed";
+        if (call.starts_with("smith_contract_assert(")) return "assert failed";
+        if (call.starts_with("smith_test_check_condition(")) return "check failed";
+        if (call.starts_with("smith_failure(")) {
+            static const std::pair<StringRef, StringRef> kinds[] = {
+                {"SmithFailure_Requires", "requires failed"},       {"SmithFailure_Ensures", "ensures failed"},
+                {"SmithFailure_Invariant", "invariant failed"},     {"SmithFailure_Assert", "assert failed"},
+                {"SmithFailure_Capacity", "arena out of capacity"}, {"SmithFailure_Check", "check failed"}};
+            for (auto &[kind, heading] : kinds)
+                if (call.contains(kind)) return std::string(heading);
+            return "failed";
+        }
+        return "";
+    }
+
+    // The functions the run-time report skips when it chooses the failing frame (smith_failure in <smith/trace.h>).
+    static bool isMachinery(StringRef call) {
+        static const StringRef prefixes[] = {"smith_failure",  "smith_contract_", "smith_check",     "smith_test_check",
+                                             "smith_requires", "smith_ensures",   "smith_invariant", "smith_assert"};
+        return llvm::any_of(prefixes, [&](StringRef prefix) { return call.starts_with(prefix); });
+    }
+
+    void emitHeld(SourceLocation where) {
+        if (!held.active) return;
+        DiagnosticStorage storage;
+        std::string text = held.heading + " in call to '" + written(held.call) + "'";
+        Diagnostic note(held.engine, where, link->noteId, storage, text);
+        held.active = false;
+        inner->HandleDiagnostic(DiagnosticsEngine::Note, note);
+    }
+
+    // True when the diagnostic is a machinery note that became the failure's.
+    bool failureReport(DiagnosticsEngine::Level level, const Diagnostic &info, SourceLocation at) {
+        if (level != DiagnosticsEngine::Note) {
+            emitHeld(held.where);
+            return false;
+        }
+        SmallString<256> formatted;
+        info.FormatDiagnostic(formatted);
+        StringRef text = formatted;
+        bool call = text.consume_front("in call to '") && text.consume_back("'");
+        if (call && isMachinery(text)) {
+            std::string heading = failureHeading(text);
+            if (!held.active && !heading.empty()) {
+                held.active = true;
+                held.heading = heading;
+                held.engine = info.getDiags();
+            }
+            if (!held.active) return false;
+            held.where = at; // a note is where its function was called: the last is the contract's line in user code
+            held.call = text.str(); // the last is the outermost wrapper, which the source calls
+            return true;
+        }
+        emitHeld(held.where);
+        return false;
+    }
+
     // The notes that name the instances an error is in, after the error and its own notes.
     void flushInstanceNotes() {
+        emitHeld(held.where);
         std::vector<std::pair<SourceLocation, std::string>> notes = std::move(pendingNotes);
         pendingNotes.clear();
         for (auto &[where, text] : notes) {
@@ -2788,10 +2866,8 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
         return nullptr;
     }
     // A .smith file runs C function bodies in clang's constant evaluator where C requires a constant
-    // (patches/clang-constexpr-c.patch). Not with clang modules (-fmodules): the option is part of a module file's
-    // configuration and of the cache's hash, which was computed before the file was known to be a .smith file, so the
-    // modules built for it would be refused (issue #97: the option should be Benign in a next LLVM configuration).
-    if (!pp.getLangOpts().Modules) const_cast<LangOptions &>(pp.getLangOpts()).SmithConstexprC = true;
+    // (patches/clang-constexpr-c.patch). The option is Benign, so it is also on under clang modules (-fmodules).
+    const_cast<LangOptions &>(pp.getLangOpts()).SmithConstexprC = true;
     return std::make_unique<SmithHook>(pp);
 }
 

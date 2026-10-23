@@ -77,7 +77,7 @@ typedef enum : unsigned char {
 //
 // In a test run by smith_tests, the test fails with the report. Anywhere else it writes the heading and the trace to
 // standard error and calls abort(), so a log holds what `smith symbolize` needs.
-[[noreturn]] void smith_failure(SmithFailureKind kind);
+[[noreturn, clang::annotate("smith_compile_error")]] void smith_failure(SmithFailureKind kind);
 
 // smith_failure with one line of what was wrong (`smith-trace detail <text>`), which the report prints under the source
 // line: the arena's out-of-capacity stop says what was asked and what was left. The text is copied before anything

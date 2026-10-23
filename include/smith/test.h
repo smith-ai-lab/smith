@@ -157,7 +157,7 @@ smith_test_value_usize(size_t value); // the runner's: one per job, and one more
 [[nodiscard]] const char *smith_test_scratch(const SmithIo *io);
 
 // The failure of check, out of line: fails the test when the condition is false.
-void smith_test_check_condition(bool condition);
+[[clang::annotate("smith_compile_check")]] void smith_test_check_condition(bool condition);
 
 // Fails the test when the condition is false. To clang's static analyzer (target::static_analyzer, true only there) it
 // is an assumption, as contract::assert is, so `test::check(p != nullptr)` tells the analyzer that p is not null

@@ -797,7 +797,8 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
 // The checks.
 
 // The failure of check, out of line: fails the test when the condition is false.
-[[smith::c_name("smith_test_check_condition")]] export void check_condition(bool condition) {
+[[smith::c_name("smith_test_check_condition")]] export [[clang::annotate("smith_compile_check")]] void
+check_condition(bool condition) {
     if (!condition) fail_condition();
 }
 

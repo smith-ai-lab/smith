@@ -17,20 +17,28 @@
 #endif
 #include "../../../include/smith/trace.h"
 
-void smith_contract_requires(bool condition);
-void smith_contract_requires(bool condition) {
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_requires(bool condition);
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_requires(bool condition) {
 if (!condition) smith_failure(SmithFailure_Requires);
 }
-void smith_contract_ensures(bool condition);
-void smith_contract_ensures(bool condition) {
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_ensures(bool condition);
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_ensures(bool condition) {
 if (!condition) smith_failure(SmithFailure_Ensures);
 }
-void smith_contract_invariant(bool condition);
-void smith_contract_invariant(bool condition) {
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_invariant(bool condition);
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_invariant(bool condition) {
 if (!condition) smith_failure(SmithFailure_Invariant);
 }
-void smith_contract_assert(bool condition);
-void smith_contract_assert(bool condition) {
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_assert(bool condition);
+[[clang::annotate("smith_compile_check")]] void
+smith_contract_assert(bool condition) {
 if (!condition) smith_failure(SmithFailure_Assert);
 }
 void smith_contract_trusted(void);

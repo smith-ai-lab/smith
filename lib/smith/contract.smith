@@ -57,19 +57,23 @@ import <smith/trace.h>;
 // it reports every index a contract bounds. Under target::static_analyzer (true only there) each is an assumption, as
 // the failure path of `assert` is for it, and nothing else changes: a compile, `smith prove` and the checks are as
 // above.
-[[smith::c_name("smith_contract_requires")]] export void check_requires(bool condition) {
+[[smith::c_name("smith_contract_requires")]] export [[clang::annotate("smith_compile_check")]] void
+check_requires(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Requires);
 }
 
-[[smith::c_name("smith_contract_ensures")]] export void check_ensures(bool condition) {
+[[smith::c_name("smith_contract_ensures")]] export [[clang::annotate("smith_compile_check")]] void
+check_ensures(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Ensures);
 }
 
-[[smith::c_name("smith_contract_invariant")]] export void check_invariant(bool condition) {
+[[smith::c_name("smith_contract_invariant")]] export [[clang::annotate("smith_compile_check")]] void
+check_invariant(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Invariant);
 }
 
-[[smith::c_name("smith_contract_assert")]] export void check_assert(bool condition) {
+[[smith::c_name("smith_contract_assert")]] export [[clang::annotate("smith_compile_check")]] void
+check_assert(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Assert);
 }
 
