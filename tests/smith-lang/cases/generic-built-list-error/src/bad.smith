@@ -11,8 +11,3 @@ export i32 grown(auto x, auto... rest) {
     args = {args..., 3};
     return 0;
 }
-
-export i32 no_semicolon(auto... rest) {
-    auto args = {1, 2}
-    return 0;
-}

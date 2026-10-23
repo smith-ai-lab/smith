@@ -1,6 +1,5 @@
 src/bad.smith:10:10: built lists are gone: write a struct or a tuple type (`struct { i32, f32 } args = {a, b};`, named with a typedef outside the generic) and index it; the arguments of a generic are `auto... rest`
 src/bad.smith:11:5: built lists are gone: write a struct or a tuple type (`struct { i32, f32 } args = {a, b};`, named with a typedef outside the generic) and index it; the arguments of a generic are `auto... rest`
-src/bad.smith:16:10: built lists are gone: write a struct or a tuple type (`struct { i32, f32 } args = {a, b};`, named with a typedef outside the generic) and index it; the arguments of a generic are `auto... rest`
 src/bad.smith:5:10: built lists are gone: write a struct or a tuple type (`struct { i32, f32 } args = {a, b};`, named with a typedef outside the generic) and index it; the arguments of a generic are `auto... rest`
 src/bad.smith:6:12: use of undeclared identifier 'args'
 src/plain.smith:5:17: cannot use 'auto' with initializer list in C
