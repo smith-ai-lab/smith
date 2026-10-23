@@ -1,0 +1,14 @@
+import geo::a;
+import geo::b;
+import <stdio.h>;
+
+i32 main(void) {
+    auto p = a::make(2, 3.0f);
+    struct { i32, f32 } q = p;
+    auto m = b::mk();
+    a::Reach r = a::reach(4.0);
+    auto longer = b::longer(r);
+    c::printf("%d %d %d\n", b::twice(q), a::sum(p), (i32)countof(p));
+    c::printf("%f %f %f\n", m[0], r[0], longer[0]);
+    return 0;
+}

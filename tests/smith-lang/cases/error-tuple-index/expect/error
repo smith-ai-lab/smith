@@ -1,0 +1,3 @@
+src/main.smith:6:25: the index of a tuple is a constant: `struct { i32, f32 }` has 2 fields, 0 to 1
+src/main.smith:7:25: the index 2 is out of range: `struct { i32, f32 }` has 2 fields
+src/main.smith:8:25: the index of a tuple is a constant: `struct { i32, f32 }` has 2 fields, 0 to 1

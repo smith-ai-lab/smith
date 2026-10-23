@@ -1,0 +1,3 @@
+src/main.smith:6:13: a tuple field is a type name, with stars and qualifiers; name an array, a function pointer or a typeof with a typedef
+src/main.smith:7:14: a tuple field is a type name, with stars and qualifiers; name an array, a function pointer or a typeof with a typedef
+src/main.smith:8:13: a tuple field is a type, and this one is empty

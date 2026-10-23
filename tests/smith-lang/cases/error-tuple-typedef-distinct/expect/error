@@ -1,0 +1,1 @@
+src/main.smith:6:25: initializing 'struct smith_tuple_f64__f32' with an expression of incompatible type 'struct smith_tuple_Meters__f32'

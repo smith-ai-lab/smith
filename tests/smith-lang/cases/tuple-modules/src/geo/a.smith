@@ -1,0 +1,25 @@
+module geo::a;
+
+export typedef f64 Meters;
+export typedef struct { Meters, f32 } Reach;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export i32 sum(struct { i32, f32 } t) {
+    return t[0] + (i32)t[1];
+}
+
+export Reach reach(Meters m) {
+    Reach r = {m, 1.0f};
+    return r;
+}
+
+export struct { Meters, f32 } reach2(Meters m) {
+    return {m, 2.0f};
+}
+
+export void scale(struct { Meters, f32 } *t, f64 by) {
+    (*t)[0] *= by;
+}

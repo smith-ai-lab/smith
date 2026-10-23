@@ -1,0 +1,8 @@
+// A field is a type name, with stars and qualifiers: an array or a function pointer is named with a typedef.
+typedef i32 (*Callback)(i32);
+typedef i32 Four[4];
+
+struct { Callback, Four *, i32 } ok;
+struct { i32[4], f32 } array;
+struct { i32 (*)(i32), f32 } function;
+struct { i32, } trailing;

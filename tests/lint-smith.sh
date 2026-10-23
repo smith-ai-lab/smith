@@ -314,6 +314,42 @@ echo "$?" >"$work/generic.status"
 expect "a module that calls a generic lints clean" "0" "$(cat "$work/generic.status")"
 expect "... with no finding about the instance's name" "0" "$(grep -c "push_array<" "$work/generic.out")"
 
+# --- tuples (issue #96): the struct a tuple lowers to and its fields `_0`, `_1` are named by the lowering, not the program -
+mkdir -p "$work/p/tuples"
+cat >"$work/p/tuples/pairs.smith" <<'EOF2'
+module tuples::pairs;
+
+export typedef struct { i32, f32 } Pair;
+
+export struct { i32, struct { f32, f32 } } nested(void) {
+    return {1, {2.0f, 3.0f}};
+}
+
+export Pair make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export f32 total(struct { i32, f32 } t, Pair *p) {
+    (*p)[0] += t[0];
+    return t[1] + (f32)countof(t);
+}
+EOF2
+cat >"$work/p/tuples/user.smith" <<'EOF2'
+module tuples::user;
+import tuples::pairs;
+
+export f32 use(void) {
+    auto p = pairs::make(1, 2.0f);
+    auto n = pairs::nested();
+    return pairs::total(p, &p) + n[1][0];
+}
+EOF2
+run tuples/pairs.smith tuples/user.smith >"$work/tuples.out"
+echo "$?" >"$work/tuples.status"
+expect "a module with tuples lints clean" "0" "$(cat "$work/tuples.status")"
+expect "... with no finding about the struct or the fields the lowering made" "0" \
+    "$(grep -c "smith_tuple_\|'_[0-9]'" "$work/tuples.out")"
+
 # --- smith-preprocessor (issue #46): a .smith file has no preprocessor ----------------------------------------------------
 mkdir -p "$work/p/pre"
 cat >"$work/p/pre/bad.smith" <<'EOF2'

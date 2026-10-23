@@ -885,6 +885,40 @@ import target;
 export constexpr i32 wide = target::f32_mantissa_bits;
 i32 oops = target::nothing;
 i32 module_name = target;
+==> error-tuple-empty/src/main.smith <==
+struct {
+} nothing;
+==> error-tuple-field/src/main.smith <==
+// A field is a type name, with stars and qualifiers: an array or a function pointer is named with a typedef.
+typedef i32 (*Callback)(i32);
+typedef i32 Four[4];
+
+struct { Callback, Four *, i32 } ok;
+struct { i32[4], f32 } array;
+struct { i32 (*)(i32), f32 } function;
+struct {
+    i32,
+} trailing;
+==> error-tuple-index/src/main.smith <==
+import <stdio.h>;
+
+i32 main(void) {
+    struct { i32, f32 } t = {1, 2.0f};
+    i32 i = 1;
+    c::printf("%d\n", t[i]);
+    c::printf("%d\n", t[2]);
+    c::printf("%d\n", t[i + 1]);
+    return t[1] > 0;
+}
+==> error-tuple-typedef-distinct/src/main.smith <==
+// A typedef is not looked through: `Meters` is the field's name, so these are two types though both fields are f64.
+typedef f64 Meters;
+
+void use(void) {
+    struct { Meters, f32 } m = {1.0, 2.0f};
+    struct { f64, f32 } plain = m;
+    (void)plain;
+}
 ==> export-inline-attributes/src/hint.smith <==
 module hint;
 
@@ -4451,6 +4485,181 @@ int main(void) {
     bad += check("static_analyzer", target::static_analyzer, c_static_analyzer());
     bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
     return bad;
+}
+==> tuple-basic/src/main.smith <==
+// Tuples: a struct whose fields have no names. Its identity is its shape.
+import <stdio.h>;
+
+typedef struct { i32, f32 } Pair;
+typedef struct { i32, struct { f32, f32 } } Nested;
+
+struct Holder {
+    struct { i32, f32 } pair;
+    struct { i32, f32 } list[2];
+};
+
+struct { i32, f32 } make(i32 a, f32 b) {
+    return (struct { i32, f32 }){a, b};
+}
+
+Pair braces(i32 a, f32 b) {
+    return {a, b};
+}
+
+Nested nest(void) {
+    return {1, {2.0f, 3.0f}};
+}
+
+i32 by_value(struct { i32, f32 } t) {
+    return t[0] + (i32)t[1];
+}
+
+void by_pointer(Pair *p) {
+    (*p)[0] += 10;
+    p->_1 = 0.5f;
+}
+
+i32 main(void) {
+    struct { i32, f32 } t = {1, 2.0f};
+    t[1] = 2.5f;
+    Pair p = make(3, 4.5f);
+    Pair q = braces(5, 6.0f);
+    Nested n = nest();
+    struct Holder h = {{7, 1.5f}, {{1, 1.0f}, {2, 2.0f}}};
+    h.list[1][0] = 9;
+    struct { i32, f32 } list[2] = {{1, 1.5f}, {2, 2.5f}};
+    by_pointer(&p);
+    c::printf("%d %f\n", t[0], (double)t[1]);
+    c::printf("%d %f\n", p[0], (double)p[1]);
+    c::printf("%d %d\n", q[0], by_value(q));
+    c::printf("%d %f %f\n", n[0], (double)n[1][0], (double)n[1][1]);
+    c::printf("%d %d\n", h.pair[0], h.list[1][0]);
+    c::printf("%d %f\n", list[1][0], (double)list[1][1]);
+    c::printf("%d %d %d\n", (i32)countof(t), (i32)countof(n), (i32)countof(n[1]));
+    c::printf("%d\n", (i32)(sizeof(struct { i32, f32 }) == sizeof t));
+    return 0;
+}
+==> tuple-c/src/geo/a.smith <==
+module geo::a;
+
+export typedef struct { i32, f32 } Pair;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export i32 sum(struct { i32, f32 } t) {
+    return t[0] + (i32)t[1];
+}
+
+export Pair swap(Pair p, struct { f32, i32 } *other) {
+    (*other)[0] = (f32)p[0];
+    (*other)[1] = (i32)p[1];
+    return {(i32)p[1], (f32)p[0]};
+}
+==> tuple-import-index/src/geo/a.smith <==
+module geo::a;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+==> tuple-import-index/src/main.smith <==
+// This file writes no tuple type: the header of geo::a has one, and its values are indexed all the same.
+import geo::a;
+import <stdio.h>;
+
+i32 main(void) {
+    auto p = a::make(2, 3.0f);
+    p[0] += 1;
+    c::printf("%d %f %d\n", p[0], (double)p[1], (i32)countof(p));
+    return 0;
+}
+==> tuple-modules/src/geo/a.smith <==
+module geo::a;
+
+export typedef f64 Meters;
+export typedef struct { Meters, f32 } Reach;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export i32 sum(struct { i32, f32 } t) {
+    return t[0] + (i32)t[1];
+}
+
+export Reach reach(Meters m) {
+    Reach r = {m, 1.0f};
+    return r;
+}
+
+export struct { Meters, f32 } reach2(Meters m) {
+    return {m, 2.0f};
+}
+
+export void scale(struct { Meters, f32 } *t, f64 by) {
+    (*t)[0] *= by;
+}
+==> tuple-modules/src/geo/b.smith <==
+module geo::b;
+
+import geo::a;
+
+// The same shape in another module is the same type: a tuple made here is passed to a function there.
+export i32 twice(struct { i32, f32 } t) {
+    return a::sum(t) * 2;
+}
+
+// `a::Meters` written here and `Meters` in geo::a are one spelling, so these are one type.
+export struct { a::Meters, f32 } mk(void) {
+    return a::reach2(5.0);
+}
+
+export a::Reach longer(a::Reach r) {
+    struct { a::Meters, f32 } copy = r;
+    a::scale(&copy, 2.0);
+    return copy;
+}
+==> tuple-modules/src/main.smith <==
+import geo::a;
+import geo::b;
+import <stdio.h>;
+
+i32 main(void) {
+    auto p = a::make(2, 3.0f);
+    struct { i32, f32 } q = p;
+    auto m = b::mk();
+    a::Reach r = a::reach(4.0);
+    auto longer = b::longer(r);
+    c::printf("%d %d %d\n", b::twice(q), a::sum(p), (i32)countof(p));
+    c::printf("%f %f %f\n", m[0], r[0], longer[0]);
+    return 0;
+}
+==> tuple-spelling/src/main.smith <==
+// The same fields in order are one type, however the types are spelled: sized, stdint and basic C types are unified.
+// A typedef is not looked through: its name is the field's spelling.
+import <stdint.h>;
+import <stdio.h>;
+
+typedef f64 Meters;
+
+i32 take(struct { i32, f32 } t) {
+    return t[0];
+}
+
+i32 main(void) {
+    struct { i32, f32 } a = {1, 2.0f};
+    struct { c::int32_t, float } b = a;
+    struct { int, float } c = b;
+    struct { signed, f32 } d = c;
+    struct { i64, u64, usize } e = {1, 2, 3};
+    struct { long long, unsigned long long, c::size_t } f = e;
+    struct { const char *, i8 } g = {"x", 1};
+    struct { const char *, c::int8_t } h = g;
+    struct { Meters, f32 } m = {1.0, 2.0f};
+    c::printf("%d %d %d\n", take(d), take(c), take(b));
+    c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
+    return 0;
 }
 ==> type-query/src/main.smith <==
 // Nothing here uses the question: the test asks the parser what it makes of these types, written as tokens the way a

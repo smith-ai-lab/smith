@@ -1,0 +1,17 @@
+module geo::a;
+
+export typedef struct { i32, f32 } Pair;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export i32 sum(struct { i32, f32 } t) {
+    return t[0] + (i32)t[1];
+}
+
+export Pair swap(Pair p, struct { f32, i32 } *other) {
+    (*other)[0] = (f32)p[0];
+    (*other)[1] = (i32)p[1];
+    return {(i32)p[1], (f32)p[0]};
+}

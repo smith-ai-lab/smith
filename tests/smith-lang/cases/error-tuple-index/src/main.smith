@@ -1,0 +1,10 @@
+import <stdio.h>;
+
+i32 main(void) {
+    struct { i32, f32 } t = {1, 2.0f};
+    i32 i = 1;
+    c::printf("%d\n", t[i]);
+    c::printf("%d\n", t[2]);
+    c::printf("%d\n", t[i + 1]);
+    return t[1] > 0;
+}

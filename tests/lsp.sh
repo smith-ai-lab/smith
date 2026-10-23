@@ -229,6 +229,22 @@ export i32 k(void) {
     return pick::gathered(5, 6);
 }
 EOF
+cat >tuples.smith <<'EOF'
+module tuples;
+
+export typedef struct { i32, f32 } Pair;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export f32 total(void) {
+    auto p = make(1, 2.0f);
+    p[0] += 1;
+    struct { i32, struct { f32, f32 } } n = {1, {2.0f, 3.0f}};
+    return p[1] + n[1][0] + (f32)countof(p);
+}
+EOF
 cat >util.c <<'EOF'
 #include <stdio.h>
 
@@ -358,6 +374,11 @@ expect "if constexpr: a name in the branch taken is hovered as in any code" 1 \
 expect_line "if constexpr: a name in the branch not taken has no hover" "$log" "hover choice.smith:8:16: (nothing)"
 expect "if constexpr: a condition that is no constant is reported at the condition, as written" 1 \
     "$(printf '%s\n' "$log" | grep -c '^diag choice.smith:15:26: In `if constexpr`: `y` is not a constant')"
+
+# A tuple, `struct { i32, f32 }`, `t[0]` and `countof(t)`: no diagnostics, and a hover on the member finds its type.
+log=$(client open tuples.smith -- hover tuples.smith 10 14)
+expect_line "tuples: no diagnostics" "$log" "diagnostics tuples.smith"
+expect "tuples: ... of any kind" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
 
 # A `c::` name is a name of the file like another: hover and go-to-definition at it find the one declaration (not every
 # declaration of the name, which is what the index answers by name: the SDK's and libc++'s `using`), and the hover of a

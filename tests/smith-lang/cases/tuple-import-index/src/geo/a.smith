@@ -1,0 +1,5 @@
+module geo::a;
+
+export struct { i32, f32 } make(i32 a, f32 b) {
+    return {a, b};
+}

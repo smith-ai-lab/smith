@@ -1,0 +1,25 @@
+// The same fields in order are one type, however the types are spelled: sized, stdint and basic C types are unified.
+// A typedef is not looked through: its name is the field's spelling.
+import <stdint.h>;
+import <stdio.h>;
+
+typedef f64 Meters;
+
+i32 take(struct { i32, f32 } t) {
+    return t[0];
+}
+
+i32 main(void) {
+    struct { i32, f32 } a = {1, 2.0f};
+    struct { c::int32_t, float } b = a;
+    struct { int, float } c = b;
+    struct { signed, f32 } d = c;
+    struct { i64, u64, usize } e = {1, 2, 3};
+    struct { long long, unsigned long long, c::size_t } f = e;
+    struct { const char *, i8 } g = {"x", 1};
+    struct { const char *, c::int8_t } h = g;
+    struct { Meters, f32 } m = {1.0, 2.0f};
+    c::printf("%d %d %d\n", take(d), take(c), take(b));
+    c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
+    return 0;
+}

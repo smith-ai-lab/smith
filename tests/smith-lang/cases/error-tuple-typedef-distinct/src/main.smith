@@ -1,0 +1,8 @@
+// A typedef is not looked through: `Meters` is the field's name, so these are two types though both fields are f64.
+typedef f64 Meters;
+
+void use(void) {
+    struct { Meters, f32 } m = {1.0, 2.0f};
+    struct { f64, f32 } plain = m;
+    (void)plain;
+}
