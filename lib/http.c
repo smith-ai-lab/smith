@@ -1,6 +1,5 @@
 #include "../include/smith/http.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -50,7 +49,7 @@ typedef struct {
     va_start(arguments, format);
     [[maybe_unused]] int written = vsnprintf(error.message, sizeof error.message, format, arguments);
     va_end(arguments);
-    assert(written > 0);
+    if (written <= 0) __builtin_trap(); // the formats here are fixed and fit the message
     http->result.error = error;
 }
 
@@ -390,7 +389,7 @@ static void smith_http_request(SmithHttp *http, SmithConnection *connection) {
                            "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: smith\r\nAccept: */*\r\n"
                            "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
                            http->parsed.target, http->parsed.authority);
-    assert(written > 0 && (size_t)written < sizeof request);
+    if (written <= 0 || (size_t)written >= sizeof request) __builtin_trap(); // the url and host are capped to fit
     http->result.error = smith_net_send(http->net, connection, request, (size_t)written);
 }
 
@@ -549,7 +548,6 @@ static void smith_http_run(SmithHttp *http, const char *url) {
 }
 
 SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path) {
-    assert(io != nullptr && url != nullptr && path != nullptr);
     SmithArena *arena = &io->arena;
     SmithArenaScope scope = smith_arena_scope_begin(arena);
     SmithHttp *http = smith_arena_push(arena, sizeof(SmithHttp), alignof(SmithHttp));
