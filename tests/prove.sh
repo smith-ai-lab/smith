@@ -239,6 +239,15 @@ expect "by value: a wrong promise about the fields fails" 1 "$rc"
 expect_contains "by value: ... as a promise that may be false" "$out" "by_value.c:30: smith_ensures(move.row == move.dest_row) may be false"
 case $out in *poison* | *"undefined behaviour"*) expect "by value: the counterexample is not poison" "a value" "$out" ;; *) expect "by value: the counterexample is not poison" "a value" "a value" ;; esac
 
+# 7d2. A struct returned through sret is translated (issue #74): the function, its caller, and a wrong promise.
+for function in make_wide use_wide; do
+    prove --function=$function "$cases/sret.c"
+    expect "sret: $function is proved" 0 "$rc"
+done
+prove --function=wrong_wide "$cases/sret.c"
+expect "sret: a wrong promise about the result fails" 1 "$rc"
+expect_contains "sret: ... as a promise that may be false" "$out" "sret.c:25: smith_ensures(wide.b == 1) may be false"
+
 # 7e. A file that does not compile is an error with clang's message, never "nothing to prove".
 printf '#include <smith/contract.h>\nint f(int x) { return x +; }\n' >"$work/syntax_error.c" # not a .c file of the repository: the tree-sitter test would call it a parse error
 prove "$work/syntax_error.c"

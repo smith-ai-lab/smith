@@ -321,10 +321,12 @@ const char *const clean_pipeline = "sroa<modify-cfg>,early-cse,simplifycfg,dce";
 // where the caller can read the memory the callee wrote, so the loads of its snapshot must stay loads.
 const char *const light_pipeline = "sroa<modify-cfg>,simplifycfg,dce";
 
-// Loops of constant bounds are unrolled, whatever the cost model thinks.
+// Loops of constant bounds are unrolled, whatever the cost model thinks. instcombine does not verify that it reached
+// its fixpoint: on a long chain of float arithmetic after unrolling (game's skeleton_reach) LLVM stops with "did not
+// reach a fixpoint", a check of its own idempotence that a result still refining the program does not need (#74).
 const char *const unroll_pipeline =
     "loop-simplify,lcssa,loop(indvars),loop-unroll<O3;full-unroll-max=1000000;no-partial;no-runtime;upperbound>,"
-    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine,gvn,instcombine,simplifycfg,dse,dce";
+    "sroa<modify-cfg>,early-cse,simplifycfg,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>,simplifycfg,dse,dce";
 
 void set_option(const char *name, const char *value) {
     auto &options = cl::getRegisteredOptions();
@@ -1629,6 +1631,18 @@ class Normalizer {
 };
 
 // Attributes LLVM 23 infers that the Alive2 this was built with does not know. Dropping nofree only loses what it said.
+// Alive2 cannot translate `sret(T)`, the pointer a function that returns a large struct writes its result through. It
+// becomes a pointer that is `dereferenceable` for T: the same object, which the caller owns. What `sret` also says, that
+// nothing else points to it, was recorded as the `noalias` assumption before this (issue #74).
+template <typename Callee>
+void strip_sret(Callee &callee, unsigned index) {
+    Type *type = callee.getParamStructRetType(index);
+    if (type == nullptr) return;
+    uint64_t size = callee.getDataLayout().getTypeAllocSize(type).getFixedValue();
+    callee.removeParamAttr(index, Attribute::StructRet);
+    callee.addDereferenceableParamAttr(index, size);
+}
+
 void drop_unsupported_attributes(Function &function) {
     // `readnone` on a pointer a callee never touches (inferred too) makes Alive2 report the call as undefined behaviour
     // when the caller's pointer is `readonly`, an access it does not make.
@@ -1636,14 +1650,17 @@ void drop_unsupported_attributes(Function &function) {
     // `initializes`, which LLVM infers from a body, makes Alive2 check that the function stores those bytes and report
     // a load of what a call left there as undefined behaviour; what the bytes hold after a call is the callee's
     // contract.
+    // `sret` goes (see strip_sret).
     for (unsigned i = 0; i < function.arg_size(); i++) {
         function.removeParamAttr(i, Attribute::NoFree);
         function.removeParamAttr(i, Attribute::Initializes);
+        strip_sret(function, i);
     }
     for (Function &callee : *function.getParent()) {
         for (unsigned i = 0; i < callee.arg_size(); i++) {
             callee.removeParamAttr(i, Attribute::NoFree);
             callee.removeParamAttr(i, Attribute::Initializes);
+            strip_sret(callee, i);
             callee.removeParamAttr(i, Attribute::ReadNone);
             callee.removeParamAttr(i, Attribute::ReadOnly);
         }
@@ -1654,6 +1671,7 @@ void drop_unsupported_attributes(Function &function) {
         for (unsigned i = 0; i < call->arg_size(); i++) {
             call->removeParamAttr(i, Attribute::NoFree);
             call->removeParamAttr(i, Attribute::Initializes);
+            strip_sret(*call, i);
             call->removeParamAttr(i, Attribute::ReadNone);
             call->removeParamAttr(i, Attribute::ReadOnly);
         }
