@@ -915,6 +915,12 @@ static bool smith_lang_aggregate_before(const char *text, size_t end) {
 const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t start, size_t end) {
     if (start > size || end > size) return nullptr;
     char next = smith_lang_next_char(text, size, end);
+    // A name is declared after a type, a qualifier or a `*`: after `)`, `,`, `(` or an operator the keyword is the
+    // keyword (`(u32)sizeof(x)`, `typeof(x) y` after a parameter).
+    size_t before = start;
+    while (before > 0 && (text[before - 1] == ' ' || text[before - 1] == '\t' || text[before - 1] == '\n'))
+        before -= 1;
+    if (before > 0 && !smith_lang_name_char(text[before - 1]) && text[before - 1] != '*') return nullptr;
     bool parameters = false;
     bool aggregate = false;
     bool typedef_statement = false;

@@ -1,0 +1,9 @@
+import size;
+#include <stdio.h>
+
+int main(void) {
+    u8 buffer[6];
+    u32 n = (u32)sizeof(buffer);
+    printf("%u %u\n", n, size::bytes_of((u16)1, (u16)2));
+    return 0;
+}
