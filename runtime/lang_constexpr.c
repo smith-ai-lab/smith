@@ -56,6 +56,7 @@ static const SmithLangCxBinary smith_lang_cx_binary[] = {
     {"||", 1}, {"&&", 2}, {"|", 3},  {"^", 4},  {"&", 5}, {"==", 6}, {"!=", 6}, {"<", 7},  {">", 7},
     {"<=", 7}, {">=", 7}, {"<<", 8}, {">>", 8}, {"+", 9}, {"-", 9},  {"*", 10}, {"/", 10}, {"%", 10},
 };
+constexpr uint32_t smith_lang_cx_value_nodes = 4096;
 constexpr uint8_t smith_lang_cx_open = 200;
 constexpr uint8_t smith_lang_cx_unary = 100;
 constexpr int8_t smith_lang_cx_unary_precedence = 11;
@@ -73,6 +74,8 @@ static SmithLangGenToken *smith_lang_cx_token(uint32_t at) {
 }
 
 static bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result);
+static uint32_t smith_lang_cx_primary_end(uint32_t at, uint32_t last);
+static bool smith_lang_cx_ask(SmithLangCx *cx, uint32_t *at, uint32_t end, SmithLangCxValue *value);
 
 static bool smith_lang_cx_word(const SmithLangGenToken *token, const char *word) {
     return smith_lang_gt_is(token, SmithTokenKind_Identifier, word);
@@ -555,8 +558,18 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at += 1;
         return true;
     }
+    uint32_t end = token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain
+                       ? smith_lang_cx_primary_end(*at, last)
+                       : *at;
+    if (end > *at && cx->host->value_query != nullptr) return smith_lang_cx_ask(cx, at, end, value);
     cx->unknown_name = true;
     cx->unknown_at = *at;
+    if (end > *at) {
+        return smith_lang_cx_fail(cx,
+                                  "`%s` is not a constant or a type; a call or a field of a `constexpr` value needs "
+                                  "smith's compiler to evaluate it, and the raw lowering has none",
+                                  smith_lang_gt_str(token));
+    }
     return smith_lang_cx_fail(cx, "`%s` is not a constant or a type", smith_lang_gt_str(token));
 }
 
@@ -609,6 +622,69 @@ static bool smith_lang_cx_step(SmithLangCx *cx, uint32_t *at, uint32_t last, boo
     }
     *at += 1;
     *want_operand = true;
+    return true;
+}
+
+// The tokens [first, last) as the compiler is asked about them (separated by \x1f): the type arguments of the instance
+// for its T and the number of a `for constexpr` variable for its name.
+static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
+    size_t used = 0;
+    for (uint32_t at = first; at < last; at++) { // the tokens
+        char piece[256];
+        int64_t number = 0;
+        if (cx->replay != nullptr && smith_lang_var_value(cx->replay, at, &number)) {
+            snprintf(piece, sizeof piece, "%lld", (long long)number);
+        } else if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, piece,
+                                          sizeof piece)) {
+            return false;
+        }
+        size_t length = strlen(piece);
+        if (used + length + 2 >= capacity) return false;
+        if (used > 0) text[used++] = '\x1f';
+        memcpy(text + used, piece, length + 1);
+        used += length;
+    }
+    return true;
+}
+
+// The end of a call, a field or an element chain that begins at `at` (`table_size(sizeof(T))`, `config.count`,
+// `names[2].length`), or `at` when the name is followed by none of them.
+static uint32_t smith_lang_cx_primary_end(uint32_t at, uint32_t last) {
+    uint32_t end = at + 1;
+    for (size_t guard = 0; end < last && guard < smith_lang_gt_max; guard++) { // bounded by the condition
+        const SmithLangGenToken *token = smith_lang_cx_token(end);
+        if (smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[")) {
+            uint32_t after = smith_lang_cx_skip_group(end, last);
+            if (after == UINT32_MAX) return at;
+            end = after;
+        } else if ((smith_lang_gt_punct(token, ".") || smith_lang_gt_punct(token, "->")) && end + 1 < last &&
+                   smith_lang_cx_token(end + 1)->kind == SmithTokenKind_Identifier) {
+            end += 2;
+        } else {
+            break;
+        }
+    }
+    return end == at + 1 ? at : end;
+}
+
+// The operand at `*at` is a call or a field the small evaluator does not know: the compiler evaluates it, in the scope
+// the parser is in (`value_query`), and it must be an integer. False with cx->message otherwise.
+static bool smith_lang_cx_ask(SmithLangCx *cx, uint32_t *at, uint32_t end, SmithLangCxValue *value) {
+    static SmithValue nodes[smith_lang_cx_value_nodes];
+    static SmithValueQuery query;
+    char tokens[1024];
+    if (!smith_lang_cx_text(cx, *at, end, tokens, sizeof tokens)) {
+        return smith_lang_cx_fail(cx, "the expression is too long");
+    }
+    query = (SmithValueQuery){.nodes = nodes, .capacity = smith_lang_cx_value_nodes};
+    if (!cx->host->value_query(cx->host->context, tokens, (uint32_t)strlen(tokens), &query)) {
+        return smith_lang_cx_fail(cx, "%s", query.why != nullptr ? query.why : "the compiler cannot evaluate it");
+    }
+    const SmithValue *root = &query.root;
+    if (root->kind != SmithValue_Int) return smith_lang_cx_fail(cx, "the value is not an integer");
+    if (root->magnitude > (uint64_t)INT64_MAX) return smith_lang_cx_fail(cx, "the number is larger than 63 bits");
+    value->number = root->negative ? -(int64_t)root->magnitude : (int64_t)root->magnitude;
+    *at = end;
     return true;
 }
 

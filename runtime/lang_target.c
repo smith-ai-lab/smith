@@ -323,6 +323,16 @@ static bool smith_lang_ifc_text(uint32_t first, uint32_t last, char *text, size_
         if (token->param != smith_lang_ifc_pseudo &&
             (token->kind == SmithTokenKind_Identifier || token->kind == SmithTokenKind_String ||
              token->kind == SmithTokenKind_Character)) {
+            const SmithLangGenToken *after = i + 1 < last ? token + 1 : nullptr;
+            if (token->kind == SmithTokenKind_Identifier && after != nullptr &&
+                (smith_lang_gt_punct(after, "(") || smith_lang_gt_punct(after, ".") ||
+                 smith_lang_gt_punct(after, "[") || smith_lang_gt_punct(after, "->"))) {
+                return smith_lang_ifc_fail(error, token->location,
+                                           "`%s` is not a constant: a call or a field of a `constexpr` value in an "
+                                           "`if constexpr` needs smith's compiler to evaluate it, and the raw "
+                                           "lowering has none",
+                                           smith_lang_gt_str(token));
+            }
             return smith_lang_ifc_fail(
                 error, token->location,
                 "`%s` is not a constant: an `if constexpr` condition is made of `target::` facts, "
