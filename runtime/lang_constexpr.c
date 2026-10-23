@@ -36,7 +36,7 @@ typedef struct {
     SmithLang *lang;
     const SmithHost *host;
     const SmithLangInstance *instance;
-    const SmithLangReplay *replay; // the lists and loop variables the condition may name
+    const SmithLangReplay *replay; // the argument list and loop variables the condition may name
     uint32_t location;
     bool unknown_name; // the evaluation failed at a name that is no constant or type: `unknown_at` is its token
     uint32_t unknown_at;
@@ -168,14 +168,14 @@ static bool smith_lang_cx_type_word(const SmithLangGenToken *token) {
     return token->length > 8 && memcmp(text, "__", 2) == 0 && memcmp(text + token->length - 7, "_TYPE__", 7) == 0;
 }
 
-// Whether the tokens at `at` are `typeof ( list [`: the type of one element of a list, which the instance knows.
+// Whether the tokens at `at` are `typeof ( rest [`: the type of one argument, which the instance knows.
 static bool smith_lang_cx_typeof_element_at(const SmithLangCx *cx, uint32_t at) {
     if (cx->replay == nullptr || at + 3 >= smith_lang_gt.count) return false;
     const SmithLangGenToken *token = smith_lang_cx_token(at);
-    SmithLangListRef list;
+    SmithLangPackRef args;
     return (smith_lang_cx_word(token, "typeof") || smith_lang_cx_word(token, "__typeof__")) &&
            smith_lang_gt_punct(smith_lang_cx_token(at + 1), "(") &&
-           smith_lang_list_resolve(cx->replay, at + 2, &list) && smith_lang_gt_punct(smith_lang_cx_token(at + 3), "[");
+           smith_lang_pack_resolve(cx->replay, at + 2, &args) && smith_lang_gt_punct(smith_lang_cx_token(at + 3), "[");
 }
 
 // Whether the tokens at `at` begin a type: T, a builtin type word, or a name the parser knows as a type.
@@ -216,14 +216,14 @@ static uint32_t smith_lang_cx_type_end(SmithLangCx *cx, uint32_t at, uint32_t la
 }
 
 // A small constant for an index (no recursion into the evaluator, which asks for types): terms of a number, the
-// variable of a `for constexpr` or `countof(list)`, joined by `+` and `-`.
+// variable of a `for constexpr` or `countof(rest)`, joined by `+` and `-`.
 static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result) {
     int64_t total = 0;
     int sign = 1;
     bool want_term = true;
     for (uint32_t at = first; at < last;) { // bounded by the index
         const SmithLangGenToken *token = smith_lang_cx_token(at);
-        SmithLangListRef list;
+        SmithLangPackRef args;
         int64_t term = 0;
         if (want_term && token->kind == SmithTokenKind_Number) {
             term = (int64_t)strtoull(smith_lang_gt_str(token), nullptr, 0);
@@ -236,8 +236,8 @@ static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last,
                 return false;
             }
             at += smith_lang_fields_countof_len(at, last);
-        } else if (want_term && smith_lang_list_countof_at(cx->replay, at, last, &list)) {
-            term = (int64_t)list.count;
+        } else if (want_term && smith_lang_pack_countof_at(cx->replay, at, last, &args)) {
+            term = (int64_t)args.count;
             at += 4;
         } else if (!want_term && (smith_lang_gt_punct(token, "+") || smith_lang_gt_punct(token, "-"))) {
             sign = smith_lang_gt_punct(token, "-") ? -1 : 1;
@@ -245,14 +245,14 @@ static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last,
             at += 1;
             continue;
         } else {
-            return smith_lang_cx_fail(cx,
-                                      "the index of `list[...]` here is a number, the variable of a `for constexpr` or "
-                                      "`countof(list)`, with `+` and `-`");
+            return smith_lang_cx_fail(
+                cx, "the index here is a number, the variable of a `for constexpr` or `countof(rest)`, "
+                    "with `+` and `-`");
         }
         total += sign * term;
         want_term = false;
     }
-    if (want_term) return smith_lang_cx_fail(cx, "the index of `typeof(list[...])` ends where a term is expected");
+    if (want_term) return smith_lang_cx_fail(cx, "the index ends where a term is expected");
     *result = total;
     return true;
 }
@@ -261,24 +261,17 @@ static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last,
 // for that argument, staged in place (it is in the pool of types already).
 static bool smith_lang_cx_element_type(SmithLangCx *cx, uint32_t first, uint32_t last, uint32_t *staged_first,
                                        uint32_t *staged_count) {
-    SmithLangListRef list;
-    smith_lang_list_resolve(cx->replay, first + 2, &list);
+    SmithLangPackRef args;
+    smith_lang_pack_resolve(cx->replay, first + 2, &args);
     uint32_t after = smith_lang_cx_skip_group(first + 3, last);
     if (after == UINT32_MAX || after + 1 != last || after - 1 <= first + 4) {
-        return smith_lang_cx_fail(cx, "`typeof(%s[...])` is written `typeof(%s[i])`", list.name, list.name);
+        return smith_lang_cx_fail(cx, "`typeof(%s[...])` is written `typeof(%s[i])`", args.name, args.name);
     }
     int64_t index = 0;
     if (!smith_lang_cx_simple(cx, first + 4, after - 1, &index)) return false;
-    if (!list.pack) {
-        return smith_lang_cx_fail(cx,
-                                  "the type of `%s[%lld]` is not known while the body is written: a list made with "
-                                  "braces has the types of its elements only in the C that is written; ask the "
-                                  "argument list (`typeof(rest[i])`)",
-                                  list.name, (long long)index);
-    }
-    if (index < 0 || (uint64_t)index >= list.count) {
-        return smith_lang_cx_fail(cx, "`%s[%lld]` is out of range: `%s` has %zu argument%s", list.name,
-                                  (long long)index, list.name, list.count, list.count == 1 ? "" : "s");
+    if (index < 0 || (uint64_t)index >= args.count) {
+        return smith_lang_cx_fail(cx, "`%s[%lld]` is out of range: `%s` has %zu argument%s", args.name,
+                                  (long long)index, args.name, args.count, args.count == 1 ? "" : "s");
     }
     size_t entry = smith_lang_pack_base(cx->replay->generic) + (size_t)index;
     *staged_first = cx->instance->arg_first[entry];
@@ -472,12 +465,12 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
 static int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                          int64_t *value);
 
-// The operand at `at` when it is `countof(list)`, a list (an error) or the variable of a `for constexpr`: 1 and the
-// value, -1 after an error, 0 when it is none of them.
-static int smith_lang_cx_list_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
+// The operand at `at` when it is `countof(rest)`, the whole `rest` (an error) or the variable of a `for constexpr`: 1
+// and the value, -1 after an error, 0 when it is none of them.
+static int smith_lang_cx_pack_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
     if (cx->replay == nullptr || cx->instance == nullptr) return 0;
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
-    SmithLangListRef list;
+    SmithLangPackRef args;
     if (smith_lang_fields_countof_at(*at, last)) { // `countof(fields(T))`: how many fields T has
         if (!smith_lang_fields_count(cx->host, cx->replay->generic, cx->instance, *at + 2, cx->location, &value->number,
                                      cx->message, sizeof cx->message)) {
@@ -486,14 +479,14 @@ static int smith_lang_cx_list_operand(SmithLangCx *cx, uint32_t *at, uint32_t la
         *at += smith_lang_fields_countof_len(*at, last);
         return 1;
     }
-    if (smith_lang_list_countof_at(cx->replay, *at, last, &list)) { // `countof(rest)`: how many elements it has
-        value->number = (int64_t)list.count;
+    if (smith_lang_pack_countof_at(cx->replay, *at, last, &args)) { // `countof(rest)`: how many arguments it has
+        value->number = (int64_t)args.count;
         *at += 4;
         return 1;
     }
-    if (smith_lang_list_resolve(cx->replay, *at, &list)) {
-        smith_lang_cx_fail(cx, "`%s` is a list: its size is `countof(%s)`", smith_lang_gt_str(token),
-                           smith_lang_gt_str(token));
+    if (smith_lang_pack_resolve(cx->replay, *at, &args)) {
+        smith_lang_cx_fail(cx, "`%s` is the tuple of the arguments: how many is `countof(%s)`",
+                           smith_lang_gt_str(token), smith_lang_gt_str(token));
         return -1;
     }
     if (smith_lang_var_value(cx->replay, *at, &value->number)) { // the variable of a `for constexpr`
@@ -528,7 +521,7 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at += 1;
         return true;
     }
-    int listed = smith_lang_cx_list_operand(cx, at, last, value);
+    int listed = smith_lang_cx_pack_operand(cx, at, last, value);
     if (listed != 0) return listed > 0;
     int fact =
         token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain && token->param == 0
@@ -790,11 +783,6 @@ static void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLa
     }
     uint32_t from = value != 0 ? then_start : else_start;
     uint32_t to = value != 0 ? then_end : whole_end;
-    if (from < to && smith_lang_gt_punct(smith_lang_cx_token(from), "{") && smith_lang_cx_skip_group(from, to) == to &&
-        smith_lang_assigns_list(replay, from + 1, to - 1)) {
-        from += 1; // a block that assigns a list is written without its braces: the new variables outlive it
-        to -= 1;
-    }
     if ((value != 0 || has_else) && from < to) smith_lang_replay_push(replay, from, to, 0);
 }
 

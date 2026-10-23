@@ -1584,38 +1584,19 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
 // ---- Replaying tokens
 // ----------------------------------------------------------------------------------------------------
 
-constexpr size_t smith_lang_lists_max = 1024;           // lists (bindings of them) one instance makes
-constexpr size_t smith_lang_list_elements_max = 64;     // elements of one list
-constexpr size_t smith_lang_list_name_max = 64;         // characters of a list's or a loop variable's name
+constexpr size_t smith_lang_pack_name_max = 64;         // characters of the argument list's or a loop variable's name
 constexpr size_t smith_lang_vars_max = 8;               // `for constexpr` loops open at once
 constexpr size_t smith_lang_loop_iterations_max = 1024; // turns of one `for constexpr`
 
-// A list made in an instance's body, `auto args = {...}`: its shape (how many elements) is known while the body is
-// written. Each binding of the name (the declaration, and each assignment that makes a new one) is its own entry, and
-// its elements are the variables `args_<binding>_<index>`.
-typedef struct {
-    char name[smith_lang_list_name_max];
-    uint16_t length;
-    uint16_t binding;
-    uint16_t count;
-    uint16_t depth; // the brace depth where it was declared: the scope its variables live in
-    bool alive;
-} SmithLangList;
-
-static SmithLangList smith_lang_lists[smith_lang_lists_max];
-
 // The variable of a `for constexpr`: a number while the loop is written out.
 typedef struct {
-    char name[smith_lang_list_name_max];
+    char name[smith_lang_pack_name_max];
     uint16_t length;
     int64_t value;
 } SmithLangVar;
 
 typedef enum {
     SmithLangFrame_Tokens,      // [pos, end) of smith_lang_gt
-    SmithLangFrame_Decl,        // `auto name_b_i = ` the tokens of an element `;`
-    SmithLangFrame_Copy,        // the elements of another list, as `list...` writes them in a list
-    SmithLangFrame_Bind,        // the new binding of a list takes effect (after the elements were written)
     SmithLangFrame_Loop,        // a `for constexpr`
     SmithLangFrame_TypedStart,  // the arguments of a call that holds a call are written to the pool, to be typed
     SmithLangFrame_TypedFinish, // ... and the call is written, now that they are typed
@@ -1637,17 +1618,11 @@ typedef struct {
     uint32_t pos; // [pos, end) of smith_lang_gt, or a punctuator to write
     uint32_t end;
     char literal;
-    uint32_t place;   // of a punctuator to write (0: the call that asked for the instance)
-    uint32_t begin;   // where the frame's tokens began (an empty `rest...` looks at the token before it)
-    uint8_t action;   // SmithLangFrameAction
-    bool started;     // Decl: the declaration's head was written
-    uint32_t name_at; // the list's name token (Decl, Copy, Bind)
-    uint16_t binding;
-    uint16_t element; // Decl: its index; Copy: the first one
-    uint16_t count;   // Copy: how many; Bind: the list's size
-    uint16_t depth;   // Bind: the scope
-    int32_t
-        source; // Copy: the list copied (an index of smith_lang_lists; -1: the argument list); TypedStart: the finish
+    uint32_t place; // of a punctuator to write (0: the call that asked for the instance)
+    uint32_t begin; // where the frame's tokens began (an empty `rest...` looks at the token before it)
+    uint8_t action; // SmithLangFrameAction
+    bool started;   // TypedFinish: the typing flag to restore
+    int32_t source; // TypedStart: the finish
     SmithLangLoop loop;
     uint32_t pool_first; // TypedFinish: where in smith_lang_gt the captured arguments begin
     uint32_t pool_text;
@@ -1658,8 +1633,6 @@ typedef struct {
 typedef struct {
     SmithLangFrame frames[smith_lang_replay_depth_max];
     size_t count;
-    uint32_t list_count; // entries of smith_lang_lists
-    uint32_t brace_depth;
     SmithLangVar vars[smith_lang_vars_max];
     size_t var_count;
     const SmithLangInstance *instance; // whose type arguments are written for T (none: the file's own code)
@@ -1695,15 +1668,12 @@ static bool smith_lang_replay_literal(SmithLangReplay *replay, char literal, uin
 // ---- Lists and loop variables of an instance's body
 // ------------------------------------------------------------------------------------
 
-// What an identifier of the body names, when it is a list: the argument list `auto... rest` (its elements are the
-// instance's parameters `rest_0`, ...) or a list the body made (`args_<binding>_<index>`).
+// What an identifier of the body names, when it is the argument list `auto... rest`: its elements are the instance's
+// parameters `rest_0`, ...
 typedef struct {
-    bool pack;
-    int32_t index; // of smith_lang_lists, for a list the body made
-    char name[smith_lang_list_name_max];
-    uint16_t binding;
+    char name[smith_lang_pack_name_max];
     size_t count;
-} SmithLangListRef;
+} SmithLangPackRef;
 
 static bool smith_lang_member_before(uint32_t at) {
     if (at == 0) return false;
@@ -1711,87 +1681,31 @@ static bool smith_lang_member_before(uint32_t at) {
     return smith_lang_gt_punct(before, ".") || smith_lang_gt_punct(before, "->");
 }
 
-// Whether the identifier at `at` names a list of the replay's instance, as the replay stands.
-static bool smith_lang_list_resolve(const SmithLangReplay *replay, uint32_t at, SmithLangListRef *ref) {
-    *ref = (SmithLangListRef){.index = -1};
+// Whether the identifier at `at` names the argument list of the replay's instance.
+static bool smith_lang_pack_resolve(const SmithLangReplay *replay, uint32_t at, SmithLangPackRef *ref) {
+    *ref = (SmithLangPackRef){};
     const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
     if (replay->generic == nullptr || replay->instance == nullptr || token->kind != SmithTokenKind_Identifier ||
-        token->special != SmithLangGen_Plain) {
+        token->special != SmithLangGen_Plain || !smith_lang_pack_marked(replay->generic, token)) {
         return false;
     }
-    if (smith_lang_pack_marked(replay->generic, token)) {
-        const SmithLangGenToken *name = smith_lang_pack_name(replay->generic);
-        snprintf(ref->name, sizeof ref->name, "%.*s", (int)name->length, smith_lang_gt_str(name));
-        ref->pack = true;
-        ref->count = smith_lang_pack_size(replay->generic, replay->instance);
-        return true;
-    }
-    if (token->param != 0 || replay->list_count == 0 || smith_lang_member_before(at)) return false;
-    for (size_t i = replay->list_count; i-- > 0;) { // the newest binding of the name first
-        const SmithLangList *list = &smith_lang_lists[i];
-        if (!list->alive || list->length != token->length ||
-            memcmp(list->name, smith_lang_gt_str(token), token->length) != 0) {
-            continue;
-        }
-        snprintf(ref->name, sizeof ref->name, "%s", list->name);
-        ref->index = (int32_t)i;
-        ref->binding = list->binding;
-        ref->count = list->count;
-        return true;
-    }
-    return false;
+    const SmithLangGenToken *name = smith_lang_pack_name(replay->generic);
+    snprintf(ref->name, sizeof ref->name, "%.*s", (int)name->length, smith_lang_gt_str(name));
+    ref->count = smith_lang_pack_size(replay->generic, replay->instance);
+    return true;
 }
 
-// The name of a list's `index`th element: `rest_0`, `args_1_0`.
-static void smith_lang_list_element(const SmithLangListRef *ref, size_t index, char *out, size_t capacity) {
-    if (ref->pack)
-        snprintf(out, capacity, "%s_%zu", ref->name, index);
-    else
-        snprintf(out, capacity, "%s_%u_%zu", ref->name, (unsigned)ref->binding, index);
+// The name of the argument list's `index`th element: `rest_0`.
+static void smith_lang_pack_element(const SmithLangPackRef *ref, size_t index, char *out, size_t capacity) {
+    snprintf(out, capacity, "%s_%zu", ref->name, index);
 }
 
-// Whether the tokens at `at` are `countof ( list )`.
-static bool smith_lang_list_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit,
-                                       SmithLangListRef *ref) {
+// Whether the tokens at `at` are `countof ( rest )`.
+static bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit,
+                                       SmithLangPackRef *ref) {
     return at + 3 < limit && smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "countof") &&
-           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "(") && smith_lang_list_resolve(replay, at + 2, ref) &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "(") && smith_lang_pack_resolve(replay, at + 2, ref) &&
            smith_lang_gt_punct(&smith_lang_gt.tokens[at + 3], ")");
-}
-
-// Whether the identifier at `at` is the variable of an element of a list the body made (`args_1_0`), as written by an
-// expansion of the list: one of the elements.
-static bool smith_lang_list_element_at(const SmithLangReplay *replay, uint32_t at) {
-    const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
-    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || replay->list_count == 0) {
-        return false;
-    }
-    const char *text = smith_lang_gt_str(token);
-    for (size_t i = replay->list_count; i-- > 0;) { // the lists made so far
-        const SmithLangList *list = &smith_lang_lists[i];
-        char expected[smith_lang_name_max];
-        for (size_t element = 0; element < list->count; element++) {
-            int length = snprintf(expected, sizeof expected, "%s_%u_%zu", list->name, (unsigned)list->binding, element);
-            if (length > 0 && (size_t)length == token->length && memcmp(expected, text, token->length) == 0) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Whether the tokens [from, to) assign a list that already exists (`args = {...}`): the statement makes a new binding,
-// whose variables must be declared in the scope the list lives in, so a block that does it is written without braces.
-static bool smith_lang_assigns_list(const SmithLangReplay *replay, uint32_t from, uint32_t to) {
-    for (uint32_t at = from; at + 2 < to; at++) { // bounded by the statement
-        SmithLangListRef list;
-        if (smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "=") &&
-            smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "{") && smith_lang_list_resolve(replay, at, &list) &&
-            !list.pack &&
-            !(at > 0 && smith_lang_gt_is(&smith_lang_gt.tokens[at - 1], SmithTokenKind_Identifier, "auto"))) {
-            return true;
-        }
-    }
-    return false;
 }
 
 // Whether the identifier at `at` is a variable of an open `for constexpr`: its value.
@@ -2030,36 +1944,35 @@ typedef struct {
     uint32_t consumed; // the tokens of the use
     size_t index;      // Index: which element; Count: how many there are
     int64_t number;    // Var: the value
-    uint32_t place;    // where the list is written
-    SmithLangListRef list;
+    uint32_t place;    // where the argument list is written
+    SmithLangPackRef args;
 } SmithLangPackUse;
 
 // The index in `rest[...]`, the tokens [first, last) of the generic, as the instance has it: the element, or an error.
 static SmithLangPackUse smith_lang_pack_index(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                               uint32_t at, uint32_t limit, uint32_t place,
-                                              const SmithLangListRef *list) {
+                                              const SmithLangPackRef *args) {
     uint32_t after = smith_lang_cx_skip_group(at + 1, limit);
     SmithLangPackUse use = {.kind = SmithLangPack_Failed,
                             .consumed = after == UINT32_MAX ? limit - at : after - at,
                             .place = place,
-                            .list = *list};
+                            .args = *args};
     static SmithLangCx evaluation;
     SmithLangCx *cx = &evaluation;
     *cx = (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .replay = replay, .location = place};
     int64_t value = 0;
     if (after == UINT32_MAX || after - 1 <= at + 2) {
-        smith_lang_error(lang, host, place, "`%s[` is not closed by `]`, or has no index", list->name);
+        smith_lang_error(lang, host, place, "`%s[` is not closed by `]`, or has no index", args->name);
         return use;
     }
     if (!smith_lang_cx_eval(cx, at + 2, after - 1, &value)) {
-        smith_lang_error(lang, host, place, "the index of `%s[...]` must be a compile-time constant: %s", list->name,
+        smith_lang_error(lang, host, place, "the index of `%s[...]` must be a compile-time constant: %s", args->name,
                          cx->message);
         return use;
     }
-    if (value < 0 || (uint64_t)value >= list->count) {
-        smith_lang_error(lang, host, place, "`%s[%lld]` is out of range: `%s` has %zu %s%s", list->name,
-                         (long long)value, list->name, list->count, list->pack ? "argument" : "element",
-                         list->count == 1 ? "" : "s");
+    if (value < 0 || (uint64_t)value >= args->count) {
+        smith_lang_error(lang, host, place, "`%s[%lld]` is out of range: `%s` has %zu argument%s", args->name,
+                         (long long)value, args->name, args->count, args->count == 1 ? "" : "s");
         return use;
     }
     use.kind = SmithLangPack_Index;
@@ -2074,14 +1987,14 @@ static SmithLangPackUse smith_lang_pack_use(SmithLang *lang, const SmithHost *ho
     SmithLangPackUse use = {};
     const SmithLangGeneric *generic = replay->generic;
     if (generic == nullptr || replay->instance == nullptr ||
-        (replay->list_count == 0 && replay->var_count == 0 && !smith_lang_has_pack(generic))) {
+        (replay->var_count == 0 && !smith_lang_has_pack(generic))) {
         return use;
     }
     SmithLangGenToken *token = &smith_lang_gt.tokens[at];
-    SmithLangListRef list;
-    bool counted = smith_lang_list_countof_at(replay, at, limit, &list);
+    SmithLangPackRef args;
+    bool counted = smith_lang_pack_countof_at(replay, at, limit, &args);
     int64_t number = 0;
-    if (!counted && !smith_lang_list_resolve(replay, at, &list)) {
+    if (!counted && !smith_lang_pack_resolve(replay, at, &args)) {
         if (!smith_lang_var_value(replay, at, &number)) return use;
         return (SmithLangPackUse){.kind = SmithLangPack_Var,
                                   .consumed = 1,
@@ -2091,31 +2004,31 @@ static SmithLangPackUse smith_lang_pack_use(SmithLang *lang, const SmithHost *ho
     uint32_t place = smith_lang_gen_place(host, generic, token, replay->location);
     if (counted) {
         return (SmithLangPackUse){
-            .kind = SmithLangPack_Count, .consumed = 4, .index = list.count, .place = place, .list = list};
+            .kind = SmithLangPack_Count, .consumed = 4, .index = args.count, .place = place, .args = args};
     }
     if (at + 1 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "...")) {
-        return (SmithLangPackUse){.kind = SmithLangPack_Expand, .consumed = 2, .place = place, .list = list};
+        return (SmithLangPackUse){.kind = SmithLangPack_Expand, .consumed = 2, .place = place, .args = args};
     }
     if (at + 1 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[")) {
-        return smith_lang_pack_index(lang, host, replay, at, limit, place, &list);
+        return smith_lang_pack_index(lang, host, replay, at, limit, place, &args);
     }
     smith_lang_error(lang, host, place,
-                     "`%s` is a list%s: write `%s...` for all of %s, `%s[i]` for one, or `countof(%s)`", list.name,
-                     list.pack ? " of arguments" : "", list.name, list.pack ? "them" : "its elements", list.name,
-                     list.name);
+                     "`%s` is the tuple of the arguments, and is not passed whole: spread it into a call with `%s...`, "
+                     "or write `%s[i]` for one argument or `countof(%s)` for how many",
+                     args.name, args.name, args.name, args.name);
     return (SmithLangPackUse){.kind = SmithLangPack_Failed, .consumed = 1, .place = place};
 }
 
 // An empty `rest...` takes a comma with it: the one before it, else the one after. Whether the comma at `at` is the one
 // before an empty expansion (the expansion then writes nothing, and the comma is dropped).
 static bool smith_lang_pack_comma_before_empty(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
-    SmithLangListRef list;
+    SmithLangPackRef args;
     if (replay->generic == nullptr || replay->instance == nullptr || at + 2 >= limit ||
-        !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ",") || !smith_lang_list_resolve(replay, at + 1, &list) ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ",") || !smith_lang_pack_resolve(replay, at + 1, &args) ||
         !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "...")) {
         return false;
     }
-    return list.count == 0;
+    return args.count == 0;
 }
 
 // An empty expansion at `at` (after `begin`, before `limit`): 1 when the comma after it goes too, because none came
@@ -2152,12 +2065,12 @@ static void smith_lang_pack_write(SmithLang *lang, const SmithHost *host, const 
     } else if (use->kind == SmithLangPack_Var) {
         smith_lang_number_write(lang, host, replay, use->number, use->place);
     } else if (use->kind == SmithLangPack_Index) {
-        smith_lang_list_element(&use->list, use->index, text, sizeof text);
+        smith_lang_pack_element(&use->args, use->index, text, sizeof text);
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
     } else if (use->kind == SmithLangPack_Expand) {
-        for (size_t i = 0; i < use->list.count; i++) { // the elements, in order
+        for (size_t i = 0; i < use->args.count; i++) { // the elements, in order
             if (i > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", use->place, replay->instance_id);
-            smith_lang_list_element(&use->list, i, text, sizeof text);
+            smith_lang_pack_element(&use->args, i, text, sizeof text);
             smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
         }
     }
@@ -2191,9 +2104,9 @@ static bool smith_lang_pack_push_number(const SmithLangGenToken *like, int64_t v
 
 // Whether the identifier at `at` is a list or a loop variable of the replay.
 static bool smith_lang_pack_named(const SmithLangReplay *replay, uint32_t at) {
-    SmithLangListRef list;
+    SmithLangPackRef args;
     int64_t number;
-    return smith_lang_list_resolve(replay, at, &list) || smith_lang_var_value(replay, at, &number);
+    return smith_lang_pack_resolve(replay, at, &args) || smith_lang_var_value(replay, at, &number);
 }
 
 // The tokens of a call's arguments [*begin, *end), with each use of a list or a loop variable written out as the
@@ -2236,15 +2149,15 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
         } else if (use.kind == SmithLangPack_Var) {
             good = smith_lang_pack_push_number(like, use.number);
         } else if (use.kind == SmithLangPack_Index) {
-            smith_lang_list_element(&use.list, use.index, text, sizeof text);
+            smith_lang_pack_element(&use.args, use.index, text, sizeof text);
             good = smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
         } else if (use.kind == SmithLangPack_Expand) {
-            for (size_t i = 0; good && i < use.list.count; i++) { // the elements, in order
+            for (size_t i = 0; good && i < use.args.count; i++) { // the elements, in order
                 if (i > 0) good = smith_lang_pack_push(like, SmithTokenKind_Punctuator, ",", false);
-                smith_lang_list_element(&use.list, i, text, sizeof text);
+                smith_lang_pack_element(&use.args, i, text, sizeof text);
                 good = good && smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
             }
-            if (use.list.count == 0) consumed += smith_lang_pack_comma_after_empty(at, *begin, *end, consumed);
+            if (use.args.count == 0) consumed += smith_lang_pack_comma_after_empty(at, *begin, *end, consumed);
         } else {
             good = false; // the error is reported
         }
@@ -2362,11 +2275,6 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, SmithLan
             snprintf(out->canonical, sizeof out->canonical, "%s", spelling);
         }
         return true;
-    }
-    if (replay->instance != nullptr && span.end - span.start == 1 && smith_lang_list_element_at(replay, span.start)) {
-        *why = "it is an element of a list made with braces, whose types are the compiler's only after the instance is "
-               "compiled (a list of arguments, `rest...`, is typed)";
-        return false;
     }
     char tokens[1024];
     SmithLangSpan text_span = span;
@@ -2845,204 +2753,46 @@ static void smith_lang_member_name(const char *module, size_t module_length, con
 
 // A call that was kept as a group in a generic's body, now that its types are known: to a generic, it becomes the call
 // of the instance; to anything else it is the plain call it always was.
-// ---- Lists and `for constexpr`: the statements of a body that make a list or repeat
+// ---- Built lists and `for constexpr`: the statements of a body that are gone or repeat
 // ----------------------------------------------------------------------------------------
 
-static uint16_t smith_lang_list_next_binding(const SmithLangReplay *replay, const SmithLangGenToken *name) {
-    uint16_t next = 0;
-    for (size_t i = 0; i < replay->list_count; i++) { // each entry is one binding of its name
-        const SmithLangList *list = &smith_lang_lists[i];
-        if (list->length == name->length && memcmp(list->name, smith_lang_gt_str(name), name->length) == 0) next += 1;
+// Built lists are gone: `auto name = {...};` and `name = {name..., x};` in a generic's body are this error, and the
+// statement is skipped. Returns the index of the name, or 0 when the frame's next tokens are no such statement.
+static uint32_t smith_lang_list_gone_at(const SmithLangReplay *replay, const SmithLangFrame *frame) {
+    const SmithLangGenToken *first = &smith_lang_gt.tokens[frame->pos];
+    if (replay->instance == nullptr || frame->pos + 4 >= frame->end || first[0].kind != SmithTokenKind_Identifier) {
+        return 0;
     }
-    return next;
-}
-
-static void smith_lang_list_add(SmithLangReplay *replay, const SmithLangGenToken *name, uint16_t binding,
-                                uint16_t count, uint16_t depth) {
-    SmithLangList *list = &smith_lang_lists[replay->list_count++];
-    *list = (SmithLangList){
-        .length = (uint16_t)name->length, .binding = binding, .count = count, .depth = depth, .alive = true};
-    snprintf(list->name, sizeof list->name, "%.*s", (int)name->length, smith_lang_gt_str(name));
-}
-
-// The braces of the body, as they are written: a list's variables live to the end of the block they are declared in.
-static void smith_lang_replay_open(SmithLangReplay *replay) {
-    replay->brace_depth += 1;
-}
-
-static void smith_lang_replay_close(SmithLangReplay *replay) {
-    if (replay->brace_depth > 0) replay->brace_depth -= 1;
-    for (size_t i = replay->list_count; i-- > 0;) { // the lists of the block that ended
-        if (smith_lang_lists[i].alive && smith_lang_lists[i].depth > replay->brace_depth)
-            smith_lang_lists[i].alive = false;
-    }
-}
-
-// The head of the declaration of a list's element: `[[maybe_unused]] auto args_1_0 =`. A list may be only counted, and
-// `auto` is the element's own type (C23's `auto` takes the type of the initializer).
-static void smith_lang_list_head(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                 const SmithLangFrame *frame, size_t index) {
-    static const SmithLangPiece head[] = {
-        {SmithTokenKind_Punctuator, "["}, {SmithTokenKind_Punctuator, "["}, {SmithTokenKind_Identifier, "maybe_unused"},
-        {SmithTokenKind_Punctuator, "]"}, {SmithTokenKind_Punctuator, "]"}, {SmithTokenKind_Identifier, "auto"}};
-    SmithLangGenToken *name = &smith_lang_gt.tokens[frame->name_at];
-    uint32_t place = smith_lang_gen_place(host, replay->generic, name, replay->location);
-    SmithLangListRef ref = {.binding = frame->binding};
-    snprintf(ref.name, sizeof ref.name, "%.*s", (int)name->length, smith_lang_gt_str(name));
-    char text[smith_lang_name_max];
-    smith_lang_list_element(&ref, index, text, sizeof text);
-    smith_lang_gen_puts(lang, host, head, sizeof head / sizeof head[0], place, replay->instance_id);
-    smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, place, replay->instance_id);
-    smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "=", place, replay->instance_id);
-}
-
-// `list...` as an element of a list: each element of the other list, declared as an element of this one.
-static void smith_lang_list_copy(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                 const SmithLangFrame *frame) {
-    SmithLangGenToken *name = &smith_lang_gt.tokens[frame->name_at];
-    uint32_t place = smith_lang_gen_place(host, replay->generic, name, replay->location);
-    SmithLangListRef source = {.index = frame->source};
-    if (frame->source >= 0) {
-        const SmithLangList *list = &smith_lang_lists[frame->source];
-        snprintf(source.name, sizeof source.name, "%s", list->name);
-        source.binding = list->binding;
-    } else {
-        const SmithLangGenToken *pack = smith_lang_pack_name(replay->generic);
-        snprintf(source.name, sizeof source.name, "%.*s", (int)pack->length, smith_lang_gt_str(pack));
-        source.pack = true;
-    }
-    for (size_t i = 0; i < frame->count; i++) {
-        char text[smith_lang_name_max];
-        smith_lang_list_head(lang, host, replay, frame, (size_t)frame->element + i);
-        smith_lang_list_element(&source, i, text, sizeof text);
-        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, place, replay->instance_id);
-        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, replay->instance_id);
-    }
-}
-
-// A statement that makes a list, read: where it is, its elements, and what each is.
-typedef struct {
-    bool declare; // `auto name = {...}`; else `name = {...}`
-    SmithLangListRef old;
-    uint32_t name_at;
-    uint32_t after; // the index after the `}`
-    bool closed;    // the `}` is followed by the `;`
-    SmithLangSpan spans[smith_lang_list_elements_max + 1];
-    size_t span_count;
-    size_t offsets[smith_lang_list_elements_max + 1];
-    size_t total;
-} SmithLangListStatement;
-
-// Whether the element is `list...`, an expansion: the list.
-static bool smith_lang_list_expands(const SmithLangReplay *replay, SmithLangSpan span, SmithLangListRef *source) {
-    return span.end - span.start == 2 && smith_lang_gt_punct(&smith_lang_gt.tokens[span.start + 1], "...") &&
-           smith_lang_list_resolve(replay, span.start, source);
-}
-
-// Whether the frame's next tokens begin a statement of a list: `auto name = {` or `name = {` with name a list.
-static bool smith_lang_list_begins(const SmithLangReplay *replay, const SmithLangFrame *frame,
-                                   SmithLangListStatement *out) {
-    uint32_t at = frame->pos;
-    const SmithLangGenToken *first = &smith_lang_gt.tokens[at];
-    out->declare = at + 3 < frame->end && smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") &&
+    bool declare = smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") &&
                    first[1].kind == SmithTokenKind_Identifier && first[1].special == SmithLangGen_Plain &&
                    smith_lang_gt_punct(&first[2], "=") && smith_lang_gt_punct(&first[3], "{");
-    bool assign = !out->declare && at + 2 < frame->end && smith_lang_list_resolve(replay, at, &out->old) &&
-                  !out->old.pack && smith_lang_gt_punct(&first[1], "=") && smith_lang_gt_punct(&first[2], "{");
-    out->name_at = out->declare ? at + 1 : at;
-    return out->declare || assign;
+    bool grow = first[0].special == SmithLangGen_Plain && smith_lang_gt_punct(&first[1], "=") &&
+                smith_lang_gt_punct(&first[2], "{") && first[3].kind == SmithTokenKind_Identifier &&
+                smith_lang_gt_punct(&first[4], "...") && !smith_lang_pack_marked(replay->generic, &first[3]);
+    return declare ? frame->pos + 1 : grow ? frame->pos : 0;
 }
 
-// What is wrong with the statement, if anything: a message. Fills the offsets of the elements and their total.
-static const char *smith_lang_list_problem(const SmithLangReplay *replay, SmithLangListStatement *st) {
-    const SmithLangGenToken *name = &smith_lang_gt.tokens[st->name_at];
-    if (!st->closed) return "a list is written `auto name = {a, b, ...};`";
-    if (st->span_count == SIZE_MAX || st->span_count > smith_lang_list_elements_max)
-        return "a list has at most 64 elements";
-    if (name->length >= smith_lang_list_name_max) return "the name of a list has at most 63 characters";
-    if (replay->list_count >= smith_lang_lists_max) return "an instance makes at most 1024 lists";
-    if (replay->count + st->span_count + 2 >= smith_lang_replay_depth_max) return "this list is too long to write";
-    if (!st->declare) {
-        const SmithLangGenToken *before = st->name_at > 0 ? name - 1 : nullptr;
-        bool starts = before == nullptr || smith_lang_gt_punct(before, ";") || smith_lang_gt_punct(before, "{") ||
-                      smith_lang_gt_punct(before, "}");
-        if (!starts || replay->brace_depth != smith_lang_lists[st->old.index].depth) {
-            return "a list's shape is known while the body is written: assign it where it is declared, as a statement "
-                   "of its own (a `for constexpr` body counts as that place), never in a branch, a loop or a block "
-                   "that is run at run time";
-        }
-    }
-    st->total = 0;
-    for (size_t i = 0; i < st->span_count; i++) { // the elements
-        SmithLangListRef source;
-        st->offsets[i] = st->total;
-        st->total += smith_lang_list_expands(replay, st->spans[i], &source) ? source.count : 1;
-        if (st->spans[i].start == st->spans[i].end) return "an element of a list is an expression";
-    }
-    return st->total > smith_lang_list_elements_max ? "a list has at most 64 elements" : nullptr;
-}
-
-// The frames that write the statement: the binding's, then each element, the first on top (written first).
-static void smith_lang_list_push(SmithLangReplay *replay, const SmithLangListStatement *st, uint16_t binding,
-                                 uint16_t depth) {
-    smith_lang_replay_push(replay, 0, 0, 0); // the binding takes effect when the elements were written
-    replay->frames[replay->count - 1] = (SmithLangFrame){.action = SmithLangFrame_Bind,
-                                                         .name_at = st->name_at,
-                                                         .binding = binding,
-                                                         .count = (uint16_t)st->total,
-                                                         .depth = depth};
-    for (size_t i = st->span_count; i-- > 0;) {
-        SmithLangListRef source;
-        bool expands = smith_lang_list_expands(replay, st->spans[i], &source);
-        smith_lang_replay_push(replay, st->spans[i].start, st->spans[i].end, 0);
-        SmithLangFrame *made = &replay->frames[replay->count - 1];
-        made->name_at = st->name_at;
-        made->binding = binding;
-        made->element = (uint16_t)st->offsets[i];
-        made->action = expands ? SmithLangFrame_Copy : SmithLangFrame_Decl;
-        made->count = expands ? (uint16_t)source.count : 0;
-        made->source = expands && !source.pack ? source.index : -1;
-    }
-}
-
-// `auto name = {a, b, ...};` and `name = {...};` of a list. The elements are declared one after the other, each the
-// variable `name_<binding>_<index>` (an expression is evaluated once, where the statement stands), and the new
-// binding takes effect after them, so the elements may name the old one: `args = {args..., x}`.
-static bool smith_lang_list_statement(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                      SmithLangFrame *frame) {
-    static SmithLangListStatement st;
-    if (replay->instance == nullptr || !smith_lang_list_begins(replay, frame, &st)) return false;
-    SmithLangGenToken *name = &smith_lang_gt.tokens[st.name_at];
-    uint32_t place = smith_lang_gen_place(host, replay->generic, name, replay->location);
-    st.after = smith_lang_cx_skip_group(st.name_at + 2, frame->end); // the index after the `}`
-    st.closed =
-        st.after != UINT32_MAX && st.after < frame->end && smith_lang_gt_punct(&smith_lang_gt.tokens[st.after], ";");
-    frame->pos = st.closed ? st.after + 1 : frame->end;
-    for (uint32_t i = st.name_at; !st.closed && i < frame->end; i++) { // an error: the statement ends at the next `;`
-        if (!smith_lang_gt_punct(&smith_lang_gt.tokens[i], ";")) continue;
-        frame->pos = i + 1;
-        break;
-    }
-    st.span_count =
-        st.closed ? smith_lang_split_args(st.name_at + 3, st.after - 1, st.spans, smith_lang_list_elements_max + 1) : 0;
-    if (st.span_count != SIZE_MAX && st.span_count > 0 &&
-        st.spans[st.span_count - 1].start == st.spans[st.span_count - 1].end) {
-        st.span_count -= 1; // a comma after the last element
-    }
-    const char *problem = smith_lang_list_problem(replay, &st);
-    uint16_t depth = (uint16_t)replay->brace_depth;
-    if (problem != nullptr) {
-        smith_lang_error(lang, host, place, "%s", problem);
-        if (st.declare) smith_lang_list_add(replay, name, 0, 0, depth); // what uses it later has no error of its own
-        return true;
-    }
-    if (!st.declare) depth = smith_lang_lists[st.old.index].depth;
-    smith_lang_list_push(replay, &st, smith_lang_list_next_binding(replay, name), depth);
+static bool smith_lang_list_gone(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                 SmithLangFrame *frame) {
+    uint32_t name = smith_lang_list_gone_at(replay, frame);
+    if (name == 0) return false;
+    SmithLangGenToken *token = &smith_lang_gt.tokens[name];
+    uint32_t place = smith_lang_gen_place(host, replay->generic, token, replay->location);
+    smith_lang_error(lang, host, place,
+                     "built lists are gone: write a struct or a tuple type (`struct { i32, f32 } %.*s = {a, b};`, "
+                     "named with a typedef outside the generic) and index it; the arguments of a generic are "
+                     "`auto... rest`",
+                     (int)token->length, smith_lang_gt_str(token));
+    uint32_t after = smith_lang_cx_skip_group(name + 2, frame->end);
+    frame->pos = after == UINT32_MAX ? frame->end : after;
+    while (frame->pos < frame->end && !smith_lang_gt_punct(&smith_lang_gt.tokens[frame->pos], ";"))
+        frame->pos += 1;
+    if (frame->pos < frame->end) frame->pos += 1;
     return true;
 }
 
-// What an `auto` or assignment frame of a list does when it is on top: false when its tokens are to be written as
-// any others.
+// What a frame that is no plain run of tokens does when it is on top: false when its tokens are to be written as any
+// others.
 static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      SmithLangFrame *frame);
 
@@ -3156,7 +2906,7 @@ static void smith_lang_replay_for(SmithLang *lang, const SmithHost *host, SmithL
         equals = smith_lang_gt_punct(&smith_lang_gt.tokens[i], "=") ? i : 0;
     const SmithLangGenToken *variable = equals > open + 2 ? &smith_lang_gt.tokens[equals - 1] : nullptr;
     if (semi_count != 2 || variable == nullptr || variable->kind != SmithTokenKind_Identifier ||
-        variable->length >= smith_lang_list_name_max) {
+        variable->length >= smith_lang_pack_name_max) {
         smith_lang_error(lang, host, place,
                          "`for constexpr` is written `for constexpr (usize i = 0; condition; step) body`: it declares "
                          "its variable");
@@ -3172,16 +2922,13 @@ static void smith_lang_replay_for(SmithLang *lang, const SmithHost *host, SmithL
     *var = (SmithLangVar){.length = (uint16_t)variable->length, .value = start};
     snprintf(var->name, sizeof var->name, "%.*s", (int)variable->length, smith_lang_gt_str(variable));
     bool block = smith_lang_gt_punct(&smith_lang_gt.tokens[body_start], "{");
-    uint32_t inner_start = block ? body_start + 1 : body_start;
-    uint32_t inner_end = block ? body_end - 1 : body_end;
-    bool strip = smith_lang_assigns_list(replay, inner_start, inner_end);
     SmithLangLoop loop = {.cond_start = semis[0] + 1,
                           .cond_end = semis[1],
                           .step_start = semis[1] + 1,
                           .step_end = body_start - 1,
-                          .body_start = strip ? inner_start : body_start,
-                          .body_end = strip ? inner_end : body_end,
-                          .wrap = !strip && !block};
+                          .body_start = body_start,
+                          .body_end = body_end,
+                          .wrap = !block};
     if (!smith_lang_replay_push(replay, 0, 0, 0)) {
         replay->var_count -= 1;
         smith_lang_error(lang, host, place, "this `for constexpr` is nested too deep");
@@ -3241,27 +2988,7 @@ static void smith_lang_typed_finish(SmithLang *lang, const SmithHost *host, Smit
 
 static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      SmithLangFrame *frame) {
-    SmithLangGenToken *name = &smith_lang_gt.tokens[frame->name_at];
-    uint32_t place = smith_lang_gen_place(host, replay->generic, name, replay->location);
     switch ((SmithLangFrameAction)frame->action) {
-    case SmithLangFrame_Decl:
-        if (!frame->started) {
-            frame->started = true;
-            smith_lang_list_head(lang, host, replay, frame, frame->element);
-            return true;
-        }
-        if (frame->pos < frame->end) return false; // the element's expression
-        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, replay->instance_id);
-        replay->count -= 1;
-        return true;
-    case SmithLangFrame_Copy:
-        smith_lang_list_copy(lang, host, replay, frame);
-        replay->count -= 1;
-        return true;
-    case SmithLangFrame_Bind:
-        smith_lang_list_add(replay, name, frame->binding, frame->count, frame->depth);
-        replay->count -= 1;
-        return true;
     case SmithLangFrame_Loop:
         smith_lang_loop_run(lang, host, replay, frame);
         return true;
@@ -3277,47 +3004,24 @@ static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, Smi
     return false;
 }
 
-// An identifier of the body that is spelled like an element of a list (`rest_0`, `args_1_0`) would be that element.
-static void smith_lang_list_clash(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+// An identifier of the body that is spelled like an element of the argument list (`rest_0`) would be that element.
+static void smith_lang_pack_clash(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                   const SmithLangGenToken *token, uint32_t place) {
     uint32_t at = (uint32_t)(token - smith_lang_gt.tokens);
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0 ||
         token->length < 3 || at < replay->generic->first || at >= replay->generic->first + replay->generic->count ||
-        smith_lang_member_before(at)) { // only the generic's own tokens: the elements a list expands to are not
+        smith_lang_member_before(at)) { // only the generic's own tokens: the elements `rest...` expands to are not
         return;
     }
     const char *text = smith_lang_gt_str(token);
     if (text[token->length - 1] < '0' || text[token->length - 1] > '9') return;
-    const char *owner = nullptr;
-    char pack[smith_lang_list_name_max] = "";
-    if (smith_lang_has_pack(replay->generic)) {
-        const SmithLangGenToken *name = smith_lang_pack_name(replay->generic);
-        snprintf(pack, sizeof pack, "%.*s", (int)name->length, smith_lang_gt_str(name));
-    }
-    size_t pack_length = strlen(pack);
-    bool digits = false;
-    size_t underscores = 0;
-    for (size_t i = 0; i < token->length; i++) {
-        underscores += text[i] == '_' ? 1U : 0U;
-        digits = digits || (text[i] >= '0' && text[i] <= '9');
-    }
-    if (pack_length > 0 && token->length > pack_length + 1 && memcmp(text, pack, pack_length) == 0 &&
+    const SmithLangGenToken *name = smith_lang_pack_name(replay->generic);
+    size_t pack_length = name->length;
+    if (token->length > pack_length + 1 && memcmp(text, smith_lang_gt_str(name), pack_length) == 0 &&
         text[pack_length] == '_' && strspn(text + pack_length + 1, "0123456789") == token->length - pack_length - 1) {
-        owner = pack;
-    }
-    for (size_t i = 0; owner == nullptr && underscores >= 2 && i < replay->list_count; i++) {
-        const SmithLangList *list = &smith_lang_lists[i];
-        size_t length = list->length;
-        if (token->length > length + 3 && memcmp(text, list->name, length) == 0 && text[length] == '_' &&
-            strspn(text + length + 1, "0123456789_") == token->length - length - 1) {
-            owner = list->name;
-        }
-    }
-    if (owner != nullptr && digits) {
         smith_lang_error(lang, host, place,
-                         "`%.*s` is the name of an element of the list `%s`: give the variable "
-                         "another name",
-                         (int)token->length, text, owner);
+                         "`%.*s` is the name of one of the arguments `%.*s`: give the variable another name",
+                         (int)token->length, text, (int)pack_length, smith_lang_gt_str(name));
     }
 }
 
@@ -3422,8 +3126,6 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             replay->count -= 1;
             smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, text,
                                frame_place != 0 ? frame_place : replay->location, replay->instance_id);
-            if (text[0] == '{') smith_lang_replay_open(replay);
-            if (text[0] == '}') smith_lang_replay_close(replay);
             continue;
         }
         if (frame->action != SmithLangFrame_Tokens && smith_lang_replay_action(lang, host, replay, frame)) continue;
@@ -3445,14 +3147,14 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             continue;
         }
         if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
-        if (smith_lang_list_statement(lang, host, replay, frame)) continue;
+        if (smith_lang_list_gone(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
         if (use.kind == SmithLangPack_None && smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end)) {
             frame->pos += 1; // the comma before an empty `rest...` goes with it
             continue;
         }
         if (use.kind != SmithLangPack_None) {
-            bool empty = use.kind == SmithLangPack_Expand && use.list.count == 0;
+            bool empty = use.kind == SmithLangPack_Expand && use.args.count == 0;
             if (empty)
                 use.consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, use.consumed);
             smith_lang_pack_write(lang, host, replay, &use);
@@ -3460,13 +3162,9 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             continue;
         }
         frame->pos += 1;
-        if (token->special == SmithLangGen_Plain && token->kind == SmithTokenKind_Punctuator && token->length == 1) {
-            if (smith_lang_gt_str(token)[0] == '{') smith_lang_replay_open(replay);
-            if (smith_lang_gt_str(token)[0] == '}') smith_lang_replay_close(replay);
-        }
         if (token->special == SmithLangGen_Plain && replay->generic != nullptr &&
-            (replay->list_count > 0 || smith_lang_has_pack(replay->generic))) {
-            smith_lang_list_clash(lang, host, replay, token,
+            smith_lang_has_pack(replay->generic)) {
+            smith_lang_pack_clash(lang, host, replay, token,
                                   smith_lang_gen_place(host, replay->generic, token, replay->location));
         }
         if (token->special == SmithLangGen_Plain && replay->typing &&
