@@ -132,6 +132,22 @@ static bool smith_lang_follows_declarator(const SmithToken *next) {
     return false;
 }
 
+// Whether the name being read is an enumeration constant being declared: first or after a comma in an enum's braces,
+// followed by `=`, `,` or `}`. No type stands before it, so the usual rule does not see it.
+static bool smith_lang_enum_constant_declared(const SmithLang *lang, const SmithToken *next) {
+    if (lang->brace_depth == 0 || lang->braces[lang->brace_depth - 1] != SmithLangBrace_Enum) return false;
+    if (lang->paren_depth != 0 || (lang->prev_char != '{' && lang->prev_char != ',')) return false;
+    return smith_lang_punct(next, "=") || smith_lang_punct(next, ",") || smith_lang_punct(next, "}");
+}
+
+// Whether the name being read is declared here, so it keeps its meaning: a declarator after a type (`int u16 =`), a
+// function at file scope (`int u16(`) or an enumeration constant.
+static bool smith_lang_declares_name(const SmithLang *lang, const SmithToken *next, bool typeish) {
+    if (typeish && smith_lang_follows_declarator(next)) return true;
+    if (typeish && lang->brace_depth == 0 && lang->paren_depth == 0 && smith_lang_punct(next, "(")) return true;
+    return smith_lang_enum_constant_declared(lang, next);
+}
+
 // Whether the tokens before end a type. A name just before may be a type only the parser knows.
 static bool smith_lang_typeish(SmithLang *lang, const SmithHost *host) {
     if (lang->typeish) return true;
@@ -522,8 +538,8 @@ static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost 
     if (sized == nullptr || (lang->statement_typedef && lang->brace_depth == lang->typedef_depth)) {
         return smith_lang_keep();
     }
-    if (smith_lang_follows_declarator(smith_lang_after(lang, host, next)) &&
-        smith_lang_context_typeish(lang, host, context)) {
+    if (smith_lang_declares_name(lang, smith_lang_after(lang, host, next),
+                                 smith_lang_context_typeish(lang, host, context))) {
         return smith_lang_keep();
     }
     if (host->lookup(host->context, name, (uint32_t)length, SmithLookup_Type).kind != SmithLookup_None) {

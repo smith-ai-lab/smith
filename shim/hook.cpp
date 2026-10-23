@@ -6,6 +6,7 @@
 // is in C, in the lowering.
 #include "names.h"
 
+#include "clang/AST/DeclBase.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticParse.h"
@@ -590,6 +591,18 @@ class SmithHook final : public TokenHook, public NameSource {
                kind == tok::kw__Float16;
     }
 
+    // Whether the name being read is where an enum's constant is declared: after the `{` of `enum {` or `enum Tag {`,
+    // or after a `,` while the parser is inside an enum's definition. No type stands before it, so it is no declarator.
+    bool enumConstantHere(tok::TokenKind before) {
+        if (before == tok::comma)
+            return sema != nullptr && sema->CurContext != nullptr && sema->CurContext->getDeclKind() == Decl::Enum;
+        if (before != tok::l_brace) return false;
+        const IdentifierInfo *info = nullptr;
+        tok::TokenKind two = PP.getHookPrevious(2, info);
+        if (two == tok::kw_enum) return true;
+        return two == tok::identifier && PP.getHookPrevious(3, info) == tok::kw_enum;
+    }
+
     // The tokens of a file that is not a module, or of a module's function body (the host offers the braces and the
     // names it watches): a module's name becomes its prefixed spelling, a sized type name its type, and the braces are
     // counted, with a few lookups and no call into the lowering.
@@ -621,6 +634,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
         if (mayEndType(before)) return Fast::No;
+        if (enumConstantHere(before)) return Fast::Kept; // an enum's constant is the program's name
         if (!body && smith_lang_io_import(lang) && info->getName() == "i32") return Fast::No; // `i32 main(io::Io *io)`
         ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;

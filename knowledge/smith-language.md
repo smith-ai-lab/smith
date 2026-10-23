@@ -109,7 +109,7 @@ u32 helper(void) { … }                              // private
   `f16` (`_Float16`), `f32`, `f64`. They are typedefs of the standard types (`typedef __INT32_TYPE__ i32;`), so the same
   types (`%llu`, `_Generic` and a C header's `uint64_t` agree) and a diagnostic names them as written:
   `initializing 'i32' (aka 'int')`. The typedef is made when the file first uses the name and declares nothing of that
-  name, so a file that declares its own `u32` (or a variable named `u8`) keeps it, and a C header's `typedef uint32_t
+  name, so a file that declares its own `u32` (a variable, a file-scope function or an enum constant named `u8`) keeps it, and a C header's `typedef uint32_t
   u32;` is fine (it conflicts only where the types differ, and then clang says so). The typedefs are implicit: they are
   in no header. A module's generated C header says `uint32_t`, so a C file that includes it has no `i32`.
 - **C is C2y** in a `.smith` file: `smith cc x.smith` adds `-std=gnu2y` (the standard `smith new` uses), so `auto x = f();`,

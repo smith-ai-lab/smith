@@ -105,7 +105,7 @@ behave() { # name
     fi
 }
 
-for name in arrays names ordinary; do
+for name in arrays names ordinary sized_names; do
     behave "$name"
 done
 

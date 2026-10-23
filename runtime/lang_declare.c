@@ -382,6 +382,10 @@ static SmithLangActKind smith_lang_sized_act(SmithLang *lang, const SmithHost *h
         return SmithLangAct_Slow; // the file's own name, perhaps
     }
     if (smith_lang_sparse_typeish(lang, host)) return SmithLangAct_Slow; // a declarator, perhaps
+    if (lang->brace_depth > 0 && lang->braces[lang->brace_depth - 1] == SmithLangBrace_Enum &&
+        (lang->prev_char == '{' || lang->prev_char == ',')) {
+        return SmithLangAct_Slow; // an enumeration constant, perhaps
+    }
     *spelling = sized->standard;
     return SmithLangAct_Sized;
 }

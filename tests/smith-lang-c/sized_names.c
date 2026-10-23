@@ -1,0 +1,25 @@
+// A file-scope enum constant or function named like a sized type keeps its C meaning in a file with no module line.
+#include <stdio.h>
+
+enum { i64 = 7, u8, u16 };
+enum Tagged { first, i32 = 40, u64, last };
+
+static int u32(int x) {
+    return x + 1;
+}
+static int f64(int x);
+static int f64(int x) {
+    return x * 2;
+}
+
+static int local(int x) {
+    enum { i8 = 3, u8_local };
+    return x + i8 + u8_local;
+}
+
+int main(void) {
+    int sum = (int)i64 + (int)u8 + (int)u16;
+    printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
+    printf("%d %d %d\n", u32(1), f64(4), local(1));
+    return 0;
+}

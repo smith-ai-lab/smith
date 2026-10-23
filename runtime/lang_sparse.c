@@ -122,7 +122,7 @@ static void smith_lang_sparse_sized(SmithLang *lang, const SmithHost *host, cons
         return;
     }
     bool declarator =
-        smith_lang_sparse_typeish(lang, host) && smith_lang_follows_declarator(smith_lang_peek(lang, host, 0, false));
+        smith_lang_declares_name(lang, smith_lang_peek(lang, host, 0, false), smith_lang_sparse_typeish(lang, host));
     if (declarator ||
         host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind != SmithLookup_None) {
         smith_lang_emit_kept(lang, host, token);
