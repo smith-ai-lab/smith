@@ -1,7 +1,7 @@
 src/reflect.smith:12:12: `fields(T)`: `Anonymous` has a member that is an anonymous struct or union; give it a name
-src/reflect.smith:16:13: `fields(T)[7]` is out of range: `T` has 1 field
-src/reflect.smith:20:13: the index of `fields(T)[...]` must be a compile-time constant: `n` is not a constant or a type
-src/reflect.smith:24:14: `fields(T)[i]` is a field: write `fields(T)[i].name` for its name, or `x.[fields(T)[i]]` for the member
-src/reflect.smith:28:24: `fields(T)[i]` is a field: write `fields(T)[i].name` for its name, or `x.[fields(T)[i]]` for the member
+src/reflect.smith:16:13: `fields(T)[7]` is out of range: the type has 1 field
+src/reflect.smith:20:13: the index of `fields(T)[...]` is a compile-time number (a literal, the variable of a `for constexpr`, `countof(...)`, with `+` and `-`): the index of `list[...]` here is a number, the variable of a `for constexpr` or `countof(list)`, with `+` and `-`
+src/reflect.smith:24:14: `fields(T)[i]` is used as `fields(T)[i].name` (its name) or as `x.[fields(T)[i]]` (the member)
+src/reflect.smith:28:24: `fields(T)[i]` is used as `fields(T)[i].name` (its name) or as `x.[fields(T)[i]]` (the member)
 src/reflect.smith:4:12: `fields(T)`: `__INT32_TYPE__` is not a struct
 src/reflect.smith:8:12: `fields(T)`: `Either` is a union; its members share their storage, so it has no list of fields

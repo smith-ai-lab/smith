@@ -532,7 +532,9 @@ void put(Writer *writer, auto piece, usize count) {
         // The first of count elements of a fixed array (a field that is an array, as the pointer it decays to).
         put_char(writer, '[');
         for (usize j = 0; j < count; j++) {
-            if (j > 0) put_string(writer, ", ");
+            if (j > 0) {
+                put_string(writer, ", ");
+            }
             put(writer, *piece, 0);
             piece += 1;
         }
@@ -540,7 +542,9 @@ void put(Writer *writer, auto piece, usize count) {
     } else if constexpr (is_record(typeof(piece))) {
         put_char(writer, '{');
         for constexpr (usize i = 0; i < countof(fields(typeof(piece))); i++) {
-            if constexpr (i > 0) put_string(writer, ", ");
+            if constexpr (i > 0) {
+                put_string(writer, ", ");
+            }
             put_string(writer, fields(typeof(piece))[i].name);
             put_string(writer, " = ");
             if constexpr (is_array(typeof(piece.[fields(typeof(piece))[i]]))) {

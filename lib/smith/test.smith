@@ -857,10 +857,14 @@ void check_part(const char *path, auto a, typeof(a) b, usize count) {
         }
     } else if constexpr (is_enum(typeof(a))) {
         (void)count;
-        if (a != b) fail_field(path, value_i64((i64)a), value_i64((i64)b));
+        if (a != b) {
+            fail_field(path, value_i64((i64)a), value_i64((i64)b));
+        }
     } else {
         (void)count;
-        if (!holds(op_equal, order(value_of(a), value_of(b)))) fail_field(path, value_of(a), value_of(b));
+        if (!holds(op_equal, order(value_of(a), value_of(b)))) {
+            fail_field(path, value_of(a), value_of(b));
+        }
     }
 }
 

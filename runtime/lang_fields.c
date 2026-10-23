@@ -12,6 +12,7 @@
 // Unions, anonymous members and a T that is no struct are errors.
 
 static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
+static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result);
 static int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
                                     SmithLangSpan span);
 
@@ -145,8 +146,10 @@ static int smith_lang_field_expr(SmithLang *lang, const SmithHost *host, const S
     evaluation =
         (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .replay = replay, .location = place};
     int64_t value = 0;
-    if (!smith_lang_cx_eval(&evaluation, at + length + 1, after - 1, &value)) {
-        snprintf(ref->message, sizeof ref->message, "the index of `fields(T)[...]` must be a compile-time constant: %s",
+    if (!smith_lang_cx_simple(&evaluation, at + length + 1, after - 1, &value)) {
+        snprintf(ref->message, sizeof ref->message,
+                 "the index of `fields(T)[...]` is a compile-time number (a literal, the variable of a `for "
+                 "constexpr`, `countof(...)`, with `+` and `-`): %s",
                  evaluation.message);
         return -1;
     }
@@ -201,7 +204,8 @@ static uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
     bool member = open > at + 2 &&
                   (smith_lang_fields_punct(open - 1, limit, ".") || smith_lang_fields_punct(open - 1, limit, "->"));
     if (!member || !smith_lang_fields_field_at(open + 1, limit)) return 0;
-    return smith_lang_cx_skip_group(open + 1 + smith_lang_fields_call_len(open + 1, limit), limit) == after - 2 ? after : 0;
+    return smith_lang_cx_skip_group(open + 1 + smith_lang_fields_call_len(open + 1, limit), limit) == after - 2 ? after
+                                                                                                                : 0;
 }
 
 // The field in `typeof ( ... [ F ] )`, the tokens [first, last): 1 and the field, -1 and the message.
@@ -279,87 +283,130 @@ static void smith_lang_fields_type_pieces(const SmithLangReplay *replay, uint32_
     }
 }
 
+// A use of `fields` being written: where it is, what it takes, what it becomes.
+typedef struct {
+    SmithLang *lang;
+    const SmithHost *host;
+    const SmithLangReplay *replay;
+    uint32_t at;
+    uint32_t limit;
+    uint32_t place;
+    uint32_t consumed;
+    SmithLangFieldPieces *pieces;
+    SmithLangFieldRef ref;
+} SmithLangFieldUse;
+
+// `typeof(... [F])` of a bit-field, whose type C cannot take with typeof: the field's declared type is written. 0 for a
+// member that is not a bit-field (typeof of it as it is), 1 written, -1 an error.
+static int smith_lang_fields_use_typeof(SmithLangFieldUse *use) {
+    uint32_t end = smith_lang_fields_typeof_end(use->at, use->limit);
+    int found = smith_lang_fields_in_typeof(use->lang, use->host, use->replay, use->place, use->at, end, &use->ref);
+    if (found == 1 && !use->ref.info.bit_field) return 0;
+    use->consumed = end - use->at;
+    if (found != 1) return found;
+    char text[smith_lang_name_max];
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Identifier, smith_lang_gt_str(smith_lang_cx_token(use->at)));
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, "(");
+    for (const char *word = use->ref.info.type; *word != 0;) { // the words of the type, `unsigned char`
+        size_t length = strcspn(word, " ");
+        snprintf(text, sizeof text, "%.*s", (int)length, word);
+        smith_lang_fields_piece(use->pieces, SmithTokenKind_Identifier, text);
+        word += length + (word[length] == ' ' ? 1 : 0);
+    }
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, ")");
+    return 1;
+}
+
+// `countof(fields(T))`: the number.
+static int smith_lang_fields_use_countof(SmithLangFieldUse *use) {
+    int64_t count = 0;
+    use->consumed = smith_lang_fields_countof_len(use->at, use->limit);
+    if (!smith_lang_fields_count(use->host, use->replay->generic, use->replay->instance, use->at + 2, use->place,
+                                 &count, use->ref.message, sizeof use->ref.message)) {
+        return -1;
+    }
+    char text[smith_lang_name_max];
+    snprintf(text, sizeof text, "%lld", (long long)count);
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Number, text);
+    return 1;
+}
+
+// `fields(T)[i].name`: the name as a string literal.
+static int smith_lang_fields_use_name(SmithLangFieldUse *use) {
+    int found = smith_lang_field_expr(use->lang, use->host, use->replay, use->at, use->limit, use->place, &use->ref);
+    use->consumed = use->ref.consumed;
+    if (found != 1) return found;
+    uint32_t after = use->at + use->ref.consumed;
+    if (!smith_lang_fields_punct(after, use->limit, ".") ||
+        !smith_lang_cx_word(smith_lang_cx_token(after + 1), "name")) {
+        snprintf(use->ref.message, sizeof use->ref.message,
+                 "`fields(T)[i]` is used as `fields(T)[i].name` (its name) or as `x.[fields(T)[i]]` (the member)");
+        return -1;
+    }
+    use->consumed += 2;
+    char text[smith_lang_name_max];
+    snprintf(text, sizeof text, "\"%s\"", use->ref.info.name);
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_String, text);
+    return 1;
+}
+
+// `.[F]`, `->[F]` or `T.[F]`: the member name after its operator.
+static int smith_lang_fields_use_member(SmithLangFieldUse *use) {
+    bool object = smith_lang_cx_token(use->at)->kind == SmithTokenKind_Identifier;
+    uint32_t field_at = use->at + (object ? 3 : 2);
+    int found = smith_lang_field_expr(use->lang, use->host, use->replay, field_at, use->limit, use->place, &use->ref);
+    use->consumed = (field_at - use->at) + use->ref.consumed + 1;
+    if (found != 1) return found;
+    if (!smith_lang_fields_punct(field_at + use->ref.consumed, use->limit, "]")) {
+        snprintf(use->ref.message, sizeof use->ref.message, "`.[` is closed by `]` right after the field");
+        return -1;
+    }
+    if (object) { // T.[F]: the member of a value that is never evaluated
+        static const char *const opening[] = {"(", "("};
+        for (size_t i = 0; i < 2; i++)
+            smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, opening[i]);
+        smith_lang_fields_type_pieces(use->replay, use->at, use->pieces);
+        static const char *const closing[] = {"*", ")"};
+        for (size_t i = 0; i < 2; i++)
+            smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, closing[i]);
+        smith_lang_fields_piece(use->pieces, SmithTokenKind_Number, "0");
+        smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, ")");
+        smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, "->");
+    } else {
+        smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator,
+                                smith_lang_gt_str(smith_lang_cx_token(use->at)));
+    }
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Identifier, use->ref.info.name);
+    return 1;
+}
+
 // What the use of `fields` at `at` is written as: 0 when the tokens are none (nothing written), 1 with the pieces, -1
 // after an error (reported; the pieces are empty). `consumed` is how many tokens the use takes.
 static int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, uint32_t at,
                                  uint32_t limit, SmithLangFieldPieces *pieces, uint32_t *consumed) {
     pieces->count = 0;
     if (!smith_lang_fields_begins(replay, at, limit)) return 0;
-    uint32_t place = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location);
-    char text[smith_lang_name_max];
-    SmithLangFieldRef ref;
+    SmithLangFieldUse use = {.lang = lang,
+                             .host = host,
+                             .replay = replay,
+                             .at = at,
+                             .limit = limit,
+                             .place =
+                                 smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location),
+                             .consumed = 1,
+                             .pieces = pieces};
     int found = 0;
-    *consumed = 1;
-    if (smith_lang_fields_typeof_end(at, limit) != 0) { // typeof of a bit-field is an error in C: its type is written
-        uint32_t end = smith_lang_fields_typeof_end(at, limit);
-        found = smith_lang_fields_in_typeof(lang, host, replay, place, at, end, &ref);
-        if (found == 1 && !ref.info.bit_field) return 0; // an ordinary member: typeof of it as it is
-        *consumed = end - at;
-        if (found == 1) {
-            smith_lang_fields_piece(pieces, SmithTokenKind_Identifier, smith_lang_gt_str(smith_lang_cx_token(at)));
-            smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, "(");
-            for (const char *word = ref.info.type; *word != 0;) { // the words of the type, `unsigned char`
-                size_t length = strcspn(word, " ");
-                snprintf(text, sizeof text, "%.*s", (int)length, word);
-                smith_lang_fields_piece(pieces, SmithTokenKind_Identifier, text);
-                word += length + (word[length] == ' ' ? 1 : 0);
-            }
-            smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, ")");
-            return 1;
-        }
-    } else if (smith_lang_fields_countof_at(at, limit)) {
-        int64_t count = 0;
-        *consumed = smith_lang_fields_countof_len(at, limit);
-        if (!smith_lang_fields_count(host, replay->generic, replay->instance, at + 2, place, &count, ref.message,
-                                     sizeof ref.message)) {
-            found = -1;
-        } else {
-            snprintf(text, sizeof text, "%lld", (long long)count);
-            smith_lang_fields_piece(pieces, SmithTokenKind_Number, text);
-            return 1;
-        }
-    } else if (smith_lang_fields_field_at(at, limit)) { // fields(T)[i].name
-        found = smith_lang_field_expr(lang, host, replay, at, limit, place, &ref);
-        *consumed = ref.consumed;
-        bool name = found == 1 && smith_lang_fields_punct(at + ref.consumed, limit, ".") &&
-                    smith_lang_cx_word(smith_lang_cx_token(at + ref.consumed + 1), "name");
-        if (found == 1 && !name) {
-            snprintf(ref.message, sizeof ref.message,
-                     "`fields(T)[i]` is used as `fields(T)[i].name` (its name) or as `x.[fields(T)[i]]` (the member)");
-            found = -1;
-        } else if (name) {
-            *consumed += 2;
-            snprintf(text, sizeof text, "\"%s\"", ref.info.name);
-            smith_lang_fields_piece(pieces, SmithTokenKind_String, text);
-            return 1;
-        }
-    } else { // `.[F]`, `->[F]` or `T.[F]`
-        bool object = smith_lang_cx_token(at)->kind == SmithTokenKind_Identifier;
-        uint32_t field_at = at + (object ? 3 : 2);
-        found = smith_lang_field_expr(lang, host, replay, field_at, limit, place, &ref);
-        *consumed = (field_at - at) + ref.consumed + 1;
-        if (found == 1 && !smith_lang_fields_punct(field_at + ref.consumed, limit, "]")) {
-            snprintf(ref.message, sizeof ref.message, "`.[` is closed by `]` right after the field");
-            found = -1;
-        } else if (found == 1) {
-            if (object) { // T.[F]: the member of a value that is never evaluated
-                static const char *const opening[] = {"(", "("};
-                for (size_t i = 0; i < 2; i++)
-                    smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, opening[i]);
-                smith_lang_fields_type_pieces(replay, at, pieces);
-                smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, "*");
-                smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, ")");
-                smith_lang_fields_piece(pieces, SmithTokenKind_Number, "0");
-                smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, ")");
-                smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, "->");
-            } else {
-                smith_lang_fields_piece(pieces, SmithTokenKind_Punctuator, smith_lang_gt_str(smith_lang_cx_token(at)));
-            }
-            smith_lang_fields_piece(pieces, SmithTokenKind_Identifier, ref.info.name);
-            return 1;
-        }
-    }
-    smith_lang_error(lang, host, place, "%s", ref.message);
+    if (smith_lang_fields_typeof_end(at, limit) != 0)
+        found = smith_lang_fields_use_typeof(&use);
+    else if (smith_lang_fields_countof_at(at, limit))
+        found = smith_lang_fields_use_countof(&use);
+    else if (smith_lang_fields_field_at(at, limit))
+        found = smith_lang_fields_use_name(&use);
+    else
+        found = smith_lang_fields_use_member(&use);
+    *consumed = use.consumed;
+    if (found >= 0) return found;
+    smith_lang_error(lang, host, use.place, "%s", use.ref.message);
     pieces->count = 0;
     bool member =
         smith_lang_cx_token(at)->kind == SmithTokenKind_Punctuator && smith_lang_fields_punct(at + 1, limit, "[");

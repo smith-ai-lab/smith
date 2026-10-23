@@ -1580,11 +1580,18 @@ class SmithHook final : public TokenHook, public NameSource {
         TypeResult parsed = sema->ParseTypeFromStringCallback(source, "<smith>", SourceLocation());
         if (trap.hasErrorOccurred() || parsed.isInvalid() || !parsed.get()) {
             // typeof of a bit-field is an error in C, and the field is a value like any other (`fields(T)`): it is
-            // typed as the integer it promotes to.
-            DiagnosticErrorTrap again(sema->getDiagnostics());
+            // typed as the integer it promotes to. Only a member access can be one, and what the retry says is not
+            // shown: if it fails too, the first parse's own message is the compiler's.
+            if (text.find('.') == std::string::npos && text.find("->") == std::string::npos) return false;
+            DiagnosticsEngine &diags = sema->getDiagnostics();
+            bool wasSuppressed = diags.getSuppressAllDiagnostics();
+            diags.setSuppressAllDiagnostics(true);
+            DiagnosticErrorTrap again(diags);
             std::string promoted = "__typeof__((" + text + ") + 0)";
             parsed = sema->ParseTypeFromStringCallback(promoted, "<smith>", SourceLocation());
-            if (again.hasErrorOccurred() || parsed.isInvalid() || !parsed.get()) return false;
+            bool failed = again.hasErrorOccurred() || parsed.isInvalid() || !parsed.get();
+            diags.setSuppressAllDiagnostics(wasSuppressed);
+            if (failed) return false;
         }
         QualType found = sema->GetTypeFromParser(parsed.get());
         const auto *typeOf = found.isNull() ? nullptr : dyn_cast<TypeOfExprType>(found.getTypePtr());

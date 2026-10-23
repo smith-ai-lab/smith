@@ -3302,8 +3302,10 @@ static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32
             smith_lang_param_type_of(replay->generic, replay->instance, (SmithLangSpan){at, at + 1}) < 0) {
             continue;
         }
-        bool starts = at == first || smith_lang_gt_punct(&smith_lang_gt.tokens[at - 1], ",");
-        bool ends = at + 1 == last || smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], ",");
+        const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1]; // the span holds the call's parentheses
+        const SmithLangGenToken *after = &smith_lang_gt.tokens[at + 1];
+        bool starts = smith_lang_gt_punct(before, ",") || smith_lang_gt_punct(before, "(");
+        bool ends = smith_lang_gt_punct(after, ",") || smith_lang_gt_punct(after, ")");
         if (!starts || !ends) return true;
     }
     return false;

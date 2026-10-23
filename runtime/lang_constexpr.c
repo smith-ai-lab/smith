@@ -240,9 +240,9 @@ static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last,
             at += 1;
             continue;
         } else {
-            return smith_lang_cx_fail(
-                cx, "the index of `typeof(list[...])` is a number, the variable of a `for constexpr` or "
-                    "`countof(list)`, with `+` and `-`");
+            return smith_lang_cx_fail(cx,
+                                      "the index of `list[...]` here is a number, the variable of a `for constexpr` or "
+                                      "`countof(list)`, with `+` and `-`");
         }
         total += sign * term;
         want_term = false;
@@ -474,8 +474,8 @@ static int smith_lang_cx_list_operand(SmithLangCx *cx, uint32_t *at, uint32_t la
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
     SmithLangListRef list;
     if (smith_lang_fields_countof_at(*at, last)) { // `countof(fields(T))`: how many fields T has
-        if (!smith_lang_fields_count(cx->host, cx->replay->generic, cx->instance, *at + 2, cx->location,
-                                     &value->number, cx->message, sizeof cx->message)) {
+        if (!smith_lang_fields_count(cx->host, cx->replay->generic, cx->instance, *at + 2, cx->location, &value->number,
+                                     cx->message, sizeof cx->message)) {
             return -1;
         }
         *at += smith_lang_fields_countof_len(*at, last);
