@@ -1,1 +1,0 @@
-src/main.smith:6:17: a list is written `auto name = {a, b, ...};`

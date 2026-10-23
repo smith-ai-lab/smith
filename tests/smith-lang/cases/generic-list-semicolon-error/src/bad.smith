@@ -1,7 +1,0 @@
-module bad;
-
-// A list is written `auto name = {...};`.
-export i32 no_semicolon(auto... rest) {
-    auto args = {1, 2}
-    return 0;
-}

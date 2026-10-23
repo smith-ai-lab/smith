@@ -1,0 +1,7 @@
+module plain;
+
+// Outside a generic's body `auto x = {...}` is C's own error.
+export i32 not_a_list(i32 x) {
+    auto pair = {x, 1};
+    return pair;
+}

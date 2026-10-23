@@ -1,1 +1,0 @@
-src/bad.smith:5:10: a list is written `auto name = {a, b, ...};`

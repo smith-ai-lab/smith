@@ -1,0 +1,4 @@
+src/shapes.smith:11:44: `while` is a C keyword; it cannot name a parameter
+src/shapes.smith:12:16: `long` is a C keyword; it cannot name a parameter
+src/shapes.smith:15:29: `for` is a C keyword; it cannot name a parameter
+src/shapes.smith:8:21: `double` is a C keyword; it cannot name a parameter

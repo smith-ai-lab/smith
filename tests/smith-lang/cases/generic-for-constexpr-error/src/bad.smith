@@ -1,0 +1,27 @@
+module bad;
+
+// A `for constexpr` has a head of three parts.
+export i32 no_step(auto... rest) {
+    for constexpr (usize i = 0; i < 2; i = i, sum) {
+    }
+    return 0;
+}
+
+export i32 no_variable(auto... rest) {
+    for constexpr (; ;) {
+    }
+    return 0;
+}
+
+// A variable named like one of the arguments is that argument.
+export i32 clash(auto... rest) {
+    i32 rest_0 = 1;
+    return rest_0;
+}
+
+// Braces keep C's meaning outside `auto name = {...}`: a list is not assigned to a variable that is not one.
+export i32 generic_literal(auto x) {
+    i32 y = 0;
+    y = {x, 1};
+    return y;
+}

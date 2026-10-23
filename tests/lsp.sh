@@ -192,13 +192,13 @@ export usize count_args(auto x, auto... rest) {
     return countof(rest);
 }
 
-// A list made in a `for constexpr`: the variables are written out, and the editor stays at the lines of this source.
+// The arguments in a `for constexpr`: the variables are written out, and the editor stays at the lines of this source.
 export i32 gathered(auto... rest) {
-    auto args = {100};
+    i32 total = 100;
     for constexpr (usize i = 0; i < countof(rest); i++) {
-        args = {args..., rest[i]};
+        total += (i32)rest[i];
     }
-    return (i32)args[countof(args) - 1];
+    return total;
 }
 EOF
 cat >genuse.smith <<'EOF'
@@ -353,13 +353,13 @@ expect_line "generic argument list: go-to-definition is the generic's name" "$lo
     "definition genuse.smith:21:20 -> pick.smith:14:14"
 expect "generic argument list: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
 
-# A list and `for constexpr` in the generic: the head as written, the instance's types, and no diagnostic in the unrolled body.
+# The argument list and `for constexpr` in the generic: the head as written, the instance's types, and no diagnostic in the unrolled body.
 log=$(client open genuse.smith pick.smith -- hover genuse.smith 25 20 -- definition genuse.smith 25 20 pick.smith:20:12)
-expect_line "generic list and for constexpr: hover shows the head as written and the instance" "$log" \
+expect_line "generic argument list and for constexpr: hover shows the head as written and the instance" "$log" \
     'hover genuse.smith:25:20: generic function pick::gathered |  | i32 pick::gathered(auto... rest) |  | instance pick::gathered(int, int)'
-expect_line "generic list and for constexpr: go-to-definition is the generic's name" "$log" \
+expect_line "generic argument list and for constexpr: go-to-definition is the generic's name" "$log" \
     "definition genuse.smith:25:20 -> pick.smith:20:12"
-expect "generic list and for constexpr: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
+expect "generic argument list and for constexpr: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag ')"
 
 # `if constexpr` outside a generic: the branch taken is ordinary code (hover works in it), the branch not taken is never
 # given to the parser, so an undeclared name there is no diagnostic and hover there is empty (as in a generic's instance

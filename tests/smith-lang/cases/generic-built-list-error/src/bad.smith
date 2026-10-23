@@ -1,0 +1,18 @@
+module bad;
+
+// Built lists are gone: a struct or a tuple type written out holds the values.
+export i32 built(auto... rest) {
+    auto args = {1, 2};
+    return args[0];
+}
+
+export i32 grown(auto x, auto... rest) {
+    auto args = {x};
+    args = {args..., 3};
+    return 0;
+}
+
+export i32 no_semicolon(auto... rest) {
+    auto args = {1, 2}
+    return 0;
+}

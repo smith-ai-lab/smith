@@ -1,0 +1,1 @@
+src/wrong.smith:1:8: module `right::name` must be in a file whose path ends in `right/name.smith`; this one is `src/wrong.smith`

@@ -33,11 +33,8 @@ extern __INT32_TYPE__ smith_tools_table_sum__(void) __asm__("_smith::tools::tabl
 }
 extern __INT32_TYPE__ smith_tools_nested__int_int([[maybe_unused]] int rest_0, [[maybe_unused]] int rest_1) __asm__("_smith::tools::nested(int, int)");
 [[gnu::weak]][[gnu::visibility("hidden")]] __INT32_TYPE__ smith_tools_nested__int_int([[maybe_unused]] int rest_0, [[maybe_unused]] int rest_1) {
-    [[maybe_unused]] auto pair_0_0 = rest_0;
-    [[maybe_unused]] auto pair_0_1 = rest_1;
-    [[maybe_unused]] auto pair_0_2 = 5;
     __INT32_TYPE__ table[] = {
-        pair_0_0, pair_0_1, pair_0_2, 1 }
+        rest_0, rest_1, 5, 1 }
     ;
-    return table[0] + table[sizeof table / sizeof table[0] - 1] + (__INT32_TYPE__) 3;
+    return table[0] + table[sizeof table / sizeof table[0] - 1] + (__INT32_TYPE__) 2 + 1;
 }

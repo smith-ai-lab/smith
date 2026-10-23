@@ -1,0 +1,2 @@
+src/main.smith:4:17: in `if constexpr`: `value` is not a constant or a type
+src/main.smith:4:37: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them

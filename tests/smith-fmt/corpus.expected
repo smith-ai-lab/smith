@@ -1774,6 +1774,45 @@ export typeof(a) bigger_twice(auto a, typeof(a) b) {
         r += pick::larger(a, b);
     return r;
 }
+==> generic-built-list-error/src/bad.smith <==
+module bad;
+
+// Built lists are gone: a struct or a tuple type written out holds the values.
+export i32 built(auto... rest) {
+    auto args = {1, 2};
+    return args[0];
+}
+
+export i32 grown(auto x, auto... rest) {
+    auto args = {x};
+    args = {args..., 3};
+    return 0;
+}
+
+export i32 no_semicolon(auto... rest) {
+    auto args = {1, 2} return 0;
+}
+==> generic-built-list-error/src/main.smith <==
+module main;
+
+import bad;
+import plain;
+
+int main(void) {
+    i32 a = bad::built(1);
+    i32 b = bad::grown(1);
+    i32 c = bad::no_semicolon();
+    i32 p = plain::not_a_list(1);
+    return a + b + c + p;
+}
+==> generic-built-list-error/src/plain.smith <==
+module plain;
+
+// Outside a generic's body `auto x = {...}` is C's own error.
+export i32 not_a_list(i32 x) {
+    auto pair = {x, 1};
+    return pair;
+}
 ==> generic-call-too-deep/src/main.smith <==
 import num;
 
@@ -2043,6 +2082,46 @@ export usize field_count(auto x) {
 
 export const char *first_name(auto x) {
     return fields(typeof(x))[0].name;
+}
+==> generic-for-constexpr-error/src/bad.smith <==
+module bad;
+
+// A `for constexpr` has a head of three parts.
+export i32 no_step(auto... rest) {
+    for constexpr (usize i = 0; i < 2; i = i, sum) {
+    }
+    return 0;
+}
+
+export i32 no_variable(auto... rest) {
+    for constexpr (; ;) {
+    }
+    return 0;
+}
+
+// A variable named like one of the arguments is that argument.
+export i32 clash(auto... rest) {
+    i32 rest_0 = 1;
+    return rest_0;
+}
+
+// Braces keep C's meaning outside `auto name = {...}`: a list is not assigned to a variable that is not one.
+export i32 generic_literal(auto x) {
+    i32 y = 0;
+    y = {x, 1};
+    return y;
+}
+==> generic-for-constexpr-error/src/main.smith <==
+module main;
+
+import bad;
+
+int main(void) {
+    i32 a = bad::no_step();
+    i32 b = bad::no_variable();
+    i32 c = bad::clash(1);
+    i32 f = bad::generic_literal(1);
+    return a + b + c + f;
 }
 ==> generic-function-error/src/apply.smith <==
 module apply;
@@ -2354,254 +2433,6 @@ int main(void) {
     printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
     return 0;
 }
-==> generic-list-error/src/bad.smith <==
-module bad;
-
-// The bound of a `for constexpr` is a compile-time constant: a parameter is not one.
-export i32 run_time_bound(auto x, auto... rest) {
-    i32 sum = 0;
-    for constexpr (i32 i = 0; i < x; i++) {
-        sum += 1;
-    }
-    return sum;
-}
-
-// A list is not a run-time value whose shape could change: it is expanded, indexed or counted.
-export i32 bare(auto... rest) {
-    auto args = {1, 2};
-    return (i32)args;
-}
-
-// The shape of a list changes only where the list is declared, not in a branch run at run time, nor in a block.
-export i32 shape_changes(auto x, auto... rest) {
-    auto args = {1, 2};
-    if (x > 0) {
-        args = {args..., 3};
-    }
-    return (i32)countof(args);
-}
-
-export i32 shape_changes_in_block(auto... rest) {
-    auto args = {1, 2};
-    {
-        args = {args..., 3};
-    }
-    return (i32)countof(args);
-}
-
-export i32 shape_changes_in_statement(auto x, auto... rest) {
-    auto args = {1, 2};
-    if (x > 0) args = {args..., 3};
-    return (i32)countof(args);
-}
-
-// A list is a list of expressions, with an index in range.
-export i32 out_of_range(auto... rest) {
-    auto args = {1, 2};
-    return args[2];
-}
-
-export i32 runtime_index(auto x, auto... rest) {
-    auto args = {1, 2};
-    return args[x];
-}
-
-// A loop that never ends, and a step that is none.
-export i32 forever(auto... rest) {
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < 10; i += 0) {
-        sum += 1;
-    }
-    return sum;
-}
-==> generic-list-error/src/main.smith <==
-module main;
-
-import bad;
-import plain;
-
-int main(void) {
-    i32 a = bad::run_time_bound(3);
-    i32 b = bad::bare(1);
-    i32 c = bad::shape_changes(1);
-    i32 d = bad::shape_changes_in_block();
-    i32 e = bad::shape_changes_in_statement(1);
-    i32 f = bad::out_of_range();
-    i32 g = bad::runtime_index(1);
-    i32 h = bad::forever();
-    i32 p = plain::not_generic(1) + plain::not_a_list(1);
-    return a + b + c + d + e + f + g + h + p;
-}
-==> generic-list-error/src/plain.smith <==
-module plain;
-
-// `for constexpr` runs once for each instance of a generic: a plain function has none.
-export i32 not_generic(i32 x) {
-    for constexpr (usize i = 0; i < 2; i++) {
-        x += 1;
-    }
-    return x;
-}
-
-// A list literal is `auto name = {...}` in a generic's body and nowhere else.
-export i32 not_a_list(i32 x) {
-    auto pair = {x, 1};
-    return pair;
-}
-==> generic-list-semicolon-error/src/bad.smith <==
-module bad;
-
-// A list is written `auto name = {...};`.
-export i32 no_semicolon(auto... rest) {
-    auto args = {1, 2} return 0;
-}
-==> generic-list-semicolon-error/src/main.smith <==
-module main;
-
-import bad;
-
-int main(void) {
-    return bad::no_semicolon();
-}
-==> generic-list-syntax-error/src/bad.smith <==
-module bad;
-
-// A `for constexpr` has a head of three parts.
-export i32 no_step(auto... rest) {
-    for constexpr (usize i = 0; i < 2; i = i, sum) {
-    }
-    return 0;
-}
-
-export i32 no_variable(auto... rest) {
-    for constexpr (; ;) {
-    }
-    return 0;
-}
-
-// A variable named like an element of a list is that element.
-export i32 clash(auto... rest) {
-    i32 rest_0 = 1;
-    auto args = {1};
-    i32 args_1_0 = 2;
-    return rest_0 + args_1_0;
-}
-
-export i32 empty_element(auto... rest) {
-    auto args = {1, , 2};
-    return 0;
-}
-
-// Braces keep C's meaning outside `auto name = {...}`: a list is not assigned to a variable that is not one.
-export i32 generic_literal(auto x) {
-    i32 y = 0;
-    y = {x, 1};
-    return y;
-}
-==> generic-list-syntax-error/src/main.smith <==
-module main;
-
-import bad;
-
-int main(void) {
-    i32 a = bad::no_step();
-    i32 b = bad::no_variable();
-    i32 c = bad::clash(1);
-    i32 e = bad::empty_element();
-    i32 f = bad::generic_literal(1);
-    return a + b + c + e + f;
-}
-==> generic-list/src/lists.smith <==
-module lists;
-
-import <stdio.h>;
-
-// `for constexpr` is C's own `for`, run at compile time and written out turn by turn: `i` is a number in each turn, so
-// `rest[i]` is the `i`th argument with its own type. A body that is one statement is the same.
-export i32 total(auto... rest) {
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < countof(rest); i++)
-        sum += (i32)rest[i];
-    return sum;
-}
-
-// `auto name = {...}` is a list: its shape (how many, of which types) is known at compile time, and its elements are
-// ordinary run-time values. `weights[i]` is the element, with its own type.
-export i32 weighted(auto... rest) {
-    auto weights = {1, 2, 3, 4};
-    static_assert(countof(weights) == 4);
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < countof(rest); i++) {
-        sum += (i32)rest[i] * weights[i];
-    }
-    return sum;
-}
-
-// Assigning a list in compile-time code makes a new binding (`args_1_...`, `args_2_...`): no variable changes type. The
-// loop's body has no braces of its own where it assigns a list declared outside it, so the new variables outlive a
-// turn. `args...` expands the elements into the arguments of a call.
-export i32 interleaved(auto... rest) {
-    auto args = {100};
-    for constexpr (usize i = 0; i < countof(rest); i++) {
-        args = {args..., (i32)i, rest[i]};
-    }
-    static_assert(countof(args) == 1 + 2 * countof(rest));
-    if constexpr (countof(rest) == 2) {
-        char text[64];
-        c::snprintf(text, sizeof text, "%d %d %d %d %d", args...);
-        c::printf("[%s]\n", text);
-    }
-    return args[countof(args) - 1];
-}
-
-// Lists nest: `args...` is an element expansion in another list, and a list may be empty. A loop counts down, steps by
-// two, or runs no turn at all.
-export i32 shapes(auto... rest) {
-    auto none = {};
-    auto both = {none..., rest..., 7};
-    i32 sum = 0;
-    for constexpr (usize i = countof(both); i > 0; i--)
-        sum += (i32)both[i - 1] * (i32)i;
-    for constexpr (usize i = 0; i < countof(both); i += 2)
-        sum += 1000;
-    for constexpr (usize i = 0; i < 0; i++)
-        sum += 1;
-    return sum + (i32)countof(none);
-}
-
-// A list of a different type for each element, a loop in a loop, and `if constexpr` on the loop's variable.
-export i32 mixed(auto... rest) {
-    auto things = {rest..., 2.5, 'x'};
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < countof(things); i++) {
-        for constexpr (usize j = 0; j < 2; j++) {
-            if constexpr (i == 0 && j == 1) {
-                sum += 100;
-            }
-            sum += (i32)things[i];
-        }
-    }
-    return sum;
-}
-==> generic-list/src/main.smith <==
-module main;
-
-import lists;
-import <stdio.h>;
-
-int main(void) {
-    i32 a = lists::total(1, 2, 3);
-    i32 b = lists::total();
-    i32 c = lists::total((u8)200, (i64)5, 2.5);
-    i32 d = lists::weighted(10, 20);
-    i32 e = lists::interleaved(5, 6);
-    i32 f = lists::interleaved(5);
-    i32 g = lists::shapes(1, 2);
-    i32 h = lists::shapes();
-    i32 k = lists::mixed(1, (u16)2);
-    c::printf("%d %d %d | %d | %d %d | %d %d | %d\n", a, b, c, d, e, f, g, h, k);
-    return 0;
-}
 ==> generic-nested-argument/src/apply.smith <==
 module apply;
 
@@ -2744,11 +2575,10 @@ export i32 table_sum(auto... rest) {
     return sum;
 }
 
-// A list nests in a list, in a call's arguments and an initializer both.
+// `rest...` in an initializer with other elements, and `countof(rest)` beside it.
 export i32 nested(auto... rest) {
-    auto pair = {rest..., 5};
-    i32 table[] = {pair..., 1};
-    return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(pair);
+    i32 table[] = {rest..., 5, 1};
+    return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(rest) + 1;
 }
 ==> generic-pack-error/src/args.smith <==
 module args;
@@ -3078,6 +2908,147 @@ export typeof(x) spread(auto x, i32 boosted) {
     Range r = widen((Range){0, 1}, nullptr);
     typeof(x) result = (typeof(x))((Mode)boosted == Boosted ? r.high : r.low);
     return result + (typeof(x))table[slots - 1] + (typeof(x))clamp_to_base(100);
+}
+==> generic-rest-error/src/bad.smith <==
+module bad;
+
+// The bound of a `for constexpr` is a compile-time constant: a parameter is not one.
+export i32 run_time_bound(auto x, auto... rest) {
+    i32 sum = 0;
+    for constexpr (i32 i = 0; i < x; i++) {
+        sum += 1;
+    }
+    return sum;
+}
+
+// `rest` is the tuple of the arguments: it is spread, indexed or counted, not passed whole.
+export i32 bare(auto... rest) {
+    return (i32)rest;
+}
+
+// The index is in range and a constant.
+export i32 out_of_range(auto... rest) {
+    return rest[2];
+}
+
+export i32 runtime_index(auto x, auto... rest) {
+    return rest[x];
+}
+
+// A loop that never ends, and a step that is none.
+export i32 forever(auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < 10; i += 0) {
+        sum += 1;
+    }
+    return sum;
+}
+==> generic-rest-error/src/main.smith <==
+module main;
+
+import bad;
+import plain;
+
+int main(void) {
+    i32 a = bad::run_time_bound(3);
+    i32 b = bad::bare(1);
+    i32 c = bad::out_of_range(1, 2);
+    i32 d = bad::runtime_index(1, 2);
+    i32 e = bad::forever();
+    i32 p = plain::not_generic(1);
+    return a + b + c + d + e + p;
+}
+==> generic-rest-error/src/plain.smith <==
+module plain;
+
+// `for constexpr` runs once for each instance of a generic: a plain function has none.
+export i32 not_generic(i32 x) {
+    for constexpr (usize i = 0; i < 2; i++) {
+        x += 1;
+    }
+    return x;
+}
+==> generic-rest/src/arguments.smith <==
+module arguments;
+
+import <stdio.h>;
+
+// `auto... rest` is the tuple of the arguments that remain, each with its own type. `for constexpr` is C's own `for`,
+// run at compile time and written out turn by turn: `i` is a number in each turn, so `rest[i]` is the `i`th argument.
+// A body that is one statement is the same.
+export i32 total(auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < countof(rest); i++)
+        sum += (i32)rest[i];
+    return sum;
+}
+
+// `rest[i]` mixes with ordinary run-time values; the weights are an ordinary array.
+export i32 weighted(auto... rest) {
+    i32 weights[] = {1, 2, 3, 4};
+    static_assert(sizeof weights / sizeof weights[0] == 4);
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        sum += (i32)rest[i] * weights[i];
+    }
+    return sum;
+}
+
+// `rest...` spreads the arguments into a call's arguments or an initializer, and `countof(rest)` is a constant.
+export i32 spread(auto... rest) {
+    static_assert(countof(rest) <= 4);
+    i32 table[] = {100, rest..., 7};
+    if constexpr (countof(rest) == 2) {
+        char text[64];
+        c::snprintf(text, sizeof text, "%d %d", rest...);
+        c::printf("[%s]\n", text);
+    }
+    return table[countof(rest) + 1] + (i32)(sizeof table / sizeof table[0]);
+}
+
+// A loop counts down, steps by two, or runs no turn at all.
+export i32 shapes(auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i = countof(rest); i > 0; i--)
+        sum += (i32)rest[i - 1] * (i32)i;
+    for constexpr (usize i = 0; i < countof(rest); i += 2)
+        sum += 1000;
+    for constexpr (usize i = 0; i < 0; i++)
+        sum += 1;
+    return sum;
+}
+
+// An argument of a different type for each element, a loop in a loop, and `if constexpr` on the loop's variable.
+export i32 mixed(auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        for constexpr (usize j = 0; j < 2; j++) {
+            if constexpr (i == 0 && j == 1) {
+                sum += 100;
+            }
+            sum += (i32)rest[i];
+        }
+    }
+    return sum;
+}
+==> generic-rest/src/main.smith <==
+module main;
+
+import arguments;
+import <stdio.h>;
+
+int main(void) {
+    i32 a = arguments::total(1, 2, 3);
+    i32 b = arguments::total();
+    i32 c = arguments::total((u8)200, (i64)5, 2.5);
+    i32 d = arguments::weighted(10, 20);
+    i32 e = arguments::spread(5, 6);
+    i32 f = arguments::spread(5);
+    i32 g = arguments::shapes(1, 2);
+    i32 h = arguments::shapes();
+    i32 k = arguments::mixed(1, (u16)2, 2.5);
+    c::printf("%d %d %d | %d | %d %d | %d %d | %d\n", a, b, c, d, e, f, g, h, k);
+    return 0;
 }
 ==> generic-sized-result-sizeof/src/main.smith <==
 import size;

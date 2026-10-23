@@ -1,0 +1,2 @@
+src/bad.smith:5:29: `target::f32_mantissa_bits` cannot be used in an exported declaration: its header is written without the compiler, for every target
+src/bad.smith:6:20: `target::nothing` is not a fact of the target; they are arch (aarch64, x86_64), os (macos, linux), address_sanitizer, undefined_sanitizer, thread_sanitizer, assertions, float_radix, f32_mantissa_bits, f64_mantissa_bits, float_eval_method and static_analyzer

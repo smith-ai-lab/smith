@@ -1,0 +1,9 @@
+module plain;
+
+// `for constexpr` runs once for each instance of a generic: a plain function has none.
+export i32 not_generic(i32 x) {
+    for constexpr (usize i = 0; i < 2; i++) {
+        x += 1;
+    }
+    return x;
+}

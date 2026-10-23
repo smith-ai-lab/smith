@@ -1,0 +1,11 @@
+src/main.smith:15:38: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:15:62: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:15:88: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:16:18: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:16:44: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:17:32: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:17:60: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:17:87: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:18:32: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:18:49: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:18:67: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them

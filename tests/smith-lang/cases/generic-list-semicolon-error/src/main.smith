@@ -1,7 +1,0 @@
-module main;
-
-import bad;
-
-int main(void) {
-    return bad::no_semicolon();
-}

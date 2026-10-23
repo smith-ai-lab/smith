@@ -1,9 +1,0 @@
-src/bad.smith:11:5: `for constexpr` is written `for constexpr (usize i = 0; condition; step) body`: it declares its variable
-src/bad.smith:18:9: `rest_0` is the name of an element of the list `rest`: give the variable another name
-src/bad.smith:18:9: redefinition of 'rest_0'
-src/bad.smith:20:9: `args_1_0` is the name of an element of the list `args`: give the variable another name
-src/bad.smith:21:12: `rest_0` is the name of an element of the list `rest`: give the variable another name
-src/bad.smith:21:21: `args_1_0` is the name of an element of the list `args`: give the variable another name
-src/bad.smith:25:10: an element of a list is an expression
-src/bad.smith:32:9: expected expression
-src/bad.smith:5:5: in `for constexpr`: the step must be a compile-time constant: `,` is not an operator of constant expressions

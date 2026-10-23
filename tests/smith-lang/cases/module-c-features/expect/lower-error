@@ -1,0 +1,2 @@
+src/main.smith:4:26: a macro that uses `::` or a sized type cannot be kept as written; make it a function
+src/main.smith:5:18: a macro that uses `::` or a sized type cannot be kept as written; make it a function

@@ -1,5 +1,5 @@
 src/args.smith:12:17: `rest[2]` is out of range: `rest` has 2 arguments
-src/args.smith:26:17: `rest` is a list of arguments: write `rest...` for all of them, `rest[i]` for one, or `countof(rest)`
+src/args.smith:26:17: `rest` is the tuple of the arguments, and is not passed whole: spread it into a call with `rest...`, or write `rest[i]` for one argument or `countof(rest)` for how many
 src/args.smith:7:17: the index of `rest[...]` must be a compile-time constant: `i` is not a constant or a type
 src/last.smith:4:8: `auto...` is the last parameter: the arguments that remain have no other parameter after them
 src/main.smith:10:21: `needs_one` takes at least 1 argument, and the call has 0

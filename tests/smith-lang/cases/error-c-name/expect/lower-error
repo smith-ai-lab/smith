@@ -1,0 +1,11 @@
+src/smith/names.smith:10:12: `plain` gets the C name that [[smith::c_name]] chose for `third`; give one of them another name
+src/smith/names.smith:14:1: [[smith::c_name]] on `fourth` chooses the C name the module's prefix gives `hidden`; give one of them another name
+src/smith/names.smith:18:5: `later` gets the C name that [[smith::c_name]] chose for `fifth`; give one of them another name
+src/smith/names.smith:21:1: [[smith::c_name]] goes before `export`: it names an export's C API
+src/smith/names.smith:24:17: [[smith::c_name]] needs a C identifier that is no keyword, as in [[smith::c_name("SmithArena")]]
+src/smith/names.smith:25:17: [[smith::c_name]] needs a C identifier that is no keyword, as in [[smith::c_name("SmithArena")]]
+src/smith/names.smith:26:1: write [[smith::c_name("Name")]]: the C name is one string
+src/smith/names.smith:27:1: write [[smith::c_name("Name")]]: the C name is one string
+src/smith/names.smith:30:36: an export has one C name
+src/smith/names.smith:33:1: [[smith::c_name]] names a typedef, a tag, a function or a variable; this export declares none
+src/smith/names.smith:6:1: [[smith::c_name]] on `second` chooses the C name of `first`; give one of them another name

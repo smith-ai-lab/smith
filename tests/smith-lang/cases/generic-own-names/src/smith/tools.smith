@@ -23,9 +23,8 @@ export i32 table_sum(auto... rest) {
     return sum;
 }
 
-// A list nests in a list, in a call's arguments and an initializer both.
+// `rest...` in an initializer with other elements, and `countof(rest)` beside it.
 export i32 nested(auto... rest) {
-    auto pair = {rest..., 5};
-    i32 table[] = {pair..., 1};
-    return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(pair);
+    i32 table[] = {rest..., 5, 1};
+    return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(rest) + 1;
 }

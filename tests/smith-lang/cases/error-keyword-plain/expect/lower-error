@@ -1,0 +1,8 @@
+src/main.smith:10:12: `sizeof` is a C keyword; it cannot name a function
+src/main.smith:11:30: `while` is a C keyword; it cannot name a variable
+src/main.smith:1:13: `int` is a C keyword; it cannot name a type
+src/main.smith:3:9: `float` is a C keyword; it cannot name a field
+src/main.smith:4:9: `char` is a C keyword; it cannot name a field
+src/main.smith:6:15: `double` is a C keyword; it cannot name a parameter
+src/main.smith:6:26: `long` is a C keyword; it cannot name a parameter
+src/main.smith:7:9: `return` is a C keyword; it cannot name a variable

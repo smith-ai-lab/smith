@@ -1,0 +1,7 @@
+src/bad.smith:14:17: `rest` is the tuple of the arguments, and is not passed whole: spread it into a call with `rest...`, or write `rest[i]` for one argument or `countof(rest)` for how many
+src/bad.smith:19:12: `rest[2]` is out of range: `rest` has 2 arguments
+src/bad.smith:23:12: the index of `rest[...]` must be a compile-time constant: `x` is not a constant or a type
+src/bad.smith:29:5: `for constexpr` ran 1024 turns without ending: is its condition ever false?
+src/bad.smith:6:5: in `for constexpr`: the condition must be a compile-time constant: `x` is not a constant or a type
+src/main.smith:4:8: module `plain` cannot be imported: src/plain.smith:5:5: `for constexpr` is the loop of a generic function's body, run once for each instance; a plain function's loop is `for`
+src/plain.smith:5:5: `for constexpr` is the loop of a generic function's body, run once for each instance; a plain function's loop is `for`

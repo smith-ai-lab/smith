@@ -1,0 +1,1 @@
+src/syntax.smith:1:8: a module name is names separated by `::`, such as game::replay
