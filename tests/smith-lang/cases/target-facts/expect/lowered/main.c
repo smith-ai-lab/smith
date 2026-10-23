@@ -80,7 +80,7 @@ static_assert(SMITH_TARGET_FLOAT_RADIX == 2);
 static_assert(SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53, "f32 and f64 are IEEE");
 static_assert(1 != 2 && 1 != 2);
 static_assert(SMITH_TARGET_ARCH == 1 || SMITH_TARGET_ARCH == 2 || SMITH_TARGET_ARCH == 0);
-__UINT8_TYPE__ mantissa[target::f32_mantissa_bits];
+__UINT8_TYPE__ mantissa[SMITH_TARGET_F32_MANTISSA_BITS];
 constexpr __INT32_TYPE__ arch_copy = SMITH_TARGET_ARCH;
 constexpr bool sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
 static_assert(_Countof(mantissa) == 24);
