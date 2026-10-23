@@ -405,7 +405,7 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   `~/.cache/smith/...`) and prints the `.hash = "sha256:…",` line for build.c's `smith_package`. A package is a URL and
   a hash, fetched with smith's own HTTPS client and extracted by smith itself (`.tar`, `.tar.gz`, `.tar.xz`, a `.gz` of one file; no other
   process); the hash is the lock (no registry, no lock file). `-DOFFLINE` forbids fetching. macOS only for now.
-- **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE, LZMA2 and tar, no
+- **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE is the library `smith::inflate` (`lib/smith/inflate.smith`, skill smith-inflate; also learner's), gzip's members loop is `gzip.c`, then LZMA2 and tar, no
   vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
   symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar.sh`
   (hostile and damaged archives, and the readers under ASan and UBSan). See [docs/build-c.md](docs/build-c.md).

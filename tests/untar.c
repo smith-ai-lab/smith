@@ -1,4 +1,4 @@
-// Tests of smith's archive readers (runtime/gzip.c, runtime/xz.c, runtime/untar.c), run by tests/untar.sh under
+// Tests of smith's archive readers (runtime/gzip.c on lib/smith/inflate.smith, runtime/xz.c, runtime/untar.c), run by tests/untar.sh under
 // AddressSanitizer and UndefinedBehaviorSanitizer. It includes runtime/package.c to reach smith_package_extract. Modes:
 //   vectors                                known answers: small gzip (fixed Huffman blocks) and xz streams, and
 //                                          every shorter prefix of each refused

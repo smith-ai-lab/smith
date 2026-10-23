@@ -868,6 +868,13 @@ static constexpr unsigned char smith_contract_source[] = {
 #embed "lib/smith/contract.smith"
 };
 
+static constexpr unsigned char smith_inflate_header[] = {
+#embed "include/smith/inflate.h"
+};
+static constexpr unsigned char smith_inflate_source[] = {
+#embed "lib/smith/inflate.smith"
+};
+
 static constexpr unsigned char smith_io_header[] = {
 #embed "include/smith/io.h"
 };
@@ -931,6 +938,9 @@ static constexpr unsigned char smith_embedded_random_source[] = {
 static constexpr unsigned char smith_embedded_io_source[] = {
 #embed "bootstrap/lib/smith/io.c"
 };
+static constexpr unsigned char smith_embedded_inflate_source[] = {
+#embed "bootstrap/lib/smith/inflate.c"
+};
 
 static constexpr unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
@@ -973,6 +983,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(contract, true),
+    SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(math, true),
@@ -1464,6 +1475,8 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
                            sizeof smith_embedded_random_source);
     smith_write_if_changed(".smith/bootstrap/lib/smith/io.c", smith_embedded_io_source,
                            sizeof smith_embedded_io_source);
+    smith_write_if_changed(".smith/bootstrap/lib/smith/inflate.c", smith_embedded_inflate_source,
+                           sizeof smith_embedded_inflate_source);
     if (file == SmithBuildFile_Conventions)
         smith_write_if_changed(smith_conventions_path, (const unsigned char *)smith_conventions_source,
                                sizeof smith_conventions_source - 1);

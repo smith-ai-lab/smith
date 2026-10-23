@@ -1,5 +1,6 @@
 // xz (the .xz container) and LZMA2 in C: smith's own decoder, so `smith_package` extracts a .tar.xz with no other
-// process. Included by runtime/package.c after runtime/gzip.c, whose sink type and CRCs it uses, and after its SHA-256.
+// process. Included by runtime/package.c after runtime/gzip.c, whose sink type it uses, and after its SHA-256; its
+// CRC-32 is smith::inflate's.
 //
 // What it reads: streams (one or more, with the zero padding xz allows between them) of blocks whose one filter is
 // LZMA2, the filter every .tar.xz uses, with the check none, CRC-32, CRC-64 or SHA-256. Every field the format lets a
@@ -13,6 +14,49 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+
+// CRC-64 (xz, ECMA-182, reflected) by slicing-by-8. The tables are made on first use.
+static uint64_t smith_crc64_tables[8][256];
+static bool smith_crc64_ready;
+
+static void smith_crc64_init(void) {
+    if (smith_crc64_ready) return;
+    for (uint64_t i = 0; i < 256; i++) {
+        uint64_t wide = i;
+        for (int bit = 0; bit < 8; bit++)
+            wide = (wide >> 1) ^ (UINT64_C(0xC96C5795D7870F42) & (UINT64_C(0) - (wide & 1U)));
+        smith_crc64_tables[0][i] = wide;
+    }
+    for (size_t table = 1; table < 8; table++) {
+        for (size_t i = 0; i < 256; i++) {
+            uint64_t wide = smith_crc64_tables[table - 1][i];
+            smith_crc64_tables[table][i] = (wide >> 8) ^ smith_crc64_tables[0][wide & 255U];
+        }
+    }
+    smith_crc64_ready = true;
+}
+
+static uint32_t smith_load32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t smith_load64(const uint8_t *p) {
+    return (uint64_t)smith_load32(p) | ((uint64_t)smith_load32(p + 4) << 32);
+}
+
+// The CRC-64 of data, continuing from `crc` (0 to start).
+static uint64_t smith_crc64(uint64_t crc, const uint8_t *data, size_t size) {
+    const uint64_t (*t)[256] = smith_crc64_tables;
+    crc = ~crc;
+    for (; size >= 8; data += 8, size -= 8) {
+        uint64_t word = crc ^ smith_load64(data);
+        crc = t[7][word & 255U] ^ t[6][(word >> 8) & 255U] ^ t[5][(word >> 16) & 255U] ^ t[4][(word >> 24) & 255U] ^
+              t[3][(word >> 32) & 255U] ^ t[2][(word >> 40) & 255U] ^ t[1][(word >> 48) & 255U] ^ t[0][word >> 56];
+    }
+    for (; size > 0; data++, size--)
+        crc = t[0][(crc ^ *data) & 255U] ^ (crc >> 8);
+    return ~crc;
+}
 
 constexpr uint64_t smith_xz_dictionary_max = UINT64_C(1) << 30;
 constexpr size_t smith_xz_blocks_max = 65536; // blocks in one stream; xz -T makes tens for the largest packages
@@ -107,7 +151,7 @@ static bool smith_xz_flush(SmithXz *xz) {
     if (count == 0) return true;
     const uint8_t *data = dictionary->buffer + dictionary->flushed;
     if (xz->check == 1)
-        xz->crc32 = smith_crc32(xz->crc32, data, count);
+        xz->crc32 = smith_inflate_crc32(xz->crc32, data, count);
     else if (xz->check == 4)
         xz->crc64 = smith_crc64(xz->crc64, data, count);
     else if (xz->check == 10)
@@ -477,7 +521,7 @@ static bool smith_xz_dictionary(SmithXz *xz, uint64_t size) {
 static size_t smith_xz_block_header(SmithXz *xz, const uint8_t *in, size_t size, uint64_t declared[2]) {
     size_t length = ((size_t)in[0] + 1U) * 4U;
     if (size < length) return smith_xz_fail_zero(xz, "the data ends inside a block header");
-    if (smith_crc32(0, in, length - 4) != smith_load32(in + length - 4)) {
+    if (smith_inflate_crc32(0, in, length - 4) != smith_load32(in + length - 4)) {
         return smith_xz_fail_zero(xz, "a block header's CRC-32 does not match");
     }
     unsigned flags = in[1];
@@ -583,7 +627,7 @@ static size_t smith_xz_index(SmithXz *xz, const uint8_t *in, size_t size, const 
     for (size_t i = body; i < padded; i++) {
         if (in[i] != 0) return smith_xz_fail_zero(xz, "the index's padding is not zero");
     }
-    if (smith_crc32(0, in, padded) != smith_load32(in + padded))
+    if (smith_inflate_crc32(0, in, padded) != smith_load32(in + padded))
         return smith_xz_fail_zero(xz, "the index's CRC-32 does not match");
     return padded + 4;
 }
@@ -593,7 +637,7 @@ static int smith_xz_stream_header(SmithXz *xz, const uint8_t *in, size_t size) {
     static const uint8_t magic[6] = {0xFD, '7', 'z', 'X', 'Z', 0};
     if (size < 12 || memcmp(in, magic, 6) != 0) return smith_xz_fail_negative(xz, "not an xz stream");
     if (in[6] != 0 || (in[7] & 0xF0U) != 0) return smith_xz_fail_negative(xz, "a stream header uses an unknown flag");
-    if (smith_crc32(0, in + 6, 2) != smith_load32(in + 8))
+    if (smith_inflate_crc32(0, in + 6, 2) != smith_load32(in + 8))
         return smith_xz_fail_negative(xz, "a stream header's CRC-32 does not match");
     unsigned check = in[7] & 0x0FU;
     if (check != 0 && check != 1 && check != 4 && check != 10) {
@@ -606,7 +650,7 @@ static int smith_xz_stream_header(SmithXz *xz, const uint8_t *in, size_t size) {
 
 static bool smith_xz_footer(SmithXz *xz, const uint8_t *footer, const uint8_t *header, size_t index_size) {
     if (footer[10] != 'Y' || footer[11] != 'Z') return smith_xz_fail(xz, "a stream's footer is damaged");
-    if (smith_crc32(0, footer + 4, 6) != smith_load32(footer))
+    if (smith_inflate_crc32(0, footer + 4, 6) != smith_load32(footer))
         return smith_xz_fail(xz, "a stream footer's CRC-32 does not match");
     if (((uint64_t)smith_load32(footer + 4) + 1U) * 4U != index_size || memcmp(footer + 8, header + 6, 2) != 0) {
         return smith_xz_fail(xz, "a stream's footer does not match its header");
@@ -656,7 +700,7 @@ static bool smith_xz_decode_streams(SmithXz *xz, const uint8_t *in, size_t size)
 
 static bool smith_xz_decode(const uint8_t *in, size_t size, SmithArchiveSink sink, void *context,
                             SmithPackageError *error) {
-    smith_crc_init();
+    smith_crc64_init();
     static SmithXz xz;
     xz = (SmithXz){.sink = sink, .context = context, .error = error};
     bool ok = smith_xz_decode_streams(&xz, in, size);

@@ -29,6 +29,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#if __has_include("bootstrap/lib/smith/inflate.c")
+#include "bootstrap/lib/smith/inflate.c"
+#else
+#include "../bootstrap/lib/smith/inflate.c"
+#endif
+
 #ifdef __APPLE__
 #if __has_include("bootstrap/lib/smith/io.c")
 #include "bootstrap/lib/smith/arena.c"
@@ -227,8 +233,8 @@ static void smith_package_remove(const char *path) {
     if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
 }
 
-// The archive readers, in smith's own code, so extraction runs no other process: gzip, then xz (which uses gzip's
-// CRCs), then tar (which uses both). The order matters, so each include is a block of its own that clang-format leaves
+// The archive readers, in smith's own code, so extraction runs no other process: gzip (on smith::inflate), then xz,
+// then tar (which uses both). The order matters, so each include is a block of its own that clang-format leaves
 // be.
 #include "gzip.c"
 

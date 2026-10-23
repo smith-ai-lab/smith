@@ -146,7 +146,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena", "autodiff", "build", "contract", "io",
+static const char *const build_generated_headers[] = {"arena", "autodiff", "build", "contract", "inflate", "io",
                                                       "math",  "random",   "test",  "text",     nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
@@ -187,9 +187,13 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // is generated, so `smith lint` leaves it alone, and it ends with `// NOLINTEND`), an include of the module's generated
 // header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
 // It needs no compiler, so the stage0 writes the same bytes (docs/smith-lang.md, "The bootstrap").
-static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith", "lib/smith/contract.smith",
-                                                      "lib/smith/io.smith",    "lib/smith/random.smith",
-                                                      "lib/smith/text.smith",  nullptr};
+static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith",
+                                                      "lib/smith/contract.smith",
+                                                      "lib/smith/inflate.smith",
+                                                      "lib/smith/io.smith",
+                                                      "lib/smith/random.smith",
+                                                      "lib/smith/text.smith",
+                                                      nullptr};
 
 // Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
 static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -479,6 +483,9 @@ static const char *const build_smith_inputs[] = {
     "include/smith/autodiff.h",
     "lib/smith/autodiff.smith",
     "bootstrap/lib/smith/arena.c",
+    "include/smith/inflate.h",
+    "lib/smith/inflate.smith",
+    "bootstrap/lib/smith/inflate.c",
     "include/smith/io.h",
     "lib/smith/io.smith",
     "bootstrap/lib/smith/io.c",
@@ -623,6 +630,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
@@ -671,6 +679,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"effects", "effects", nullptr, nullptr, 0},
     {"headers", "headers", nullptr, nullptr, 0},
     {"http", "http", nullptr, nullptr, 0},
+    {"inflate", "inflate", nullptr, nullptr, 0},
     {"io", "io", nullptr, nullptr, 0},
     {"json", "json", nullptr, nullptr, 0},
     {"lint-smith", "lint-smith", nullptr, nullptr, 0},

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests of smith's own archive extraction (runtime/gzip.c, runtime/xz.c, runtime/untar.c), the part of `smith_package`
+# Tests of smith's own archive extraction (runtime/gzip.c on lib/smith/inflate.smith, runtime/xz.c, runtime/untar.c), the part of `smith_package`
 # that used to run tar. Archives are made with the system's tar and gzip and with tests/xz.py (macOS has no xz, and Homebrew's is not relied on), and read back by `smith fetch` and, under
 # AddressSanitizer and UndefinedBehaviorSanitizer, by tests/untar.c. Every case uses a cache of its own through
 # XDG_CACHE_HOME, so the real ~/.cache/smith is never touched. Usage: sh tests/untar.sh path/to/smith
@@ -292,7 +292,7 @@ size=$(wc -c <"$arc/a.tar.gz" | tr -d ' ')
 head -c $((size / 2)) "$arc/a.tar.gz" >"$arc/cut.tar.gz"
 refuse "a truncated gzip" "$arc/cut.tar.gz" "gzip:"
 head -c $((size - 4)) "$arc/a.tar.gz" >"$arc/cut-trailer.tar.gz"
-refuse "a gzip without its trailer" "$arc/cut-trailer.tar.gz" "trailer is cut off"
+refuse "a gzip without its trailer" "$arc/cut-trailer.tar.gz" "the data is cut off"
 size=$(wc -c <"$arc/a.tar.xz" | tr -d ' ')
 head -c $((size / 2)) "$arc/a.tar.xz" >"$arc/cut.tar.xz"
 refuse "a truncated xz" "$arc/cut.tar.xz" "xz:"
@@ -343,11 +343,11 @@ flip() { # file, offset (negative counts from the end), output
     printf "$(printf '\\%03o' $(((byte + 1) % 256)))" | dd of="$3" bs=1 seek="$at" conv=notrunc 2>/dev/null
 }
 flip "$arc/a.tar.gz" -8 "$arc/bad-crc.tar.gz"
-refuse "a gzip with a wrong CRC-32" "$arc/bad-crc.tar.gz" "CRC-32 of the data does not match"
+refuse "a gzip with a wrong CRC-32" "$arc/bad-crc.tar.gz" "checksum of the data does not match"
 flip "$arc/a.tar.gz" -4 "$arc/bad-size.tar.gz"
 refuse "a gzip with a wrong size" "$arc/bad-size.tar.gz" "size of the data does not match"
 flip "$arc/rand.tar.gz" 100000 "$arc/bad-stored.tar.gz"
-refuse "a gzip with a changed byte in a stored block" "$arc/bad-stored.tar.gz" "CRC-32 of the data does not match"
+refuse "a gzip with a changed byte in a stored block" "$arc/bad-stored.tar.gz" "checksum of the data does not match"
 for check in crc32 crc64 sha256; do
     xz --check=$check -c "$arc/rand.tar" >"$arc/rand-$check.tar.xz"
     flip "$arc/rand-$check.tar.xz" 100000 "$arc/bad-$check.tar.xz"
