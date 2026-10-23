@@ -1,6 +1,6 @@
 #include "../include/smith/json.h"
 
-#include <assert.h>
+#include "../include/smith/contract.h"
 #include <stdint.h>
 
 const char *smith_json_reason_text(SmithJsonReason reason) {
@@ -149,8 +149,9 @@ enum {
 };
 
 SmithJsonReader smith_json_reader_make(SmithText input, SmithJsonLimits limits) {
-    assert(limits.depth <= smith_json_depth_max);
-    assert(input.begin != nullptr || input.length == 0);
+    smith_trusted(); // the prover cannot yet translate a struct returned through sret; the body is a field-by-field copy
+    smith_requires(limits.depth <= smith_json_depth_max);
+    smith_requires(input.begin != nullptr || input.length == 0);
     SmithJsonReader reader = {.input = input, .limits = limits, .state = SmithJsonState_Top};
     reader.token = SmithJsonToken_Null; // nothing read yet; not Error and not End
     return reader;
@@ -448,7 +449,6 @@ static SmithJsonToken smith_json_read_after_comma(SmithJsonReader *reader, bool 
 }
 
 SmithJsonToken smith_json_read(SmithJsonReader *reader) {
-    assert(reader != nullptr);
     if (reader->token == SmithJsonToken_Error || reader->token == SmithJsonToken_End) return reader->token;
     smith_json_skip_space(reader);
     if (reader->position >= reader->input.length) {
@@ -485,7 +485,6 @@ SmithJsonToken smith_json_read(SmithJsonReader *reader) {
 }
 
 bool smith_json_skip(SmithJsonReader *reader) {
-    assert(reader != nullptr);
     if (reader->token == SmithJsonToken_Key && smith_json_read(reader) == SmithJsonToken_Error) return false;
     if (reader->token == SmithJsonToken_Error) return false;
     if (reader->token != SmithJsonToken_ObjectBegin && reader->token != SmithJsonToken_ArrayBegin) return true;
@@ -494,7 +493,7 @@ bool smith_json_skip(SmithJsonReader *reader) {
         SmithJsonToken token = smith_json_read(reader);
         if (token == SmithJsonToken_Error) return false;
         if (reader->depth == outside) return true;
-        assert(token != SmithJsonToken_End);
+        if (token == SmithJsonToken_End) __builtin_trap();
     }
     return false;
 }
@@ -512,7 +511,7 @@ static size_t smith_json_decode_step(SmithText raw, size_t *at, char *out) {
     uint32_t code = 0;
     SmithJsonReason reason = SmithJsonReason_None;
     size_t step = smith_json_escape(raw, *at, &code, &reason);
-    assert(step != 0);
+    if (step == 0) __builtin_trap();
     *at += step;
     return smith_json_encode(code, out);
 }
@@ -523,20 +522,22 @@ static SmithText smith_json_decode_into(const SmithJsonReader *reader, char *des
     while (at < reader->text.length) {
         used += smith_json_decode_step(reader->text, &at, destination + used);
     }
-    assert(used == reader->length);
+    if (used != reader->length) __builtin_trap();
     destination[used] = '\0';
     return (SmithText){destination, used};
 }
 
 SmithText smith_json_decode(const SmithJsonReader *reader, SmithArena *arena) {
-    assert(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
+    smith_trusted(); // its loops run over the input, which has no bound a proof can use
+    smith_requires(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
     if (!reader->escaped) return reader->text;
     char *destination = smith_arena_push(arena, reader->length + 1, 1);
     return smith_json_decode_into(reader, destination);
 }
 
 bool smith_json_is(const SmithJsonReader *reader, const char *string) {
-    assert(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
+    smith_trusted(); // its loops run over the input, which has no bound a proof can use
+    smith_requires(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
     size_t at = 0;
     size_t matched = 0;
     while (at < reader->text.length) {
@@ -625,7 +626,7 @@ static void smith_json_build_close(SmithJsonBuild *build, size_t depth) {
         items[i] = &build->nodes[child];
         child += build->nodes[child].span;
     }
-    assert(child == build->next);
+    if (child != build->next) __builtin_trap();
 }
 
 static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader *reader) {
@@ -666,7 +667,7 @@ static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader 
         break;
     case SmithJsonToken_Error:
     case SmithJsonToken_End:
-        assert(false);
+        __builtin_trap();
         break;
     }
 }
@@ -693,7 +694,6 @@ static bool smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, Smit
 
 bool smith_json_parse(SmithArena *arena, SmithText input, SmithJsonLimits limits, const SmithJsonValue **root,
                       SmithJsonError *error) {
-    assert(arena != nullptr && root != nullptr && error != nullptr);
     SmithJsonSize size = {};
     if (!smith_json_measure(input, limits, &size, error)) return false;
     SmithJsonBuild build = {};
@@ -704,16 +704,15 @@ bool smith_json_parse(SmithArena *arena, SmithText input, SmithJsonLimits limits
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     for (SmithJsonToken token = smith_json_read(&reader); token != SmithJsonToken_End;
          token = smith_json_read(&reader)) {
-        assert(token != SmithJsonToken_Error); // the first pass read the same bytes
+        if (token == SmithJsonToken_Error) __builtin_trap(); // the first pass read the same bytes
         smith_json_build_token(&build, &reader);
     }
-    assert(build.next == size.values && build.bytes_used == size.bytes);
+    if (build.next != size.values || build.bytes_used != size.bytes) __builtin_trap();
     *root = build.nodes;
     return true;
 }
 
 const SmithJsonValue *smith_json_member(const SmithJsonValue *object, const char *key) {
-    assert(object != nullptr && key != nullptr);
     if (object->kind != SmithJsonKind_Object) return nullptr;
     for (size_t i = object->count; i-- > 0;) {
         if (smith_text_is(object->items[i]->key, key)) return object->items[i];
@@ -733,7 +732,8 @@ enum {
 };
 
 SmithJsonWriter smith_json_writer_make(char *buffer, size_t capacity, size_t indent) {
-    assert(buffer != nullptr || capacity == 0);
+    smith_trusted(); // as smith_json_reader_make: a struct returned through sret
+    smith_requires(buffer != nullptr || capacity == 0);
     return (SmithJsonWriter){.buffer = buffer, .capacity = capacity, .indent = indent};
 }
 
@@ -974,6 +974,7 @@ typedef struct {
 // Writes a scalar, or the start of a container (pushing it), as the value `current`.
 static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValue *current, SmithJsonValueFrame *stack,
                                     size_t depth) {
+    smith_trusted(); // the writes loop over the writer's indent, which no requires here bounds
     switch (current->kind) {
     case SmithJsonKind_Null:
         smith_json_write_null(writer);
@@ -992,7 +993,7 @@ static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValu
     case SmithJsonKind_Object:
         break;
     }
-    assert(depth < smith_json_depth_max);
+    smith_requires(depth < smith_json_depth_max);
     if (current->kind == SmithJsonKind_Array)
         smith_json_write_array_begin(writer);
     else
@@ -1002,7 +1003,6 @@ static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValu
 }
 
 void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value) {
-    assert(value != nullptr);
     SmithJsonValueFrame stack[smith_json_depth_max];
     size_t depth = 0;
     const SmithJsonValue *current = value;
@@ -1029,11 +1029,10 @@ void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value
         current = top->container->items[top->next++];
         if (object) smith_json_write_key(writer, current->key);
     }
-    assert(false && "span does not count the tree");
+    __builtin_trap(); // span does not count the tree
 }
 
 bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output) {
-    assert(output != nullptr);
     if (writer->error.reason == SmithJsonReason_None && writer->state != SmithJsonWriterState_Done)
         (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
     if (writer->error.reason != SmithJsonReason_None) return false;
