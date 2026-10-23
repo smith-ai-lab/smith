@@ -1001,6 +1001,8 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
+// What a run costs: the wall and CPU time of each task, and the smith processes it started.
+#include "runtime/account.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.
@@ -2873,6 +2875,7 @@ static void smith_usage(FILE *out) {
 
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
+    smith_account_start();
     char self[PATH_MAX];
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
@@ -2899,6 +2902,7 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[1], "--smith-sha256") == 0) return smith_sha256_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
+    if (strcmp(argv[1], "--smith-account") == 0) return smith_account_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
     return smith_dispatch(verb, argc, argv, self);

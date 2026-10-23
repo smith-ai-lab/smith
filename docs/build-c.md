@@ -105,7 +105,7 @@ How each verb uses it:
   exactly one program (the others in it, such as links, are built but not run); otherwise `smith run` says how many it
   names and lists them.
 - **check** runs fmt, docs, lint, test and prove in that order, cheapest first, and does not stop at a failure: each part
-  prints `smith check: <part> ok` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or
+  prints `smith check: <part> ok (<n> s wall, <n> s cpu)` or `FAILED (status N)` after its own output, and the last line is `smith check: ok` or
   `smith check: failed: <parts>`. The exit status is 1 if any part failed. prove is skipped (and says so) by a smith
   without a prover, and lint, test and prove are skipped (and say so) in a folder with no build.c, main.smith or main.c.
 

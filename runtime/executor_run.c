@@ -108,9 +108,32 @@ static void smith_run_command_argv(const SmithEdge *edge, const char *argv[4]) {
     argv[3] = nullptr;
 }
 
+// A task, when a run is accounted (runtime/account.c), goes through `smith --smith-account`, which adds a line to the
+// account file for it. Returns the argv to run.
+static const char *const *smith_job_argv(SmithExec *exec, const SmithEdge *edge, const char *argv[8]) {
+    const char *file = getenv("SMITH_ACCOUNT_FILE");
+    const char *self = getenv("SMITH_SELF");
+    constexpr char task_prefix[] = ".smith/task/";
+    const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
+    if (file == nullptr || *file == '\0' || self == nullptr ||
+        strncmp(output, task_prefix, sizeof task_prefix - 1) != 0) {
+        smith_run_command_argv(edge, argv);
+        return argv;
+    }
+    argv[0] = self;
+    argv[1] = "--smith-account";
+    argv[2] = file;
+    argv[3] = output + sizeof task_prefix - 1;
+    argv[4] = "/bin/sh";
+    argv[5] = "-c";
+    argv[6] = edge->command;
+    argv[7] = nullptr;
+    return argv;
+}
+
 static bool smith_job_process_start(SmithExec *exec, SmithJob *job) {
-    const char *argv[4];
-    smith_run_command_argv(&exec->graph.edges[job->edge], argv);
+    const char *argv_storage[8];
+    const char *const *argv = smith_job_argv(exec, &exec->graph.edges[job->edge], argv_storage);
     SmithError error = smith_processes_capture_async(&exec->io->processes, &job->arena, argv, &job->capture);
     if (error.code != 0) snprintf(job->message, sizeof job->message, "%s", error.message);
     return error.code == 0;

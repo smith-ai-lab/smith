@@ -563,7 +563,20 @@ static int smith_prove_project(int count, char **args, const char *self) {
 static int smith_test_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *const targets[] = {"smith_tests", nullptr};
+    // Each task's wall and CPU time and smith starts (runtime/account.c), unless SMITH_ACCOUNT=no; =all lists every
+    // task.
+    const char *mode = getenv("SMITH_ACCOUNT");
+    bool accounted = mode == nullptr || strcmp(mode, "no") != 0;
+    char account[PATH_MAX];
+    snprintf(account, sizeof account, "%s/smith-account.%d", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
+             (int)getpid());
+    (void)unlink(account);
+    if (accounted) setenv("SMITH_ACCOUNT_FILE", account, 1);
     int status = smith_verb_build(self, split, targets, true);
+    if (accounted) {
+        smith_account_report(account, "smith test", mode != nullptr && strcmp(mode, "all") == 0);
+        (void)unlink(account);
+    }
     if (status != 0) return status;
     if (smith_info_read("smith test")->test_count == 0) {
         fprintf(stderr, "smith test: the build declares no tests; smith_tests (<smith/build.h>) declares them\n");
@@ -607,12 +620,32 @@ static int smith_run_project(int count, char **args, const char *self) {
 
 // ---- check
 
-static void smith_check_part(const char *name, int status, const char **failed, size_t *failed_count) {
+// What a part of the check cost: its wall time and the CPU time of this process and of the children it waited for.
+typedef struct {
+    uint64_t wall_ms;
+    uint64_t cpu_ms;
+} SmithCheckClock;
+
+static SmithCheckClock smith_check_clock(void) {
+    struct rusage own = {};
+    struct rusage children = {};
+    getrusage(RUSAGE_SELF, &own);
+    getrusage(RUSAGE_CHILDREN, &children);
+    return (SmithCheckClock){.wall_ms = smith_account_now_ms(),
+                             .cpu_ms = smith_account_ms(own.ru_utime) + smith_account_ms(own.ru_stime) +
+                                       smith_account_ms(children.ru_utime) + smith_account_ms(children.ru_stime)};
+}
+
+static void smith_check_part(const char *name, int status, SmithCheckClock since, const char **failed,
+                             size_t *failed_count) {
+    SmithCheckClock now = smith_check_clock();
+    double wall = (double)(now.wall_ms - since.wall_ms) / 1000.0;
+    double cpu = (double)(now.cpu_ms - since.cpu_ms) / 1000.0;
     if (status == 0) {
-        fprintf(stderr, "smith check: %s ok\n", name);
+        fprintf(stderr, "smith check: %s ok (%.1f s wall, %.1f s cpu)\n", name, wall, cpu);
         return;
     }
-    fprintf(stderr, "smith check: %s FAILED (status %d)\n", name, status);
+    fprintf(stderr, "smith check: %s FAILED (status %d) (%.1f s wall, %.1f s cpu)\n", name, status, wall, cpu);
     failed[(*failed_count)++] = name;
 }
 
@@ -631,19 +664,28 @@ static int smith_check_child(const char *self, const char *verb, const SmithVerb
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
 static int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
-    if (split->own_count > 0) smith_die(smith_exit_usage, "takes no arguments but -D options", "check");
+    bool every_task = split->own_count == 1 && strcmp(split->own[0], "-v") == 0;
+    if (split->own_count > (every_task ? 1U : 0U))
+        smith_die(smith_exit_usage, "takes no arguments but -D options and -v", "check");
+    if (every_task) setenv("SMITH_ACCOUNT", "all", 1); // `smith test` lists every task, not the slowest few
+    SmithCheckClock since = {};
     const char *failed[8];
     size_t failed_count = 0;
-    smith_check_part("fmt", smith_fmt_project(self, true), failed, &failed_count);
-    smith_check_part("docs", smith_docs_check(0, nullptr), failed, &failed_count);
+    since = smith_check_clock();
+    smith_check_part("fmt", smith_fmt_project(self, true), since, failed, &failed_count);
+    since = smith_check_clock();
+    smith_check_part("docs", smith_docs_check(0, nullptr), since, failed, &failed_count);
     if (access("build.c", R_OK) != 0 && access("build.smith", R_OK) != 0 && access("main.smith", R_OK) != 0 &&
         access("main.c", R_OK) != 0) {
         fprintf(stderr, "smith check: no build file and no main, so lint, test and prove are skipped\n");
     } else {
-        smith_check_part("lint", smith_check_child(self, "lint", split), failed, &failed_count);
-        smith_check_part("test", smith_check_child(self, "test", split), failed, &failed_count);
+        since = smith_check_clock();
+        smith_check_part("lint", smith_check_child(self, "lint", split), since, failed, &failed_count);
+        since = smith_check_clock();
+        smith_check_part("test", smith_check_child(self, "test", split), since, failed, &failed_count);
         if (smith_has_prover()) {
-            smith_check_part("prove", smith_check_child(self, "prove", split), failed, &failed_count);
+            since = smith_check_clock();
+            smith_check_part("prove", smith_check_child(self, "prove", split), since, failed, &failed_count);
         } else {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
         }
