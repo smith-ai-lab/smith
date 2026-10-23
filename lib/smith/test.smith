@@ -2529,7 +2529,7 @@ void say_explained(const Options *options) {
     return failed == 0 ? 0 : 1;
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     Runner runner = {.io = &io, .make_io = io::make, .argc = argc, .argv = argv};
     return run_tests(&runner);

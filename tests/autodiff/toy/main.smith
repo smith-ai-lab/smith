@@ -36,7 +36,7 @@ i32 gradients(io::Console *console) {
     return status;
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     f64 x = 1.7;
     f64 y = 0.4;

@@ -71,7 +71,7 @@ void compare(io::Console *console, const char *name, const f64 *got, const f64 *
     worst = c::fmax(worst, relative);
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     Scan scan = {};
     Seeds seeds = {};

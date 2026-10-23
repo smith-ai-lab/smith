@@ -34,7 +34,7 @@ import <unistd.h>;
 // <smith/io.h>: everything a program does to the world outside it, as values you hold and pass on. One line in main
 // makes all of it:
 //
-//   i32 main(i32 argc, char *argv[]) {
+//   i32 main(i32 argc, char **argv) {
 //       io::Io io = io::make(argc, argv);
 //       ...
 //   }
