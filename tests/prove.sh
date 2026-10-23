@@ -477,6 +477,12 @@ expect_contains "gate: ... and the module's size before and after" "$out" " inst
 expect_contains "gate: ... counting its functions" "$out" "phase gate: 2 functions with a contract of their own"
 expect_contains "gate: ... a failing assert is still refuted" "$out" "assertion.c:16: assert(x < 50) may fail"
 
+# 16c. The library that defines the contract functions (bootstrap/lib/smith/contract.c) in the program is no reason to
+# inline them: the contracts stay points, and the function is still a unit. Only what a unit reaches is flattened.
+prove "$cases/clamp.c" "$here/bootstrap/lib/smith/contract.c"
+expect "contract.c in the program: the contracts are still proved" 0 "$rc"
+expect_contains "contract.c in the program: ... as before" "$out" "proved, 0 failed"
+
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
 # rebuild of smith with the same prover keeps the proofs.
 if grep -q '__DATE__\|__TIME__' "$here/shim/prove.cpp"; then

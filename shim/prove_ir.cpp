@@ -413,8 +413,9 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             if (call == nullptr) continue;
             Function *callee = call->getCalledFunction();
             if (callee == nullptr || callee->isDeclaration() || callee == &function || is_modular(*callee) ||
-                recursive.count(callee) != 0 || callee->isVarArg())
-                continue; // a variable argument list cannot be inlined into a function that has none
+                recursive.count(callee) != 0 || callee->isVarArg() || contract_name(callee->getName()))
+                continue; // a variable argument list cannot be inlined into a function that has none; a contract is a
+                          // point
             target = call;
             break;
         }
@@ -555,6 +556,27 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
             order.push_back(function);
         }
     }
+    // Only what a unit reaches is flattened: a module of 300k instructions, with a handful of units in it, would grow
+    // to memory's end if every function in it were inlined into its callers. A trusted function's body is never read,
+    // so nothing past it is reached through it.
+    DenseSet<const Function *> reached;
+    SmallVector<const Function *, 64> work;
+    for (const Function &function : module) {
+        if (is_unit(function) && reached.insert(&function).second) work.push_back(&function);
+    }
+    while (!work.empty()) {
+        const Function *function = work.pop_back_val();
+        if (is_trusted(*function)) continue;
+        for (const Instruction &instruction : instructions(*function)) {
+            const auto *call = dyn_cast<CallBase>(&instruction);
+            if (call == nullptr) continue;
+            const Function *callee = call->getCalledFunction();
+            if (callee != nullptr && !callee->isDeclaration() && !contract_name(callee->getName()) &&
+                reached.insert(callee).second)
+                work.push_back(callee);
+        }
+    }
+    llvm::erase_if(order, [&](Function *function) { return reached.count(function) == 0; });
     for (Function *function : order) {
         if (program.recursive.count(function) != 0) continue;
         if (!inline_helpers(*function, program.recursive, error)) return false;

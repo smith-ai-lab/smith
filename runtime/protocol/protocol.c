@@ -1,8 +1,8 @@
 // The hand-written half of the generated protocol code; protocol.h says what is here.
 #include "protocol.h"
 
-#include <assert.h>
 #include <string.h>
+#include "../../include/smith/contract.h"
 
 const char *smith_protocol_reason_text(SmithProtocolReason reason) {
     switch (reason) {
@@ -23,7 +23,7 @@ const char *smith_protocol_reason_text(SmithProtocolReason reason) {
 }
 
 bool smith_protocol_fail(SmithProtocolError *error, SmithProtocolReason reason, const SmithJsonValue *at) {
-    assert(error != nullptr && reason != SmithProtocolReason_None);
+    smith_requires(reason != SmithProtocolReason_None);
     *error = (SmithProtocolError){.reason = reason, .offset = at != nullptr ? at->offset : 0};
     return false;
 }
@@ -77,7 +77,7 @@ bool smith_protocol_coin(SmithKey key) {
 }
 
 size_t smith_protocol_pick(SmithKey key, size_t count) {
-    assert(count > 0);
+    smith_requires(count > 0 && count <= INT64_MAX); // the draw is an int64_t
     return (size_t)smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 0, .high = (int64_t)count - 1});
 }
 
@@ -238,7 +238,7 @@ static bool smith_protocol_tree_equal(const SmithJsonValue *a, const SmithJsonVa
         if (!smith_protocol_string_equal(&child_a->key, &child_b->key)) return false;
         if (!smith_protocol_shallow_equal(child_a, child_b)) return false;
         if (!smith_protocol_container(child_a) || child_a->count == 0) continue;
-        assert(depth < smith_json_depth_max);
+        if (depth >= smith_json_depth_max) __builtin_trap(); // the tree is no deeper than its limit
         stack[depth++] = (SmithProtocolPair){child_a, child_b, 0};
     }
     return false;
@@ -372,14 +372,14 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
     }
     SmithText text = {};
     bool finished = smith_json_writer_finish(&writer, &text);
-    assert(finished);
+    if (!finished) __builtin_trap(); // the document fits its buffer
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
     bool parsed = smith_json_parse(
         arena, text,
         (SmithJsonLimits){.depth = smith_protocol_random_depth + 1, .string_length = capacity, .count = capacity},
         &root, &error);
-    assert(parsed);
+    if (!parsed) __builtin_trap(); // it is the text the writer just wrote
     (void)finished;
     (void)parsed;
     return root;
@@ -430,7 +430,7 @@ bool smith_protocol_extra_parse(SmithArena *arena, const SmithJsonValue *object,
         values[kept] = object->items[i];
         kept++;
     }
-    assert(kept == count);
+    if (kept != count) __builtin_trap(); // the first pass counted the same members
     out->keys = keys;
     out->values = values;
     out->count = count;
