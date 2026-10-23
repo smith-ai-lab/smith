@@ -278,6 +278,100 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-generic-private-generic/src/main.smith <==
+module main;
+
+import shape;
+
+int main(void) {
+    return shape::padded(1) + shape::framed(2);
+}
+==> error-generic-private-generic/src/shape.smith <==
+module shape;
+
+constexpr i32 margin = 2;
+
+// A private generic: no importer may call it, but the exported one below does, so its record is in the header.
+typeof(x) padded(auto x) {
+    return x + (typeof(x))margin;
+}
+
+// A private generic nobody exported calls: its record is not in the header.
+typeof(x) unused(auto x) {
+    return x;
+}
+
+export typeof(x) framed(auto x) {
+    return padded(padded(x));
+}
+
+export i32 plain(i32 x) {
+    return unused(x);
+}
+==> error-generic-private-name/src/main.smith <==
+module main;
+
+import scale;
+import <stdio.h>;
+
+int main(void) {
+    // The instance of `spread` calls these, but the source of an importer cannot name them.
+    c::printf("%d\n", scale::clamp_to_base(5));
+    scale::Range r = {0, 1};
+    scale::counter.calls = 3;
+    return r.low + scale::spread(0, 1);
+}
+==> error-generic-private-name/src/scale.smith <==
+module scale;
+
+import <stdio.h>;
+
+// Private code that the exported generics below use: instances are compiled in the importer's file.
+constexpr i32 base = 10;
+constexpr i32 slots = base / 2;
+
+typedef enum { Plain, Boosted } Mode;
+
+typedef struct {
+    i32 low;
+    i32 high;
+} Range;
+
+struct Counter {
+    i32 calls;
+};
+
+static i32 table[slots] = {1, 2, 3, 4, 5};
+static struct Counter counter;
+
+// A prototype that names a private type and a C type: both reach the instance section.
+static Range widen(Range r, c::FILE *log);
+
+static Range widen(Range r, c::FILE *log) {
+    (void)log;
+    counter.calls += 1;
+    return (Range){r.low - base, r.high + base};
+}
+
+// Never used by a generic: it stays static, and is in no header.
+static i32 unused(i32 x) {
+    return x + 1;
+}
+
+// An inline helper: the instance links to a function, so `inline` is dropped.
+static inline i32 clamp_to_base(i32 x) {
+    return x > base ? base : x;
+}
+
+export i32 calls(void) {
+    return counter.calls + unused(0) - 1;
+}
+
+export typeof(x) spread(auto x, i32 boosted) {
+    Range r = widen((Range){0, 1}, nullptr);
+    typeof(x) result = (typeof(x))((Mode)boosted == Boosted ? r.high : r.low);
+    return result + (typeof(x))table[slots - 1] + (typeof(x))clamp_to_base(100);
+}
 ==> error-if-constexpr/src/main.smith <==
 import target;
 
@@ -2014,6 +2108,40 @@ int main(void) {
     c::printf("%d %d %d | %d | %d %d | %d %d | %d\n", a, b, c, d, e, f, g, h, k);
     return 0;
 }
+==> generic-nested-argument/src/apply.smith <==
+module apply;
+
+export typeof(x) twice(constexpr auto f, auto x) {
+    return f(f(x));
+}
+
+// A generic call is the argument of another, in an instance's body: its type is asked as the instance writes it.
+export typeof(x) four(constexpr auto f, auto x) {
+    return twice(f, twice(f, x));
+}
+
+// The same with a parameter in an expression beside the call, and a call that is an operand.
+export typeof(x) five(constexpr auto f, auto x) {
+    return twice(f, twice(f, x) + 1);
+}
+==> generic-nested-argument/src/main.smith <==
+module main;
+
+import apply;
+import <stdio.h>;
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+static f64 half(f64 x) {
+    return x / 2;
+}
+
+int main(void) {
+    c::printf("%d %d %.2f\n", apply::four(inc, 0), apply::five(inc, 0), apply::four(half, 16.0));
+    return 0;
+}
 ==> generic-nested/src/arena.smith <==
 module arena;
 
@@ -2361,6 +2489,101 @@ int main(void) {
     fmt::print("x =", 42, "y =", 2.5, "ok:", true);
     fmt::print(small, negative, 1.5f, (u64)18446744073709551615ULL);
     return 0;
+}
+==> generic-private-generic/src/main.smith <==
+module main;
+
+import shape;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d %.1f %d\n", shape::framed(10), shape::framed(1.5), shape::plain(7));
+    return 0;
+}
+==> generic-private-generic/src/shape.smith <==
+module shape;
+
+constexpr i32 margin = 2;
+
+// A private generic: no importer may call it, but the exported one below does, so its record is in the header.
+typeof(x) padded(auto x) {
+    return x + (typeof(x))margin;
+}
+
+// A private generic nobody exported calls: its record is not in the header.
+typeof(x) unused(auto x) {
+    return x;
+}
+
+export typeof(x) framed(auto x) {
+    return padded(padded(x));
+}
+
+export i32 plain(i32 x) {
+    return unused(x);
+}
+==> generic-private-names/src/main.smith <==
+module main;
+
+import scale;
+import <stdio.h>;
+
+int main(void) {
+    i32 a = scale::spread(0, 0);
+    f64 b = scale::spread(0.5, 1);
+    c::printf("%d %.1f %d\n", a, b, scale::calls());
+    return 0;
+}
+==> generic-private-names/src/scale.smith <==
+module scale;
+
+import <stdio.h>;
+
+// Private code that the exported generics below use: instances are compiled in the importer's file.
+constexpr i32 base = 10;
+constexpr i32 slots = base / 2;
+
+typedef enum { Plain, Boosted } Mode;
+
+typedef struct {
+    i32 low;
+    i32 high;
+} Range;
+
+struct Counter {
+    i32 calls;
+};
+
+static i32 table[slots] = {1, 2, 3, 4, 5};
+static struct Counter counter;
+
+// A prototype that names a private type and a C type: both reach the instance section.
+static Range widen(Range r, c::FILE *log);
+
+static Range widen(Range r, c::FILE *log) {
+    (void)log;
+    counter.calls += 1;
+    return (Range){r.low - base, r.high + base};
+}
+
+// Never used by a generic: it stays static, and is in no header.
+static i32 unused(i32 x) {
+    return x + 1;
+}
+
+// An inline helper: the instance links to a function, so `inline` is dropped.
+static inline i32 clamp_to_base(i32 x) {
+    return x > base ? base : x;
+}
+
+export i32 calls(void) {
+    return counter.calls + unused(0) - 1;
+}
+
+export typeof(x) spread(auto x, i32 boosted) {
+    Range r = widen((Range){0, 1}, nullptr);
+    typeof(x) result = (typeof(x))((Mode)boosted == Boosted ? r.high : r.low);
+    return result + (typeof(x))table[slots - 1] + (typeof(x))clamp_to_base(100);
 }
 ==> generic-sized-result-sizeof/src/main.smith <==
 import size;
