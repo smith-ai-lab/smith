@@ -134,7 +134,8 @@ constexpr SmithTestOp smith_test_op_greater_equal = 5;
 
 [[nodiscard]] SmithTestValue smith_test_value_u64(uint64_t value);
 
-[[nodiscard]] SmithTestValue smith_test_value_usize(size_t value);
+[[nodiscard]] SmithTestValue
+smith_test_value_usize(size_t value); // the runner's: one per job, and one more for shrinking
 
 // Whether this run asked for the heavy checks at full size (--full). False by default.
 [[nodiscard]] bool smith_test_full(void);
@@ -215,7 +216,7 @@ void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
 // --in-process jumps to the runner's loop. The flag and the stack of the call are in the shared block, so they survive
 // the process, and nothing runs in the test after the abort. A check or contract that fails after the call is the abort
 // (on_failure); a plain check that fails is not.
-void smith_test_expect_abort(void);
+void smith_test_expect_abort(void); // what the child asked for: the child writes, the runner reads
 
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.

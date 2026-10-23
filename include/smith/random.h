@@ -158,7 +158,9 @@ typedef struct {
 // required: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key, SmithUniformFloat uniform);
 
-[[nodiscard]] double smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform);
+[[nodiscard]] double smith_uniform_double_sample(
+    SmithKey key,
+    SmithUniformDouble uniform); // not reached by the grid, which stops at 2^-24; kept so the function is AS241's
 
 [[nodiscard]] double smith_normal_double_sample(SmithKey key, SmithNormalDouble normal);
 
