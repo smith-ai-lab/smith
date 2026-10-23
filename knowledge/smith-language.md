@@ -29,7 +29,7 @@ input; it can still write a module's header (`smith cc --smith-header`). The com
 modules itself: a header step per module, and every `.smith` compile, and every C compile that names a header of `.smith/include` as an input or puts that folder on its include path, waits for all of them (knowledge/build-file.md).
 
 A `.smith` file is C with modules. Renaming `x.c` to `x.smith` changes nothing: the file means what it meant.
-**The C rule:** valid C in a `.smith` file without a `module` line means exactly what it means in C. A new feature uses
+**The C rule:** valid C in a `.smith` file without a `module` line means exactly what it means in C, at the same `-std` as a `.c` file: the latest C by default; an older C is an explicit `-std=`. A new feature uses
 syntax that is invalid C (`::`, `import x;`, `auto` and `constexpr type` parameters, `if constexpr`); a `module` line may
 reject valid C (it defines exports and private names) but never silently changes what a construct means. A module-only
 rejection gets an error case in the corpus (`tests/smith-lang/cases/error-*`), and `tests/smith-lang-c.sh` pins the rule:
