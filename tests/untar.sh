@@ -326,9 +326,9 @@ size=$(wc -c <"$arc/tool-bin.gz" | tr -d ' ')
 head -c $((size / 2)) "$arc/tool-bin.gz" >"$arc/cut-single.gz"
 refuse "a truncated single gz" "$arc/cut-single.gz" "gzip:"
 head -c $((size - 4)) "$arc/tool-bin.gz" >"$arc/cut-single-trailer.gz"
-refuse "a single gz without its trailer" "$arc/cut-single-trailer.gz" "trailer is cut off"
+refuse "a single gz without its trailer" "$arc/cut-single-trailer.gz" "the data is cut off"
 { head -c $((size - 8)) "$arc/tool-bin.gz"; printf '\1\2\3\4'; tail -c 4 "$arc/tool-bin.gz"; } >"$arc/crc-single.gz"
-refuse "a single gz with a wrong CRC" "$arc/crc-single.gz" "CRC-32"
+refuse "a single gz with a wrong CRC" "$arc/crc-single.gz" "checksum of the data does not match"
 { head -c $((size - 4)) "$arc/tool-bin.gz"; printf '\1\2\3\4'; } >"$arc/len-single.gz"
 refuse "a single gz with a wrong size" "$arc/len-single.gz" "size of the data"
 
