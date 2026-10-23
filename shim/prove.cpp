@@ -53,6 +53,7 @@ const char *const sanitizers = "-fsanitize=signed-integer-overflow,shift,integer
 
 struct Arguments {
     std::vector<std::string> files;
+    std::vector<std::string> libraries; // smith's own, read for their contracts and never proved (--library=)
     std::vector<std::string> flags;
     prove::Options options;
 };
@@ -64,6 +65,7 @@ struct Arguments {
                          "  --budget=SECONDS  the time one function may take (default 10)\n"
                          "  --memory=GB       the memory one function may use (default 8)\n"
                          "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
+                         "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
                          "  --no-cache        prove again what a cached proof already proved\n"
                          "  -v                print the functions that are proved too, with their time, the slowest\n"
                          "                    query of each and, when it took a second, what made it costly\n");
@@ -86,6 +88,8 @@ Arguments parse(int argc, char **argv) {
         } else if (argument.rfind("--emit-ir-append=", 0) == 0) {
             arguments.options.emit_ir = argument.substr(17);
             arguments.options.emit_ir_append = true;
+        } else if (argument.rfind("--library=", 0) == 0) {
+            arguments.libraries.push_back(argument.substr(10));
         } else if (argument == "--no-cache") {
             arguments.options.no_cache = true;
         } else if (argument.rfind("--function=", 0) == 0) {
@@ -587,15 +591,19 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     }
     // An `import foo` that finds no header looks for foo.smith among the command's .smith files first.
     std::string smith_inputs;
-    for (const std::string &file : arguments.files) {
-        if (is_smith(file)) smith_inputs += file + "\n";
+    for (const std::vector<std::string> *list : {&arguments.files, &arguments.libraries}) {
+        for (const std::string &file : *list) {
+            if (is_smith(file)) smith_inputs += file + "\n";
+        }
     }
     if (!smith_inputs.empty()) setenv("SMITH_LANG_INPUTS", smith_inputs.c_str(), 1);
     std::vector<std::string> bitcode;
     int status = 0;
-    for (size_t i = 0; i < arguments.files.size() && status == 0; i++) {
+    std::vector<std::string> sources = arguments.files;
+    sources.insert(sources.end(), arguments.libraries.begin(), arguments.libraries.end());
+    for (size_t i = 0; i < sources.size() && status == 0; i++) {
         std::string output = std::string(directory.data()) + "/" + std::to_string(i) + ".bc";
-        status = compile(program, resource, arguments.files[i], arguments.flags, output);
+        status = compile(program, resource, sources[i], arguments.flags, output);
         bitcode.push_back(output);
     }
     prove::Program loaded;
@@ -604,7 +612,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     int result = 0;
     if (status != 0) {
         result = status;
-    } else if (!prove::program_load(loaded, bitcode, error)) {
+    } else if (!prove::program_load(loaded, bitcode, error, arguments.libraries.size())) {
         std::fprintf(stderr, "smith: prove: %s\n", error.c_str());
         result = 2;
     }

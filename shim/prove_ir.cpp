@@ -220,8 +220,8 @@ bool is_trusted(const Function &function) {
 // What program_units proves, and what program_load asks before it flattens anything: a defined function, not a
 // snapshot and not trusted, with a contract of its own. One definition, so the gate and the units cannot disagree.
 bool is_unit(const Function &function) {
-    return !function.isDeclaration() && !function.hasFnAttribute("smith.snapshot") && !is_trusted(function) &&
-           has_any_own_contract(function);
+    return !function.isDeclaration() && !function.hasFnAttribute("smith.snapshot") &&
+           !function.hasFnAttribute("smith.library") && !is_trusted(function) && has_any_own_contract(function);
 }
 
 // A function with an smith_ensures, or a trusted one, is used through its contract; any other is part of its caller.
@@ -527,11 +527,33 @@ bool is_snapshot(const Function &function) {
 
 } // namespace
 
-bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error) {
+namespace {
+
+// A function of a smith library the program links: read so that its callers use its contract (a trusted one is assumed,
+// one with an smith_ensures is used through it, any other is part of its caller), and never proved here, since the
+// library's own proof covers it. An edge export (smith::io's) loses its body: it stays the edge, as when only its
+// header is read.
+void mark_library(Module &module) {
+    for (Function &function : module) {
+        if (function.isDeclaration()) continue;
+        if (function.hasFnAttribute("smith.edge")) {
+            function.deleteBody();
+            function.setMetadata("smith.id", nullptr);
+            function.setSubprogram(nullptr);
+            continue;
+        }
+        function.addFnAttr("smith.library");
+    }
+}
+
+} // namespace
+
+bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error, size_t libraries) {
     Clock::time_point begin = Clock::now();
     program.context = std::make_unique<LLVMContext>();
     unsigned counter = 0;
-    for (const std::string &path : bitcode) {
+    for (size_t index = 0; index < bitcode.size(); index++) {
+        const std::string &path = bitcode[index];
         SMDiagnostic diagnostic;
         std::unique_ptr<Module> module = parseIRFile(path, diagnostic, *program.context);
         if (module == nullptr) {
@@ -539,6 +561,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
             return false;
         }
         annotate(*module, counter);
+        if (index >= bitcode.size() - libraries) mark_library(*module);
         if (program.module == nullptr) {
             program.module = std::move(module);
         } else if (Linker::linkModules(*program.module, std::move(module))) {
@@ -556,7 +579,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (function.isDeclaration()) continue;
         if (is_unit(function)) {
             own++;
-        } else if (is_trusted(function)) {
+        } else if (is_trusted(function) && !function.hasFnAttribute("smith.library")) {
             trusted++;
         }
     }
@@ -694,7 +717,9 @@ std::string program_label(const Program &program, const std::string &name) {
 std::vector<Trusted> program_trusted(const Program &program) {
     std::vector<Trusted> found;
     for (const Function &function : *program.module) {
-        if (function.isDeclaration() || is_snapshot(function) || !is_trusted(function)) continue;
+        if (function.isDeclaration() || is_snapshot(function) || function.hasFnAttribute("smith.library") ||
+            !is_trusted(function))
+            continue;
         Trusted trusted;
         trusted.name = source_name(function);
         if (const DISubprogram *subprogram = function.getSubprogram()) {

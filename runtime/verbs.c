@@ -98,6 +98,8 @@ typedef struct {
     size_t program_count;
     const char *units[smith_verbs_lines_max]; // the sources of a program, tab separated
     size_t unit_count;
+    const char *libraries[smith_verbs_lines_max]; // the library sources of the program of the same index in units
+    size_t library_count;
     const char *defaults[smith_verbs_lines_max];
     size_t default_count;
     const char *runners[smith_verbs_lines_max]; // the programs smith_tests made (a build.info without them has none)
@@ -126,8 +128,12 @@ static const SmithInfo *smith_info_read(const char *verb) {
         bool last = *end == '\0';
         *end = '\0';
         char *tab = strchr(line, '\t');
-        if (tab != nullptr) {
-            *tab++ = '\0';
+        if (tab != nullptr || strcmp(line, "unit") == 0 || strcmp(line, "library") == 0) { // these two may be empty
+            if (tab != nullptr) {
+                *tab++ = '\0';
+            } else {
+                tab = end;
+            }
             if (strcmp(line, "compile") == 0 && smith_info.compile_count < smith_verbs_lines_max) {
                 char *flags = strchr(tab, '\t');
                 if (flags != nullptr) *flags++ = '\0';
@@ -137,6 +143,8 @@ static const SmithInfo *smith_info_read(const char *verb) {
                 smith_info.test_count++;
             } else if (strcmp(line, "unit") == 0 && smith_info.unit_count < smith_verbs_lines_max) {
                 smith_info.units[smith_info.unit_count++] = tab;
+            } else if (strcmp(line, "library") == 0 && smith_info.library_count < smith_verbs_lines_max) {
+                smith_info.libraries[smith_info.library_count++] = tab;
             } else if (strcmp(line, "program") == 0 && smith_info.program_count < smith_verbs_lines_max) {
                 smith_info.programs[smith_info.program_count++] = tab;
             } else if (strcmp(line, "runner") == 0 && smith_info.runner_count < smith_verbs_lines_max) {
@@ -459,7 +467,27 @@ static void smith_prove_pass_options(size_t *used) {
     }
 }
 
-static int smith_prove_group(const char *self, const SmithInfo *info, const size_t *members, size_t member_count) {
+// The program's library sources, each as `--library=<source>`, after the files: smith's own code that the proof reads for
+// its contracts and does not prove.
+static void smith_prove_libraries(const char *libraries, size_t *used) {
+    static char copy[smith_verbs_info_max + 1];
+    static char words[smith_verbs_lines_max][PATH_MAX + 16];
+    snprintf(copy, sizeof copy, "%s", libraries);
+    size_t count = 0;
+    char *source = copy;
+    while (*source != '\0' && count < smith_verbs_lines_max) { // bounded by the sources
+        char *tab = strchr(source, '\t');
+        if (tab != nullptr) *tab = '\0';
+        snprintf(words[count], sizeof words[count], "--library=%s", source);
+        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
+            smith_prove_argv[(*used)++] = words[count++];
+        if (tab == nullptr) break;
+        source = tab + 1;
+    }
+}
+
+static int smith_prove_group(const char *self, const SmithInfo *info, const size_t *members, size_t member_count,
+                             const char *libraries) {
     smith_prove_groups_run++;
     size_t used = 0;
     smith_prove_argv[used++] = (char *)self;
@@ -467,6 +495,7 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     smith_prove_pass_options(&used);
     for (size_t i = 0; i < member_count; i++)
         smith_prove_argv[used++] = (char *)info->compiles[members[i]];
+    smith_prove_libraries(libraries, &used);
     smith_prove_argv[used++] = (char *)"--";
     // A copy: the compile's flags are shared by every group that proves the same source (a unity file), and cutting
     // them at their tabs in place would leave the next group with the first word only.
@@ -495,7 +524,7 @@ static size_t smith_prove_compile_of(const SmithInfo *info, const char *source) 
 
 // Proves one program's sources: those with the same flags together (the prover reads one set of flags), as the program
 // links them.
-static int smith_prove_unit(const char *self, const SmithInfo *info, char *sources) {
+static int smith_prove_unit(const char *self, const SmithInfo *info, char *sources, const char *libraries) {
     static size_t found[smith_verbs_lines_max];
     size_t found_count = 0;
     for (char *source = sources; source != nullptr && *source != '\0' && found_count < smith_verbs_lines_max;) {
@@ -517,7 +546,7 @@ static int smith_prove_unit(const char *self, const SmithInfo *info, char *sourc
             done[i] = true;
             members[member_count++] = found[i];
         }
-        int one = smith_prove_group(self, info, members, member_count);
+        int one = smith_prove_group(self, info, members, member_count, libraries);
         if (one != 0) status = one;
     }
     return status;
@@ -548,7 +577,8 @@ static int smith_prove_project(int count, char **args, const char *self) {
     status = 0;
     for (size_t i = 0; i < info->unit_count; i++) {
         if (repeated[i]) continue;
-        int one = smith_prove_unit(self, info, (char *)info->units[i]);
+        int one = smith_prove_unit(self, info, (char *)info->units[i],
+                                   i < info->library_count ? info->libraries[i] : "");
         if (one != 0) status = one;
     }
     if (status == 0 && smith_prove_groups_run == 0) {

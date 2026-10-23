@@ -2110,6 +2110,9 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 //   program<TAB>path   the output of a smith_program
 //   unit<TAB>source... the own sources of a program's objects (not of the tests' runner): what `smith prove` proves
 //                      together
+//   library<TAB>source... after each unit line: the sources of smith's own libraries (.smith/lib/...) that program links,
+//                      which `smith prove` reads for their contracts and never proves (not io's, whose exports are the
+//                      program's edge, nor contract's or test's)
 //   default<TAB>target a target of smith_default, with the aliases opened
 constexpr size_t smith_targets_max = 4096;
 
@@ -2119,6 +2122,17 @@ static bool smith_is_compiled_extension(const char *source) {
         if (smith_ends_with(source, extensions[i])) return true;
     }
     return false;
+}
+
+// A source of a library of smith's whose contracts a program's proof uses.
+static bool smith_is_proved_library(const char *source) {
+    const char *library = smith_library_of(source);
+    if (library == nullptr || !smith_is_compiled_extension(source)) return false;
+    static const char *const left_out[] = {"io", "contract", "test"};
+    for (size_t i = 0; i < sizeof left_out / sizeof left_out[0]; i++) {
+        if (strcmp(library, left_out[i]) == 0) return false;
+    }
+    return true;
 }
 
 static bool smith_is_own_source(const char *source) {
@@ -2218,6 +2232,11 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
         fputs("unit", out);
         for (size_t j = 0; smith_program_sources[i][j] != nullptr; j++) {
             if (smith_is_own_source(smith_program_sources[i][j])) fprintf(out, "\t%s", smith_program_sources[i][j]);
+        }
+        fputc('\n', out);
+        fputs("library", out);
+        for (size_t j = 0; smith_program_sources[i][j] != nullptr; j++) {
+            if (smith_is_proved_library(smith_program_sources[i][j])) fprintf(out, "\t%s", smith_program_sources[i][j]);
         }
         fputc('\n', out);
     }

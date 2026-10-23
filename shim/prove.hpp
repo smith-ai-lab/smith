@@ -139,8 +139,10 @@ struct Program {
 
 // Reads the bitcode files, links them and prepares the module: every callee without an smith_ensures is inlined where
 // it is called, memory effects are inferred, pointer parameters are marked dereferenceable. Returns false and fills
-// `error` when the files cannot be read.
-bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error);
+// `error` when the files cannot be read. The last `libraries` files are smith's own libraries, read for their contracts
+// and bodies and never proved.
+bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error,
+                  size_t libraries = 0);
 
 // The functions that are proved, in the order the files define them: the ones that carry a contract (smith_requires,
 // smith_ensures or smith_invariant) and are not trusted. A function with no contract is not proved, nor is main; calls

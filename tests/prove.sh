@@ -372,6 +372,40 @@ EOF
     expect_contains "project: ... counterexample" "$out" "counterexample: count = 5"
     cd "$proj" && capture "$smith" prove --budget=30 -v; cd "$here"
     expect_contains "project: the prover's options are the project's too (-v, --budget=)" "$out" "ok    primes::shown_sum"
+    # 11c. A project's proof reads smith's libraries for their contracts (issue #66): a proved function may call a library
+    # export, whatever the library marks it with, and is proved against the library's contract. The library's own
+    # functions are not proved there.
+    libs=$work/libsproj
+    mkdir -p "$libs"
+    cat >"$libs/main.smith" <<'EOF'
+import libs;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", (int)libs::pick(2));
+    return 0;
+}
+EOF
+    cat >"$libs/libs.smith" <<'EOF'
+module libs;
+
+import smith::contract;
+import smith::random;
+
+export u64 pick(u64 index) {
+    contract::requires(index < 10);
+    random::Key key = random::key_make(7);
+    random::Key part = random::key_derive(key, index);
+    contract::ensures(true);
+    return part.bits;
+}
+EOF
+    cd "$libs" && capture "$smith" prove -v; cd "$here"
+    expect "libraries: a proved function that calls a library export is proved" 0 "$rc"
+    expect_contains "libraries: ... against the library's contract" "$out" "ok    libs::pick  ("
+    expect_contains "libraries: ... and only the project's functions are counted" "$out" "1 proved, 0 failed"
+    case $out in *"neither a body nor a contract"*) expect "libraries: no 'neither a body nor a contract' for a library function" "none" "$out" ;; *) expect "libraries: no 'neither a body nor a contract' for a library function" "none" "none" ;; esac
+    case $out in *"random::"*) expect "libraries: the library's own functions are not proved or listed" "none" "$out" ;; *) expect "libraries: the library's own functions are not proved or listed" "none" "none" ;; esac
 else
     echo "skipped: this smith's clang has no token hook, so no .smith proofs"
 fi
