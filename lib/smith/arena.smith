@@ -44,7 +44,7 @@ import <stdint.h>;
 } Arena;
 
 // A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is
-// reset only with none open; both are asserted.
+// reset only with none open; both are required.
 [[smith::c_name("SmithArenaScope")]] export typedef struct {
     Arena *arena;
     usize used;
@@ -72,7 +72,8 @@ constexpr usize poison_window = 64 << 10; // poisoned past the cursor after each
 
 // Poisons [used, touched) again, after a reset or the end of a scope.
 void poison_unused(const Arena *arena) {
-    contract::assert(arena->used <= arena->touched && arena->touched <= arena->capacity);
+    contract::trusted(); // the sanitizer's runtime is the edge; a build without it never calls this
+    contract::requires(arena->used <= arena->touched && arena->touched <= arena->capacity);
     c::__asan_poison_memory_region(arena->memory + arena->used, arena->touched - arena->used);
 }
 
@@ -99,9 +100,8 @@ usize effective_align(usize align) {
 
 // Whether size bytes at align fit; the bytes of padding go to *padding. Written so that no sum can overflow.
 bool measure(const Arena *arena, usize size, usize align, usize *padding) {
-    contract::assert(arena != nullptr);
-    contract::assert(arena->used <= arena->capacity);
-    contract::assert(align_valid(align));
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
     align = effective_align(align);
     *padding = (align - (arena->used & (align - 1))) & (align - 1);
     usize room = arena->capacity - arena->used;
@@ -116,9 +116,9 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // An arena over memory, which must be aligned to align_max and hold capacity bytes.
 [[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
-    contract::assert(memory != nullptr);
-    contract::assert(((usize)memory & (align_max - 1)) == 0);
-    contract::assert(capacity > 0);
+    contract::trusted(); // the prover cannot yet translate a struct returned through sret
+    contract::requires(((usize)memory & (align_max - 1)) == 0);
+    contract::requires(capacity > 0);
     return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
 }
 
@@ -126,6 +126,10 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 // with a message naming the request and the capacity, in every build: it is a single comparison, and without it a
 // build with NDEBUG would write past the memory.
 [[smith::c_name("smith_arena_push")]] export [[nodiscard]] void *push_raw(Arena *arena, usize size, usize align) {
+    contract::trusted(); // it writes the memory it hands out, whose extent a proof does not know
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
+    contract::ensures(arena->used <= arena->capacity);
     usize padding = 0;
     if (!measure(arena, size, align, &padding)) stop(arena, size, align);
 
@@ -139,7 +143,6 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     }
     __builtin_memset(result, 0, size); // memset is a macro in a fortified SDK; the builtin is a function
 
-    contract::assert(arena->used <= arena->capacity);
     return result;
 }
 
@@ -152,13 +155,18 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 // count items of size bytes.
 [[smith::c_name("smith_arena_push_array")]] export [[nodiscard]] void *push_array_raw(Arena *arena, usize size,
                                                                                       usize count, usize align) {
-    contract::assert(arena != nullptr);
+    contract::trusted(); // a count that overflows ends in the failure report, which is the edge
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
+    contract::ensures(arena->used <= arena->capacity);
     if (size > 0 && count > math::max(usize) / size) stop_overflow(arena, size, count);
     return push_raw(arena, size * count, align);
 }
 
 // Whether a push of size at align would fit.
 [[smith::c_name("smith_arena_fits")]] export [[nodiscard]] bool fits(const Arena *arena, usize size, usize align) {
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
     usize padding = 0;
     return measure(arena, size, align, &padding);
 }
@@ -179,11 +187,12 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 // aligned to align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so when the
 // parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages only as it
 // is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset every frame,
-// one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the parent has no
+// one for the run). Running out of the parent's capacity is the same stop as a push. Requires that the parent has no
 // scope open, since the end of the scope would hand the carved memory back.
 [[smith::c_name("smith_arena_carve")]] export [[nodiscard]] Arena carve(Arena *parent, usize capacity) {
-    contract::assert(parent != nullptr && capacity > 0);
-    contract::assert(parent->scopes == 0); // ending a scope would give the carved memory back
+    contract::trusted(); // the prover cannot yet translate a struct returned through sret
+    contract::requires(capacity > 0);
+    contract::requires(parent->scopes == 0); // ending a scope would give the carved memory back
     usize start = (parent->used + align_max - 1) & ~(align_max - 1);
     if (start > parent->capacity || capacity > parent->capacity - start) stop(parent, capacity, align_max);
     u8 *memory = parent->memory + start;
@@ -199,20 +208,19 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     return make(memory, capacity);
 }
 
-// Frees everything. Asserts no scope is open.
+// Frees everything. Requires that no scope is open.
 [[smith::c_name("smith_arena_reset")]] export void reset(Arena *arena) {
-    contract::assert(arena != nullptr);
-    contract::assert(arena->used <= arena->capacity);
-    contract::assert(arena->scopes == 0); // a scope still open would restore a cursor past the reset
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(arena->scopes == 0); // a scope still open would restore a cursor past the reset
     arena->used = 0;
     if (sanitized) poison_unused(arena);
 }
 
 // Begins a scope.
 [[smith::c_name("smith_arena_scope_begin")]] export [[nodiscard]] Scope scope_begin(Arena *arena) {
-    contract::assert(arena != nullptr);
-    contract::assert(arena->used <= arena->capacity);
-    contract::assert(arena->scopes < math::max(usize));
+    contract::trusted(); // the prover cannot yet translate a struct returned through sret
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(arena->scopes < math::max(usize));
     Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};
     arena->scopes += 1;
     return scope;
@@ -220,10 +228,10 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Ends a scope: frees what was pushed since it began.
 [[smith::c_name("smith_arena_scope_end")]] export void scope_end(Scope scope) {
-    contract::assert(scope.arena != nullptr);
-    contract::assert(scope.arena->scopes > 0);                // more ends than begins
-    contract::assert(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
-    contract::assert(scope.used <= scope.arena->used);
+    contract::trusted(); // the arena is a pointer inside a struct passed by value, which a proof does not know to be valid
+    contract::requires(scope.arena->scopes > 0);                // more ends than begins
+    contract::requires(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
+    contract::requires(scope.used <= scope.arena->used);
     scope.arena->scopes -= 1;
     scope.arena->used = scope.used;
     if (sanitized) poison_unused(scope.arena);

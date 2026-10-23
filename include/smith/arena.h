@@ -3,8 +3,8 @@
 // smith-module: smith::arena
 // smith-imports: smith::contract smith::math
 // smith-names: align_max=smith_arena_align_max Arena=SmithArena Scope=SmithArenaScope make=smith_arena_make push_raw=smith_arena_push push_array_raw=smith_arena_push_array fits=smith_arena_fits push=smith_arena_push_type push_array=smith_arena_push_array_type carve=smith_arena_carve reset=smith_arena_reset scope_begin=smith_arena_scope_begin scope_end=smith_arena_scope_end
-// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@167:51=[ p@167:52=[ i@167:53=nodiscard p@167:62=] p@167:63=] iP1w@167:65=T pw@167:67=* i@167:68=smith_arena_push_type p@167:72=( i@167:73=SmithArena pw@167:79=* i@167:80=arena p@167:85=, iw@167:87=constexpr iw@167:97=type iP1w@167:102=T p@167:103=) pw@167:105={ iw@168:5=return pw@168:12=( iP1@168:13=T pw@168:15=* p@168:16=) i@168:17=smith_arena_push p@168:25=( i@168:26=arena p@168:31=, iw@168:33=sizeof p@168:39=( iP1@168:40=T p@168:41=) p@168:42=, iw@168:44=alignof p@168:51=( iP1@168:52=T p@168:53=) p@168:54=) p@168:55=; p@169:1=}
-// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@173:57=[ p@173:58=[ i@173:59=nodiscard p@173:68=] p@173:69=] iP1w@173:71=T pw@173:73=* i@173:74=smith_arena_push_array_type p@173:84=( i@173:85=SmithArena pw@173:91=* i@173:92=arena p@173:97=, iw@173:99=constexpr iw@173:109=type iP1w@173:114=T p@173:115=, ixw@174:85=__SIZE_TYPE__ iw@174:91=count p@174:96=) pw@174:98={ iw@175:5=return pw@175:12=( iP1@175:13=T pw@175:15=* p@175:16=) i@175:17=smith_arena_push_array p@175:31=( i@175:32=arena p@175:37=, iw@175:39=sizeof p@175:45=( iP1@175:46=T p@175:47=) p@175:48=, iw@175:50=count p@175:55=, iw@175:57=alignof p@175:64=( iP1@175:65=T p@175:66=) p@175:67=) p@175:68=; p@176:1=}
+// smith-generic: smith::arena push smith_arena_push_type lib/smith/arena.smith - 7 8 16 17 | pw@175:51=[ p@175:52=[ i@175:53=nodiscard p@175:62=] p@175:63=] iP1w@175:65=T pw@175:67=* i@175:68=smith_arena_push_type p@175:72=( i@175:73=SmithArena pw@175:79=* i@175:80=arena p@175:85=, iw@175:87=constexpr iw@175:97=type iP1w@175:102=T p@175:103=) pw@175:105={ iw@176:5=return pw@176:12=( iP1@176:13=T pw@176:15=* p@176:16=) i@176:17=smith_arena_push p@176:25=( i@176:26=arena p@176:31=, iw@176:33=sizeof p@176:39=( iP1@176:40=T p@176:41=) p@176:42=, iw@176:44=alignof p@176:51=( iP1@176:52=T p@176:53=) p@176:54=) p@176:55=; p@177:1=}
+// smith-generic: smith::arena push_array smith_arena_push_array_type lib/smith/arena.smith - 7 8 19 20 | pw@181:57=[ p@181:58=[ i@181:59=nodiscard p@181:68=] p@181:69=] iP1w@181:71=T pw@181:73=* i@181:74=smith_arena_push_array_type p@181:84=( i@181:85=SmithArena pw@181:91=* i@181:92=arena p@181:97=, iw@181:99=constexpr iw@181:109=type iP1w@181:114=T p@181:115=, ixw@182:85=__SIZE_TYPE__ iw@182:91=count p@182:96=) pw@182:98={ iw@183:5=return pw@183:12=( iP1@183:13=T pw@183:15=* p@183:16=) i@183:17=smith_arena_push_array p@183:31=( i@183:32=arena p@183:37=, iw@183:39=sizeof p@183:45=( iP1@183:46=T p@183:47=) p@183:48=, iw@183:50=count p@183:55=, iw@183:57=alignof p@183:64=( iP1@183:65=T p@183:66=) p@183:67=) p@183:68=; p@184:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
@@ -45,7 +45,7 @@ typedef struct {
 } SmithArena;
 
 // A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is
-// reset only with none open; both are asserted.
+// reset only with none open; both are required.
 typedef struct {
     SmithArena *arena;
     size_t used;
@@ -70,11 +70,11 @@ typedef struct {
 // aligned to align_max, and the parent's cursor moves past them. Nothing in them is touched or poisoned, so when the
 // parent is a reservation of address space (the 64 GiB mmap of smith_io_make) the carved arena commits pages only as it
 // is used, and a program can carve hundreds of MiB at start for arenas with different lifetimes (one reset every frame,
-// one for the run). Running out of the parent's capacity is the same stop as a push. Asserts that the parent has no
+// one for the run). Running out of the parent's capacity is the same stop as a push. Requires that the parent has no
 // scope open, since the end of the scope would hand the carved memory back.
 [[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, size_t capacity);
 
-// Frees everything. Asserts no scope is open.
+// Frees everything. Requires that no scope is open.
 void smith_arena_reset(SmithArena *arena);
 
 // Begins a scope.
