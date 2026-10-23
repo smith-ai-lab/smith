@@ -590,9 +590,31 @@ static int smith_prove_project(int count, char **args, const char *self) {
 
 // ---- test and run
 
+// `-k` and `-k N` (ninja's: how many failed jobs to put up with, 0 for any number; a bare `-k` is `-k 0`) are the
+// build's, not the runner's: `smith test -k` compiles every test file and reports every compile error in one run.
+static void smith_verb_take_keep_going(SmithVerbArgs *split) {
+    static char keep_going[32];
+    size_t kept = 0;
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        char *arg = split->own[i];
+        if (strncmp(arg, "-k", 2) != 0 || strlen(arg) >= sizeof keep_going - 3) {
+            split->own[kept++] = arg;
+            continue;
+        }
+        const char *value = arg + 2;
+        bool next = arg[2] == '\0' && i + 1 < split->own_count && split->own[i + 1][0] >= '0' &&
+                    split->own[i + 1][0] <= '9';
+        if (next) value = split->own[++i];
+        snprintf(keep_going, sizeof keep_going, "-k%s", value[0] != '\0' ? value : "0");
+        if (split->option_count < smith_build_args_max) split->options[split->option_count++] = keep_going;
+    }
+    split->own_count = kept;
+}
+
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
+    smith_verb_take_keep_going(split);
     const char *const targets[] = {"smith_tests", nullptr};
     // Each task's wall and CPU time and smith starts (runtime/account.c), unless SMITH_ACCOUNT=no; =all lists every
     // task.

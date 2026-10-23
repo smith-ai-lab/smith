@@ -755,6 +755,10 @@ capture build/tests $iso --test prop_ok --seed 5 --verbose
 expect_contains "seeds: --seed runs one seed" "$out" "PASS prop_ok (seed 5)"
 capture "$smith" test $iso --test prop_ok --seeds 3
 expect "task: smith test runs the runner" 0 "$rc"
+capture "$smith" test $iso --test prop_ok --seeds 3 -k
+expect "task: -k is the build's (keep going), not the runner's" 0 "$rc"
+capture "$smith" test $iso --test prop_ok --seeds 3 -k 2
+expect "task: -k N too" 0 "$rc"
 capture "$smith" test $iso --test prop_ok --seeds x
 expect "task: a bad option reaches the runner's usage, and fails the task" yes "$([ "$rc" -ne 0 ] && echo yes)"
 expect_contains "task: ... which says so" "$err$out" "usage:"
