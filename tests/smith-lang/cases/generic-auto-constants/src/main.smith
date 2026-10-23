@@ -1,0 +1,23 @@
+import pick;
+import "k.h";
+#include <stdio.h>
+
+// A constant is judged by its value, and by its own type: all ones in a u32 fits a u32.
+int main(void) {
+    u32 count = 7;
+    u8 small = 1;
+    u64 wide = 1;
+    printf("%u\n", pick::larger(count, c::failed));
+    printf("%u\n", pick::larger(count, c::BIG));
+    printf("%u\n", pick::larger(count, 4294967295u));
+    printf("%u\n", pick::larger(count, 0xFFFFFFFFu));
+    printf("%u\n", pick::larger(count, 0xFFFFFFFF));
+    printf("%u\n", pick::larger(count, 4294967295ull));
+    printf("%u\n", pick::larger(count, 4294967295l));
+    printf("%u\n", pick::larger(count, 037777777777));
+    printf("%u\n", pick::larger(count, c::Style_Count - 1));
+    printf("%u\n", pick::larger(count, c::Style_B));
+    printf("%u\n", pick::larger(small, c::Style_Count - 1));
+    printf("%llu\n", pick::larger(wide, 18446744073709551615ull));
+    return 0;
+}

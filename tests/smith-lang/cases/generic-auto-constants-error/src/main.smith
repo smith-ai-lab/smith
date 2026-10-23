@@ -1,0 +1,13 @@
+import pick;
+import "k.h";
+
+int main(void) {
+    u32 count = 7;
+    u8 small = 1;
+    u32 a = pick::larger(count, 4294967296);
+    u32 b = pick::larger(count, -1);
+    u8 r3 = pick::larger(small, 256);
+    u8 d = pick::larger(small, c::failed);
+    u8 e = pick::larger(small, c::Style_Count + 254);
+    return a + b + r3 + d + e;
+}

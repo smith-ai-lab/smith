@@ -2167,14 +2167,25 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
-    // The value of a `constexpr` integer variable the parser has parsed, for an `if constexpr` condition.
+    // The value of a `constexpr` integer variable or an enumeration constant the parser has parsed, as the number it
+    // is: an unsigned value is read as unsigned (a `uint32_t` of all ones is 4294967295, not -1), and one that does
+    // not fit an int64_t is not offered.
     static bool constantValue(void *context, const char *name, uint32_t length, int64_t *value) {
         auto *self = static_cast<SmithHook *>(context);
-        auto *variable = dyn_cast_or_null<VarDecl>(self->findDecl(name, length, SmithLookup_Value));
-        if (variable == nullptr || !variable->isConstexpr() || variable->isInvalidDecl()) return false;
-        const APValue *evaluated = variable->evaluateValue();
-        if (evaluated == nullptr || !evaluated->isInt()) return false;
-        *value = evaluated->getInt().getSExtValue();
+        const NamedDecl *decl = self->findDecl(name, length, SmithLookup_Value);
+        llvm::APSInt number;
+        if (auto *constant = dyn_cast_or_null<EnumConstantDecl>(decl)) {
+            number = constant->getInitVal();
+        } else if (auto *variable = dyn_cast_or_null<VarDecl>(decl)) {
+            if (!variable->isConstexpr() || variable->isInvalidDecl()) return false;
+            const APValue *evaluated = variable->evaluateValue();
+            if (evaluated == nullptr || !evaluated->isInt()) return false;
+            number = evaluated->getInt();
+        } else {
+            return false;
+        }
+        if (number.isUnsigned() ? number.getActiveBits() > 63 : number.getSignificantBits() > 64) return false;
+        *value = number.isUnsigned() ? static_cast<int64_t>(number.getZExtValue()) : number.getSExtValue();
         return true;
     }
 

@@ -1,0 +1,5 @@
+src/main.smith:10:35: the argument `failed` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)failed`, or the first argument, `(i32)small`
+src/main.smith:11:35: the argument `Style_Count + 254` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)(Style_Count + 254)`, or the first argument, `(i32)small`
+src/main.smith:7:33: the argument `4294967296` of `larger` converts to u32, the type of its first argument `count`, and changes its value; cast it, `(u32)4294967296`, or the first argument, `(i32)count`
+src/main.smith:8:33: the argument `-1` of `larger` converts to u32, the type of its first argument `count`, and changes its value; cast it, `(u32)-1`, or the first argument, `(i32)count`
+src/main.smith:9:33: the argument `256` of `larger` converts to u8, the type of its first argument `small`, and changes its value; cast it, `(u8)256`, or the first argument, `(i32)small`
