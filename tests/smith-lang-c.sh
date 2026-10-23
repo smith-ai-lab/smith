@@ -35,7 +35,7 @@ compare() { # name, source, extra flags
     # The renamed copy sits where the original does, so that #include "..." finds its neighbours.
     smith_file="${2%.c}.smith"
     base=$(basename "${2%.c}")
-    own="s/\([^A-Za-z0-9_]\)$base\.smith\"/\1$base.c\"/g"
+    own="s|\([^A-Za-z0-9_/.-]\)$base\.smith\"|\1$base.c\"|g"
     cp "$2" "$smith_file"
     # shellcheck disable=SC2086
     "$smith" cc $flags $3 -S "$2" -o "$work/plain/$1.s" 2>"$work/plain/$1.err"

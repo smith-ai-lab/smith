@@ -3,8 +3,7 @@
 
 typedef int import;
 import imported = 3;
-typedef int export;
-export exported = 4;
+static int export = 4;
 typedef int module;
 module modular = 5;
 
@@ -32,7 +31,7 @@ int main(void) {
     struct c_holder c = {5};
     int io = c.x, u8 = 2, constexpr_ = 1, out = 0;
     same_type(3, 4, &out);
-    printf("%d %d %d\n", imported, exported, modular);
+    printf("%d %d %d\n", imported, export, modular);
     printf("%d %d %d %d\n", countof(4), type_name(9), out, rest(4));
     printf("%d %d %s\n", io, u8, "x::y");
     if (constexpr_) printf("%d\n", countof(1));
