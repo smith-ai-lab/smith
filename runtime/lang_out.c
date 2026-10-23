@@ -47,9 +47,9 @@ static SmithLangGenToken smith_lang_gt_tokens[smith_lang_gt_max];
 static char smith_lang_gt_chars[smith_lang_gt_text_max];
 static SmithLangGenToken smith_lang_it_tokens[smith_lang_it_max];
 static char smith_lang_it_chars[smith_lang_it_text_max];
-static SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,   0, 0,
+static SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,    0, 0,
                                       smith_lang_gt_max,    smith_lang_gt_text_max, 0, 0};
-static SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,   0, 0,
+static SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,    0, 0,
                                       smith_lang_it_max,    smith_lang_it_text_max, 0, 0};
 
 constexpr unsigned smith_lang_gen_flag_line_start = 1U;
