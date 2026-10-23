@@ -461,20 +461,57 @@ static bool smith_lang_held_is_inline(const SmithLangHeld *held) {
                                                        smith_lang_equals(text, held->text.length, "__inline__"));
 }
 
-static bool smith_lang_recording_exported(const SmithLang *lang) {
-    return lang->recording && !lang->recording_skip && smith_lang_generics[lang->recording_generic].exported;
-}
-
 // A name written `x::name` is part of the body of the generic being recorded, whose record the module's header holds
 // (and its importers compile): the header must have what it names.
+// An exported generic's names are the header's at once; a private generic's wait, because the header has its record
+// only if an exported generic calls it (lang_private.c applies them then).
+static void smith_lang_generic_note(SmithLang *lang, SmithLangGeneric *generic, uint16_t via, const char *name,
+                                    size_t length, bool tag) {
+    if (generic->exported) {
+        smith_lang_note_use(lang, via, name, length, tag);
+        return;
+    }
+    if (lang->priv_notes_count >= smith_lang_priv_notes_max) return;
+    if (generic->note_count == 0) generic->note_first = (uint32_t)lang->priv_notes_count;
+    SmithLangPrivNote *note = &lang->priv_notes[lang->priv_notes_count++];
+    note->via = via;
+    note->tag = tag;
+    note->name = smith_lang_store(lang, name, length);
+    generic->note_count += 1;
+}
+
 static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token) {
-    if (!smith_lang_recording_exported(lang)) return;
+    if (!lang->recording || lang->recording_skip) return;
     bool tag = false;
     if (smith_lang_gt.count > 0) {
         const SmithLangGenToken *before = &smith_lang_gt.tokens[smith_lang_gt.count - 1];
         tag = smith_lang_tag_before(smith_lang_gt_str(before), before->length);
     }
-    smith_lang_note_use(lang, token->via, token->text, token->length, tag);
+    smith_lang_generic_note(lang, &smith_lang_generics[lang->recording_generic], token->via, token->text,
+                            token->length, tag);
+}
+
+static void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via) {
+    smith_lang_generic_note(lang, &smith_lang_generics[lang->recording_generic], via, "", 0, false);
+}
+
+// The call or the name of the generic being recorded is `known`'s (a private function, type or generic of the module).
+static void smith_lang_generic_use(SmithLang *lang, const SmithLangName *known) {
+    if (!lang->recording || lang->recording_skip || known->exported || lang->gen_uses_count >= smith_lang_gen_uses_max)
+        return;
+    lang->gen_uses[lang->gen_uses_count++] =
+        (SmithLangGenUse){.generic = lang->recording_generic, .name = (uint32_t)(known - lang->names)};
+}
+
+// A body that calls a generic of its own module (written bare, or as `module::name`): a private one is used.
+static void smith_lang_generic_use_member(SmithLang *lang, const char *module, size_t module_length,
+                                          const char *member, size_t member_length) {
+    if (!lang->recording || !lang->is_module || strlen(lang->module) != module_length ||
+        memcmp(lang->module, module, module_length) != 0) {
+        return;
+    }
+    const SmithLangName *known = smith_lang_name_find(lang, member, member_length);
+    if (known != nullptr) smith_lang_generic_use(lang, known);
 }
 
 // Pushes the head's tokens into the pool; false when it is full.
@@ -485,10 +522,10 @@ static bool smith_lang_generic_push_head(SmithLang *lang, SmithLangGeneric *gene
         if (smith_lang_held_is_inline(held)) continue;
         if (i == lang->decl.last_name) generic->name_index = pushed;
         SmithToken token = smith_lang_held_token(lang, held);
-        if (held->via != 0 && lang->decl.exported) { // the head of an exported generic is in its header's record
+        if (held->via != 0) { // the head of a generic is in its header's record
             bool tag = i > 0 && smith_lang_tag_before(smith_lang_scratch_str(lang->head[i - 1].text),
                                                       lang->head[i - 1].text.length);
-            smith_lang_note_use(lang, held->via, token.text, token.length, tag);
+            smith_lang_generic_note(lang, generic, held->via, token.text, token.length, tag);
         }
         if (smith_lang_pool_add(&smith_lang_gt, smith_lang_gt_from(&token), token.text, token.length) == UINT32_MAX) {
             return false;
@@ -565,6 +602,7 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
     SmithLangGeneric *generic = &smith_lang_generics[lang->generics_count];
     *generic = (SmithLangGeneric){};
     generic->first = smith_lang_gt.count;
+    generic->exported = lang->decl.exported; // before its head is pushed: the names it writes through imports
     if (problem == nullptr) {
         if (!smith_lang_generic_push_head(lang, generic) || !smith_lang_generic_parens(generic)) {
             problem = "a generic is a function with a parameter list after its name";
@@ -753,7 +791,9 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
         used = smith_lang_escape(out, capacity, used, smith_lang_str(words[i]), words[i].length);
         used = smith_lang_append(out, capacity, used, " ");
     }
-    used = smith_lang_append(out, capacity, used, "%c %u %u %u %u |", generic->is_inline ? 'i' : '-',
+    // i: inline, p: private (an exported generic calls it), q: both
+    char kind = generic->exported ? (generic->is_inline ? 'i' : '-') : (generic->is_inline ? 'q' : 'p');
+    used = smith_lang_append(out, capacity, used, "%c %u %u %u %u |", kind,
                              generic->name_index, generic->open_index, generic->close_index, generic->body_index);
     for (uint32_t i = 0; i < generic->count; i++) { // the head, then the body
         const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
@@ -773,7 +813,8 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
 static size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     for (size_t i = 0; i < lang->generics_count; i++) { // the module's own
         const SmithLangGeneric *generic = &smith_lang_generics[i];
-        if (generic->own && generic->exported) used = smith_lang_generic_serialize(generic, out, capacity, used);
+        if (generic->own && (generic->exported || generic->needed))
+            used = smith_lang_generic_serialize(generic, out, capacity, used);
     }
     return used;
 }
@@ -935,12 +976,13 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
                 generic->member = smith_lang_store(lang, words[1], strlen(words[1]));
                 generic->lowered = smith_lang_store(lang, words[2], strlen(words[2]));
                 generic->source = smith_lang_store(lang, words[3], strlen(words[3]));
-                generic->is_inline = parsed.words[4][0] == 'i';
+                generic->is_inline = parsed.words[4][0] == 'i' || parsed.words[4][0] == 'q';
+                generic->hidden = parsed.words[4][0] == 'p' || parsed.words[4][0] == 'q';
                 generic->name_index = (uint32_t)strtoul(parsed.words[5], nullptr, 10);
                 generic->open_index = (uint32_t)strtoul(parsed.words[6], nullptr, 10);
                 generic->close_index = (uint32_t)strtoul(parsed.words[7], nullptr, 10);
                 generic->body_index = (uint32_t)strtoul(parsed.words[8], nullptr, 10);
-                generic->exported = true;
+                generic->exported = !generic->hidden;
                 good = smith_lang_generic_scan(generic) == nullptr;
             }
             if (good && smith_lang_generic_find(lang, words[0], strlen(words[0]), words[1], strlen(words[1])) < 0) {
@@ -3579,6 +3621,14 @@ static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host,
         smith_lang_generic_call_done(lang);
         return true;
     }
+    if (generic_index >= 0 && smith_lang_generics[generic_index].hidden && !lang->recording) {
+        smith_lang_error(lang, host, location,
+                         "`%.*s` is private to its module (an exported generic calls it); export it to call it",
+                         (int)member_length, member);
+        smith_lang_generic_call_done(lang);
+        return true;
+    }
+    smith_lang_generic_use_member(lang, module, module_length, member, member_length);
     bool where_ok = !lang->is_module || lang->state == SmithLangState_Stream || lang->body_sparse;
     if (!where_ok || lang->export_active) {
         smith_lang_error(
@@ -3619,8 +3669,7 @@ static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *ho
     (void)name;
     (void)length;
     (void)location;
-    if (!lang->decl.exported || known->exported || known->generic != 0) return;
-    known->needed = true; // the header's instance section declares it (runtime/lang_private.c)
+    smith_lang_generic_use(lang, known); // if an exported generic reaches it, the header's instance section has it
 }
 
 // ---- Beside the nested interface reads

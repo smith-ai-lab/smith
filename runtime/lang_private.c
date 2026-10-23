@@ -101,6 +101,31 @@ static bool smith_lang_priv_writes(const SmithLang *lang, const SmithLangPrivRan
 static void smith_lang_priv_resolve(SmithLang *lang) {
     if (lang->priv_resolved) return;
     lang->priv_resolved = true;
+    for (bool changed = true; changed;) { // what the exported generics use, and what the generics they call use
+        changed = false;
+        for (size_t i = 0; i < lang->gen_uses_count; i++) {
+            const SmithLangGenUse *use = &lang->gen_uses[i];
+            const SmithLangGeneric *user = &smith_lang_generics[use->generic];
+            if (!user->own || !(user->exported || user->needed)) continue;
+            SmithLangName *name = &lang->names[use->name];
+            if (!name->needed) {
+                name->needed = true;
+                changed = true;
+            }
+            SmithLangGeneric *called = name->generic != 0 ? &smith_lang_generics[name->generic - 1] : nullptr;
+            if (called != nullptr && !called->exported && !called->needed) {
+                called->needed = true;
+                changed = true;
+            }
+        }
+    }
+    for (size_t i = 0; i < lang->generics_count; i++) { // the names the private generics in the header write
+        const SmithLangGeneric *generic = &smith_lang_generics[i];
+        for (uint32_t n = 0; generic->own && generic->needed && !generic->exported && n < generic->note_count; n++) {
+            const SmithLangPrivNote *note = &lang->priv_notes[generic->note_first + n];
+            smith_lang_note_use(lang, note->via, smith_lang_str(note->name), note->name.length, note->tag);
+        }
+    }
     for (size_t i = 0; i < lang->priv_names_count; i++) { // what a generic's body names
         const SmithLangPrivName *entry = &lang->priv_names[i];
         const SmithLangName *known = smith_lang_name_find(lang, smith_lang_str(entry->name), entry->name.length);

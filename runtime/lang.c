@@ -20,6 +20,7 @@ constexpr size_t smith_lang_priv_text_max = (size_t)1 << 19;
 constexpr size_t smith_lang_priv_ranges_max = 1024;
 constexpr size_t smith_lang_priv_names_max = 2048;
 constexpr size_t smith_lang_priv_notes_max = 4096;
+constexpr size_t smith_lang_gen_uses_max = 8192;
 constexpr size_t smith_lang_hidden_max = 1024; // private names of imports an instance section declares
 constexpr size_t smith_lang_linked_max = 256;  // private names of a module that have a symbol (its header says which)
 constexpr size_t smith_lang_slots = 131072;    // a power of two, twice the names
@@ -219,8 +220,19 @@ typedef struct {
     uint8_t type_kind[smith_lang_type_params_max];     // a SmithLangSlot
     bool is_inline;
     bool exported;
-    bool own; // the module being lowered defines it (else an import's)
+    bool own;    // the module being lowered defines it (else an import's)
+    bool needed; // own and private: an exported generic calls it, so its record is in the header
+    bool hidden; // an import's private generic (its header holds the record for the instances of exported ones)
+    uint32_t note_first; // own, private: the names its body writes through imports, in SmithLang::priv_notes
+    uint32_t note_count;
 } SmithLangGeneric;
+
+// A name an own generic's body writes (a private function, a type, another generic...), to find what an exported
+// generic needs of the module's private code.
+typedef struct {
+    uint32_t generic;
+    uint32_t name; // an index of SmithLang::names
+} SmithLangGenUse;
 
 // A name the compiler sees, and how the source writes it (runtime/lang_names.c).
 typedef struct {
@@ -497,6 +509,8 @@ struct SmithLang {
     SmithLangText linked[smith_lang_linked_max]; // a compile: the private names that have a symbol (the header says)
     size_t linked_count;
     bool linked_read;
+    SmithLangGenUse gen_uses[smith_lang_gen_uses_max];
+    size_t gen_uses_count;
     SmithLangText hidden[smith_lang_hidden_max]; // as lowered: the imports' private names that their headers declare
     size_t hidden_count;
     bool emit_synthetic;   // everything emitted is a copy with no token of its own in the source (a prototype)

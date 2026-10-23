@@ -1,0 +1,21 @@
+module shape;
+
+constexpr i32 margin = 2;
+
+// A private generic: no importer may call it, but the exported one below does, so its record is in the header.
+typeof(x) padded(auto x) {
+    return x + (typeof(x))margin;
+}
+
+// A private generic nobody exported calls: its record is not in the header.
+typeof(x) unused(auto x) {
+    return x;
+}
+
+export typeof(x) framed(auto x) {
+    return padded(padded(x));
+}
+
+export i32 plain(i32 x) {
+    return unused(x);
+}

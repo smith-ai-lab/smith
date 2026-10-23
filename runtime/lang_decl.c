@@ -35,6 +35,7 @@ static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, cons
 static void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor);
 
 // runtime/lang_generic.c
+static void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via);
 static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, size_t length);
 static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                     const SmithLangBinding *binding, const SmithToken *member);
@@ -360,9 +361,6 @@ static void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
     if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
 
-// runtime/lang_generic.c: the body of an exported generic is being recorded
-static bool smith_lang_recording_exported(const SmithLang *lang);
-
 // runtime/lang_target.c
 static void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                   const SmithToken *member, SmithToken *result, char *digits, size_t capacity);
@@ -448,8 +446,8 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         return true;
     }
     if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);
-    if (!binding->is_c && smith_lang_recording_exported(lang)) { // a call to a generic, say, which has no `via` token
-        lang->bindings[binding - lang->bindings].in_header = true;
+    if (!binding->is_c && lang->recording && !lang->recording_skip) { // a call to a generic, say, which has no `via`
+        smith_lang_generic_note_binding(lang, (uint16_t)(binding - lang->bindings + 1));
     }
     if (binding->is_c) {
         smith_lang_allow(lang, taken.location);

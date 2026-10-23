@@ -1,0 +1,1 @@
+src/main.smith:6:19: `padded` is private to its module (an exported generic calls it); export it to call it

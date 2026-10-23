@@ -1,0 +1,7 @@
+module main;
+
+import shape;
+
+int main(void) {
+    return shape::padded(1) + shape::framed(2);
+}

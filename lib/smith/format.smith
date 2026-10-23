@@ -280,7 +280,7 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
 
 // A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or Text is
 // referenced (it must outlive the call that writes it), any other piece is held in the 64 characters of the value.
-export constexpr usize padded_capacity = 64;
+constexpr usize padded_capacity = 64;
 [[smith::c_name("SmithFormatPadded")]] export typedef struct {
     const char *begin;
     usize length;
@@ -489,7 +489,7 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
 
 // One piece by the rule of its type. `to` is this for each of its arguments; a type with no rule is an error here, and
 // at the position of the piece in `to`.
-export void put(Writer *writer, auto piece) {
+void put(Writer *writer, auto piece) {
     if constexpr (is_bool(typeof(piece))) {
         put_string(writer, piece ? "true" : "false");
     } else if constexpr (typeof(piece) == char) {
@@ -522,7 +522,7 @@ export void put(Writer *writer, auto piece) {
 }
 
 // The piece as text, to be put in a column of width characters (on the right, or on the left when left is true).
-export Padded make_padded(auto piece, u32 width, bool left) {
+Padded make_padded(auto piece, u32 width, bool left) {
     Padded padded = {};
     padded.width = width;
     padded.left = left;
@@ -554,7 +554,7 @@ export [[nodiscard]] Padded left(auto piece, u32 width) {
 
 // The error for a piece `to` has no rule for: Slot is char[n] for the n-th piece, counting from 1, so the message can
 // name it (a static_assert message is a literal, and a number cannot be a compile-time parameter).
-export void no_rule(constexpr type Slot) {
+void no_rule(constexpr type Slot) {
     if constexpr (sizeof(Slot) == 1) {
         static_assert(false, "format: no rule for the type of piece 1; the note lists the types in order");
     } else if constexpr (sizeof(Slot) == 2) {
