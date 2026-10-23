@@ -1,0 +1,26 @@
+// An out-of-bounds read inside a function that autodiff::gradient differentiates, through the generic's instance:
+// `main ok` stays inside the array, `main primal` reads past it. AddressSanitizer (debug profile) must stop it at
+// the line of the read.
+module main;
+
+import smith::autodiff;
+import smith::io;
+import <string.h>;
+
+typedef struct {
+    f64 v[4];
+} Data;
+
+f64 pick(Data *d, usize n) {
+    return d->v[n] * d->v[n];
+}
+
+i32 main(i32 argc, char *argv[]) {
+    io::Io io = io::make(argc, argv);
+    Data d = {.v = {1.0, 2.0, 3.0, 4.0}};
+    usize n = c::strcmp(argv[1], "ok") == 0 ? 3 : 4;
+    Data g = autodiff::gradient(pick, &d, n);
+    (void)io::console_printf(&io.console, "gradient %.3f %.3f\n", g.v[0], g.v[3]);
+    io::close(&io);
+    return 0;
+}

@@ -8,7 +8,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 
 ## Architecture
 
-- [Enzyme is linked into smith's lld, and smith::autodiff is its raw interface](autodiff.md): An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
+- [Enzyme is linked into smith's lld, and smith::autodiff is its interface](autodiff.md): An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
 - [smith build and build.c](build-file.md): smith build runs a project's build.c, which writes a ninja manifest that smith's own executor runs, with everything explicit and no macros.
 - [Contracts are C23 attributes and calls that smith reads](contracts.md): Contracts are calls of smith::contract that smith prove reads from the IR, are not a clang plugin and do not depend on -fbounds-safety.
 - [smith dbg and smith dap](debugger.md): smith dbg and smith dap are lldb and lldb-dap from smith's LLVM with the system's debugserver, and the doc holds how they are built, their cost, and macOS permissions.

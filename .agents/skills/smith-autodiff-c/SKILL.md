@@ -23,9 +23,12 @@ void loss_gradient(const double *p, double *dp, size_t n) {
 | `autodiff::constant`         | `enzyme_const`        | the next argument is not differentiated                                          |
 | `autodiff::dup`              | `enzyme_dup`          | a pointer (reverse: then its shadow, which receives the derivative) or a value and its tangent (forward) |
 | `autodiff::out`              | `enzyme_out`          | a scalar whose derivative the call returns (reverse mode)                        |
+| `autodiff::interleave`       | `enzyme_interleave`   | ends the arguments; every shadow (derivative) pointer follows it, in the order of the `dup`s (what `gradient` uses) |
 | `autodiff::dup_no_need`      | `enzyme_dupnoneed`    | as `dup`, for a result the caller never reads                                    |
 
 What to know:
+
+- **No `gradient` in C**: it is a generic function (`typeof(*x)` result, a list of arguments), which C does not have. In the interleave form, one `enzyme_const` covers the whole run of constant arguments and an unmarked `float` would be active, so write `__enzyme_autodiff((void *)f, enzyme_dup, x, enzyme_const, a, b, enzyme_interleave, &dx)`; with no constant argument leave out `enzyme_const` (the marker would take `enzyme_interleave` as its argument).
 
 - **The functions are variadic and return `double`** (the first derivative of an `out` argument, or a forward tangent). Nothing after the first argument is type checked, so pass exactly the types the function takes: a `float` after a marker is promoted to `double` and Enzyme refuses it ("Cannot cast ... primal argument"). For a struct of several derivatives, or another result type, call through a cast pointer type: `((Pair (*)(void *, ...))__enzyme_autodiff)(...)`. The first argument is the function as a `void *`.
 - **The markers are never defined.** They are `extern int` that no source gives a value: a defined one would be folded to its value before Enzyme reads it. The library has no object that defines them; do not define them in a program either.

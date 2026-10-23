@@ -1,12 +1,12 @@
 ---
 type: architecture
-title: Enzyme is linked into smith's lld, and smith::autodiff is its raw interface
+title: Enzyme is linked into smith's lld, and smith::autodiff is its interface
 description: An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
 tags: [autodiff, enzyme]
 ---
-# Enzyme is linked into smith's lld, and smith::autodiff is its raw interface
+# Enzyme is linked into smith's lld, and smith::autodiff is its interface
 
-**Enzyme (automatic differentiation of LLVM IR) is linked into smith's lld, and `smith::autodiff` is its raw interface**
+**Enzyme (automatic differentiation of LLVM IR) is linked into smith's lld, and `smith::autodiff` is its interface**
 (skill smith-autodiff). Enzyme v0.0.303 (Apache-2.0 with the LLVM exception, pinned by hash in build.c) is built static by
 `smith build llvm` (`scripts/enzyme.sh`, after the prover's libraries; `smith build enzyme` alone) into its own folder
 `~/.cache/smith/enzyme/<version>-<LLVM configuration>/`, never inside an LLVM install, so building it changes no
@@ -17,7 +17,12 @@ so `shim/lld.cpp` adds `--load-pass-plugin=<smith's own path>` and Enzyme's `llv
 (`-exported_symbol`): lld dlopens the executable itself, so nothing is read from disk. A link with no bitcode never
 reads the option, and a link with no Enzyme call costs nothing measurable. **The library** is `lib/smith/autodiff.smith`
 (`__enzyme_autodiff`, `__enzyme_fwddiff`, the `enzyme_*` markers as `extern` and never defined; a source that defines
-nothing, like math). **A program that reaches it is an autodiff program** (`smith_app`'s scan finds the library as it
+nothing, like math) **and `gradient`**, an ordinary generic (`constexpr auto f, auto x, auto... rest`, result
+`typeof(*x)`) that calls the raw reverse mode as `dup x, constant rest..., interleave, &dx` (`enzyme_interleave`: one
+`enzyme_const` covers the whole run; with no extra argument the `constant` is left out by `if constexpr`, else it would take
+`interleave` as its argument). It holds every argument after `*x` constant, checks `f` with `sizeof(f(x, rest...))` so a wrong
+call is an error at the user's call, and zeroes a `dx` that is a plain value, so the pointee must hold its own memory (a
+struct of pointers has null shadows). Its body writes the module's own names bare (`reverse`, `dup`): `autodiff::dup` would not resolve in the instance. C has no `gradient` (no generics), only the raw interface. **A program that reaches it is an autodiff program** (`smith_app`'s scan finds the library as it
 does every other) and, in every profile and for the tests, links with `-flto=full` (ThinLTO fails), compiles each file with
 `-Xclang -disable-llvm-passes` (Enzyme wants IR not yet optimized; the link optimizes after it), puts its objects in
 `build/<profile>/autodiff/`, and **debug has AddressSanitizer, run

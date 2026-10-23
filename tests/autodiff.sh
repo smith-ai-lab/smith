@@ -62,9 +62,9 @@ expect_lacks() { # name, text, needle
 }
 
 # The lines "<name> <derivative> <analytic>" a program prints agree to 1e-9 relative: how many do not.
-disagree() { awk '/^(reverse|forward|loss)/ { d = $(NF-1); a = $NF; e = d - a; if (e < 0) e = -e; s = a < 0 ? -a : a; if (e > 1e-9 * (s > 1 ? s : 1)) bad++ } END { print bad + 0 }'; }
+disagree() { awk '/^(reverse|forward|loss|gradient)/ { d = $(NF-1); a = $NF; e = d - a; if (e < 0) e = -e; s = a < 0 ? -a : a; if (e > 1e-9 * (s > 1 ? s : 1)) bad++ } END { print bad + 0 }'; }
 
-# 1. The toy: main.smith, toy.smith, kernel.c and a test, which differentiate across three files.
+# 1. The toy (reverse, forward and autodiff::gradient): main.smith, toy.smith, kernel.c and a test, which differentiate across three files.
 mkdir "$work/toy" && cd "$work/toy" || exit 1
 cp -R "$here/tests/autodiff/toy/." .
 git init -q . && git config user.email t@t && git config user.name t
@@ -81,7 +81,7 @@ for profile in debug release fast; do
     capture "build/$profile/toy"
     expect "toy: $profile runs" 0 "$rc"
     expect "toy: $profile reverse and forward derivatives equal the analytic ones" 0 "$(printf '%s\n' "$out" | disagree)"
-    expect "toy: $profile prints six lines" 6 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+    expect "toy: $profile prints six lines and eight of autodiff::gradient" 14 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
     expect "toy: $profile prints nothing of Enzyme's own to standard error" "" "$err"
 done
 commands=$(smith build -t commands build/debug/toy build/release/toy build/fast/toy)
@@ -94,7 +94,7 @@ expect_lacks "toy: release and fast have no sanitizer" "$(smith build -t command
 expect_contains "toy: the objects are beside the others" "$commands" "build/debug/autodiff/kernel.o"
 capture smith test
 expect "toy: smith test, whose test differentiates, passes" 0 "$rc"
-expect_contains "toy: ... and runs it" "$out" "1 passed, 0 failed"
+expect_contains "toy: ... and runs it" "$out" "2 passed, 0 failed"
 capture smith lint
 expect "toy: smith lint is clean" 0 "$rc"
 
@@ -148,6 +148,47 @@ expect_contains "oob: ... in the gradient at the line of the source" "$err" "in 
 capture build/release/oob primal
 expect_lacks "oob: release has no AddressSanitizer" "$err" "AddressSanitizer"
 unset ASAN_SYMBOLIZER_PATH
+
+# 3b. autodiff::gradient of the same scan (a loss of fixed arrays), in .smith: equal to the hand-written backward to 1e-12.
+mkdir "$work/scangrad" && cd "$work/scangrad" || exit 1
+cp -R "$here/tests/autodiff/scan/base" "$here/tests/autodiff/scan-gradient/main.smith" .
+git init -q .
+capture smith build release
+expect "scan gradient: release builds" 0 "$rc"
+capture smith build
+expect "scan gradient: debug builds" 0 "$rc"
+for profile in release debug; do
+    capture "build/$profile/scangrad"
+    expect "scan gradient: $profile equals the hand-written backward to 1e-12" 0 "$rc"
+    expect_contains "scan gradient: $profile reports the difference" "$out" "worst relative difference"
+done
+
+# 4b. AddressSanitizer through the generic instance of autodiff::gradient: the read's line, in the function as differentiated.
+mkdir "$work/oobgrad" && cd "$work/oobgrad" || exit 1
+cp "$here/tests/autodiff/oob-gradient/main.smith" .
+git init -q .
+capture smith build
+expect "oob gradient: debug builds" 0 "$rc"
+export ASAN_SYMBOLIZER_PATH=$work/bin/llvm-symbolizer
+capture build/debug/oobgrad ok
+expect "oob gradient: inside the array it runs" 0 "$rc"
+expect_contains "oob gradient: ... and is right" "$out" "gradient 0.000 8.000"
+capture build/debug/oobgrad bad
+expect_contains "oob gradient: past the array, AddressSanitizer stops it" "$err" "ERROR: AddressSanitizer: stack-buffer-overflow"
+expect_contains "oob gradient: ... at the line of the read" "$err" "in diffemain_pick $work/oobgrad/main.smith:15"
+unset ASAN_SYMBOLIZER_PATH
+
+# 4c. A call autodiff::gradient cannot differentiate is an error at the call, not a link error from Enzyme.
+mkdir "$work/wrong" && cd "$work/wrong" || exit 1
+git init -q .
+for call in 'autodiff::gradient(total, &d)' 'autodiff::gradient(total, &d, &d)' 'autodiff::gradient(total, 1.0, 2.0)'; do
+    escaped=$(printf '%s' "$call" | sed 's/&/\\&/g')
+    sed "s|CALL|$escaped|" "$here/tests/autodiff/wrong/main.smith" >main.smith
+    capture smith build
+    expect "wrong: \`$call\` is refused" 1 "$rc"
+    expect_contains "wrong: ... at the call in main.smith" "$err$out" "main.smith:16:"
+    expect_lacks "wrong: ... and never reaches Enzyme" "$err$out" "Enzyme:"
+done
 
 # 5. A smith that runs an external clang has no Enzyme: the build refuses an autodiff program and says why.
 cd "$work/toy" || exit 1

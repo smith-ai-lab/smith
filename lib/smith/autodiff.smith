@@ -1,4 +1,5 @@
-// smith::autodiff, <smith/autodiff.h>: Enzyme's own interface, as Enzyme documents it, declared and never defined.
+// smith::autodiff, <smith/autodiff.h>: Enzyme's own interface, as Enzyme documents it, declared and never defined, and
+// `gradient`, the typed call built on it (the last export; a .smith file's, since it is generic).
 // Enzyme differentiates LLVM IR: it finds a call to __enzyme_autodiff (reverse mode) or __enzyme_fwddiff (forward mode)
 // when smith links the program, writes the derivative of the function it is given, and replaces the call with it. So
 // nothing here has a body, and nothing may: a marker that had a definition would be folded to its value before Enzyme
@@ -42,3 +43,21 @@ module smith::autodiff;
 [[smith::c_name("enzyme_dup")]] export extern i32 dup;
 [[smith::c_name("enzyme_out")]] export extern i32 out;
 [[smith::c_name("enzyme_dupnoneed")]] export extern i32 dup_no_need;
+[[smith::c_name("enzyme_interleave")]] export extern i32 interleave;
+
+// The gradient of `f` with respect to `*x`, with every other argument held constant: `autodiff::gradient(loss, &params,
+// &batch)` is the derivative of `loss(&params, &batch)` with respect to what `&params` points to, of the type of `*x`,
+// zeroed first and filled by the reverse mode. `f` is the name of a function (a compile time argument), `x` a pointer,
+// and `rest` anything `f` takes after it; a pointer in `rest` is read, never differentiated. A call `f` does not accept
+// is an error at the call. A generic function: only .smith calls it (C writes `__enzyme_autodiff` with
+// `enzyme_interleave`).
+export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
+    (void)sizeof(f(x, rest...));
+    typeof_unqual(*x) dx = {};
+    if constexpr (countof(rest) == 0) {
+        reverse((void *)f, dup, x, interleave, &dx);
+    } else {
+        reverse((void *)f, dup, x, constant, rest..., interleave, &dx);
+    }
+    return dx;
+}
