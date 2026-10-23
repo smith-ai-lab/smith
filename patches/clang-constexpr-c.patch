@@ -1,0 +1,184 @@
+--- a/clang/include/clang/Basic/LangOptions.def
++++ b/clang/include/clang/Basic/LangOptions.def
+@@ -43,6 +43,7 @@
+ LANGOPT(C17               , 1, 0, NotCompatible, "C17")
+ LANGOPT(C23               , 1, 0, NotCompatible, "C23")
+ LANGOPT(C2y               , 1, 0, NotCompatible, "C2y")
++LANGOPT(SmithConstexprC   , 1, 0, NotCompatible, "smith: C function bodies run in the constant evaluator where C requires a constant")
+ LANGOPT(MSVCCompat        , 1, 0, NotCompatible, "Microsoft Visual C++ full compatibility mode")
+ LANGOPT(Kernel            , 1, 0, NotCompatible, "Kernel mode")
+ LANGOPT(MicrosoftExt      , 1, 0, NotCompatible, "Microsoft C++ extensions")
+--- a/clang/lib/AST/ExprConstant.cpp
++++ b/clang/lib/AST/ExprConstant.cpp
+@@ -1912,11 +1912,42 @@
+   Out << ')';
+ }
+ 
++/// smith: a C function body runs in the constant evaluator, as C++14 constexpr
++/// functions do, when the front end is lowering a `.smith` file
++/// (LangOptions::SmithConstexprC) and C requires a constant here. The patch only
++/// turns an error into a value: the evaluation must be in a constant context
++/// (InConstantContext: a `constexpr` initializer, `static_assert`, a case label,
++/// an enum value, a bit-field width, ...) and not the quiet folding clang does
++/// to see whether an expression happens to be constant (ConstantFold mode: the
++/// operand of `__builtin_constant_p`, an automatic variable's initializer; or
++/// no constant context at all: code generation's folding), where a call that
++/// is not a constant expression must stay one.
++static bool SmithCEval(const EvalInfo &Info) {
++  const LangOptions &LO = Info.getLangOpts();
++  return LO.SmithConstexprC && !LO.CPlusPlus && Info.InConstantContext &&
++         Info.EvalMode != EvaluationMode::ConstantFold;
++}
++
++static bool SmithEvalCAssign(const Expr *E, LValue &Result, EvalInfo &Info);
++static bool SmithIsCAssign(EvalInfo &Info, const Expr *E) {
++  E = E->IgnoreParens();
++  if (!SmithCEval(Info))
++    return false;
++  if (auto *B = dyn_cast<BinaryOperator>(E))
++    return B->isAssignmentOp();
++  return false;
++}
++
+ /// Evaluate an expression to see if it had side-effects, and discard its
+ /// result.
+ /// \return \c true if the caller should keep evaluating.
+ static bool EvaluateIgnoredValue(EvalInfo &Info, const Expr *E) {
+   assert(!E->isValueDependent());
++  if (SmithIsCAssign(Info, E)) {
++    LValue LV;
++    return SmithEvalCAssign(E->IgnoreParens(), LV, Info) ||
++           Info.noteSideEffect();
++  }
+   APValue Scratch;
+   if (!Evaluate(Scratch, Info, E))
+     // We don't need the value, but we might have skipped a side effect here.
+@@ -4127,7 +4158,7 @@
+     // In C++14 onwards, it is permitted to read a mutable member whose
+     // lifetime began within the evaluation.
+     // FIXME: Should we also allow this in C++11?
+-    if (!Info.getLangOpts().CPlusPlus14 &&
++    if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) &&
+         AK != AccessKinds::AK_IsWithinLifetime)
+       return false;
+     return lifetimeStartedInEvaluation(Info, Base, /*MutableSubobject*/true);
+@@ -4605,7 +4636,7 @@
+   APValue *BaseVal = nullptr;
+   QualType BaseType = getType(LVal.Base);
+ 
+-  if (Info.getLangOpts().CPlusPlus14 && LVal.Base == Info.EvaluatingDecl &&
++  if ((Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) && LVal.Base == Info.EvaluatingDecl &&
+       lifetimeStartedInEvaluation(Info, LVal.Base)) {
+     // This is the object whose initializer we're evaluating, so its lifetime
+     // started in the current evaluation.
+@@ -4678,7 +4709,7 @@
+         // Access of a parameter that's not associated with a frame isn't going
+         // to work out, but we can leave it to evaluateVarDeclInit to provide a
+         // suitable diagnostic.
+-      } else if (Info.getLangOpts().CPlusPlus14 &&
++      } else if ((Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) &&
+                  lifetimeStartedInEvaluation(Info, LVal.Base)) {
+         // OK, we can read and modify an object if we're in the process of
+         // evaluating its initializer, because its lifetime began in this
+@@ -4864,7 +4895,7 @@
+   if (llvm::isa_and_nonnull<ParmVarDecl>(
+           LVal.Base.dyn_cast<const ValueDecl *>()))
+     ++VisibleDepth;
+-  if ((Frame && Info.getLangOpts().CPlusPlus14 &&
++  if ((Frame && (Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) &&
+        Info.EvalStatus.HasSideEffects) ||
+       (isModification(AK) && VisibleDepth < Info.SpeculativeEvaluationDepth))
+     return CompleteObject();
+@@ -4959,7 +4990,7 @@
+   if (LVal.Designator.Invalid)
+     return false;
+ 
+-  if (!Info.getLangOpts().CPlusPlus14) {
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info))) {
+     Info.FFDiag(E);
+     return false;
+   }
+@@ -5108,7 +5139,7 @@
+   if (LVal.Designator.Invalid)
+     return false;
+ 
+-  if (!Info.getLangOpts().CPlusPlus14) {
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info))) {
+     Info.FFDiag(E);
+     return false;
+   }
+@@ -5256,7 +5287,7 @@
+   if (LVal.Designator.Invalid)
+     return false;
+ 
+-  if (!Info.getLangOpts().CPlusPlus14) {
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info))) {
+     Info.FFDiag(E);
+     return false;
+   }
+@@ -6415,7 +6446,8 @@
+ 
+   // Can we evaluate this function call?
+   if (Definition && Body &&
+-      (Definition->isConstexpr() || (Info.CurrentCall->CanEvalMSConstexpr &&
++      (Definition->isConstexpr() || SmithCEval(Info) ||
++       (Info.CurrentCall->CanEvalMSConstexpr &&
+                                         Definition->hasAttr<MSConstexprAttr>())))
+     return true;
+ 
+@@ -9094,7 +9126,7 @@
+     return VisitUnaryPostIncDec(UO);
+   }
+   bool VisitUnaryPostIncDec(const UnaryOperator *UO) {
+-    if (!Info.getLangOpts().CPlusPlus14 && !Info.keepEvaluatingAfterFailure())
++    if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) && !Info.keepEvaluatingAfterFailure())
+       return Error(UO);
+ 
+     LValue LVal;
+@@ -9804,7 +9836,7 @@
+ }
+ 
+ bool LValueExprEvaluator::VisitUnaryPreIncDec(const UnaryOperator *UO) {
+-  if (!Info.getLangOpts().CPlusPlus14 && !Info.keepEvaluatingAfterFailure())
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) && !Info.keepEvaluatingAfterFailure())
+     return Error(UO);
+ 
+   if (!this->Visit(UO->getSubExpr()))
+@@ -9817,7 +9849,7 @@
+ 
+ bool LValueExprEvaluator::VisitCompoundAssignOperator(
+     const CompoundAssignOperator *CAO) {
+-  if (!Info.getLangOpts().CPlusPlus14 && !Info.keepEvaluatingAfterFailure())
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) && !Info.keepEvaluatingAfterFailure())
+     return Error(CAO);
+ 
+   bool Success = true;
+@@ -9840,8 +9872,12 @@
+       CAO->getOpForCompoundAssignment(CAO->getOpcode()), RHS);
+ }
+ 
++static bool SmithEvalCAssign(const Expr *E, LValue &Result, EvalInfo &Info) {
++  return LValueExprEvaluator(Info, Result, false).Visit(E);
++}
++
+ bool LValueExprEvaluator::VisitBinAssign(const BinaryOperator *E) {
+-  if (!Info.getLangOpts().CPlusPlus14 && !Info.keepEvaluatingAfterFailure())
++  if (!(Info.getLangOpts().CPlusPlus14 || SmithCEval(Info)) && !Info.keepEvaluatingAfterFailure())
+     return Error(E);
+ 
+   bool Success = true;
+@@ -19316,6 +19352,14 @@
+ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
+   // We don't support assignment in C. C++ assignments don't get here because
+   // assignment is an lvalue in C++.
++  if (E->isAssignmentOp() && SmithIsCAssign(Info, E)) {
++    LValue LV;
++    APValue V;
++    if (!SmithEvalCAssign(E, LV, Info) ||
++        !handleLValueToRValueConversion(Info, E, E->getType(), LV, V))
++      return false;
++    return Success(V, E);
++  }
+   if (E->isAssignmentOp()) {
+     Error(E);
+     if (!Info.noteFailure())
