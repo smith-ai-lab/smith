@@ -12,10 +12,91 @@ diff -ru a/clang/lib/Format/Format.cpp b/clang/lib/Format/Format.cpp
      return FormatStyle::LK_C;
    if (FileName.ends_with(".java"))
      return FormatStyle::LK_Java;
+diff -ru a/clang/lib/Format/FormatToken.h b/clang/lib/Format/FormatToken.h
+--- a/clang/lib/Format/FormatToken.h	2026-10-23 13:10:07
++++ b/clang/lib/Format/FormatToken.h	2026-10-23 13:10:07
+@@ -29,6 +29,9 @@
+   TYPE(ArrayInitializerLSquare)                                                \
+   TYPE(ArraySubscriptLSquare)                                                  \
+   TYPE(AttributeColon)                                                         \
++  TYPE(SmithSliceColon)                                                        \
++  TYPE(SmithTupleLBrace)                                                       \
++  TYPE(SmithTupleRBrace)                                                       \
+   TYPE(AttributeLParen)                                                        \
+   TYPE(AttributeLSquare)                                                       \
+   TYPE(AttributeMacro)                                                         \
 diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator.cpp
---- a/clang/lib/Format/TokenAnnotator.cpp	2026-10-21 09:52:01
-+++ b/clang/lib/Format/TokenAnnotator.cpp	2026-10-21 09:53:43
-@@ -2027,7 +2027,11 @@
+--- a/clang/lib/Format/TokenAnnotator.cpp	2026-10-23 13:10:07
++++ b/clang/lib/Format/TokenAnnotator.cpp	2026-10-23 13:10:07
+@@ -712,7 +712,7 @@
+     bool InsideInlineASM = Line.startsWith(tok::kw_asm);
+     bool IsCppStructuredBinding = Left->isCppStructuredBinding(IsCpp);
+     bool StartsObjCMethodExpr =
+-        !IsCppStructuredBinding && !InsideInlineASM && !CppArrayTemplates &&
++        !Line.IsSmith && !IsCppStructuredBinding && !InsideInlineASM && !CppArrayTemplates &&
+         IsCpp && !IsCpp11AttributeSpecifier && !IsCSharpAttributeSpecifier &&
+         Contexts.back().CanBeExpression && Left->isNot(TT_LambdaLSquare) &&
+         CurrentToken->isNoneOf(tok::l_brace, tok::r_square) &&
+@@ -886,6 +886,14 @@
+           // Remember that this is a [[using ns: foo]] C++ attribute, so we
+           // don't add a space before the colon (unlike other colons).
+           CurrentToken->setType(TT_AttributeColon);
++        } else if (Line.IsSmith &&
++                   Left->isOneOf(TT_ArraySubscriptLSquare,
++                                 TT_DesignatedInitializerLSquare)) {
++          // A slice `xs[a:b]` or the shape `xs[:]` of a .smith file (issue
++          // #82); the colon of a `?:` was taken by parseConditional.
++          CurrentToken->setType(TT_SmithSliceColon);
++          next();
++          continue;
+         } else if (!Style.isVerilog() && !Line.InPragmaDirective &&
+                    Left->isOneOf(TT_ArraySubscriptLSquare,
+                                  TT_DesignatedInitializerLSquare)) {
+@@ -1328,6 +1336,34 @@
+     return true;
+   }
+ 
++  // `struct { i32, f32 }` of a .smith file (issue #96): the braces of a body
++  // with no `;`, which stay a braced list and a type after the `}`.
++  void markSmithTuple(FormatToken *Open) {
++    int Depth = 0;
++    for (FormatToken *Tok = Open; Tok; Tok = Tok->Next) {
++      if (Tok->is(tok::semi))
++        return;
++      if (Tok->is(tok::l_brace))
++        ++Depth;
++      if (Tok->is(tok::r_brace) && --Depth == 0)
++        break;
++    }
++    if (Depth != 0 || Open->Next->is(tok::r_brace))
++      return;
++    Depth = 0;
++    for (FormatToken *Tok = Open; Tok; Tok = Tok->Next) {
++      if (Tok->is(tok::l_brace)) {
++        ++Depth;
++        Tok->setType(TT_SmithTupleLBrace);
++      }
++      if (Tok->is(tok::r_brace)) {
++        Tok->setType(TT_SmithTupleRBrace);
++        if (--Depth == 0)
++          return;
++      }
++    }
++  }
++
+   bool consumeToken() {
+     if (IsCpp) {
+       const auto *Prev = CurrentToken->getPreviousNonComment();
+@@ -1617,6 +1653,8 @@
+       Scopes.push_back(getScopeType(*Tok));
+       if (!parseBrace())
+         return false;
++      if (Line.IsSmith && Prev && Prev->is(tok::kw_struct))
++        markSmithTuple(Tok);
+       break;
+     case tok::less:
+       if (parseAngle()) {
+@@ -2027,7 +2065,11 @@
          (!Style.isVerilog() && Info &&
           Info->getPPKeywordID() == tok::pp_import && CurrentToken->Next &&
           CurrentToken->Next->isOneOf(tok::string_literal, tok::identifier,
@@ -28,9 +109,52 @@ diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator
        next();
        parseIncludeDirective();
        return LT_ImportStatement;
+@@ -3059,7 +3101,7 @@
+     const FormatToken *PrevToken = Tok.getPreviousNonComment();
+     if (!PrevToken)
+       return TT_UnaryOperator;
+-    if (PrevToken->isTypeName(LangOpts))
++    if (PrevToken->isTypeName(LangOpts) || PrevToken->is(TT_SmithTupleRBrace))
+       return TT_PointerOrReference;
+     if (PrevToken->isPlacementOperator() && Tok.is(tok::ampamp))
+       return TT_BinaryOperator;
+@@ -5203,6 +5245,14 @@
+   // clang-format-off section).
+   if (Left.Finalized)
+     return Right.hasWhitespaceBefore();
++
++  // A .smith tuple type and slice (issues #96, #82).
++  if (Left.isOneOf(TT_SmithTupleLBrace, TT_SmithSliceColon) ||
++      Right.isOneOf(TT_SmithTupleRBrace, TT_SmithSliceColon)) {
++    return Left.is(TT_SmithTupleLBrace) || Right.is(TT_SmithTupleRBrace);
++  }
++  if (Right.is(TT_SmithTupleLBrace) && Left.is(tok::kw_struct))
++    return true;
+ 
+   const bool IsVerilog = Style.isVerilog();
+   assert(!IsVerilog || !IsCpp);
+diff -ru a/clang/lib/Format/TokenAnnotator.h b/clang/lib/Format/TokenAnnotator.h
+--- a/clang/lib/Format/TokenAnnotator.h	2026-10-23 13:10:07
++++ b/clang/lib/Format/TokenAnnotator.h	2026-10-23 13:10:07
+@@ -59,6 +59,7 @@
+         InPragmaDirective(Line.InPragmaDirective),
+         InMacroBody(Line.InMacroBody),
+         IsModuleOrImportDecl(Line.IsModuleOrImportDecl),
++        IsSmith(Line.IsSmith),
+         MustBeDeclaration(Line.MustBeDeclaration), MightBeFunctionDecl(false),
+         IsMultiVariableDeclStmt(false), Affected(false),
+         LeadingEmptyLinesAffected(false), ChildrenAffected(false),
+@@ -186,6 +187,7 @@
+   bool InPragmaDirective;
+   bool InMacroBody;
+   bool IsModuleOrImportDecl;
++  bool IsSmith;
+   bool MustBeDeclaration;
+   bool MightBeFunctionDecl;
+   bool IsMultiVariableDeclStmt;
 diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/UnwrappedLineParser.cpp
---- a/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-21 09:50:14
-+++ b/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-21 09:53:43
+--- a/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-23 13:10:07
++++ b/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-23 13:10:07
 @@ -17,6 +17,7 @@
  #include "FormatTokenSource.h"
  #include "Macros.h"
@@ -55,7 +179,7 @@ diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/Unwrapped
  UnwrappedLineParser::UnwrappedLineParser(
      SourceManager &SourceMgr, const FormatStyle &Style,
      const AdditionalKeywords &Keywords, unsigned FirstStartColumn,
-@@ -159,6 +169,7 @@
+@@ -159,18 +169,22 @@
      IdentifierTable &IdentTable)
      : Line(new UnwrappedLine), AtEndOfPPLine(false), CurrentLines(&Lines),
        Style(Style), IsCpp(Style.isCpp()),
@@ -63,7 +187,23 @@ diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/Unwrapped
        LangOpts(getFormattingLangOpts(Style)), Keywords(Keywords),
        CommentPragmasRegex(Style.CommentPragmas), Tokens(nullptr),
        Callback(Callback), AllTokens(Tokens), PPBranchLevel(-1),
-@@ -1354,8 +1365,12 @@
+       IncludeGuard(getIncludeGuardState(Style.IndentPPDirectives)),
+       IncludeGuardToken(nullptr), FirstStartColumn(FirstStartColumn),
+-      Macros(Style.Macros, SourceMgr, Style, Allocator, IdentTable) {}
++      Macros(Style.Macros, SourceMgr, Style, Allocator, IdentTable) {
++  Line->IsSmith = IsSmith;
++}
+ 
+ void UnwrappedLineParser::reset() {
+   PPBranchLevel = -1;
+   IncludeGuard = getIncludeGuardState(Style.IndentPPDirectives);
+   IncludeGuardToken = nullptr;
+   Line.reset(new UnwrappedLine);
++  Line->IsSmith = IsSmith;
+   CommentsBeforeNextToken.clear();
+   FormatTok = nullptr;
+   AtEndOfPPLine = false;
+@@ -1354,8 +1368,12 @@
    assert(IsCpp);
    assert(FormatTok->is(Keywords.kw_module));
  
@@ -78,7 +218,7 @@ diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/Unwrapped
      return false;
    }
  
-@@ -1377,8 +1392,12 @@
+@@ -1377,8 +1395,12 @@
    assert(IsCpp);
    assert(FormatTok->is(Keywords.kw_import) && "'import' expected");
  
@@ -93,15 +233,89 @@ diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/Unwrapped
      return false;
    }
  
+@@ -4260,6 +4282,22 @@
+       return {TT_RecordLBrace, TT_RecordRBrace};
+     }
+   };
++  // A tuple type of a .smith file (issue #96), `struct { i32, f32 }`: a braced
++  // list that is still a type after the `}`, so it stays in its line.
++  if (IsSmith && InitialToken.is(tok::kw_struct) && !ClassName &&
++      FormatTok->is(tok::l_brace) && isSmithTuple()) {
++    for (int Depth = 0;;) {
++      FormatTok->setBlockKind(BK_BracedInit);
++      if (FormatTok->is(tok::l_brace))
++        ++Depth;
++      if (FormatTok->is(tok::r_brace))
++        --Depth;
++      nextToken();
++      if (Depth == 0 || eof())
++        break;
++    }
++    return;
++  }
+   if (FormatTok->is(tok::l_brace)) {
+     if (IsListInitialization())
+       return;
+@@ -4286,6 +4324,29 @@
+   // "} n, m;" will end up in one unwrapped line.
+ }
+ 
++bool UnwrappedLineParser::isSmithTuple() {
++  assert(FormatTok->is(tok::l_brace));
++  unsigned StoredPosition = Tokens->getPosition();
++  int Depth = 1;
++  bool IsTuple = false;
++  bool Empty = true;
++  for (FormatToken *Tok = Tokens->getNextToken(); Tok->isNot(tok::eof);
++       Tok = Tokens->getNextToken()) {
++    if (Tok->is(tok::semi))
++      break;
++    if (Tok->is(tok::l_brace))
++      ++Depth;
++    if (Tok->is(tok::r_brace) && --Depth == 0) {
++      IsTuple = !Empty;
++      break;
++    }
++    if (Tok->isNot(tok::comment))
++      Empty = false;
++  }
++  FormatTok = Tokens->setPosition(StoredPosition);
++  return IsTuple;
++}
++
+ void UnwrappedLineParser::parseObjCMethod() {
+   assert(FormatTok->isOneOf(tok::l_paren, tok::identifier) &&
+          "'(' or identifier expected.");
+@@ -5088,6 +5149,7 @@
+       // call with its expansion.
+       auto PreCall = std::move(Line);
+       Line.reset(new UnwrappedLine);
++      Line->IsSmith = IsSmith;
+       bool OldInExpansion = InExpansion;
+       InExpansion = true;
+       // We parse the macro call into a new line.
 diff -ru a/clang/lib/Format/UnwrappedLineParser.h b/clang/lib/Format/UnwrappedLineParser.h
---- a/clang/lib/Format/UnwrappedLineParser.h	2026-10-21 09:50:14
-+++ b/clang/lib/Format/UnwrappedLineParser.h	2026-10-21 09:53:43
-@@ -333,6 +333,8 @@
+--- a/clang/lib/Format/UnwrappedLineParser.h	2026-10-23 13:10:07
++++ b/clang/lib/Format/UnwrappedLineParser.h	2026-10-23 13:10:07
+@@ -64,6 +64,9 @@
+   /// Whether it is a C++20 module/import declaration.
+   bool IsModuleOrImportDecl = false;
+ 
++  /// Whether the line is in a .smith file (issue #25).
++  bool IsSmith = false;
++
+   /// If this \c UnwrappedLine closes a block in a sequence of lines,
+   /// \c MatchingOpeningBlockLineIndex stores the index of the corresponding
+   /// opening line. Otherwise, \c MatchingOpeningBlockLineIndex must be
+@@ -333,6 +336,11 @@
  
    const FormatStyle &Style;
    bool IsCpp;
 +  // The file is a .smith file (C with modules, issue #25).
 +  bool IsSmith;
++  // Whether the `{` the parser is on starts a tuple type body (issue #96):
++  // `struct { i32, f32 }`, a braced list without a `;`.
++  bool isSmithTuple();
    LangOptions LangOpts;
    const AdditionalKeywords &Keywords;
  
