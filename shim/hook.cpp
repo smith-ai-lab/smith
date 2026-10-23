@@ -2621,6 +2621,11 @@ bool debugName(const NamedDecl *decl, std::string &scope, std::string &name) {
     if (!object && !isa<TypedefNameDecl>(decl) && !isa<TagDecl>(decl)) return false;
     const IdentifierInfo *identifier = decl->getIdentifier();
     smith::WrittenName written;
+    if (identifier != nullptr && identifier->getName() == "smith_user_main") { // `i32 main(io::Io *io)`, as written
+        scope = "";
+        name = "main";
+        return true;
+    }
     if (identifier == nullptr || !hook->writtenName(identifier->getName(), written) || written.module.empty())
         return false;
     scope = object ? "" : written.module;

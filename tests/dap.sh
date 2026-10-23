@@ -205,6 +205,21 @@ else
     echo "skipped: this smith has no token hook, so no .smith names"
 fi
 
+# `i32 main(io::Io *io)` is the function `smith_user_main` to the compiler and `main` to the debugger, with a module line
+# or without (the DWARF name; no debugger process runs).
+if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes" && command -v dwarfdump >/dev/null; then
+    mkdir "$work/iomain" "$work/iomain/plain"
+    cd "$work/iomain" || exit 1
+    printf 'import smith::io;\n\ni32 main(io::Io *io) {\n    return (i32)io->seed - (i32)io->seed;\n}\n' >plain/a.smith
+    printf 'module main;\n\nimport smith::io;\n\ni32 main(io::Io *io) {\n    return (i32)io->seed - (i32)io->seed;\n}\n' >main.smith
+    for file in plain/a.smith main.smith; do
+        "$smith" cc -g -O0 -I "$here/include" -c "$file" -o "$work/iomain/o.o" 2>"$work/iomain/err"
+        names=$(dwarfdump --debug-info "$work/iomain/o.o" 2>/dev/null | grep -A1 'DW_AT_linkage_name.*smith_user_main' | tail -n 1)
+        expect_contains "the io-form main of $file is main to the debugger" "$names" 'DW_AT_name	("main")'
+    done
+    cd "$here" || exit 1
+fi
+
 echo
 echo "$total debugger checks, $failures failed"
 [ "$failures" -eq 0 ]
