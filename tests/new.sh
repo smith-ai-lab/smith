@@ -93,9 +93,14 @@ verbs_on_new_project() {
     expect_contains "$label: ... on the tests of the template" "$out" "$template_tests passed, 0 failed"
     capture smith test --test no_primes
     expect_contains "$label: smith test --test runs one test" "$out" "1 passed, 0 failed"
-    capture smith prove
-    expect "$label: smith prove succeeds with nothing to prove" 0 "$rc"
-    expect_contains "$label: ... and says so" "$out" "nothing to prove"
+    capture smith prove -v
+    if [ "$(has "$err" "has no prover")" = yes ]; then
+        echo "skip  $label: smith prove (this smith has no prover)"
+    else
+        expect "$label: smith prove succeeds" 0 "$rc"
+        expect_contains "$label: ... and proves the contract of sum" "$out" "1 proved, 0 failed"
+        expect "$label: ... without skipping it" no "$(has "$out" "nothing to prove")"
+    fi
     test_file=tests/test_primes.$ext
     sed 's/sum(5), 28/sum(5), 27/' "$test_file" >"$test_file.new" && mv "$test_file.new" "$test_file"
     capture smith test
@@ -311,7 +316,7 @@ if [ "$(has "$err" "has no prover")" = yes ]; then
     echo "skip  new verbs: smith prove (this smith has no prover)"
 else
     expect "new verbs: smith prove proves the contracts of the compiled sources" 0 "$rc"
-    expect_contains "new verbs: ... both functions" "$out" "2 proved, 0 failed"
+    expect_contains "new verbs: ... both functions, and the template's primes_sum" "$out" "3 proved, 0 failed"
     printf '#include <smith/contract.h>\n\n#include "clamp.h"\n\nint32_t pinned(int32_t x) {\n    smith_requires(x >= 0);\n    return clamp(x, 10, 5);\n}\n' >bad_caller.c
     printf '#pragma once\n#include "clamp.h"\n' >bad_caller.h
     sed 's|#include "clamp.h"|#include "bad_caller.h"\n#include "clamp.h"|' main.c >main.c.new && mv main.c.new main.c
