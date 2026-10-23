@@ -1,0 +1,8 @@
+src/last.smith:4:8: `auto...` is the last parameter: the arguments that remain have no other parameter after them
+src/main.smith:10:21: `needs_one` takes at least 1 argument, and the call has 0
+src/main.smith:12:34: cannot tell the type of `1`, the argument of `out_of_range`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:29: cannot tell the type of `1`, the argument of `guarded`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:14:29: cannot tell the type of `1`, the argument of `guarded`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:33: cannot tell the type of `1`, the argument of `runtime_index`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:32: cannot tell the type of `1`, the argument of `out_of_range`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:24: cannot tell the type of `1`, the argument of `bare`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable

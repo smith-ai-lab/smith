@@ -1788,6 +1788,154 @@ int main(void) {
     c::printf("%d %zu %zu\n", p->x, after_point, a.used);
     return 0;
 }
+==> generic-pack-error/src/args.smith <==
+module args;
+
+// A runtime index: the list is known at compile time, and `i` is not.
+export i64 runtime_index(auto x, auto... rest) {
+    (void)x;
+    usize i = 1;
+    return (i64)rest[i];
+}
+
+// An index the list has no element for, when the branch is taken.
+export i64 out_of_range(auto... rest) {
+    return (i64)rest[2];
+}
+
+// The same index in a branch not taken is fine.
+export i64 guarded(auto... rest) {
+    if constexpr (countof(rest) > 2) {
+        return (i64)rest[2];
+    } else {
+        return 0;
+    }
+}
+
+// A list is not a value: it is expanded, indexed or counted.
+export i64 bare(auto... rest) {
+    return (i64)rest;
+}
+
+export usize needs_one(auto x, auto... rest) {
+    (void)x;
+    return countof(rest);
+}
+==> generic-pack-error/src/last.smith <==
+module last;
+
+// The list is the last parameter: nothing comes after it.
+export void not_last(auto... rest, i32 x) {
+    (void)x;
+}
+==> generic-pack-error/src/main.smith <==
+module main;
+
+import args;
+import last;
+
+int main(void) {
+    i64 a = args::runtime_index(1, 2, 3);
+    i64 b = args::out_of_range(1, 2);
+    i64 c = args::bare(1, 2);
+    usize d = args::needs_one();
+    // These are fine.
+    i64 ok1 = args::out_of_range(1, 2, 3);
+    i64 ok2 = args::guarded(1);
+    i64 ok3 = args::guarded(1, 2, 3);
+    return (int)(a + b + c + (i64)d + ok1 + ok2 + ok3);
+}
+==> generic-pack/src/args.smith <==
+module args;
+
+// `auto... rest` is the arguments that remain, each with its own type: `countof(rest)` is how many there are.
+export usize count(auto x, auto... rest) {
+    (void)x;
+    return countof(rest);
+}
+
+// `rest...` expands them, in order, wherever a list of expressions goes: here a call's arguments.
+export typeof(x) call_all(constexpr auto f, auto x, auto... rest) {
+    (void)sizeof(f(x, rest...));
+    return f(x, rest...);
+}
+
+// `rest[i]` is the `i`th, with its own type, `i` a compile-time constant; the branch not taken may name what is not
+// there.
+export f64 second_or(auto x, auto... rest) {
+    (void)x;
+    if constexpr (countof(rest) > 1) {
+        return (f64)rest[1];
+    } else {
+        return -1.0;
+    }
+}
+
+// The size of each element's own type.
+export usize size_of_first(auto... rest) {
+    if constexpr (countof(rest) == 0) {
+        return 0;
+    } else {
+        return sizeof(rest[0]);
+    }
+}
+
+// A generic hands its list on to another: the elements keep their types.
+export typeof(x) forward(constexpr auto f, auto x, auto... rest) {
+    return call_all(f, x, rest...);
+}
+
+// An expansion after other arguments, and a count passed on.
+export usize forward_count(auto x, auto... rest) {
+    return count(x, rest...) + 100;
+}
+
+// The list's size is a constant: a static_assert and an array length use it.
+export usize at_least_two(auto... rest) {
+    static_assert(countof(rest) >= 2, "at_least_two needs two arguments");
+    u8 bytes[countof(rest)];
+    return sizeof bytes;
+}
+==> generic-pack/src/main.smith <==
+module main;
+
+import args;
+import <stdio.h>;
+
+static i32 add1(i32 a) {
+    return a + 1;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+static i32 add3(i32 a, i32 b, i32 c) {
+    return a + b + c;
+}
+
+int main(void) {
+    usize n0 = args::count(1);
+    usize n1 = args::count(1, 2.5);
+    usize n3 = args::count(1, 2.5, (u8)3, "four");
+    i32 r1 = args::call_all(add1, 5);
+    i32 r2 = args::call_all(plus, 5, 6);
+    i32 r3 = args::call_all(add3, 5, 6, 7);
+    f64 s0 = args::second_or(1);
+    f64 s1 = args::second_or(1, 2);
+    f64 s2 = args::second_or(1, 2, 3.5f);
+    usize z0 = args::size_of_first();
+    usize z1 = args::size_of_first((u16)1, 2.0);
+    usize z2 = args::size_of_first(2.0, (u16)1);
+    i32 f1 = args::forward(add3, 1, 2, 3);
+    i32 f2 = args::forward(add1, 1);
+    usize c1 = args::forward_count(1);
+    usize c2 = args::forward_count(1, 2, 3);
+    usize b = args::at_least_two(1, 2, 3);
+    c::printf("%zu %zu %zu | %d %d %d | %.1f %.1f %.1f | %zu %zu %zu | %d %d | %zu %zu | %zu\n", n0, n1, n3, r1, r2, r3,
+              s0, s1, s2, z0, z1, z2, f1, f2, c1, c2, b);
+    return 0;
+}
 ==> generic-static-assert/src/main.smith <==
 import sa;
 int main(void) {

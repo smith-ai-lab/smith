@@ -129,8 +129,10 @@ module.exports = grammar(C, {
     primitive_type: ($, original) => choice(original, ...sized),
 
     // T max(constexpr type T, T a, T b)
-    parameter_declaration: ($, original) => choice(original, prec.dynamic(1, $.type_parameter)),
+    // and, for argument lists, auto... rest
+    parameter_declaration: ($, original) => choice(original, prec.dynamic(1, $.type_parameter), prec.dynamic(1, $.pack_parameter)),
     type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
+    pack_parameter: $ => seq('auto', '...', field('name', $.identifier)),
 
     // if constexpr (T == f32) { ... }
     if_statement: ($, original) => choice(
@@ -162,9 +164,12 @@ module.exports = grammar(C, {
       )),
       ')',
     ),
+    // rest...: the arguments of a list, expanded
+    pack_expansion: $ => seq($.expression, '...'),
     // (a call such as `c::strlen(path)` is an expression, not a type with a function declarator)
     _argument: $ => choice(
       prec.dynamic(3, $.expression),
+      prec.dynamic(3, $.pack_expansion),
       $.compound_statement,
       prec.dynamic(-1, $.type_descriptor),
       alias(choice('==', '!=', '<', '>', '<=', '>=', '&&', '||'), $.operator),

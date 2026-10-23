@@ -408,3 +408,38 @@ int kind(constexpr type T, T v) {
           (number_literal)))
       (return_statement
         (number_literal)))))
+
+================================================================================
+a function parameter and an argument list
+================================================================================
+
+int apply(constexpr auto f, auto x, auto... rest) {
+    return f(x, rest...);
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_qualifier)
+          (storage_class_specifier)
+          (type_identifier))
+        (parameter_declaration
+          (storage_class_specifier)
+          (type_identifier))
+        (parameter_declaration
+          (pack_parameter
+            (identifier)))))
+    (compound_statement
+      (return_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)
+            (pack_expansion
+              (identifier))))))))

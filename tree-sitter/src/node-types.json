@@ -524,6 +524,10 @@
           "named": true
         },
         {
+          "type": "pack_expansion",
+          "named": true
+        },
+        {
           "type": "preproc_defined",
           "named": true
         },
@@ -2735,6 +2739,37 @@
     }
   },
   {
+    "type": "pack_expansion",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "pack_parameter",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "parameter_declaration",
     "named": true,
     "fields": {
@@ -2777,6 +2812,10 @@
         },
         {
           "type": "ms_declspec_modifier",
+          "named": true
+        },
+        {
+          "type": "pack_parameter",
           "named": true
         },
         {

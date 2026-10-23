@@ -1126,6 +1126,29 @@ static bool smith_lang_has_function(const SmithLangGeneric *generic) {
     return false;
 }
 
+// The list `auto... rest` of an instance (its uses are written below, after the constant expressions they may hold).
+static bool smith_lang_pack_marked(const SmithLangGeneric *generic, const SmithLangGenToken *token) {
+    return token->param != 0 && token->special == SmithLangGen_Plain && (size_t)token->param <= generic->type_count &&
+           generic->type_kind[token->param - 1] == SmithLangSlot_Pack;
+}
+
+static const SmithLangGenToken *smith_lang_pack_name(const SmithLangGeneric *generic) {
+    return &smith_lang_gt.tokens[generic->first + generic->type_token[smith_lang_pack_base(generic)]];
+}
+
+// How many arguments the instance's list has.
+static size_t smith_lang_pack_size(const SmithLangGeneric *generic, const SmithLangInstance *instance) {
+    return instance->entries - smith_lang_pack_base(generic);
+}
+
+// Whether the tokens at `at` are `countof ( rest )`.
+static bool smith_lang_pack_countof_at(const SmithLangGeneric *generic, uint32_t at, uint32_t limit) {
+    return at + 3 < limit && smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "countof") &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "(") &&
+           smith_lang_pack_marked(generic, &smith_lang_gt.tokens[at + 2]) &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 3], ")");
+}
+
 typedef struct {
     char canonical[smith_lang_entries_max][256];
     char written[smith_lang_entries_max][256];
@@ -1342,6 +1365,12 @@ static size_t smith_lang_gen_pack_params(SmithLang *lang, const SmithHost *host,
     const SmithLangGenToken *name = &smith_lang_gt.tokens[param->start + 2];
     for (size_t e = smith_lang_pack_base(generic); e < instance->entries; e++) { // the arguments of the list
         if (written++ > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", location, instance_id);
+        static const SmithLangPiece unused[] = {{SmithTokenKind_Punctuator, "["},
+                                                {SmithTokenKind_Punctuator, "["},
+                                                {SmithTokenKind_Identifier, "maybe_unused"},
+                                                {SmithTokenKind_Punctuator, "]"},
+                                                {SmithTokenKind_Punctuator, "]"}};
+        smith_lang_gen_puts(lang, host, unused, sizeof unused / sizeof unused[0], location, instance_id); // a list may be only counted
         smith_lang_gen_put_arg(lang, host, instance, (unsigned)e, instance_id);
         char element[smith_lang_name_max];
         snprintf(element, sizeof element, "%.*s_%zu", (int)name->length, smith_lang_gt_str(name),
@@ -1429,6 +1458,7 @@ typedef struct {
     uint32_t end;
     char literal;
     uint32_t place; // of a punctuator to write (0: the call that asked for the instance)
+    uint32_t begin; // where the frame's tokens began (an empty `rest...` looks at the token before it)
 } SmithLangFrame;
 
 typedef struct {
@@ -1444,7 +1474,7 @@ static SmithLangReplay smith_lang_replay;
 
 static bool smith_lang_replay_push(SmithLangReplay *replay, uint32_t pos, uint32_t end, char literal) {
     if (replay->count >= smith_lang_replay_depth_max) return false;
-    replay->frames[replay->count++] = (SmithLangFrame){pos, end, literal, 0};
+    replay->frames[replay->count++] = (SmithLangFrame){pos, end, literal, 0, pos};
     return true;
 }
 
@@ -1496,6 +1526,7 @@ static bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *i
     for (uint32_t at = span.start; at < span.end; at++) { // the tokens of the type
         const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
         if (token->param != 0 && instance != nullptr) {
+            if (smith_lang_pack_marked(&smith_lang_generics[instance->generic], token)) return false; // no one type
             const SmithLangInstance *source = instance;
             unsigned param = (unsigned)token->param - 1;
             for (uint32_t i = 0; i < source->arg_count[param]; i++) { // the instance's own type
@@ -1651,9 +1682,211 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
 
 #include "lang_constexpr.c"
 
+static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
+
+// ---- Argument lists: `auto... rest`
+// ------------------------------------------------------------------------------------------------------
+
+// `auto... rest` is a compile-time list of the arguments that remain, each with its own type. An instance has one
+// parameter for each (`rest_0`, `rest_1`, ...), and the body uses the list in three ways, each a C construct run at
+// compile time: `rest...` is the elements as a comma-separated list, `rest[i]` is the `i`th (a compile-time index, with
+// its own type), and `countof(rest)` is how many there are.
+
+typedef enum {
+    SmithLangPack_None,   // not a use of a list
+    SmithLangPack_Failed, // an error was reported; the tokens are skipped
+    SmithLangPack_Expand,
+    SmithLangPack_Index,
+    SmithLangPack_Count,
+} SmithLangPackKind;
+
+typedef struct {
+    SmithLangPackKind kind;
+    uint32_t consumed; // the tokens of the use
+    size_t index;      // Index: which element; Count: how many there are
+    uint32_t place;    // where the list is written
+} SmithLangPackUse;
+
+// The index in `rest[...]`, the tokens [first, last) of the generic, as the instance has it: the element, or an error.
+static SmithLangPackUse smith_lang_pack_index(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                              uint32_t at, uint32_t limit, uint32_t place) {
+    const SmithLangGeneric *generic = replay->generic;
+    const SmithLangGenToken *name = smith_lang_pack_name(generic);
+    uint32_t after = smith_lang_cx_skip_group(at + 1, limit);
+    SmithLangPackUse use = {.kind = SmithLangPack_Failed, .consumed = after == UINT32_MAX ? limit - at : after - at,
+                            .place = place};
+    static SmithLangCx evaluation;
+    SmithLangCx *cx = &evaluation;
+    *cx = (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .location = place};
+    int64_t value = 0;
+    if (after == UINT32_MAX || after - 1 <= at + 2) {
+        smith_lang_error(lang, host, place, "`%.*s[` is not closed by `]`, or has no index", (int)name->length,
+                         smith_lang_gt_str(name));
+        return use;
+    }
+    if (!smith_lang_cx_eval(cx, at + 2, after - 1, &value)) {
+        smith_lang_error(lang, host, place, "the index of `%.*s[...]` must be a compile-time constant: %s",
+                         (int)name->length, smith_lang_gt_str(name), cx->message);
+        return use;
+    }
+    size_t size = smith_lang_pack_size(generic, replay->instance);
+    if (value < 0 || (uint64_t)value >= size) {
+        smith_lang_error(lang, host, place, "`%.*s[%lld]` is out of range: `%.*s` has %zu argument%s", (int)name->length,
+                         smith_lang_gt_str(name), (long long)value, (int)name->length, smith_lang_gt_str(name), size,
+                         size == 1 ? "" : "s");
+        return use;
+    }
+    use.kind = SmithLangPack_Index;
+    use.index = (size_t)value;
+    return use;
+}
+
+// What the tokens at `at` are, when they use the list of the instance being written: `rest...`, `rest[i]`,
+// `countof(rest)`; anything else is None.
+static SmithLangPackUse smith_lang_pack_use(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                            uint32_t at, uint32_t limit) {
+    SmithLangPackUse use = {};
+    const SmithLangGeneric *generic = replay->generic;
+    if (generic == nullptr || replay->instance == nullptr || !smith_lang_has_pack(generic)) return use;
+    SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+    bool counted = smith_lang_pack_countof_at(generic, at, limit);
+    if (!counted && !smith_lang_pack_marked(generic, token)) return use;
+    uint32_t place = smith_lang_gen_place(host, generic, token, replay->location);
+    if (counted) {
+        return (SmithLangPackUse){.kind = SmithLangPack_Count, .consumed = 4,
+                                  .index = smith_lang_pack_size(generic, replay->instance), .place = place};
+    }
+    if (at + 1 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "...")) {
+        return (SmithLangPackUse){.kind = SmithLangPack_Expand, .consumed = 2, .place = place};
+    }
+    if (at + 1 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[")) {
+        return smith_lang_pack_index(lang, host, replay, at, limit, place);
+    }
+    const SmithLangGenToken *name = smith_lang_pack_name(generic);
+    smith_lang_error(lang, host, place,
+                     "`%.*s` is a list of arguments: write `%.*s...` for all of them, `%.*s[i]` for one, or "
+                     "`countof(%.*s)`",
+                     (int)name->length, smith_lang_gt_str(name), (int)name->length, smith_lang_gt_str(name),
+                     (int)name->length, smith_lang_gt_str(name), (int)name->length, smith_lang_gt_str(name));
+    return (SmithLangPackUse){.kind = SmithLangPack_Failed, .consumed = 1, .place = place};
+}
+
+// An empty `rest...` takes a comma with it: the one before it, else the one after. Whether the comma at `at` is the one
+// before an empty expansion (the expansion then writes nothing, and the comma is dropped).
+static bool smith_lang_pack_comma_before_empty(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                               uint32_t at, uint32_t limit) {
+    const SmithLangGeneric *generic = replay->generic;
+    if (generic == nullptr || replay->instance == nullptr || !smith_lang_has_pack(generic) || at + 2 >= limit ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ",") ||
+        !smith_lang_pack_marked(generic, &smith_lang_gt.tokens[at + 1]) ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "...")) {
+        return false;
+    }
+    (void)lang;
+    (void)host;
+    return smith_lang_pack_size(generic, replay->instance) == 0;
+}
+
+// An empty expansion at `at` (after `begin`, before `limit`): 1 when the comma after it goes too, because none came
+// before it.
+static uint32_t smith_lang_pack_comma_after_empty(uint32_t at, uint32_t begin, uint32_t limit, uint32_t consumed) {
+    if (at > begin && smith_lang_gt_punct(&smith_lang_gt.tokens[at - 1], ",")) return 0;
+    return at + consumed < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + consumed], ",") ? 1U : 0U;
+}
+
+// The name of the `index`th element: `rest_0`.
+static void smith_lang_pack_element(const SmithLangGeneric *generic, size_t index, char *out, size_t capacity) {
+    const SmithLangGenToken *name = smith_lang_pack_name(generic);
+    snprintf(out, capacity, "%.*s_%zu", (int)name->length, smith_lang_gt_str(name), index);
+}
+
+// Writes a use of the list: the number, the element or all of them.
+static void smith_lang_pack_write(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                  const SmithLangPackUse *use) {
+    char text[smith_lang_name_max];
+    if (use->kind == SmithLangPack_Failed) {
+        smith_lang_generic_poison(lang, host, use->place); // what stands there has an error already
+    } else if (use->kind == SmithLangPack_Count) {
+        snprintf(text, sizeof text, "%zu", use->index);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Number, text, use->place, replay->instance_id);
+    } else if (use->kind == SmithLangPack_Index) {
+        smith_lang_pack_element(replay->generic, use->index, text, sizeof text);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
+    } else if (use->kind == SmithLangPack_Expand) {
+        size_t size = smith_lang_pack_size(replay->generic, replay->instance);
+        for (size_t i = 0; i < size; i++) { // the elements, in order
+            if (i > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", use->place, replay->instance_id);
+            smith_lang_pack_element(replay->generic, i, text, sizeof text);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
+        }
+    }
+}
+
+// A token in the pool's end, with the text given.
+static bool smith_lang_pack_push(const SmithLangGenToken *like, SmithTokenKind kind, const char *text, bool copy) {
+    SmithLangGenToken made = *like;
+    made.kind = (uint8_t)kind;
+    if (!copy) { // a token of the list's own is a name or a number, not a parameter of the generic
+        made.param = 0;
+        made.written = 0;
+        made.covers = 0;
+    }
+    return smith_lang_pool_add(&smith_lang_gt, made, text, strlen(text)) != UINT32_MAX;
+}
+
+// The tokens of a call's arguments [*begin, *end), with each use of the list written out as the elements, the number
+// or the name, in new tokens at the pool's end (the tokens of the generic are kept: another instance reads them again).
+// False after the error. The range is the new one.
+static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                         uint32_t *begin, uint32_t *end) {
+    const SmithLangGeneric *generic = replay->generic;
+    if (generic == nullptr || replay->instance == nullptr || !smith_lang_has_pack(generic)) return true;
+    bool used = false;
+    for (uint32_t at = *begin; at < *end && !used; at++) // is there a use of the list at all
+        used = smith_lang_pack_marked(generic, &smith_lang_gt.tokens[at]);
+    if (!used) return true;
+    uint32_t first = smith_lang_gt.count;
+    bool good = true;
+    for (uint32_t at = *begin; at < *end && good;) { // each token, copied unless it uses the list
+        SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, at, *end);
+        char text[smith_lang_name_max];
+        const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+        if (use.kind == SmithLangPack_None) {
+            bool skip = smith_lang_pack_comma_before_empty(lang, host, replay, at, *end);
+            good = skip || smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
+            at += 1;
+            continue;
+        }
+        uint32_t consumed = use.consumed;
+        if (use.kind == SmithLangPack_Count) {
+            snprintf(text, sizeof text, "%zu", use.index);
+            good = smith_lang_pack_push(like, SmithTokenKind_Number, text, false);
+        } else if (use.kind == SmithLangPack_Index) {
+            smith_lang_pack_element(generic, use.index, text, sizeof text);
+            good = smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
+        } else if (use.kind == SmithLangPack_Expand) {
+            size_t size = smith_lang_pack_size(generic, replay->instance);
+            for (size_t i = 0; good && i < size; i++) { // the elements, in order
+                if (i > 0) good = smith_lang_pack_push(like, SmithTokenKind_Punctuator, ",", false);
+                smith_lang_pack_element(generic, i, text, sizeof text);
+                good = good && smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
+            }
+            if (size == 0) consumed += smith_lang_pack_comma_after_empty(at, *begin, *end, consumed);
+        } else {
+            good = false; // the error is reported
+        }
+        at += consumed;
+    }
+    if (!good) return false;
+    *begin = first;
+    *end = smith_lang_gt.count;
+    return good;
+}
+
 // The parameter of a generic that a lone identifier names, when its type is one of the generic's types (`auto x`,
 // `typeof(x) y`, `T v`): the type's index, else -1. In an instance's body, that parameter's type is the instance's.
-static int smith_lang_param_type_of(const SmithLangGeneric *generic, SmithLangSpan span) {
+static int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
+                                    SmithLangSpan span) {
     if (span.end - span.start != 1) return -1;
     const SmithLangGenToken *name = &smith_lang_gt.tokens[span.start];
     if (name->kind != SmithTokenKind_Identifier || name->special != SmithLangGen_Plain) return -1;
@@ -1667,7 +1900,17 @@ static int smith_lang_param_type_of(const SmithLangGeneric *generic, SmithLangSp
             return (int)first->param - 1;
         }
     }
-    return -1;
+    if (instance == nullptr || !smith_lang_has_pack(generic)) return -1;
+    const SmithLangGenToken *pack = smith_lang_pack_name(generic); // `rest_2`: the third element of the list
+    const char *text = smith_lang_gt_str(name);
+    if (name->length <= pack->length + 1 || memcmp(text, smith_lang_gt_str(pack), pack->length) != 0 ||
+        text[pack->length] != '_') {
+        return -1;
+    }
+    char *digits_end = nullptr;
+    unsigned long element = strtoul(text + pack->length + 1, &digits_end, 10);
+    if (*digits_end != 0 || element >= smith_lang_pack_size(generic, instance)) return -1;
+    return (int)(smith_lang_pack_base(generic) + element);
 }
 
 // The value of a constant argument, as the compiler folded it (the host's SmithExprType).
@@ -1708,7 +1951,7 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, const Sm
                                 SmithLangSpan span, uint32_t location, SmithLangArgType *out, const char **why,
                                 bool explain) {
     int own = replay->instance != nullptr && replay->generic != nullptr
-                  ? smith_lang_param_type_of(replay->generic, span)
+                  ? smith_lang_param_type_of(replay->generic, replay->instance, span)
                   : -1;
     if (own >= 0) {
         char spelling[256];
@@ -1760,7 +2003,7 @@ static bool smith_lang_infer_auto(SmithLang *lang, const SmithHost *host, const 
                                   const SmithLangGeneric *generic, SmithLangSpan span, uint32_t location,
                                   uint32_t *first, uint32_t *count) {
     int own = replay->instance != nullptr && replay->generic != nullptr
-                  ? smith_lang_param_type_of(replay->generic, span)
+                  ? smith_lang_param_type_of(replay->generic, replay->instance, span)
                   : -1;
     if (own >= 0) { // the instance's own type, as it is
         *first = smith_lang_it.count;
@@ -2032,7 +2275,10 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
                                    uint32_t real) {
     const SmithLangGeneric *generic = &smith_lang_generics[generic_index];
     SmithLangSpan spans[smith_lang_call_params_max];
-    size_t count = smith_lang_split_args(first + 1, last - 1, spans, smith_lang_call_params_max);
+    uint32_t begin = first + 1;
+    uint32_t end = last - 1;
+    if (!smith_lang_pack_expand_range(lang, host, replay, &begin, &end)) return false;
+    size_t count = smith_lang_split_args(begin, end, spans, smith_lang_call_params_max);
     const char *name = smith_lang_str(generic->member);
     bool has_pack = smith_lang_has_pack(generic);
     size_t fixed = generic->param_count - (has_pack ? 1U : 0U); // the parameters before `auto... rest`
@@ -2045,8 +2291,8 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
         return false;
     }
     if (count == SIZE_MAX || (has_pack ? count < fixed : count != generic->param_count)) {
-        smith_lang_error(lang, host, location, "`%s` takes %s%zu arguments, and the call has %zu", name,
-                         has_pack ? "at least " : "", fixed,
+        smith_lang_error(lang, host, location, "`%s` takes %s%zu argument%s, and the call has %zu", name,
+                         has_pack ? "at least " : "", fixed, has_pack && fixed == 1 ? "" : "s",
                          count == SIZE_MAX ? (size_t)smith_lang_call_params_max : count);
         return false;
     }
@@ -2201,6 +2447,19 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         }
         if (token->special == SmithLangGen_IfConstexpr) {
             smith_lang_replay_if(lang, host, replay, frame);
+            continue;
+        }
+        SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
+        if (use.kind == SmithLangPack_None &&
+            smith_lang_pack_comma_before_empty(lang, host, replay, frame->pos, frame->end)) {
+            frame->pos += 1; // the comma before an empty `rest...` goes with it
+            continue;
+        }
+        if (use.kind != SmithLangPack_None) {
+            bool empty = use.kind == SmithLangPack_Expand && smith_lang_pack_size(replay->generic, replay->instance) == 0;
+            if (empty) use.consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, use.consumed);
+            smith_lang_pack_write(lang, host, replay, &use);
+            frame->pos += use.consumed;
             continue;
         }
         frame->pos += 1;

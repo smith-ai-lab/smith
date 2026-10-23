@@ -77,6 +77,17 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   (`(void)sizeof(f(x, rest...))` writes it explicitly). An instance is identified by the function's spelling (`inc` and
   `main_inc` are the same function written two ways, and so two instances) and named `twice<apply::triple, int>` in the
   debugger. Its symbol carries the file too, because a `static` function of two files may share a name.
+- **Argument lists** (issue #70). `auto... rest` is the last parameter and takes the arguments that remain, each of its
+  own type; each distinct list of types (with the other slots') is one instance. In the instance the list is a
+  compile-time value, written as the C that it lowers to: the parameters `rest_0, rest_1, ...` (marked
+  `[[maybe_unused]]`, since a list may only be counted), `rest...` is `rest_0, rest_1` wherever a call's arguments go (an
+  empty list takes a comma with it), `rest[i]` is `rest_i` with `i` a compile-time constant (the evaluator of
+  `if constexpr`: a number, `countof(rest)`, a `constexpr` of the file; a runtime index or one out of range is an
+  error naming the list), and `countof(rest)` is its size, a number the compiler and `if constexpr` conditions both read
+  (C2y's `_Countof`). A list used any other way is an error that says the three ways. `rest...` in the arguments of a
+  call to another generic is expanded before that call is read, so `forward(f, x, rest...)` types each element by its
+  own type; a call of the generic needs at least the parameters before the list. No value-changing conversion check
+  applies (no `typeof` target). The debugger names the instance with every type, `gradient<loss, Params *, Batch *>`.
 - **Conversions.** A later argument whose parameter is `typeof(a) b` converts to a's type by C's rules, with one
   addition: a conversion that changes the value is an error at the call, whatever warnings the project has on. A
   literal and an expression of literals, `constexpr` integers (the file's or a C header's, an unsigned one as the
@@ -114,6 +125,6 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   generic's name. An instance is `pick::larger<i32>` in `smith dbg` and `smith dap`, and its code is the generic's own
   file, line and column, so a breakpoint, a listing and the arguments are those of the source.
 - **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),
-  argument lists (`auto... rest`), `auto *p` and `const auto x` (an `auto` parameter is `auto name`),
-  overloading, specialization, variadic type lists, constraints other than `if constexpr` and `static_assert`,
+  `for constexpr` and lists as values (`auto args = {...}`, issue #71), a list in an initializer, `auto *p` and `const auto x` (an `auto` parameter is `auto name`),
+  overloading, specialization, constraints other than `if constexpr` and `static_assert`,
   pointers to a generic, and a type local to a function as `T`.

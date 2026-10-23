@@ -185,6 +185,12 @@ export typeof(a) larger(auto a, typeof(a) b) {
 export typeof(x) apply_twice(constexpr auto f, auto x) {
     return f(f(x));
 }
+
+// The arguments that remain: each has its own type.
+export usize count_args(auto x, auto... rest) {
+    (void)x;
+    return countof(rest);
+}
 EOF
 cat >genuse.smith <<'EOF'
 module genuse;
@@ -204,6 +210,10 @@ static i32 inc(i32 x) {
 
 export int g(void) {
     return pick::apply_twice(inc, 4);
+}
+
+export usize h(void) {
+    return pick::count_args(1, 2.5, 3);
 }
 EOF
 cat >util.c <<'EOF'
@@ -305,6 +315,14 @@ expect_line "generic function parameter: hover shows the head as written and the
 expect_line "generic function parameter: go-to-definition is the generic's name" "$log" \
     "definition genuse.smith:17:20 -> pick.smith:9:18"
 expect "generic function parameter: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
+
+# `auto... rest`: the head as written, and the instance lists the type of each argument.
+log=$(client open genuse.smith pick.smith -- hover genuse.smith 21 20 -- definition genuse.smith 21 20 pick.smith:14:14)
+expect_line "generic argument list: hover shows the head as written and every type in the instance" "$log" \
+    'hover genuse.smith:21:20: generic function pick::count_args |  | usize pick::count_args(auto x, auto... rest) |  | instance pick::count_args(int, f64, int)'
+expect_line "generic argument list: go-to-definition is the generic's name" "$log" \
+    "definition genuse.smith:21:20 -> pick.smith:14:14"
+expect "generic argument list: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
 
 # `if constexpr` outside a generic: the branch taken is ordinary code (hover works in it), the branch not taken is never
 # given to the parser, so an undeclared name there is no diagnostic and hover there is empty (as in a generic's instance

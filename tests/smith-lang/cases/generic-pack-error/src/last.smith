@@ -1,0 +1,6 @@
+module last;
+
+// The list is the last parameter: nothing comes after it.
+export void not_last(auto... rest, i32 x) {
+    (void)x;
+}

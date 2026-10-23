@@ -368,7 +368,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic =
-            SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ");
+            SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ") ||
+            SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;

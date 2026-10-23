@@ -1,0 +1,32 @@
+module args;
+
+// A runtime index: the list is known at compile time, and `i` is not.
+export i64 runtime_index(auto x, auto... rest) {
+    (void)x;
+    usize i = 1;
+    return (i64)rest[i];
+}
+
+// An index the list has no element for, when the branch is taken.
+export i64 out_of_range(auto... rest) {
+    return (i64)rest[2];
+}
+
+// The same index in a branch not taken is fine.
+export i64 guarded(auto... rest) {
+    if constexpr (countof(rest) > 2) {
+        return (i64)rest[2];
+    } else {
+        return 0;
+    }
+}
+
+// A list is not a value: it is expanded, indexed or counted.
+export i64 bare(auto... rest) {
+    return (i64)rest;
+}
+
+export usize needs_one(auto x, auto... rest) {
+    (void)x;
+    return countof(rest);
+}

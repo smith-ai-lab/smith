@@ -385,6 +385,18 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at += 1;
         return true;
     }
+    if (cx->instance != nullptr && smith_lang_has_pack(&smith_lang_generics[cx->instance->generic])) {
+        const SmithLangGeneric *generic = &smith_lang_generics[cx->instance->generic];
+        if (smith_lang_pack_countof_at(generic, *at, last)) { // `countof(rest)`: how many arguments the list has
+            value->number = (int64_t)smith_lang_pack_size(generic, cx->instance);
+            *at += 4;
+            return true;
+        }
+        if (smith_lang_pack_marked(generic, token)) {
+            return smith_lang_cx_fail(cx, "`%s` is a list of arguments: its size is `countof(%s)`",
+                                      smith_lang_gt_str(token), smith_lang_gt_str(token));
+        }
+    }
     int fact =
         token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain && token->param == 0
             ? smith_lang_target_macro_value(cx->lang, cx->host, smith_lang_gt_str(token), token->length, &value->number)
