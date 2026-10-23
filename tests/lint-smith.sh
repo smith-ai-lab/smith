@@ -520,7 +520,7 @@ export void use(i32 a, i32 b) {
 EOF2
 idiom smith-module-library idiom/library_test.smith >"$work/library-test.out"
 expected="idiom/library_test.smith:3:1: error: \`import <smith/test.h>;\` reads smith::test, a module, through its C header: write \`import smith::test;\` and call it as \`test::name(...)\`
-idiom/library_test.smith:6:8: error: \`c::smith_check_equal_i32\` is \`test::check_equal_i32\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check_equal_i32\` (or, better, the generic \`test::check_equal(a, b)\`, which infers the type from its arguments)
+idiom/library_test.smith:6:8: error: \`c::smith_check_equal_i32\` is \`test::check_equal_i32\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check_equal_i32\` (or, better, the generic \`test::check_equal(a, b)\`, which takes the type from its first argument)
 idiom/library_test.smith:7:8: error: \`c::smith_check\` is \`test::check\` of the module smith::test, reached through its C header: write \`import smith::test;\` and \`test::check\`"
 expect "smith-module-library: a named instance of a generic points to the generic" "$expected" "$(idiom_findings <"$work/library-test.out")"
 cat >"$work/p/idiom/shape.h" <<'EOF2'

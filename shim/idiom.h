@@ -294,7 +294,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
         }
 
         // `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
-        // generic's, which infers the type from its arguments.
+        // generic's, which takes the type from its first argument.
         static std::string generic_of(const ModuleHeader &module, const std::string &name) {
             static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32", "i64", "isize",   "u8",
                                                 "u16",  "u32",  "u64", "usize", "f32", "f64", "pointer", "ptr"};
@@ -306,7 +306,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
                 std::string base = name.substr(0, name.size() - suffix.size());
                 if (module.generics.count(base) != 0) {
                     return " (or, better, the generic `" + module.binding + "::" + base +
-                           "(a, b)`, which infers the type from its arguments)";
+                           "(a, b)`, which takes the type from its first argument)";
                 }
             }
             return "";

@@ -80,10 +80,11 @@ import <unistd.h>;
 // the report; run the runner by hand and it prints the raw trace, which `smith symbolize` reads.
 //
 //   test::check(condition)                  fails the test when the condition is false
-//   test::check_equal(a, b)                 a == b; both values print with their type. The type is a's (`auto a`), which
-//   test::check_not_equal(a, b)             is bool, char, an integer, f32, f64 or a pointer, and b converts to it by C's
-//   test::check_less(a, b)                  rules: `check_equal(count, 3)` works, but a conversion that changes the value
-//   test::check_less_equal(a, b)            (`check_equal(my_u8, 300)`) is an error at the call, naming the cast to write.
+//   test::check_equal(a, b)                 a == b; both values print with their type. The type is a's (`auto a`),
+//   which test::check_not_equal(a, b)             is bool, char, an integer, f32, f64 or a pointer, and b converts to
+//   it by C's test::check_less(a, b)                  rules: `check_equal(count, 3)` works, but a conversion that
+//   changes the value test::check_less_equal(a, b)            (`check_equal(my_u8, 300)`) is an error at the call,
+//   naming the cast to write.
 //                                           A NaN is unordered, so every comparison but not_equal fails on one.
 //   test::check_greater(a, b)
 //   test::check_greater_equal(a, b)

@@ -352,7 +352,8 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
-        host.maybe_generic = SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ");
+        host.maybe_generic =
+            SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
@@ -1744,7 +1745,8 @@ class SmithHook final : public TokenHook, public NameSource {
             return QualType();
         }
         if (const RecordDecl *definition = record->getDefinition()) {
-            for (const NamedDecl *member : definition->lookup(&PP.getIdentifierTable().get(name))) { // anonymous members too
+            for (const NamedDecl *member :
+                 definition->lookup(&PP.getIdentifierTable().get(name))) { // anonymous members too
                 if (const auto *field = dyn_cast<ValueDecl>(member)) return field->getType();
             }
         }
@@ -1779,7 +1781,8 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         if (token == "true" || token == "false") return literalType(token);
         if (token == "nullptr") return sema->getASTContext().NullPtrTy;
-        if (token == "__extension__") { // how the lowering writes a call to a generic: its type is the declared result's
+        if (token ==
+            "__extension__") { // how the lowering writes a call to a generic: its type is the declared result's
             size_t open = begin + 1;
             size_t name = open + 3;
             while (open + 2 < end && t[open] == "(" && t[open + 1] == "{" && t[open + 2] == "extern" && name < end &&

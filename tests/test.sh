@@ -932,7 +932,7 @@ void test_pointer_not_null_fails(void) {
 void test_typed_passes(void) {
     u32 small = 3;
     u64 big = 3;
-    test::check_equal(small, big);
+    test::check_equal((u64)small, big);
     test::check_less(small, 10);
 }
 
@@ -996,7 +996,7 @@ expect_contains "api: ... not_equal passes on a NaN, which equals nothing" "$out
 expect_contains "api: ... near passes for f32 and f64 and for equal infinities" "$out" "PASS near_generic_passes"
 expect_contains "api: ... same_bits passes for a NaN and -0 against itself" "$out" "PASS same_bits_passes"
 expect_contains "api: ... a pointer is checked against nullptr and its own address" "$out" "PASS pointer_passes"
-expect_contains "api: ... a type written first overrides the inference" "$out" "PASS typed_passes"
+expect_contains "api: ... a cast on the first argument gives the type" "$out" "PASS typed_passes"
 expect_contains "api: ... arguments may be expressions" "$out" "PASS expressions_pass"
 expect_contains "api: ... test::memory gives a typed arena" "$out" "PASS memory_passes"
 expect_contains "api: ... and none of them failed" "$out" "8 passed, 0 failed"
@@ -1057,7 +1057,7 @@ if [ -n "$have_symbolizer" ]; then
 0 passed, 1 failed" --test pointer_not_null_fails
 fi
 
-# Two types are a compile error that names the parameter: cast one side, or write the type first.
+# A second argument that does not keep its value in the first's type is a compile error that names the cast.
 project "$work/conflict"
 cat >tests/test_conflict.smith <<'C'
 import smith::test;
@@ -1070,7 +1070,7 @@ void test_conflict(void) {
 C
 capture "$smith" build
 expect "conflict: two types in one check fail to build" 1 "$rc"
-expect_contains "conflict: ... naming the type parameter" "$out$err" "conflicting types for \`T\`"
+expect_contains "conflict: ... naming the type and the cast" "$out$err" "converts to u32, the type of its first argument \`small\`"
 fi
 
 # 4b. Shrinking, in three parts (each runs the same test file in a project of its own).
