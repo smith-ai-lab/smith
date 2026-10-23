@@ -65,6 +65,16 @@ tags: [lowering, internals]
   tokens (`const char *`, a typedef, `struct S`, the sized types' own names, pointers) is asked with `type_query`: its
   canonical spelling (typedefs looked through, the identity of a generic's instance), size, alignment, and whether it
   is an integer, a float, signed, a pointer, a bool, an enum or a record (`SMITH_LANG_ASK='?const char *,?Packet'`).
+  An expression is evaluated with `value_query` (issue #98): the tokens (a generic's `T` and a `for constexpr` variable
+  already replaced) are read as `__typeof__(expr)` in the parser's scope, as `expr_type` does, and the expression is
+  evaluated in a constant context, so a C function runs as in `constexpr` (the target's `sizeof(long)`, issue #97). The
+  value is a tree (`SmithValue`: an integer with signedness and width, an `f32` or `f64`, a struct's fields, an array's
+  elements; a string is `char`s) whose nodes the lowering provides, and a pointer, a union, an integer over 64 bits or a
+  long double is an error. The lowering reads an integer from it where its own evaluator meets a name followed by
+  `(`, `.`, `[` or `->` (`if constexpr (table_size(sizeof(T)) > 64)`, `i < config.count`); the function must be defined
+  in the file the instance is written in (a generic's instance is compiled where it is called, where another module's
+  function is a declaration). The raw lowering has no `value_query` and says so. `SMITH_LANG_ASK='!grid.cells,!f(3)'`
+  prints the tree.
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
   clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with
   the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `smith cc --smith-header`) reads every

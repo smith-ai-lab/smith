@@ -54,7 +54,7 @@ export i32 describe(auto value) {
 }
 ```
 
-In a generic's body, where it chooses the branch for each instance; in any other function body it chooses by the target (`if constexpr (target::arch == target::aarch64) { } else { }`, see `smith-lang`), with blocks for branches. In a generic the condition is a constant expression: integers, `true`, `false`, the operators of C, `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (`T` may be `typeof(x)`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`. The branch not taken is never given to the parser, so it may use what `T` has not (`value.x`).
+In a generic's body, where it chooses the branch for each instance; in any other function body it chooses by the target (`if constexpr (target::arch == target::aarch64) { } else { }`, see `smith-lang`), with blocks for branches. In a generic the condition is a constant expression: integers, `true`, `false`, the operators of C, `sizeof(T)`, `alignof(T)`, `T == U` and `T != U` (`T` may be `typeof(x)`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`. The branch not taken is never given to the parser, so it may use what `T` has not (`value.x`). A call or a field in the condition (`table_size(sizeof(T)) > 64`, a `for constexpr` bound `i < config.count`) is evaluated by the compiler, so it must be an integer constant; the function must be defined in the file the instance is written in (the generic's own module, not another).
 
 ## Errors
 
