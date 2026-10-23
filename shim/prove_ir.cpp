@@ -568,6 +568,8 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     // says what it does to them) and nothing else a proved function can see; inference may only narrow that.
     for (Function &function : module) {
         if (!is_trusted(function) && !function.hasFnAttribute("smith.edge")) continue;
+        // What it returns is a value, never poison: a caller may branch on it.
+        if (!function.getReturnType()->isVoidTy()) function.addRetAttr(Attribute::NoUndef);
         function.setMemoryEffects(MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
                                   MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef));
         // It frees nothing the caller can see either, unless it is given a pointer it may write through (it could be

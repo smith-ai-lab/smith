@@ -31,6 +31,7 @@ static_assert(SMITH_TARGET_FLOAT_RADIX == 2 && SMITH_TARGET_F32_MANTISSA_BITS ==
 "f32 and f64 must be IEEE");
 static_assert(SMITH_TARGET_FLOAT_EVAL_METHOD == 0, "f32 arithmetic must happen in f32");
 static inline double smith_random_opaque_double(double value) {
+smith_trusted();
 #if SMITH_TARGET_ARCH == 1
  {
 __asm__("" : "+w"(value));
@@ -44,6 +45,7 @@ __asm__("" : "+X"(value));
 return value;
 }
 static inline float smith_random_opaque_float(float value) {
+smith_trusted();
 #if SMITH_TARGET_ARCH == 1
  {
 __asm__("" : "+w"(value));
@@ -57,14 +59,17 @@ __asm__("" : "+X"(value));
 return value;
 }
 static inline __UINT32_TYPE__ smith_random_register_u32(__UINT32_TYPE__ value) {
+smith_trusted();
 __asm__("" : "+r"(value));
 return value;
 }
 static inline const double *smith_random_register_doubles(const double *value) {
+smith_trusted();
 __asm__("" : "+r"(value));
 return value;
 }
 static inline const float *smith_random_register_floats(const float *value) {
+smith_trusted();
 __asm__("" : "+r"(value));
 return value;
 }
@@ -150,11 +155,13 @@ return (SmithKey){.bits = seed};
 }
 [[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i);
 [[nodiscard]] SmithKey smith_key_derive(SmithKey key, __UINT64_TYPE__ i) {
+smith_trusted();
 smith_random_Block counter = {{(__UINT32_TYPE__)i, (__UINT32_TYPE__)(i >> 32), 1, 0}};
 return (SmithKey){.bits = smith_random_philox_low(counter, (__UINT32_TYPE__)key.bits, (__UINT32_TYPE__)(key.bits >> 32)), .tap = key.tap};
 }
 [[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n);
 [[nodiscard]] __UINT64_TYPE__ smith_key_bits(SmithKey key, __UINT64_TYPE__ n) {
+smith_trusted();
 __UINT64_TYPE__ block = n >> 1;
 smith_random_Block counter = {{(__UINT32_TYPE__)block, (__UINT32_TYPE__)(block >> 32), 0, 0}};
 __UINT32_TYPE__ key_0 = (__UINT32_TYPE__)key.bits;
@@ -311,7 +318,7 @@ __INT64_TYPE__ half = (__INT64_TYPE__)(word >> 1);
 return (word & 1) != 0 ? -half - 1 : half;
 }
 static __UINT64_TYPE__ smith_random_around(__UINT64_TYPE__ index, __UINT64_TYPE__ origin, __UINT64_TYPE__ count) {
-smith_assert(origin < count && index < count);
+smith_requires(origin < count && index < count);
 __UINT64_TYPE__ below = origin;
 __UINT64_TYPE__ above = count - 1 - origin;
 __UINT64_TYPE__ both = below < above ? below : above;
@@ -321,7 +328,8 @@ return below > above ? origin - (index - both) : origin + (index - both);
 static constexpr __UINT64_TYPE__ smith_random_attempts = 64;
 typedef unsigned _BitInt(128) smith_random_Wide;
 static __UINT64_TYPE__ smith_random_draw_index(SmithKey key, __UINT64_TYPE__ n) {
-smith_assert(n > 0);
+smith_trusted();
+smith_requires(n > 0);
 __UINT64_TYPE__ threshold = (0 - n) % n;
 __UINT64_TYPE__ index = 0;
 for (__UINT64_TYPE__ attempt = 0; attempt < smith_random_attempts; attempt++) {
@@ -329,6 +337,7 @@ smith_random_Wide product = (smith_random_Wide)smith_key_bits(key, attempt) * n;
 index = (__UINT64_TYPE__)(product >> 64);
 if (threshold == 0 || (__UINT64_TYPE__)product < 0 - threshold) break;
 }
+smith_ensures(index < n);
 return index;
 }
 static __INT64_TYPE__ smith_random_int_value(__INT64_TYPE__ low, __INT64_TYPE__ high, __UINT64_TYPE__ index) {
@@ -345,7 +354,7 @@ return (__INT64_TYPE__)((__UINT64_TYPE__)low + smith_random_around(index, origin
 SmithUniformInt64 uniform);
 [[nodiscard]] __INT64_TYPE__ smith_uniform_int64_sample(SmithKey key,
 SmithUniformInt64 uniform) {
-smith_assert(uniform.low <= uniform.high);
+smith_requires(uniform.low <= uniform.high);
 __UINT64_TYPE__ span = (__UINT64_TYPE__)uniform.high - (__UINT64_TYPE__)uniform.low + 1;
 if (span == 0) return smith_random_zigzag(smith_key_bits(key, 0));
 return smith_random_int_value(uniform.low, uniform.high, smith_random_draw_index(key, span));
@@ -382,8 +391,9 @@ return origin < last ? origin : last;
 SmithUniformFloat uniform);
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key,
 SmithUniformFloat uniform) {
-smith_assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
-smith_assert(__builtin_isfinite(uniform.high - uniform.low));
+smith_trusted();
+smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+smith_requires(__builtin_isfinite(uniform.high - uniform.low));
 __UINT64_TYPE__ origin = smith_random_origin_float(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 40, origin, (__UINT64_TYPE__)1 << 24);
 float value = uniform.low + smith_random_mul_float(uniform.high - uniform.low, (float)grid * 0x1p-24f);
@@ -393,8 +403,9 @@ return value < uniform.high ? value : smith_random_below_float(uniform.high);
 SmithUniformDouble uniform);
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key,
 SmithUniformDouble uniform) {
-smith_assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
-smith_assert(__builtin_isfinite(uniform.high - uniform.low));
+smith_trusted();
+smith_requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+smith_requires(__builtin_isfinite(uniform.high - uniform.low));
 __UINT64_TYPE__ origin = smith_random_origin_double(uniform.low, uniform.high);
 __UINT64_TYPE__ grid = smith_random_around(smith_key_bits(key, 0) >> 11, origin, (__UINT64_TYPE__)1 << 53);
 double value = uniform.low + smith_random_mul_double(uniform.high - uniform.low, (double)grid * 0x1p-53);
@@ -486,19 +497,21 @@ return (float)(grid * 2 + 1) * 0x1p-24f;
 SmithNormalDouble normal);
 [[nodiscard]] double smith_normal_double_sample(SmithKey key,
 SmithNormalDouble normal) {
-smith_assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
+smith_trusted();
+smith_requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
 return normal.mean + smith_random_mul_double(normal.deviation, smith_random_ppnd16(smith_random_normal_u_double(key)));
 }
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal);
 [[nodiscard]] float smith_normal_float_sample(SmithKey key,
 SmithNormalFloat normal) {
-smith_assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
+smith_trusted();
+smith_requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
 return normal.mean + smith_random_mul_float(normal.deviation, smith_random_ppnd7(smith_random_normal_u_float(key)));
 }
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli);
 [[nodiscard]] bool smith_bernoulli_sample(SmithKey key, SmithBernoulli bernoulli) {
-smith_assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
+smith_requires(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
 __UINT64_TYPE__ grid = smith_key_bits(key, 0) >> 11;
 return (double)(((__UINT64_TYPE__)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
@@ -538,13 +551,14 @@ alias[index] = index;
 smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count);
 [[nodiscard]] SmithCategorical
 smith_categorical_make(SmithArena *arena, const double *weights, __SIZE_TYPE__ count) {
-smith_assert(arena != nullptr && weights != nullptr && count >= 1);
+smith_trusted();
+smith_requires(count >= 1);
 double sum = 0.0;
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
-smith_assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0);
+if (!(__builtin_isfinite(weights[i]) && weights[i] >= 0.0)) __builtin_trap();
 sum += weights[i];
 }
-smith_assert(__builtin_isfinite(sum) && sum > 0.0);
+if (!(__builtin_isfinite(sum) && sum > 0.0)) __builtin_trap();
 double *probability =__extension__({extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");smith_arena_push_array_type__f64(arena,count);});
 __SIZE_TYPE__ *alias =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
@@ -562,7 +576,8 @@ return (SmithCategorical){.probability = probability, .alias = alias, .count = c
 SmithCategorical categorical);
 [[nodiscard]] __SIZE_TYPE__ smith_categorical_sample(SmithKey key,
 SmithCategorical categorical) {
-smith_assert(categorical.count >= 1);
+smith_trusted();
+smith_requires(categorical.count >= 1);
 __SIZE_TYPE__ index = (__SIZE_TYPE__)smith_random_draw_index(smith_key_derive(key, 0), categorical.count);
 bool keep = smith_key_unit_double(smith_key_derive(key, 1), 0) < categorical.probability[index];
 return keep ? index : categorical.alias[index];
@@ -571,7 +586,8 @@ void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
 __SIZE_TYPE__ *out);
 void smith_permutation_sample(SmithKey key, SmithPermutation permutation,
 __SIZE_TYPE__ *out) {
-smith_assert(out != nullptr || permutation.count == 0);
+smith_trusted();
+smith_requires(out != nullptr || permutation.count == 0);
 for (__SIZE_TYPE__ i = 0; i < permutation.count; i++)
 out[i] = i;
 for (__SIZE_TYPE__ i = permutation.count; i > 1; i--) {

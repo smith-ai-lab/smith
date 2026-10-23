@@ -52,3 +52,11 @@ int32_t after_announce(int32_t x) {
 int main(void) {
     return scaled() + scaled_too_far() + after_announce(1);
 }
+
+// A caller may branch on what a trusted function returns: it is a value, never poison.
+int32_t branches_on_trusted(void) {
+    int32_t percent = sensor_percent();
+    int32_t half = percent > 50 ? 1 : 0;
+    smith_ensures(half == 0 || half == 1);
+    return half;
+}

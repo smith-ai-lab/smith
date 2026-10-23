@@ -155,7 +155,7 @@ typedef struct {
 
 // Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation), and the zero word gives
 // the simplest value (see the top). The categorical's zero word gives column 0 and a coin that keeps it. Parameters are
-// checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
+// required: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[nodiscard]] float smith_uniform_float_sample(SmithKey key, SmithUniformFloat uniform);
 
 [[nodiscard]] double smith_uniform_double_sample(SmithKey key, SmithUniformDouble uniform);

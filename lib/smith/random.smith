@@ -138,6 +138,7 @@ static_assert(target::float_eval_method == 0, "f32 arithmetic must happen in f32
 // A value the compiler cannot see through, so a product is not fused into a following addition. The register class
 // keeps it out of memory on the architecture that is tested; "X" is correct everywhere, if slower.
 inline f64 opaque_double(f64 value) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
     if constexpr (target::arch == target::aarch64) {
         __asm__("" : "+w"(value));
     } else {
@@ -147,6 +148,7 @@ inline f64 opaque_double(f64 value) {
 }
 
 inline f32 opaque_float(f32 value) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
     if constexpr (target::arch == target::aarch64) {
         __asm__("" : "+w"(value));
     } else {
@@ -160,16 +162,19 @@ inline f32 opaque_float(f32 value) {
 // add of a register is one), and the polynomial coefficients are loaded (rebuilt from immediates they cost four
 // instructions each). This only changes how the same bits are computed.
 inline u32 register_u32(u32 value) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
     __asm__("" : "+r"(value));
     return value;
 }
 
 inline const f64 *register_doubles(const f64 *value) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
     __asm__("" : "+r"(value));
     return value;
 }
 
 inline const f32 *register_floats(const f32 *value) {
+    contract::trusted(); // an empty asm is the edge a proof cannot read; its result is taken as any value
     __asm__("" : "+r"(value));
     return value;
 }
@@ -283,6 +288,7 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
 // Counter word 2 separates derive's domain (1) from bits' domain (0).
 // JAX's fold_in: the key for part or item i of key. Deriving is how a key is split, so each use gets its own.
 [[smith::c_name("smith_key_derive")]] export [[nodiscard]] Key key_derive(Key key, u64 i) {
+    contract::trusted(); // Philox is 64 multiplications a draw, which a proof of its callers should not repeat
     Block counter = {{(u32)i, (u32)(i >> 32), 1, 0}};
     return (Key){.bits = philox_low(counter, (u32)key.bits, (u32)(key.bits >> 32)), .tap = key.tap};
 }
@@ -292,6 +298,7 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
 // The key's n-th 64 random bits. Draws n = 0, 1, 2... of one key are different numbers; they are a stream a
 // distribution may spend, while a program gives each use its own derived key.
 [[smith::c_name("smith_key_bits")]] export [[nodiscard]] u64 key_bits(Key key, u64 n) {
+    contract::trusted(); // the runner's tap is a call through a function pointer, the edge a proof cannot read
     u64 block = n >> 1;
     Block counter = {{(u32)block, (u32)(block >> 32), 0, 0}};
     u32 key_0 = (u32)key.bits;
@@ -475,7 +482,7 @@ i64 zigzag(u64 word) {
 // origin - 1, origin + 1, origin - 2, origin + 2... until one side runs out, then the rest of the other side in order.
 // A bijection of [0, count), so a uniform index gives a uniform position, and index 0 gives the origin.
 u64 around(u64 index, u64 origin, u64 count) {
-    contract::assert(origin < count && index < count);
+    contract::requires(origin < count && index < count);
     u64 below = origin;
     u64 above = count - 1 - origin;
     u64 both = below < above ? below : above; // positions come in pairs this many times
@@ -497,7 +504,8 @@ constexpr u64 attempts = 64;
 typedef unsigned _BitInt(128) Wide; // the product of two words, whose high half is the index
 
 u64 draw_index(Key key, u64 n) {
-    contract::assert(n > 0);
+    contract::trusted(); // 64 attempts of a 128-bit product: callers use the promise, which the tests check
+    contract::requires(n > 0);
     u64 threshold = (0 - n) % n; // 2^64 mod n
     u64 index = 0;
     for (u64 attempt = 0; attempt < attempts; attempt++) {
@@ -505,6 +513,7 @@ u64 draw_index(Key key, u64 n) {
         index = (u64)(product >> 64);
         if (threshold == 0 || (u64)product < 0 - threshold) break;
     }
+    contract::ensures(index < n);
     return index;
 }
 
@@ -523,7 +532,7 @@ i64 int_value(i64 low, i64 high, u64 index) {
 
 [[smith::c_name("smith_uniform_int64_sample")]] export [[nodiscard]] i64 uniform_int64_sample(Key key,
                                                                                               UniformInt64 uniform) {
-    contract::assert(uniform.low <= uniform.high);
+    contract::requires(uniform.low <= uniform.high);
     u64 span = (u64)uniform.high - (u64)uniform.low + 1;
     if (span == 0) return zigzag(key_bits(key, 0)); // the whole i64 range
     return int_value(uniform.low, uniform.high, draw_index(key, span));
@@ -568,11 +577,12 @@ u64 origin_double(f64 low, f64 high) {
 
 // Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation), and the zero word gives
 // the simplest value (see the top). The categorical's zero word gives column 0 and a coin that keeps it. Parameters are
-// checked with assert: low < high and both finite, deviation > 0, a probability in [0, 1].
+// required: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[smith::c_name("smith_uniform_float_sample")]] export [[nodiscard]] f32 uniform_float_sample(Key key,
                                                                                               UniformFloat uniform) {
-    contract::assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
-    contract::assert(__builtin_isfinite(uniform.high - uniform.low));
+    contract::trusted(); // the floating-point arithmetic of a draw costs a proof far more than it is worth; the tests cover the values
+    contract::requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+    contract::requires(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_float(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 40, origin, (u64)1 << 24);
     f32 value = uniform.low + mul_float(uniform.high - uniform.low, (f32)grid * 0x1p-24f);
@@ -581,8 +591,9 @@ u64 origin_double(f64 low, f64 high) {
 
 [[smith::c_name("smith_uniform_double_sample")]] export [[nodiscard]] f64 uniform_double_sample(Key key,
                                                                                                 UniformDouble uniform) {
-    contract::assert(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
-    contract::assert(__builtin_isfinite(uniform.high - uniform.low));
+    contract::trusted(); // the floating-point arithmetic of a draw costs a proof far more than it is worth; the tests cover the values
+    contract::requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) && uniform.low < uniform.high);
+    contract::requires(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_double(uniform.low, uniform.high);
     u64 grid = around(key_bits(key, 0) >> 11, origin, (u64)1 << 53);
     f64 value = uniform.low + mul_double(uniform.high - uniform.low, (f64)grid * 0x1p-53);
@@ -693,20 +704,22 @@ f32 normal_u_float(Key key) {
 
 [[smith::c_name("smith_normal_double_sample")]] export [[nodiscard]] f64 normal_double_sample(Key key,
                                                                                               NormalDouble normal) {
-    contract::assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
+    contract::trusted(); // the polynomial of the normal quantile costs a proof far more than it is worth; the tests cover the values
+    contract::requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
     return normal.mean + mul_double(normal.deviation, ppnd16(normal_u_double(key)));
 }
 
 [[smith::c_name("smith_normal_float_sample")]] export [[nodiscard]] f32 normal_float_sample(Key key,
                                                                                             NormalFloat normal) {
-    contract::assert(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
+    contract::trusted(); // the polynomial of the normal quantile costs a proof far more than it is worth; the tests cover the values
+    contract::requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
     return normal.mean + mul_float(normal.deviation, ppnd7(normal_u_float(key)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 
 [[smith::c_name("smith_bernoulli_sample")]] export [[nodiscard]] bool bernoulli_sample(Key key, Bernoulli bernoulli) {
-    contract::assert(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
+    contract::requires(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
     u64 grid = key_bits(key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
     return (f64)(((u64)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
@@ -752,13 +765,14 @@ void alias_build(f64 *probability, usize *alias, usize *small, usize *large, usi
 // that ends before this returns.
 [[smith::c_name("smith_categorical_make")]] export [[nodiscard]] Categorical
 categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
-    contract::assert(arena != nullptr && weights != nullptr && count >= 1);
+    contract::trusted(); // its loops run over the weights, whose count has no bound a proof can use
+    contract::requires(count >= 1);
     f64 sum = 0.0;
     for (usize i = 0; i < count; i++) {
-        contract::assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0);
+        if (!(__builtin_isfinite(weights[i]) && weights[i] >= 0.0)) __builtin_trap(); // data, not a parameter
         sum += weights[i];
     }
-    contract::assert(__builtin_isfinite(sum) && sum > 0.0);
+    if (!(__builtin_isfinite(sum) && sum > 0.0)) __builtin_trap();
     f64 *probability = arena::push_array(arena, f64, count);
     usize *alias = arena::push_array(arena, usize, count);
     for (usize i = 0; i < count; i++) {
@@ -776,7 +790,8 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
 // An index below count; a zero weight is never drawn.
 [[smith::c_name("smith_categorical_sample")]] export [[nodiscard]] usize categorical_sample(Key key,
                                                                                             Categorical categorical) {
-    contract::assert(categorical.count >= 1);
+    contract::trusted(); // its tables are pointers inside a struct passed by value, which a proof does not know to be valid
+    contract::requires(categorical.count >= 1);
     usize index = (usize)draw_index(key_derive(key, 0), categorical.count);
     bool keep = key_unit_double(key_derive(key, 1), 0) < categorical.probability[index];
     return keep ? index : categorical.alias[index];
@@ -785,7 +800,8 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
 // Writes 0..count-1 to out in a uniformly random order (Fisher-Yates); a count of 0 writes nothing.
 [[smith::c_name("smith_permutation_sample")]] export void permutation_sample(Key key, Permutation permutation,
                                                                              usize *out) {
-    contract::assert(out != nullptr || permutation.count == 0);
+    contract::trusted(); // its loops run over the count, which has no bound a proof can use
+    contract::requires(out != nullptr || permutation.count == 0);
     for (usize i = 0; i < permutation.count; i++)
         out[i] = i;
     for (usize i = permutation.count; i > 1; i--) { // step i swaps position i - 1 with a position in [0, i)

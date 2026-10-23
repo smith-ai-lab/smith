@@ -388,6 +388,8 @@ expect_contains "trusted: ... and the counts say so" "$out" "2 proved, 1 failed,
 case $out in *"inline assembly"*) expect "trusted: the body of a trusted function is not read" "no error" "$out" ;; *) expect "trusted: the body of a trusted function is not read" "no error" "no error" ;; esac
 case $out in *"ok    sensor_percent"* | *"ok    announce"*) expect "trusted: a trusted function is never listed as proved" "not proved" "$out" ;; *) expect "trusted: a trusted function is never listed as proved" "not proved" "not proved" ;; esac
 case $out in *"main"* | *"ok    helper"* | *"FAIL  helper"*) expect "default set: main and a function with no contract are not proved" "neither" "$out" ;; *) expect "default set: main and a function with no contract are not proved" "neither" "neither" ;; esac
+prove --function=branches_on_trusted "$cases/trusted.c"
+expect "trusted: a caller may branch on the result" 0 "$rc"
 prove --function=after_announce "$cases/trusted.c"
 expect "trusted: a caller of a trusted function with no contract is proved, reading the function with no contract" 0 "$rc"
 prove --function=sensor_percent "$cases/trusted.c"
