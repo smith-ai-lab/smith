@@ -22,5 +22,7 @@ i32 main(void) {
     reflect::show(Pair, &pair);
     reflect::show(Mixed, &mixed);
     c::printf("%g %g %zu\n", reflect::sum(Pair, pair), reflect::sum(Mixed, mixed), reflect::last_index(Mixed));
+    c::printf("%zu %zu %s %s\n", reflect::field_count(pair), reflect::field_count(mixed), reflect::first_name(pair),
+              reflect::first_name(mixed));
     return 0;
 }

@@ -35,3 +35,12 @@ export f64 sum(constexpr type T, T value) {
 export usize last_index(constexpr type T) {
     return countof(fields(T)) - 1;
 }
+
+// The fields of the type of a parameter: `fields(typeof(x))`.
+export usize field_count(auto x) {
+    return countof(fields(typeof(x)));
+}
+
+export const char *first_name(auto x) {
+    return fields(typeof(x))[0].name;
+}

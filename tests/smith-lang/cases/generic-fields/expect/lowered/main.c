@@ -16,6 +16,7 @@ __INT32_TYPE__ main(void) {
 main_Pair pair = {1, 2.5f};
 main_Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};__extension__({extern void reflect_show__Pair(main_Pair*x)__asm__("_reflect::show(main_Pair)");reflect_show__Pair(&pair);});__extension__({extern void reflect_show__Mixed(main_Mixed*x)__asm__("_reflect::show(main_Mixed)");reflect_show__Mixed(&mixed);});
 printf("%g %g %zu\n",__extension__({extern double reflect_sum__Pair(main_Pair value)__asm__("_reflect::sum(main_Pair)");reflect_sum__Pair(pair);}),__extension__({extern double reflect_sum__Mixed(main_Mixed value)__asm__("_reflect::sum(main_Mixed)");reflect_sum__Mixed(mixed);}),__extension__({extern __SIZE_TYPE__ reflect_last_index__Mixed(void)__asm__("_reflect::last_index(main_Mixed)");reflect_last_index__Mixed();}));
+printf("%zu %zu %s %s\n",smith_call_failed,smith_call_failed,smith_call_failed,smith_call_failed);
 return 0;
 }
 extern void reflect_show__Pair(main_Pair*x)__asm__("_reflect::show(main_Pair)");

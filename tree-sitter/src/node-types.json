@@ -1896,9 +1896,21 @@
         ]
       },
       "field": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
+          {
+            "type": "[",
+            "named": false
+          },
+          {
+            "type": "]",
+            "named": false
+          },
+          {
+            "type": "expression",
+            "named": true
+          },
           {
             "type": "field_identifier",
             "named": true

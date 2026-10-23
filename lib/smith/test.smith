@@ -746,6 +746,19 @@ void explain_join(const char *text, usize used, bool late, i32 status) {
     stop();
 }
 
+constexpr usize label_capacity = 128;
+
+// Two structs differ at the field `path` (`pair.m`, `values[2]`): the two values, labeled with the path.
+[[noreturn]] void fail_field(const char *path, Value a, Value b) {
+    char label_a[label_capacity + 2];
+    char label_b[label_capacity + 2];
+    __builtin_snprintf(label_a, sizeof label_a, "a.%s", path);
+    __builtin_snprintf(label_b, sizeof label_b, "b.%s", path);
+    Line lines[2] = {{.text = label_a, .value = a}, {.text = label_b, .value = b}};
+    write_values(lines, 2);
+    stop();
+}
+
 [[noreturn]] void fail_same_bits(Value a, Value b) {
     Line lines[2] = {{.text = "a", .value = a, .bits = true}, {.text = "b", .value = b, .bits = true}};
     write_values(lines, 2);
@@ -806,10 +819,58 @@ void on_failure(c::SmithFailureKind kind, const usize *frames, usize count) {
     if (!holds(op, order(a, b))) fail_compare(a, b);
 }
 
+// `path` and `.name` (or `[index]`) in next: the path of a part of a struct.
+void extend_path(char *next, const char *path, const char *name) {
+    __builtin_snprintf(next, label_capacity, "%s%s%s", path, path[0] != '\0' && name[0] != '[' ? "." : "", name);
+}
+
+// Compares a and b part by part and fails at the first that differs, naming it. A struct is compared field by field
+// (`fields(T)`, at compile time), a fixed array element by element (count elements, a and b the pointers they decay
+// to), anything else by value. The fields of a struct are reached with `a.[f]`, so a bit-field is read, never
+// addressed.
+void check_part(const char *path, auto a, typeof(a) b, usize count) {
+    if constexpr (is_pointer(typeof(a))) {
+        for (usize j = 0; j < count; j++) {
+            char next[label_capacity];
+            char position[24];
+            __builtin_snprintf(position, sizeof position, "[%zu]", j);
+            extend_path(next, path, position);
+            check_part(next, *a, *b, 0);
+            a += 1;
+            b += 1;
+        }
+    } else if constexpr (is_record(typeof(a))) {
+        (void)count;
+        for constexpr (usize i = 0; i < countof(fields(typeof(a))); i++) {
+            char next[label_capacity];
+            extend_path(next, path, fields(typeof(a))[i].name);
+            if constexpr (is_array(typeof(a.[fields(typeof(a))[i]]))) {
+                check_part(next, a.[fields(typeof(a))[i]], b.[fields(typeof(a))[i]],
+                           sizeof(a.[fields(typeof(a))[i]]) / sizeof(a.[fields(typeof(a))[i]][0]));
+            } else if constexpr (is_pointer(typeof(a.[fields(typeof(a))[i]]))) { // the same address
+                if (a.[fields(typeof(a))[i]] != b.[fields(typeof(a))[i]]) {
+                    fail_field(next, value_of(a.[fields(typeof(a))[i]]), value_of(b.[fields(typeof(a))[i]]));
+                }
+            } else {
+                check_part(next, a.[fields(typeof(a))[i]], b.[fields(typeof(a))[i]], 0);
+            }
+        }
+    } else if constexpr (is_enum(typeof(a))) {
+        (void)count;
+        if (a != b) fail_field(path, value_i64((i64)a), value_i64((i64)b));
+    } else {
+        (void)count;
+        if (!holds(op_equal, order(value_of(a), value_of(b)))) fail_field(path, value_of(a), value_of(b));
+    }
+}
+
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
-// values print with it.
+// values print with it. Two structs are equal when every field is, and the first that differs is named
+// (`a.pair.m = 1`, `b.pair.m = 2`); a fixed array field is compared element by element.
 export void check_equal(auto a, typeof(a) b) {
-    if constexpr (target::static_analyzer) {
+    if constexpr (is_record(typeof(a))) {
+        check_part("", a, b, 0);
+    } else if constexpr (target::static_analyzer) {
         __builtin_assume(a == b); // the analyzer cannot see what a failed check does: it is told what a pass means
     } else {
         check_compare(op_equal, value_of(a), value_of(b));

@@ -1576,6 +1576,147 @@ module num;
 export T add(constexpr type T, T a, T b) {
     return a + b;
 }
+==> generic-fields-error/src/main.smith <==
+module main;
+
+import reflect;
+
+typedef union {
+    i32 a;
+    f32 b;
+} Either;
+
+typedef struct {
+    i32 a;
+    struct {
+        i32 b;
+        i32 c;
+    };
+} Anonymous;
+
+typedef struct {
+    i32 a;
+} One;
+
+i32 main(void) {
+    i32 total = 0;
+    total += reflect::count_int(i32);
+    total += reflect::count_union(Either);
+    total += reflect::count_anonymous(Anonymous);
+    One one = {1};
+    total += reflect::out_of_range(One, &one);
+    total += reflect::not_constant(One, &one, 0);
+    reflect::bare(One);
+    reflect::odd_name(One);
+    return total;
+}
+==> generic-fields-error/src/reflect.smith <==
+module reflect;
+
+export i32 count_int(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 count_union(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 count_anonymous(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 out_of_range(constexpr type T, T *x) {
+    return x->[fields(T)[7]];
+}
+
+export i32 not_constant(constexpr type T, T *x, i32 n) {
+    return x->[fields(T)[n]];
+}
+
+export void bare(constexpr type T) {
+    auto f = fields(T)[0];
+}
+
+export void odd_name(constexpr type T) {
+    const char *name = fields(T)[0].label;
+}
+==> generic-fields/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import reflect;
+
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    u8 bits : 3;
+    u8 more : 5;
+    i32 values[3];
+    f64 scale;
+} Mixed;
+
+i32 main(void) {
+    Pair pair = {1, 2.5f};
+    Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};
+    reflect::show(Pair, &pair);
+    reflect::show(Mixed, &mixed);
+    c::printf("%g %g %zu\n", reflect::sum(Pair, pair), reflect::sum(Mixed, mixed), reflect::last_index(Mixed));
+    c::printf("%zu %zu %s %s\n", reflect::field_count(pair), reflect::field_count(mixed), reflect::first_name(pair),
+              reflect::first_name(mixed));
+    return 0;
+}
+==> generic-fields/src/reflect.smith <==
+module reflect;
+
+import <stdio.h>;
+
+// `fields(T)` is a compile-time list of the named fields of a struct, like an argument list: `countof`, a constant
+// index, `for constexpr`. `.name` is a string literal; `x.[f]` and `x->[f]` are the member; `typeof(T.[f])` is its
+// type.
+export void show(constexpr type T, T *x) {
+    c::printf("%zu fields:", (usize)countof(fields(T)));
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        if constexpr (is_float(typeof(x->[fields(T)[i]]))) {
+            c::printf(" %s=%g", fields(T)[i].name, (f64)x->[fields(T)[i]]);
+        } else if constexpr (is_integer(typeof(T.[fields(T)[i]]))) {
+            c::printf(" %s=%lld", fields(T)[i].name, (long long)x->[fields(T)[i]]);
+        } else if constexpr (is_array(typeof(x->[fields(T)[i]]))) {
+            c::printf(" %s=array(%zu)", fields(T)[i].name, sizeof(x->[fields(T)[i]]) / sizeof(x->[fields(T)[i]][0]));
+        } else {
+            c::printf(" %s=?", fields(T)[i].name);
+        }
+    }
+    c::printf("\n");
+}
+
+// A field's type without a value, and the member of a value, in code.
+export f64 sum(constexpr type T, T value) {
+    f64 total = 0;
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        if constexpr (is_float(typeof(T.[fields(T)[i]])) || is_integer(typeof(T.[fields(T)[i]]))) {
+            typeof(T.[fields(T)[i]]) part = value.[fields(T)[i]];
+            total += (f64)part;
+        }
+    }
+    return total;
+}
+
+export usize last_index(constexpr type T) {
+    return countof(fields(T)) - 1;
+}
+
+// The fields of the type of a parameter: `fields(typeof(x))`.
+export usize field_count(auto x) {
+    return countof(fields(typeof(x)));
+}
+
+export const char *first_name(auto x) {
+    return fields(typeof(x))[0].name;
+}
 ==> generic-function-error/src/apply.smith <==
 module apply;
 

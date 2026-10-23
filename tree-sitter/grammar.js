@@ -59,6 +59,12 @@ module.exports = grammar(C, {
       prec.dynamic(-2, seq(field('name', $.identifier), '(', field('argument', $.expression), ')')),
     ),
 
+    // x.[f] and x->[f]: the member named by a field f of fields(T)
+    field_expression: $ => seq(
+      prec(C.PREC.FIELD, seq(field('argument', $.expression), field('operator', choice('.', '->')))),
+      field('field', choice($._field_identifier, seq('[', $.expression, ']'))),
+    ),
+
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),
 

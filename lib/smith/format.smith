@@ -547,8 +547,8 @@ void put(Writer *writer, auto piece, usize count) {
                 put(writer, piece.[fields(typeof(piece))[i]],
                     sizeof(piece.[fields(typeof(piece))[i]]) / sizeof(piece.[fields(typeof(piece))[i]][0]));
             } else if constexpr (is_pointer(typeof(piece.[fields(typeof(piece))[i]])) &&
-                                 typeof(piece.[fields(typeof(piece))[i]]) != char * &&
-                                 typeof(piece.[fields(typeof(piece))[i]]) != const char *) {
+                                 typeof(piece.[fields(typeof(piece))[i]]) !=
+                                     char *&&typeof(piece.[fields(typeof(piece))[i]]) != const char *) {
                 static_assert(false, "format: a pointer field has no rule; see the instance in the note");
             } else {
                 put(writer, piece.[fields(typeof(piece))[i]], 0);
@@ -573,7 +573,7 @@ Padded make_padded(auto piece, u32 width, bool left) {
         padded.length = piece.length;
     } else {
         Writer writer = make(padded.characters, padded_capacity);
-        if constexpr (is_pointer(typeof(piece)) && typeof(piece) != char * && typeof(piece) != const char *) {
+        if constexpr (is_pointer(typeof(piece)) && typeof(piece) != char *&&typeof(piece) != const char *) {
             static_assert(false, "format: no rule for the type of a piece; see the instance in the note");
         } else {
             put(&writer, piece, 0);

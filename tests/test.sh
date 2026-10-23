@@ -1275,6 +1275,59 @@ expect_contains "crash: a SIGSEGV is named" "$out" "FAIL crash: killed by SIGSEG
 expect_contains "crash: ... with the note" "$out" "    note: about to crash"
 expect_contains "crash: ... and the other test passed" "$out" "1 passed, 1 failed"
 
+# 5b. A struct is compared field by field (fields(T)): the first that differs is named, nested and in an array.
+project "$work/structs"
+cat >tests/test_structs.smith <<'C'
+import smith::test;
+
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    u8 flags : 3;
+    i32 values[3];
+    f64 scale;
+} Wide;
+
+void test_same(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    test::check_equal(a, b);
+}
+
+void test_nested(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.pair.b = 3.5f;
+    test::check_equal(a, b);
+}
+
+void test_array(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.values[2] = 9;
+    test::check_equal(a, b);
+}
+
+void test_bits(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.flags = 2;
+    test::check_equal(a, b);
+}
+C
+capture "$smith" build
+expect "struct: the runner builds" 0 "$rc"
+capture build/tests $iso
+expect_contains "struct: equal structs pass, the other three fail" "$out" "1 passed, 3 failed"
+expect_contains "struct: a nested field is named by its path" "$out" "a.pair.b = 2.5 [0x1.4p+1]   (f32)"
+expect_contains "struct: ... and the other struct's value" "$out" "b.pair.b = 3.5 [0x1.cp+1]   (f32)"
+expect_contains "struct: an array element is named by its index" "$out" "a.values[2] = 3   (i32)"
+expect_contains "struct: a bit-field is compared by its value" "$out" "b.flags = 2   (i32)"
+
 # 6. Finding the tests: in .smith and in C files, side by side.
 project "$work/finding"
 cat >tests/test_a.smith <<'C'

@@ -3,6 +3,10 @@ __extension__({ extern void reflect_show__Mixed(main_Mixed * x) __asm__("_reflec
 __extension__({ extern double reflect_sum__Pair(main_Pair value) __asm__("_reflect::sum(main_Pair)"); reflect_sum__Pair(pair); })
 __extension__({ extern double reflect_sum__Mixed(main_Mixed value) __asm__("_reflect::sum(main_Mixed)"); reflect_sum__Mixed(mixed); })
 __extension__({ extern __SIZE_TYPE__ reflect_last_index__Mixed(void) __asm__("_reflect::last_index(main_Mixed)"); reflect_last_index__Mixed(); })
+__extension__({ extern __SIZE_TYPE__ reflect_field_count__Pair(main_Pair x) __asm__("_reflect::field_count(main_Pair)"); reflect_field_count__Pair(pair); })
+__extension__({ extern __SIZE_TYPE__ reflect_field_count__Mixed(main_Mixed x) __asm__("_reflect::field_count(main_Mixed)"); reflect_field_count__Mixed(mixed); })
+__extension__({ extern const char * reflect_first_name__Pair(main_Pair x) __asm__("_reflect::first_name(main_Pair)"); reflect_first_name__Pair(pair); })
+__extension__({ extern const char * reflect_first_name__Mixed(main_Mixed x) __asm__("_reflect::first_name(main_Mixed)"); reflect_first_name__Mixed(mixed); })
 extern void reflect_show__Pair(main_Pair * x) __asm__("_reflect::show(main_Pair)");
 [[gnu::weak]][[gnu::visibility("hidden")]] void reflect_show__Pair(main_Pair * x) {
     printf("%zu fields:", (__SIZE_TYPE__) 2);
@@ -95,4 +99,20 @@ extern double reflect_sum__Mixed(main_Mixed value) __asm__("_reflect::sum(main_M
 extern __SIZE_TYPE__ reflect_last_index__Mixed(void) __asm__("_reflect::last_index(main_Mixed)");
 [[gnu::weak]][[gnu::visibility("hidden")]] __SIZE_TYPE__ reflect_last_index__Mixed(void) {
     return 5 - 1;
+}
+extern __SIZE_TYPE__ reflect_field_count__Pair(main_Pair x) __asm__("_reflect::field_count(main_Pair)");
+[[gnu::weak]][[gnu::visibility("hidden")]] __SIZE_TYPE__ reflect_field_count__Pair(main_Pair x) {
+    return 2;
+}
+extern __SIZE_TYPE__ reflect_field_count__Mixed(main_Mixed x) __asm__("_reflect::field_count(main_Mixed)");
+[[gnu::weak]][[gnu::visibility("hidden")]] __SIZE_TYPE__ reflect_field_count__Mixed(main_Mixed x) {
+    return 5;
+}
+extern const char * reflect_first_name__Pair(main_Pair x) __asm__("_reflect::first_name(main_Pair)");
+[[gnu::weak]][[gnu::visibility("hidden")]] const char * reflect_first_name__Pair(main_Pair x) {
+    return "m";
+}
+extern const char * reflect_first_name__Mixed(main_Mixed x) __asm__("_reflect::first_name(main_Mixed)");
+[[gnu::weak]][[gnu::visibility("hidden")]] const char * reflect_first_name__Mixed(main_Mixed x) {
+    return "pair";
 }
