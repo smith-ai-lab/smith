@@ -26,7 +26,7 @@ build/stage0 build install -DCC=cc             # builds the full smith and insta
 ```
 
 The stage0 runs an external clang. If Homebrew's `llvm` is not installed, set `SMITH_CLANG=/usr/bin/clang`. `build llvm`
-puts its work in `~/.cache/smith/llvm/23.1.3-r2` and survives `smith build clean`.
+puts its work in `~/.cache/smith/llvm/23.1.3-r4` and survives `smith build clean`.
 
 `build install` runs the tests, then copies three files to `~/.local/bin` (`-DPREFIX=` changes the folder):
 
