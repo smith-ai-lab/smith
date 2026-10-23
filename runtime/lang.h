@@ -100,12 +100,32 @@ typedef struct {
 // `if constexpr` asks (is_integer(T), sizeof(T)) and the identity of a type for its instances.
 typedef struct {
     bool complete; // size and alignment are known
-    bool is_integer, is_float, is_signed, is_pointer, is_bool, is_enum, is_record;
+    bool is_integer, is_float, is_signed, is_pointer, is_bool, is_enum, is_record, is_array;
     uint64_t size;
     uint64_t alignment;
     const char *canonical; // the type with every typedef looked through; valid until the next question
     uint32_t canonical_length;
 } SmithTypeQuery;
+
+// A field of a struct, for `fields(T)`: what the parser says of the type written by a spelling. `status` is Ok when the
+// type is a struct whose members are all named; `count` is then the number of named fields, and the field asked for
+// (when its index is below `count`) has its name, the spelling of its type and whether it is a bit-field.
+typedef enum {
+    SmithFields_Ok,
+    SmithFields_NotRecord,
+    SmithFields_Union,
+    SmithFields_Anonymous, // a member that is an anonymous struct or union
+    SmithFields_Incomplete,
+    SmithFields_Unreadable, // the spelling is no type
+} SmithFieldsStatus;
+
+typedef struct {
+    SmithFieldsStatus status;
+    uint32_t count;
+    bool bit_field;
+    char name[128];
+    char type[256];
+} SmithFieldInfo;
 
 // The type of an expression, for a generic whose type is not written at the call (`test::check_equal(a, b)`).
 typedef struct {
@@ -180,6 +200,9 @@ typedef struct {
     // The value of a `constexpr` constant of integer type the parser has completely parsed (a variable of the file, or
     // a local declared by an earlier statement), named as the compiler sees it. Null for a host without a parser.
     bool (*constant)(void *context, const char *name, uint32_t length, int64_t *value);
+    // The `index`th named field of the struct a spelling names (`fields(T)`), and how many there are. False when the
+    // host has no parser.
+    bool (*type_field)(void *context, const char *spelling, uint32_t length, uint32_t index, SmithFieldInfo *out);
     // The `index`th field of a struct or union: its name and the spelling of its type, valid until the next call.
     bool (*field)(void *context, const char *name, uint32_t length, SmithLookupKind space, uint32_t index,
                   const char **field_name, const char **field_type);

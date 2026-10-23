@@ -359,6 +359,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
         host.field = &SmithHook::fieldOf;
+        host.type_field = &SmithHook::typeField;
         host.read_header = &SmithHook::readHeader;
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
@@ -1547,6 +1548,7 @@ class SmithHook final : public TokenHook, public NameSource {
         out->is_signed = out->is_float || canonical->isSignedIntegerOrEnumerationType();
         out->is_pointer = canonical->isPointerType();
         out->is_record = canonical->isRecordType();
+        out->is_array = canonical->isArrayType();
         out->complete = !canonical->isIncompleteType() && !canonical->isDependentType() && !canonical->isVoidType() &&
                         !canonical->isFunctionType();
         if (out->complete) {
@@ -1576,7 +1578,14 @@ class SmithHook final : public TokenHook, public NameSource {
         std::string source = "__typeof__(" + text + ")";
         DiagnosticErrorTrap trap(sema->getDiagnostics());
         TypeResult parsed = sema->ParseTypeFromStringCallback(source, "<smith>", SourceLocation());
-        if (trap.hasErrorOccurred() || parsed.isInvalid() || !parsed.get()) return false;
+        if (trap.hasErrorOccurred() || parsed.isInvalid() || !parsed.get()) {
+            // typeof of a bit-field is an error in C, and the field is a value like any other (`fields(T)`): it is
+            // typed as the integer it promotes to.
+            DiagnosticErrorTrap again(sema->getDiagnostics());
+            std::string promoted = "__typeof__((" + text + ") + 0)";
+            parsed = sema->ParseTypeFromStringCallback(promoted, "<smith>", SourceLocation());
+            if (again.hasErrorOccurred() || parsed.isInvalid() || !parsed.get()) return false;
+        }
         QualType found = sema->GetTypeFromParser(parsed.get());
         const auto *typeOf = found.isNull() ? nullptr : dyn_cast<TypeOfExprType>(found.getTypePtr());
         if (typeOf == nullptr || typeOf->getUnderlyingExpr() == nullptr ||
@@ -1689,6 +1698,45 @@ class SmithHook final : public TokenHook, public NameSource {
             return true;
         }
         return false;
+    }
+
+    // The named fields of the struct a spelling names, and the `index`th of them (runtime/lang_fields.c). An unnamed
+    // bit-field is padding, not a member; a member that is an anonymous struct or union has no name to reach it by.
+    static bool typeField(void *context, const char *spelling, uint32_t length, uint32_t index, SmithFieldInfo *out) {
+        auto *self = static_cast<SmithHook *>(context);
+        *out = SmithFieldInfo{};
+        if (self->sema == nullptr) return false;
+        QualType type = self->readType(StringRef(spelling, length));
+        if (type.isNull()) {
+            out->status = SmithFields_Unreadable;
+            return true;
+        }
+        const RecordDecl *record = type.getCanonicalType()->getAsRecordDecl();
+        if (record == nullptr) {
+            out->status = SmithFields_NotRecord;
+            return true;
+        }
+        if (record->isUnion()) {
+            out->status = SmithFields_Union;
+            return true;
+        }
+        if (record->getDefinition() == nullptr) {
+            out->status = SmithFields_Incomplete;
+            return true;
+        }
+        for (const FieldDecl *field : record->getDefinition()->fields()) {
+            if (field->isAnonymousStructOrUnion()) {
+                out->status = SmithFields_Anonymous;
+                return true;
+            }
+            if (field->getName().empty()) continue; // padding
+            if (out->count++ != index) continue;
+            snprintf(out->name, sizeof out->name, "%s", field->getName().str().c_str());
+            snprintf(out->type, sizeof out->type, "%s",
+                     field->getType().getAsString(self->sema->getASTContext().getPrintingPolicy()).c_str());
+            out->bit_field = field->isBitField();
+        }
+        return true;
     }
 
     static void renameName(void *context, const char *name, uint32_t length, const char *prefixed,

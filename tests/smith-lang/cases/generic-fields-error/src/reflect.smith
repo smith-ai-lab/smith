@@ -1,0 +1,29 @@
+module reflect;
+
+export i32 count_int(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 count_union(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 count_anonymous(constexpr type T) {
+    return countof(fields(T));
+}
+
+export i32 out_of_range(constexpr type T, T *x) {
+    return x->[fields(T)[7]];
+}
+
+export i32 not_constant(constexpr type T, T *x, i32 n) {
+    return x->[fields(T)[n]];
+}
+
+export void bare(constexpr type T) {
+    auto f = fields(T)[0];
+}
+
+export void odd_name(constexpr type T) {
+    const char *name = fields(T)[0].label;
+}

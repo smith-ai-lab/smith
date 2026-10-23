@@ -2175,14 +2175,24 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
     if (generic == nullptr || replay->instance == nullptr) return true;
     bool used = false;
     for (uint32_t at = *begin; at < *end && !used; at++) // is there a use of a list at all
-        used = smith_lang_pack_named(replay, at);
+        used = smith_lang_pack_named(replay, at) || smith_lang_fields_begins(replay, at, *end);
     if (!used) return true;
     uint32_t first = smith_lang_gt.count;
     bool good = true;
     for (uint32_t at = *begin; at < *end && good;) { // each token, copied unless it uses a list
-        SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, at, *end);
         char text[smith_lang_name_max];
         const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+        static SmithLangFieldPieces pieces;
+        uint32_t taken = 0;
+        int field = smith_lang_fields_use(lang, host, replay, at, *end, &pieces, &taken);
+        if (field != 0) { // a use of fields(T), written in new tokens
+            good = field > 0;
+            for (size_t i = 0; good && i < pieces.count; i++)
+                good = smith_lang_pack_push(like, pieces.kind[i], pieces.text[i], false);
+            at += taken;
+            continue;
+        }
+        SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, at, *end);
         if (use.kind == SmithLangPack_None) {
             bool skip = smith_lang_pack_comma_before_empty(replay, at, *end);
             good = skip || smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
@@ -3281,6 +3291,24 @@ static void smith_lang_list_clash(SmithLang *lang, const SmithHost *host, const 
     }
 }
 
+// Whether an argument of the call [first, last) is an expression with a parameter of the instance in it (`*first`,
+// `piece.m`, `first + 1`), not just the parameter: the parameters are not declared while the body is written, so the
+// arguments are typed with them written as values of their types.
+static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32_t first, uint32_t last) {
+    for (uint32_t at = first; at < last; at++) { // bounded by the call
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0 ||
+            smith_lang_member_before(at) ||
+            smith_lang_param_type_of(replay->generic, replay->instance, (SmithLangSpan){at, at + 1}) < 0) {
+            continue;
+        }
+        bool starts = at == first || smith_lang_gt_punct(&smith_lang_gt.tokens[at - 1], ",");
+        bool ends = at + 1 == last || smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], ",");
+        if (!starts || !ends) return true;
+    }
+    return false;
+}
+
 static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, uint32_t begin) {
     SmithLangFrame *frame = &replay->frames[replay->count - 1];
     SmithLangGenToken *token = &smith_lang_gt.tokens[begin];
@@ -3294,7 +3322,9 @@ static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, Smit
     size_t member_length = token->length - module_length - 2;
     int found = smith_lang_generic_resolve(lang, host, text, module_length, colons + 1, member_length);
     uint32_t location = smith_lang_gen_place(host, replay->generic, token, replay->location);
-    if (found >= 0 && replay->instance != nullptr && smith_lang_span_has_group((SmithLangSpan){begin + 1, end}) &&
+    if (found >= 0 && replay->instance != nullptr &&
+        (smith_lang_span_has_group((SmithLangSpan){begin + 1, end}) || smith_lang_fields_in(begin + 1, end) ||
+         smith_lang_expression_of_param(replay, begin + 1, end)) &&
         replay->count + 3 <= smith_lang_replay_depth_max) {
         // Its arguments hold a call: they are written to the pool first, to be typed (smith_lang_typed_start).
         smith_lang_replay_push(replay, 0, 0, 0);
@@ -3382,6 +3412,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             smith_lang_replay_for(lang, host, replay, frame);
             continue;
         }
+        if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
         if (smith_lang_list_statement(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
         if (use.kind == SmithLangPack_None && smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end)) {

@@ -26,6 +26,34 @@ static u64 test_format_draw(random::Key key) {
     return random::key_bits(random::key_derive(key, 0), 0) >> shift;
 }
 
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    u8 flags : 3;
+    u8 mode : 5;
+    i32 values[3];
+    const char *name;
+    bool on;
+} Nested;
+
+// A struct is written field by field from fields(T): {m = 1, b = 2}, a nested struct and a fixed array the same way.
+export void test_format_struct_is_its_fields(void) {
+    char out[capacity];
+    Pair pair = {1, 2};
+    format::Written written = format::to(out, sizeof out, pair);
+    test::check(written.fits);
+    test::check(is(out, "{m = 1, b = 2}"));
+    Nested nested = {{-3, 0.5f}, 5, 17, {7, 8, 9}, "box", true};
+    (void)format::to(out, sizeof out, "n = ", nested, "!");
+    test::check(
+        is(out, "n = {pair = {m = -3, b = 0.5}, flags = 5, mode = 17, values = [7, 8, 9], name = box, on = true}!"));
+    test::check_equal(format::length(pair), 14);
+}
+
 export void test_format_pieces_in_order(void) {
     char out[capacity];
     u32 n = 3;
@@ -530,10 +558,10 @@ export void test_format_no_rule_error_names_the_piece(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "lang_project");
     scratch::write(&p, "bad.smith",
                    "import smith::format;\n"
-                   "typedef struct { i32 x; } Point;\n"
+                   "typedef void *Point;\n"
                    "i32 main(void) {\n"
                    "    char buffer[64];\n"
-                   "    Point point = {1};\n"
+                   "    Point point = nullptr;\n"
                    "    (void)format::to(buffer, sizeof buffer, \"a\", 1, point, 2);\n"
                    "    return 0;\n"
                    "}\n");

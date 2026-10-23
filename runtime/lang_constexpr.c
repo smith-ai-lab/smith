@@ -146,6 +146,8 @@ static uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
     return UINT32_MAX;
 }
 
+#include "lang_fields.c"
+
 // ---- Types in a condition ------------------------------------------------------------------------------------------
 
 static bool smith_lang_cx_type_word(const SmithLangGenToken *token) {
@@ -174,7 +176,9 @@ static bool smith_lang_cx_typeof_element_at(const SmithLangCx *cx, uint32_t at) 
 // Whether the tokens at `at` begin a type: T, a builtin type word, or a name the parser knows as a type.
 static bool smith_lang_cx_type_start(SmithLangCx *cx, uint32_t at) {
     const SmithLangGenToken *token = smith_lang_cx_token(at);
-    if (smith_lang_cx_typeof_element_at(cx, at)) return true;
+    if (smith_lang_cx_typeof_element_at(cx, at) || smith_lang_fields_typeof_end(at, smith_lang_gt.count) != 0) {
+        return true;
+    }
     if (smith_lang_cx_type_word(token)) return true;
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain) return false;
     return cx->host->lookup(cx->host->context, smith_lang_gt_str(token), token->length, SmithLookup_Type).kind ==
@@ -185,6 +189,8 @@ static bool smith_lang_cx_type_start(SmithLangCx *cx, uint32_t at) {
 // parser knows as a type (`c::V2`, a C struct or vector typedef).
 static uint32_t smith_lang_cx_type_end(SmithLangCx *cx, uint32_t at, uint32_t last) {
     bool named = false;
+    uint32_t field_end = smith_lang_fields_typeof_end(at, smith_lang_gt.count);
+    if (field_end != 0) return field_end;
     if (smith_lang_cx_typeof_element_at(cx, at)) {
         uint32_t after = smith_lang_cx_skip_group(at + 1, last);
         return after == UINT32_MAX ? at : after;
@@ -219,6 +225,12 @@ static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last,
             at += 1;
         } else if (want_term && smith_lang_var_value(cx->replay, at, &term)) {
             at += 1;
+        } else if (want_term && smith_lang_fields_countof_at(at, last)) {
+            if (!smith_lang_fields_count(cx->host, cx->replay->generic, cx->instance, at + 2, cx->location, &term,
+                                         cx->message, sizeof cx->message)) {
+                return false;
+            }
+            at += smith_lang_fields_countof_len(at, last);
         } else if (want_term && smith_lang_list_countof_at(cx->replay, at, last, &list)) {
             term = (int64_t)list.count;
             at += 4;
@@ -280,13 +292,21 @@ static bool smith_lang_cx_query(SmithLangCx *cx, uint32_t first, uint32_t last, 
     uint32_t staged_first = 0;
     uint32_t staged_count = 0;
     SmithLangSpan span = {first, last};
-    if (smith_lang_cx_typeof_element_at(cx, first) && smith_lang_cx_skip_group(first + 1, last) == last) {
+    char field_spelling[smith_lang_cx_name_max] = "";
+    bool field = smith_lang_fields_typeof_end(first, last) == last;
+    if (field && !smith_lang_cx_field_type(cx, first, last, field_spelling, sizeof field_spelling)) return false;
+    if (field) {
+        staged_count = 0;
+    } else if (smith_lang_cx_typeof_element_at(cx, first) && smith_lang_cx_skip_group(first + 1, last) == last) {
         if (!smith_lang_cx_element_type(cx, first, last, &staged_first, &staged_count)) return false;
     } else if (!smith_lang_stage_type(span, cx->instance, cx->location, &staged_first, &staged_count)) {
         return smith_lang_cx_fail(cx, "this type is too long");
     }
     char spelling[smith_lang_cx_name_max];
-    smith_lang_it_spelling(staged_first, staged_count, spelling, sizeof spelling);
+    if (field)
+        snprintf(spelling, sizeof spelling, "%s", field_spelling);
+    else
+        smith_lang_it_spelling(staged_first, staged_count, spelling, sizeof spelling);
     smith_lang_it.count = mark[0];
     smith_lang_it.text_used = mark[1];
     *query = (SmithTypeQuery){};
@@ -424,17 +444,18 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (strcmp(text, "is_bool") == 0) value->number = query.is_bool;
     if (strcmp(text, "is_enum") == 0) value->number = query.is_enum;
     if (strcmp(text, "is_record") == 0) value->number = query.is_record;
+    if (strcmp(text, "is_array") == 0) value->number = query.is_array;
     *at = after;
     return true;
 }
 
 static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
-    static const char *const names[] = {"sizeof",    "alignof",    "_Alignof", "is_integer", "is_float",
-                                        "is_signed", "is_pointer", "is_bool",  "is_enum",    "is_record"};
+    static const char *const names[] = {"sizeof",     "alignof", "_Alignof", "is_integer", "is_float", "is_signed",
+                                        "is_pointer", "is_bool", "is_enum",  "is_record",  "is_array"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 10 names
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 11 names
         if (smith_lang_equals(smith_lang_gt_str(token), token->length, names[i])) return true;
     }
     return false;
@@ -452,6 +473,14 @@ static int smith_lang_cx_list_operand(SmithLangCx *cx, uint32_t *at, uint32_t la
     if (cx->replay == nullptr || cx->instance == nullptr) return 0;
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
     SmithLangListRef list;
+    if (smith_lang_fields_countof_at(*at, last)) { // `countof(fields(T))`: how many fields T has
+        if (!smith_lang_fields_count(cx->host, cx->replay->generic, cx->instance, *at + 2, cx->location,
+                                     &value->number, cx->message, sizeof cx->message)) {
+            return -1;
+        }
+        *at += smith_lang_fields_countof_len(*at, last);
+        return 1;
+    }
     if (smith_lang_list_countof_at(cx->replay, *at, last, &list)) { // `countof(rest)`: how many elements it has
         value->number = (int64_t)list.count;
         *at += 4;

@@ -1,0 +1,2 @@
+#include <stdio.h>
+ [ [ clang :: unavailable ( "reflect::show is a generic function: call it from a .smith module" ) ] ] void reflect_show ( void ) ; [ [ clang :: unavailable ( "reflect::sum is a generic function: call it from a .smith module" ) ] ] void reflect_sum ( void ) ; [ [ clang :: unavailable ( "reflect::last_index is a generic function: call it from a .smith module" ) ] ] void reflect_last_index ( void ) ;

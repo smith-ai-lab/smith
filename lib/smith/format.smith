@@ -27,7 +27,10 @@ import smith::text;
 //   format::General           printf's %.Ng: format::general(value, 6), format::Scientific is %.Ne: scientific(value,
 //   3) format::Padded            any of the above in a column of width characters: format::pad(n, 5) is %5d,
 //                             format::left(name, 16) is %-16s, format::pad(format::fixed(x, 1), 6) is %6.1f
-// Anything else (a pointer, an enum, a struct) is an error: convert it to what it means, (u64)(usize)pointer.
+//   a struct                  {m = 1, b = 2}: each field by the rule of its type, a nested struct the same way, a
+//                             fixed array as [1, 2, 3]; the fields come from fields(T) at compile time. A union or a
+//                             struct with an anonymous member is an error (fields(T) has none).
+// Anything else (a pointer, an enum) is an error: convert it to what it means, (u64)(usize)pointer.
 //
 // Writing never stops. The text is cut where the buffer ends, the buffer is always terminated (when it has room for
 // the terminator), and the result says how long the whole text is, so a caller can retry with room, as snprintf does.
@@ -488,8 +491,10 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
 }
 
 // One piece by the rule of its type. `to` is this for each of its arguments; a type with no rule is an error here, and
-// at the position of the piece in `to`.
-void put(Writer *writer, auto piece) {
+// at the position of the piece in `to`. A struct is `{m = 1, b = 2}`: each field by the rule of its type (a nested
+// struct the same way, a fixed array as `[1, 2, 3]`), the fields being the compile-time list `fields(typeof(piece))`.
+void put(Writer *writer, auto piece, usize count) {
+    (void)count;
     if constexpr (is_bool(typeof(piece))) {
         put_string(writer, piece ? "true" : "false");
     } else if constexpr (typeof(piece) == char) {
@@ -503,7 +508,14 @@ void put(Writer *writer, auto piece) {
     } else if constexpr (is_float(typeof(piece))) {
         put_f64(writer, (f64)piece);
     } else if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
-        put_string(writer, piece);
+        if (count == 0) {
+            put_string(writer, piece);
+        } else { // a char array of a struct: up to its end or its terminator
+            usize length = 0;
+            while (length < count && piece[length] != '\0')
+                length += 1;
+            put_bytes(writer, piece, length);
+        }
     } else if constexpr (typeof(piece) == text::Text) {
         put_bytes(writer, piece.begin, piece.length);
     } else if constexpr (typeof(piece) == Hex) {
@@ -516,6 +528,33 @@ void put(Writer *writer, auto piece) {
         put_scientific(writer, piece);
     } else if constexpr (typeof(piece) == Padded) {
         put_padded(writer, piece);
+    } else if constexpr (is_pointer(typeof(piece))) {
+        // The first of count elements of a fixed array (a field that is an array, as the pointer it decays to).
+        put_char(writer, '[');
+        for (usize j = 0; j < count; j++) {
+            if (j > 0) put_string(writer, ", ");
+            put(writer, *piece, 0);
+            piece += 1;
+        }
+        put_char(writer, ']');
+    } else if constexpr (is_record(typeof(piece))) {
+        put_char(writer, '{');
+        for constexpr (usize i = 0; i < countof(fields(typeof(piece))); i++) {
+            if constexpr (i > 0) put_string(writer, ", ");
+            put_string(writer, fields(typeof(piece))[i].name);
+            put_string(writer, " = ");
+            if constexpr (is_array(typeof(piece.[fields(typeof(piece))[i]]))) {
+                put(writer, piece.[fields(typeof(piece))[i]],
+                    sizeof(piece.[fields(typeof(piece))[i]]) / sizeof(piece.[fields(typeof(piece))[i]][0]));
+            } else if constexpr (is_pointer(typeof(piece.[fields(typeof(piece))[i]])) &&
+                                 typeof(piece.[fields(typeof(piece))[i]]) != char * &&
+                                 typeof(piece.[fields(typeof(piece))[i]]) != const char *) {
+                static_assert(false, "format: a pointer field has no rule; see the instance in the note");
+            } else {
+                put(writer, piece.[fields(typeof(piece))[i]], 0);
+            }
+        }
+        put_char(writer, '}');
     } else {
         static_assert(false, "format: no rule for the type of a piece; see the instance in the note");
     }
@@ -534,7 +573,11 @@ Padded make_padded(auto piece, u32 width, bool left) {
         padded.length = piece.length;
     } else {
         Writer writer = make(padded.characters, padded_capacity);
-        put(&writer, piece);
+        if constexpr (is_pointer(typeof(piece)) && typeof(piece) != char * && typeof(piece) != const char *) {
+            static_assert(false, "format: no rule for the type of a piece; see the instance in the note");
+        } else {
+            put(&writer, piece, 0);
+        }
         padded.length = writer.length < padded_capacity - 1 ? writer.length : padded_capacity - 1;
     }
     return padded;
@@ -627,14 +670,16 @@ export Written to(char *buffer, usize capacity, auto... args) {
     Writer writer = {buffer, capacity, 0};
     for constexpr (usize i = 0; i < countof(args); i++) {
         if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
-            put(&writer, args[i]);
+            put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char * ||
                              typeof(args[i]) == text::Text) {
-            put(&writer, args[i]);
+            put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == Hex || typeof(args[i]) == Fixed || typeof(args[i]) == General) {
-            put(&writer, args[i]);
+            put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == Scientific || typeof(args[i]) == Padded) {
-            put(&writer, args[i]);
+            put(&writer, args[i], 0);
+        } else if constexpr (is_record(typeof(args[i]))) {
+            put(&writer, args[i], 0);
         } else {
             no_rule(char[i + 1]);
         }

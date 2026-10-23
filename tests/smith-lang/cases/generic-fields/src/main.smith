@@ -1,0 +1,26 @@
+module main;
+
+import <stdio.h>;
+import reflect;
+
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    u8 bits : 3;
+    u8 more : 5;
+    i32 values[3];
+    f64 scale;
+} Mixed;
+
+i32 main(void) {
+    Pair pair = {1, 2.5f};
+    Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};
+    reflect::show(Pair, &pair);
+    reflect::show(Mixed, &mixed);
+    c::printf("%g %g %zu\n", reflect::sum(Pair, pair), reflect::sum(Mixed, mixed), reflect::last_index(Mixed));
+    return 0;
+}
