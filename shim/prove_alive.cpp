@@ -393,9 +393,9 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         transform.src = std::move(*source);
         transform.tgt = std::move(*target);
         // Z3 (the fallback for a query Bitwuzla cannot read, and the values of a counterexample) has only a wall clock,
-        // so it gets the budget as that
-        smt::set_query_timeout(
-            std::to_string(static_cast<long>(options.budget_seconds * Options::solver_threads * 1000) + 1));
+        // and the budget is CPU time (with_z3_cpu_limit interrupts it there), so its own limit is only a backstop, as
+        // long as the parent's: on a busy machine a wall limit of the budget's size ends a proof the budget has not.
+        smt::set_query_timeout(std::to_string(static_cast<long>((20 * options.budget_seconds + 30) * 1000)));
         solver_context.reset(); // takes the timeout
         transform.preprocess();
         tools::TransformVerify verifier(transform, false);

@@ -689,7 +689,7 @@ expect_contains "isolation: ... under the test's FAIL line" "$out" "FAIL overflo
 expect_contains "isolation: ... with the note" "$out" "    note: index 8"
 capture build/tests $iso --test sleeps --wall-timeout 1
 expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1."
-capture build/tests $iso --test spins --timeout 1
+capture build/tests $iso --test spins --timeout 1 --wall-timeout 600
 expect_contains "isolation: a busy test is over its CPU time limit" "$out" "FAIL spins: over its CPU time limit of 1 s (it ran "
 capture build/tests $iso --test naps --timeout 1 --verbose
 expect_contains "isolation: a blocked test spends no CPU time, so the CPU limit does not end it" "$out" "PASS naps"
