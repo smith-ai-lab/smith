@@ -1,7 +1,8 @@
 #!/bin/sh
 # End-to-end tests for smith::autodiff (Enzyme, run at link time inside smith's lld): a toy across .smith and C files in
 # the three profiles and under `smith test`, a copy of learner's scan reference against its hand-written backward,
-# the commands of a program that does not differentiate, and the refusal of a smith with no Enzyme.
+# AddressSanitizer after Enzyme in the debug profile (an out-of-bounds read in the primal and in the gradient), the
+# commands of a program that does not differentiate, and the refusal of a smith with no Enzyme.
 # Usage: sh tests/autodiff.sh path/to/smith
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -9,7 +10,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin" "$work/home"
-ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
+ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/llvm-symbolizer" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH=$work/bin:$PATH
 export HOME=$work/home
 export XDG_CACHE_HOME=$work/xdg-cache
@@ -87,7 +88,9 @@ commands=$(smith build -t commands build/debug/toy build/release/toy build/fast/
 expect_contains "toy: every compile has no optimization passes" "$commands" "-Xclang -disable-llvm-passes"
 expect_contains "toy: every link is full LTO" "$commands" "smith-cc -flto=full build/release/autodiff/main.o"
 expect_lacks "toy: ThinLTO is never used" "$commands" "-flto=thin"
-expect_lacks "toy: the sanitizers are left out of the debug profile" "$commands" "-fsanitize"
+expect_contains "toy: the debug profile has AddressSanitizer" "$commands" "-fsanitize=address -fno-sanitize-recover=address"
+expect_lacks "toy: ... and no UndefinedBehaviorSanitizer" "$commands" "undefined"
+expect_lacks "toy: release and fast have no sanitizer" "$(smith build -t commands build/release/toy build/fast/toy)" "-fsanitize"
 expect_contains "toy: the objects are beside the others" "$commands" "build/debug/autodiff/kernel.o"
 capture smith test
 expect "toy: smith test, whose test differentiates, passes" 0 "$rc"
@@ -122,7 +125,31 @@ for profile in release debug; do
     expect_contains "scan: $profile reports the difference" "$out" "worst relative difference"
 done
 
-# 4. A smith that runs an external clang has no Enzyme: the build refuses an autodiff program and says why.
+# 4. AddressSanitizer runs after Enzyme: an out-of-bounds read is reported at its line in the function as called and in
+# its gradient, the same program inside the array passes, and release has no ASan.
+mkdir "$work/oob" && cd "$work/oob" || exit 1
+cp "$here/tests/autodiff/oob/"* .
+git init -q .
+capture smith build
+expect "oob: debug builds" 0 "$rc"
+capture smith build release
+expect "oob: release builds" 0 "$rc"
+export ASAN_SYMBOLIZER_PATH=$work/bin/llvm-symbolizer
+capture build/debug/oob ok
+expect "oob: inside the array, the gradient of debug runs" 0 "$rc"
+expect_contains "oob: ... and is right" "$out" "gradient 1.000 15.000"
+capture build/debug/oob primal
+expect_contains "oob: the primal's read is a heap-buffer-overflow" "$err" "ERROR: AddressSanitizer: heap-buffer-overflow"
+expect_contains "oob: ... in sumsq at its line" "$err" "in sumsq $work/oob/sumsq.c:6"
+expect_lacks "oob: ... and not in a gradient" "$err" "diffe"
+capture build/debug/oob gradient
+expect_contains "oob: the gradient's read is a heap-buffer-overflow" "$err" "ERROR: AddressSanitizer: heap-buffer-overflow"
+expect_contains "oob: ... in the gradient at the line of the source" "$err" "in diffesumsq $work/oob/sumsq.c:6"
+capture build/release/oob primal
+expect_lacks "oob: release has no AddressSanitizer" "$err" "AddressSanitizer"
+unset ASAN_SYMBOLIZER_PATH
+
+# 5. A smith that runs an external clang has no Enzyme: the build refuses an autodiff program and says why.
 cd "$work/toy" || exit 1
 rm -rf .smith build
 capture env SMITH_CLANG=/usr/bin/clang smith build

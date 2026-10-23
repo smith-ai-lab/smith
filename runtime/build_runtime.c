@@ -3016,13 +3016,19 @@ static bool smith_app_covers(const char *folder, const char *source) {
 // with
 // ---- the profile's -O level but none of the optimization passes (Enzyme wants IR that is not yet optimized: after -O2
 // ---- its gradient is 3.1 times the hand-written one, before it 1.1 to 1.3 times; the link optimizes afterwards).
-// ---- The sanitizers are left out. What is lost: AddressSanitizer's and UndefinedBehaviorSanitizer's checks in the
-// ---- debug profile. Their run-time handlers break Enzyme (it cannot differentiate a call to __ubsan_handle_*, "No
-// create
-// ---- nofree of empty function"), the trap form of UBSan builds but loses its checks inside the gradient, and
-// AddressSanitizer
-// ---- only works instrumented after Enzyme has run, which the compiler does not do. Change the policy here.
+// ---- The debug profile keeps AddressSanitizer, instrumented after Enzyme: each file is compiled with
+// ---- -fsanitize=address and no passes, so its functions carry sanitize_address and are not yet instrumented, and
+// ---- smith's lld runs ASan right after Enzyme (shim/lld.cpp). UndefinedBehaviorSanitizer is left out: its run-time
+// ---- handlers (__ubsan_handle_*) break Enzyme ("No create nofree of empty function"), and its trap form loses its
+// ---- checks inside the gradient (issue #59 tracks UB checks after Enzyme). Change the policy here.
 static bool smith_app_autodiff; // the program or the tests being declared use smith::autodiff
+
+// The debug profile's sanitizer flags, as an autodiff program takes them: ASan only.
+static const char *smith_autodiff_sanitizer(const char *flag) {
+    if (strcmp(flag, "-fsanitize=address,undefined") == 0) return "-fsanitize=address";
+    if (strcmp(flag, "-fno-sanitize-recover=all") == 0) return "-fno-sanitize-recover=address";
+    return flag;
+}
 
 static bool smith_autodiff_dropped(const char *flag) {
     return strncmp(flag, "-fsanitize", strlen("-fsanitize")) == 0 ||
@@ -3030,13 +3036,14 @@ static bool smith_autodiff_dropped(const char *flag) {
            strcmp(flag, "-flto") == 0;
 }
 
-// `flags` as an autodiff program takes them: without the sanitizers and ThinLTO, with full LTO, and for a compile with
-// no optimization passes.
+// `flags` as an autodiff program takes them: ASan but no other sanitizer, no ThinLTO, full LTO, and for a compile no
+// optimization passes.
 static const char *const *smith_autodiff_flags(SmithBuild *b, const char *const *flags, bool compile) {
     const char **kept = smith_new_list(smith_count(flags));
     size_t used = 0;
     for (size_t i = 0; flags[i] != nullptr; i++) {
-        if (!smith_autodiff_dropped(flags[i])) kept[used++] = flags[i];
+        const char *flag = smith_autodiff_sanitizer(flags[i]);
+        if (flag != flags[i] || !smith_autodiff_dropped(flag)) kept[used++] = flag;
     }
     kept[used] = nullptr;
     return smith_cat(b, kept, smith_list(b, "-flto=full", nullptr),
@@ -3076,14 +3083,23 @@ static const char *const *smith_app_flags(SmithBuild *b, const char *profile, co
     return smith_app_autodiff ? smith_autodiff_flags(b, flags, true) : flags;
 }
 
-static const char *const *smith_app_link_flags(SmithBuild *b, const char *profile, const char *const *more) {
+// `output` is the program the link writes (nullptr for none). An autodiff program in debug links bitcode, and its
+// debug map names the object the linker makes from it, which lld deletes unless it is told where to keep it: with it,
+// a sanitizer's report and a failure's call stack have their lines.
+static const char *const *smith_app_link_flags(SmithBuild *b, const char *profile, const char *const *more,
+                                               const char *output) {
     bool sanitized = strcmp(profile, "debug") == 0;
     bool optimized = !sanitized;
     const char *const *flags =
         smith_cat(b, smith_when(b, sanitized, smith_list(b, "-fsanitize=address,undefined", nullptr)),
                   smith_when(b, optimized, smith_list(b, "-flto=thin", nullptr)),
                   smith_or_empty(b, smith_app_state.defaults.link_flags), smith_or_empty(b, more), nullptr);
-    return smith_app_autodiff ? smith_autodiff_flags(b, flags, false) : flags;
+    if (!smith_app_autodiff) return flags;
+    bool keep = sanitized && output != nullptr;
+    return smith_cat(
+        b, smith_autodiff_flags(b, flags, false),
+        smith_when(b, keep, smith_list(b, smith_text("-Wl,-object_path_lto,%s/%s.lto.o", b->root, output), nullptr)),
+        nullptr);
 }
 
 // The public conventions (a low-level step that starts from them) are never an autodiff program's.
@@ -3103,7 +3119,7 @@ const char *const *smith_profile_link_flags(SmithBuild *b, const char *profile) 
     (void)smith_app_profile(profile);
     bool saved = smith_app_autodiff;
     smith_app_autodiff = false;
-    const char *const *flags = smith_app_link_flags(b, profile, nullptr);
+    const char *const *flags = smith_app_link_flags(b, profile, nullptr, nullptr);
     smith_app_autodiff = saved;
     return flags;
 }
@@ -3256,10 +3272,11 @@ static SmithStep smith_app_program(SmithBuild *b, SmithApp *app, const char *pro
         }
         app->objects = (const SmithObject *const *)kept;
     }
+    const char *output = smith_text("build/%s/%s", profile, app->name);
     SmithProgram program = {
         .linker = "smith-cc",
-        .output = smith_text("build/%s/%s", profile, app->name),
-        .flags = smith_app_link_flags(b, profile, app->link_flags),
+        .output = output,
+        .flags = smith_app_link_flags(b, profile, app->link_flags, output),
         .objects = (const SmithObject *const *)linked,
         .libraries = app->libraries,
     };
@@ -3367,7 +3384,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
         .sources = files,
         .objects = (const SmithObject *const *)objects,
         .flags = flags,
-        .link_flags = smith_app_link_flags(b, "debug", copy.link_flags),
+        .link_flags = smith_app_link_flags(b, "debug", copy.link_flags, "build/tests"),
         .inputs = copy.inputs,
     };
     smith_tests(b, &run);

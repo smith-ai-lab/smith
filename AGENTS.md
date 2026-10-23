@@ -294,9 +294,14 @@ A C toolchain and a modern standard library for C, written in C. Planned work is
   nothing, like math). **A program that reaches it is an autodiff program** (`smith_app`'s scan finds the library as it
   does every other) and, in every profile and for the tests, links with `-flto=full` (ThinLTO fails), compiles each file with
   `-Xclang -disable-llvm-passes` (Enzyme wants IR not yet optimized; the link optimizes after it), puts its objects in
-  `build/<profile>/autodiff/`, and **has no sanitizers** (UBSan's handlers break Enzyme, trap mode loses its checks in the
-  gradient, ASan only works after Enzyme; the owner has not decided the policy: `smith_autodiff_flags` in
-  runtime/build_runtime.c is the one place). Programs that do not use it have unchanged commands. A smith with no Enzyme, or
+  `build/<profile>/autodiff/`, and **debug has AddressSanitizer, run
+  after Enzyme, and no UBSan** (owner's decision): debug compiles with `-fsanitize=address -fno-sanitize-recover=address`
+  and no passes, so functions carry `sanitize_address` uninstrumented, and `shim/lld.cpp`'s plugin entry (smith's own,
+  Enzyme's is weak) registers Enzyme and then ASan at the same full-LTO early extension point, so ASan instruments the
+  gradients too (it skips a module that already has `asan.module_ctor`, so it never runs twice); the link keeps lld's
+  object (`-Wl,-object_path_lto`) so reports have lines. UBSan's handlers break Enzyme and its trap mode loses its checks
+  in the gradient (#59 tracks UB checks after Enzyme). Release and fast have none. `smith_autodiff_flags` in
+  runtime/build_runtime.c is the one place. Programs that do not use it have unchanged commands. A smith with no Enzyme, or
   run with `SMITH_CLANG` or `SMITH_LINKER`, refuses an autodiff program (`SMITH_ENZYME=no` in the build program's
   environment). `smith cc` adds no flag: `-flto=full` through smith's lld differentiates.
 - **Neovim support is this repository** ([docs/neovim.md](docs/neovim.md)): `plugin/smith.lua` is the only Neovim file at the root,
