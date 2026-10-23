@@ -1397,20 +1397,6 @@ static bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *i
 // ---- The type of an `auto` parameter, from its argument
 // -----------------------------------------------------------------------------------------------
 
-// Whether an argument is made of literals only: numbers, characters and strings and `nullptr` with operators and
-// parentheses between them (`2 + 2`, `-(1 << 4)`), and no name.
-static bool smith_lang_infer_literal(SmithLangSpan span) {
-    bool literal = false;
-    for (uint32_t at = span.start; at < span.end; at++) {
-        SmithTokenKind kind = (SmithTokenKind)smith_lang_gt.tokens[at].kind;
-        bool null = kind == SmithTokenKind_Identifier && smith_lang_gt_is(&smith_lang_gt.tokens[at], kind, "nullptr");
-        if (kind == SmithTokenKind_Identifier && !null) return false;
-        literal = literal || null || kind == SmithTokenKind_Number || kind == SmithTokenKind_Character ||
-                  kind == SmithTokenKind_String;
-    }
-    return literal;
-}
-
 // The text of the calls to generics already lowered, as the source wrote them, for a message that quotes an argument
 // (`pick::larger(a, 3)` and not the statement expression it became). Made again at each outermost call.
 static char smith_lang_written_text[1 << 14];
@@ -1562,9 +1548,20 @@ static int smith_lang_param_type_of(const SmithLangGeneric *generic, SmithLangSp
     return -1;
 }
 
+// The value of a constant argument, as the compiler folded it (the host's SmithExprType).
+typedef struct {
+    bool is_float;
+    bool negative;
+    bool overflow;
+    uint64_t magnitude;
+    double real;
+} SmithLangLiteral;
+
 typedef struct {
     char written[256];
     char canonical[256];
+    bool constant; // the compiler folds the argument to a number
+    SmithLangLiteral value;
 } SmithLangArgType;
 
 // Whether a type as the parser wrote it names a typedef of a system header's own (`__size_t`), which a module that
@@ -1585,7 +1582,8 @@ static bool smith_lang_internal_type(const char *written) {
 // The type of an argument, from the compiler (or, for a parameter of the generic being instanced, from the instance).
 // False with `why` when it cannot be said.
 static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                SmithLangSpan span, uint32_t location, SmithLangArgType *out, const char **why) {
+                                SmithLangSpan span, uint32_t location, SmithLangArgType *out, const char **why,
+                                bool explain) {
     int own = replay->instance != nullptr && replay->generic != nullptr
                   ? smith_lang_param_type_of(replay->generic, span)
                   : -1;
@@ -1611,18 +1609,24 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, const Sm
         *why = "the argument is too long to take its type from";
         return false;
     }
-    SmithExprType type = {};
+    SmithExprType type = {.explain = explain};
     if (host->expr_type == nullptr) {
         *why = "the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a "
                "function with `auto` parameters)";
         return false;
     }
-    if (!host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), 0, &type)) {
+    if (!host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), &type)) {
         *why = type.why != nullptr ? type.why : "the compiler cannot say";
         return false;
     }
     memcpy(out->written, type.written, sizeof out->written);
     memcpy(out->canonical, type.canonical, sizeof out->canonical);
+    out->constant = type.constant;
+    out->value = (SmithLangLiteral){.is_float = type.is_float,
+                                    .negative = type.negative,
+                                    .overflow = type.overflow,
+                                    .magnitude = type.magnitude,
+                                    .real = type.real};
     if (smith_lang_internal_type(out->written)) memcpy(out->written, out->canonical, sizeof out->written);
     return true;
 }
@@ -1650,7 +1654,7 @@ static bool smith_lang_infer_auto(SmithLang *lang, const SmithHost *host, const 
     }
     SmithLangArgType type = {};
     const char *why = nullptr;
-    if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why)) {
+    if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
         char shown[256];
         smith_lang_infer_written(span, shown, sizeof shown);
         smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
@@ -1711,92 +1715,6 @@ static bool smith_lang_range_fits(SmithLangNumber from, SmithLangNumber to) {
     return !from.is_signed && to.bits > from.bits;
 }
 
-typedef struct {
-    bool is_float;
-    bool float_suffix; // 0.1f: the value is a float's
-    bool negative;
-    bool overflow;
-    uint64_t magnitude;
-    double real;
-} SmithLangLiteral;
-
-// The digits of an integer literal, with its base's prefix and suffix taken off. False when it is not understood.
-static bool smith_lang_literal_integer(const char *text, SmithLangLiteral *out) {
-    unsigned base = 10;
-    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        base = 16;
-        text += 2;
-    } else if (text[0] == '0' && (text[1] == 'b' || text[1] == 'B')) {
-        base = 2;
-        text += 2;
-    } else if (text[0] == '0' && text[1] != 0) {
-        base = 8;
-    }
-    bool any = false;
-    for (; *text != 0; text++) { // the digits, then the suffix
-        char c = *text;
-        unsigned digit = c >= '0' && c <= '9'   ? (unsigned)(c - '0')
-                         : c >= 'a' && c <= 'f' ? (unsigned)(c - 'a' + 10)
-                         : c >= 'A' && c <= 'F' ? (unsigned)(c - 'A' + 10)
-                                                : 99U;
-        if (c == '\'') continue;
-        if (digit >= base) break;
-        if (out->magnitude > (UINT64_MAX - digit) / base) out->overflow = true;
-        out->magnitude = out->magnitude * base + digit;
-        any = true;
-    }
-    while (*text == 'u' || *text == 'U' || *text == 'l' || *text == 'L') // the suffix
-        text += 1;
-    return any && *text == 0;
-}
-
-// The value of a number written as a literal (an optional sign, then one number token) or named as a `constexpr`
-// integer of the file. False for anything else.
-static bool smith_lang_literal(const SmithHost *host, SmithLangSpan span, SmithLangLiteral *out) {
-    *out = (SmithLangLiteral){};
-    uint32_t at = span.start;
-    while (at < span.end && (smith_lang_gt_punct(&smith_lang_gt.tokens[at], "-") ||
-                             smith_lang_gt_punct(&smith_lang_gt.tokens[at], "+"))) {
-        out->negative = out->negative != smith_lang_gt_punct(&smith_lang_gt.tokens[at], "-");
-        at += 1;
-    }
-    if (at + 1 != span.end) return false;
-    const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
-    if (token->special != SmithLangGen_Plain) return false;
-    if (token->kind == SmithTokenKind_Identifier) { // a constexpr constant of the file
-        int64_t value = 0;
-        if (host->constant == nullptr ||
-            !host->constant(host->context, smith_lang_gt_str(token), token->length, &value)) {
-            return false;
-        }
-        out->negative = out->negative != (value < 0);
-        out->magnitude = value < 0 ? 0 - (uint64_t)value : (uint64_t)value;
-        return true;
-    }
-    if (token->kind != SmithTokenKind_Number || token->length >= 128) return false;
-    char text[128];
-    size_t length = 0;
-    for (uint32_t i = 0; i < token->length; i++) { // without the digit separators
-        if (smith_lang_gt_str(token)[i] != '\'') text[length++] = smith_lang_gt_str(token)[i];
-    }
-    text[length] = 0;
-    bool hex = text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
-    bool real = false;
-    for (size_t i = 0; i < length; i++) {
-        char c = text[i];
-        real = real || c == '.' || (!hex && (c == 'e' || c == 'E')) || (hex && (c == 'p' || c == 'P'));
-    }
-    if (!real) return smith_lang_literal_integer(text, out);
-    char last = text[length - 1];
-    if (last == 'l' || last == 'L') return false;
-    out->is_float = true;
-    out->float_suffix = last == 'f' || last == 'F';
-    char *end = nullptr;
-    out->real = out->float_suffix ? (double)strtof(text, &end) : strtod(text, &end);
-    if (out->negative) out->real = -out->real;
-    return end != text;
-}
-
 static bool smith_lang_literal_fits(const SmithLangLiteral *literal, SmithLangNumber to) {
     if (to.integer) {
         if (to.bits > 64) return true;
@@ -1819,42 +1737,10 @@ static bool smith_lang_literal_fits(const SmithLangLiteral *literal, SmithLangNu
     }
     if (!to.floating || to.bits > 64) return true;
     if (literal->is_float) {
-        if (to.bits != 32 || literal->float_suffix || !__builtin_isfinite(literal->real)) return true;
+        if (to.bits != 32 || !__builtin_isfinite(literal->real)) return true;
         return (double)(float)literal->real == literal->real;
     }
     return !literal->overflow && literal->magnitude <= (uint64_t)1 << smith_lang_significand_bits(to.bits);
-}
-
-// Whether every number of the argument is an integer: the evaluator of `if constexpr` reads those.
-static bool smith_lang_span_integral(SmithLangSpan span) {
-    for (uint32_t at = span.start; at < span.end; at++) { // the tokens
-        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
-        if (token->special != SmithLangGen_Plain) return false;
-        if (token->kind != SmithTokenKind_Number) continue;
-        const char *text = smith_lang_gt_str(token);
-        bool hex = token->length > 1 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
-        for (uint32_t i = 0; i < token->length; i++) {
-            char c = text[i];
-            if (c == '.' || c == 'p' || c == 'P' || (!hex && (c == 'e' || c == 'E' || c == 'f' || c == 'F'))) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-// An argument that is an integer constant expression of literals and the file's `constexpr` constants
-// (`sim_button_dash | sim_button_block`, `1 << 4`): its value, which is judged as a literal is.
-static bool smith_lang_constant_expression(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                           SmithLangSpan span, uint32_t location, SmithLangLiteral *out) {
-    if (span.end - span.start < 2 || !smith_lang_span_integral(span)) return false;
-    static SmithLangCx evaluation;
-    SmithLangCx *cx = &evaluation;
-    *cx = (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .location = location};
-    int64_t value = 0;
-    if (!smith_lang_cx_eval(cx, span.start, span.end, &value)) return false;
-    *out = (SmithLangLiteral){.negative = value < 0, .magnitude = value < 0 ? 0 - (uint64_t)value : (uint64_t)value};
-    return true;
 }
 
 // The parameter at `position` is `typeof(x) name` for an `auto` x of the generic (it converts its argument): the
@@ -1894,28 +1780,20 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, const 
     smith_lang_it_spelling(type_first, type_count, to_spelling, sizeof to_spelling);
     SmithLangNumber to = smith_lang_number_of(host, to_spelling);
     if (!to.known) return true;
-    SmithLangLiteral literal = {};
-    bool is_literal = smith_lang_literal(host, span, &literal) ||
-                      smith_lang_constant_expression(lang, host, replay, span, location, &literal);
     SmithLangArgType from = {};
     const char *why = nullptr;
-    bool typed = smith_lang_arg_type(lang, host, replay, span, location, &from, &why);
-    const char *literal_type = literal.is_float ? (literal.float_suffix ? "f32" : "f64") : "i32";
-    if (is_literal) {
-        if (smith_lang_literal_fits(&literal, to)) return true;
-    } else {
-        if (smith_lang_infer_literal(span) || !typed) return true;
-        SmithLangNumber source = smith_lang_number_of(host, from.canonical);
-        if (!source.known || smith_lang_range_fits(source, to)) return true;
-    }
+    if (!smith_lang_arg_type(lang, host, replay, span, location, &from, &why, false)) return true;
+    SmithLangNumber source = smith_lang_number_of(host, from.canonical);
+    if (!source.known) return true;  // a bool, an enum, a pointer: C's rules
+    bool is_literal = from.constant; // the compiler folded it: its value is what is judged
+    if (is_literal ? smith_lang_literal_fits(&from.value, to) : smith_lang_range_fits(source, to)) return true;
     char argument[256];
     char first[256];
     char from_spelling[256];
     smith_lang_it_written(lang, type_first, type_count, to_written, sizeof to_written);
     smith_lang_infer_written(span, argument, sizeof argument);
     smith_lang_infer_written(first_span, first, sizeof first);
-    smith_lang_smith_spelling(typed ? from.written : "i32", from_spelling, sizeof from_spelling);
-    if (is_literal) snprintf(from_spelling, sizeof from_spelling, "%s", literal_type);
+    smith_lang_smith_spelling(from.written, from_spelling, sizeof from_spelling);
     const char *name = smith_lang_str(generic->member);
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     char argument_cast[256];

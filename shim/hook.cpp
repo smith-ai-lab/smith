@@ -48,6 +48,21 @@ using namespace clang;
 
 namespace {
 
+// The first error a parse reports, kept instead of printed and left out of the counts.
+class DiagnosticCollector : public DiagnosticConsumer {
+  public:
+    std::string first;
+    bool IncludeInDiagnosticCounts() const override {
+        return false;
+    }
+    void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level < DiagnosticsEngine::Error || !first.empty()) return;
+        SmallString<256> message;
+        info.FormatDiagnostic(message);
+        first = message.str().str();
+    }
+};
+
 // One thing to put back in front of the parser, in order: tokens, or a header to include.
 struct Action {
     bool include = false;
@@ -1653,413 +1668,117 @@ class SmithHook final : public TokenHook, public NameSource {
         return true;
     }
 
-    // ---- The type of an expression
-    //
-    // `test::check_equal(a, b)` leaves T to be told from its arguments. The arguments are the lowered tokens of a name,
-    // a field chain, `*e`, `&e`, `e[i]`, a call, a cast or a literal: what a person writes to name a value. Anything
-    // else (arithmetic, a conditional) is not typed, and the call must say its type. The scope is the parser's, so a
-    // local declared by an earlier statement is found.
-    std::string typeWhy;
+    // ---- The type of an expression, asked of the parser
 
-    static size_t closingOf(const std::vector<std::string> &tokens, size_t open, size_t end) {
-        int depth = 0;
-        for (size_t at = open; at < end; at++) {
-            const std::string &token = tokens[at];
-            if (token == "(" || token == "[" || token == "{") depth += 1;
-            if (token == ")" || token == "]" || token == "}") depth -= 1;
-            if (depth == 0) return at;
-        }
-        return end;
-    }
-
-    QualType literalType(const std::string &token) {
-        ASTContext &ast = sema->getASTContext();
-        if (token[0] == '"') return ast.getPointerType(ast.CharTy);
-        if (token[0] == '\'') return ast.IntTy;
-        if (token == "true" || token == "false") return ast.BoolTy;
-        bool hex = token.size() > 1 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X');
-        bool real = !hex && token.find_first_of(".eE") != std::string::npos;
-        char last = static_cast<char>(std::tolower(static_cast<unsigned char>(token.back())));
-        if (real) return last == 'f' ? ast.FloatTy : ast.DoubleTy;
-        bool isUnsigned = token.find_first_of("uU") != std::string::npos;
-        size_t longs =
-            static_cast<size_t>(std::count_if(token.begin(), token.end(), [](char c) { return c == 'l' || c == 'L'; }));
-        if (longs >= 2) return isUnsigned ? ast.UnsignedLongLongTy : ast.LongLongTy;
-        if (longs == 1) return isUnsigned ? ast.UnsignedLongTy : ast.LongTy;
-        return isUnsigned ? ast.UnsignedIntTy : ast.IntTy;
-    }
-
-    // The type of the name (a variable, a parameter, a function): null with typeWhy when it is not found.
-    QualType nameType(const std::string &name) {
-        auto *decl = dyn_cast_or_null<ValueDecl>(findDecl(name.data(), name.size(), SmithLookup_Value));
-        if (decl == nullptr) {
-            typeWhy = "`" + name + "` is not a name the compiler knows here";
-            return QualType();
-        }
-        return decl->getType();
-    }
-
-    // The lanes of an ext-vector, `v.x` or `v.yx`: the element type for one lane, else a vector of that many.
-    QualType laneType(const ExtVectorType *vector, const std::string &name) {
-        static const StringRef sets[] = {"xyzw", "rgba"};
-        bool known = false;
-        for (StringRef set : sets) {
-            known = !name.empty();
-            for (char c : name)
-                known = known && set.contains(c);
-            if (known) break;
-        }
-        if (!known) { // s0, hi, lo, even, odd and the like: the compiler's own names for lanes
-            typeWhy = "no lanes named `" + name + "`";
-            return QualType();
-        }
-        if (name.size() == 1) return vector->getElementType();
-        ASTContext &ast = sema->getASTContext();
-        QualType lanes = ast.getExtVectorType(vector->getElementType(), static_cast<unsigned>(name.size()));
-        // A vector type has no spelling a type argument can be written with (`__attribute__((ext_vector_type(2)))`
-        // does not read back as a type), so the vector is named by a typedef the program has for it.
-        QualType canonical = lanes.getCanonicalType();
-        for (const Decl *decl : ast.getTranslationUnitDecl()->decls()) {
-            const auto *typedefName = dyn_cast<TypedefNameDecl>(decl);
-            if (typedefName != nullptr && typedefName->getUnderlyingType().getCanonicalType() == canonical &&
-                !typedefName->getName().starts_with("__")) {
-                return ast.getTypedefType(ElaboratedTypeKeyword::None, /*Qualifier=*/std::nullopt, typedefName);
-            }
-        }
-        typeWhy = "no typedef names the vector of `." + name + "`; write the type as the argument";
-        return QualType();
-    }
-
-    QualType memberType(QualType base, bool arrow, const std::string &name) {
-        if (arrow) {
-            if (!base->isPointerType()) {
-                typeWhy = "`->` needs a pointer";
-                return QualType();
-            }
-            base = base->getPointeeType();
-        }
-        if (const auto *vector = base->getAs<ExtVectorType>()) return laneType(vector, name);
-        const RecordDecl *record = base->getAsRecordDecl();
-        if (record == nullptr) {
-            typeWhy = "`." + name + "` needs a struct, a union or a vector";
-            return QualType();
-        }
-        if (const RecordDecl *definition = record->getDefinition()) {
-            for (const NamedDecl *member :
-                 definition->lookup(&PP.getIdentifierTable().get(name))) { // anonymous members too
-                if (const auto *field = dyn_cast<ValueDecl>(member)) return field->getType();
-            }
-        }
-        typeWhy = "no field `" + name + "`";
-        return QualType();
-    }
-
-    QualType elementType(QualType type) {
-        if (type->isPointerType()) return type->getPointeeType();
-        if (const auto *array = sema->getASTContext().getAsArrayType(type)) return array->getElementType();
-        typeWhy = "that is not a pointer or an array";
-        return QualType();
-    }
-
-    QualType resultOfCall(QualType callee) {
-        if (callee->isPointerType()) callee = callee->getPointeeType();
-        if (const auto *function = callee->getAs<FunctionType>()) return function->getReturnType();
-        typeWhy = "that is not a function";
-        return QualType();
-    }
-
-    // The primary expression at the start of [begin, end): its type, and where it ends in `next`.
-    QualType primaryType(const std::vector<std::string> &t, size_t begin, size_t end, size_t *next) {
-        const std::string &token = t[begin];
-        *next = begin + 1;
-        bool word = std::isalpha(static_cast<unsigned char>(token[0])) || token[0] == '_';
-        if (!word) {
-            if (std::isdigit(static_cast<unsigned char>(token[0])) || token[0] == '"' || token[0] == '\'')
-                return literalType(token);
-            typeWhy = "`" + token + "` does not begin a name or a literal";
-            return QualType();
-        }
-        if (token == "true" || token == "false") return literalType(token);
-        if (token == "nullptr") return sema->getASTContext().NullPtrTy;
-        if (token ==
-            "__extension__") { // how the lowering writes a call to a generic: its type is the declared result's
-            size_t open = begin + 1;
-            size_t name = open + 3;
-            while (open + 2 < end && t[open] == "(" && t[open + 1] == "{" && t[open + 2] == "extern" && name < end &&
-                   t[name] != "(") {
-                name += 1; // to the `(` of the declaration's parameters
-            }
-            std::string spelling;
-            for (size_t at = open + 3; open + 3 < name && at + 1 < name && name < end; at++)
-                spelling += (at > open + 3 ? " " : "") + t[at];
-            QualType result = spelling.empty() ? QualType() : readType(spelling);
-            if (result.isNull()) {
-                typeWhy = "a call to a generic function is not typed";
-                return QualType();
-            }
-            *next = closingOf(t, open, end) + 1;
-            return result;
-        }
-        if (token == "sizeof" || token == "alignof" || token == "_Alignof" || token == "_Countof") {
-            *next = begin + 1 < end && t[begin + 1] == "(" ? closingOf(t, begin + 1, end) + 1 : begin + 2;
-            return sema->getASTContext().getCanonicalType(sema->getASTContext().getSizeType());
-        }
-        QualType type = nameType(token);
-        if (type.isNull() || begin + 1 >= end || t[begin + 1] != "(") return type;
-        size_t close = closingOf(t, begin + 1, end);
-        *next = close + 1;
-        return resultOfCall(type);
-    }
-
-    // One step after a primary expression: `.f`, `->f`, `[i]` or a call.
-    QualType postfixType(const std::vector<std::string> &t, size_t *at, size_t end, QualType type) {
-        const std::string &token = t[*at];
-        if ((token == "." || token == "->") && *at + 1 < end) {
-            QualType member = memberType(type, token == "->", t[*at + 1]);
-            *at += 2;
-            return member;
-        }
-        if (token == "[" || token == "(") {
-            *at = closingOf(t, *at, end) + 1;
-            return token == "[" ? elementType(type) : resultOfCall(type);
-        }
-        typeWhy = "`" + token + "` is not understood in this expression";
-        return QualType();
-    }
-
-    QualType prefixType(const std::string &op, QualType type) {
-        ASTContext &ast = sema->getASTContext();
-        if (op == "*") return elementType(type);
-        if (op == "&") return ast.getPointerType(type);
-        if (op == "!") return ast.IntTy;
-        return type; // - + ~
-    }
-
-    // Binary operators, by precedence (higher binds tighter); 0 for a token that is no binary operator.
-    static int binaryPrecedence(const std::string &op) {
-        if (op == "||") return 1;
-        if (op == "&&") return 2;
-        if (op == "|") return 3;
-        if (op == "^") return 4;
-        if (op == "&") return 5;
-        if (op == "==" || op == "!=") return 6;
-        if (op == "<" || op == "<=" || op == ">" || op == ">=") return 7;
-        if (op == "<<" || op == ">>") return 8;
-        if (op == "+" || op == "-") return 9;
-        if (op == "*" || op == "/" || op == "%") return 10;
-        return 0;
-    }
-
-    // Whether the token ends an operand: a name or a literal, `)` or `]`.
-    static bool endsOperand(const std::string &token) {
-        if (token == ")" || token == "]") return true;
-        unsigned char first = static_cast<unsigned char>(token[0]);
-        return std::isalnum(first) || first == '_' || first == '"' || first == '\'';
-    }
-
-    // Whether the `)` at `close` ends a cast, `(i32)`, whose operand follows, rather than an operand.
-    bool endsCast(const std::vector<std::string> &t, size_t begin, size_t close) {
-        int depth = 0;
-        size_t open = close;
-        for (;; open--) {
-            if (t[open] == ")" || t[open] == "]" || t[open] == "}") depth += 1;
-            if (t[open] == "(" || t[open] == "[" || t[open] == "{") depth -= 1;
-            if (depth == 0 || open == begin) break;
-        }
-        if (depth != 0 || t[open] != "(" || (open > begin && endsOperand(t[open - 1]))) return false;
-        std::string spelling;
-        for (size_t at = open + 1; at < close; at++)
-            spelling += (at > open + 1 ? " " : "") + t[at];
-        return !readType(spelling).isNull();
-    }
-
-    // The index of the binary operator that ends the expression, the last of the lowest precedence outside any
-    // brackets (they associate to the left), or `end` for none. A `?` is found first: the conditional is below them
-    // all.
-    size_t splitBinary(const std::vector<std::string> &t, size_t begin, size_t end, bool *conditional) {
-        size_t found = end;
-        int lowest = 100;
-        int depth = 0;
-        *conditional = false;
-        for (size_t at = end; at > begin; at--) {
-            const std::string &token = t[at - 1];
-            if (token == ")" || token == "]" || token == "}") depth += 1;
-            if (token == "(" || token == "[" || token == "{") depth -= 1;
-            if (depth != 0) continue;
-            if (token == "?") {
-                found = at - 1; // the first `?` from the left is found last: the scan goes back
-                *conditional = true;
-                lowest = 0;
-                continue;
-            }
-            int precedence = binaryPrecedence(token);
-            if (precedence == 0 || precedence >= lowest || at - 1 == begin || !endsOperand(t[at - 2])) continue;
-            if (t[at - 2] == ")" && endsCast(t, begin, at - 2)) continue;
-            found = at - 1;
-            lowest = precedence;
-        }
-        return found;
-    }
-
-    // The type both operands of an arithmetic operator are converted to (C's usual arithmetic conversions).
-    QualType usualArithmetic(QualType a, QualType b) {
-        ASTContext &ast = sema->getASTContext();
-        if (a->isVectorType() || b->isVectorType()) return a->isVectorType() ? a : b; // a vector and its scalars
-        if (a->isFloatingType() || b->isFloatingType()) {
-            if (!a->isFloatingType()) return b;
-            if (!b->isFloatingType()) return a;
-            return ast.getFloatingTypeOrder(a, b) >= 0 ? a : b;
-        }
-        if (!a->isIntegralOrEnumerationType() || !b->isIntegralOrEnumerationType()) {
-            typeWhy = "an operator needs numbers";
-            return QualType();
-        }
-        if (ast.isPromotableIntegerType(a)) a = ast.getPromotedIntegerType(a);
-        if (ast.isPromotableIntegerType(b)) b = ast.getPromotedIntegerType(b);
-        a = a.getUnqualifiedType();
-        b = b.getUnqualifiedType();
-        if (ast.hasSameType(a, b)) return a;
-        bool signedA = a->isSignedIntegerType();
-        bool signedB = b->isSignedIntegerType();
-        if (signedA == signedB) return ast.getIntegerTypeOrder(a, b) >= 0 ? a : b;
-        QualType unsignedType = signedA ? b : a;
-        QualType signedType = signedA ? a : b;
-        if (ast.getIntegerTypeOrder(unsignedType, signedType) >= 0) return unsignedType;
-        if (ast.getIntWidth(signedType) > ast.getIntWidth(unsignedType)) return signedType;
-        return ast.getCorrespondingUnsignedType(signedType);
-    }
-
-    // The type of `left op right`.
-    QualType binaryType(const std::string &op, QualType left, QualType right) {
-        ASTContext &ast = sema->getASTContext();
-        int precedence = binaryPrecedence(op);
-        if (precedence <= 2 || precedence == 6 || precedence == 7) return ast.IntTy; // && || == != < <= > >=
-        if (op == "<<" || op == ">>") {
-            if (!left->isIntegralOrEnumerationType()) {
-                typeWhy = "a shift needs an integer";
-                return QualType();
-            }
-            return ast.isPromotableIntegerType(left) ? ast.getPromotedIntegerType(left) : left.getUnqualifiedType();
-        }
-        if ((op == "+" || op == "-") && (left->isPointerType() || right->isPointerType())) {
-            if (left->isPointerType() && right->isPointerType()) return ast.getCanonicalType(ast.getPointerDiffType());
-            return left->isPointerType() ? left : right;
-        }
-        return usualArithmetic(left, right);
-    }
-
-    QualType subexpressionType(const std::vector<std::string> &t, size_t begin, size_t end) {
-        return expressionType(
-            std::vector<std::string>(t.begin() + static_cast<long>(begin), t.begin() + static_cast<long>(end)));
-    }
-
-    // The type of an expression with a binary operator or a `?:` at its top, or null with typeWhy (and `handled`
-    // false when there is none).
-    QualType operatorType(const std::vector<std::string> &t, size_t begin, size_t end, bool *handled) {
-        bool conditional = false;
-        size_t at = splitBinary(t, begin, end, &conditional);
-        *handled = at < end;
-        if (!*handled) return QualType();
-        if (conditional) { // a ? b : c has the type b and c share
-            int depth = 0;
-            size_t colon = end;
-            for (size_t i = at + 1; i < end && colon == end; i++) {
-                if (t[i] == "(" || t[i] == "[" || t[i] == "{" || t[i] == "?") depth += 1;
-                if (t[i] == ")" || t[i] == "]" || t[i] == "}") depth -= 1;
-                if (t[i] == ":" && depth == 0) colon = i;
-                if (t[i] == ":" && depth > 0) depth -= 1;
-            }
-            if (colon == end) {
-                typeWhy = "a `?` has no `:`";
-                return QualType();
-            }
-            QualType yes = subexpressionType(t, at + 1, colon);
-            QualType no = yes.isNull() ? yes : subexpressionType(t, colon + 1, end);
-            if (yes.isNull() || no.isNull()) return QualType();
-            if (yes->isArithmeticType() && no->isArithmeticType()) return usualArithmetic(yes, no);
-            return yes;
-        }
-        QualType left = subexpressionType(t, begin, at);
-        QualType right = left.isNull() ? left : subexpressionType(t, at + 1, end);
-        if (left.isNull() || right.isNull()) return QualType();
-        return binaryType(t[at], left, right);
-    }
-
-    // The type of the expression the tokens spell, unqualified, with arrays and functions as pointers.
-    QualType expressionType(std::vector<std::string> t) {
-        size_t begin = 0;
-        size_t end = t.size();
-        for (size_t guard = 0;
-             guard < end && end - begin >= 2 && t[begin] == "(" && closingOf(t, begin, end) == end - 1; guard++) {
-            begin += 1; // the parentheses around it all
-            end -= 1;
-        }
-        if (begin >= end) {
-            typeWhy = "the expression is empty";
-            return QualType();
-        }
-        bool handled = false;
-        QualType operated = operatorType(t, begin, end, &handled);
-        if (handled) return operated.isNull() ? operated : finishType(operated);
-        if (t[begin] == "(") { // a cast: its type is the type
-            size_t close = closingOf(t, begin, end);
-            std::string spelling;
-            for (size_t at = begin + 1; at < close; at++)
-                spelling += (at > begin + 1 ? " " : "") + t[at];
-            QualType cast = close + 1 < end ? readType(spelling) : QualType();
-            if (!cast.isNull()) return finishType(cast);
-        }
-        std::vector<std::string> prefix;
-        while (begin < end && (t[begin] == "*" || t[begin] == "&" || t[begin] == "-" || t[begin] == "+" ||
-                               t[begin] == "!" || t[begin] == "~")) {
-            prefix.push_back(t[begin++]);
-        }
-        if (begin >= end) {
-            typeWhy = "an operator has no operand";
-            return QualType();
-        }
-        size_t at = 0;
-        QualType type = primaryType(t, begin, end, &at);
-        for (size_t guard = 0; !type.isNull() && at < end && guard < end; guard++)
-            type = postfixType(t, &at, end, type);
-        for (size_t i = prefix.size(); !type.isNull() && i > 0; i--)
-            type = prefixType(prefix[i - 1], type);
-        return type.isNull() ? type : finishType(type);
-    }
-
+    // The type an argument has once it is passed: an array or a function as a pointer, and no qualifiers.
     QualType finishType(QualType type) {
         ASTContext &ast = sema->getASTContext();
-        if (type->isArrayType()) return ast.getPointerType(elementType(type));
+        if (type->isArrayType()) return ast.getPointerType(ast.getAsArrayType(type)->getElementType());
         if (type->isFunctionType()) return ast.getPointerType(type);
         return type.getUnqualifiedType();
     }
 
-    static bool exprType(void *context, const char *tokens, uint32_t length, uint32_t derefs, SmithExprType *out) {
+    // The type of the expression the tokens spell, asked of the parser itself: `__typeof__(tokens)` is read through
+    // Sema's ParseTypeFromString (the parser's own entry for a type written in a string: it saves the current token,
+    // reads the string's tokens in a child scope of the one the parser is in, so the locals declared so far are seen,
+    // and puts the token back). The operand of typeof is never evaluated, so nothing is marked used. Diagnostics are
+    // off while it runs, and asked again with them on when the parse fails, so the compiler says why itself.
+    bool parseTypeof(const std::string &text, QualType *type, const Expr **expression) {
+        if (!sema->ParseTypeFromStringCallback || sema->getCurScope() == nullptr) return false;
+        std::string source = "__typeof__(" + text + ")";
+        TypeResult parsed = sema->ParseTypeFromStringCallback(source, "<smith>", SourceLocation());
+        if (parsed.isInvalid() || !parsed.get()) return false;
+        QualType found = sema->GetTypeFromParser(parsed.get());
+        const auto *typeOf = found.isNull() ? nullptr : dyn_cast<TypeOfExprType>(found.getTypePtr());
+        if (typeOf == nullptr || typeOf->getUnderlyingExpr() == nullptr ||
+            typeOf->getUnderlyingExpr()->containsErrors()) {
+            return false;
+        }
+        *expression = typeOf->getUnderlyingExpr();
+        *type = (*expression)->getType();
+        return !type->isNull();
+    }
+
+    // The lowering writes a sized type as the compiler's macro for it (`__UINT32_TYPE__`), which the program's `u32` is
+    // a typedef of: the text is read with the typedef, made if the program has not named it yet.
+    void nameSizedTypes(std::string &text) {
+        for (size_t at = 0; at < text.size();) {
+            size_t end = at;
+            while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                end += 1;
+            if (end == at || isDigit(text[at])) {
+                at = end == at ? at + 1 : end;
+                continue;
+            }
+            for (unsigned i = 0; i < 13; i++) {
+                const SizedName &entry = sizedTable[i];
+                bool named = text.compare(at, end - at, entry.name) == 0;
+                bool macro = !named && entry.macro != nullptr && text.compare(at, end - at, entry.macro) == 0;
+                if (!named && !macro) continue;
+                ensureSized(i, SM.getLocForStartOfFile(MainFile));
+                if (macro) text.replace(at, end - at, entry.name);
+                end = at + strlen(entry.name);
+                break;
+            }
+            at = end;
+        }
+    }
+
+    // The number an expression folds to, when it does: an integer as a sign and a magnitude, a float as a double.
+    static void foldedValue(const Expr *expression, ASTContext &ast, SmithExprType *out) {
+        Expr::EvalResult result;
+        if (!expression->EvaluateAsRValue(result, ast) || result.HasSideEffects) return;
+        if (result.Val.isInt()) {
+            const llvm::APSInt &number = result.Val.getInt();
+            llvm::APInt wide =
+                number.isSigned() ? number.sext(number.getBitWidth() + 1) : number.zext(number.getBitWidth() + 1);
+            out->constant = true;
+            out->negative = wide.isNegative();
+            if (out->negative) wide.negate();
+            out->overflow = wide.getActiveBits() > 64;
+            out->magnitude = wide.getLimitedValue();
+        } else if (result.Val.isFloat()) {
+            out->constant = true;
+            out->is_float = true;
+            out->real = result.Val.getFloat().convertToDouble();
+        }
+    }
+
+    static bool exprType(void *context, const char *tokens, uint32_t length, SmithExprType *out) {
         auto *self = static_cast<SmithHook *>(context);
+        bool explain = out->explain;
         *out = SmithExprType{};
         if (self->sema == nullptr) return false;
-        self->typeWhy.clear();
-        std::vector<std::string> parts;
-        std::string current;
-        for (uint32_t at = 0; at < length; at++) {
-            if (tokens[at] == '\x1f') {
-                parts.push_back(current);
-                current.clear();
-            } else {
-                current += tokens[at];
+        std::string text;
+        for (uint32_t at = 0; at < length; at++)
+            text += tokens[at] == '\x1f' ? ' ' : tokens[at];
+        self->nameSizedTypes(text);
+        DiagnosticsEngine &diags = self->sema->getDiagnostics();
+        bool wasSuppressed = diags.getSuppressAllDiagnostics();
+        diags.setSuppressAllDiagnostics(true);
+        QualType type;
+        const Expr *expression = nullptr;
+        bool good = self->parseTypeof(text, &type, &expression);
+        diags.setSuppressAllDiagnostics(wasSuppressed);
+        if (!good) {
+            self->queryText = "the compiler does not accept it here";
+            if (explain) { // the compiler's own words for why: the error fails the compile, as the lowering's does
+                DiagnosticCollector collector;
+                std::unique_ptr<DiagnosticConsumer> owned = diags.takeClient();
+                DiagnosticConsumer *client = diags.getClient();
+                diags.setClient(&collector, false);
+                self->parseTypeof(text, &type, &expression);
+                diags.setClient(client, owned != nullptr);
+                owned.release();
+                if (!collector.first.empty()) self->queryText = collector.first;
             }
-        }
-        if (!current.empty()) parts.push_back(current);
-        QualType type = parts.empty() ? QualType() : self->expressionType(parts);
-        for (uint32_t i = 0; !type.isNull() && i < derefs; i++)
-            type = self->elementType(type);
-        if (!type.isNull()) type = self->finishType(type);
-        if (type.isNull()) {
-            self->queryText = self->typeWhy.empty() ? "that expression's type is not understood" : self->typeWhy;
             out->why = self->queryText.c_str();
             return false;
         }
-        const PrintingPolicy &policy = self->sema->getASTContext().getPrintingPolicy();
+        ASTContext &ast = self->sema->getASTContext();
+        foldedValue(expression, ast, out);
+        type = self->finishType(type);
+        const PrintingPolicy &policy = ast.getPrintingPolicy();
         snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
         snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
         return true;

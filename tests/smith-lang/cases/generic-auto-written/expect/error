@@ -1,2 +1,1 @@
 src/main.smith:10:29: the argument `y` of `larger` is u32 and converts to u16, the type of its first argument `x`, which may change its value; cast it, `(u16)y`, or the first argument, `(u32)x`
-src/main.smith:11:26: cannot tell the type of `++a`, the argument of `larger`: `++` does not begin a name or a literal; give it a type with a cast or a variable

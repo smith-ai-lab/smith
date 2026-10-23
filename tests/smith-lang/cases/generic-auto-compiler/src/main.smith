@@ -1,0 +1,35 @@
+import pick;
+#include <stdio.h>
+
+typedef struct {
+    u32 tag;
+    union {
+        f32 real;
+        u32 bits;
+    };
+} Cell;
+
+typedef enum : u8 { Small = 3, Large = 200 } Size;
+
+static i32 triple(i32 v) {
+    return v * 3;
+}
+
+// The compiler types every argument, whatever it is made of: a cast of an index, a member of an anonymous union,
+// the enumerators of a fixed type, an operator with a side effect, a call inside a call, a statement expression.
+int main(void) {
+    u8 block[16] = {0, 1, 2};
+    void *bytes = block;
+    usize size = 16;
+    Cell cell = {.tag = 9, .real = 1.5f};
+    Cell *pointer = &cell;
+    i32 n = 4;
+    printf("%d\n", pick::larger(((u8 *)bytes)[size - 1], 0));
+    printf("%g %u\n", pick::larger(cell.real, 0.5f), pick::larger(pointer->bits, 7));
+    printf("%u %u\n", pick::larger(Small, 7), pick::larger(Large, 255));
+    printf("%d %d\n", pick::larger(n++, 2), n);
+    printf("%d\n", pick::larger(pick::larger(n, 1), triple(pick::larger(n, 2))));
+    printf("%d\n", pick::larger(({ i32 local = 5; local * 2; }), n));
+    printf("%zu %zu\n", pick::size_of_value(cell.bits), pick::size_of_value(&cell.real));
+    return 0;
+}

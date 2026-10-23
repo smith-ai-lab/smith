@@ -50,12 +50,17 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   for `f`.
 - **`auto` parameters.** `export void check_equal(auto a, typeof(a) b)` is a generic with no `constexpr type`: the type
   of `a` is the type of its argument, and each distinct canonical type (or list of them, for several `auto`
-  parameters, up to 4 with the `constexpr type`s) is one instance. The compiler types the argument as a name, a field
-  chain (anonymous members too), `*e`, `&e`, `e[i]`, a call (a call to another generic has its result's type), a cast,
-  `sizeof` or a literal, and the binary operators and `?:` of C over them, in the scope the parser is in; arrays are
-  pointers, and qualifiers are dropped, as `auto` drops them. An argument it cannot type (a `++`, a compound literal) is
-  an error that says to give it a type with a cast or a variable. Inside a generic's body, an argument that is a
-  parameter of that generic (`value_of(a)`, `check_compare(op, value_of(b))`) has the instance's type, so generics
+  parameters, up to 4 with the `constexpr type`s) is one instance. The compiler types the argument: the lowering gives
+  its tokens to the parser itself, as `__typeof__(<tokens>)` read through Sema's `ParseTypeFromString` (the parser's
+  own entry for a type written in a string) in a child scope of the one the parser is in, so any expression works
+  (a cast of an index, `((u8 *)block)[n - 1]`, a member of an anonymous union, an operator with a side effect, a
+  statement expression, a call to another generic), a local declared by an earlier statement counts, and nothing is
+  evaluated or marked used. Arrays are pointers and qualifiers are dropped, as `auto` drops them. Diagnostics are off
+  while it reads; an argument the compiler does not accept is an error that carries the compiler's own message and
+  says to give it a type with a cast or a variable. The same read says whether the compiler folds the argument to a
+  number, and which: a later argument is judged by that value and by its own type, never by the lowering's guess
+  (all ones in a `u32` constant is a `u32`'s). Inside a generic's body, an argument that is a parameter of that generic
+  (`value_of(a)`, `check_compare(op, value_of(b))`) has the instance's type, so generics
   call generics with their parameters.
 - **`typeof(p)`** names the type of an earlier `auto` parameter `p` (or of the instance's own `T`) in later parameters,
   in the body and in the return type, which is written before the name as in C: `export typeof(x) sqrt(auto x);`. It

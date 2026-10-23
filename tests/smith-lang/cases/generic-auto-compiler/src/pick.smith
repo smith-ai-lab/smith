@@ -1,0 +1,21 @@
+module pick;
+
+// The type is the first argument's; the second converts to it.
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize size_of_value(auto value) {
+    (void)value;
+    return sizeof(typeof(value));
+}
+
+// A call to another generic inside a generic: the arguments are the instance's own parameters, so their type is known.
+export typeof(value) twice(auto value) {
+    return larger(value, value);
+}
+
+export typeof(a) zero_like(auto a) {
+    (void)a;
+    return (typeof(a)){0};
+}
