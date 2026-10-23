@@ -180,6 +180,11 @@ module pick;
 export typeof(a) larger(auto a, typeof(a) b) {
     return a > b ? a : b;
 }
+
+// A function known at compile time: each function is an instance.
+export typeof(x) apply_twice(constexpr auto f, auto x) {
+    return f(f(x));
+}
 EOF
 cat >genuse.smith <<'EOF'
 module genuse;
@@ -191,6 +196,14 @@ export int f(void) {
     i32 first = pick::larger(a, b);
     f64 second = pick::larger(1.5, 2.5);
     return first + (int)second;
+}
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+export int g(void) {
+    return pick::apply_twice(inc, 4);
 }
 EOF
 cat >util.c <<'EOF'
@@ -284,6 +297,14 @@ expect_line "generic call: go-to-definition is the generic's name in its module"
     "definition genuse.smith:7:26 -> pick.smith:4:18"
 expect_line "generic call: hover, the second instance" "$log" \
     'hover genuse.smith:8:26: generic function pick::larger |  | typeof(a) pick::larger(auto a, typeof(a) b) |  | instance pick::larger(f64)'
+
+# A function passed to `constexpr auto f`: the hover shows the head as written, and the instance names the function.
+log=$(client open genuse.smith pick.smith -- hover genuse.smith 17 20 -- definition genuse.smith 17 20 pick.smith:9:18)
+expect_line "generic function parameter: hover shows the head as written and the function in the instance" "$log" \
+    'hover genuse.smith:17:20: generic function pick::apply_twice |  | typeof(x) pick::apply_twice(constexpr auto f, auto x) |  | instance pick::apply_twice(inc, int)'
+expect_line "generic function parameter: go-to-definition is the generic's name" "$log" \
+    "definition genuse.smith:17:20 -> pick.smith:9:18"
+expect "generic function parameter: no diagnostics" 0 "$(printf '%s\n' "$log" | grep -c '^diag genuse.smith')"
 
 # `if constexpr` outside a generic: the branch taken is ordinary code (hover works in it), the branch not taken is never
 # given to the parser, so an undeclared name there is no diagnostic and hover there is empty (as in a generic's instance
