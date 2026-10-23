@@ -1640,7 +1640,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 diags.setClient(&collector, false);
                 self->parseTypeof(text, &type, &expression);
                 diags.setClient(client, owned != nullptr);
-                owned.release();
+                static_cast<void>(owned.release());
                 if (!collector.first.empty()) self->queryText = collector.first;
             }
             out->why = self->queryText.c_str();
