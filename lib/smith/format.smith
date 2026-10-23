@@ -280,7 +280,7 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
 
 // A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or Text is
 // referenced (it must outlive the call that writes it), any other piece is held in the 64 characters of the value.
-constexpr usize padded_capacity = 64;
+export constexpr usize padded_capacity = 64;
 [[smith::c_name("SmithFormatPadded")]] export typedef struct {
     const char *begin;
     usize length;

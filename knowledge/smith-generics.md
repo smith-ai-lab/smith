@@ -162,6 +162,8 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
     read. The debugger shows the elements as variables of that name at the generic's own lines.
   - *The editor's grammar* reads `for constexpr (...)`, `auto args = {...};`, `args = {...};` and `{rest..., x}`;
     clang-format reads `for constexpr` (patch smith-lang-for-constexpr-format).
+- **Private names in an exported generic's body** (issue #75). The body may name the module's private functions, variables, types, constants and generics: the header's instance section declares what the instance needs, and the module's compile gives the functions and variables a symbol (design: "The instance section" of [smith-module-headers](smith-module-headers.md)). The lowering keeps the names each generic's body writes, chooses at the end of the file what the exported generics reach (through private generics too) and writes only that. The importer still cannot write them.
+- **A call as the argument of a call, in an instance's body** (`twice(f, twice(f, x))`). The arguments of such a call are written to the pool first, with the instance's parameters as values (`(*(int *)0)`), so that the compiler types them where the instance is not declared yet; then the call is written from the arguments as they were. Frames of the replay do it in turn (`TypedStart`, `TypedFinish`), so it is no recursion of C.
 - **A module's own exports** may be written qualified in its generics and elsewhere in the module (`tools::dup` in
   `smith::tools`): the module's last name is a binding of itself that an import of that name replaces.
 - **Not done:** generic types and functions that return `type`, compile-time value parameters (`constexpr u32 tile`),

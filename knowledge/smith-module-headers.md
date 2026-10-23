@@ -73,5 +73,24 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   body included, and the module defines it the same way: it has no symbol and no `__asm__` label, so C, C++ and `.smith`
   importers compile it themselves. Its body may use only what the header has: the module's other exports, the module's
   imports and C. A private name in it is an error in the includer, not in the module.
+- **The instance section: what an exported generic's instance needs of the module's private code** (issue #75). An
+  instance is compiled in the importer's file, so it needs a private function's or variable's symbol and a private
+  type's or constant's definition there, and an importer must still not write any of them. The header pass keeps every
+  private declaration as the lowering writes it (a function or a variable as the declaration that carries its symbol,
+  `int32_t m_helper(int32_t x) __asm__("_m::helper");`, with no body or initializer; a type or a `constexpr` in full),
+  marks the ones the bodies of the exported generics name, and the ones those name in turn (a prototype's parameter
+  type, the size of an array), and writes only the marked, in the order declared, between `#ifdef SMITH_INSTANCES` and
+  `#endif`, after the exports (and a `// smith-linked: helper counter` line, the functions and variables among them, and
+  a `// smith-hidden:` line, all the names of the section). C, C++ and `.smith` code that is not an importer never see
+  the section: `shim/hook.cpp` defines `SMITH_INSTANCES` around the `#include` of the header it enters for an
+  `import`. What the section names through imports (`c::FILE`) is included by the header, like the record of an
+  exported generic; an unmarked private declaration adds nothing, so the header is as wide as its exports and
+  generics need. The module's own compile reads `// smith-linked:` from its header (the interface made from its source
+  when there is none) and gives those functions and variables the symbol `_m::helper` instead of `static` (and drops
+  `inline`); every other private name stays `static`. An importer's `m::helper` is an error (``is private to its module
+  ... export it``), since it is in `// smith-hidden:`. A private generic that an exported one calls has its record in
+  the header too, marked private in its `// smith-generic:` line (`p`, `q` if inline); an importer cannot call it, and
+  nothing else of it is written. An exported declaration may still not name a private type, and a private constant its
+  array bound or initializer needs must be exported.
 - An interface read in memory (`import foo` with no header) keeps the conditionals on the module's own lines, and no
   comments (diagnostics point at the module's lines).

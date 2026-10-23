@@ -397,6 +397,16 @@ static void smith_lang_check_listed(SmithLang *lang, const SmithHost *host, cons
     host->hint(host->context, taken->location, message);
 }
 
+// `x::name` where the header of x declares `name` only for the instances of its exported generics: it is private.
+static void smith_lang_check_hidden(SmithLang *lang, const SmithHost *host, const SmithLangBinding *binding,
+                                    const SmithToken *taken, size_t total) {
+    if (!smith_lang_is_hidden(lang, lang->tmp, total)) return;
+    smith_lang_error(lang, host, taken->location,
+                     "`%s::%.*s` is private to its module (an exported generic's instance uses it); export it to use "
+                     "it",
+                     smith_lang_str(binding->name), (int)taken->length, taken->text);
+}
+
 // `io::make` and `io::Io` as the file writes them: the first make is refused in a file whose main has the io, and the
 // type is what the `main` written at the end of that file names.
 static void smith_lang_note_io_use(SmithLang *lang, const SmithToken *member, size_t total) {
@@ -469,12 +479,7 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         lang->tmp[total] = 0;
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
         if (chosen == nullptr) smith_lang_check_listed(lang, host, binding, &taken, total);
-        if (smith_lang_is_hidden(lang, lang->tmp, total)) {
-            smith_lang_error(lang, host, taken.location,
-                             "`%s::%.*s` is private to its module (an exported generic's instance uses it); export it "
-                             "to use it",
-                             smith_lang_str(binding->name), (int)taken.length, taken.text);
-        }
+        smith_lang_check_hidden(lang, host, binding, &taken, total);
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);

@@ -220,9 +220,9 @@ typedef struct {
     uint8_t type_kind[smith_lang_type_params_max];     // a SmithLangSlot
     bool is_inline;
     bool exported;
-    bool own;    // the module being lowered defines it (else an import's)
-    bool needed; // own and private: an exported generic calls it, so its record is in the header
-    bool hidden; // an import's private generic (its header holds the record for the instances of exported ones)
+    bool own;            // the module being lowered defines it (else an import's)
+    bool needed;         // own and private: an exported generic calls it, so its record is in the header
+    bool hidden;         // an import's private generic (its header holds the record for the instances of exported ones)
     uint32_t note_first; // own, private: the names its body writes through imports, in SmithLang::priv_notes
     uint32_t note_count;
 } SmithLangGeneric;
