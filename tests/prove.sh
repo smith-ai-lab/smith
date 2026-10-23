@@ -279,6 +279,12 @@ expect_contains "inlined_requires: ... with the values" "$out" "counterexample: 
 prove --function=careful "$cases/inlined_requires.c"
 expect "inlined_requires: a caller that keeps it is proved" 0 "$rc"
 
+# 7c2f. `T p[static N]` is N objects (#74).
+prove --function=third "$cases/static_array.c"
+expect "static_array: a load inside [static 4] is proved" 0 "$rc"
+prove --function=past "$cases/static_array.c"
+expect "static_array: a load past it is refused" 1 "$rc"
+
 # 7c3. Two pointer parameters may be the same object unless the source says otherwise (issue #57): no claim rests on
 # int32_t * and uint32_t *, a struct and a pointer to its member, or two struct types being different objects; `restrict`
 # is what says it.

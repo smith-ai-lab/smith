@@ -389,6 +389,8 @@ void mark_pointer_parameters(Function &function) {
         if (!argument->getType()->isPointerTy() || argument->hasStructRetAttr() || argument->hasByValAttr()) continue;
         uint64_t bytes = pointee_bytes(types[i - hidden + 1]);
         if (bytes == 0) continue;
+        // `T p[static N]` is N objects: clang says so with its own dereferenceable, which the type's size must not shrink.
+        bytes = std::max<uint64_t>(bytes, argument->getDereferenceableBytes());
         argument->addAttr(Attribute::getWithDereferenceableBytes(function.getContext(), bytes));
         argument->addAttr(Attribute::NonNull);
     }
