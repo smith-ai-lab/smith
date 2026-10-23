@@ -258,6 +258,53 @@ import foo;
 i32 main() {
     return foo::f(21) - 42;
 }
+==> constexpr-c/src/main.smith <==
+#include <stdio.h>
+
+// An ordinary C function runs at compile time where C requires a constant.
+static int fib(int n) {
+    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+static int sum_to(int n) {
+    int s = 0;
+    for (int i = 1; i <= n; i++)
+        s += i;
+    return s;
+}
+static unsigned long width(void) {
+    return sizeof(long);
+}
+
+struct Table {
+    int v[8];
+    int n;
+};
+static struct Table squares(int n) {
+    struct Table t = {};
+    for (int i = 0; i < n; i++) {
+        t.v[i] = i * i;
+        t.n += 1;
+    }
+    return t;
+}
+
+static_assert(sum_to(100) == 5050);
+constexpr int x = fib(10);
+constexpr struct Table table = squares(6);
+constexpr unsigned long w = width();
+enum { Fib7 = fib(7) };
+struct Bits {
+    unsigned a : fib(5);
+};
+static int cached = fib(12);
+
+int main(void) {
+    switch (x) {
+    case fib(10):
+        printf("%d %d %d %lu %d %d\n", x, table.v[5], table.n, w, Fib7, cached);
+    }
+    return 0;
+}
 ==> cycle-by-source/src/a.smith <==
 module a;
 import b;
@@ -437,6 +484,42 @@ int later(void) {
 
 // an export that declares nothing a C name could name
 [[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };
+==> error-constexpr-c-asm/src/main.smith <==
+#include <stdio.h>
+
+// An "i" operand needs a literal constant: a call is still an error, as in C (asm is not a place the evaluator is
+// used).
+static int forty(void) {
+    return 40 + 2;
+}
+
+int main(void) {
+    int r;
+    asm("mov %w0, %1" : "=r"(r) : "i"(forty()));
+    printf("%d\n", r);
+    return 0;
+}
+==> error-constexpr-c/src/main.smith <==
+static int spin(int n) {
+    while (n > 0)
+        n = n + 1 - 1;
+    return n;
+}
+static int deep(int n) {
+    return deep(n + 1) + 1;
+}
+static int overflow(int n) {
+    return n + 1;
+}
+static int at(int i) {
+    int a[4] = {1, 2, 3, 4};
+    return a[i];
+}
+
+constexpr int steps = spin(1);
+constexpr int depth = deep(0);
+constexpr int wrapped = overflow(2147483647);
+constexpr int outside = at(9);
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {
     return 1;

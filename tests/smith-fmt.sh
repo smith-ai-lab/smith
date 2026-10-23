@@ -71,6 +71,16 @@ else
     fi
 fi
 
+# --- tuple types and slice declarators stay as written (#96, #82) ----------------------------------------------------
+total=$((total + 1))
+"$smith" fmt --style="file:$here/.clang-format" --assume-filename="$work/case.smith" <tests/smith-fmt/tuples-slices.smith >"$work/tuples" 2>&1
+if cmp -s tests/smith-fmt/tuples-slices.smith "$work/tuples"; then
+    echo "ok    tuples and slices: tests/smith-fmt/tuples-slices.smith is unchanged"
+else
+    fail "tuples and slices: tests/smith-fmt/tuples-slices.smith changed"
+    diff tests/smith-fmt/tuples-slices.smith "$work/tuples" | head -20
+fi
+
 # --- the same as C -------------------------------------------------------------------------------------------------
 same=0
 different=0
