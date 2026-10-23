@@ -5,7 +5,7 @@ tree-sitter/src/tree_sitter/*
 # Inputs and expectations of the tests, written as the case needs them (some are broken or oddly formatted on purpose).
 tests/smith-lang/cases/**
 tests/tree_sitter_cases/*
-tests/prove/*
+tests/prove/**
 # Generated from DAP's and MCP's schemas (scripts/protocol.c, smith build protocol).
 runtime/protocol/dap.c
 runtime/protocol/dap.h

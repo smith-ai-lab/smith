@@ -697,6 +697,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"package", "package", nullptr, nullptr, 0},
     {"protocol", "protocol", nullptr, nullptr, 0},
     {"prove", "prove", nullptr, nullptr, 1},
+    {"prove-sound", "prove_sound", nullptr, nullptr, 1},
     {"random", "random", nullptr, nullptr, 0},
     {"resource", "resource", nullptr, nullptr, 0},
     {"run", "run", nullptr, nullptr, 0},
@@ -832,6 +833,12 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);
+    // The soundness harnesses of `smith prove` on 8 seeds of 50000 inputs each (issue #64).
+    SmithStep sound_full = {
+        .command = (const char *[]){"sh", "-c", "sh tests/prove_sound.sh \"$0\" full", binary, nullptr},
+        .inputs = (const char *[]){binary, nullptr},
+    };
+    smith_task(b, "prove-sound-full", &sound_full);
     return tasks;
 }
 

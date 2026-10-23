@@ -268,6 +268,51 @@ struct Analyses {
     }
 };
 
+// A local nothing has written holds one value, any one: not `undef`, which LLVM may take to be whatever suits, so that
+// sroa turns `int x; if (c) x = 7; ... x == 7` into 7 and the proof says an uninitialized read is 7 (issue #64). A
+// store of `freeze undef` to each scalar of each local, at the top of the function, keeps it a value the proof cannot
+// choose; every real store after it makes the freeze dead. A local of more than 256 scalars is left as it is.
+void count_scalars(Type *type, uint64_t &count) {
+    if (auto *record = dyn_cast<StructType>(type)) {
+        for (Type *element : record->elements())
+            count_scalars(element, count);
+    } else if (auto *array = dyn_cast<ArrayType>(type)) {
+        uint64_t before = count;
+        count_scalars(array->getElementType(), count);
+        count = before + (count - before) * array->getNumElements();
+    } else {
+        count++;
+    }
+}
+
+void freeze_scalars(IRBuilder<> &builder, Type *type, Value *pointer) {
+    if (auto *record = dyn_cast<StructType>(type)) {
+        for (unsigned i = 0; i < record->getNumElements(); i++)
+            freeze_scalars(builder, record->getElementType(i), builder.CreateStructGEP(record, pointer, i));
+    } else if (auto *array = dyn_cast<ArrayType>(type)) {
+        for (uint64_t i = 0; i < array->getNumElements(); i++)
+            freeze_scalars(builder, array->getElementType(), builder.CreateConstInBoundsGEP2_64(array, pointer, 0, i));
+    } else {
+        builder.CreateAlignedStore(builder.CreateFreeze(UndefValue::get(type)), pointer, Align(1));
+    }
+}
+
+void freeze_locals(Function &function) {
+    std::vector<AllocaInst *> locals;
+    for (Instruction &instruction : function.getEntryBlock()) {
+        auto *local = dyn_cast<AllocaInst>(&instruction);
+        if (local != nullptr && local->isStaticAlloca() && local->getAllocatedType()->isSized())
+            locals.push_back(local);
+    }
+    for (AllocaInst *local : locals) {
+        uint64_t count = 0;
+        count_scalars(local->getAllocatedType(), count);
+        if (count == 0 || count > 256) continue;
+        IRBuilder<> builder(local->getNextNode());
+        freeze_scalars(builder, local->getAllocatedType(), local);
+    }
+}
+
 // Locals live in registers, redundant loads go, and the control flow is simple. These only refine the program, so a
 // proof of the result holds for the original in every case LLVM keeps defined.
 const char *const clean_pipeline = "sroa<modify-cfg>,early-cse,simplifycfg,dce";
@@ -540,6 +585,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     Analyses analyses;
     for (Function &function : module) {
         if (function.isDeclaration()) continue;
+        freeze_locals(function);
         if (!analyses.run_function(function, light_pipeline, error)) return false;
         mark_pointer_parameters(function);
     }

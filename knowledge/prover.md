@@ -26,3 +26,5 @@ report lists it as `trusted` and counts it apart from `proved`. A proved functio
 libc function with no contract fails with a message that names the call and the function to mark. Errors name their
 cause (a `smith_requires` that reads after a write names both lines), and `--emit-ir=FILE` writes the IR the prover
 checks. Skill: smith-contract.
+
+Soundness is tested by running what was proved (random inputs satisfying each `requires`, under the sanitizers) and by a corpus of false claims that must fail: `tests/prove_sound.sh`, `tests/prove/sound/`, `tests/prove/unsound/` (issue #64). A local nothing has written holds a frozen value, not `undef`, so an uninitialized read is never proved to be what the contract wants.
