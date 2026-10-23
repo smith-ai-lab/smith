@@ -1,5 +1,5 @@
-// Where C does not require a constant, a call is not evaluated at compile time: this file means the same in a .c file, in a
-// .smith file without a module line, and in a smith that has no evaluator for C functions.
+// Where C does not require a constant, a call is not evaluated at compile time: this file means the same in a .c file,
+// in a .smith file without a module line, and in a smith that has no evaluator for C functions.
 static int f(int n) {
     return n * 2 + 1;
 }

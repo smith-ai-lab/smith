@@ -2554,8 +2554,11 @@ std::unique_ptr<TokenHook> makeHook(Preprocessor &pp) {
         Presenter::presentToolEngine(nullptr); // what the last .smith file taught the tool's consumer is not this one's
         return nullptr;
     }
-    // A .smith file runs C function bodies in clang's constant evaluator where C requires a constant (patches/clang-constexpr-c.patch).
-    const_cast<LangOptions &>(pp.getLangOpts()).SmithConstexprC = true;
+    // A .smith file runs C function bodies in clang's constant evaluator where C requires a constant
+    // (patches/clang-constexpr-c.patch). Not with clang modules (-fmodules): the option is part of a module file's
+    // configuration and of the cache's hash, which was computed before the file was known to be a .smith file, so the
+    // modules built for it would be refused (issue #97: the option should be Benign in a next LLVM configuration).
+    if (!pp.getLangOpts().Modules) const_cast<LangOptions &>(pp.getLangOpts()).SmithConstexprC = true;
     return std::make_unique<SmithHook>(pp);
 }
 
