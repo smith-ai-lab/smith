@@ -1,0 +1,3 @@
+status 1
+affine_defer.smith:23:17: error: smith-affine: 'key' is used again; it was already used at line 22
+affine_defer.smith:22:20: note: 'key' was first used here

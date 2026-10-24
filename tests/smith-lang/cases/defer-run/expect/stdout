@@ -1,0 +1,19 @@
+body
+second deferred, runs first
+first deferred, runs last
+end of iteration 0
+middle
+end of iteration 1
+end of iteration 2
+in block
+block a
+block b
+nested body
+inner
+outer body
+outer
+leave early
+not early
+leave early
+cleanup before the jump
+after the jump

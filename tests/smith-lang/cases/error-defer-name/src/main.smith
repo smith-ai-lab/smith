@@ -1,0 +1,7 @@
+module main;
+
+// In a module `defer` is a keyword, so it cannot name a variable (issue #210).
+i32 main(void) {
+    i32 defer = 1;
+    return defer - 1;
+}
