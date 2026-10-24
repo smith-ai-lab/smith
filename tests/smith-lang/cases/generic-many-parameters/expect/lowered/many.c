@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "many::sum6 is a generic function: call it from a .smith module" ) ] ] void many_sum6 ( void ) ; [ [ clang :: unavailable ( "many::sum_as is a generic function: call it from a .smith module" ) ] ] void many_sum_as ( void ) ; [ [ clang :: unavailable ( "many::sum8 is a generic function: call it from a .smith module" ) ] ] void many_sum8 ( void ) ;

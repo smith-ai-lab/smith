@@ -1,0 +1,13 @@
+module main;
+
+import args;
+import <stdio.h>;
+
+int main(void) {
+    i64 v = 5;
+    i32 x = 3;
+    f64 y = 4.0;
+    c::printf("%d %d %d\n", args::locals(1, 2, (i64)3), args::pointers(v, &v, &x, &v), args::second(2, 3));
+    (void)y;
+    return 0;
+}

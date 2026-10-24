@@ -279,8 +279,8 @@ static uint32_t smith_lang_fields_open_of(uint32_t close, uint32_t floor) {
 }
 
 // In `typeof ( ... . [ F ] [ i ] [ j ] )` from `at` to `after` (the index after its `)`): the `]` that closes the field
-// group and how many subscripts follow it (the element of a slice or an array: `typeof(x.[f][0])`). False when the tokens
-// are no member of a struct.
+// group and how many subscripts follow it (the element of a slice or an array: `typeof(x.[f][0])`). False when the
+// tokens are no member of a struct.
 static bool smith_lang_fields_typeof_parts(uint32_t at, uint32_t after, uint32_t *close, uint32_t *subscripts) {
     *close = after - 2;
     *subscripts = 0;
@@ -314,8 +314,8 @@ static uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
     return after;
 }
 
-// The field in `typeof ( ... [ F ] )`, the tokens [first, last): 1 and the field, -1 and the message. `subscripts` is how
-// many `[i]` follow the field.
+// The field in `typeof ( ... [ F ] )`, the tokens [first, last): 1 and the field, -1 and the message. `subscripts` is
+// how many `[i]` follow the field.
 static int smith_lang_fields_in_typeof(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                        uint32_t place, uint32_t first, uint32_t last, SmithLangFieldRef *ref,
                                        uint32_t *subscripts) {
@@ -436,8 +436,8 @@ typedef struct {
 static int smith_lang_fields_use_typeof(SmithLangFieldUse *use) {
     uint32_t end = smith_lang_fields_typeof_end(use->at, use->limit);
     uint32_t subscripts = 0;
-    int found =
-        smith_lang_fields_in_typeof(use->lang, use->host, use->replay, use->place, use->at, end, &use->ref, &subscripts);
+    int found = smith_lang_fields_in_typeof(use->lang, use->host, use->replay, use->place, use->at, end, &use->ref,
+                                            &subscripts);
     if (found == 1 && (!use->ref.info.bit_field || subscripts != 0)) return 0;
     use->consumed = end - use->at;
     if (found != 1) return found;
@@ -680,7 +680,8 @@ static bool smith_lang_countof_begin(SmithLangReplay *replay, uint32_t place, Sm
     uint32_t first = 0;
     uint32_t last = 0;
     uint32_t after = 0;
-    if (!smith_lang_countof_member_at(frame, &first, &last, &after) || replay->count + 4 > smith_lang_replay_depth_max) {
+    if (!smith_lang_countof_member_at(frame, &first, &last, &after) ||
+        replay->count + 4 > smith_lang_replay_depth_max) {
         return false;
     }
     frame->pos = after;
@@ -729,7 +730,9 @@ static void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = done.place;
     if (!typed) {
         smith_lang_error(lang, host, place, "cannot tell what `countof` counts here: %s",
-                         !fits ? "the member is too long" : type.why != nullptr ? type.why : "the compiler cannot say");
+                         !fits                 ? "the member is too long"
+                         : type.why != nullptr ? type.why
+                                               : "the compiler cannot say");
         smith_lang_generic_poison(lang, host, place);
         return;
     }
@@ -757,9 +760,9 @@ static bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, Smi
         smith_lang_fields_alias(lang, host, replay, frame);
     }
     if (replay->instance != nullptr &&
-        smith_lang_countof_begin(replay, smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(frame->pos),
-                                                              replay->location),
-                                 frame)) {
+        smith_lang_countof_begin(
+            replay, smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(frame->pos), replay->location),
+            frame)) {
         return true;
     }
     int found = smith_lang_fields_use(lang, host, replay, frame->pos, frame->end, &pieces, &consumed);

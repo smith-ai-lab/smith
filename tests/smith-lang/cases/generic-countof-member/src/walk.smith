@@ -1,0 +1,24 @@
+module walk;
+
+// `countof` of a member that is a slice or a fixed array: written by name, through `->`, by `.[f]`, of an element.
+export usize total(auto x) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        n += countof(x.[f]);
+    }
+    return n;
+}
+
+export usize total_through(auto proto, auto p) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
+        constexpr Field f = fields(typeof(proto))[i];
+        n += countof(p->[f]);
+    }
+    return n;
+}
+
+export usize named(auto p) {
+    return countof(p->xs) * 100 + countof(p->fixed) * 10 + countof(p->rows[1]);
+}

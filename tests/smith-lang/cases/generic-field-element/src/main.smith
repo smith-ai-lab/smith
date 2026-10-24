@@ -1,0 +1,17 @@
+module main;
+
+import walk;
+import <stdio.h>;
+
+struct Floats { f64 xs[:]; };
+struct Ints { i32 xs[:]; i32 n; };
+struct Point { f32 x; f32 y; };
+struct Mixed { f32 a[:]; u8 b[:]; f64 fixed[3]; struct Point points[:]; };
+
+int main(void) {
+    struct Floats floats = {};
+    struct Ints ints = {};
+    struct Mixed mixed = {};
+    c::printf("%d %d %d\n", walk::describe(floats), walk::describe(ints), walk::describe(mixed));
+    return 0;
+}

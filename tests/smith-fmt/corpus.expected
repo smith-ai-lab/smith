@@ -1569,6 +1569,54 @@ i32 main(void) {
               (unsigned long long)table::chosen_value(5), (unsigned long long)table::hook(8));
     return 0;
 }
+==> generic-argument-names/src/args.smith <==
+module args;
+
+export i32 twice(auto x) {
+    return (i32)(x + x);
+}
+
+export i32 product(auto a, typeof(a) b) {
+    return (i32)(a * b);
+}
+
+// A local, `rest[k]` inside an expression, and `*p` for a parameter written as a type and a name, are arguments.
+export i32 locals(auto first, auto... rest) {
+    i32 local = 7;
+    i64 wide = 100;
+    i32 total = twice(local) + twice(first) + twice(wide);
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        total += twice(rest[i] + 1);
+    }
+    return total;
+}
+
+export i32 pointers(auto proto, typeof(proto) *p, auto... rest) {
+    typeof(proto) *q = p;
+    i32 total = twice(*p) + product(*q, proto);
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        total += twice(*rest[i]);
+    }
+    return total;
+}
+
+export i32 second(auto first, auto... rest) {
+    return product(first, rest[0]) + product(rest[0], first);
+}
+==> generic-argument-names/src/main.smith <==
+module main;
+
+import args;
+import <stdio.h>;
+
+int main(void) {
+    i64 v = 5;
+    i32 x = 3;
+    f64 y = 4.0;
+    c::printf("%d %d %d\n", args::locals(1, 2, (i64)3), args::pointers(v, &v, &x, &v), args::second(2, 3));
+    (void)y;
+    return 0;
+}
 ==> generic-array-pointer/src/main.smith <==
 module main;
 
@@ -2413,6 +2461,56 @@ int main(void) {
     printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
     return 0;
 }
+==> generic-countof-member/src/main.smith <==
+module main;
+
+import walk;
+import <stdio.h>;
+
+struct S {
+    i32 xs[:];
+    f64 ys[:];
+    i32 fixed[3];
+};
+struct R {
+    i32 xs[:];
+    i32 fixed[3];
+    i32 rows[2][5];
+};
+
+int main(void) {
+    i32 a[2] = {1, 2};
+    f64 b[3] = {1, 2, 3};
+    struct S s = {.xs = a[0:2], .ys = b[0:3], .fixed = {1, 2, 3}};
+    struct R r = {.xs = a[0:1]};
+    c::printf("%zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r));
+    return 0;
+}
+==> generic-countof-member/src/walk.smith <==
+module walk;
+
+// `countof` of a member that is a slice or a fixed array: written by name, through `->`, by `.[f]`, of an element.
+export usize total(auto x) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        n += countof(x.[f]);
+    }
+    return n;
+}
+
+export usize total_through(auto proto, auto p) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
+        constexpr Field f = fields(typeof(proto))[i];
+        n += countof(p->[f]);
+    }
+    return n;
+}
+
+export usize named(auto p) {
+    return countof(p->xs) * 100 + countof(p->fixed) * 10 + countof(p->rows[1]);
+}
 ==> generic-error-instance/src/main.smith <==
 module main;
 
@@ -2435,6 +2533,61 @@ module num;
 // Adds two values of one type: it works for the types `+` works for.
 export T add(constexpr type T, T a, T b) {
     return a + b;
+}
+==> generic-field-element/src/main.smith <==
+module main;
+
+import walk;
+import <stdio.h>;
+
+struct Floats {
+    f64 xs[:];
+};
+struct Ints {
+    i32 xs[:];
+    i32 n;
+};
+struct Point {
+    f32 x;
+    f32 y;
+};
+struct Mixed {
+    f32 a[:];
+    u8 b[:];
+    f64 fixed[3];
+    struct Point points[:];
+};
+
+int main(void) {
+    struct Floats floats = {};
+    struct Ints ints = {};
+    struct Mixed mixed = {};
+    c::printf("%d %d %d\n", walk::describe(floats), walk::describe(ints), walk::describe(mixed));
+    return 0;
+}
+==> generic-field-element/src/walk.smith <==
+module walk;
+
+// The element type of a `[:]` field or a fixed array, asked in an `if constexpr`: `typeof(x.[f][0])`.
+export i32 describe(auto x) {
+    i32 total = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        if constexpr (is_slice(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) {
+                total += 1; // a slice of floats
+            } else if constexpr (is_integer(typeof(x.[f][0]))) {
+                total += 10; // of integers
+            } else if constexpr (is_record(typeof(x.[f][0]))) {
+                total += 100; // of structs
+            } else {
+                total += 1000;
+            }
+        } else if constexpr (is_array(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) total += 10000; // a fixed array of floats
+        }
+    }
+    return total;
 }
 ==> generic-fields-error/src/main.smith <==
 module main;
@@ -3056,6 +3209,38 @@ int main(void) {
     printf("%d %d %d\n", kind::describe(i32, small), kind::floats_only(f32, f), kind::floats_only(i32, small));
     printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
     return 0;
+}
+==> generic-many-parameters/src/main.smith <==
+module main;
+
+import many;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d %d %d %d\n", many::sum6(1, 2, 3, 4, 5, 6), many::sum_as(i64, 1, (u8)2, 3, 4.0, 5),
+              many::sum8(1, 2, 3, 4, 5, 6, 7), many::sum8(1, 2, 3, 4, 5, 6, 7, 8, (i64)9));
+    return 0;
+}
+==> generic-many-parameters/src/many.smith <==
+module many;
+
+// A generic takes any number of compile-time parameters: here six `auto`, and a type with five.
+export i32 sum6(auto a, auto b, auto c, auto d, auto e, auto f) {
+    return (i32)(a + b + c + d + e + f);
+}
+
+export i32 sum_as(constexpr type T, auto a, auto b, auto c, auto d, auto e) {
+    T total = (T)(a + b + c + d + e);
+    return (i32)total;
+}
+
+// Many parameters, and a list after them.
+export i32 sum8(auto a, auto b, auto c, auto d, auto e, auto f, auto g, auto... rest) {
+    i32 total = (i32)(a + b + c + d + e + f + g);
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        total += (i32)rest[i];
+    }
+    return total;
 }
 ==> generic-nested-argument/src/apply.smith <==
 module apply;

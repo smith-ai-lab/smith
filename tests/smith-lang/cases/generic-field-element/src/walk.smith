@@ -1,0 +1,23 @@
+module walk;
+
+// The element type of a `[:]` field or a fixed array, asked in an `if constexpr`: `typeof(x.[f][0])`.
+export i32 describe(auto x) {
+    i32 total = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        if constexpr (is_slice(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) {
+                total += 1; // a slice of floats
+            } else if constexpr (is_integer(typeof(x.[f][0]))) {
+                total += 10; // of integers
+            } else if constexpr (is_record(typeof(x.[f][0]))) {
+                total += 100; // of structs
+            } else {
+                total += 1000;
+            }
+        } else if constexpr (is_array(typeof(x.[f]))) {
+            if constexpr (is_float(typeof(x.[f][0]))) total += 10000; // a fixed array of floats
+        }
+    }
+    return total;
+}

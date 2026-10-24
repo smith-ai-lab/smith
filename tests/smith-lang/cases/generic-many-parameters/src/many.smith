@@ -1,0 +1,20 @@
+module many;
+
+// A generic takes any number of compile-time parameters: here six `auto`, and a type with five.
+export i32 sum6(auto a, auto b, auto c, auto d, auto e, auto f) {
+    return (i32)(a + b + c + d + e + f);
+}
+
+export i32 sum_as(constexpr type T, auto a, auto b, auto c, auto d, auto e) {
+    T total = (T)(a + b + c + d + e);
+    return (i32)total;
+}
+
+// Many parameters, and a list after them.
+export i32 sum8(auto a, auto b, auto c, auto d, auto e, auto f, auto g, auto... rest) {
+    i32 total = (i32)(a + b + c + d + e + f + g);
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        total += (i32)rest[i];
+    }
+    return total;
+}

@@ -2362,6 +2362,28 @@ static void smith_lang_number_write(SmithLang *lang, const SmithHost *host, cons
     if (value < 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ")", place, replay->instance_id);
 }
 
+// An entry of the instance (a parameter's or a list element's type) written as a value that is never evaluated,
+// `(*(type *)0)`: what the compiler is asked about where the instance is not declared yet.
+static void smith_lang_typing_entry(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, size_t entry,
+                                    uint32_t place) {
+    static const char *const opening[] = {"(", "*", "("};
+    for (size_t i = 0; i < 3; i++)
+        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, opening[i], place, replay->instance_id);
+    for (uint32_t i = 0; i < replay->instance->arg_count[entry]; i++) { // the type's tokens
+        const SmithLangGenToken *part = &smith_lang_it.tokens[replay->instance->arg_first[entry] + i];
+        char text[256];
+        size_t length = part->length < sizeof text - 1 ? part->length : sizeof text - 1;
+        memcpy(text, smith_lang_pool_text(&smith_lang_it, part), length);
+        text[length] = 0;
+        smith_lang_gen_put(lang, host, (SmithTokenKind)part->kind, text, place, replay->instance_id);
+    }
+    static const char *const closing[] = {"*", ")", "0", ")"};
+    for (size_t i = 0; i < 4; i++) {
+        smith_lang_gen_put(lang, host, i == 2 ? SmithTokenKind_Number : SmithTokenKind_Punctuator, closing[i], place,
+                           replay->instance_id);
+    }
+}
+
 // Writes a use of the list: the number, the element or all of them.
 static void smith_lang_pack_write(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                   const SmithLangPackUse *use) {
@@ -2375,11 +2397,19 @@ static void smith_lang_pack_write(SmithLang *lang, const SmithHost *host, const 
         smith_lang_number_write(lang, host, replay, use->number, use->place);
     } else if (use->kind == SmithLangPack_Index) {
         smith_lang_pack_element(&use->args, use->index, text, sizeof text);
+        if (replay->typing && replay->generic != nullptr) { // to be typed: a value of the element's type
+            smith_lang_typing_entry(lang, host, replay, smith_lang_pack_base(replay->generic) + use->index, use->place);
+            return;
+        }
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
     } else if (use->kind == SmithLangPack_Expand) {
         for (size_t i = 0; i < use->args.count; i++) { // the elements, in order
             if (i > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", use->place, replay->instance_id);
             smith_lang_pack_element(&use->args, i, text, sizeof text);
+            if (replay->typing && replay->generic != nullptr) {
+                smith_lang_typing_entry(lang, host, replay, smith_lang_pack_base(replay->generic) + i, use->place);
+                continue;
+            }
             smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, use->place, replay->instance_id);
         }
     }
@@ -3330,9 +3360,8 @@ static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, Smi
 
 // A word that cannot begin the type of a declaration: a statement that merely ends like one (`return x;`).
 static bool smith_lang_decl_not_type(const SmithLangGenToken *token) {
-    static const char *const words[] = {"return", "else",  "goto",   "case",   "break",  "continue",
-                                        "do",     "sizeof", "default", "while", "if",     "for",
-                                        "switch", "constexpr"};
+    static const char *const words[] = {"return", "else",    "goto",  "case", "break", "continue", "do",
+                                        "sizeof", "default", "while", "if",   "for",   "switch",   "constexpr"};
     if (token->kind != SmithTokenKind_Identifier) return true;
     for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) { // 14 entries
         if (smith_lang_gt_is(token, SmithTokenKind_Identifier, words[i])) return true;
@@ -3374,7 +3403,8 @@ static bool smith_lang_decl_type(const SmithLangGeneric *generic, uint32_t at, S
     for (uint32_t k = at; k > low + 1; k--) { // the nearest local before the use
         const SmithLangGenToken *token = &smith_lang_gt.tokens[k - 1];
         if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain ||
-            token->length != name->length || memcmp(smith_lang_gt_str(token), smith_lang_gt_str(name), name->length) != 0 ||
+            token->length != name->length ||
+            memcmp(smith_lang_gt_str(token), smith_lang_gt_str(name), name->length) != 0 ||
             smith_lang_member_before(k - 1)) {
             continue;
         }
@@ -3401,7 +3431,8 @@ static bool smith_lang_decl_type(const SmithLangGeneric *generic, uint32_t at, S
         const SmithLangParam *param = &params[i];
         if (param->kind != SmithLangSlot_Plain || param->end - param->start < 2) continue;
         const SmithLangGenToken *last = &smith_lang_gt.tokens[param->end - 1];
-        if (last->length != name->length || memcmp(smith_lang_gt_str(last), smith_lang_gt_str(name), name->length) != 0 ||
+        if (last->length != name->length ||
+            memcmp(smith_lang_gt_str(last), smith_lang_gt_str(name), name->length) != 0 ||
             !smith_lang_decl_plausible(param->start, param->end - 1)) {
             continue;
         }
@@ -3435,15 +3466,43 @@ static void smith_lang_pack_clash(SmithLang *lang, const SmithHost *host, const 
 // Whether an argument of the call [first, last) is an expression with a parameter of the instance in it (`*first`,
 // `piece.m`, `first + 1`), not just the parameter: the parameters are not declared while the body is written, so the
 // arguments are typed with them written as values of their types.
-static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32_t first, uint32_t last) {
+static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32_t first, uint32_t last,
+                                           const SmithLangGeneric *callee) {
+    bool types_arguments = false; // the callee has a parameter whose type its arguments give
+    for (size_t k = 0; k < callee->type_count; k++) {
+        types_arguments =
+            types_arguments || callee->type_kind[k] == SmithLangSlot_Auto || callee->type_kind[k] == SmithLangSlot_Pack;
+    }
     for (uint32_t at = first; at < last; at++) { // bounded by the call
         const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (smith_lang_pack_marked(replay->generic, token) && !smith_lang_member_before(at) &&
+            smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[")) { // `rest[k]` in an expression, not the argument
+            uint32_t close = at + 1;
+            for (int depth = 0; close < last; close++) { // to the matching bracket
+                depth += smith_lang_gt_punct(&smith_lang_gt.tokens[close], "[") ? 1 : 0;
+                depth -= smith_lang_gt_punct(&smith_lang_gt.tokens[close], "]") ? 1 : 0;
+                if (depth == 0) break;
+            }
+            const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1];
+            const SmithLangGenToken *after = &smith_lang_gt.tokens[close + 1];
+            bool starts = smith_lang_gt_punct(before, ",") || smith_lang_gt_punct(before, "(");
+            bool ends = smith_lang_gt_punct(after, ",") || smith_lang_gt_punct(after, ")");
+            if (!starts || !ends) return true;
+            at = close;
+            continue;
+        }
         if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0 ||
             smith_lang_member_before(at)) {
             continue;
         }
         SmithLangSpan declared;
-        if (smith_lang_decl_type(replay->generic, at, &declared)) return true; // a local or a typed parameter
+        if (smith_lang_decl_type(replay->generic, at, &declared)) { // a local or a typed parameter
+            const SmithLangGenToken *around[2] = {&smith_lang_gt.tokens[at - 1], &smith_lang_gt.tokens[at + 1]};
+            bool lone = (smith_lang_gt_punct(around[0], ",") || smith_lang_gt_punct(around[0], "(")) &&
+                        (smith_lang_gt_punct(around[1], ",") || smith_lang_gt_punct(around[1], ")"));
+            if (!lone || types_arguments) return true;
+            continue;
+        }
         if (smith_lang_param_type_of(replay->generic, replay->instance, (SmithLangSpan){at, at + 1}) < 0) continue;
         const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1]; // the span holds the call's parentheses
         const SmithLangGenToken *after = &smith_lang_gt.tokens[at + 1];
@@ -3469,7 +3528,7 @@ static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, Smit
     uint32_t location = smith_lang_gen_place(host, replay->generic, token, replay->location);
     if (found >= 0 && replay->instance != nullptr &&
         (smith_lang_span_has_group((SmithLangSpan){begin + 1, end}) || smith_lang_fields_in(begin + 1, end) ||
-         smith_lang_expression_of_param(replay, begin + 1, end)) &&
+         smith_lang_expression_of_param(replay, begin + 1, end, &smith_lang_generics[found])) &&
         replay->count + 3 <= smith_lang_replay_depth_max) {
         // Its arguments hold a call: they are written to the pool first, to be typed (smith_lang_typed_start).
         smith_lang_replay_push(replay, 0, 0, 0);
@@ -3543,22 +3602,7 @@ static bool smith_lang_typing_param(SmithLang *lang, const SmithHost *host, cons
         return smith_lang_typing_declared(lang, host, replay, declared, place);
     }
     if (own < 0) return false;
-    static const char *const opening[] = {"(", "*", "("};
-    for (size_t i = 0; i < 3; i++)
-        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, opening[i], place, replay->instance_id);
-    for (uint32_t i = 0; i < replay->instance->arg_count[own]; i++) { // the type's tokens
-        const SmithLangGenToken *part = &smith_lang_it.tokens[replay->instance->arg_first[own] + i];
-        char text[256];
-        size_t length = part->length < sizeof text - 1 ? part->length : sizeof text - 1;
-        memcpy(text, smith_lang_pool_text(&smith_lang_it, part), length);
-        text[length] = 0;
-        smith_lang_gen_put(lang, host, (SmithTokenKind)part->kind, text, place, replay->instance_id);
-    }
-    static const char *const closing[] = {"*", ")", "0", ")"};
-    for (size_t i = 0; i < 4; i++) {
-        smith_lang_gen_put(lang, host, i == 2 ? SmithTokenKind_Number : SmithTokenKind_Punctuator, closing[i], place,
-                           replay->instance_id);
-    }
+    smith_lang_typing_entry(lang, host, replay, (size_t)own, place);
     return true;
 }
 
