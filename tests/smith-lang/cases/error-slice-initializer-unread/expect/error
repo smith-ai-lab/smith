@@ -1,4 +1,4 @@
-src/main.smith:29:25: a slice member in an array of structs is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)
+src/main.smith:29:25: a slice member in an array of structs or slices is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)
 src/main.smith:30:22: a slice member in a struct with an anonymous member is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)
 src/main.smith:31:33: a slice member in a struct with an anonymous member is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)
 src/main.smith:32:22: a slice member in an initializer of over 200 tokens is not read in an initializer list yet: assign the slice after the declaration (an unread value would leave it empty)

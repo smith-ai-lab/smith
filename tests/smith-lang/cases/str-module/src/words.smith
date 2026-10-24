@@ -1,0 +1,22 @@
+module words;
+
+export struct Pair {
+    str key;
+    str value;
+};
+
+export usize total(str xs) {
+    return countof(xs);
+}
+
+export str first_word(str xs) {
+    usize n = 0;
+    while (n < countof(xs) && xs[n] != ' ') n++;
+    return xs[0:n];
+}
+
+export bool pop(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}

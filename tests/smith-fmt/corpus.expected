@@ -1516,6 +1516,32 @@ import <stdint.h>;
 u64 widen(uint32_t x, size_t n, ptrdiff_t d) {
     return x + n + d;
 }
+==> error-str-array/src/main.smith <==
+module main;
+
+// An array of `str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
+
+i32 main(void) {
+    str names[1] = {"a"};
+    return (i32)sizeof names;
+}
+==> error-str-name/src/main.smith <==
+module main;
+
+// `str` is a type in a module, as `i32` is: it cannot name a variable, a parameter, a field or a function.
+
+struct Holder {
+    const char *str;
+};
+
+static int measure(const char *str) {
+    return str[0];
+}
+
+i32 main(void) {
+    const char *str = "abcd";
+    return measure(str);
+}
 ==> error-target-fact/src/bad.smith <==
 module bad;
 
@@ -7002,6 +7028,147 @@ i32 main() {
     int numbers[] = {4, 8, 15, 16, 23, 42};
     auto count = _Countof(numbers);
     printf("%zu\n", count);
+    return 0;
+}
+==> str-c-rule/src/main.smith <==
+// No `module` line: this file means what C means, and `str` is a name here (a variable, a parameter, a field).
+#include <stdio.h>
+
+struct Holder {
+    const char *str;
+};
+
+static int measure(const char *str) {
+    int n = 0;
+    while (str[n] != 0)
+        n++;
+    return n;
+}
+
+int main(void) {
+    const char *str = "abcd";
+    struct Holder holder = {.str = str};
+    printf("%d %d\n", measure(str), measure(holder.str));
+    return 0;
+}
+==> str-lowering/src/words.smith <==
+module words;
+
+export struct Pair {
+    str key;
+    str value;
+};
+
+export usize total(str xs) {
+    return countof(xs);
+}
+
+export str first_word(str xs) {
+    usize n = 0;
+    while (n < countof(xs) && xs[n] != ' ')
+        n++;
+    return xs[0:n];
+}
+
+export bool pop(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+==> str-module/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import words;
+
+i32 main(void) {
+    str s = "hello world";
+    str w = words::first_word(s);
+    str *p = &s;
+    usize n = 0;
+    while (words::pop(p))
+        n++;
+    struct words::Pair pair = {.key = w, .value = "x"};
+    c::printf("%zu %zu %zu %zu\n", words::total(w), n, countof(pair.key), countof(pair.value));
+    return 0;
+}
+==> str-module/src/words.smith <==
+module words;
+
+export struct Pair {
+    str key;
+    str value;
+};
+
+export usize total(str xs) {
+    return countof(xs);
+}
+
+export str first_word(str xs) {
+    usize n = 0;
+    while (n < countof(xs) && xs[n] != ' ')
+        n++;
+    return xs[0:n];
+}
+
+export bool pop(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+==> str-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// `str` is a type of every module, `const char[:]` (issue #85), as `u8` is a type: no typedef, no import.
+
+struct Named {
+    str name;
+    i32 id;
+};
+
+static usize length(str xs) {
+    return countof(xs);
+}
+
+static str tail(str xs) {
+    return xs[1:];
+}
+
+static bool next(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+
+static void poke(char (*b)[:]) {
+    (*b)[0] = 'Z';
+}
+
+i32 main(void) {
+    str s = "abc";
+    c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
+    str cut = s[0:2];
+    str *p = &s;
+    usize steps = 0;
+    while (next(p))
+        steps++;
+    c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
+
+    char raw[4] = {'a', 'b', 'c', 'd'};
+    char w[:] = raw;
+    str r = w;    // const is added implicitly
+    str *pr = &w; // a pointer to char[:] is a pointer to str (C23, N2607)
+    poke(&w);
+    c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
+
+    struct Named n = {.name = "field", .id = 3};
+    typeof(s) same = n.name;
+    c::printf("%zu %zu %d\n", countof(n.name), countof(same), n.id);
+    const str k = "k";
+    static str fixed = "hello";
+    c::printf("%zu %zu %zu\n", countof(k), countof(fixed), (usize)sizeof(str));
     return 0;
 }
 ==> str-typedef-lowering/src/text.smith <==

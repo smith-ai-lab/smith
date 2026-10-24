@@ -885,6 +885,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
             }
             bool at_start = lang->slice.after_boundary;
             lang->slice.after_boundary = smith_lang_slice_boundary(token);
+            if (smith_lang_slice_str(lang, host, token)) return;
             if (at_start && smith_lang_slice_begin(lang, host, token)) return;
             smith_lang_slice_equals(lang, host, token);
             if (smith_lang_slice_init_compound(lang, host, token)) return;

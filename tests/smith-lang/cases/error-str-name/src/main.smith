@@ -1,0 +1,16 @@
+module main;
+
+// `str` is a type in a module, as `i32` is: it cannot name a variable, a parameter, a field or a function.
+
+struct Holder {
+    const char *str;
+};
+
+static int measure(const char *str) {
+    return str[0];
+}
+
+i32 main(void) {
+    const char *str = "abcd";
+    return measure(str);
+}

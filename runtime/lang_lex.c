@@ -672,7 +672,8 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .main_file = file,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
-        .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length),
+        .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
+                       smith_lang_text_has_str(smith_lang_source, raw.length),
     };
     SmithRawNames names = {};
     raw.names = &names;
@@ -1046,7 +1047,8 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .declarations_only = header_path != nullptr,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
-        .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length),
+        .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
+                       smith_lang_text_has_str(smith_lang_source, raw.length),
     };
     SmithRawNames names = {};
     raw.names = &names;
