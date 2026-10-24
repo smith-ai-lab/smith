@@ -1661,12 +1661,14 @@ static bool smith_lang_slice_replay_countof(SmithLangReplay *replay, uint32_t pl
     return true;
 }
 
-// `xs[a:b]` of a one-dimension slice: the generic's tokens [at + 2, close) split at `colon`, a view of the elements.
+// `E[a:b]` of a one-dimension slice: the slice's expression is the generic's tokens [first, open), the subscript's
+// [open + 1, close) split at `colon`; a view of the elements. `bounds` is first, open, colon, close.
 static bool smith_lang_slice_replay_cut(const SmithHost *host, SmithLangReplay *replay, uint32_t place,
-                                        const SmithLangSliceType *type, const uint32_t bounds[3], unsigned counter) {
-    uint32_t at = bounds[0];
-    uint32_t colon = bounds[1];
-    uint32_t close = bounds[2];
+                                        const SmithLangSliceType *type, const uint32_t bounds[4], unsigned counter) {
+    uint32_t first_at = bounds[0];
+    uint32_t open_at = bounds[1];
+    uint32_t colon = bounds[2];
+    uint32_t close = bounds[3];
     char condition[160];
     char check[512];
     char head[640];
@@ -1685,12 +1687,12 @@ static bool smith_lang_slice_replay_cut(const SmithHost *host, SmithLangReplay *
              check, type->tag, counter, counter, counter, counter, counter, counter);
     char whole[64];
     snprintf(whole, sizeof whole, "smith_s%u . count [ 0 ]", counter);
-    SmithLangSlicePart parts[9] = {{head, 0, 0}, {nullptr, at, at + 1}, {first, 0, 0}};
+    SmithLangSlicePart parts[9] = {{head, 0, 0}, {nullptr, first_at, open_at}, {first, 0, 0}};
     size_t used = 3;
-    if (colon == at + 2) {
+    if (colon == open_at + 1) {
         parts[used++] = (SmithLangSlicePart){"0", 0, 0};
     } else {
-        parts[used++] = (SmithLangSlicePart){nullptr, at + 2, colon};
+        parts[used++] = (SmithLangSlicePart){nullptr, open_at + 1, colon};
     }
     parts[used++] = (SmithLangSlicePart){second, 0, 0};
     if (colon + 1 == close) {
@@ -1751,7 +1753,143 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
         smith_lang_slice_parts(replay, place, parts, sizeof parts / sizeof parts[0]);
         return true;
     }
-    return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[3]){at, colon, close}, counter);
+    return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[4]){at, at + 1, colon, close}, counter);
+}
+
+// The size of dimension `at` of a slice named `smith_s<counter>`, as an expression.
+static void smith_lang_slice_replay_dim(const SmithLangSliceDims *dims, size_t at, unsigned counter, char *out,
+                                        size_t capacity) {
+    if (!dims->runtime[at]) {
+        snprintf(out, capacity, "%llu", (unsigned long long)dims->fixed[at]);
+        return;
+    }
+    size_t which = 0;
+    for (size_t before = 0; before < at; before++) // at most 8
+        which += dims->runtime[before] ? 1 : 0;
+    snprintf(out, capacity, "smith_s%u . count [ %zu ]", counter, which);
+}
+
+// `E[i][j]` of a slice with an index for each of its dimensions, E the generic's tokens [span[0], span[1]), the
+// indexes `at[k]` (open, close) pairs: the element, each index checked against its dimension (row-major, one block).
+static void smith_lang_slice_replay_element(const SmithHost *host, SmithLangReplay *replay, uint32_t place,
+                                            const SmithLangSliceDims *dims, const uint32_t span[2],
+                                            const uint32_t (*at)[2]) {
+    static unsigned counter;
+    counter += 1;
+    char condition[320] = "";
+    char offset[320] = "";
+    char names[smith_lang_slice_dims_max][32];
+    size_t used = 0;
+    for (size_t k = 0; k < dims->count; k++) { // each index
+        char size[64];
+        smith_lang_slice_replay_dim(dims, k, counter, size, sizeof size);
+        snprintf(names[k], sizeof names[k], "smith_i%u_%zu", counter, k);
+        used += (size_t)snprintf(condition + used, sizeof condition - used, "%s%s < %s", k > 0 ? " && " : "", names[k],
+                                 size);
+        if (k == 0) {
+            snprintf(offset, sizeof offset, "%s", names[0]);
+        } else {
+            char next[320];
+            snprintf(next, sizeof next, "( %s ) * %s + %s", offset, size, names[k]);
+            snprintf(offset, sizeof offset, "%s", next);
+        }
+    }
+    char check[480];
+    smith_lang_slice_check(host, condition, check, sizeof check);
+    char head[96];
+    char between[smith_lang_slice_dims_max][96];
+    char end[640];
+    snprintf(head, sizeof head, "( * __extension__ ( { auto smith_s%u = (", counter);
+    SmithLangSlicePart parts[2 + 2 * smith_lang_slice_dims_max + 1] = {{head, 0, 0}, {nullptr, span[0], span[1]}};
+    size_t count = 2;
+    for (size_t k = 0; k < dims->count; k++) {
+        snprintf(between[k], sizeof between[k], ") ; __SIZE_TYPE__ %s = (", names[k]);
+        parts[count++] = (SmithLangSlicePart){between[k], 0, 0};
+        parts[count++] = (SmithLangSlicePart){nullptr, at[k][0] + 1, at[k][1]};
+    }
+    snprintf(end, sizeof end, ") ; %s & smith_s%u . data [ %s ] ; } ) )", check, counter, offset);
+    parts[count++] = (SmithLangSlicePart){end, 0, 0};
+    smith_lang_slice_parts(replay, place, parts, count);
+}
+
+static bool smith_lang_slice_replay_op(uint32_t at, const char *text) {
+    return smith_lang_gt_punct(&smith_lang_gt.tokens[at], text);
+}
+
+// A member of a slice read by `.[F]` and subscripted, `x.[f][i]`, `p->[f][i][j]`, `x.[f][a:b]` in an instance's body
+// (issue #125): the compiler has not read the instance, so the lowering writes the subscript as it does for a slice
+// parameter. The object is `ident (. ident | -> ident)*` and the field is the instance's; a member that is not a slice
+// (an array, a pointer) is C's own subscript, written as it is.
+static bool smith_lang_slice_replay_member(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                           SmithLangFrame *frame, uint32_t place) {
+    uint32_t first = frame->pos;
+    uint32_t end = frame->end;
+    uint32_t dot = first + 1;
+    while (dot + 1 < end && smith_lang_gt.tokens[dot + 1].kind == SmithTokenKind_Identifier &&
+           (smith_lang_slice_replay_op(dot, ".") || smith_lang_slice_replay_op(dot, "->")))
+        dot += 2;
+    if (dot + 3 >= end || !(smith_lang_slice_replay_op(dot, ".") || smith_lang_slice_replay_op(dot, "->")) ||
+        !smith_lang_slice_replay_op(dot + 1, "[")) {
+        return false;
+    }
+    uint32_t group = smith_lang_cx_skip_group(dot + 1, end);
+    if (group == UINT32_MAX || group >= end || !smith_lang_slice_replay_op(group, "[")) return false;
+    SmithLangFieldRef ref;
+    if (smith_lang_fields_group(lang, host, replay, dot + 2, group - 1, place, &ref) != 1) return false;
+    static const char tag[] = "struct smith_array_";
+    if (strncmp(ref.info.type, tag, sizeof tag - 1) != 0) return false;
+    SmithLangSliceType type = {.kind = SmithLangSlice_Slice};
+    snprintf(type.tag, sizeof type.tag, "%s", ref.info.type + 7);
+    size_t stem = 0;
+    if (!smith_lang_slice_dims_parse(type.tag, &type.dims, &stem)) type.dims = smith_lang_slice_dims_one();
+    char element[256];
+    snprintf(element, sizeof element, "%s", ref.info.type);
+    if (!smith_lang_fields_element(host, element, sizeof element)) return false;
+    uint32_t indexes[smith_lang_slice_dims_max][2];
+    uint32_t colon = UINT32_MAX;
+    size_t taken = 0;
+    uint32_t next = group;
+    while (taken < type.dims.count && next < end && smith_lang_slice_replay_op(next, "[")) { // each index
+        uint32_t close = smith_lang_slice_replay_close(next, end, &colon);
+        if (close == UINT32_MAX || colon != UINT32_MAX) break;
+        indexes[taken][0] = next;
+        indexes[taken][1] = close;
+        taken += 1;
+        next = close + 1;
+    }
+    bool cut = colon != UINT32_MAX && taken == 0 && type.dims.count == 1;
+    uint32_t close = taken == 0 ? smith_lang_slice_replay_close(group, end, &colon) : next - 1;
+    if (close == UINT32_MAX || (taken != type.dims.count && !cut)) {
+        smith_lang_error(lang, host, place,
+                         "a generic cannot index or cut part of the rows of a slice member yet: index every "
+                         "dimension, `x.[f][i][j]`, or take the row in the caller");
+        smith_lang_generic_poison(lang, host, place);
+        uint32_t skip = group;
+        while (skip < end && smith_lang_slice_replay_op(skip, "[") && smith_lang_cx_skip_group(skip, end) != UINT32_MAX)
+            skip = smith_lang_cx_skip_group(skip, end); // every subscript is taken, so that the error is the only one
+        frame->pos = skip;
+        return true;
+    }
+    frame->pos = close + 1;
+    if (replay->typing) { // an element is a value of the pointer's type, a cut one of the slice's
+        char typed[640];
+        if (cut) {
+            snprintf(typed, sizeof typed, "( * ( ( struct %s * ) 0 ) )", type.tag);
+        } else {
+            snprintf(typed, sizeof typed, "( * ( ( %s * ) 0 ) )", element);
+        }
+        SmithLangSlicePart part = {typed, 0, 0};
+        smith_lang_slice_parts(replay, place, &part, 1);
+        return true;
+    }
+    if (cut) {
+        static unsigned counter = 1000000;
+        counter += 1;
+        return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[4]){first, group, colon, close},
+                                           counter);
+    }
+    smith_lang_slice_replay_element(host, replay, place, &type.dims, (uint32_t[2]){first, group}, indexes);
+    return true;
 }
 
 // The token at the frame's position starts `countof(xs)`, `xs[i]` or `xs[a:b]` of a slice parameter: write it as the
@@ -1759,12 +1897,14 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
 static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangFrame *frame) {
     const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
-    if (replay->instance == nullptr || replay->instance->slices.length == 0 || replay->generic == nullptr ||
-        token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0 ||
-        smith_lang_member_before(frame->pos) || replay->count + 12 >= smith_lang_replay_depth_max) {
+    if (replay->instance == nullptr || replay->generic == nullptr || token->kind != SmithTokenKind_Identifier ||
+        token->special != SmithLangGen_Plain || token->param != 0 || smith_lang_member_before(frame->pos) ||
+        replay->count + 24 >= smith_lang_replay_depth_max) {
         return false;
     }
     uint32_t place = smith_lang_gen_place(host, replay->generic, (SmithLangGenToken *)token, replay->location);
+    if (smith_lang_slice_replay_member(lang, host, replay, frame, place)) return true;
+    if (replay->instance->slices.length == 0) return false;
     if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "countof")) {
         return smith_lang_slice_replay_countof(replay, place, frame);
     }

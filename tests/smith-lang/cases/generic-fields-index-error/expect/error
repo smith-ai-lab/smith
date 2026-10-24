@@ -1,0 +1,1 @@
+src/main.smith:10:12: a generic cannot index or cut part of the rows of a slice member yet: index every dimension, `x.[f][i][j]`, or take the row in the caller
