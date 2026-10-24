@@ -61,6 +61,9 @@ jobs:
         # The step ends before the job does, so the log steps below always run.
         timeout-minutes: 25
         shell: bash
+        env:
+          # the per-task table (wall, cpu, processes) goes to .smith/log/test.log, kept in the artifact
+          SMITH_ACCOUNT: all
         run: |
           ci="$RUNNER_TEMP/ci"
           mkdir -p "$ci"
