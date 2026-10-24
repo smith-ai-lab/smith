@@ -9,6 +9,7 @@
 #endif
 #endif
 #include "../../../include/smith/contract.h"
+#include "../../../include/smith/math.h"
 #include <sanitizer/asan_interface.h>
 #include "../../../include/smith/trace.h"
 

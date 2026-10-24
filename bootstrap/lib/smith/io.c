@@ -2159,7 +2159,8 @@ char *copy = smith_arena_push_array(&io.arena, sizeof(char), fake->input_size + 
 __builtin_memcpy(copy, test.input, fake->input_size);
 fake->input = copy;
 }
-const char **values = smith_arena_push_array(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
+const char **values =
+(const char **)smith_arena_push_array(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
 for (__SIZE_TYPE__ i = 0; i < test.argc; i++) {
 smith_io_check(test.argv != nullptr);
 values[i] = test.argv[i];
@@ -2167,7 +2168,8 @@ values[i] = test.argv[i];
 __SIZE_TYPE__ entries = 0;
 for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
 }
-const char **variables = smith_arena_push_array(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
+const char **variables =
+(const char **)smith_arena_push_array(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
 for (__SIZE_TYPE__ i = 0; i < entries; i++)
 variables[i] = test.environment[i];
 fake->cores = test.cores > 0 ? test.cores : 1;

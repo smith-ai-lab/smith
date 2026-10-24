@@ -1,7 +1,8 @@
-#!/ bin / sh
-#Tests of < smith / arena.h> and of how a project gets a smith library, with real clang, ninja and clangd.Usage:
-#sh tests / arena.sh path / to / smith
-set - u case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
+#!/bin/sh
+# Tests of <smith/arena.h> and of how a project gets a smith library, with real clang, ninja and clangd. Usage:
+# sh tests/arena.sh path/to/smith
+set -u
+case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
 work=$(mktemp -d)
@@ -257,4 +258,3 @@ expect_contains "unknown: the message names the library" "$err" 'smith: build.c:
 echo
 echo "$total arena checks, $failures failed"
 [ "$failures" -eq 0 ]
-

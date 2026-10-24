@@ -963,7 +963,16 @@ static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *ho
     static SmithToken tokens[256];
     SmithToken like = {};
     like.location = location;
+    // The struct is written whole each time, in the call's declaration and in the instance's (C23: the same definition
+    // may be written again in any scope), whatever earlier declarations defined: the tags `T xs[:]` records are the
+    // file's and are left as they were.
+    static char saved[sizeof lang->slice.tags];
+    uint32_t saved_count = lang->slice.tag_count;
+    memcpy(saved, lang->slice.tags, sizeof saved);
+    lang->slice.tag_count = 0;
     size_t count = smith_lang_ty_type_tokens(lang, instance->result_handle, &like, tokens, 256);
+    memcpy(lang->slice.tags, saved, sizeof saved);
+    lang->slice.tag_count = saved_count;
     for (size_t at = 0; at < count; at++) { // the struct's tokens
         const SmithToken *token = &tokens[at];
         const char *text = token->text;
