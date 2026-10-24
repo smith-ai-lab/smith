@@ -25,7 +25,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 | `smith check`, `fmt`, `lint` | [smith-check](../smith-check/SKILL.md), [smith-check-lints](../smith-check-lints/SKILL.md) |
 | `smith lsp` | [smith-lsp](../smith-lsp/SKILL.md); Neovim [smith-neovim](../smith-neovim/SKILL.md) |
 | `smith docs` | [smith-docs](../smith-docs/SKILL.md), [smith-docs-check](../smith-docs-check/SKILL.md) |
-| `smith prove` | [smith-prove](../smith-prove/SKILL.md), [-trusted](../smith-prove-trusted/SKILL.md), [-cost](../smith-prove-cost/SKILL.md); contracts [smith-contract](../smith-contract/SKILL.md) |
+| `smith prove` | [smith-prove](../smith-prove/SKILL.md): [-project](../smith-prove-project/SKILL.md), [-slices](../smith-prove-slices/SKILL.md), [-calls](../smith-prove-calls/SKILL.md), [-pointers](../smith-prove-pointers/SKILL.md), [-loops](../smith-prove-loops/SKILL.md), [-budget](../smith-prove-budget/SKILL.md), [-ir](../smith-prove-ir/SKILL.md), [-trusted](../smith-prove-trusted/SKILL.md), [-cost](../smith-prove-cost/SKILL.md); contracts [smith-contract](../smith-contract/SKILL.md) ([-roles](../smith-contract-roles/SKILL.md)) |
 | `smith dbg`, `smith dap`, `smith mcp` | [smith-debug](../smith-debug/SKILL.md), [smith-mcp](../smith-mcp/SKILL.md) |
 | `smith symbolize`, `smith-trace` lines, sanitizer reports | [smith-trace](../smith-trace/SKILL.md) |
 | `smith new`, `smith version` | [smith-new](../smith-new/SKILL.md); `smith version` prints the version and the commit |

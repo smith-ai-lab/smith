@@ -51,10 +51,4 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 
 Also in this family: [smith-contract-proof](../smith-contract-proof/SKILL.md) (`modifies`, a loop's invariant, compile time), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md). `smith prove` and `smith check` say how many functions have a contract (`4 of 23 functions`): write the next one from `smith prove -v`.
 
-## Where an assert goes (the roles stay distinct)
-
-- **A precondition at entry is `requires`**, never an `assert`: the caller proves it, the body assumes it. A pointer parameter is already assumed valid and not null, so `assert(p != nullptr)` is deleted, not converted.
-- **A promise about the result is `ensures`**, written before the return (it may name locals).
-- **A fact in the middle that follows from what the function knows stays an `assert`**; a function with only asserts is proved, so it must be provable cheaply.
-- **A check that cannot be proved cheaply stays an assert, in a trusted function**: a fact about data, about a libc result or deep in a loop over input goes in a small function that starts with `contract::trusted();` and holds `contract::assert(holds); if (!holds) __builtin_trap();` (the library's `check`). The prover never reads its body, so the check is a run-time one that writes the failure report (the call's line and the stack); the trap stops a build without assertions. A bare `__builtin_trap()` writes no report.
-- **A function with a precondition that cannot be proved is `requires` plus `smith_trusted()`** (first statement), with the reason in a comment (smith-prove-trusted).
+Where an assert, a `requires`, an `ensures` and a trusted check each go: `smith-contract-roles`.
