@@ -237,7 +237,12 @@ call 1 launch '{"program":"spin","breakpoints":[{"file":"spin.c","line":9}]}' >g
 "$smith" mcp <gone.jsonl >gone.out 2>&1
 expect_contains "a launch stopped before sleep" "$(reply gone.out 1)" "stopped: breakpoint"
 pid=$(cat spin.pid 2>/dev/null || echo 0)
-sleep 1
+# the server ends the program when the input ends: wait for that (order, not a number of seconds), well inside the 60 s
+# the program sleeps
+for _ in $(seq 1 500); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+done
 if kill -0 "$pid" 2>/dev/null; then
     # Not killed here: the program is no child of this script, so its pid may already be another process's (another
     # test's compile). It ends by itself when its sleep does.

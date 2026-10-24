@@ -158,11 +158,13 @@ static void test_real_processes_run(SmithIo *io) {
     assert(none.error.code == ENOENT && test_contains(none.error.message, "/no/such/program"));
 }
 
-// Three processes and a timeout in one loop. The timer (50 ms) fires after the quick processes and before the slow one.
+// Three processes and a timeout in one loop. The quick processes end first, then the timer, then the slow one: the
+// order of the events, never their durations (the slow one runs until the test ends it, so a stall of the machine
+// cannot reorder them).
 static void test_real_wait_several(SmithIo *io) {
     const char *const quick3[] = {"/bin/sh", "-c", "exit 3", nullptr};
     const char *const quick4[] = {"/bin/sh", "-c", "exit 4", nullptr};
-    const char *const slow[] = {"/bin/sleep", "0.4", nullptr};
+    const char *const slow[] = {"/bin/sleep", "600", nullptr};
     SmithProcess processes[3] = {};
     assert(smith_processes_spawn(&io->processes, quick3, &processes[0]).code == 0);
     assert(smith_processes_spawn(&io->processes, quick4, &processes[1]).code == 0);
@@ -175,12 +177,15 @@ static void test_real_wait_several(SmithIo *io) {
         (void)smith_io_run(io, smith_io_forever);
     assert(timer.done && waits[0].exit_status == 3 && waits[1].exit_status == 4);
     assert(!waits[2].done); // the slow one is still running when the timer fires
+    assert(kill(processes[2].id, SIGKILL) == 0);
     for (size_t round = 0; round < test_rounds_max && !waits[2].done; round++)
         (void)smith_io_run(io, smith_io_forever);
-    assert(waits[2].done && waits[2].exit_status == 0 && waits[2].error.code == 0);
+    assert(waits[2].done && waits[2].signal == SIGKILL && waits[2].error.code == 0);
+    // A poll with nothing pending does not wait; the poll that waits for a pending timer is checked on the fake clock
+    // (tests/io_test.smith), where no machine load can make the timer fire before the poll.
+    assert(smith_io_run(io, 0) == 0);
     SmithOp idle = {};
     smith_clock_timeout_async(&io->clock, &idle, 10 * test_millisecond);
-    assert(smith_io_run(io, 0) == 0 && !idle.done); // a poll does not wait
     assert(smith_io_run(io, smith_io_forever) == 1 && idle.done);
 }
 
@@ -597,14 +602,15 @@ static void test_real_net(SmithIo *io) {
     SmithError error = smith_net_connect(&io->net, &connection, "127.0.0.1", port, false);
     assert(error.code == 0);
     assert(smith_net_send(&io->net, &connection, "GET / HTTP/1.1\r\n\r\n", 18).code == 0);
-    // The loop waits on the receive and a timer together; the data arrives in two parts, 40 ms apart.
+    // The loop waits on the receive and a timer together; the data arrives in two parts.
     char buffer[64];
     SmithOp receive = {}, timer = {};
     smith_net_receive_async(&io->net, &receive, &connection, buffer, sizeof buffer - 1);
     smith_clock_timeout_async(&io->clock, &timer, 300 * test_millisecond);
     for (size_t round = 0; round < test_rounds_max && !receive.done; round++)
         (void)smith_io_run(io, smith_io_forever);
-    assert(receive.done && !timer.done && receive.error.code == 0 && receive.size > 0);
+    assert(receive.done && receive.error.code == 0 &&
+           receive.size > 0); // not that the timer is still pending: a loaded machine can stall past it
     size_t total = receive.size;
     for (size_t round = 0; round < test_rounds_max; round++) {
         SmithRead more = smith_net_receive(&io->net, &connection, buffer + total, sizeof buffer - 1 - total);

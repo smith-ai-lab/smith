@@ -2727,7 +2727,7 @@ static void wait_for(const char *name) {
     const char *folder = c::getenv("SMITH_TEST_PROBE");
     char path[1024];
     c::snprintf(path, sizeof path, "%s/%s", folder, name);
-    for (i32 i = 0; i < 300 && !exists(path); i++) {
+    for (i32 i = 0; i < 60000 && !exists(path); i++) { // up to 600 s: a hang backstop, never a pass/fail time
         c::usleep(10000);
     }
     test::check(exists(path));

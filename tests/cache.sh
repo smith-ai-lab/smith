@@ -243,7 +243,7 @@ cat >build.c <<'C'
 #include <smith/build.h>
 
 void build(SmithBuild *b) {
-    SmithStep wait = {.command = (const char *[]){"sh", "-c", "touch started; sleep 4; touch finished", nullptr}};
+    SmithStep wait = {.command = (const char *[]){"sh", "-c", "touch started; while [ ! -e release ]; do sleep 0.1; done; touch finished", nullptr}};
     smith_task(b, "wait", &wait);
     smith_default(b, smith_list(b, nullptr));
 }
@@ -261,6 +261,7 @@ expect_contains "busy: and says why" "$err" "a smith build is using the cache"
 expect "busy: nothing was removed" yes "$(exists "$packages/$hex1/file.txt")"
 capture "$smith" cache
 expect "busy: showing the caches is still allowed" 0 "$rc"
+touch release # the build runs until told: no number of seconds a loaded machine could outlast
 wait "$build_pid"
 capture "$smith" cache clean
 expect "busy: after the build, smith cache clean works" "0 no" "$rc $(exists "$packages")"

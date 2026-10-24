@@ -1987,6 +1987,8 @@ exec_run
 expect_contains "restat: and then settles, the log has the input's time" "$out" "no work to do"
 
 # 14d. Jobs run at once and print whole; a pool serialises its jobs; a console job keeps stdin.
+# Order, never durations: a job that must overlap another waits for the other's mark, and a pooled one waits a bounded
+# while for a mark that must not come, so a loaded machine can only make the check weaker, never fail it.
 project
 cat >build.ninja <<'N'
 pool one
@@ -1997,9 +1999,9 @@ rule single
   command = $cmd
   pool = one
 build a: step
-  cmd = echo a1; sleep 0.5; echo a2; echo a3 >&2
+  cmd = echo a1; while [ ! -e b.done ]; do sleep 0.05; done; echo a2; echo a3 >&2
 build b: step
-  cmd = echo b1; sleep 0.1; echo b2
+  cmd = echo b1; echo b2; touch b.done
 default a b
 N
 exec_run -j2
@@ -2017,15 +2019,17 @@ rule single
   command = $cmd
   pool = one
 build a: single
-  cmd = echo start >> order; sleep 0.2; echo end >> order
+  cap = 20
+  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt $cap ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
 build b: single
-  cmd = echo start >> order; sleep 0.2; echo end >> order
+  cap = 20
+  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt $cap ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
 default a b
 N
 exec_run -j4
 expect "pool: a pool of depth 1 runs one job at a time" "start end start end" "$(tr '\n' ' ' <order | sed 's/ $//')"
 rm -f order a b
-sed -i.bak 's/  pool = one//' build.ninja
+sed -i.bak -e 's/  pool = one//' -e 's/cap = 20/cap = 12000/' build.ninja # the other's start is waited for as long as it takes
 exec_run -j4
 expect "pool: without it the two run together" "start start end end" "$(tr '\n' ' ' <order | sed 's/ $//')"
 cat >build.ninja <<'N'

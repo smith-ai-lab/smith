@@ -240,7 +240,10 @@ expect "and one whose binary exists is never touched" yes "$(exists "$folder_e")
 kill $holder 2>/dev/null
 wait $holder 2>/dev/null
 for p in $(lsof -t "$folder_d/.in-use" 2>/dev/null); do kill "$p" 2>/dev/null; done
-sleep 1
+for _ in $(seq 1 300); do # until nothing holds the file: order, not a number of seconds
+    [ -z "$(lsof -t "$folder_d/.in-use" 2>/dev/null)" ] && break
+    sleep 0.1
+done
 touch -t "$two_hours_ago" "$folder_d"
 variant smith_g 44
 "$work/smith_g" cc -fsyntax-only hello.c
