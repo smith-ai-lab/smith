@@ -166,7 +166,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   (`smith_lang_fields_valued_type`). The definition goes out through `gen_put` with the generics dump off (a test reads
   the instances only); it cannot be queued as source, because a function body in the queue is read as the lowering's
   sparse body and loses the `}` that ends it. Limits: the functions a condition calls must be defined in the file that
-  instantiates the generic or be functions over `type` of an import (#107) (the instance is compiled there), `typeof(x->[f])` of a bit-field kept in a variable is C's
+  instantiates the generic or be exported functions of an import ([body-files](body-files.md), #107) (the instance is compiled there), `typeof(x->[f])` of a bit-field kept in a variable is C's
   error, a file that defines its own `Field` and also uses `fields(` is a redefinition, `countof(f.name)` is not
   lowered in a generic's body (use `f.name.count[0]`).
 - **`for constexpr`** (issue #71, skill smith-lang-rest). Smith is C plus compile time. The lowering keeps, for the

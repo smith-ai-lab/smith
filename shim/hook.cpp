@@ -2703,7 +2703,7 @@ class SmithHook final : public TokenHook, public NameSource {
         Token token;
         // A function's head is no place for a call at compile time (a head's words are its own names), and a function
         // body is one only where the statement says so.
-        int groups = 0;     // parenthesized groups at the top of the statement: a head with two has a computed result type
+        int groups = 0; // parenthesized groups at the top of the statement: a head with two has a computed result type
         int parens = 0;
         auto flushWords = [&](bool head) {
             if (keyword || (bodies == 0 && (!head || groups >= 2) && (equals || open > 0 || groups >= 2)))
