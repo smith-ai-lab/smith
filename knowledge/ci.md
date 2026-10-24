@@ -1,7 +1,7 @@
 ---
 type: design
 title: CI runs the full check on the owner's Mac
-description: Every pull request runs smith check on a self-hosted runner on a self-hosted runner (no lock, one clone per job), and a green push to main installs and releases smith.
+description: Every pull request runs smith check on a self-hosted runner (no lock, one clone per job), and a green push to main installs and releases smith.
 tags: [ci, process]
 ---
 # CI runs the full check on the owner's Mac
