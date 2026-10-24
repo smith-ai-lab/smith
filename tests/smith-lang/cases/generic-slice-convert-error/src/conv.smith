@@ -1,0 +1,15 @@
+module conv;
+
+// Dropping `const` stays an error inside a generic's body, with the message an ordinary function gets.
+
+static usize plain_count(u8 xs[:]) {
+    return countof(xs);
+}
+
+export usize ordinary(const u8 xs[:]) {
+    return plain_count(xs);
+}
+
+export usize generic(auto xs) {
+    return plain_count(xs);
+}
