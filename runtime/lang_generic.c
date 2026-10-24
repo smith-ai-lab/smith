@@ -692,6 +692,29 @@ static void smith_lang_generic_enter_body(SmithLang *lang, const SmithHost *host
     lang->decl.checking = false;
 }
 
+// A private function over `type` that the head's computed result type calls (`pick(T) widen(...)`) is used by the
+// generic: an exported generic carries it in its header like one its body calls (issue #143).
+static void smith_lang_generic_head_uses(SmithLang *lang, const SmithLangGeneric *generic) {
+    bool was = lang->recording;
+    lang->recording = true;
+    for (uint32_t i = 0; i + 1 < generic->name_index; i++) { // the result type, to the name
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
+        const SmithLangGenToken *next = &smith_lang_gt.tokens[generic->first + i + 1];
+        if (token->kind != SmithTokenKind_Identifier || !smith_lang_gt_punct(next, "(")) continue;
+        for (size_t g = 0; g + 1 < lang->generics_count; g++) { // the head is written with the C name
+            const SmithLangGeneric *called = &smith_lang_generics[g];
+            if (!called->own || !called->plain || called->exported ||
+                !smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_str(called->lowered))) {
+                continue;
+            }
+            const SmithLangName *known =
+                smith_lang_name_find(lang, smith_lang_str(called->member), called->member.length);
+            if (known != nullptr) smith_lang_generic_use(lang, known);
+        }
+    }
+    lang->recording = was;
+}
+
 // The head of the declaration is complete and its terminator is the `{` of the body: the head is recorded and the body
 // is read into the pool, not written. (A generic with no body, or anything else the terminator says, is the error.)
 static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
@@ -753,6 +776,7 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
             smith_lang_capture_mark(lang, generic->first + i);
         }
     }
+    smith_lang_generic_head_uses(lang, generic);
     smith_lang_generic_enter_body(lang, host, terminator);
 }
 

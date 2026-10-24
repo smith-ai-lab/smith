@@ -1,0 +1,18 @@
+module shapes;
+
+static bool wide(type t) { return sizeof(t) > 4; }
+
+// A private function over `type`: the exported generics below call it, in a computed result type and in an
+// `if constexpr`, and an importing module's instance finds it (issue #143).
+static type same(type t) { return wide(t) ? t : t; }
+
+export same(T) keep(constexpr type T, auto x) {
+    return x;
+}
+
+export i32 width(constexpr type T) {
+    if constexpr (wide(T)) {
+        return 2;
+    }
+    return 1;
+}
