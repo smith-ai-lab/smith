@@ -1,0 +1,2 @@
+status 1
+effects_chain.c:13:5: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> helper (effects_chain.c:13) -> log_it (effects_chain.c:9) -> printf (effects_chain.c:5)

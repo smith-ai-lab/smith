@@ -1,0 +1,31 @@
+module effects_chain;
+
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+
+static void log_it(const char *text) {
+    c::printf("%s\n", text);
+}
+
+export [[smith::pure]] i32 length(const char *text) {
+    return (i32)c::strlen(text);
+}
+
+export [[smith::pure]] i32 bad(const char *text) {
+    log_it(text);
+    return 0;
+}
+
+export [[smith::alloc]] void *grab(u32 size) {
+    return c::malloc(size);
+}
+
+export [[smith::alloc]] i32 too_much(const char *path) {
+    return c::fopen(path, "r") != nullptr;
+}
+
+// A slice index that traps is no effect.
+export [[smith::pure]] i32 at(i32 values[:], usize index) {
+    return values[index];
+}

@@ -1,0 +1,2 @@
+status 1
+effects_ceiling.c:10:18: error: smith-effect: `too_much` is limited to alloc, but it has the effects files: too_much -> fopen (effects_ceiling.c:10)
