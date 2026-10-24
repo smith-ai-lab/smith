@@ -844,9 +844,9 @@ class SmithHook final : public TokenHook, public NameSource {
                 return fast == Fast::Dropped;
             }
         }
-        if (!stats.on) return feed(tok);
+        if (!stats.on) return keepCountof(tok, feed(tok));
         auto begin = std::chrono::steady_clock::now();
-        bool consumed = feed(tok);
+        bool consumed = keepCountof(tok, feed(tok));
         stats.slow_nanoseconds +=
             std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - begin).count();
         return consumed;
@@ -1712,12 +1712,23 @@ class SmithHook final : public TokenHook, public NameSource {
         return token.is(tok::identifier) && info != nullptr && !info->hasMacroDefinition();
     }
 
+    // A `countof` the lowering passed on as it is, with no meaning of its own, is C2y's (issue #167).
+    bool keepCountof(Token &tok, bool consumed) {
+        const IdentifierInfo *beforeInfo = nullptr;
+        tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);
+        if (!consumed && tok.is(tok::identifier) && before != tok::period && before != tok::arrow &&
+            !mayEndType(before)) { // after a type it declares a name of the program's own
+            countofToKeyword(tok);
+        }
+        return consumed;
+    }
+
     // The identifier `countof` of the lowering's output, as the keyword `_Countof`, unless it names a member
     // (`x.countof`) or something the program declared.
     void countofToKeyword(Token &made) {
         const IdentifierInfo *info = made.getIdentifierInfo();
         if (info->getName() != "countof" || info->getFETokenInfo() != nullptr) return;
-        if (!out.empty() && out.back().isOneOf(tok::period, tok::arrow)) return;
+        if (!out.empty() && (out.back().isOneOf(tok::period, tok::arrow) || mayEndType(out.back().getKind()))) return;
         IdentifierInfo *keyword = PP.getIdentifierInfo("_Countof");
         made.setIdentifierInfo(keyword);
         made.setKind(keyword->getTokenID());
