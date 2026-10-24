@@ -465,7 +465,7 @@ SliceLayout slice_layout(const DIType *type) {
     auto *composite = dyn_cast_or_null<DICompositeType>(type);
     if (composite == nullptr || composite->getTag() != dwarf::DW_TAG_structure_type ||
         !composite->getName().starts_with("smith_array_") || composite->getSizeInBits() % 64 != 0 ||
-        composite->getSizeInBits() < 128 || composite->getSizeInBits() > 64 * 9)
+        composite->getSizeInBits() < 128 || composite->getSizeInBits() > uint64_t{64} * 9)
         return layout;
     layout.runtime = static_cast<unsigned>(composite->getSizeInBits() / 64 - 1);
     // the dimensions, from the end of the name: `_2` is fixed, `_n` is a count; the last `_n` that makes k of them is
