@@ -63,12 +63,12 @@ void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
                 if constexpr (is_array(typeof(proto.[f]))) {
                     shadow_walk(a, p->[f][0], &p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
                 } else if constexpr (is_slice(typeof(proto.[f]))) {
-                    if (p->[f].count[0] > 0) { // an empty slice has no element to read
+                    if (countof(p->[f]) > 0) { // an empty slice has no element to read
                         typeof(p->[f].data) old = p->[f].data;
                         p->[f].data =
-                            (typeof(old))arena::push_array_raw(a, sizeof(*old), p->[f].count[0], alignof(typeof(*old)));
-                        __builtin_memcpy(p->[f].data, old, p->[f].count[0] * sizeof(*old));
-                        shadow_walk(a, *p->[f].data, p->[f].data, p->[f].count[0]);
+                            (typeof(old))arena::push_array_raw(a, sizeof(*old), countof(p->[f]), alignof(typeof(*old)));
+                        __builtin_memcpy(p->[f].data, old, countof(p->[f]) * sizeof(*old));
+                        shadow_walk(a, *p->[f].data, p->[f].data, countof(p->[f]));
                     }
                 } else {
                     shadow_walk(a, p->[f], &p->[f], 1);
@@ -129,9 +129,9 @@ void map_walk1(constexpr auto f, auto proto, usize n, auto out, typeof(out) a) {
                     map_walk1(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
                               &a->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
-                    contract::assert(a->[fld].count[0] == out->[fld].count[0]);
-                    if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk1(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data);
+                    contract::assert(countof(a->[fld]) == countof(out->[fld]));
+                    if (countof(out->[fld]) > 0) { // an empty slice has no element to read
+                        map_walk1(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data);
                     }
                 } else {
                     map_walk1(f, out->[fld], 1, &out->[fld], &a->[fld]);
@@ -166,10 +166,10 @@ void map_walk2(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                     map_walk2(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
                               &a->[fld][0], &b->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
-                    contract::assert(a->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(b->[fld].count[0] == out->[fld].count[0]);
-                    if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk2(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                    contract::assert(countof(a->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(b->[fld]) == countof(out->[fld]));
+                    if (countof(out->[fld]) > 0) { // an empty slice has no element to read
+                        map_walk2(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
                                   b->[fld].data);
                     }
                 } else {
@@ -208,11 +208,11 @@ void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                     map_walk3(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
                               &a->[fld][0], &b->[fld][0], &c->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
-                    contract::assert(a->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(b->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(c->[fld].count[0] == out->[fld].count[0]);
-                    if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk3(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                    contract::assert(countof(a->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(b->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(c->[fld]) == countof(out->[fld]));
+                    if (countof(out->[fld]) > 0) { // an empty slice has no element to read
+                        map_walk3(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
                                   b->[fld].data, c->[fld].data);
                     }
                 } else {
@@ -255,12 +255,12 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                     map_walk4(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
                               &a->[fld][0], &b->[fld][0], &c->[fld][0], &d->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
-                    contract::assert(a->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(b->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(c->[fld].count[0] == out->[fld].count[0]);
-                    contract::assert(d->[fld].count[0] == out->[fld].count[0]);
-                    if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk4(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                    contract::assert(countof(a->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(b->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(c->[fld]) == countof(out->[fld]));
+                    contract::assert(countof(d->[fld]) == countof(out->[fld]));
+                    if (countof(out->[fld]) > 0) { // an empty slice has no element to read
+                        map_walk4(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
                                   b->[fld].data, c->[fld].data, d->[fld].data);
                     }
                 } else {
