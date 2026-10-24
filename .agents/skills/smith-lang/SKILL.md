@@ -45,17 +45,16 @@ Formatting, linting, building, the editor: `smith-lang-tools`. Good style: `smit
 
 ## Compiling
 
-It is C2y: `smith cc x.smith` means `-x c -std=gnu2y` (a `-std=` of yours wins), with the other flags as for any C file.
+C2y: `smith cc x.smith` means `-x c -std=gnu2y` (a `-std=` of yours wins), with the other flags as for any C file.
 
 ```sh
 smith cc main.smith stats.smith -o prog   # main.smith: `module main; import stats;`
 smith cc -c main.smith                    # alone: stats.smith is found by the path its name implies
 ```
-
 `import stats` with no `stats.h` reads `stats.smith` (among the command's files, else by its path: `a::b` is `a/b.smith`); nothing is written, and linking is as in C. `smith build` writes the headers.
 
 ## Errors
 
 - `.smith files need a smith whose clang has the token hook`: a stage0, or a smith built without `patches/clang-token-hook.patch`; `smith cc --smith-which x.smith` says `token-hook yes` or `no`.
 - ``` `double` is a C keyword; it cannot name a function ```: a C keyword as a name (`i32 double(i32 x)`), at the name, and nothing follows it.
-- A module not found is one error listing what was tried. `... is a C name; write c::...` and the module errors are in `smith-lang-modules`. Every error points at the `.smith` text; if a file fails like plain C, it is C: fix it as C.
+- A module not found is one error listing what was tried. `... is a C name; write c::...` and the module errors are in `smith-lang-modules-errors`. Every error points at the `.smith` text; if a file fails like plain C, it is C: fix it as C.
