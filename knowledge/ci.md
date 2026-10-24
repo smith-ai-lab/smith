@@ -15,3 +15,5 @@ tags: [ci, process]
 **On `main`,** after a green check the `install` job runs `smith build install`, so the installed smith is the merged commit (`smith build release` joins when it exists).
 
 **The process.** An implementer pushes its branch, opens a pull request with `gh pr create` linking the issue, and runs only the tests for what it changed. The lead merges (`gh pr merge --squash`, or `--rebase` to keep commits) only when CI is green on the head commit, so the commit that was checked is the commit that is merged.
+
+**Limits.** Each job has `timeout-minutes: 30`. The DAP test client fails with "the debugger is waiting for permission (Developer Tools)" when neither `smith dap` nor its children use CPU for 60 s (the service user lacks the permission), instead of waiting out the 600 s backstop.

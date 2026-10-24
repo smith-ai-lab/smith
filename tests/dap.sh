@@ -84,6 +84,12 @@ if ! "$smith" cc -std=gnu23 "$here/tests/dap_client.c" -o "$work/dap_client"; th
     echo "FAIL  tests/dap_client.c does not build"
     exit 1
 fi
+# A silent adapter (no output, no CPU) is reported as a missing permission after the idle limit, not waited out.
+printf '#!/bin/sh\nexec sleep 30\n' >"$work/silent"
+chmod +x "$work/silent"
+silent_out=$(DAP_CLIENT_IDLE_SECONDS=1 "$work/dap_client" "$work/silent" x x 1 x x 2>&1 >/dev/null)
+expect_contains "dap: a silent adapter fails as a missing Developer Tools permission" "$silent_out" \
+    "the debugger is waiting for permission (Developer Tools)"
 "$work/dap_client" "$smith" "$work/src/prog" "$work/src/prog.c" 10 sum 7 >"$work/dap.log" 2>&1
 status=$?
 log=$(cat "$work/dap.log")
