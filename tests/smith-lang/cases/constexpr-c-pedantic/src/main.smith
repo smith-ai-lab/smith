@@ -1,0 +1,36 @@
+module main;
+import <stdio.h>;
+
+// A call of an ordinary C function where C requires a constant builds under -Wpedantic -Werror: folding it is no GNU
+// extension in a .smith file (issue #166).
+static i32 fib(i32 n) {
+    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+static_assert(fib(10) == 55);
+
+enum { Fib7 = fib(7) };
+
+struct Flags {
+    u32 low : fib(4) - 1;
+    u32 high : 3;
+};
+
+static type wider(type a, type b) {
+    return sizeof(a) >= sizeof(b) ? a : b;
+}
+
+static_assert(wider(u8, f64) == f64);
+
+i32 main(void) {
+    i32 n = 13;
+    switch (n) {
+    case fib(7):
+        c::printf("seven %d\n", (i32)Fib7);
+        break;
+    default:
+        c::printf("other %zu\n", sizeof(struct Flags));
+        break;
+    }
+    return 0;
+}

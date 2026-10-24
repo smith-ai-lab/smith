@@ -341,7 +341,7 @@ module bytes;
 
 import smith::contract;
 
-export void copy(u8 dst[restrict:], const u8 src[const restrict:]) {
+export void copy(u8 dst[restrict :], const u8 src[const restrict :]) {
     contract::requires(countof(dst) >= countof(src));
     for (usize i = 0; i < countof(src); i++) {
         contract::invariant(i <= countof(src));
@@ -570,7 +570,7 @@ and `gh` signed in. A clone builds with the release of its newest ancestor commi
 
 ```sh
 git clone git@github.com:adam-r-kowalski/smith && cd smith
-sh scripts/stage0.sh llvm      # builds LLVM 23.1.3 (r6) into ~/.cache/smith/llvm, about 9 minutes, once
+sh scripts/stage0.sh llvm      # builds LLVM 23.1.3 (r7) into ~/.cache/smith/llvm, about 9 minutes, once
 sh scripts/stage0.sh install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
 ```
 
