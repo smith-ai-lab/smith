@@ -511,7 +511,7 @@ module greet;
 import smith::format;
 import smith::io;
 
-export void greet(io::Console *out, const char *name) {
+export void greet(io::Console *out, const char name[:]) {
     format::print(out, "hello, ", name, "\n");
 }
 ```
