@@ -16,6 +16,8 @@
 // (knowledge/failure-reports-and-tests.md).
 
 #include <ctype.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
 
 #include "../shim/lldb_explain.h"
 
@@ -326,6 +328,28 @@ static void smith_explain_arm(void) {
     alarm(smith_explain_hang_seconds);
 }
 
+// Detach does not always leave the test running: under load the SIGSTOP of the attach is still pending when the
+// debugger lets go, and the test stays stopped for ever (measured: 5 to 16 of 40 tests started at once, every one cured
+// by a SIGCONT). So this process continues the test until it has been seen running for a moment.
+constexpr int smith_explain_resume_rounds = 400;
+constexpr int smith_explain_resume_settled = 10;
+constexpr uint32_t smith_explain_stopped = 4; // SSTOP of <sys/proc.h>, a kernel header
+
+static void smith_explain_resume(long pid) {
+    int settled = 0;
+    for (int round = 0; round < smith_explain_resume_rounds && settled < smith_explain_resume_settled; round++) {
+        struct proc_bsdshortinfo info = {};
+        if (proc_pidinfo((int)pid, PROC_PIDT_SHORTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) return;
+        if (info.pbsi_status == smith_explain_stopped) {
+            kill((pid_t)pid, SIGCONT);
+            settled = 0;
+        } else {
+            settled++;
+        }
+        usleep(5000);
+    }
+}
+
 // `smith --smith-explain --pid <pid>` and `smith --smith-explain --available`.
 static int smith_explain_main(int argc, char **argv, const char *self) {
     long pid = 0;
@@ -336,6 +360,7 @@ static int smith_explain_main(int argc, char **argv, const char *self) {
     if (pid <= 0) smith_die(smith_exit_usage, "usage: smith --smith-explain --pid <pid>", nullptr);
     smith_explain_arm();
     int status = smith_explain_run(pid, self);
+    smith_explain_resume(pid);
     fflush(stdout);
     return status;
 }
