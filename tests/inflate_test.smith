@@ -38,8 +38,8 @@ static const u8 *load(io::Io *io, const char *name, const char *extension, usize
     (void)format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
     io::Read file = io::files_read(&io->files, &io->arena, path);
     test::check_equal(file.error.code, 0);
-    *size = file.size;
-    return (const u8 *)file.data;
+    *size = countof(file.data);
+    return file.data.data;
 }
 
 static bool same(const u8 *a, const u8 *b, usize size) {

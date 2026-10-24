@@ -205,8 +205,8 @@ static SmithRead smith_http_receive(SmithHttp *http, SmithConnection *connection
         (void)smith_io_run(http->io, (int64_t)(smith_http_idle_ns - waited));
     }
     if (receive.done) {
-        http->received += receive.size;
-        return (SmithRead){.error = receive.error, .data = receive.data, .size = receive.size, .end = receive.end};
+        http->received += receive.data.count[0];
+        return (SmithRead){.error = receive.error, .data = receive.data, .end = receive.end};
     }
     SmithOp close = {};
     smith_net_close_async(http->net, &close, connection);
@@ -369,7 +369,7 @@ static void smith_http_read_body(SmithHttp *http, SmithConnection *connection, S
             return;
         }
         if (read.end) break;
-        smith_http_feed(http, body, http->read_buffer, read.size);
+        smith_http_feed(http, body, http->read_buffer, read.data.count[0]);
     }
     smith_http_flush(http);
     if (http->result.error.code != 0 || body->done || body->mode == SmithBody_ToEnd) return;
@@ -415,7 +415,7 @@ static size_t smith_http_read_head(SmithHttp *http, SmithConnection *connection)
             return SIZE_MAX;
         }
         size_t from = http->head_size > 3 ? http->head_size - 3 : 0;
-        http->head_size += read.size;
+        http->head_size += read.data.count[0];
         http->head[http->head_size] = 0;
         const char *blank = strstr(http->head + from, "\r\n\r\n");
         if (blank != nullptr) { // the body bytes that came with the head move to the read buffer

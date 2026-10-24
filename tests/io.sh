@@ -160,8 +160,8 @@ static size_t count_words(SmithFiles *files, SmithArena *arena, const char *path
     SmithRead text = smith_files_read(files, arena, path);
     size_t words = 0;
     bool inside = false;
-    for (size_t i = 0; i < text.size; i++) {
-        bool space = text.data[i] == ' ' || text.data[i] == '\n';
+    for (size_t i = 0; i < text.data.count[0]; i++) {
+        bool space = text.data.data[i] == ' ' || text.data.data[i] == '\n';
         if (!space && !inside) words += 1;
         inside = !space;
     }

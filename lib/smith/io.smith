@@ -116,12 +116,12 @@ static_assert(target::os == target::macos,
     char message[192];
 } Error;
 
-// The result of reading: data is NUL-terminated (size does not count the NUL), in the arena you gave. For a read of the
-// console, end is true when the input is over and nothing was read.
+// The result of reading: data is the bytes read, a `const u8[:]`, in the arena you gave; for a file or a line it has a
+// zero after it that its count does not count, so it can be handed to C. For a read of the console, end is true when
+// the input is over and nothing was read.
 [[smith::c_name("SmithRead")]] export typedef struct {
     Error error;
-    const char *data;
-    usize size;
+    const u8 data[:];
     bool end;
 } Read;
 
@@ -167,8 +167,8 @@ static_assert(target::os == target::macos,
 [[smith::c_name("SmithOp")]] export typedef struct [[clang::annotate("smith::capability")]] SmithOp {
     bool done;        // set by io::run when the op finished, successfully or not
     Error error;      // valid once done
-    const char *data; // reads: NUL-terminated, in the arena given at submit
-    usize size;       // reads: bytes read
+    const u8 data[:]; // reads: the bytes read (a file's and a line's have a zero after them, not counted)
+    usize taken;      // writes: the bytes taken
     bool end;         // console reads: the input is over
     i32 exit_status;  // process waits: the exit status, or 0 if killed
     i32 signal;       // process waits: the signal that killed it, or 0
@@ -728,14 +728,20 @@ Error fake_capture(Fake *fake, bool errors, const char *text) {
     return (Error){};
 }
 
+// What a read produced: the n bytes at bytes, as the op's data.
+void op_data(Op *op, const void *bytes, usize n) {
+    const u8 *first = bytes;
+    op->data = first[0:n];
+}
+
 Error fake_read_file(Fake *fake, arena::Arena *arena, const char *path, Read *result) {
     FakeFile *file = fake_find(fake, path);
     if (file == nullptr) return error_make(enoent, "open", path);
     if (file->folder) return error_make(eisdir, "read", path);
     u8 *copy = arena::push_array_raw(arena, sizeof(u8), file->size + 1, alignof(u8));
     if (file->size > 0) __builtin_memcpy(copy, file->data, file->size);
-    result->data = (const char *)copy;
-    result->size = file->size;
+    const u8 *contents = copy;
+    result->data = contents[0:file->size];
     return (Error){};
 }
 
@@ -950,7 +956,7 @@ void fake_child_read(Op *op) {
     if (child->chunk != 0 && n > child->chunk) n = child->chunk;
     if (n > 0) __builtin_memcpy(op->internal.destination, child->output + child->output_position, n);
     child->output_position += n;
-    op->size = n;
+    op_data(op, op->internal.destination, n);
     op->end = n == 0;
 }
 
@@ -965,7 +971,7 @@ void fake_child_write(Op *op) {
         __builtin_memcpy(child->input + child->input_size, op->internal.input, size);
         child->input_size += size;
         child->input[child->input_size] = 0;
-        op->size = size;
+        op->taken = size;
     }
 }
 
@@ -989,8 +995,8 @@ Error real_read_file(arena::Arena *arena, const char *path, Read *result) {
     c::close(descriptor);
     grow_reserve(&grow, 0);
     grow.data[grow.size] = 0;
-    result->data = (const char *)grow.data;
-    result->size = grow.size;
+    const u8 *contents = grow.data;
+    result->data = contents[0:grow.size];
     return error;
 }
 
@@ -1204,8 +1210,7 @@ void net_scripted_receive(Op *op, Connection *connection) {
     if (server->chunk > 0 && take > server->chunk) take = server->chunk;
     if (take > 0) __builtin_memcpy(op->internal.destination, server->response + connection->internal.position, take);
     connection->internal.position += take;
-    op->data = (const char *)op->internal.destination;
-    op->size = take;
+    op_data(op, op->internal.destination, take);
     if (take > 0) return;
     if (server->error != 0)
         op->error = error_make(server->error, "read", connection->internal.name);
@@ -1215,12 +1220,12 @@ void net_scripted_receive(Op *op, Connection *connection) {
 
 void net_scripted_send(Op *op, Connection *connection) {
     FakeServer *server = connection->internal.script;
-    if (server->request_size + op->size > request_max) {
+    if (server->request_size + op->taken > request_max) {
         op->error = error_make(enospc, "send", connection->internal.name);
         return;
     }
-    __builtin_memcpy(server->request + server->request_size, op->internal.input, op->size);
-    server->request_size += op->size;
+    __builtin_memcpy(server->request + server->request_size, op->internal.input, op->taken);
+    server->request_size += op->taken;
     server->request[server->request_size] = 0;
 }
 
@@ -1357,11 +1362,10 @@ void loop_finish_file(Loop *loop, Op *op) {
         op->error = loop->fake != nullptr ? fake_read_file(loop->fake, op->internal.arena, op->internal.path, &result)
                                           : real_read_file(op->internal.arena, op->internal.path, &result);
         op->data = result.data;
-        op->size = result.size;
     } else {
         op->error = loop->fake != nullptr
-                        ? fake_write(loop->fake, op->internal.path, op->internal.input, op->size, op->internal.mode)
-                        : real_write_file(op->internal.path, op->internal.input, op->size, op->internal.mode);
+                        ? fake_write(loop->fake, op->internal.path, op->internal.input, op->taken, op->internal.mode)
+                        : real_write_file(op->internal.path, op->internal.input, op->taken, op->internal.mode);
     }
 }
 
@@ -1383,10 +1387,9 @@ void loop_finish_console(Loop *loop, Op *op) {
             size = (usize)n;
         if (op->internal.fill) console->end += size;
     }
-    op->size = size;
     op->end = size == 0 && op->error.code == 0 && op->internal.capacity > 0;
     if (!op->internal.fill && op->internal.destination != nullptr) op->internal.destination[size] = 0;
-    op->data = (const char *)op->internal.destination;
+    op_data(op, op->internal.destination, size);
 }
 
 void loop_finish_wait(Loop *loop, Op *op) {
@@ -1424,13 +1427,13 @@ void loop_finish_wait(Loop *loop, Op *op) {
 // done: all written, or failed; false when the pipe is full, and the op waits for room again.
 bool loop_finish_write(Loop *loop, Op *op) {
     usize total = op->internal.capacity;
-    if (op->size < total) {
+    if (op->taken < total) {
         // sigset_t is a bit set on macOS (<signal.h> has macros for these, which are the preprocessor's): signal n is
         // bit n - 1.
         c::sigset_t pipe_signal = (c::sigset_t)1 << (u32)(sig_pipe - 1);
         c::sigset_t before = {};
         c::pthread_sigmask(sig_block, &pipe_signal, &before);
-        isize n = c::write(op->internal.descriptor, (const u8 *)op->internal.input + op->size, total - op->size);
+        isize n = c::write(op->internal.descriptor, (const u8 *)op->internal.input + op->taken, total - op->taken);
         i32 code = errno_now();
         if (n < 0 && code == epipe) {
             c::sigset_t pending = {};
@@ -1439,14 +1442,14 @@ bool loop_finish_write(Loop *loop, Op *op) {
             if ((pending & pipe_signal) != 0) c::sigwait(&pipe_signal, &taken);
         }
         c::pthread_sigmask(sig_setmask, &before, nullptr);
-        if (n >= 0) op->size += (usize)n;
+        if (n >= 0) op->taken += (usize)n;
         if (n < 0 && code != eagain && code != eintr) op->error = error_make(code, "write", "child stdin");
         if (n < 0 && (code == eagain || code == eintr)) {
             op->internal.ready = !loop_watch(loop, op);
             return false;
         }
     }
-    if (op->size < total && op->error.code == 0) {
+    if (op->taken < total && op->error.code == 0) {
         op->internal.ready = !loop_watch(loop, op); // wait until the pipe has room again
         return false;
     }
@@ -1477,7 +1480,7 @@ bool loop_complete(Loop *loop, Op *op) {
         }
         isize n = c::read(op->internal.descriptor, op->internal.destination, op->internal.capacity);
         if (n < 0) op->error = error_make(errno_now(), "read", "pipe");
-        op->size = n < 0 ? 0 : (usize)n;
+        op_data(op, op->internal.destination, n < 0 ? 0 : (usize)n);
         op->end = n == 0;
         break;
     }
@@ -1610,7 +1613,7 @@ files_write_async(Files *files, Op *op, const char *path, const u8 data[:], Writ
     op->internal.path = path;
     op->internal.mode = mode;
     op->internal.input = data.data;
-    op->size = countof(data);
+    op->taken = countof(data);
     loop_submit(files->loop, op);
 }
 
@@ -1620,7 +1623,7 @@ files_read(Files *files, arena::Arena *arena, const char *path) {
     Op op = {};
     files_read_async(files, &op, arena, path);
     if (!op.done) loop_wait(files->loop, &op);
-    return (Read){.error = op.error, .data = op.data, .size = op.size};
+    return (Read){.error = op.error, .data = op.data};
 }
 
 // Writes the bytes of data to the file as the mode says.
@@ -1758,7 +1761,7 @@ bool console_fill(Console *console, Error *error) {
     loop_submit(console->loop, &op);
     loop_wait(console->loop, &op);
     *error = op.error;
-    return op.error.code == 0 && op.size > 0;
+    return op.error.code == 0 && countof(op.data) > 0;
 }
 
 // The next line of stdin without its newline, in the arena. At the end of the input end is true; a last line with no
@@ -1784,8 +1787,8 @@ console_read_line(Console *console, arena::Arena *arena) {
     result.end = !newline && !any;
     grow_reserve(&line, 0);
     line.data[line.size] = 0;
-    result.data = (const char *)line.data;
-    result.size = line.size;
+    const u8 *contents = line.data;
+    result.data = contents[0:line.size];
     return result;
 }
 
@@ -2011,10 +2014,10 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
     return child_start_real(processes->loop, argv, child);
 }
 
-// Completes when all bytes of data are in the child's stdin pipe (op->size is its count), or fails: EPIPE when the
-// child has closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program.
-// The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child
-// reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
+// Completes when all bytes of data are in the child's stdin pipe (op->taken is its count when done), or fails: EPIPE
+// when the child has closed its stdin or exited (op->taken says how much was taken before that). SIGPIPE cannot kill
+// the program. The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as
+// the child reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
 [[smith::c_name("smith_child_write_async")]] export [[clang::annotate("smith::edge")]] void
 child_write_async(Child *child, Op *op, const u8 data[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
@@ -2032,8 +2035,8 @@ child_write_async(Child *child, Op *op, const u8 data[:]) {
 }
 
 // Completes with whatever the child's stdout holds, at least one byte and at most countof(buffer), in buffer (op->data,
-// op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
-// and nothing was read.
+// not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it and nothing
+// was read.
 [[smith::c_name("smith_child_read_async")]] export [[clang::annotate("smith::edge")]] void
 child_read_async(Child *child, Op *op, u8 buffer[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
@@ -2042,7 +2045,6 @@ child_read_async(Child *child, Op *op, u8 buffer[:]) {
     op_start(op, loop, PipeRead);
     op->internal.destination = buffer.data;
     op->internal.capacity = countof(buffer);
-    op->data = (const char *)buffer.data;
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
@@ -2106,7 +2108,7 @@ void stream_feed(Loop *loop, Stream *stream) {
     if (!stream->open) return;
     if (stream->op.internal.kind != None) {
         if (!stream->op.done) return;
-        stream->grow.size += stream->op.size;
+        stream->grow.size += countof(stream->op.data);
         if (stream->op.end || stream->op.error.code != 0) {
             c::close(stream->descriptor);
             stream->open = false;
@@ -2385,19 +2387,18 @@ usize net_copy(c::dispatch_data_t content, u8 *buffer, usize capacity) {
 void net_received(Loop *loop, Connection *connection, c::dispatch_data_t content, bool complete, c::nw_error_t error) {
     Op *op = net_take(connection, NetReceive);
     if (op == nullptr) return;
-    op->size = net_copy(content, op->internal.destination, op->internal.capacity);
-    op->data = (const char *)op->internal.destination;
+    op_data(op, op->internal.destination, net_copy(content, op->internal.destination, op->internal.capacity));
     Error failure = {};
     if (error != nullptr) failure = net_error(&loop->net_api, error, "read", connection->internal.name);
     if (complete && error == nullptr) connection->internal.end = true;
-    op->end = connection->internal.end && op->size == 0;
+    op->end = connection->internal.end && countof(op->data) == 0;
     net_finish(loop, op, failure);
 }
 
 void net_receive_real(Loop *loop, Op *op, Connection *connection) {
     const NetApi *api = &loop->net_api;
     if (connection->internal.end) { // the peer finished with the last block
-        op->data = (const char *)op->internal.destination;
+        op_data(op, op->internal.destination, 0);
         op->end = true;
         net_finish(loop, op, (Error){});
         return;
@@ -2413,7 +2414,7 @@ void net_receive_real(Loop *loop, Op *op, Connection *connection) {
 void net_send_real(Loop *loop, Op *op, Connection *connection) {
     const NetApi *api = &loop->net_api;
     __c11_atomic_store(&connection->internal.waiting[NetSend - NetConnect], op, seq_cst);
-    c::dispatch_data_t data = c::dispatch_data_create(op->internal.input, op->size, loop->net_queue, nullptr);
+    c::dispatch_data_t data = c::dispatch_data_create(op->internal.input, op->taken, loop->net_queue, nullptr);
     api->send(connection->internal.handle, data, *api->context_message, true, ^(c::nw_error_t error) {
         Error failure = {};
         if (error != nullptr) failure = net_error(&loop->net_api, error, "write", connection->internal.name);
@@ -2451,7 +2452,7 @@ net_send_async(Net *net, Op *op, Connection *connection, const u8 data[:]) {
     usize size = countof(data);
     net_start(net, op, connection, NetSend);
     op->internal.input = data.data;
-    op->size = size;
+    op->taken = size;
     loop_submit(net->loop, op);
     if (net_scripted(net->loop)) return;
     if (__c11_atomic_load(&connection->internal.closed, seq_cst) || size == 0) {
@@ -2461,7 +2462,7 @@ net_send_async(Net *net, Op *op, Connection *connection, const u8 data[:]) {
     net_send_real(net->loop, op, connection);
 }
 
-// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data, op->size;
+// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data;
 // not NUL-terminated); op->end is true when the peer is done sending and nothing was read.
 [[smith::c_name("smith_net_receive_async")]] export [[clang::annotate("smith::edge")]] void
 net_receive_async(Net *net, Op *op, Connection *connection, u8 buffer[:]) {
@@ -2521,7 +2522,7 @@ net_receive(Net *net, Connection *connection, u8 buffer[:]) {
     Op op = {};
     net_receive_async(net, &op, connection, buffer);
     loop_wait(net->loop, &op);
-    return (Read){.error = op.error, .data = op.data, .size = op.size, .end = op.end};
+    return (Read){.error = op.error, .data = op.data, .end = op.end};
 }
 
 [[smith::c_name("smith_net_close")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
@@ -2651,7 +2652,7 @@ void capture_feed(Capture *capture) {
     Op *reading = &capture->internal.read;
     if (capture->internal.reading && !reading->done) return;
     if (capture->internal.reading) {
-        if (!capture->truncated) capture->output_size += reading->size;
+        if (!capture->truncated) capture->output_size += countof(reading->data);
         capture->internal.reading = false;
         if (reading->end || reading->error.code != 0) {
             if (reading->error.code != 0 && capture->error.code == 0) capture->error = reading->error;

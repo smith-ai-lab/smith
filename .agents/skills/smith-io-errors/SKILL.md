@@ -12,7 +12,7 @@ import smith::io;
 
 i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
-    io::Read text = io::files_read(&io.files, &io.arena, "config.txt"); // data is NUL-terminated
+    io::Read text = io::files_read(&io.files, &io.arena, "config.txt"); // data is a const u8[:], with a zero after it that its count does not count
     if (text.error.code != 0) {
         io::Error printed = io::console_print_error(&io.console, text.error.message);
         (void)printed;
@@ -41,7 +41,7 @@ void play(io::Io *io) {
     for (usize turn = 0; turn < turn_max; turn++) {
         io::Read line = io::console_read_line(&io->console, &io->arena);
         if (line.error.code != 0 || line.end) break; // line.end: the input is over
-        (void)io::console_printf(&io->console, "%s\n", line.data);
+        (void)io::console_printf(&io->console, "%s\n", (const char *)line.data.data);
     }
 }
 ```

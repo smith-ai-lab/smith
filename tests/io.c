@@ -49,9 +49,9 @@ static Summary summarize(SmithFiles *files, SmithArena *arena, const char *path)
     SmithRead text = smith_files_read(files, arena, path);
     summary.error = text.error.code;
     memcpy(summary.message, text.error.message, sizeof summary.message);
-    summary.bytes = text.size;
-    for (size_t i = 0; i < text.size; i++)
-        if (text.data[i] == '\n') summary.lines += 1;
+    summary.bytes = text.data.count[0];
+    for (size_t i = 0; i < text.data.count[0]; i++)
+        if (((const char *)text.data.data)[i] == '\n') summary.lines += 1;
     return summary;
 }
 
@@ -69,21 +69,22 @@ static void test_real_files(SmithIo *io) {
                           SmithWrite_Replace);
     assert(error.code == 0);
     SmithRead read = smith_files_read(&io->files, &io->arena, "hello.txt");
-    assert(read.error.code == 0 && read.size == sizeof text - 1 && strcmp(read.data, text) == 0);
+    assert(read.error.code == 0 && read.data.count[0] == sizeof text - 1 &&
+           strcmp((const char *)read.data.data, text) == 0);
 
     SmithRead missing = smith_files_read(&io->files, &io->arena, "missing.txt");
     assert(missing.error.code == ENOENT);
     assert(strcmp(missing.error.message, "open missing.txt: No such file or directory") == 0);
-    assert(missing.data == nullptr && missing.size == 0);
+    assert(missing.data.data == nullptr && missing.data.count[0] == 0);
 
     SmithRead hosts = smith_files_read(&io->files, &io->arena, "/etc/hosts"); // absolute paths work
-    assert(hosts.error.code == 0 && hosts.size > 0);
+    assert(hosts.error.code == 0 && hosts.data.count[0] > 0);
     assert(smith_files_write(&io->files, "../io-test-parent.txt",
                              (struct smith_array_const_u8_n){.data = (const uint8_t *)("parent"), .count = {6}},
                              SmithWrite_Replace)
                .code == 0);
     SmithRead parent = smith_files_read(&io->files, &io->arena, "../io-test-parent.txt"); // so do ".." paths
-    assert(parent.error.code == 0 && strcmp(parent.data, "parent") == 0);
+    assert(parent.error.code == 0 && strcmp((const char *)parent.data.data, "parent") == 0);
     assert(smith_files_read(&io->files, &io->arena, "").error.code == ENOENT);
     assert(smith_files_write(&io->files, "no/such/folder/x",
                              (struct smith_array_const_u8_n){.data = (const uint8_t *)(text), .count = {1}},
@@ -101,7 +102,7 @@ static void test_real_big_file(SmithIo *io) {
                              SmithWrite_Replace)
                .code == 0);
     SmithRead read = smith_files_read(&io->files, &io->arena, "big.bin");
-    assert(read.error.code == 0 && read.size == size && memcmp(read.data, data, size) == 0);
+    assert(read.error.code == 0 && read.data.count[0] == size && memcmp(read.data.data, data, size) == 0);
 }
 
 // Several file operations in one loop: they run in the order submitted, so the read sees the write before it.
@@ -115,10 +116,10 @@ static void test_real_async_files(SmithIo *io) {
     assert(!write.done && !read.done && !missing.done);
     size_t completed = smith_io_run(io, 0);
     assert(completed == 3 && write.done && read.done && missing.done);
-    assert(write.error.code == 0 && read.error.code == 0 && strcmp(read.data, "async") == 0);
+    assert(write.error.code == 0 && read.error.code == 0 && strcmp((const char *)read.data.data, "async") == 0);
     assert(missing.error.code == ENOENT);
     smith_files_read_async(&io->files, &read, &io->arena, "async.txt"); // an op is reusable once done
-    assert(smith_io_run(io, 0) == 1 && read.size == 5);
+    assert(smith_io_run(io, 0) == 1 && read.data.count[0] == 5);
 }
 
 static void test_real_console_pipe(SmithIo *io) {
@@ -131,20 +132,20 @@ static void test_real_console_pipe(SmithIo *io) {
     assert(dup2(fds[0], STDIN_FILENO) >= 0);
     close(fds[0]);
     SmithRead line = smith_console_read_line(&io->console, &io->arena);
-    assert(line.error.code == 0 && !line.end && strcmp(line.data, "one") == 0);
+    assert(line.error.code == 0 && !line.end && strcmp((const char *)line.data.data, "one") == 0);
     SmithOp op = {};
     smith_console_read_async(&io->console, &op, &io->arena, 4); // served from what read_line buffered
-    assert(smith_io_run(io, smith_io_forever) == 1 && op.done && strcmp(op.data, "two\n") == 0);
+    assert(smith_io_run(io, smith_io_forever) == 1 && op.done && strcmp((const char *)op.data.data, "two\n") == 0);
     line = smith_console_read_line(&io->console, &io->arena);
-    assert(!line.end && line.size == 0);
+    assert(!line.end && line.data.count[0] == 0);
     line = smith_console_read_line(&io->console, &io->arena);
-    assert(!line.end && strcmp(line.data, "last without newline") == 0);
+    assert(!line.end && strcmp((const char *)line.data.data, "last without newline") == 0);
     for (size_t i = 0; i < 3; i++) { // the end stays the end
         line = smith_console_read_line(&io->console, &io->arena);
-        assert(line.error.code == 0 && line.end && line.size == 0);
+        assert(line.error.code == 0 && line.end && line.data.count[0] == 0);
     }
     smith_console_read_async(&io->console, &op, &io->arena, 16);
-    assert(smith_io_run(io, smith_io_forever) == 1 && op.end && op.size == 0);
+    assert(smith_io_run(io, smith_io_forever) == 1 && op.end && op.data.count[0] == 0);
     dup2(saved, STDIN_FILENO);
     close(saved);
 }
@@ -452,7 +453,8 @@ static void check_tree(SmithFiles *files, SmithArena *arena, const char *root) {
         SmithWrite_New);
     assert(taken.code == EEXIST && test_contains(taken.message, "one.txt"));
     SmithRead kept = smith_files_read(files, arena, path);
-    assert(kept.error.code == 0 && strcmp(kept.data, "first") == 0); // the second create changed nothing
+    assert(kept.error.code == 0 &&
+           strcmp((const char *)kept.data.data, "first") == 0); // the second create changed nothing
     SmithFileInfo file = smith_files_info(files, path);
     assert(file.error.code == 0 && !file.folder && file.writable && file.size == 5);
 
@@ -467,7 +469,7 @@ static void check_tree(SmithFiles *files, SmithArena *arena, const char *root) {
                .code == 0);
     assert(smith_files_write(files, path, (struct smith_array_const_u8_n){}, SmithWrite_Append).code == 0);
     SmithRead log = smith_files_read(files, arena, path);
-    assert(log.error.code == 0 && log.size == 8 && strcmp(log.data, "one\ntwo\n") == 0);
+    assert(log.error.code == 0 && log.data.count[0] == 8 && strcmp((const char *)log.data.data, "one\ntwo\n") == 0);
 
     SmithFileList list = smith_files_list(files, arena, root); // sorted, files and folders
     assert(list.error.code == 0 && list.count == 2);
@@ -490,7 +492,7 @@ static void check_tree(SmithFiles *files, SmithArena *arena, const char *root) {
                              SmithWrite_Atomic)
                .code == 0);
     SmithRead replaced = smith_files_read(files, arena, path);
-    assert(replaced.error.code == 0 && strcmp(replaced.data, "replaced!") == 0);
+    assert(replaced.error.code == 0 && strcmp((const char *)replaced.data.data, "replaced!") == 0);
     snprintf(path, sizeof path, "%s/a/one.txt.tmp", root);
     assert(smith_files_info(files, path).error.code == ENOENT); // the temporary file is gone
 }
@@ -504,7 +506,7 @@ static void check_map_and_remove(SmithFiles *files, SmithArena *arena, const cha
     assert((uintptr_t)mapped.data % 64 == 0);
     memcpy(mapped.data, "REPLACED?", 9); // private: the file keeps what it had
     SmithRead unchanged = smith_files_read(files, arena, path);
-    assert(strcmp(unchanged.data, "replaced!") == 0);
+    assert(strcmp((const char *)unchanged.data.data, "replaced!") == 0);
     snprintf(path, sizeof path, "%s/empty", root);
     assert(smith_files_write(files, path, (struct smith_array_const_u8_n){}, SmithWrite_Replace).code == 0);
     assert(smith_files_map(files, path).error.code == EINVAL);
@@ -584,7 +586,7 @@ static int program_lines(void) {
         SmithRead line = smith_console_read_line(&io.console, &io.arena);
         if (line.end || line.error.code != 0) break;
         lines += 1;
-        last = line.data;
+        last = (const char *)line.data.data;
     }
     printf("%zu lines, last=%s\n", lines, last);
     return 0;
@@ -654,14 +656,14 @@ static void test_real_net(SmithIo *io) {
     for (size_t round = 0; round < test_rounds_max && !receive.done; round++)
         (void)smith_io_run(io, smith_io_forever);
     assert(receive.done && receive.error.code == 0 &&
-           receive.size > 0); // not that the timer is still pending: a loaded machine can stall past it
-    size_t total = receive.size;
+           receive.data.count[0] > 0); // not that the timer is still pending: a loaded machine can stall past it
+    size_t total = receive.data.count[0];
     for (size_t round = 0; round < test_rounds_max; round++) {
         SmithRead more = smith_net_receive(
             &io->net, &connection,
             (struct smith_array_u8_n){.data = (uint8_t *)(buffer + total), .count = {sizeof buffer - 1 - total}});
         assert(more.error.code == 0);
-        total += more.size;
+        total += more.data.count[0];
         if (more.end) break;
     }
     buffer[total] = 0;
@@ -718,7 +720,7 @@ static size_t test_child_read(SmithIo *io, SmithChild *child, char *buffer, size
         test_child_until(io, &read);
         assert(read.error.code == 0);
         if (read.end) break;
-        got += read.size;
+        got += read.data.count[0];
     }
     return got;
 }
@@ -738,7 +740,7 @@ static void test_real_child_cat(SmithIo *io) {
     smith_child_write_async(&child, &write,
                             (struct smith_array_const_u8_n){.data = (const uint8_t *)("hello\n"), .count = {6}});
     test_child_until(io, &write);
-    assert(write.error.code == 0 && write.size == 6);
+    assert(write.error.code == 0 && write.taken == 6);
     char buffer[64];
     assert(test_child_read(io, &child, buffer, sizeof buffer, 6) == 6 && memcmp(buffer, "hello\n", 6) == 0);
     smith_child_close_input(&child);
@@ -765,7 +767,7 @@ static void test_real_child_early_exit(SmithIo *io) {
         smith_child_write_async(&child, &write,
                                 (struct smith_array_const_u8_n){.data = (const uint8_t *)("late\n"), .count = {5}});
         test_child_until(io, &write);
-        assert(write.error.code == EPIPE && write.size == 0);
+        assert(write.error.code == EPIPE && write.taken == 0);
     }
     char buffer[16];
     assert(test_child_read(io, &child, buffer, sizeof buffer, 4) == 4 && memcmp(buffer, "bye\n", 4) == 0);
@@ -793,13 +795,13 @@ static void test_real_child_large(SmithIo *io) {
     bool closed = false;
     for (size_t round = 0; round < test_rounds_max && !(closed && read.done && read.end); round++) {
         if (write.done && !closed) {
-            assert(write.error.code == 0 && write.size == total);
+            assert(write.error.code == 0 && write.taken == total);
             smith_child_close_input(&child);
             closed = true;
         }
         if (read.done && !read.end) {
             assert(read.error.code == 0);
-            got += read.size;
+            got += read.data.count[0];
             smith_child_read_async(
                 &child, &read,
                 (struct smith_array_u8_n){.data = (uint8_t *)(output + got),

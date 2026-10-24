@@ -211,9 +211,9 @@ static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char 
     const char *info_path = smith_mcp_absolute(&server->scratch, folder, ".smith/build.info");
     if (smith_files_info(&server->io->files, info_path).error.code != 0) return nullptr;
     SmithRead read = smith_files_read(&server->io->files, &server->scratch, info_path);
-    if (read.error.code != 0 || read.data == nullptr) return nullptr;
-    const char *cursor = read.data;
-    const char *end = read.data + read.size;
+    if (read.error.code != 0 || read.data.data == nullptr) return nullptr;
+    const char *cursor = (const char *)read.data.data;
+    const char *end = cursor + read.data.count[0];
     while (cursor < end) { // bounded by the file
         const char *newline = memchr(cursor, '\n', (size_t)(end - cursor));
         const char *stop = newline != nullptr ? newline : end;

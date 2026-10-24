@@ -22,12 +22,20 @@ typedef struct {
     char message[192];
 } SmithError;
 
-// The result of reading: data is NUL-terminated (size does not count the NUL), in the arena you gave. For a read of the
-// console, end is true when the input is over and nothing was read.
+#ifndef SMITH_ARRAY_const_u8_n
+#define SMITH_ARRAY_const_u8_n
+struct smith_array_const_u8_n {
+    const uint8_t *data;
+    size_t count[1];
+};
+#endif
+
+// The result of reading: data is the bytes read, a `const u8[:]`, in the arena you gave; for a file or a line it has a
+// zero after it that its count does not count, so it can be handed to C. For a read of the console, end is true when
+// the input is over and nothing was read.
 typedef struct {
     SmithError error;
-    const char *data;
-    size_t size;
+    struct smith_array_const_u8_n data;
     bool end;
 } SmithRead;
 
@@ -61,10 +69,11 @@ typedef enum {
 } SmithWrite;
 
 typedef struct [[clang::annotate("smith::capability")]] SmithOp {
-    bool done;           // set by io::run when the op finished, successfully or not
-    SmithError error;    // valid once done
-    const char *data;    // reads: NUL-terminated, in the arena given at submit
-    size_t size;         // reads: bytes read
+    bool done;        // set by io::run when the op finished, successfully or not
+    SmithError error; // valid once done
+    struct smith_array_const_u8_n
+        data;            // reads: the bytes read (a file's and a line's have a zero after them, not counted)
+    size_t taken;        // writes: the bytes taken
     bool end;            // console reads: the input is over
     int32_t exit_status; // process waits: the exit status, or 0 if killed
     int32_t signal;      // process waits: the signal that killed it, or 0
@@ -314,14 +323,6 @@ typedef struct {
 [[clang::annotate("smith::edge")]] void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena,
                                                                const char *path);
 
-#ifndef SMITH_ARRAY_const_u8_n
-#define SMITH_ARRAY_const_u8_n
-struct smith_array_const_u8_n {
-    const uint8_t *data;
-    size_t count[1];
-};
-#endif
-
 [[clang::annotate("smith::edge")]] void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path,
                                                                 struct smith_array_const_u8_n data, SmithWrite mode);
 
@@ -418,10 +419,10 @@ smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *arg
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child);
 
-// Completes when all bytes of data are in the child's stdin pipe (op->size is its count), or fails: EPIPE when the
-// child has closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program.
-// The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child
-// reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
+// Completes when all bytes of data are in the child's stdin pipe (op->taken is its count when done), or fails: EPIPE
+// when the child has closed its stdin or exited (op->taken says how much was taken before that). SIGPIPE cannot kill
+// the program. The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as
+// the child reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
 [[clang::annotate("smith::edge")]] void smith_child_write_async(SmithChild *child, SmithOp *op,
                                                                 struct smith_array_const_u8_n data);
 
@@ -434,8 +435,8 @@ struct smith_array_u8_n {
 #endif
 
 // Completes with whatever the child's stdout holds, at least one byte and at most countof(buffer), in buffer (op->data,
-// op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
-// and nothing was read.
+// not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it and nothing
+// was read.
 [[clang::annotate("smith::edge")]] void smith_child_read_async(SmithChild *child, SmithOp *op,
                                                                struct smith_array_u8_n buffer);
 
@@ -464,7 +465,7 @@ smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *co
 [[clang::annotate("smith::edge")]] void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
                                                              struct smith_array_const_u8_n data);
 
-// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data, op->size;
+// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data;
 // not NUL-terminated); op->end is true when the peer is done sending and nothing was read.
 [[clang::annotate("smith::edge")]] void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
                                                                 struct smith_array_u8_n buffer);

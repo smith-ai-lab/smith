@@ -15,7 +15,7 @@ void fetch(io::Io *io, const u8 request[:]) {
     io::Error error = io::net_connect(&io->net, &connection, "example.com", 443, true); // tls
     error = io::net_send(&io->net, &connection, request);
     u8 buffer[4096];
-    io::Read reply = io::net_receive(&io->net, &connection, buffer); // reply.size bytes, or reply.end
+    io::Read reply = io::net_receive(&io->net, &connection, buffer); // countof(reply.data) bytes, or reply.end
     (void)reply;
     error = io::net_close(&io->net, &connection);
     (void)error;
