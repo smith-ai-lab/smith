@@ -1,0 +1,55 @@
+module stats;
+
+// A slice is passed to a generic: its struct is defined at file scope before the instance, so the instance's signature
+// names the caller's own type. In the body `countof(xs)`, `xs[i]` and `xs[a:b]` are the slice's.
+
+export typeof(xs) tail(auto xs) {
+    return xs[1:];
+}
+
+export typeof(xs) head(auto xs, usize n) {
+    return xs[:n];
+}
+
+export bool is_a_slice(auto x) {
+    if constexpr (is_slice(typeof(x))) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+export usize count(auto xs) {
+    return countof(xs);
+}
+
+export i32 last_i32(auto xs) {
+    return xs[countof(xs) - 1];
+}
+
+export i32 second_y(auto xs) {
+    return xs[1].y;
+}
+
+export f32 total(auto xs) {
+    f32 sum = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        sum += xs[i];
+    return sum;
+}
+
+export i64 total_i(auto xs) {
+    i64 sum = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        sum += xs[i];
+    return sum;
+}
+
+// The start of a slice, as the ticket spells it: the checked index guarded by the count.
+export const void *start(auto xs) {
+    return countof(xs) ? &xs[0] : nullptr;
+}
+
+export usize element_size(auto xs) {
+    return sizeof(xs[0]);
+}

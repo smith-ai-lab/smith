@@ -1,0 +1,58 @@
+module main;
+
+import stats;
+import <stdio.h>;
+
+struct Point {
+    i32 x;
+    i32 y;
+};
+
+// is_slice is true for T[:] and for more dimensions, false for the rest, a fixed array included.
+static type slice_of(type T) {
+    return T[:];
+}
+
+static bool slicy(type t) {
+    return is_slice(t);
+}
+
+i32 main(void) {
+    i32 raw[5] = {1, 2, 3, 4, 5};
+    i32 xs[:] = raw;
+    f32 rows_type[:][2];
+    f32 grid_type[:][:];
+    constexpr type one = slice_of(i32);
+    constexpr type plain = i32;
+    constexpr type fixed = i32[4];
+    constexpr type of_xs = typeof(xs);
+    constexpr type of_rows = typeof(rows_type);
+    constexpr type of_grid = typeof(grid_type);
+    static_assert(is_slice(one) && is_slice(of_xs) && is_slice(of_rows) && is_slice(of_grid) && one == of_xs);
+    static_assert(slicy(one) && slicy(slice_of(f32[2])) && !slicy(plain) && !slicy(fixed));
+    static_assert(!is_slice(plain) && !is_slice(fixed) && !is_array(one) && is_array(fixed));
+    c::printf("%lld %zu %d\n", (long long)stats::total_i(xs), stats::count(xs), stats::last_i32(xs));
+
+    // A row of a slice of rows is a slice: f32[:][2] has rows of two, f32[:][:] rows of any count.
+    f32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+    f32 fixed_rows[:][2] = grid;
+    f32 rows[:][:] = grid;
+    c::printf("%g %g\n", (double)stats::total(fixed_rows[1]), (double)stats::total(fixed_rows[2]));
+    c::printf("%zu %g\n", stats::count(fixed_rows), (double)stats::total(fixed_rows[0]));
+    c::printf("%zu\n", stats::count(rows));
+
+    // A slice returned from a generic, and cut inside one.
+    i32 inner[:] = stats::tail(xs);
+    i32 front[:] = stats::head(xs, 2);
+    c::printf("%zu %d %zu %d\n", countof(inner), inner[0], countof(front), front[1]);
+    i32 both[:] = stats::tail(stats::head(xs, 4));
+    c::printf("%zu %d %d\n", countof(both), both[0], stats::last_i32(both));
+
+    // The start, the element size and what is_slice says of an argument.
+    c::printf("%d %d %zu\n", *(const i32 *)stats::start(xs), stats::start(inner) == &raw[1], stats::element_size(xs));
+    struct Point points[2] = {{1, 2}, {3, 4}};
+    struct Point ps[:] = points;
+    c::printf("%zu %d %d\n", stats::element_size(ps), stats::second_y(ps), stats::is_a_slice(ps));
+    c::printf("%d %d\n", stats::is_a_slice(raw[0]), stats::is_a_slice(&raw[0]));
+    return 0;
+}

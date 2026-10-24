@@ -880,7 +880,7 @@ static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const 
     size_t count = 0;
     SmithLangSliceDims dims;
     if (!smith_lang_ty_slice_tag(lang, base, depth, tag, sizeof tag, elem, &count, 48, &dims, like)) return 0;
-    return smith_lang_slice_define(lang, out, 0, capacity, tag, elem, count, &dims, like);
+    return smith_lang_slice_define(lang, nullptr, out, 0, capacity, tag, elem, count, &dims, like);
 }
 
 // `t x;`, `(t)y` or the argument of a generic call, where `t` holds a type: the chain becomes the type it names.
@@ -921,8 +921,9 @@ typedef struct {
 } SmithLangTyQuestion;
 
 static const SmithLangTyQuestion smith_lang_ty_questions[] = {
-    {"is_integer", 16}, {"is_float", 17}, {"is_signed", 18}, {"is_pointer", 19},
-    {"is_bool", 20},    {"is_enum", 21},  {"is_record", 22}, {"is_array", 23},
+    {"is_integer", 16}, {"is_float", 17},  {"is_signed", 18}, {"is_pointer", 19}, {"is_bool", 20},
+    {"is_enum", 21},    {"is_record", 22}, {"is_array", 23},  {"is_slice", 12}, // the handle's slice depth (bits 12 to
+                                                                                // 15), as 0 or 1
 };
 
 // `sizeof(t)` and its kin, where `t` holds a type: an expression over the handle, written in the C given to the
@@ -931,7 +932,7 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     bool size = smith_lang_ident(token, "sizeof");
     bool align = smith_lang_ident(token, "alignof") || smith_lang_ident(token, "_Alignof");
     const SmithLangTyQuestion *question = nullptr;
-    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 8 questions
+    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 9 questions
         if (smith_lang_ident(token, smith_lang_ty_questions[i].name)) question = &smith_lang_ty_questions[i];
     }
     if ((!size && !align && question == nullptr) || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
@@ -949,6 +950,12 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "<<", token, true);
     }
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, align ? true : token->space_before);
+    bool slice = question != nullptr && question->shift == 12;
+    if (slice) { // `(!!(((t) >> 12) & 15))`: any depth is a slice
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "!", token, false);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "!", token, false);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
+    }
     if (!size) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     for (size_t i = 0; i < chain.count; i++) // the chain, as written
@@ -960,8 +967,9 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     if (!size) {
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "&", token, true);
-        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, align ? "31" : "1", token, true);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, align ? "31" : slice ? "15" : "1", token, true);
     }
+    if (slice) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
     if (align) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
     if (smith_lang_ty_put(lang, 2 + chain.count, made, used)) smith_lang_ty.passthrough = chain.count;
@@ -1422,4 +1430,24 @@ static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *hos
     if (holder != nullptr) snprintf(holder->field, sizeof holder->field, "type");
     holder = smith_lang_ty_add("smith_field", 11, SmithLangTy_HolderTag, 0);
     if (holder != nullptr) snprintf(holder->field, sizeof holder->field, "type");
+}
+
+// ---- A slice struct no declaration of the file defines (issue #119)
+
+// A row of a slice of rows is a struct the lowering names in a compound literal, inside a statement expression, so no
+// scope the call sees defines it. What the tag says back is enough for the definition an instance writes at file scope:
+// the element's spelling (`smith_lang_ty_stem_spelling`) and the number of run-time dimensions. False for a tag that
+// does not say its element (a hash, a tuple).
+static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count) {
+    SmithLangSliceDims dims;
+    size_t stem = 0;
+    size_t prefix = sizeof smith_lang_slice_prefix - 1;
+    char element[smith_lang_ty_spelling_max];
+    if (!smith_lang_slice_dims_parse(tag, &dims, &stem) || stem <= prefix ||
+        !smith_lang_ty_stem_spelling(tag + prefix, stem - prefix, element, sizeof element)) {
+        return false;
+    }
+    *count = (unsigned long)smith_lang_slice_dims_runtime(&dims);
+    snprintf(data, capacity, "%s *", element);
+    return *count > 0;
 }

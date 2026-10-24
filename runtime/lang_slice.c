@@ -283,9 +283,9 @@ static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag
 
 // The struct a slice is, ready for the queue: `struct tag { T *data; usize count[1]; }`, or only `struct tag` when an
 // earlier declaration defined it at file scope. The first use at file scope defines it.
-static size_t smith_lang_slice_define(SmithLang *lang, SmithToken *out, size_t used, size_t capacity, const char *tag,
-                                      const SmithToken *elem, size_t count, const SmithLangSliceDims *dims,
-                                      const SmithToken *like) {
+static size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used,
+                                      size_t capacity, const char *tag, const SmithToken *elem, size_t count,
+                                      const SmithLangSliceDims *dims, const SmithToken *like) {
     size_t sizes = smith_lang_slice_dims_runtime(dims);
     bool bare = smith_lang_slice_defined(lang, tag);
     char pattern[smith_lang_tuple_name_max + 80];
@@ -308,7 +308,11 @@ static size_t smith_lang_slice_define(SmithLang *lang, SmithToken *out, size_t u
         if (out[i].synthetic && (smith_lang_punct(&out[i], "{") || smith_lang_punct(&out[i], "}")))
             out[i].tuple_brace = true;
     }
-    if (!lang->in_function && lang->paren_depth == 0 && lang->slice.tag_count < 32) {
+    // A file with no `module` line does not track its functions: the compiler says whether a body is open (issue #119).
+    char returned[8];
+    bool in_body = lang->in_function || (host != nullptr && host->return_type != nullptr &&
+                                         host->return_type(host->context, returned, sizeof returned));
+    if (!in_body && lang->paren_depth == 0 && lang->slice.tag_count < 32) {
         snprintf(lang->slice.tags[lang->slice.tag_count++], sizeof lang->slice.tags[0], "%s", tag);
     }
     return used;
@@ -452,7 +456,7 @@ static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const
     if (dims_problem != nullptr) smith_lang_error(lang, host, dims_where, "%s", dims_problem);
     bool good = smith_lang_slice_tag_of(lang, span + leading, name - leading, &dims, tag, sizeof tag, &problem, &where);
     if (good) {
-        used = smith_lang_slice_define(lang, made, used, sizeof made / sizeof made[0], tag, span + leading,
+        used = smith_lang_slice_define(lang, host, made, used, sizeof made / sizeof made[0], tag, span + leading,
                                        name - leading, &dims, &span[leading]);
     } else {
         smith_lang_error(lang, host, where, "%s", problem);
@@ -505,8 +509,8 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
         smith_lang_error(lang, host, where, "%s", problem);
         return false;
     }
-    size_t used =
-        smith_lang_slice_define(lang, made, 0, sizeof made / sizeof made[0], tag, span + 1, close - 1, &dims, token);
+    size_t used = smith_lang_slice_define(lang, host, made, 0, sizeof made / sizeof made[0], tag, span + 1, close - 1,
+                                          &dims, token);
     made[0].space_before = token->space_before;
     made[0].line_start = token->line_start;
     if (!smith_lang_tuple_replace(lang, last + 1, made, used)) return false;
@@ -1520,4 +1524,202 @@ static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, con
     cur.tokens[0].space_before = token->space_before;
     cur.tokens[0].line_start = token->line_start;
     return smith_lang_tuple_replace(lang, close + 1, cur.tokens, cur.count);
+}
+
+// ---- A slice in an instance's body (issue #119)
+
+// An instance's body is the generic's tokens written again, not read by the lowering, so `xs` (an `auto` parameter) has
+// no `countof`, subscript or cut of a slice. The replay writes them as the lowering does for a source's own slices, in
+// frames: the words of the pattern and the generic's own tokens between them (which are replayed in turn, so a
+// `countof(xs)` in an index is lowered too).
+
+typedef struct {
+    const char *text; // words, or nullptr: the generic's tokens [first, last)
+    uint32_t first;
+    uint32_t last;
+} SmithLangSlicePart;
+
+static void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, const SmithLangSlicePart *parts,
+                                   size_t count) {
+    for (size_t at = count; at > 0; at--) { // the frames run last to first
+        const SmithLangSlicePart *part = &parts[at - 1];
+        if (part->text == nullptr) {
+            smith_lang_replay_push(replay, part->first, part->last, 0);
+            continue;
+        }
+        if (!smith_lang_replay_push(replay, 0, 0, 0)) return;
+        SmithLangFrame *frame = &replay->frames[replay->count - 1];
+        snprintf(frame->words, sizeof frame->words, "%s", part->text);
+        frame->place = place;
+    }
+}
+
+// Whether the identifier at `at` names a parameter of the instance whose type is a slice (the entries the instance
+// recorded when it was asked for; the compiler has not read the instance's signature yet).
+static bool smith_lang_slice_replay_named(const SmithLangReplay *replay, uint32_t at, SmithLangSliceType *type) {
+    int slot = smith_lang_param_type_of(replay->generic, replay->instance, (SmithLangSpan){at, at + 1});
+    if (slot < 0) return false;
+    char text[1024];
+    snprintf(text, sizeof text, "%s", smith_lang_str(replay->instance->slices));
+    for (char *entry = text; *entry != 0;) { // `slot \x1f tag \x1f data \x1f count \x1e`
+        char *end = strchr(entry, '\x1e');
+        char *tag = strchr(entry, '\x1f');
+        if (end == nullptr || tag == nullptr || tag > end) return false;
+        *tag++ = 0;
+        char *stop = strchr(tag, '\x1f');
+        if (stop != nullptr && stop < end && strtol(entry, nullptr, 10) == slot) {
+            *stop++ = 0;
+            char *count = strchr(stop, '\x1f');
+            if (count != nullptr) *count = 0;
+            *type = (SmithLangSliceType){.kind = SmithLangSlice_Slice};
+            snprintf(type->tag, sizeof type->tag, "%s", tag);
+            snprintf(type->element, sizeof type->element, "%s", stop); // the pointer's type: `float *`
+            size_t stem = 0;
+            if (!smith_lang_slice_dims_parse(type->tag, &type->dims, &stem)) type->dims = smith_lang_slice_dims_one();
+            return true;
+        }
+        entry = end + 1;
+    }
+    return false;
+}
+
+// The `]` that closes the `[` at `open` within [open, end), or UINT32_MAX; `colon` says a `:` stands at its top level.
+static uint32_t smith_lang_slice_replay_close(uint32_t open, uint32_t end, uint32_t *colon) {
+    int depth = 0;
+    int conditions = 0;
+    *colon = UINT32_MAX;
+    for (uint32_t at = open; at < end; at++) { // the subscript
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (token->special != SmithLangGen_Plain || token->kind != SmithTokenKind_Punctuator) continue;
+        if (smith_lang_gt_open(token)) depth += 1;
+        if (smith_lang_gt_close(token)) depth -= 1;
+        if (depth == 0) return at;
+        if (depth != 1) continue;
+        if (smith_lang_gt_punct(token, "?")) conditions += 1;
+        if (!smith_lang_gt_punct(token, ":")) continue;
+        if (conditions > 0) {
+            conditions -= 1;
+        } else if (*colon == UINT32_MAX) {
+            *colon = at;
+        }
+    }
+    return UINT32_MAX;
+}
+
+static bool smith_lang_slice_replay_countof(SmithLangReplay *replay, uint32_t place, SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    if (at + 3 >= frame->end || !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "(") ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 3], ")") ||
+        smith_lang_gt.tokens[at + 2].special != SmithLangGen_Plain) {
+        return false;
+    }
+    SmithLangSliceType type = {};
+    if (!smith_lang_slice_replay_named(replay, at + 2, &type)) return false;
+    frame->pos += 4;
+    if (replay->typing) { // the compiler is asked only its type, and the slice's struct is not one it has read
+        SmithLangSlicePart typed[] = {{"( ( __SIZE_TYPE__ ) 0 )", 0, 0}};
+        smith_lang_slice_parts(replay, place, typed, 1);
+        return true;
+    }
+    SmithLangSlicePart parts[] = {{"( (", 0, 0}, {nullptr, at + 2, at + 3}, {") . count [ 0 ] )", 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, sizeof parts / sizeof parts[0]);
+    return true;
+}
+
+static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                              uint32_t place, SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    if (at + 3 >= frame->end || !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[") ||
+        smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "[")) {
+        return false;
+    }
+    SmithLangSliceType type = {};
+    uint32_t colon = UINT32_MAX;
+    uint32_t close = smith_lang_slice_replay_close(at + 1, frame->end, &colon);
+    if (close == UINT32_MAX || !smith_lang_slice_replay_named(replay, at, &type)) return false;
+    if (type.dims.count != 1) {
+        smith_lang_error(lang, host, place,
+                         "a generic cannot index or cut a slice of more than one dimension yet: take a row first, "
+                         "`xs[i]`, in the caller");
+        return false;
+    }
+    if (replay->typing) { // only the type is asked of it, and the slice's struct is not one the compiler has read yet:
+        char typed[640];  // an element is a value of the pointer's type, a cut a value of the slice's
+        if (colon == UINT32_MAX) {
+            snprintf(typed, sizeof typed, "( * ( ( %s ) 0 ) )", type.element);
+        } else {
+            snprintf(typed, sizeof typed, "( * ( ( struct %s * ) 0 ) )", type.tag);
+        }
+        SmithLangSlicePart parts[] = {{typed, 0, 0}};
+        frame->pos = close + 1;
+        smith_lang_slice_parts(replay, place, parts, 1);
+        return true;
+    }
+    static unsigned counter;
+    counter += 1;
+    char condition[160];
+    char check[512];
+    char head[640];
+    char tail[1024];
+    frame->pos = close + 1;
+    if (colon == UINT32_MAX) {
+        snprintf(condition, sizeof condition, "smith_i%1$u < smith_s%1$u . count [ 0 ]", counter);
+        smith_lang_slice_check(host, condition, check, sizeof check);
+        snprintf(head, sizeof head, "( * __extension__ ( { auto smith_s%u = (", counter);
+        snprintf(tail, sizeof tail, ") ; __SIZE_TYPE__ smith_i%1$u = (", counter);
+        char end[1024];
+        snprintf(end, sizeof end, ") ; %s & smith_s%u . data [ smith_i%u ] ; } ) )", check, counter, counter);
+        SmithLangSlicePart parts[] = {
+            {head, 0, 0}, {nullptr, at, at + 1}, {tail, 0, 0}, {nullptr, at + 2, close}, {end, 0, 0}};
+        smith_lang_slice_parts(replay, place, parts, sizeof parts / sizeof parts[0]);
+        return true;
+    }
+    snprintf(condition, sizeof condition, "smith_a%1$u <= smith_b%1$u && smith_b%1$u <= smith_s%1$u . count [ 0 ]",
+             counter);
+    smith_lang_slice_check(host, condition, check, sizeof check);
+    snprintf(head, sizeof head, "__extension__ ( { auto smith_s%u = (", counter);
+    char first[160];
+    char second[160];
+    char last[1024];
+    snprintf(first, sizeof first, ") ; __SIZE_TYPE__ smith_a%u = (", counter);
+    snprintf(second, sizeof second, ") ; __SIZE_TYPE__ smith_b%u = (", counter);
+    snprintf(last, sizeof last,
+             ") ; %s ( struct %s ) { . data = smith_a%u == 0 ? smith_s%u . data : smith_s%u . data + smith_a%u , . "
+             "count = { smith_b%u - smith_a%u } } ; } )",
+             check, type.tag, counter, counter, counter, counter, counter, counter);
+    char whole[64];
+    snprintf(whole, sizeof whole, "smith_s%u . count [ 0 ]", counter);
+    SmithLangSlicePart parts[9] = {{head, 0, 0}, {nullptr, at, at + 1}, {first, 0, 0}};
+    size_t used = 3;
+    if (colon == at + 2) {
+        parts[used++] = (SmithLangSlicePart){"0", 0, 0};
+    } else {
+        parts[used++] = (SmithLangSlicePart){nullptr, at + 2, colon};
+    }
+    parts[used++] = (SmithLangSlicePart){second, 0, 0};
+    if (colon + 1 == close) {
+        parts[used++] = (SmithLangSlicePart){whole, 0, 0};
+    } else {
+        parts[used++] = (SmithLangSlicePart){nullptr, colon + 1, close};
+    }
+    parts[used++] = (SmithLangSlicePart){last, 0, 0};
+    smith_lang_slice_parts(replay, place, parts, used);
+    return true;
+}
+
+// The token at the frame's position starts `countof(xs)`, `xs[i]` or `xs[a:b]` of a slice parameter: write it as the
+// lowering does and take its tokens. False when it is not one.
+static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    SmithLangFrame *frame) {
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
+    if (replay->instance == nullptr || replay->instance->slices.length == 0 || replay->generic == nullptr ||
+        token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0 ||
+        smith_lang_member_before(frame->pos) || replay->count + 12 >= smith_lang_replay_depth_max) {
+        return false;
+    }
+    uint32_t place = smith_lang_gen_place(host, replay->generic, (SmithLangGenToken *)token, replay->location);
+    if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "countof")) {
+        return smith_lang_slice_replay_countof(replay, place, frame);
+    }
+    return smith_lang_slice_replay_subscript(lang, host, replay, place, frame);
 }

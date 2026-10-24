@@ -8,7 +8,7 @@
 //
 // The condition is a constant expression over: integer literals, `true` and `false`, the operators of C, `sizeof(T)`
 // and `alignof(T)`, `T == U` and `T != U` (two types are equal when the parser's canonical spellings are, so `u32 ==
-// uint32_t`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum` and `is_record`. A type
+// uint32_t`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`, `is_array` and `is_slice`. A type
 // is written as the tokens of C's type names: T, the sized types, `struct S`, a typedef, qualifiers and `*`.
 
 constexpr size_t smith_lang_cx_stack_max = 32;
@@ -451,17 +451,22 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (strcmp(text, "is_enum") == 0) value->number = query.is_enum;
     if (strcmp(text, "is_record") == 0) value->number = query.is_record;
     if (strcmp(text, "is_array") == 0) value->number = query.is_array;
+    if (strcmp(text, "is_slice") == 0) { // `T[:]` and its dimensions: the struct of runtime/lang_slice.c, no other
+        static const char tag[] = "struct smith_array_";
+        value->number = strncmp(cx->canonical[canonical], tag, sizeof tag - 1) == 0 &&
+                        strpbrk(cx->canonical[canonical] + 7, "*[( ") == nullptr;
+    }
     *at = after;
     return true;
 }
 
 static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
     static const char *const names[] = {"sizeof",     "alignof", "_Alignof", "is_integer", "is_float", "is_signed",
-                                        "is_pointer", "is_bool", "is_enum",  "is_record",  "is_array"};
+                                        "is_pointer", "is_bool", "is_enum",  "is_record",  "is_array", "is_slice"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 11 names
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 12 names
         if (smith_lang_equals(smith_lang_gt_str(token), token->length, names[i])) return true;
     }
     return false;

@@ -52,6 +52,7 @@ typedef struct {
     uint8_t result_state;   // a computed result type (issue #102): 0 not yet asked, 1 in `result`, 2 failed (reported)
     char result[160];       // its spelling
     uint64_t result_handle; // and its type's handle (a slice is written with its struct, runtime/lang_type.c)
+    SmithLangText slices; // the slice structs of its types (issue #119): `slot\x1ftag\x1fdata type\x1fcount\x1e`, each
 } SmithLangInstance;
 
 static SmithLangInstance smith_lang_instances[smith_lang_instances_max];
@@ -97,6 +98,8 @@ static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, si
 static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
                                    size_t capacity, const char **problem, uint32_t *where);
 static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity);
+static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
+static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count);
 
 // The type parameter a slice's tag is made of: `smith_array_T_n` in `typeof(T[:]) push_slice(...)`, whose struct is
 // named after its element. The token is marked as a slice tag (the instance spells the tag of the type it was asked
@@ -1439,6 +1442,38 @@ static void smith_lang_instance_description(const SmithLangGeneric *generic, con
     snprintf(out + used, capacity - (size_t)used, ")");
 }
 
+// A slice struct is a local of the function that first wrote it, and an instance is written at the end of the file: its
+// signature would name a tag of its own, an incomplete type of the prototype. So the instance defines the struct at
+// file scope first (C23: the same definition in another scope is the same type), from what the compiler says of the
+// caller's own struct, asked here where the caller's scope is open (issue #119).
+static void smith_lang_instance_slices(SmithLang *lang, const SmithHost *host, SmithLangInstance *instance,
+                                       const SmithLangTypeNames *names, size_t entries) {
+    static const char prefix[] = "struct smith_array_";
+    if (host->type_field == nullptr) return;
+    char text[1024];
+    size_t used = 0;
+    for (size_t k = 0; k < entries; k++) { // the types
+        const char *canonical = names->canonical[k];
+        if (strncmp(canonical, prefix, sizeof prefix - 1) != 0) continue;
+        SmithFieldInfo data = {};
+        SmithFieldInfo counts = {};
+        unsigned long count = 0;
+        if (host->type_field(host->context, canonical, (uint32_t)strlen(canonical), 0, &data) &&
+            data.status == SmithFields_Ok && strcmp(data.name, "data") == 0 && strchr(data.type, '(') == nullptr &&
+            host->type_field(host->context, canonical, (uint32_t)strlen(canonical), 1, &counts) &&
+            counts.status == SmithFields_Ok && strcmp(counts.name, "count") == 0 &&
+            strchr(counts.type, '[') != nullptr) {
+            count = strtoul(strchr(counts.type, '[') + 1, nullptr, 10);
+        } else if (!smith_lang_slice_tag_definition(canonical + 7, data.type, sizeof data.type, &count)) {
+            continue;
+        }
+        if (used + strlen(canonical) + strlen(data.type) + 32 > sizeof text) continue;
+        used += (size_t)snprintf(text + used, sizeof text - used, "%zu\x1f%s\x1f%s\x1f%lu\x1e", k, canonical + 7,
+                                 data.type, count);
+    }
+    if (used > 0) instance->slices = smith_lang_store(lang, text, used);
+}
+
 // Makes the instance (its types are staged in smith_lang_it) and tells the lowering the name the source gives it.
 static int smith_lang_instance_make(SmithLang *lang, uint32_t generic_index, const uint32_t first[],
                                     const uint32_t count[], size_t entries, const SmithLangTypeNames *names,
@@ -1514,7 +1549,9 @@ static int smith_lang_instance_request(SmithLang *lang, const SmithHost *host, u
         smith_lang_it_release(mark);
         return -1;
     }
-    return smith_lang_instance_make(lang, generic_index, first, count, entries, names, key, location);
+    int made = smith_lang_instance_make(lang, generic_index, first, count, entries, names, key, location);
+    smith_lang_instance_slices(lang, host, &smith_lang_instances[made], names, entries);
+    return made;
 }
 
 // ---- Writing a signature and a call
@@ -1710,6 +1747,68 @@ static void smith_lang_gen_declaration(SmithLang *lang, const SmithHost *host, c
     smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", location, instance_id);
 }
 
+// `struct tag { T * data; __SIZE_TYPE__ count[n]; };` for each slice struct of the instance's types: at file scope
+// before the instance's declaration, and in the block of a call before its declaration, where the caller's own struct
+// may be out of sight (a row of a slice of rows is defined inside its expression). C23 makes the definitions one type;
+// the file's own definition at file scope is not written again.
+static void smith_lang_instance_define_slices(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                              uint32_t location, uint32_t id) {
+    if (instance->slices.length == 0) return;
+    char text[1024];
+    snprintf(text, sizeof text, "%s", smith_lang_str(instance->slices));
+    char *entry = text;
+    while (*entry != 0) { // the entries
+        char *end = strchr(entry, '\x1e');
+        if (end == nullptr) break;
+        *end = 0;
+        char *tag = strchr(entry, '\x1f');
+        char *data = tag != nullptr ? strchr(tag + 1, '\x1f') : nullptr;
+        char *count = data != nullptr ? strchr(data + 1, '\x1f') : nullptr;
+        if (count != nullptr) {
+            *tag++ = 0;
+            entry = tag;
+        }
+        if (count != nullptr && !smith_lang_slice_defined(lang, entry)) {
+            *data++ = 0;
+            *count++ = 0;
+            smith_lang_gen_note_break(lang);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "struct", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, entry, location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "{", location, id);
+            for (char *word = data; *word != 0;) { // the element's type, as the compiler spells it
+                if (*word == ' ') {
+                    word += 1;
+                    continue;
+                }
+                char *stop = word + 1;
+                bool name = isalnum((unsigned char)*word) || *word == '_';
+                while (name && (isalnum((unsigned char)*stop) || *stop == '_'))
+                    stop += 1;
+                char saved = *stop;
+                *stop = 0;
+                size_t word_length = strlen(word);
+                bool macro =
+                    strncmp(word, "__", 2) == 0 && word_length > 8 && strcmp(word + word_length - 7, "_TYPE__") == 0;
+                smith_lang_gen_put_expanding(lang, host, name ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator,
+                                             word, location, id, macro);
+                *stop = saved;
+                word = stop;
+            }
+            smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "data", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", location, id);
+            smith_lang_gen_put_expanding(lang, host, SmithTokenKind_Identifier, "__SIZE_TYPE__", location, id, true);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "count", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "[", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Number, count, location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "]", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "}", location, id);
+            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", location, id);
+        }
+        entry = end + 1;
+    }
+}
+
 // The start of a call: `__extension__ ({ extern R f(P) __asm__("label"); f(`. The arguments follow, then `) ; } )`.
 // `real` is the place of the name in the source when this is the call as written (the name is its token), else
 // UINT32_MAX.
@@ -1721,6 +1820,7 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
                                            {SmithTokenKind_Punctuator, "("},
                                            {SmithTokenKind_Punctuator, "{"}};
     smith_lang_gen_puts(lang, host, start, sizeof start / sizeof start[0], location, instance_id);
+    smith_lang_instance_define_slices(lang, host, instance, location, instance_id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, instance_id);
     if (real == UINT32_MAX) {
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location,
@@ -1776,11 +1876,12 @@ typedef struct {
     uint32_t pos; // [pos, end) of smith_lang_gt, or a punctuator to write
     uint32_t end;
     char literal;
-    uint32_t place; // of a punctuator to write (0: the call that asked for the instance)
-    uint32_t begin; // where the frame's tokens began (an empty `rest...` looks at the token before it)
-    uint8_t action; // SmithLangFrameAction
-    bool started;   // TypedFinish: the typing flag to restore
-    int32_t source; // TypedStart: the finish
+    char words[640]; // words to write, separated by spaces (a slice's index in an instance, issue #119)
+    uint32_t place;  // of a punctuator to write (0: the call that asked for the instance)
+    uint32_t begin;  // where the frame's tokens began (an empty `rest...` looks at the token before it)
+    uint8_t action;  // SmithLangFrameAction
+    bool started;    // TypedFinish: the typing flag to restore
+    int32_t source;  // TypedStart: the finish
     SmithLangLoop loop;
     uint32_t pool_first; // TypedFinish: where in smith_lang_gt the captured arguments begin
     uint32_t pool_text;
@@ -1807,6 +1908,38 @@ typedef struct {
 } SmithLangReplay;
 
 static SmithLangReplay smith_lang_replay;
+
+// runtime/lang_slice.c, which comes after this file: `countof(xs)`, `xs[i]` and `xs[a:b]` of a slice in an instance's
+// body
+static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    SmithLangFrame *frame);
+static SmithTokenKind smith_lang_slice_kind(const char *word);
+static const char *smith_lang_tuple_keep(const char *text, size_t length);
+
+// Writes the words of a frame, then the frame is done.
+static void smith_lang_replay_words(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                    SmithLangFrame *frame) {
+    char text[sizeof frame->words];
+    memcpy(text, frame->words, sizeof text);
+    uint32_t place = frame->place != 0 ? frame->place : replay->location;
+    uint32_t instance = replay->instance_id;
+    frame->words[0] = 0;
+    frame->literal = 0;
+    frame->pos = frame->end;
+    for (char *word = text; *word != 0;) { // each word
+        while (*word == ' ')
+            word += 1;
+        char *stop = word;
+        while (*stop != 0 && *stop != ' ')
+            stop += 1;
+        if (stop == word) break;
+        const char *kept = smith_lang_tuple_keep(word, (size_t)(stop - word));
+        size_t kept_length = strlen(kept);
+        bool size = strncmp(kept, "__", 2) == 0 && kept_length > 8 && strcmp(kept + kept_length - 7, "_TYPE__") == 0;
+        smith_lang_gen_put_expanding(lang, host, smith_lang_slice_kind(kept), kept, place, instance, size);
+        word = stop;
+    }
+}
 
 static bool smith_lang_replay_push(SmithLangReplay *replay, uint32_t pos, uint32_t end, char literal) {
     if (replay->count >= smith_lang_replay_depth_max) return false;
@@ -3298,6 +3431,10 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
                                frame_place != 0 ? frame_place : replay->location, replay->instance_id);
             continue;
         }
+        if (frame->words[0] != 0) {
+            smith_lang_replay_words(lang, host, replay, frame);
+            continue;
+        }
         if (frame->action != SmithLangFrame_Tokens && smith_lang_replay_action(lang, host, replay, frame)) continue;
         if (frame->pos >= frame->end) {
             replay->count -= 1;
@@ -3317,6 +3454,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             continue;
         }
         if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
+        if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
         if (smith_lang_list_gone(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
         if (use.kind == SmithLangPack_None && smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end)) {
@@ -3368,6 +3506,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     lang->carry_line_start = true;
     smith_lang_gen_note_break(lang);
     smith_lang_fields_declare(lang, host, generic, instance, id, location);
+    smith_lang_instance_define_slices(lang, host, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},
                                           {SmithTokenKind_Identifier, "gnu"},  {SmithTokenKind_Punctuator, "::"},
