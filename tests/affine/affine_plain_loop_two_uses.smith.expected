@@ -1,0 +1,3 @@
+status 1
+affine_plain_loop_two_uses.smith:14:65: error: smith-affine: 'keys[i]' is used again; it was already used at line 14
+affine_plain_loop_two_uses.smith:14:49: note: 'keys[i]' was first used here

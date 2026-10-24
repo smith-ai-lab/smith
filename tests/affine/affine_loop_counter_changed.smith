@@ -1,0 +1,19 @@
+module affine_loop_counter_changed;
+
+export [[smith::affine]] typedef struct { u64 bits; } Key;
+export typedef struct { Key key; u64 n; } Holder;
+export u64 draw(Key key) { return key.bits; }
+export void split(Key key, Key keys[3]) { (void)key; (void)keys; }
+export void split_all(Key key, Key keys[:]) { (void)key; (void)keys; }
+export u64 take(Key *key) { return key->bits; }
+
+u64 skipping(Key key) {
+    Key keys[3];
+    split(key, keys);
+    u64 total = 0;
+    for (usize i = 0; i < 3; i++) {
+        total += draw(keys[i]);
+        i++;
+    }
+    return total;
+}

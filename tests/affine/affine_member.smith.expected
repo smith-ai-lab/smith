@@ -1,0 +1,3 @@
+status 1
+affine_member.smith:12:21: error: smith-affine: 'h.key' is used again; it was already used at line 11
+affine_member.smith:11:18: note: 'h.key' was first used here
