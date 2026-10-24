@@ -1,3 +1,3 @@
 src/wide.smith:11:15: static assertion failed due to requirement '!long_is_four(wide)': long is four bytes here
-src/wide.smith:12:15: static assertion failed due to requirement '((wide) >> 32) != 4': sizeof of a type value is four bytes here
+src/wide.smith:12:15: static assertion failed due to requirement '((unsigned long long)(wide) >> 32) != 4': sizeof of a type value is four bytes here
 src/wide.smith:13:15: static assertion failed due to requirement '(1ULL << (((wide) >> 24) & 31)) != 4': alignof of a type value is four here

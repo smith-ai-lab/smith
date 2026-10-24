@@ -11,4 +11,4 @@ value (i64)-1: i64 -1
 value grid.cells[1][2]: i32 -6
 value &grid: error: a pointer is not a value (C23: a `constexpr` pointer must be null)
 value counter: error: the expression is not a constant expression; subexpression not valid in a constant expression
-value (__int128)1: error: an integer wider than 64 bits is not a value smith reads back
+value (__int128)1: error: a signed integer, or one wider than 128 bits, is not a value smith reads back
