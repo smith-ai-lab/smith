@@ -1850,6 +1850,25 @@ static bool smith_can_differentiate(void) {
 #endif
 }
 
+// A build's compilers are the links `smith-cc` and `smith-c++` that a build file names; they are found on PATH, so the
+// folder of the running smith goes first when it holds smith-cc: a smith under test compiles with itself, never with
+// the installed one. A caller's CC (a path) or SMITH_CLANG still wins, since they bypass the name.
+static void smith_prefer_own_links(const char *self) {
+    char folder[PATH_MAX];
+    int written = snprintf(folder, sizeof folder, "%s", self);
+    SMITH_ASSERT(written > 0 && written < PATH_MAX);
+    char *slash = strrchr(folder, '/');
+    if (slash == nullptr) return;
+    *slash = '\0';
+    char link[PATH_MAX];
+    written = snprintf(link, sizeof link, "%s/smith-cc", folder);
+    if (written <= 0 || written >= PATH_MAX || !smith_is_executable(link)) return;
+    const char *old = getenv("PATH");
+    char path[PATH_MAX * 4];
+    written = snprintf(path, sizeof path, "%s:%s", folder, old == nullptr ? "" : old);
+    if (written > 0 && (size_t)written < sizeof path) setenv("PATH", path, 1);
+}
+
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
 // nullptr: its targets are smith's own, smith_needs and smith_tests).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
@@ -1858,6 +1877,7 @@ static int smith_build_main(int count, char **args, const char *self, const char
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     SmithBuildFile file = smith_build_file();
     smith_cache_hold();
+    smith_prefer_own_links(self);
     setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no",
            1);                     // whether smith::autodiff programs can be built
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures

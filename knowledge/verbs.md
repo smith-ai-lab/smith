@@ -140,4 +140,4 @@ table, `smith_verbs` in smith.c, so a new verb is a row (the actions are in `run
 For a program that needs one path to the compiler (`CC=` in a Makefile, CMake, the first word of a
 `compile_commands.json` command, which clangd reads as a compiler), `smith build install` also installs the links
 `smith-cc` and `smith-c++`, which act as `smith cc` and `smith c++` by their name. A `build.c` names them as its
-compilers (`.compiler = "smith-cc"`); `"smith"` alone, or a path that ends in `/smith` (an environment's `CC=$HOME/.local/bin/smith`), is an error that says so before anything runs, since `smith foo.c` has no meaning.
+compilers (`.compiler = "smith-cc"`); `"smith"` alone, or a path that ends in `/smith` (an environment's `CC=$HOME/.local/bin/smith`), is an error that says so before anything runs, since `smith foo.c` has no meaning. A smith that runs a build puts its own folder first on `PATH` when it holds `smith-cc`, so the compilers a build file names are that smith's links, never the installed ones (a `CC` path wins).

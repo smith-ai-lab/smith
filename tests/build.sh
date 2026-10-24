@@ -2318,6 +2318,20 @@ expect_contains "-DCC=smith: ... with the hint" "$err" "use \"smith-cc\" for C"
 capture env CC=smith-cc "$smith" build
 expect "CC=smith-cc still builds" 0 "$rc"
 
+# 13y2. A smith builds with its own smith-cc, the link beside it, and never with the one earlier on PATH (issue #191):
+# a copy of smith whose smith-cc leaves a marker is the one that compiles, with another smith-cc first on PATH.
+project
+printf 'int main(void) { return 0; }\n' >main.c
+mkdir own other
+cp "$smith" own/smith
+for kind in own other; do
+    printf '#!/bin/sh\necho %s >>"%s/marker"\nexec "%s" cc "$@"\n' "$kind" "$PWD" "$smith" >$kind/smith-cc
+    chmod +x $kind/smith-cc
+done
+PATH=$PWD/other:$PATH "$PWD/own/smith" build >out.txt 2>err.txt
+expect "own link: the build runs" 0 "$?"
+expect "own link: the smith-cc beside the running smith compiled, not the one on PATH" "own" "$(sort -u marker 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+
 # 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "io" brings the arena and random,
 # whether the project passes them to smith_program or not (smith_program adds what the libraries it links need).
 project
