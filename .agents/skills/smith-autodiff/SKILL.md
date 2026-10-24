@@ -20,13 +20,13 @@ typedef struct { Layer layers[:]; f64 scale[2]; i32 steps; } Net;
 f64 loss(Net *net, const Batch *batch) { ... }
 
 Net g = autodiff::gradient(&io.arena, loss, &net, &batch);   // g.layers[j].w[i] = d loss / d net.layers[j].w[i]
-autodiff::map(sgd, &net, &net, &g);                          // net = sgd(net, g), leaf by leaf; f64 sgd(f64 p, f64 g)
+autodiff::map(sgd, &net, &net, &g, rate);                    // net = sgd(net, g, rate), leaf by leaf; f64 sgd(f64 p, f64 g, f64 rate)
 Net m = autodiff::zeros(&io.arena, net);                     // a struct of net's shape, all zero: an optimizer's state
 ```
 
 - The gradient has the shape of `*x`: a float field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested struct is walked, a `[:]` field (one dimension) is a new array of the same length from the arena, and each element of a `[:]` or a fixed array of structs is walked in turn. A pointer field is an error at your call that says to use `[:]`; so is a call `f` does not accept ("too few arguments ... in instance smith::autodiff::gradient(...)").
 - `f` is a function's name (`mod::loss` too), its first parameter a pointer and its result a float; the arguments after it are anything `f` takes (pointers there are read, never differentiated). A pointer to `const` is fine.
-- **`autodiff::map(f, &out, &a, &b, ...)`** sets every float leaf of `out` to `f` of the matching leaves of one to four structs of the same type (`out` may be one of them), walking nested structs, fixed arrays and `[:]` fields (equal lengths, checked); other leaves stay as they are. `f` is an ordinary function of one float per input (a generic cannot be passed); an `f32` leaf converts to `f`'s `f64` parameters and back. SGD, momentum and Adam are each a small function and `map` (`map(moment1, &m, &m, &g)`, `map(adam, &p, &p, &m, &v)`); a number `f` needs besides the leaves (the learning rate, Adam's bias corrections) is a variable of your file. `zeros(&arena, x)` is `x` with every number zero and every `[:]` a new array of its length.
+- **`autodiff::map(f, &out, &a, &b, ..., x, y)`** sets every float leaf of `out` to `f` of the matching leaves of any number of structs of the same type (`out` may be one of them), walking nested structs, fixed arrays and `[:]` fields (equal lengths, checked); other leaves stay as they are. A struct pointer is walked to its leaf and anything else (the learning rate, the step) is passed to every call as it is, in its place. `f` is an ordinary function of one float per struct and one value per number (a generic cannot be passed); an `f32` leaf converts to `f`'s `f64` parameters and back. Adam (learner's shape) is `map(moment1, &m, &m, &g, beta1); map(moment2, &v, &v, &g, beta2); map(adam, &p, &p, &m, &v, lr, t)` with `f64 adam(f64 p, f64 m, f64 v, f64 lr, i32 t)` computing the bias corrections from `t`; SGD is `map(sgd, &p, &p, &g, lr)`. `zeros(&arena, x)` is `x` with every number zero and every `[:]` a new array of its length.
 
 The raw calls, which `gradient` is built on and C uses:
 

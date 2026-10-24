@@ -110,30 +110,49 @@ Net make_net(arena::Arena *arena, f64 seed) {
     return p;
 }
 
-// Optimizers: functions of one set of matching leaves, applied with autodiff::map. The numbers they need besides the
-// leaves are the file's.
+// Optimizers: functions of one set of matching leaves and the numbers they need, applied with autodiff::map: a pointer
+// is walked to its leaf, a number (the learning rate, the step) is passed to every call as it is.
+f64 sgd(f64 p, f64 g, f64 rate) {
+    return p - rate * g;
+}
+
+f64 moment1(f64 m, f64 g, f64 beta) {
+    return beta * m + (1.0 - beta) * g;
+}
+
+f64 moment2(f64 v, f64 g, f64 beta) {
+    return beta * v + (1.0 - beta) * g * g;
+}
+
+f64 adam(f64 p, f64 m, f64 v, f64 rate, i32 step) {
+    f64 correct1 = 1.0 / (1.0 - c::pow(0.9, (f64)step));
+    f64 correct2 = 1.0 / (1.0 - c::pow(0.999, (f64)step));
+    return p - rate * (m * correct1) / (c::sqrt(v * correct2) + 1e-8);
+}
+
+// One to six inputs and two numbers: out = sum of the inputs scaled by `a`, plus `b`.
+f64 sum1(f64 x, f64 a, f64 b) {
+    return a * x + b;
+}
+f64 sum2(f64 x, f64 y, f64 a, f64 b) {
+    return a * (x + y) + b;
+}
+f64 sum3(f64 x, f64 y, f64 z, f64 a, f64 b) {
+    return a * (x + y + z) + b;
+}
+f64 sum4(f64 x, f64 y, f64 z, f64 w, f64 a, f64 b) {
+    return a * (x + y + z + w) + b;
+}
+f64 sum5(f64 x, f64 y, f64 z, f64 w, f64 u, f64 a, f64 b) {
+    return a * (x + y + z + w + u) + b;
+}
+f64 sum6(f64 x, f64 y, f64 z, f64 w, f64 u, f64 t, f64 a, f64 b) {
+    return a * (x + y + z + w + u + t) + b;
+}
+
 f64 learning_rate = 0.05;
 f64 beta1 = 0.9;
 f64 beta2 = 0.999;
-f64 epsilon = 1e-8;
-f64 correct1 = 1.0;
-f64 correct2 = 1.0;
-
-f64 sgd(f64 p, f64 g) {
-    return p - learning_rate * g;
-}
-
-f64 moment1(f64 m, f64 g) {
-    return beta1 * m + (1.0 - beta1) * g;
-}
-
-f64 moment2(f64 v, f64 g) {
-    return beta2 * v + (1.0 - beta2) * g * g;
-}
-
-f64 adam(f64 p, f64 m, f64 v) {
-    return p - learning_rate * (m * correct1) / (c::sqrt(v * correct2) + epsilon);
-}
 
 i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
@@ -194,7 +213,7 @@ i32 main(i32 argc, char **argv) {
     f64 flat_g[numbers] = {};
     (void)flatten(&p, before);
     (void)flatten(&g, flat_g);
-    autodiff::map(sgd, &p, &p, &g);
+    autodiff::map(sgd, &p, &p, &g, learning_rate);
     f64 sgd_want[numbers] = {};
     for (usize i = 0; i < numbers; i++) {
         sgd_want[i] = before[i] - learning_rate * flat_g[i];
@@ -222,21 +241,50 @@ i32 main(i32 argc, char **argv) {
         Net gq = autodiff::gradient(arena, net_loss, &q, &batch);
         f64 gflat[numbers] = {};
         (void)flatten(&gq, gflat);
-        correct1 = 1.0 / (1.0 - c::pow(beta1, (f64)step));
-        correct2 = 1.0 / (1.0 - c::pow(beta2, (f64)step));
-        autodiff::map(moment1, &m, &m, &gq);
-        autodiff::map(moment2, &v, &v, &gq);
-        autodiff::map(adam, &q, &q, &m, &v);
+        f64 correct1 = 1.0 / (1.0 - c::pow(beta1, (f64)step));
+        f64 correct2 = 1.0 / (1.0 - c::pow(beta2, (f64)step));
+        autodiff::map(moment1, &m, &m, &gq, beta1);
+        autodiff::map(moment2, &v, &v, &gq, beta2);
+        autodiff::map(adam, &q, &q, &m, &v, learning_rate, step);
         for (usize i = 0; i < numbers; i++) {
             ref_m[i] = beta1 * ref_m[i] + (1.0 - beta1) * gflat[i];
             ref_v[i] = beta2 * ref_v[i] + (1.0 - beta2) * gflat[i] * gflat[i];
-            ref[i] = ref[i] - learning_rate * (ref_m[i] * correct1) / (c::sqrt(ref_v[i] * correct2) + epsilon);
+            ref[i] = ref[i] - learning_rate * (ref_m[i] * correct1) / (c::sqrt(ref_v[i] * correct2) + 1e-8);
         }
     }
     f64 adam_got[numbers] = {};
     (void)flatten(&q, adam_got);
     (void)io::console_printf(console, "adam, five steps:\n");
     report(console, "map(adam) vs loop", adam_got, ref, numbers, tolerance);
+
+    // 5. One to six walked inputs and two numbers, against a loop: out = a * (sum of the inputs) + b.
+    Net in[6] = {};
+    f64 flat[6][numbers] = {};
+    for (usize j = 0; j < 6; j++) {
+        in[j] = make_net(arena, 0.1 * (f64)(j + 1));
+        (void)flatten(&in[j], flat[j]);
+    }
+    Net o = autodiff::zeros(arena, in[0]);
+    (void)io::console_printf(console, "map with 1 to 6 inputs and 2 numbers:\n");
+    for (usize inputs = 1; inputs <= 6; inputs++) {
+        if (inputs == 1) autodiff::map(sum1, &o, &in[0], 2.0, 0.5);
+        if (inputs == 2) autodiff::map(sum2, &o, &in[0], &in[1], 2.0, 0.5);
+        if (inputs == 3) autodiff::map(sum3, &o, &in[0], &in[1], &in[2], 2.0, 0.5);
+        if (inputs == 4) autodiff::map(sum4, &o, &in[0], &in[1], &in[2], &in[3], 2.0, 0.5);
+        if (inputs == 5) autodiff::map(sum5, &o, &in[0], &in[1], &in[2], &in[3], &in[4], 2.0, 0.5);
+        if (inputs == 6) autodiff::map(sum6, &o, &in[0], &in[1], &in[2], &in[3], &in[4], &in[5], 2.0, 0.5);
+        f64 got_sum[numbers] = {};
+        f64 want_sum[numbers] = {};
+        (void)flatten(&o, got_sum);
+        for (usize i = 0; i < numbers; i++) {
+            f64 total = 0.0;
+            for (usize j = 0; j < inputs; j++) {
+                total += flat[j][i];
+            }
+            want_sum[i] = 2.0 * total + 0.5;
+        }
+        report(console, "map(sum) vs loop", got_sum, want_sum, numbers, tolerance);
+    }
 
     (void)io::console_printf(console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
     io::close(&io);
