@@ -48,6 +48,12 @@ check different-tree-not-checked no "$(sh "$script" checked "$tree2")"
 STUB_ANSWER=
 check expired-or-missing-runs run "$(sh "$script" decide push "$tree1")"
 check missing-not-checked no "$(sh "$script" checked "$tree1")"
+# fail safe: a malformed answer (not a single run id) is "not checked", so the full check runs
+for bad in 'not json' 'null' '<html>502</html>' '4242 4243' '12abc' '{"artifacts":[]}'; do
+    STUB_ANSWER=$bad
+    check "malformed-runs: $bad" run "$(sh "$script" decide push "$tree1")"
+    check "malformed-not-checked: $bad" no "$(sh "$script" checked "$tree1")"
+done
 STUB_ANSWER=4242
 export STUB_FAIL=1
 check gh-fails-runs run "$(sh "$script" decide push "$tree1")"
