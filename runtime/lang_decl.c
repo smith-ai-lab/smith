@@ -621,7 +621,7 @@ static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, co
 // A name used in a module that a C header declared, with no `c.`.
 static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                     uint32_t location, bool *is_type) {
-    if (length >= 2 && name[0] == '_' && name[1] == '_') return;
+    if (lang->generated_name || (length >= 2 && name[0] == '_' && name[1] == '_')) return;
     if (smith_lang_in_attribute(lang) || (host->previous != nullptr && smith_lang_sparse_in_attribute(lang, host))) {
         return; // [[gnu::format(printf, 1, 2)]]: printf is the attribute's word for a kind of format
     }

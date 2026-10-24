@@ -82,8 +82,10 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
         return;
     }
     SmithLangContext context = smith_lang_context(lang, host, true);
+    lang->generated_name = token->synthetic; // a name the lowering wrote (`key_Key`) is no C name of the user's
     SmithLangLowered lowered =
         smith_lang_lower(lang, host, token->text, token->length, token->location, &context, nullptr);
+    lang->generated_name = false;
     if (lowered.replaced) {
         SmithToken renamed = smith_lang_synth(SmithTokenKind_Identifier, lowered.text, lowered.length, token);
         renamed.expand = lowered.expand;
