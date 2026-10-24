@@ -32,6 +32,27 @@ jobs:
             exit 1
           fi
 
+      - name: Debugger permission
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          id
+          DevToolsSecurity -status || true
+          env | sort | grep -vi token || true
+          dir=$(mktemp -d)
+          printf 'int main(void){return 3;}\n' >"$dir/t.c"
+          smith cc -g "$dir/t.c" -o "$dir/t"
+          out=$(smith dbg --batch -o 'b main' -o run -o bt -o quit "$dir/t" 2>&1) || true
+          echo "$out"
+          case $out in
+          *"stop reason = breakpoint"*) ;;
+          *)
+            echo "::error::the runner may not debug: see knowledge/debugger.md"
+            exit 1
+            ;;
+          esac
+
       - name: Build smith
         run: smith build
 
