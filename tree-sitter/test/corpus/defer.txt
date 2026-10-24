@@ -1,0 +1,48 @@
+================================================================================
+defer: a statement and a block, and defer as a name (issue #210)
+================================================================================
+
+module m;
+
+void f(int defer) {
+    defer close(fd);
+    defer { a(); b(); }
+    int x = defer;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (module_declaration
+    (module_path
+      (identifier)))
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (defer_statement
+        (expression_statement
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier)))))
+      (defer_statement
+        (compound_statement
+          (expression_statement
+            (call_expression
+              (identifier)
+              (argument_list)))
+          (expression_statement
+            (call_expression
+              (identifier)
+              (argument_list)))))
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (identifier))))))

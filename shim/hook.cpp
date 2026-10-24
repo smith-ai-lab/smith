@@ -1732,6 +1732,7 @@ class SmithHook final : public TokenHook, public NameSource {
     bool keepCountof(Token &tok, bool consumed) {
         const IdentifierInfo *beforeInfo = nullptr;
         tok::TokenKind before = PP.getHookPrevious(1, beforeInfo);
+        if (!consumed && tok.is(tok::identifier)) deferToKeyword(tok, before);
         if (!consumed && tok.is(tok::identifier) && before != tok::period && before != tok::arrow &&
             !mayEndType(before)) { // after a type it declares a name of the program's own
             countofToKeyword(tok);
@@ -1741,6 +1742,23 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // The identifier `countof` of the lowering's output, as the keyword `_Countof`, unless it names a member
     // (`x.countof`) or something the program declared.
+    // In a module `defer` is the keyword of C2y's defer TS, `_Defer` to the compiler (issue #210); it names nothing
+    // (a type before it makes it a declarator), and a member `x.defer` is the member's. Without a `module` line it is
+    // an ordinary identifier.
+    void deferToKeyword(Token &made, tok::TokenKind before) {
+        const IdentifierInfo *info = made.getIdentifierInfo();
+        if (info == nullptr || info->getName() != "defer" || !smith_lang_is_module(lang)) return;
+        if (before == tok::period || before == tok::arrow) return;
+        if (mayEndType(before)) {
+            PP.getDiagnostics().Report(made.getLocation(), diagnostic)
+                << StringRef("`defer` is a keyword in a module (C2y's defer): it cannot name a variable or a function");
+            return;
+        }
+        IdentifierInfo *keyword = PP.getIdentifierInfo("_Defer");
+        made.setIdentifierInfo(keyword);
+        made.setKind(keyword->getTokenID());
+    }
+
     void countofToKeyword(Token &made) {
         const IdentifierInfo *info = made.getIdentifierInfo();
         if (info->getName() != "countof" || info->getFETokenInfo() != nullptr) return;
@@ -1779,6 +1797,8 @@ class SmithHook final : public TokenHook, public NameSource {
         // every other meaning (a slice, a pack, fields, an array parameter, a tuple). A name of the program's own
         // keeps its meaning (issue #167).
         if (!token->expand && made.is(tok::identifier) && self->sema != nullptr) self->countofToKeyword(made);
+        if (!token->expand && made.is(tok::identifier) && self->sema != nullptr)
+            self->deferToKeyword(made, self->out.empty() ? tok::unknown : self->out.back().getKind());
         made.clearFlag(Token::StartOfLine);
         made.clearFlag(Token::LeadingSpace);
         made.clearFlag(Token::DisableExpand);

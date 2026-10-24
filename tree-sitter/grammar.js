@@ -172,6 +172,11 @@ module.exports = grammar(C, {
       seq('for', 'constexpr', '(', $._for_statement_body, ')', field('body', $.statement)),
     ),
 
+    // defer c::close(fd); and defer { ... } in a module (C2y's defer TS). The keyword is a token of its own at the start
+    // of a statement only: `int defer = 1;` in a file with no module line is still a declaration.
+    defer_statement: $ => seq(alias(token(prec(1, /defer/)), 'defer'), $.statement),
+    _non_case_statement: ($, original) => choice(original, prec.dynamic(2, $.defer_statement)),
+
     // auto args = {a, b}; makes a list (C23 leaves `auto x = {...}` invalid, so a declaration cannot read it)
     list_declaration: $ => seq('auto', field('name', $.identifier), '=', field('value', $.initializer_list), ';'),
     // auto x = expr; (C23's type inference; there is no type for a declaration to read), also constexpr auto f = fields(T)[i];

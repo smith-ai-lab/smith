@@ -1,0 +1,2 @@
+src/main.smith:5:9: `defer` is a keyword in a module (C2y's defer): it cannot name a variable or a function
+src/main.smith:6:12: expected expression

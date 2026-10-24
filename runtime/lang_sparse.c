@@ -12,8 +12,8 @@ static void smith_lang_stream_close(SmithLang *lang, const SmithHost *host, cons
 // The names the host should offer from the start of any .smith file.
 void smith_lang_watch_basics(const SmithHost *host) {
     // `countof` is watched so that what the lowering leaves is C2y's, on a fixed array (the hook writes `_Countof`).
-    static const char *const words[] = {"module", "import", "export", "countof"};
-    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) // 4 entries
+    static const char *const words[] = {"module", "import", "export", "countof", "defer"};
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) // 5 entries
         host->watch(host->context, words[i], (uint32_t)strlen(words[i]));
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 13 entries
         host->watch(host->context, smith_lang_sized[i].name, (uint32_t)strlen(smith_lang_sized[i].name));

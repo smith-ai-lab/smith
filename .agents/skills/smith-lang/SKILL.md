@@ -39,6 +39,7 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | type values | `constexpr type t = i32;` | `smith-lang-type-values` |
 | tuples | `struct { i32, f32 }`, `t[0]` | `smith-lang-tuples` |
 | used once | `[[smith::affine]]` | `smith-lang-affine` |
+| cleanup on every exit | `defer c::close(fd);` | `smith-lang-defer` |
 | the target | `import target;`, `target::arch`, no `#if` | `smith-lang-target` |
 | the io | `i32 main(io::Io *io)` | `smith-io` |
 

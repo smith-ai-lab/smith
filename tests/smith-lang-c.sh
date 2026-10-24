@@ -109,7 +109,7 @@ behave() { # name
     fi
 }
 
-for name in arrays names ordinary sized_names slices; do
+for name in arrays defer_name names ordinary sized_names slices; do
     behave "$name"
 done
 

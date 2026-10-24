@@ -87,6 +87,14 @@ int smith_lang_command(int argc, char **argv, int first, char **out, size_t capa
     for (int i = 0; i < first; i++)
         out[used++] = argv[i];
     if (!smith_lang_standard_given(argc, argv, first)) out[used++] = (char *)"-std=gnu2y";
+    // `defer` of a module is `_Defer`, which needs the defer TS on (issue #210); only a command with a .smith input
+    // gets it, so a plain C file keeps C's keywords unless its own flags ask.
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
+            out[used++] = (char *)"-fdefer-ts";
+            break;
+        }
+    }
     for (int i = first; i < argc; i++) { // bounded by argc
         if (used + 7 > capacity) return -1;
         if (i == scan.dashes) return smith_lang_inputs_after(argc, argv, i, scan.language, out, used, capacity);

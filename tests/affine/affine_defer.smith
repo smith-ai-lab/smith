@@ -1,0 +1,24 @@
+module affine_defer;
+
+export [[smith::affine]] typedef struct {
+    u64 bits;
+} Key;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export void sink(u64 value) {
+    (void)value;
+}
+
+// A use inside a deferred statement is a use, and a block with defers does not stop the analysis (issue #210).
+u64 once(Key key) {
+    u64 n = 1;
+    defer sink(n);
+    return draw(key);
+}
+
+u64 twice(Key key) {
+    u64 a = 0;
+    defer a = draw(key);
+    return draw(key) + a;
+}
