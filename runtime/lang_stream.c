@@ -895,6 +895,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     }
     smith_lang_dispatch(lang, host, token);
     if (!token->foreign && (smith_lang_ident(token, "module") || smith_lang_ident(token, "import"))) {
+        smith_lang_field_after_imports(lang, host);
         lang->slice.after_boundary = true; // a module or import line ends in a `;` that no token carries on
     }
     if (host->previous != nullptr && smith_lang_tuples_on(lang, host) &&

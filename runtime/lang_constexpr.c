@@ -293,6 +293,9 @@ static bool smith_lang_cx_query(SmithLangCx *cx, uint32_t first, uint32_t last, 
     char field_spelling[smith_lang_cx_name_max] = "";
     bool field = smith_lang_fields_typeof_end(first, last) == last;
     if (field && !smith_lang_cx_field_type(cx, first, last, field_spelling, sizeof field_spelling)) return false;
+    bool valued = !field && smith_lang_fields_valued(first, last); // `f.type` of a `Field`
+    if (valued && !smith_lang_fields_valued_type(cx, first, last, field_spelling, sizeof field_spelling)) return false;
+    field = field || valued;
     if (field) {
         staged_count = 0;
     } else if (smith_lang_cx_typeof_element_at(cx, first) && smith_lang_cx_skip_group(first + 1, last) == last) {
@@ -659,12 +662,19 @@ static bool smith_lang_cx_type_argument(uint32_t first, uint32_t last, uint32_t 
 
 // The tokens [first, last) as the compiler is asked about them (separated by \x1f): the type arguments of the instance
 // for its T and the number of a `for constexpr` variable for its name.
+static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
+                                           size_t capacity);
+
 static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
     size_t used = 0;
     for (uint32_t at = first; at < last; at++) { // the tokens
-        char piece[256];
+        char piece[1024];
         int64_t number = 0;
-        if (cx->replay != nullptr && smith_lang_var_value(cx->replay, at, &number)) {
+        uint32_t taken = smith_lang_fields_cx_piece(cx, at, last, piece, sizeof piece);
+        if (taken == UINT32_MAX) return false;
+        if (taken != 0) { // a `fields(T)[i]`, or a `Field` kept in a variable: its value as an expression
+            at += taken - 1;
+        } else if (cx->replay != nullptr && smith_lang_var_value(cx->replay, at, &number)) {
             snprintf(piece, sizeof piece, "%lld", (long long)number);
         } else if (smith_lang_cx_token(at)->param != 0 && smith_lang_cx_type_argument(first, last, at)) {
             uint64_t handle = 0;

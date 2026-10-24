@@ -124,6 +124,7 @@ typedef struct {
     SmithFieldsStatus status;
     uint32_t count;
     bool bit_field;
+    bool tuple; // the struct is a tuple: its members are `_0`, `_1`, and `fields` names them "0", "1"
     char name[128];
     char type[256];
 } SmithFieldInfo;
@@ -273,6 +274,9 @@ typedef struct {
     // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
     // token, because a type value is found by the tokens around a type name.
     bool maybe_type_value;
+    // Whether the file's text uses `fields(` or the `Field` type (runtime/lang_fields.c): `Field` is defined at the
+    // file's first declaration. The host also sets maybe_type_value, which offers every token.
+    bool maybe_field;
     bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook
                       // alone
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).

@@ -1082,9 +1082,10 @@ static void smith_lang_gen_note_break(SmithLang *lang) {
 }
 
 // Writes a token of the lowering's own: no source has it, and `instance` says whose body it is in (0: none).
-static void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
-                               uint32_t location, uint32_t instance) {
+static void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
+                                         uint32_t location, uint32_t instance, bool expand) {
     SmithToken token = {};
+    token.expand = expand; // a builtin macro such as __SIZE_TYPE__
     token.kind = kind;
     token.handle = smith_token_no_handle;
     token.text = text;
@@ -1096,6 +1097,11 @@ static void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithToke
     token.space_before = smith_lang_gen_space(lang, kind, text, token.length);
     smith_lang_gen_note(lang, kind, text, token.length);
     smith_lang_emit_code(lang, host, token);
+}
+
+static void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
+                               uint32_t location, uint32_t instance) {
+    smith_lang_gen_put_expanding(lang, host, kind, text, location, instance, false);
 }
 
 // Writes the pieces, in order.
@@ -3197,6 +3203,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     }
     lang->carry_line_start = true;
     smith_lang_gen_note_break(lang);
+    smith_lang_fields_declare(lang, host, generic, instance, id, location);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},
                                           {SmithTokenKind_Identifier, "gnu"},  {SmithTokenKind_Punctuator, "::"},

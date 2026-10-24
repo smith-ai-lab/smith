@@ -844,3 +844,22 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
     smith_lang_ty_track(lang, host, token, as_value);
     return replaced;
 }
+
+// ---- `Field`, the element of `fields(T)` (runtime/lang_fields.c)
+
+// After a `module` or `import` line, when no other `import` follows: defines `Field` and `smith_field_make` in a file
+// that uses `fields(` or the name, or imports a generic that reflects, so that the first declaration may use them and
+// the compiler has read them before an instance's condition asks about a `Field`. Written as the lowering leaves them.
+// Only the compile of the file defines them: the raw passes (headers, interfaces) have no parser.
+static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host) {
+    if (lang->field_defined || host->type_field == nullptr || !(host->maybe_field || lang->field_import) ||
+        lang->recording || !lang->is_module) {
+        return;
+    }
+    if (smith_lang_ident(smith_lang_peek(lang, host, 0, false), "import")) return;
+    smith_lang_fields_define(lang, host, nullptr, smith_lang_peek(lang, host, 0, false)->location, 0);
+    SmithLangTyName *holder = smith_lang_ty_add("Field", 5, SmithLangTy_Holder, 0);
+    if (holder != nullptr) snprintf(holder->field, sizeof holder->field, "type");
+    holder = smith_lang_ty_add("smith_field", 11, SmithLangTy_HolderTag, 0);
+    if (holder != nullptr) snprintf(holder->field, sizeof holder->field, "type");
+}

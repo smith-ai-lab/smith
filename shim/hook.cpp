@@ -649,7 +649,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile));
-        host.maybe_type_value = hasTypeValue(SM.getBufferData(MainFile));
+        host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
+        host.maybe_type_value = host.maybe_field || hasTypeValue(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
@@ -2071,6 +2072,24 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             return true;
         }
+        if (value.isLValue() && !value.isNullPointer() && value.getLValueOffset().isZero()) {
+            // A pointer to a whole string literal (the name of a `Field`) is read as the array of its characters.
+            const auto *base = value.getLValueBase().dyn_cast<const Expr *>();
+            const auto *literal = base == nullptr ? nullptr : dyn_cast<StringLiteral>(base->IgnoreParenImpCasts());
+            if (literal != nullptr && literal->getCharByteWidth() == 1) {
+                unsigned size = literal->getLength();
+                node->kind = SmithValue_Array;
+                node->count = size;
+                node->items = size == 0 ? nullptr : takeNodes(out, size, why);
+                if (size != 0 && node->items == nullptr) return false;
+                for (unsigned i = 0; i < size; i++) {
+                    node->items[i].kind = SmithValue_Int;
+                    node->items[i].bits = 8;
+                    node->items[i].magnitude = literal->getCodeUnit(i);
+                }
+                return true;
+            }
+        }
         if (value.isLValue() || value.isMemberPointer()) {
             why = "a pointer is not a value (C23: a `constexpr` pointer must be null)";
             return false;
@@ -2201,6 +2220,7 @@ class SmithHook final : public TokenHook, public NameSource {
             snprintf(out->type, sizeof out->type, "%s",
                      field->getType().getAsString(self->sema->getASTContext().getPrintingPolicy()).c_str());
             out->bit_field = field->isBitField();
+            out->tuple = record->getName().starts_with("smith_tuple");
         }
         return true;
     }
@@ -2226,6 +2246,48 @@ class SmithHook final : public TokenHook, public NameSource {
             if (is_if || is_for) return true;
         }
         return false;
+    }
+
+    // Whether the code (not its comments or strings) uses `fields(` (a reflection), or the type `Field` without defining
+    // one: a name `Field` that is not the name of a typedef (`} Field;`) nor a member (runtime/lang_fields.c).
+    static bool hasFieldsUse(StringRef text) {
+        bool reflects = false;
+        bool used = false;
+        char previous = 0; // the last character of code before the word
+        for (size_t at = 0; at < text.size();) {
+            char c = text[at];
+            if (c == '/' && at + 1 < text.size() && (text[at + 1] == '/' || text[at + 1] == '*')) {
+                bool line = text[at + 1] == '/';
+                size_t end = text.find(line ? "\n" : "*/", at + 2);
+                at = end == StringRef::npos ? text.size() : end + (line ? 1 : 2);
+            } else if (c == '"' || c == '\'') {
+                size_t end = at + 1;
+                while (end < text.size() && text[end] != c && text[end] != '\n')
+                    end += text[end] == '\\' ? 2 : 1;
+                at = end + 1;
+                previous = c;
+            } else if (isAsciiIdentifierStart(c)) {
+                size_t end = at + 1;
+                while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                    end += 1;
+                StringRef word = text.substr(at, end - at);
+                size_t next = end;
+                while (next < text.size() && isWhitespace(text[next]))
+                    next += 1;
+                if (word == "fields" && next < text.size() && text[next] == '(' && previous != '.' && previous != '>')
+                    reflects = true;
+                if (word == "Field") {
+                    if (previous == '}' && next < text.size() && text[next] == ';') return false; // its own `Field`
+                    used = used || (previous != '.' && previous != ':' && previous != '>');
+                }
+                previous = 'a';
+                at = end;
+            } else {
+                if (!isWhitespace(c)) previous = c;
+                at += 1;
+            }
+        }
+        return reflects || used;
     }
 
     // Whether the code (not its comments or strings) has `type` before a name or a `*`, other than in a generic's

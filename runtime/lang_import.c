@@ -227,10 +227,30 @@ static bool smith_lang_import_is_target(SmithLang *lang, const char *module, con
     return true;
 }
 
+// Whether a header has a generic that holds a `Field` of its own: one of its lines names `fields(` and, as well, the
+// type `Field` or `constexpr auto` (a field kept in a variable). The lines that only write `fields(T)[i].name` and
+// `x.[fields(T)[i]]` need nothing of the importer.
+static bool smith_lang_import_reflects(const char *text, uint32_t length) {
+    static const char marker[] = "// smith-generic:";
+    for (const char *at = memmem(text, length, marker, sizeof marker - 1); at != nullptr;
+         at = memmem(at + 1, (size_t)(text + length - at - 1), marker, sizeof marker - 1)) { // one pass per line
+        const char *end = memchr(at, '\n', (size_t)(text + length - at));
+        size_t line = end != nullptr ? (size_t)(end - at) : (size_t)(text + length - at);
+        if (memmem(at, line, "=fields p@", 10) == nullptr) continue;
+        if (memmem(at, line, "=Field ", 7) != nullptr) return true;
+        if (memmem(at, line, "=constexpr ", 11) != nullptr && memmem(at, line, "=auto ", 6) != nullptr) return true;
+    }
+    return false;
+}
+
 // A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
 // the host offers it every token.
 static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length) {
     if (text == nullptr) return;
+    if (!lang->field_import && smith_lang_import_reflects(text, length)) { // a generic that keeps a field (#100)
+        lang->field_import = true;
+        if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
+    }
     if (memmem(text, length, "// smith-slices", 15) != nullptr) lang->slices_seen = true;
     if (memmem(text, length, "// smith-tuples", 15) == nullptr && !lang->slices_seen) return;
     lang->tuples_seen = true;

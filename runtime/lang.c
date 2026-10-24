@@ -379,6 +379,8 @@ struct SmithLang {
     bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
                        // (runtime/lang_tuple.c)
     SmithLangSliceState slice;
+    bool field_import;  // an import's generics use `fields`: `Field` is defined at this file's first declaration
+    bool field_defined; // `Field` (runtime/lang_fields.c) is defined in this file
     bool slices_seen; // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen; // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
     bool io_import;   // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
