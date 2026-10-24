@@ -582,6 +582,42 @@ EOF
     expect_contains "libraries: ... and only the project's functions are counted" "$out" "1 proved, 0 failed"
     case $out in *"neither a body nor a contract"*) expect "libraries: no 'neither a body nor a contract' for a library function" "none" "$out" ;; *) expect "libraries: no 'neither a body nor a contract' for a library function" "none" "none" ;; esac
     case $out in *"random::"*) expect "libraries: the library's own functions are not proved or listed" "none" "$out" ;; *) expect "libraries: the library's own functions are not proved or listed" "none" "none" ;; esac
+    # 11d. A slice in a project links the trace library, whose smith_failure has a body: the check's failure is still the
+    # proof point (issue #151), a guarded index is proved and an unguarded one is refuted, never "a call of pthread_self".
+    slices=$work/slicesproj
+    mkdir -p "$slices"
+    cat >"$slices/main.smith" <<'EOF'
+import stats;
+import <stdio.h>;
+
+int main(void) {
+    i32 a[3] = {1, 2, 3};
+    i32 xs[:] = a[0:3];
+    c::printf("%d %d\n", (int)stats::first(xs), (int)stats::firstu(xs));
+    return 0;
+}
+EOF
+    cat >"$slices/stats.smith" <<'EOF'
+module stats;
+
+import smith::contract;
+
+export i32 first(i32 xs[:]) {
+    contract::ensures(true);
+    if (countof(xs) > 0) return xs[0];
+    return 0;
+}
+
+export i32 firstu(i32 xs[:]) {
+    contract::ensures(true);
+    return xs[0];
+}
+EOF
+    cd "$slices" && capture "$smith" prove -v; cd "$here"
+    expect "slices in a project: the unguarded index is refuted" 1 "$rc"
+    expect_contains "slices in a project: a guarded index is proved" "$out" "ok    stats::first  ("
+    expect_contains "slices in a project: the unguarded index fails at its check" "$out" "assert(an index or a slice is in range) may fail"
+    case $out in *"pthread_self"*|*"neither a body nor a contract"*) expect "slices in a project: the trace library's body is not read" "none" "$out" ;; *) expect "slices in a project: the trace library's body is not read" "none" "none" ;; esac
 else
     echo "skipped: this smith's clang has no token hook, so no .smith proofs"
 fi
