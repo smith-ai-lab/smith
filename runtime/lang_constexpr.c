@@ -8,8 +8,9 @@
 //
 // The condition is a constant expression over: integer literals, `true` and `false`, the operators of C, `sizeof(T)`
 // and `alignof(T)`, `T == U` and `T != U` (two types are equal when the parser's canonical spellings are, so `u32 ==
-// uint32_t`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`, `is_array` and `is_slice`. A type
-// is written as the tokens of C's type names: T, the sized types, `struct S`, a typedef, qualifiers and `*`.
+// uint32_t`), and `is_integer(T)`, `is_float`, `is_signed`, `is_pointer`, `is_bool`, `is_enum`, `is_record`, `is_array`
+// and `is_slice`. A type is written as the tokens of C's type names: T, the sized types, `struct S`, a typedef,
+// qualifiers and `*`.
 
 constexpr size_t smith_lang_cx_stack_max = 32;
 constexpr size_t smith_lang_cx_types_max = 8;

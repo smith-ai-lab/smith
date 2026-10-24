@@ -1626,6 +1626,48 @@ static bool smith_lang_slice_replay_countof(SmithLangReplay *replay, uint32_t pl
     return true;
 }
 
+// `xs[a:b]` of a one-dimension slice: the generic's tokens [at + 2, close) split at `colon`, a view of the elements.
+static bool smith_lang_slice_replay_cut(const SmithHost *host, SmithLangReplay *replay, uint32_t place,
+                                        const SmithLangSliceType *type, const uint32_t bounds[3], unsigned counter) {
+    uint32_t at = bounds[0];
+    uint32_t colon = bounds[1];
+    uint32_t close = bounds[2];
+    char condition[160];
+    char check[512];
+    char head[640];
+    snprintf(condition, sizeof condition, "smith_a%1$u <= smith_b%1$u && smith_b%1$u <= smith_s%1$u . count [ 0 ]",
+             counter);
+    smith_lang_slice_check(host, condition, check, sizeof check);
+    snprintf(head, sizeof head, "__extension__ ( { auto smith_s%u = (", counter);
+    char first[160];
+    char second[160];
+    char last[1024];
+    snprintf(first, sizeof first, ") ; __SIZE_TYPE__ smith_a%u = (", counter);
+    snprintf(second, sizeof second, ") ; __SIZE_TYPE__ smith_b%u = (", counter);
+    snprintf(last, sizeof last,
+             ") ; %s ( struct %s ) { . data = smith_a%u == 0 ? smith_s%u . data : smith_s%u . data + smith_a%u , . "
+             "count = { smith_b%u - smith_a%u } } ; } )",
+             check, type->tag, counter, counter, counter, counter, counter, counter);
+    char whole[64];
+    snprintf(whole, sizeof whole, "smith_s%u . count [ 0 ]", counter);
+    SmithLangSlicePart parts[9] = {{head, 0, 0}, {nullptr, at, at + 1}, {first, 0, 0}};
+    size_t used = 3;
+    if (colon == at + 2) {
+        parts[used++] = (SmithLangSlicePart){"0", 0, 0};
+    } else {
+        parts[used++] = (SmithLangSlicePart){nullptr, at + 2, colon};
+    }
+    parts[used++] = (SmithLangSlicePart){second, 0, 0};
+    if (colon + 1 == close) {
+        parts[used++] = (SmithLangSlicePart){whole, 0, 0};
+    } else {
+        parts[used++] = (SmithLangSlicePart){nullptr, colon + 1, close};
+    }
+    parts[used++] = (SmithLangSlicePart){last, 0, 0};
+    smith_lang_slice_parts(replay, place, parts, used);
+    return true;
+}
+
 static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                               uint32_t place, SmithLangFrame *frame) {
     uint32_t at = frame->pos;
@@ -1674,37 +1716,7 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
         smith_lang_slice_parts(replay, place, parts, sizeof parts / sizeof parts[0]);
         return true;
     }
-    snprintf(condition, sizeof condition, "smith_a%1$u <= smith_b%1$u && smith_b%1$u <= smith_s%1$u . count [ 0 ]",
-             counter);
-    smith_lang_slice_check(host, condition, check, sizeof check);
-    snprintf(head, sizeof head, "__extension__ ( { auto smith_s%u = (", counter);
-    char first[160];
-    char second[160];
-    char last[1024];
-    snprintf(first, sizeof first, ") ; __SIZE_TYPE__ smith_a%u = (", counter);
-    snprintf(second, sizeof second, ") ; __SIZE_TYPE__ smith_b%u = (", counter);
-    snprintf(last, sizeof last,
-             ") ; %s ( struct %s ) { . data = smith_a%u == 0 ? smith_s%u . data : smith_s%u . data + smith_a%u , . "
-             "count = { smith_b%u - smith_a%u } } ; } )",
-             check, type.tag, counter, counter, counter, counter, counter, counter);
-    char whole[64];
-    snprintf(whole, sizeof whole, "smith_s%u . count [ 0 ]", counter);
-    SmithLangSlicePart parts[9] = {{head, 0, 0}, {nullptr, at, at + 1}, {first, 0, 0}};
-    size_t used = 3;
-    if (colon == at + 2) {
-        parts[used++] = (SmithLangSlicePart){"0", 0, 0};
-    } else {
-        parts[used++] = (SmithLangSlicePart){nullptr, at + 2, colon};
-    }
-    parts[used++] = (SmithLangSlicePart){second, 0, 0};
-    if (colon + 1 == close) {
-        parts[used++] = (SmithLangSlicePart){whole, 0, 0};
-    } else {
-        parts[used++] = (SmithLangSlicePart){nullptr, colon + 1, close};
-    }
-    parts[used++] = (SmithLangSlicePart){last, 0, 0};
-    smith_lang_slice_parts(replay, place, parts, used);
-    return true;
+    return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[3]){at, colon, close}, counter);
 }
 
 // The token at the frame's position starts `countof(xs)`, `xs[i]` or `xs[a:b]` of a slice parameter: write it as the
