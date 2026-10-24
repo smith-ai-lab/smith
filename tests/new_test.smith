@@ -2,7 +2,8 @@
 // on the new project (run, test, prove, fmt, lint, check, the three profiles), the libraries under the conventions'
 // flags, a project with its own build file or another build system, git's states, the docs checks and the rules of the
 // templates. Git is isolated from the user's configuration: HOME is a folder of the test, and the identity comes from
-// the environment except in the no-identity case. Each test is a project of its own, so they run side by side.
+// the environment except in the no-identity case; SMITH_OUTPUT=full is set here too, as `smith test` sets it, so the
+// cases read the nested verbs' full output (and fail on an empty one) however the runner is started. Each test is a project of its own, so they run side by side.
 module new_test;
 
 import smith::arena;
@@ -12,7 +13,7 @@ import scratch;
 
 constexpr char git_environment[] =
     "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com "
-    "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com; mkdir -p \"$HOME\"; ";
+    "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com SMITH_OUTPUT=full; mkdir -p \"$HOME\"; ";
 
 // `generate <name> [flags]` puts a copy of the project `smith new` makes in the folder, as `smith new` leaves it
 // (built, committed): it is made once for each smith under test, in the tests' cache, so the tests that only need a
