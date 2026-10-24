@@ -19,7 +19,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 | Verb | Load |
 | --- | --- |
 | `smith cc`, `smith c++`, `smith-cc`, `smith-c++` | [smith-cc](../smith-cc/SKILL.md); shaders [smith-metal](../smith-metal/SKILL.md) |
-| `smith build`, `build.c`, `build.smith` | [smith-build](../smith-build/SKILL.md): [-smith](../smith-build-smith/SKILL.md), [-c](../smith-build-c/SKILL.md), [-objects](../smith-build-objects/SKILL.md), [-functions](../smith-build-functions/SKILL.md), [-makefile](../smith-build-makefile/SKILL.md), [-tests](../smith-build-tests/SKILL.md), [-levels](../smith-build-levels/SKILL.md), [-warnings](../smith-build-warnings/SKILL.md) |
+| `smith build`, `build.c`, `build.smith` | [smith-build](../smith-build/SKILL.md): [-smith](../smith-build-smith/SKILL.md), [-c](../smith-build-c/SKILL.md), [-objects](../smith-build-objects/SKILL.md), [-functions](../smith-build-functions/SKILL.md), [-makefile](../smith-build-makefile/SKILL.md), [-tests](../smith-build-tests/SKILL.md), [-levels](../smith-build-levels/SKILL.md) ([-high](../smith-build-levels-high/SKILL.md), [-low](../smith-build-levels-low/SKILL.md)), [-warnings](../smith-build-warnings/SKILL.md) |
 | `smith fetch`, `smith cache`, `smith_package`, `smith_modules` | [smith-packages](../smith-packages/SKILL.md), [smith-modules-cache](../smith-modules-cache/SKILL.md) |
 | `smith run`, `smith test` | [smith-run-test](../smith-run-test/SKILL.md); writing tests [smith-test](../smith-test/SKILL.md) |
 | `smith check`, `fmt`, `lint` | [smith-check](../smith-check/SKILL.md), [smith-check-lints](../smith-check-lints/SKILL.md) |
@@ -32,7 +32,13 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 ## The language
 
-[smith-lang](../smith-lang/SKILL.md) (C with modules), [-modules](../smith-lang-modules/SKILL.md), [-c-interop](../smith-lang-c-interop/SKILL.md), [-sized-types](../smith-lang-sized-types/SKILL.md), [-arrays](../smith-lang-arrays/SKILL.md) (array parameters), [-slice-qualifiers](../smith-lang-slice-qualifiers/SKILL.md) (`const`, `restrict` on a slice), [-slice-pointers](../smith-lang-slice-pointers/SKILL.md) (`const char (*p)[:]`), [-generics](../smith-lang-generics/SKILL.md), [-rest](../smith-lang-rest/SKILL.md) (`auto... rest`, `for constexpr`), [-reflection](../smith-lang-reflection/SKILL.md) (`fields(T)`), [-target](../smith-lang-target/SKILL.md) (no preprocessor, `if constexpr`). Style: [smith-idiom](../smith-idiom/SKILL.md), [-before](../smith-idiom-before/SKILL.md), [-after](../smith-idiom-after/SKILL.md), [-port](../smith-idiom-port/SKILL.md).
+Start at [smith-lang](../smith-lang/SKILL.md) (its table of steps); each feature has one skill that opens with a snippet.
+
+- Modules and C: [-modules](../smith-lang-modules/SKILL.md), [-modules-errors](../smith-lang-modules-errors/SKILL.md), [-exports](../smith-lang-exports/SKILL.md) (`export`, `c_name`, `export inline`), [-c-interop](../smith-lang-c-interop/SKILL.md) (`import <h>;`, `c::`), [-c-headers](../smith-lang-c-headers/SKILL.md) (a module from C and C++), [-tools](../smith-lang-tools/SKILL.md) (`--smith-lower`, fmt, lint, editor).
+- Types and arrays: [-sized-types](../smith-lang-sized-types/SKILL.md), [-arrays](../smith-lang-arrays/SKILL.md) (slices `T xs[:]`, array parameters), [-slice-qualifiers](../smith-lang-slice-qualifiers/SKILL.md) (`const`, `restrict` on a slice), [-slice-pointers](../smith-lang-slice-pointers/SKILL.md) (`const char (*p)[:]`), [-tuples](../smith-lang-tuples/SKILL.md) (`struct { i32, f32 }`).
+- Compile time: [-constexpr](../smith-lang-constexpr/SKILL.md) (a function run in the compiler, `static_assert(f())`), [-generics](../smith-lang-generics/SKILL.md) (`constexpr type T`, `auto`, `typeof`, `if constexpr`), [-rest](../smith-lang-rest/SKILL.md) (`auto... rest`, `for constexpr`), [-reflection](../smith-lang-reflection/SKILL.md) (`fields(T)`), [-type-values](../smith-lang-type-values/SKILL.md) (`constexpr type t`), [-target](../smith-lang-target/SKILL.md) (no preprocessor, `target::`).
+- Contracts and their proofs: [smith-contract](../smith-contract/SKILL.md), [smith-contract-proof](../smith-contract-proof/SKILL.md) (`modifies`, `invariant`).
+- Style: [smith-idiom](../smith-idiom/SKILL.md), [-before](../smith-idiom-before/SKILL.md), [-after](../smith-idiom-after/SKILL.md), [-port](../smith-idiom-port/SKILL.md).
 
 ## The libraries
 
