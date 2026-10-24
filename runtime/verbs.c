@@ -593,6 +593,23 @@ static void smith_prove_libraries(const char *libraries, size_t *used) {
     }
 }
 
+// The words a `.smith` compile starts with, which a C file's do not (smith_lang_flags in the build runtime): sources
+// whose flags differ by them alone are proved together, so a C file that calls into a module of the same program
+// (smith.c into smith::random) finds the module's body, as it would linked. The group keeps the first member's flags,
+// and a module that needs the folder gets it last, where it never shadows a header the first member's own -I paths
+// find.
+constexpr char smith_prove_lang_prefix[] = "-I\t.smith/include\t";
+
+static const char *smith_prove_flags_core(const char *flags) {
+    return strncmp(flags, smith_prove_lang_prefix, sizeof smith_prove_lang_prefix - 1) == 0
+               ? flags + sizeof smith_prove_lang_prefix - 1
+               : flags;
+}
+
+static bool smith_prove_flags_alike(const char *one, const char *other) {
+    return strcmp(smith_prove_flags_core(one), smith_prove_flags_core(other)) == 0;
+}
+
 static int smith_prove_group(const char *self, const SmithInfo *info, const size_t *members, size_t member_count,
                              const char *libraries) {
     smith_prove_groups_run++;
@@ -608,7 +625,14 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     // A copy: the compile's flags are shared by every group that proves the same source (a unity file), and cutting
     // them at their tabs in place would leave the next group with the first word only.
     static char flags_copy[smith_verbs_info_max + 1];
-    snprintf(flags_copy, sizeof flags_copy, "%s", info->compile_flags[members[0]]);
+    int length = snprintf(flags_copy, sizeof flags_copy, "%s", info->compile_flags[members[0]]);
+    bool needs_folder = false;
+    for (size_t i = 0; i < member_count; i++)
+        needs_folder =
+            needs_folder || smith_prove_flags_core(info->compile_flags[members[i]]) != info->compile_flags[members[i]];
+    if (needs_folder && smith_prove_flags_core(flags_copy) == flags_copy && length > 0 &&
+        (size_t)length + sizeof smith_prove_lang_prefix < sizeof flags_copy)
+        snprintf(flags_copy + length, sizeof flags_copy - (size_t)length, "\t-I\t.smith/include");
     char *flags = flags_copy;
     for (size_t guard = 0; *flags != '\0' && guard < smith_verbs_words_max; guard++) { // bounded by the words
         char *tab = strchr(flags, '\t');
@@ -650,7 +674,8 @@ static int smith_prove_unit(const char *self, const SmithInfo *info, char *sourc
         if (done[first]) continue;
         size_t member_count = 0;
         for (size_t i = first; i < found_count; i++) {
-            if (done[i] || strcmp(info->compile_flags[found[i]], info->compile_flags[found[first]]) != 0) continue;
+            if (done[i] || !smith_prove_flags_alike(info->compile_flags[found[i]], info->compile_flags[found[first]]))
+                continue;
             done[i] = true;
             members[member_count++] = found[i];
         }
