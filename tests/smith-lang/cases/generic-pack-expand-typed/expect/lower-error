@@ -1,0 +1,7 @@
+src/main.smith:10:37: cannot tell the type of `a`, the argument of `nested`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:36: cannot tell the type of `a`, the argument of `mixed`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:41: cannot tell the type of `a`, the argument of `with_local`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:46: cannot tell the type of `a`, the argument of `with_generic`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:80: cannot tell the type of `a`, the argument of `with_generic`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:47: cannot tell the type of `a`, the argument of `with_function`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:78: cannot tell the type of `a`, the argument of `with_function`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

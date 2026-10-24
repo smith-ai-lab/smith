@@ -1927,6 +1927,8 @@ typedef struct {
     uint16_t generic_index;
 } SmithLangFrame;
 
+constexpr size_t smith_lang_junk_max = 64;
+
 typedef struct {
     SmithLangFrame frames[smith_lang_replay_depth_max];
     size_t count;
@@ -1943,6 +1945,10 @@ typedef struct {
     size_t typed_count;
     uint32_t typed_first; // the captured arguments of the call being finished: [first, last) of smith_lang_gt
     uint32_t typed_last;
+    // Tokens in the pool that a capture holds but are not part of it: the written-out lists and patterns of a call or
+    // a pattern in the arguments, read by the replay and never by the compiler (smith_lang_typed_compact).
+    SmithLangSpan junk[smith_lang_junk_max];
+    size_t junk_count;
 } SmithLangReplay;
 
 static SmithLangReplay smith_lang_replay;
@@ -2571,7 +2577,7 @@ static int smith_lang_pack_pattern_open(SmithLang *lang, const SmithHost *host, 
 
 // The pattern at `start` written once for each element, in new tokens at the pool's end, a comma between the copies.
 static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32_t start,
-                                           const SmithLangPattern *pattern) {
+                                           const SmithLangPattern *pattern, bool indexed) {
     size_t count = smith_lang_pack_size(replay->generic, replay->instance);
     const SmithLangGenToken *pack = smith_lang_pack_name(replay->generic);
     for (size_t element = 0; element < count; element++) { // one copy each
@@ -2583,7 +2589,14 @@ static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32
             const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
             char text[smith_lang_name_max];
             bool good = false;
-            if (smith_lang_pack_whole_at(replay, at, pattern->dots)) {
+            if (smith_lang_pack_whole_at(replay, at, pattern->dots) && indexed) {
+                // to be typed: `rest[k]`, which the replay writes as a value of the element's type
+                snprintf(text, sizeof text, "%zu", element);
+                good = smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true) &&
+                       smith_lang_pack_push(like, SmithTokenKind_Punctuator, "[", false) &&
+                       smith_lang_pack_push(like, SmithTokenKind_Number, text, false) &&
+                       smith_lang_pack_push(like, SmithTokenKind_Punctuator, "]", false);
+            } else if (smith_lang_pack_whole_at(replay, at, pattern->dots)) {
                 snprintf(text, sizeof text, "%.*s_%zu", (int)pack->length, smith_lang_gt_str(pack), element);
                 good = smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
             } else {
@@ -2595,10 +2608,22 @@ static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32
     return true;
 }
 
+// Whether the arguments [begin, end) hold a pattern expansion (`g(rest)...`, not the bare `rest...`).
+static bool smith_lang_pack_has_pattern(const SmithLangReplay *replay, uint32_t begin, uint32_t end) {
+    SmithLangPattern pattern;
+    for (uint32_t at = begin; at < end; at++) {
+        if (smith_lang_pack_arg_start(at, begin) && smith_lang_pack_pattern_find(replay, at, end, &pattern) &&
+            !pattern.bare) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The arguments [*begin, *end) with each pattern expansion written out, in new tokens at the pool's end; the range is
 // then the new one. False after an error.
 static bool smith_lang_pack_patterns_range(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                           uint32_t *begin, uint32_t *end) {
+                                           uint32_t *begin, uint32_t *end, bool indexed) {
     SmithLangPattern pattern;
     bool any = false;
     for (uint32_t at = *begin; at < *end && !any; at++) { // is there an expansion at all
@@ -2616,7 +2641,7 @@ static bool smith_lang_pack_patterns_range(SmithLang *lang, const SmithHost *hos
             if (smith_lang_pack_size(replay->generic, replay->instance) == 0) {
                 consumed += smith_lang_pack_comma_after_empty(at, *begin, *end, consumed);
             }
-            good = smith_lang_pack_pattern_copies(replay, at, &pattern);
+            good = smith_lang_pack_pattern_copies(replay, at, &pattern, indexed);
             at += consumed;
             continue;
         }
@@ -2638,7 +2663,7 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
                                          uint32_t *begin, uint32_t *end) {
     const SmithLangGeneric *generic = replay->generic;
     if (generic == nullptr || replay->instance == nullptr) return true;
-    if (!smith_lang_pack_patterns_range(lang, host, replay, begin, end)) return false;
+    if (!smith_lang_pack_patterns_range(lang, host, replay, begin, end, false)) return false;
     bool used = false;
     for (uint32_t at = *begin; at < *end && !used; at++) // is there a use of a list at all
         used = smith_lang_pack_named(replay, at) || smith_lang_fields_begins(replay, at, *end);
@@ -3171,6 +3196,40 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
     return good;
 }
 
+// Remembers that the pool's tokens [first, last) are not part of the capture around them. False when the list is full.
+static bool smith_lang_junk_add(SmithLangReplay *replay, uint32_t first, uint32_t last) {
+    if (last <= first) return true;
+    if (replay->junk_count >= smith_lang_junk_max) return false;
+    replay->junk[replay->junk_count++] = (SmithLangSpan){first, last};
+    return true;
+}
+
+static bool smith_lang_junk_holds(const SmithLangReplay *replay, uint32_t at) {
+    for (size_t i = 0; i < replay->junk_count; i++) {
+        if (at >= replay->junk[i].start && at < replay->junk[i].end) return true;
+    }
+    return false;
+}
+
+// The captured arguments [typed_first, typed_last) without the junk a nested call or pattern left in them, copied to
+// the pool's end (itself junk for a capture around it) so that they split into the call's arguments again.
+static bool smith_lang_typed_compact(SmithLangReplay *replay) {
+    bool any = false;
+    for (uint32_t at = replay->typed_first; at < replay->typed_last && !any; at++)
+        any = smith_lang_junk_holds(replay, at);
+    if (!any) return true;
+    uint32_t first = smith_lang_gt.count;
+    uint32_t last = replay->typed_last;
+    for (uint32_t at = replay->typed_first; at < last; at++) {
+        if (smith_lang_junk_holds(replay, at)) continue;
+        const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+        if (!smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true)) return false;
+    }
+    replay->typed_first = first;
+    replay->typed_last = smith_lang_gt.count;
+    return smith_lang_junk_add(replay, first, smith_lang_gt.count);
+}
+
 // A call to a generic: `args` is the `( ... )` with its parentheses, in smith_lang_gt at [first, last). The types are
 // taken out of the arguments (a `constexpr type T` is passed; an `auto` parameter's is its argument's) and asked for,
 // and the start of the call is written; what follows it (the other arguments and the end) is left in the replay for it
@@ -3182,6 +3241,7 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     SmithLangSpan spans[smith_lang_call_params_max];
     uint32_t begin = first + 1;
     uint32_t end = last - 1;
+    uint32_t pool_before = smith_lang_gt.count;
     if (!smith_lang_pack_expand_range(lang, host, replay, &begin, &end)) return false;
     size_t count = smith_lang_split_args(begin, end, spans, smith_lang_call_params_max);
     if (!smith_lang_call_arity(lang, host, generic, spans, count, location)) return false;
@@ -3190,6 +3250,11 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     uint32_t mark[2] = {smith_lang_it.count, smith_lang_it.text_used};
     SmithLangCallTypes types;
     replay->typed_count = 0;
+    if (replay->typed_last > replay->typed_first && !smith_lang_typed_compact(replay)) {
+        smith_lang_error(lang, host, location, "the arguments of `%s` are too long to type",
+                         smith_lang_str(generic->member));
+        return false;
+    }
     if (replay->typed_last > replay->typed_first) { // the arguments as the instance writes them, to type
         SmithLangSpan typed[smith_lang_call_params_max];
         size_t typed_count =
@@ -3209,6 +3274,7 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     int index =
         smith_lang_instance_request(lang, host, generic_index, types.first, types.count, types.entries, mark, location);
     if (index < 0) return false;
+    if (replay->typing) (void)smith_lang_junk_add(replay, pool_before, smith_lang_gt.count); // the lists written out
     smith_lang_gen_call_start(lang, host, generic, &smith_lang_instances[index], location, real, replay->instance_id);
     if (real != UINT32_MAX && lang->call_site_count < smith_lang_call_sites_max) {
         lang->call_sites[lang->call_site_count++] =
@@ -3502,7 +3568,12 @@ static void smith_lang_typed_finish(SmithLang *lang, const SmithHost *host, Smit
     if (smith_lang_gt.count == captured_end) { // the arguments are not needed any more (unless a list was expanded)
         smith_lang_gt.count = done.pool_first;
         smith_lang_gt.text_used = done.pool_text;
+        while (replay->junk_count > 0 && replay->junk[replay->junk_count - 1].start >= done.pool_first)
+            replay->junk_count -= 1; // they went with the arguments
+    } else if (replay->typing) {     // a capture around this one holds these arguments, as the call's own are written
+        (void)smith_lang_junk_add(replay, done.pool_first, captured_end);
     }
+    if (!replay->typing) replay->junk_count = 0;
     if (!written) {
         const SmithLangGenToken *token = &smith_lang_gt.tokens[done.group];
         const char *text = smith_lang_gt_str(token);
@@ -3713,6 +3784,7 @@ static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, Smit
     uint32_t location = smith_lang_gen_place(host, replay->generic, token, replay->location);
     if (found >= 0 && replay->instance != nullptr &&
         (smith_lang_span_has_group((SmithLangSpan){begin + 1, end}) || smith_lang_fields_in(begin + 1, end) ||
+         smith_lang_pack_has_pattern(replay, begin + 2, end - 1) ||
          smith_lang_expression_of_param(replay, begin + 1, end, &smith_lang_generics[found])) &&
         replay->count + 3 <= smith_lang_replay_depth_max) {
         // Its arguments hold a call: they are written to the pool first, to be typed (smith_lang_typed_start).
@@ -3801,7 +3873,7 @@ static bool smith_lang_replay_pattern(SmithLang *lang, const SmithHost *host, Sm
     uint32_t consumed = pattern.dots + 1 - frame->pos;
     uint32_t first = smith_lang_gt.count;
     uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[pattern.dots], replay->location);
-    bool good = opened > 0 && smith_lang_pack_pattern_copies(replay, frame->pos, &pattern);
+    bool good = opened > 0 && smith_lang_pack_pattern_copies(replay, frame->pos, &pattern, replay->typing);
     if (opened > 0 && smith_lang_pack_size(replay->generic, replay->instance) == 0) {
         consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, consumed);
     }
@@ -3809,6 +3881,7 @@ static bool smith_lang_replay_pattern(SmithLang *lang, const SmithHost *host, Sm
     if (!good) {
         smith_lang_generic_poison(lang, host, place);
     } else if (smith_lang_gt.count > first) {
+        if (replay->typing) (void)smith_lang_junk_add(replay, first, smith_lang_gt.count); // not part of the capture
         smith_lang_replay_push(replay, first, smith_lang_gt.count, 0);
     }
     return true;
