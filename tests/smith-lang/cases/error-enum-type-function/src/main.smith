@@ -1,0 +1,30 @@
+module main;
+
+// Each line below is an error with its fix; none is accepted and misread. The limits are the implementation's.
+
+type pair(type T) {
+    return enum {
+        T first;
+        T second;
+    };
+}
+
+type many(type T, usize n) {
+    return enum {
+        T some;
+    };
+}
+
+type branchy(type T) {
+    if (sizeof(T) > 4) return enum { T big; };
+    return enum { T small; };
+}
+
+type opt(type T) { return enum { T some; none; }; }
+
+static opt(usize, usize) two(void);
+
+void use(void) {
+    opt(usize) a = .none;
+    (void)a;
+}

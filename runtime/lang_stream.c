@@ -951,6 +951,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
+    if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
     if (smith_lang_type_on(lang, host) && !token->foreign && !lang->recording && !lang->decl.generic &&
         smith_lang_ty_token(lang, host, token)) {
         return;
@@ -994,6 +995,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     if (!token->foreign && (smith_lang_ident(token, "module") || smith_lang_ident(token, "import"))) {
         smith_lang_field_after_imports(lang, host);
         lang->slice.after_boundary = true; // a module or import line ends in a `;` that no token carries on
+        smith_lang_eshape_start = true;
     }
     if (host->previous != nullptr && smith_lang_tuples_on(lang, host) &&
         (lang->recent_count == 0 || lang->recent[0].text != token->text)) {

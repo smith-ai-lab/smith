@@ -913,6 +913,88 @@ i32 main() {
     c::printf("%d %d\n", t == .full, flip(t) == .empty);
     return 0;
 }
+==> enum-type-function/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A type function that returns an enum (issue #198): `option(usize)` is one struct for every use, defined at the first
+// declaration that names it.
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+type result(type T, type E) {
+    return enum {
+        T ok;
+        E error;
+    };
+}
+
+static option(usize) find(const char *text, char wanted) {
+    for (usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+
+static option(usize) again(usize v) {
+    option(usize) x = {.some = v};
+    return x;
+}
+
+static result(Circle, i32) make(bool good) {
+    if (good) return {.ok = {.radius = 2}};
+    return {.error = 7};
+}
+
+typedef option(Circle *) MaybeCircle;
+
+static f32 radius_of(MaybeCircle c) {
+    if (c == .some) return c.some->radius;
+    return -1;
+}
+
+static usize unwrap(option(usize) o, usize otherwise) {
+    if (o == .some) return o.some;
+    return otherwise;
+}
+
+i32 main(void) {
+    option(usize) at = find("key=value", '=');
+    option(usize) missing = find("none", '=');
+    result(Circle, i32) good = make(true);
+    result(Circle, i32) bad = make(false);
+    c::printf("%zu %zu\n", unwrap(at, 99), unwrap(missing, 99));
+    c::printf("%zu\n", unwrap(again(5), 0));
+    Circle unit = {.radius = 3};
+    MaybeCircle maybe = {.some = &unit};
+    c::printf("%.0f %.0f\n", (double)radius_of(maybe), (double)radius_of(.none));
+    switch (good) {
+    case .ok:
+        c::printf("ok %.0f\n", (double)good.ok.radius);
+        break;
+    case .error:
+        c::printf("error %d\n", good.error);
+        break;
+    }
+    switch (bad) {
+    case .ok:
+        c::printf("ok\n");
+        break;
+    case .error:
+        c::printf("error %d\n", bad.error);
+        break;
+    }
+    return 0;
+}
 ==> error-array-param-index/src/main.smith <==
 module main;
 
@@ -1243,6 +1325,46 @@ i32 main() {
 
 static void nowhere() {
     ready(.empty);
+}
+==> error-enum-type-function/src/main.smith <==
+module main;
+
+// Each line below is an error with its fix; none is accepted and misread. The limits are the implementation's.
+
+type pair(type T) {
+    return enum {
+        T first;
+        T second;
+    };
+}
+
+type many(type T, usize n) {
+    return enum {
+        T some;
+    };
+}
+
+type branchy(type T) {
+    if (sizeof(T) > 4) return enum {
+            T big;
+        };
+    return enum {
+        T small;
+    };
+}
+
+type opt(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+static opt(usize, usize) two(void);
+
+void use(void) {
+    opt(usize) a = .none;
+    (void)a;
 }
 ==> error-export-no-module/src/main.smith <==
 export int helper() {

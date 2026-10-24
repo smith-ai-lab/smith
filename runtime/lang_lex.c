@@ -562,6 +562,7 @@ size_t smith_lang_interface_capacity(void) {
     return sizeof smith_lang_header_full;
 }
 
+static void smith_lang_enum_aside(bool save);
 static bool smith_lang_aside_held; // a state is set aside and not yet restored
 
 // Holds one saved state, not a stack: a second save before the restore would overwrite the first, and the caller's
@@ -580,6 +581,7 @@ static void smith_lang_keep_aside(bool save) {
         memcpy(smith_lang_saved_header_body, smith_lang_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_saved_header_full, smith_lang_header_full, sizeof smith_lang_header_full);
         smith_lang_generics_aside(true, &smith_lang_instance);
+        smith_lang_enum_aside(true);
     } else {
         memcpy(&smith_lang_instance, &smith_lang_saved_instance, sizeof smith_lang_instance);
         memcpy(smith_lang_chars, smith_lang_saved_chars, sizeof smith_lang_chars);
@@ -587,6 +589,7 @@ static void smith_lang_keep_aside(bool save) {
         memcpy(smith_lang_header_body, smith_lang_saved_header_body, sizeof smith_lang_header_body);
         memcpy(smith_lang_header_full, smith_lang_saved_header_full, sizeof smith_lang_header_full);
         smith_lang_generics_aside(false, &smith_lang_instance);
+        smith_lang_enum_aside(false);
     }
 }
 
