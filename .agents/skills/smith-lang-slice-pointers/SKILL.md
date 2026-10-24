@@ -1,0 +1,30 @@
+---
+name: smith-lang-slice-pointers
+description: "A pointer to a slice as C's pointer to an array: `const char (*text)[:]` (`*text` is the slice, `(*text)[i]`, `(*text)[a:b]`, `countof(*text)`, `*text = (*text)[n:]`), `typeof(const char[:]) *text` and a typedef'd `Text *text`, passing `&s` to it, a typedef of a slice type used as `Text s = \"abc\";`, a cursor function such as `take_line(&s, &line)`. Load when a .smith file takes or returns a slice by pointer, writes `(*p)[:]`, or on 'converting a pointer to a slice of ... discards qualifiers'."
+---
+
+# A pointer to a slice
+
+This skill ships in the smith plugin, from `.agents/skills/smith-lang-slice-pointers/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Slices: `smith-lang-arrays`; qualifiers: `smith-lang-slice-qualifiers`.
+
+A slice is C's array declarator with a run-time size, so a pointer to one is C's pointer to an array, as `int (*p)[10]`. It lets a function advance the caller's slice, as a cursor does.
+
+```
+bool take_line(const char (*text)[:], const char (*line)[:]) {
+    if (countof(*text) == 0) return false;
+    usize n = 0;
+    while (n < countof(*text) && (*text)[n] != '\n') n++;   // *text is the slice
+    *line = (*text)[0:n];
+    *text = (*text)[n < countof(*text) ? n + 1 : n:];       // advance the caller's slice
+    return true;
+}
+const char s[:] = "a\nb";
+const char line[:];
+while (take_line(&s, &line)) { /* line is "a", then "b" */ }
+```
+
+- **Three spellings, one type:** `const char (*text)[:]`, `typeof(const char[:]) *text` and, with `typedef typeof(const char[:]) Text;`, `Text *text`. More stars (`(**pp)[:]`), a qualified pointer (`(*const p)[:]`) and more dimensions (`const f32 (*m)[:][2]`) work as in C.
+- **At a call `&s` passes unchanged.** C23's rule for pointers to arrays: a pointer to `char[:]` converts implicitly to a pointer to `const char[:]` (a call and an initializer; the lowering casts, the structs differ only in the element's `const`), and the reverse is the error "converting a pointer to a slice of `const char` to a pointer to a slice of `char` discards qualifiers". The same holds for a pointer variable. Not converted: an assignment `cp = p;` or a `return` of a pointer to a slice with another qualifier (clang reports a mismatch).
+- **A typedef of a slice type is the slice everywhere:** `Text s = "abc";`, `Text r = raw;` (an array), `s = "xy";` and `typeof(const char[:]) s = "abc";` work as `const char s[:] = "abc";` does.
+- Not yet: the brackets of the pointee carrying qualifiers (`(*p)[const :]`); write `typeof(...)` for a pointer to a slice that is itself const.
+- Underneath: a pointer to the slice's struct (`struct smith_array_const_char_n *`), so C passes `&s` of a `struct smith_array_const_char_n s`.

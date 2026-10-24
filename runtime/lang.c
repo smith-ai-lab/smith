@@ -285,9 +285,10 @@ typedef struct {
 typedef struct {
     char armed[96]; // the name of a slice just declared, whose `=` may convert an array
     char armed_tag[512];
-    uint32_t skip;       // the location of the first token of a chain that was written again
-    bool after_boundary; // the token before the one being lowered opens or ends a statement
-    char tags[32][512];  // the tags defined at file scope so far
+    char typeof_tag[512]; // the slice a `typeof(T[:])` just wrote, which a declaration's `=` may convert to
+    uint32_t skip;        // the location of the first token of a chain that was written again
+    bool after_boundary;  // the token before the one being lowered opens or ends a statement
+    char tags[32][512];   // the tags defined at file scope so far
     uint32_t tag_count;
 } SmithLangSliceState;
 

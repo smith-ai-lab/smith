@@ -540,7 +540,7 @@ static size_t smith_lang_slice_groups(SmithLang *lang, const SmithHost *host, co
 
 // At the first token of a declaration (after `;`, `{`, `}`, `(`, `,` or `:`): if it declares a slice, its tokens up to
 // `]` become the struct, defined where it is written, and the name. True when the token was replaced.
-static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+static bool smith_lang_slice_begin_array(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
     size_t name = 0;
     size_t close = 0;
     SmithLangSliceQuals quals = {};
@@ -586,6 +586,97 @@ static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
+// A pointer to a slice, C's pointer to an array: `const char (*text)[:]`. The tokens of the declaration, counted from
+// `first` as 0: the element's, `(`, the stars and qualifiers of the pointer, the name, `)` and `[ : ]`. Gives the index
+// of the `(` (`open`), of the name and of the `]`.
+static bool smith_lang_slice_pointer_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *first,
+                                                 size_t *open, size_t *name, size_t *close) {
+    if (first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first)) return false;
+    size_t at = 1;
+    for (; at < smith_lang_slice_scan_max; at++) { // the element: types, stars and `::`
+        const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
+        if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
+        if (smith_lang_punct(token, "(")) break;
+        if (at == 1 && smith_lang_punct(token, "::")) {
+            const SmithLangBinding *named =
+                lang->bindings_count > 0 ? smith_lang_binding_find(lang, first->text, first->length) : nullptr;
+            if (named != nullptr && named->is_c) return false; // the name after `c::` must reach the stream as written
+        }
+        if (!(token->kind == SmithTokenKind_Identifier || smith_lang_punct(token, "*") ||
+              smith_lang_punct(token, "::"))) {
+            return false;
+        }
+    }
+    if (at >= smith_lang_slice_scan_max - 8) return false;
+    size_t stars = 0;
+    size_t last = at + 1;
+    for (; last < at + 8; last++) { // the pointer: stars, qualifiers, then the name
+        const SmithToken *token = smith_lang_slice_at(lang, host, first, last);
+        if (smith_lang_punct(token, "*")) {
+            stars += 1;
+        } else if (token->kind != SmithTokenKind_Identifier || stars == 0) {
+            return false;
+        } else if (!smith_lang_slice_qualifier(token)) {
+            break;
+        }
+    }
+    if (last >= at + 8 || !smith_lang_punct(smith_lang_slice_at(lang, host, first, last + 1), ")") ||
+        !smith_lang_punct(smith_lang_slice_at(lang, host, first, last + 2), "[") ||
+        smith_lang_slice_bracket(lang, host, first, last + 2, nullptr) != 0) {
+        return false;
+    }
+    *open = at;
+    *name = last;
+    *close = last + 4;
+    return true;
+}
+
+// At the first token of `T (*name)[:]`: the slice's struct, then the pointer's own tokens and the name, as
+// `struct tag *name` would be written. True when the token was replaced.
+static bool smith_lang_slice_pointer_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+    size_t open = 0;
+    size_t name = 0;
+    size_t close = 0;
+    if (!smith_lang_slice_pointer_declaration(lang, host, first, &open, &name, &close)) return false;
+    static SmithToken span[smith_lang_slice_scan_max + 4];
+    for (size_t at = 0; at <= close; at++) // up to the `]`
+        span[at] = *smith_lang_slice_at(lang, host, first, at);
+    size_t leading = smith_lang_slice_leading(span, open);
+    SmithLangSliceDims dims = smith_lang_slice_dims_one();
+    const char *dims_problem = nullptr;
+    uint32_t dims_where = 0;
+    size_t end = smith_lang_slice_groups(lang, host, first, close, &dims, &dims_problem, &dims_where);
+    if (dims_problem != nullptr) smith_lang_error(lang, host, dims_where, "%s", dims_problem);
+    char tag[smith_lang_tuple_name_max];
+    const char *problem = nullptr;
+    uint32_t where = span[open].location;
+    if (!smith_lang_slice_tag_of(lang, span + leading, open - leading, &dims, tag, sizeof tag, &problem, &where)) {
+        smith_lang_error(lang, host, where, "%s", problem);
+        return false;
+    }
+    static SmithToken made[smith_lang_slice_scan_max + 40];
+    size_t used = 0;
+    for (size_t at = 0; at < leading; at++)
+        made[used++] = span[at];
+    used = smith_lang_slice_define(lang, host, made, used, sizeof made / sizeof made[0], tag, span + leading,
+                                   open - leading, &dims, &span[leading]);
+    for (size_t at = open + 1; at <= name; at++) { // the stars, their qualifiers and the name
+        made[used] = span[at];
+        made[used++].space_before = at == open + 1 || !smith_lang_punct(&span[at - 1], "*");
+    }
+    if (!smith_lang_tuple_replace(lang, end, made, used)) return false;
+    lang->slice.skip = span[name].location;
+    snprintf(lang->slice.armed, sizeof lang->slice.armed, "%.*s", (int)span[name].length, span[name].text);
+    snprintf(lang->slice.armed_tag, sizeof lang->slice.armed_tag, "*%s", tag); // its `=` may add a qualifier
+    smith_lang_slice_flag(lang);
+    return true;
+}
+
+// At the first token of a declaration: `T xs[:]` or `T (*xs)[:]`.
+static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+    return smith_lang_slice_begin_array(lang, host, first) || smith_lang_slice_pointer_begin(lang, host, first);
+}
+
 // `typeof(T[:])`: a slice's struct as a type, the result of a function or the type of a local.
 static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) return false;
@@ -628,6 +719,7 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
                                           &dims, token);
     made[0].space_before = token->space_before;
     made[0].line_start = token->line_start;
+    snprintf(lang->slice.typeof_tag, sizeof lang->slice.typeof_tag, "%s", tag);
     if (!smith_lang_tuple_replace(lang, last + 1, made, used)) return false;
     smith_lang_slice_flag(lang);
     return true; // the `typeof` itself is dropped
@@ -1318,7 +1410,14 @@ static size_t smith_lang_slice_params(const char *canonical, char tags[][smith_l
                 param += 1;
             tags[count][0] = 0;
             if (strncmp(param, "struct smith_array_", 19) == 0) {
-                snprintf(tags[count], smith_lang_tuple_name_max, "%.*s", (int)strcspn(param + 7, ",) "), param + 7);
+                size_t length = strcspn(param + 7, ",) ");
+                bool pointer = strncmp(param + 7 + length, " *", 2) == 0;
+                bool many = pointer && param[9 + length] == '*'; // a pointer to a pointer to a slice: as it is
+                // a pointer to a slice is marked by a star before its tag
+                if (!many) {
+                    snprintf(tags[count], smith_lang_tuple_name_max, "%s%.*s", pointer ? "*" : "", (int)length,
+                             param + 7);
+                }
             }
             count += 1;
             start = at + 1;
@@ -1590,6 +1689,44 @@ static bool smith_lang_slice_convert(SmithLang *lang, const SmithHost *host, con
     return true;
 }
 
+// A pointer to a slice where a pointer to a slice of `tag` is wanted (C23's rule for pointers to arrays, N2607: a
+// pointer to `char[:]` converts to a pointer to `const char[:]`, and the reverse discards qualifiers). The structs
+// differ only in the element's qualifiers, so the pointer is cast.
+static void smith_lang_slice_convert_pointer(SmithLang *lang, const SmithHost *host, const char *tag,
+                                             const SmithToken *expr, size_t count, SmithLangSliceCur *cur) {
+    char text[smith_lang_slice_text_max];
+    SmithExprType found = {};
+    bool typed = count > 0 && smith_lang_slice_text(lang, expr, count, text, sizeof text) &&
+                 host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
+                 strncmp(found.canonical, "struct smith_array_", 19) == 0;
+    char from[smith_lang_tuple_name_max] = "";
+    if (typed) snprintf(from, sizeof from, "%.*s", (int)strcspn(found.canonical + 7, " "), found.canonical + 7);
+    SmithLangSliceRelation relation = typed ? smith_lang_slice_relation(from, tag) : SmithLangSliceRelation_Same;
+    if (relation == SmithLangSliceRelation_Same || relation == SmithLangSliceRelation_Other) {
+        smith_lang_slice_add(cur, expr, count);
+        return;
+    }
+    char pattern[smith_lang_tuple_name_max + 400];
+    char definition[smith_lang_tuple_name_max + 200];
+    smith_lang_slice_definition_text(lang, tag, definition, sizeof definition);
+    if (relation == SmithLangSliceRelation_Discards) {
+        char words_from[96];
+        char words_to[96];
+        smith_lang_slice_tag_words(from, words_from, sizeof words_from);
+        smith_lang_slice_tag_words(tag, words_to, sizeof words_to);
+        smith_lang_error(lang, host, expr[0].location,
+                         "converting a pointer to a slice of `%s` to a pointer to a slice of `%s` discards "
+                         "qualifiers: the elements are read-only",
+                         words_from, words_to);
+        snprintf(pattern, sizeof pattern, "__extension__ ( { %s ( struct %s * ) 0 ; } )", definition, tag);
+    } else {
+        snprintf(pattern, sizeof pattern, "__extension__ ( { %s ( struct %s * ) ( @0 ) ; } )", definition, tag);
+    }
+    SmithLangSliceSpan spans[1] = {{expr, count}};
+    cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, pattern, spans, expr);
+    cur->changed = true;
+}
+
 // The arguments of a call, converted: an array where the function wants a slice, and, for a C function, a slice
 // where it wants a pointer (`xs.data`; its length is `countof(xs)`).
 static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const SmithLangSliceChain *chain,
@@ -1615,7 +1752,9 @@ static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const 
             if (!(depth == 0 && smith_lang_punct(token, ","))) continue;
         }
         size_t from = start;
-        if (argument < params && tags[argument][0] != 0) {
+        if (argument < params && tags[argument][0] == '*') {
+            smith_lang_slice_convert_pointer(lang, host, tags[argument] + 1, &chain->tokens[from], at - from, cur);
+        } else if (argument < params && tags[argument][0] != 0) {
             smith_lang_slice_convert(lang, host, tags[argument], &chain->tokens[from], at - from, cur);
         } else if (chain->c_head && at > from) {
             char arg[smith_lang_slice_text_max];
@@ -1685,6 +1824,47 @@ static size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, siz
     return count;
 }
 
+// The type a declaration `T name =` gives its variable, when `T` is a slice (a typedef of one, or the struct a
+// `typeof(U[:])` just wrote): its tag. The name is not declared yet, so the type is asked of `( T ) { }`. `declares`
+// says that the tokens before the `=` are a declaration at all.
+static bool smith_lang_slice_declared(SmithLang *lang, const SmithHost *host, char *tag, size_t capacity,
+                                      bool *declares) {
+    SmithToken name = {};
+    SmithToken type = {};
+    if (!smith_lang_tuple_previous(lang, host, 1, &name) || name.kind != SmithTokenKind_Identifier ||
+        smith_lang_word(name.text, name.length) != SmithLangWord_Other ||
+        !smith_lang_tuple_previous(lang, host, 2, &type)) {
+        return false;
+    }
+    if (smith_lang_punct(&type, "}") && lang->slice.typeof_tag[0] != 0) {
+        *declares = true;
+        snprintf(tag, capacity, "%s", lang->slice.typeof_tag);
+        return true;
+    }
+    if (type.kind != SmithTokenKind_Identifier || smith_lang_word(type.text, type.length) != SmithLangWord_Other) {
+        return false;
+    }
+    SmithToken kind = {};
+    bool tagged =
+        smith_lang_tuple_previous(lang, host, 3, &kind) && kind.kind == SmithTokenKind_Identifier &&
+        (smith_lang_ident(&kind, "struct") || smith_lang_ident(&kind, "union") || smith_lang_ident(&kind, "enum"));
+    SmithToken tokens[6];
+    size_t count = 0;
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &type, true);
+    if (tagged) tokens[count++] = kind;
+    tokens[count++] = type;
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, &type, true);
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, &type, true);
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, &type, true);
+    char text[smith_lang_slice_text_max];
+    if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text)) return false;
+    SmithLangSliceType found = {};
+    *declares = true;
+    if (!smith_lang_slice_type(host, text, &found) || found.kind != SmithLangSlice_Slice) return false;
+    snprintf(tag, capacity, "%s", found.tag);
+    return true;
+}
+
 // The `=` being lowered, of `slice = array` or `T xs[:] = array`: the right side becomes the slice of the left's type.
 // (The left side is typed from the tokens before it; a declaration's own name is not declared yet, so it is known by
 // the tag its declaration made.)
@@ -1695,9 +1875,14 @@ static void smith_lang_slice_equals(SmithLang *lang, const SmithHost *host, cons
     }
     SmithToken before;
     char tag[smith_lang_tuple_name_max] = "";
+    bool declares = false;
     if (lang->slice.armed_tag[0] != 0 && smith_lang_tuple_previous(lang, host, 1, &before) &&
         smith_lang_equals(before.text, before.length, lang->slice.armed)) {
         snprintf(tag, sizeof tag, "%s", lang->slice.armed_tag);
+    } else if (smith_lang_slice_declared(lang, host, tag, sizeof tag, &declares)) {
+        // `Text s = ...` or `typeof(const char[:]) s = ...`: the declaration's type is a slice
+    } else if (declares) {
+        return; // a declaration of another type: the name before it is no earlier variable
     } else {
         char text[512];
         SmithLangSliceType type = {};
@@ -1712,7 +1897,11 @@ static void smith_lang_slice_equals(SmithLang *lang, const SmithHost *host, cons
     if (count == 0 || smith_lang_punct(&right[0], "{")) return;
     static SmithLangSliceCur converted;
     converted = (SmithLangSliceCur){};
-    smith_lang_slice_convert(lang, host, tag, right, count, &converted);
+    if (tag[0] == '*') {
+        smith_lang_slice_convert_pointer(lang, host, tag + 1, right, count, &converted);
+    } else {
+        smith_lang_slice_convert(lang, host, tag, right, count, &converted);
+    }
     if (converted.changed && !converted.overflow)
         smith_lang_tuple_replace(lang, count, converted.tokens, converted.count);
 }
