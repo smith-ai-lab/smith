@@ -13,6 +13,8 @@ if [ "${1:-}" = --parts ]; then
     sed -n 's/^if part \(.*\); then$/\1/p' "$0" | tr ' ' '\n' | sort -u
     exit 0
 fi
+# What the checks expect is the output of a run under `smith test`, which sets this for everything beneath it.
+export SMITH_OUTPUT=full
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 iso=
 if [ "${2:-}" = isolate ]; then
