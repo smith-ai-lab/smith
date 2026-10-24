@@ -1,0 +1,10 @@
+module main;
+
+i32 main(void) {
+    f32 three[4][3] = {};
+    f32 one[4] = {};
+    f32 rows[:][2] = three;
+    f32 flat[:][:] = one;
+    f32 fine[:][:] = three;
+    return (i32)(countof(rows) + countof(flat) + countof(fine));
+}

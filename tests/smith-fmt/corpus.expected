@@ -998,15 +998,45 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
-==> error-slice-more-dimensions/src/main.smith <==
+==> error-slice-dims-across-rows/src/main.smith <==
 module main;
 
-i32 take(i32 rows[:][:]) {
+i32 main(void) {
+    f32 raw[4][2] = {};
+    f32 xs[:][2] = raw;
+    // a slice within a row is fine; an inner dimension across rows needs strides
+    f32 ok[:] = xs[1][0:2];
+    f32 bad[:][2] = xs[1:3][0:1];
+    return (i32)(ok[0] + (f32)countof(bad));
+}
+==> error-slice-dims-fixed-slice/src/main.smith <==
+module main;
+
+i32 main(void) {
+    f32 raw[4][2] = {};
+    f32 xs[:][2] = raw[1:3];
+    return (i32)countof(xs);
+}
+==> error-slice-dims-group/src/main.smith <==
+module main;
+
+i32 take(f32 xs[:][2][n]) {
     return 0;
 }
 
 i32 main(void) {
     return 0;
+}
+==> error-slice-dims-shape/src/main.smith <==
+module main;
+
+i32 main(void) {
+    f32 three[4][3] = {};
+    f32 one[4] = {};
+    f32 rows[:][2] = three;
+    f32 flat[:][:] = one;
+    f32 fine[:][:] = three;
+    return (i32)(countof(rows) + countof(flat) + countof(fine));
 }
 ==> error-slice-negative/src/main.smith <==
 module main;
@@ -4791,6 +4821,98 @@ int main(void) {
     static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
     bool flag = true;
     printf("%d\n", flag);
+    return 0;
+}
+==> slice-dims-lowering/src/dims.smith <==
+module dims;
+
+// Run-time arrays of more dimensions: the struct is named after the element and the shape (`n` a run-time size).
+
+export struct Image {
+    f32 pixels[:][:];
+    u8 rows[:][3];
+};
+
+export f32 at(f32 xs[:][2], usize i, usize j) {
+    return xs[i][j];
+}
+
+export typeof(f32[:][2]) tail(f32 xs[:][2]) {
+    return xs[1:countof(xs)];
+}
+
+export usize width(i32 cube[:][2][:], usize i) {
+    return countof(cube[i]);
+}
+
+export f32 first(f32 xs[:][:]) {
+    f32 row[:] = xs[0];
+    return row[0] + xs[0][1] + xs[1][countof(xs[0]) - 1];
+}
+==> slice-dims-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// Run-time arrays of more dimensions: `f32 xs[:][2]` (rows of 2) and `xs[:][:]`, any mix. Built by hand from a fixed
+// array, indexed `xs[i][j]`, a row `xs[i]` (a `[:]`), counted, sliced within a row, passed on and returned.
+
+struct Grid {
+    f32 cells[:][:];
+};
+
+static f32 total(f32 rows[:][2]) {
+    f32 sum = 0;
+    for (usize i = 0; i < countof(rows); i++) {
+        for (usize j = 0; j < countof(rows[i]); j++) {
+            sum += rows[i][j];
+        }
+    }
+    return sum;
+}
+
+static f32 row_sum(f32 row[:]) {
+    f32 sum = 0;
+    for (usize i = 0; i < countof(row); i++) {
+        sum += row[i];
+    }
+    return sum;
+}
+
+static typeof(f32[:][2]) lower(f32 rows[:][2]) {
+    return rows[1:countof(rows)];
+}
+
+i32 main(void) {
+    f32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
+    f32 pairs[:][2] = raw;
+    f32 grid[:][:] = raw;
+    c::printf("%zu %zu %zu %zu\n", countof(pairs), countof(pairs[0]), countof(grid), countof(grid[3]));
+    c::printf("%g %g %g\n", pairs[2][1], grid[3][0], total(pairs));
+    pairs[1][0] = 30;
+    f32 row[:] = pairs[1];
+    row[1] += 100;
+    c::printf("%g %g %g %g\n", raw[1][0], raw[1][1], row_sum(pairs[2]), row_sum(pairs[3][1:2]));
+    typeof(f32[:][2]) rest = lower(pairs);
+    c::printf("%zu %g %g\n", countof(rest), rest[0][0], total(pairs[1:3]));
+    struct Grid held = {.cells = grid};
+    held.cells[0][1] = -2;
+    c::printf("%zu %g %zu\n", countof(held.cells[2]), raw[0][1], countof(held.cells[1:3]));
+
+    // Three dimensions, 2 by 3 by 4 numbers, the last one fixed: one block, row-major.
+    i32 cube[2][3][4] = {};
+    for (i32 n = 0; n < 24; n++) {
+        cube[n / 12][n / 4 % 3][n % 4] = n;
+    }
+    i32 deep[:][:][4] = cube;
+    i32 plane[:][4] = deep[1];
+    i32 line[:] = deep[1][2];
+    c::printf("%zu %zu %zu %zu\n", countof(deep), countof(deep[0]), countof(deep[0][0]), countof(plane));
+    c::printf("%d %d %d %d\n", deep[0][0][0], deep[1][2][3], plane[1][2], line[1]);
+    deep[1][1][1] = 99;
+    c::printf("%d %d %d\n", cube[1][1][1], deep[0][2][3], plane[1][1]);
+    i32 cut[:] = deep[1][0][1:3];
+    c::printf("%zu %d %d\n", countof(cut), cut[0], cut[1]);
     return 0;
 }
 ==> slice-lowering/src/slices.smith <==

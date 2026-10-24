@@ -1973,6 +1973,14 @@ class SmithHook final : public TokenHook, public NameSource {
         if (const auto *constant = ast.getAsConstantArrayType(type)) {
             out->is_array = true;
             out->array_size = constant->getSize().getZExtValue();
+            QualType inner = type;
+            while (const auto *level = ast.getAsConstantArrayType(inner)) {
+                if (out->array_rank < 8) out->array_dims[out->array_rank] = level->getSize().getZExtValue();
+                out->array_rank += 1;
+                inner = level->getElementType();
+            }
+            snprintf(out->array_element, sizeof out->array_element, "%s",
+                     inner.getUnqualifiedType().getAsString(ast.getPrintingPolicy()).c_str());
         }
         type = self->finishType(type);
         const PrintingPolicy &policy = ast.getPrintingPolicy();

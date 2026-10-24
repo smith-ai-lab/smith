@@ -1,0 +1,1 @@
+src/main.smith:8:28: a slice of rows has no strides: slice each row, `xs[i][a:b]`, not an inner dimension across rows, `xs[a:b][c:d]`

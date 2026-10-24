@@ -9,8 +9,10 @@ tags: [gaps]
 - A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 - Apple's `metal` output is not reproducible (two identical builds of learner's shaders differ), so compare shaders by
   the command smith runs, not by bytes.
-- `arena::push_slice(&a, T, n)` (#82) gives a `T[:]` of one dimension; more sizes (`push_slice(&a, f32, n, m)`) need a
-  return type computed from the parameters (#102, #105), and `push_array` stays a `T *` until #105. The result of a
+- `arena::push_slice(&a, T, n)` (#82) gives a `T[:]` of one dimension; more sizes (`push_slice(&a, f32, n, m)`) wait
+  for the owner's choice of how its result type is computed (#105), and `push_array` stays a `T *` until then. A
+  `[:][2]` is built by the lowering already (`f32 xs[:][2]`, converted from a fixed array); a generic's head cannot
+  return one yet. The result of a
   generic call cannot be indexed or sliced where it is written (`push_slice(...)[1:3]`): bind it to a `T xs[:]` first. A
   module that imports arena is not in slice mode for that (the header carries no `smith-slices` line for a generic's
   head): it writes a `[:]` of its own to index.

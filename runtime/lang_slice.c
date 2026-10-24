@@ -13,7 +13,8 @@
 // and writes the chain again. Included by runtime/lang.c, after runtime/lang_tuple.c.
 
 constexpr size_t smith_lang_slice_chain_max = 200;
-constexpr size_t smith_lang_slice_cur_max = 240;
+constexpr size_t smith_lang_slice_cur_max = 600;
+constexpr size_t smith_lang_slice_dims_max = 8;
 constexpr size_t smith_lang_slice_elements_max = 24;
 constexpr size_t smith_lang_slice_scan_max = 48;
 constexpr size_t smith_lang_slice_text_max = 4096;
@@ -105,7 +106,9 @@ static size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capa
     size_t from = used;
     used = smith_lang_slice_build(out, used, capacity, pattern, spans, like);
     for (size_t i = from; i < used; i++) { // each token made
-        static const char *const temporaries[] = {"smith_s", "smith_i", "smith_a", "smith_b", "smith_p"};
+        static const char *const temporaries[] = {"smith_s", "smith_i", "smith_a", "smith_b", "smith_p",
+                                                  "smith_r", "smith_j", "smith_k", "smith_l", "smith_m",
+                                                  "smith_n", "smith_o", "smith_q"};
         for (size_t t = 0; t < sizeof temporaries / sizeof temporaries[0]; t++) { // the names of the temporaries
             if (!out[i].synthetic || !smith_lang_equals(out[i].text, out[i].length, temporaries[t])) continue;
             char numbered[24];
@@ -121,31 +124,123 @@ static size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capa
     return used;
 }
 
+// ---- The dimensions of a slice (issue #105)
+
+// `f32[:][2]` is two dimensions, the first of them run-time. The struct of a run-time array keeps its sizes in
+// `count[k]`, k the number of `:`; the fixed ones are in its name (`smith_array_f32_n_2`), and everything else (the
+// strides, the checks) is written from them. The first dimension is always a `:`: a row of fixed size is a `[:]`.
+typedef struct {
+    size_t count;
+    bool runtime[smith_lang_slice_dims_max];
+    uint64_t fixed[smith_lang_slice_dims_max];
+} SmithLangSliceDims;
+
+static SmithLangSliceDims smith_lang_slice_dims_one(void) {
+    SmithLangSliceDims dims = {.count = 1};
+    dims.runtime[0] = true;
+    return dims;
+}
+
+static size_t smith_lang_slice_dims_runtime(const SmithLangSliceDims *dims) {
+    size_t runtime = 0;
+    for (size_t at = 0; at < dims->count; at++) // at most 8
+        runtime += dims->runtime[at] ? 1 : 0;
+    return runtime;
+}
+
+// `_n_2` for `[:][2]`.
+static void smith_lang_slice_dims_suffix(const SmithLangSliceDims *dims, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (size_t at = 0; at < dims->count && used + 24 < capacity; at++) { // at most 8
+        used += dims->runtime[at]
+                    ? (size_t)snprintf(out + used, capacity - used, "_n")
+                    : (size_t)snprintf(out + used, capacity - used, "_%llu", (unsigned long long)dims->fixed[at]);
+    }
+}
+
+// The last `_n` or `_<digits>` of a name before `end`: its start (the `_`) and whether it is a run-time dimension.
+static bool smith_lang_slice_dims_last(const char *text, size_t end, size_t *start, bool *runtime, uint64_t *fixed) {
+    size_t at = end;
+    while (at > 0 && text[at - 1] != '_')
+        at -= 1;
+    if (at == 0 || at == end) return false;
+    size_t length = end - at;
+    *start = at - 1;
+    if (length == 1 && text[at] == 'n') {
+        *runtime = true;
+        return true;
+    }
+    uint64_t value = 0;
+    for (size_t i = at; i < end; i++) { // digits only
+        if (text[i] < '0' || text[i] > '9') return false;
+        value = value * 10 + (uint64_t)(text[i] - '0');
+    }
+    *runtime = false;
+    *fixed = value;
+    return true;
+}
+
+// The dimensions a slice's tag names, and the length of the tag before them (its element's part). A tag's element
+// never ends like a dimension (`_e` is written between), so reading from the end is unambiguous.
+static bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size_t *stem) {
+    bool runtime[smith_lang_slice_dims_max];
+    uint64_t fixed[smith_lang_slice_dims_max] = {};
+    size_t found = 0;
+    size_t end = strlen(tag);
+    size_t start = 0;
+    while (found < smith_lang_slice_dims_max &&
+           smith_lang_slice_dims_last(tag, end, &start, &runtime[found], &fixed[found])) {
+        found += 1;
+        end = start;
+    }
+    if (found == 0) return false;
+    *dims = (SmithLangSliceDims){.count = found};
+    for (size_t at = 0; at < found; at++) { // read from the end
+        dims->runtime[at] = runtime[found - 1 - at];
+        dims->fixed[at] = fixed[found - 1 - at];
+    }
+    *stem = end;
+    return true;
+}
+
 // ---- The name of a slice's struct
 
-static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity) {
+static void smith_lang_slice_tag_dims(const char *spelled, const SmithLangSliceDims *dims, char *tag, size_t capacity) {
     size_t length = strlen(spelled);
+    char suffix[64];
+    smith_lang_slice_dims_suffix(dims, suffix, sizeof suffix);
+    size_t start = 0;
+    bool runtime = false;
+    uint64_t fixed = 0;
+    const char *guard = smith_lang_slice_dims_last(spelled, length, &start, &runtime, &fixed) ? "_e" : "";
     if (length <= smith_lang_tuple_long) {
-        snprintf(tag, capacity, "%s%s_n", smith_lang_slice_prefix, spelled);
+        snprintf(tag, capacity, "%s%s%s%s", smith_lang_slice_prefix, spelled, guard, suffix);
         return;
     }
     uint64_t hash = 14695981039346656037ull;
     for (size_t i = 0; i < length; i++) { // FNV-1a
         hash = (hash ^ (uint8_t)spelled[i]) * 1099511628211ull;
     }
-    snprintf(tag, capacity, "%s%.80s_h%016llx_n", smith_lang_slice_prefix, spelled, (unsigned long long)hash);
+    snprintf(tag, capacity, "%s%.80s_h%016llx%s", smith_lang_slice_prefix, spelled, (unsigned long long)hash, suffix);
+}
+
+static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity) {
+    SmithLangSliceDims one = smith_lang_slice_dims_one();
+    smith_lang_slice_tag_dims(spelled, &one, tag, capacity);
 }
 
 // The struct a slice of the element written as `elem` is, or false with the reason at `where`.
-static bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count, char *tag, size_t capacity,
-                                    const char **problem, uint32_t *where) {
+static bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count,
+                                    const SmithLangSliceDims *dims, char *tag, size_t capacity, const char **problem,
+                                    uint32_t *where) {
     char spelled[smith_lang_tuple_name_max];
     if (count == 0) {
         *problem = "a slice needs its element type: `T xs[:]`";
         return false;
     }
     if (!smith_lang_tuple_spell(lang, elem, 0, count, spelled, sizeof spelled, problem, where)) return false;
-    smith_lang_slice_tag(spelled, tag, capacity);
+    smith_lang_slice_tag_dims(spelled, dims, tag, capacity);
     return true;
 }
 
@@ -160,8 +255,8 @@ static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag) {
 }
 
 // The definition as a C header spells it, for a bare tag: the header of an export that names the struct holds it.
-static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag, const SmithToken *elem,
-                                                size_t count) {
+static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag, const SmithToken *elem, size_t count,
+                                                size_t sizes) {
     char text[smith_lang_tuple_name_max];
     size_t used = (size_t)snprintf(text, sizeof text, "%s {", tag);
     for (size_t at = 0; at < count && used + smith_lang_name_max + 8 < sizeof text; at++) { // the element's tokens
@@ -182,24 +277,29 @@ static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag
         used += (size_t)snprintf(text + used, sizeof text - used, " %s", word);
         at += taken - 1;
     }
-    snprintf(text + used, sizeof text - used, " * data; size_t count [ 1 ]; }");
+    snprintf(text + used, sizeof text - used, " * data; size_t count [ %zu ]; }", sizes);
     return smith_lang_tuple_keep(text, strlen(text));
 }
 
 // The struct a slice is, ready for the queue: `struct tag { T *data; usize count[1]; }`, or only `struct tag` when an
 // earlier declaration defined it at file scope. The first use at file scope defines it.
 static size_t smith_lang_slice_define(SmithLang *lang, SmithToken *out, size_t used, size_t capacity, const char *tag,
-                                      const SmithToken *elem, size_t count, const SmithToken *like) {
+                                      const SmithToken *elem, size_t count, const SmithLangSliceDims *dims,
+                                      const SmithToken *like) {
+    size_t sizes = smith_lang_slice_dims_runtime(dims);
     bool bare = smith_lang_slice_defined(lang, tag);
     char pattern[smith_lang_tuple_name_max + 80];
-    snprintf(pattern, sizeof pattern, bare ? "struct %s" : "struct %s { @0 * data ; __SIZE_TYPE__ count [ 1 ] ; }",
-             tag);
+    if (bare) {
+        snprintf(pattern, sizeof pattern, "struct %s", tag);
+    } else {
+        snprintf(pattern, sizeof pattern, "struct %s { @0 * data ; __SIZE_TYPE__ count [ %zu ] ; }", tag, sizes);
+    }
     SmithLangSliceSpan spans[1] = {{elem, count}};
     size_t first = used;
     used = smith_lang_slice_pattern(out, used, capacity, pattern, spans, like);
     if (first > 0) out[first].space_before = true; // after `typedef`, `static` and the like
     if (bare) {
-        const char *text = smith_lang_slice_header_text(lang, tag, elem, count);
+        const char *text = smith_lang_slice_header_text(lang, tag, elem, count, sizes);
         out[used - 1].header_text = text;
         out[used - 1].header_length = (uint32_t)strlen(text);
         return used;
@@ -291,24 +391,41 @@ static void smith_lang_slice_flag(SmithLang *lang) {
     lang->tuples_seen = true;
 }
 
-// `[ : ]` was read after the name and more dimensions follow: they are not built yet. Returns the tokens of them, to be
-// dropped so that the compiler has nothing more to say.
-static size_t smith_lang_slice_more(SmithLang *lang, const SmithHost *host, size_t close) {
-    size_t extra = 0;
-    for (size_t groups = 0; groups < 4; groups++) { // each `[ ... ]` after the name
-        const SmithToken *next = smith_lang_peek(lang, host, close + extra, false);
-        if (!smith_lang_punct(next, "[")) break;
-        if (groups == 0) {
-            smith_lang_error(lang, host, next->location,
-                             "a run-time array of more than one dimension is not built yet; a `[:]` of `[:]` has rows "
-                             "of different lengths, so hold the rows in a struct");
+// The groups after the first `[ : ]`, from the index `last` (of the first group's `]`, the first token counted 0 as in
+// smith_lang_slice_at): `[ : ]` is a run-time dimension and `[ 2 ]` a fixed one. Adds them to `dims`; gives the index
+// of the last `]` and, when a group is not one, a problem (the group is skipped).
+static size_t smith_lang_slice_groups(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t last,
+                                      SmithLangSliceDims *dims, const char **problem, uint32_t *where) {
+    for (size_t groups = 0; groups < smith_lang_slice_dims_max; groups++) { // each `[ ... ]` after the name
+        const SmithToken *open = smith_lang_slice_at(lang, host, first, last + 1);
+        if (!smith_lang_punct(open, "[") || smith_lang_punct(smith_lang_slice_at(lang, host, first, last + 2), "["))
+            break;
+        const SmithToken *inside = smith_lang_slice_at(lang, host, first, last + 2);
+        const SmithToken *close = smith_lang_slice_at(lang, host, first, last + 3);
+        bool run = smith_lang_punct(inside, ":") && smith_lang_punct(close, "]");
+        bool fixed = inside->kind == SmithTokenKind_Number && smith_lang_punct(close, "]");
+        if (dims->count >= smith_lang_slice_dims_max) {
+            *problem = "a run-time array has at most 8 dimensions";
+            *where = open->location;
+        } else if (run || fixed) {
+            char digits[32];
+            snprintf(digits, sizeof digits, "%.*s", (int)(inside->length < 31 ? inside->length : 31), inside->text);
+            dims->runtime[dims->count] = run;
+            dims->fixed[dims->count] = run ? 0 : strtoull(digits, nullptr, 0);
+            dims->count += 1;
+            last += 3;
+            continue;
+        } else {
+            *problem = "a dimension of a run-time array is `[:]` or a number: `f32 xs[:][2]`";
+            *where = open->location;
         }
         for (size_t guard = 0; guard < 32; guard++) { // to its `]`
-            extra += 1;
-            if (smith_lang_punct(smith_lang_peek(lang, host, close + extra - 1, false), "]")) break;
+            last += 1;
+            const SmithToken *next = smith_lang_slice_at(lang, host, first, last);
+            if (smith_lang_punct(next, "]") || next->kind == SmithTokenKind_Eof) break;
         }
     }
-    return extra;
+    return last;
 }
 
 // At the first token of a declaration (after `;`, `{`, `}`, `(`, `,` or `:`): if it declares a slice, its tokens up to
@@ -328,17 +445,21 @@ static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const
     size_t used = 0;
     for (size_t at = 0; at < leading; at++)
         made[used++] = span[at];
-    bool good = smith_lang_slice_tag_of(lang, span + leading, name - leading, tag, sizeof tag, &problem, &where);
+    SmithLangSliceDims dims = smith_lang_slice_dims_one();
+    const char *dims_problem = nullptr;
+    uint32_t dims_where = 0;
+    size_t end = smith_lang_slice_groups(lang, host, first, close, &dims, &dims_problem, &dims_where);
+    if (dims_problem != nullptr) smith_lang_error(lang, host, dims_where, "%s", dims_problem);
+    bool good = smith_lang_slice_tag_of(lang, span + leading, name - leading, &dims, tag, sizeof tag, &problem, &where);
     if (good) {
         used = smith_lang_slice_define(lang, made, used, sizeof made / sizeof made[0], tag, span + leading,
-                                       name - leading, &span[leading]);
+                                       name - leading, &dims, &span[leading]);
     } else {
         smith_lang_error(lang, host, where, "%s", problem);
         made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, &span[leading], true);
     }
     made[used++] = span[name];
-    size_t extra = smith_lang_slice_more(lang, host, close);
-    if (!smith_lang_tuple_replace(lang, close + extra, made, used)) return false;
+    if (!smith_lang_tuple_replace(lang, end, made, used)) return false;
     lang->slice.skip = span[name].location; // the name just declared starts no chain
     smith_lang_slice_flag(lang);
     snprintf(lang->slice.armed, sizeof lang->slice.armed, "%.*s", (int)span[name].length, span[name].text);
@@ -354,8 +475,7 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
         const SmithToken *next = smith_lang_peek(lang, host, at, false);
         if (next->kind == SmithTokenKind_Eof || next->foreign) return false;
         if (smith_lang_punct(next, "[") && smith_lang_punct(smith_lang_peek(lang, host, at + 1, false), ":") &&
-            smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "]") &&
-            smith_lang_punct(smith_lang_peek(lang, host, at + 3, false), ")")) {
+            smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "]")) {
             close = at;
         } else if (!(next->kind == SmithTokenKind_Identifier || smith_lang_punct(next, "*") ||
                      smith_lang_punct(next, "::"))) {
@@ -363,6 +483,17 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
         }
     }
     if (close < 2) return false;
+    SmithLangSliceDims dims = smith_lang_slice_dims_one();
+    const char *dims_problem = nullptr;
+    uint32_t dims_where = 0;
+    size_t last = smith_lang_slice_groups(lang, host, token, close + 3, &dims, &dims_problem, &dims_where);
+    if (!smith_lang_punct(smith_lang_peek(lang, host, last, false), ")")) return false;
+    if (dims_problem != nullptr) smith_lang_error(lang, host, dims_where, "%s", dims_problem);
+    if (dims.count > 1 && lang->decl.generic) {
+        smith_lang_error(lang, host, token->location,
+                         "a generic's result of more than one dimension is not built yet: `typeof(T[:])`");
+        return false;
+    }
     static SmithToken span[smith_lang_slice_scan_max + 4];
     for (size_t at = 0; at <= close + 3; at++) // `(` to `)`
         span[at] = *smith_lang_peek(lang, host, at, false);
@@ -370,15 +501,15 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
     const char *problem = nullptr;
     uint32_t where = span[1].location;
     static SmithToken made[smith_lang_slice_scan_max + 40];
-    if (!smith_lang_slice_tag_of(lang, span + 1, close - 1, tag, sizeof tag, &problem, &where)) {
+    if (!smith_lang_slice_tag_of(lang, span + 1, close - 1, &dims, tag, sizeof tag, &problem, &where)) {
         smith_lang_error(lang, host, where, "%s", problem);
         return false;
     }
-    size_t used = smith_lang_slice_define(lang, made, 0, sizeof made / sizeof made[0], tag, span + 1, close - 1, token);
-    size_t extra = smith_lang_slice_more(lang, host, close + 4);
+    size_t used =
+        smith_lang_slice_define(lang, made, 0, sizeof made / sizeof made[0], tag, span + 1, close - 1, &dims, token);
     made[0].space_before = token->space_before;
     made[0].line_start = token->line_start;
-    if (!smith_lang_tuple_replace(lang, close + 4 + extra, made, used)) return false;
+    if (!smith_lang_tuple_replace(lang, last + 1, made, used)) return false;
     smith_lang_slice_flag(lang);
     return true; // the `typeof` itself is dropped
 }
@@ -400,9 +531,13 @@ typedef enum {
 
 typedef struct {
     SmithLangSliceKind kind;
-    char tag[smith_lang_tuple_name_max]; // a slice: its struct
-    char element[256];                   // a pointer or an array: the element as the parser writes it
-    uint64_t count;                      // an array: how many
+    char tag[smith_lang_tuple_name_max];  // a slice: its struct
+    char stem[smith_lang_tuple_name_max]; // a slice: its tag without the dimensions
+    SmithLangSliceDims dims;              // a slice: its dimensions
+    char element[256];                    // a pointer or an array: the element as the parser writes it
+    uint64_t count;                       // an array: how many
+    uint32_t rank;                        // an array: its dimensions, `array_dims` their sizes
+    uint64_t array_dims[smith_lang_slice_dims_max];
 } SmithLangSliceType;
 
 // The element of `int32_t *` or `float[4]`: what stands before the last `*` or `[`.
@@ -439,11 +574,24 @@ static bool smith_lang_slice_type(const SmithHost *host, const char *text, Smith
         tag += 7;
         snprintf(out->tag, sizeof out->tag, "%.*s", (int)strcspn(tag, " "), tag);
         out->kind = SmithLangSlice_Slice;
+        size_t stem = 0;
+        if (!smith_lang_slice_dims_parse(out->tag, &out->dims, &stem)) out->dims = smith_lang_slice_dims_one();
+        snprintf(out->stem, sizeof out->stem, "%.*s", (int)stem, out->tag);
+        return true;
+    }
+    if (found.is_array && found.array_rank >= 2 && found.array_rank <= smith_lang_slice_dims_max) {
+        out->kind = SmithLangSlice_Array; // `float[4][2]`: canonical says a pointer to rows, the host the dimensions
+        out->count = found.array_size;
+        out->rank = found.array_rank;
+        memcpy(out->array_dims, found.array_dims, sizeof out->array_dims);
+        snprintf(out->element, sizeof out->element, "%s", found.array_element);
         return true;
     }
     if (length > 0 && canonical[length - 1] == '*' && strchr(canonical, '(') == nullptr) {
         out->kind = found.is_array ? SmithLangSlice_Array : SmithLangSlice_Pointer;
         out->count = found.array_size;
+        out->rank = found.is_array ? 1 : 0;
+        if (found.is_array) out->array_dims[0] = found.array_size;
     } else {
         return true;
     }
@@ -556,6 +704,7 @@ typedef struct {
     size_t count;
     bool changed;
     bool overflow;
+    bool sliced; // the last subscript was a slice (`xs[a:b]`)
 } SmithLangSliceCur;
 
 static SmithLangSliceChain smith_lang_slice_chain_state;
@@ -708,7 +857,8 @@ static bool smith_lang_slice_from_pointer(SmithLang *lang, SmithLangSliceCur *cu
     static SmithToken element[48];
     size_t words = smith_lang_slice_words(element, sizeof element / sizeof element[0], type->element, like);
     char tag[smith_lang_tuple_name_max];
-    if (!smith_lang_slice_tag_of(lang, element, words, tag, sizeof tag, problem, where)) return false;
+    SmithLangSliceDims one = smith_lang_slice_dims_one();
+    if (!smith_lang_slice_tag_of(lang, element, words, &one, tag, sizeof tag, problem, where)) return false;
     SmithLangSliceSpan all[4] = {spans[0], spans[1], spans[2], {element, words}};
     char condition[160] = "smith_a <= smith_b";
     if (type->kind == SmithLangSlice_Array) {
@@ -726,6 +876,115 @@ static bool smith_lang_slice_from_pointer(SmithLang *lang, SmithLangSliceCur *cu
              check, tag, tag);
     cur->count = smith_lang_slice_pattern(cur->tokens, 0, smith_lang_slice_cur_max, pattern, all, like);
     return true;
+}
+
+// ---- A subscript of a slice of more dimensions
+
+// The size of dimension `at` as an expression over `smith_s`: its count or its number.
+static void smith_lang_slice_dim_text(const SmithLangSliceDims *dims, size_t at, char *out, size_t capacity) {
+    if (!dims->runtime[at]) {
+        snprintf(out, capacity, "%llu", (unsigned long long)dims->fixed[at]);
+        return;
+    }
+    size_t which = 0;
+    for (size_t before = 0; before < at; before++) // at most 8
+        which += dims->runtime[before] ? 1 : 0;
+    snprintf(out, capacity, "smith_s . count [ %zu ]", which);
+}
+
+// The product of the sizes of the dimensions `from` to the last, as an expression: the elements one index step skips.
+static void smith_lang_slice_stride_text(const SmithLangSliceDims *dims, size_t from, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (size_t at = from; at < dims->count && used + 48 < capacity; at++) { // at most 8
+        char one[48];
+        smith_lang_slice_dim_text(dims, at, one, sizeof one);
+        used += (size_t)snprintf(out + used, capacity - used, "%s%s", at > from ? " * " : "", one);
+    }
+}
+
+// `xs[i][j]` of a slice of `dims` in one step, `m` indexes in spans 1 to m (the slice's expression is span 0): the
+// element when they name every dimension, else the row they name, a slice of the dimensions that are left (the first
+// of them run-time: a row of fixed size is a `[:]`). Row-major, one contiguous block: no strides.
+static bool smith_lang_slice_rows(SmithLangSliceCur *cur, const SmithHost *host, const SmithLangSliceSpan *spans,
+                                  size_t m, const SmithLangSliceType *type, const SmithToken *like) {
+    static const char *const names[smith_lang_slice_dims_max] = {"smith_i", "smith_j", "smith_k", "smith_l",
+                                                                 "smith_m", "smith_n", "smith_o", "smith_q"};
+    const SmithLangSliceDims *dims = &type->dims;
+    char declarations[512] = "";
+    char condition[512] = "";
+    char offset[512];
+    size_t used = 0;
+    size_t on = 0;
+    for (size_t at = 0; at < m; at++) { // each index, checked against its dimension
+        char size[48];
+        smith_lang_slice_dim_text(dims, at, size, sizeof size);
+        used += (size_t)snprintf(declarations + used, sizeof declarations - used, "__SIZE_TYPE__ %s = ( @%zu ) ; ",
+                                 names[at], at + 1);
+        on +=
+            (size_t)snprintf(condition + on, sizeof condition - on, "%s%s < %s", at > 0 ? " && " : "", names[at], size);
+        if (at == 0) {
+            snprintf(offset, sizeof offset, "%s", names[0]);
+        } else {
+            char next[512];
+            snprintf(next, sizeof next, "( %s ) * %s + %s", offset, size, names[at]);
+            snprintf(offset, sizeof offset, "%s", next);
+        }
+    }
+    char check[1024];
+    char pattern[4096];
+    smith_lang_slice_check(host, condition, check, sizeof check);
+    if (m == dims->count) {
+        snprintf(pattern, sizeof pattern,
+                 "( * __extension__ ( { auto smith_s = ( @0 ) ; %s%s & smith_s . data [ %s ] ; } ) )", declarations,
+                 check, offset);
+        cur->count = smith_lang_slice_pattern(cur->tokens, 0, smith_lang_slice_cur_max, pattern, spans, like);
+        return true;
+    }
+    SmithLangSliceDims row = {.count = dims->count - m};
+    row.runtime[0] = true;
+    for (size_t at = m + 1; at < dims->count; at++) { // the dimensions after the first of the row
+        row.runtime[at - m] = dims->runtime[at];
+        row.fixed[at - m] = dims->fixed[at];
+    }
+    char suffix[64];
+    smith_lang_slice_dims_suffix(&row, suffix, sizeof suffix);
+    char stride[512];
+    smith_lang_slice_stride_text(dims, m, stride, sizeof stride);
+    char counts[512] = "";
+    size_t shown = 0;
+    for (size_t at = m; at < dims->count; at++) { // the sizes of the row's run-time dimensions
+        if (at > m && !dims->runtime[at]) continue;
+        char size[48];
+        smith_lang_slice_dim_text(dims, at, size, sizeof size);
+        shown += (size_t)snprintf(counts + shown, sizeof counts - shown, "%s%s", shown > 0 ? " , " : "", size);
+    }
+    snprintf(pattern, sizeof pattern,
+             "( __extension__ ( { auto smith_s = ( @0 ) ; %s%s struct %s%s { __typeof__ ( * smith_s . data ) * data ; "
+             "__SIZE_TYPE__ count [ %zu ] ; } ; ( struct %s%s ) { . data = smith_s . data + ( %s ) * ( %s ) , . count "
+             "= { %s } } ; } ) )",
+             declarations, check, type->stem, suffix, smith_lang_slice_dims_runtime(&row), type->stem, suffix, offset,
+             stride, counts);
+    cur->count = smith_lang_slice_pattern(cur->tokens, 0, smith_lang_slice_cur_max, pattern, spans, like);
+    return true;
+}
+
+// A slice of the first dimension of a slice of more: the rows `a` to `b - 1`, a view of the same shape.
+static size_t smith_lang_slice_view_rows(SmithLangSliceCur *cur, const SmithHost *host, const SmithLangSliceSpan *spans,
+                                         const SmithLangSliceType *type, const SmithToken *like) {
+    char check[512];
+    char stride[512];
+    char pattern[2048];
+    smith_lang_slice_check(host, "smith_a <= smith_b && smith_b <= smith_s . count [ 0 ]", check, sizeof check);
+    smith_lang_slice_stride_text(&type->dims, 1, stride, sizeof stride);
+    snprintf(
+        pattern, sizeof pattern,
+        "__extension__ ( { auto smith_s = ( @0 ) ; __SIZE_TYPE__ smith_a = ( @1 ) ; __SIZE_TYPE__ smith_b = ( @2 ) "
+        "; %s auto smith_r = smith_s ; smith_r . data = smith_a == 0 ? smith_s . data : smith_s . data + smith_a * "
+        "( %s ) ; smith_r . count [ 0 ] = smith_b - smith_a ; smith_r ; } )",
+        check, stride);
+    cur->count = smith_lang_slice_pattern(cur->tokens, 0, smith_lang_slice_cur_max, pattern, spans, like);
+    return cur->count;
 }
 
 // ---- Reading a subscript: `[i]`, `[a:b]`, `[:b]`, `[a:]`
@@ -775,9 +1034,71 @@ static void smith_lang_slice_negative(SmithLang *lang, const SmithHost *host, co
     }
 }
 
+// The indexes `xs[i][j]` of a slice of more dimensions that follow each other from the element `index` of the chain,
+// written as one step. Gives how many chain elements it took.
+static size_t smith_lang_slice_row_run(SmithLang *lang, const SmithHost *host, const SmithLangSliceChain *chain,
+                                       size_t index, SmithLangSliceCur *cur, const SmithLangSliceType *type) {
+    SmithLangSliceSpan spans[smith_lang_slice_dims_max + 1];
+    spans[0] = (SmithLangSliceSpan){cur->tokens, cur->count};
+    size_t taken = 0;
+    while (index + taken < chain->element_count && taken < type->dims.count) { // each index, up to the dimensions
+        const SmithLangSliceElement *next = &chain->elements[index + taken];
+        if (next->kind != SmithLangSliceElement_Subscript) break;
+        const SmithToken *inner = &chain->tokens[next->from + 1];
+        size_t count = next->to - next->from - 2;
+        if (smith_lang_slice_shape(inner, count).colon != SIZE_MAX) break; // a slice ends the run
+        smith_lang_slice_negative(lang, host, inner, count);
+        spans[taken + 1] = (SmithLangSliceSpan){inner, count};
+        taken += 1;
+    }
+    static SmithLangSliceCur out;
+    out = (SmithLangSliceCur){};
+    smith_lang_slice_rows(&out, host, spans, taken, type, &chain->tokens[chain->elements[index].from]);
+    *cur = out;
+    cur->changed = true;
+    return taken;
+}
+
+// `xs[a:b]`: the bounds are span `inner` split at `shape`; `cur` holds the expression before it, `out` the whole after.
+static bool smith_lang_slice_cut(SmithLang *lang, const SmithHost *host, const SmithLangSliceSpan *bounds,
+                                 SmithLangSliceShape shape, const SmithLangSliceType *type,
+                                 const SmithLangSliceCur *cur, SmithLangSliceCur *out, const SmithToken *like) {
+    const SmithToken *inner = bounds->tokens;
+    SmithToken zero = smith_lang_slice_number("0", like);
+    SmithToken whole[8];
+    SmithLangSliceSpan whole_span = {whole,
+                                     smith_lang_slice_build(whole, 0, 8, "smith_s . count [ 0 ]", nullptr, like)};
+    SmithLangSliceSpan low =
+        shape.colon == 0 ? (SmithLangSliceSpan){&zero, 1} : (SmithLangSliceSpan){inner, shape.colon};
+    size_t stop = shape.second == SIZE_MAX ? bounds->count : shape.second;
+    SmithLangSliceSpan high =
+        shape.colon + 1 == stop ? whole_span : (SmithLangSliceSpan){inner + shape.colon + 1, stop - shape.colon - 1};
+    SmithLangSliceSpan spans[3] = {{cur->tokens, cur->count}, low, high};
+    if (type->kind == SmithLangSlice_Slice && type->dims.count > 1) {
+        smith_lang_slice_view_rows(out, host, spans, type, like);
+    } else if (type->kind == SmithLangSlice_Slice) {
+        smith_lang_slice_view(out, host, spans, type->tag, like);
+    } else {
+        const char *problem = nullptr;
+        uint32_t where = like->location;
+        if (shape.colon + 1 == stop) {
+            smith_lang_error(lang, host, like->location, "slicing a pointer or an array needs both bounds: `p[a:b]`");
+            spans[2] = (SmithLangSliceSpan){&zero, 1};
+        }
+        if (!smith_lang_slice_from_pointer(lang, out, host, spans, type, like, &problem, &where)) {
+            smith_lang_error(lang, host, where, "%s", problem);
+            return false;
+        }
+    }
+    out->sliced = true;
+    return true;
+}
+
 // One subscript of the chain: `cur` holds what is before it, and holds the whole afterwards.
-static void smith_lang_slice_subscript_element(SmithLang *lang, const SmithHost *host, const SmithLangSliceChain *chain,
-                                               const SmithLangSliceElement *element, SmithLangSliceCur *cur) {
+static size_t smith_lang_slice_subscript_element(SmithLang *lang, const SmithHost *host,
+                                                 const SmithLangSliceChain *chain, size_t index,
+                                                 SmithLangSliceCur *cur) {
+    const SmithLangSliceElement *element = &chain->elements[index];
     const SmithToken *inner = &chain->tokens[element->from + 1];
     size_t count = element->to - element->from - 2;
     SmithLangSliceShape shape = smith_lang_slice_shape(inner, count);
@@ -799,51 +1120,41 @@ static void smith_lang_slice_subscript_element(SmithLang *lang, const SmithHost 
             size_t made = smith_lang_slice_build(zero_index, 0, 4, "[ 0 ]", none, like);
             smith_lang_slice_add(cur, zero_index, made); // so that the compiler has nothing more to say of it
             cur->changed = true;
-            return;
+            return 1;
         }
         smith_lang_slice_add(cur, &chain->tokens[element->from], element->to - element->from);
-        return;
+        return 1;
     }
     if (shape.second != SIZE_MAX) {
         smith_lang_error(lang, host, like->location, "a slice has no step: `xs[a:b]` takes the elements a to b - 1");
     }
+    if (type.kind == SmithLangSlice_Slice && type.dims.count > 1 && shape.colon == SIZE_MAX) {
+        return smith_lang_slice_row_run(lang, host, chain, index, cur, &type);
+    }
+    if (type.kind == SmithLangSlice_Slice && type.dims.count > 1 && cur->sliced) {
+        smith_lang_error(lang, host, like->location,
+                         "a slice of rows has no strides: slice each row, `xs[i][a:b]`, not an inner dimension "
+                         "across rows, `xs[a:b][c:d]`");
+        return 1; // the subscript is dropped: the rows stay
+    }
+    if (type.kind == SmithLangSlice_Array && type.rank > 1) {
+        smith_lang_error(lang, host, like->location,
+                         "a fixed array of more than one dimension has no slice: convert it, `f32 xs[:][2] = a;`");
+        cur->changed = true;
+        return 1; // the subscript is dropped: the array stays
+    }
     static SmithLangSliceCur out;
     out = (SmithLangSliceCur){};
-    SmithToken zero = smith_lang_slice_number("0", like);
-    SmithToken whole[8];
-    SmithLangSliceSpan whole_span = {whole,
-                                     smith_lang_slice_build(whole, 0, 8, "smith_s . count [ 0 ]", nullptr, like)};
-    SmithLangSliceSpan prefix = {cur->tokens, cur->count};
     if (shape.colon == SIZE_MAX) {
         smith_lang_slice_negative(lang, host, inner, count);
-        SmithLangSliceSpan spans[2] = {prefix, {inner, count}};
+        SmithLangSliceSpan spans[2] = {{cur->tokens, cur->count}, {inner, count}};
         smith_lang_slice_index(&out, host, spans, like);
-    } else {
-        SmithLangSliceSpan low =
-            shape.colon == 0 ? (SmithLangSliceSpan){&zero, 1} : (SmithLangSliceSpan){inner, shape.colon};
-        size_t stop = shape.second == SIZE_MAX ? count : shape.second;
-        SmithLangSliceSpan high = shape.colon + 1 == stop
-                                      ? whole_span
-                                      : (SmithLangSliceSpan){inner + shape.colon + 1, stop - shape.colon - 1};
-        SmithLangSliceSpan spans[3] = {prefix, low, high};
-        if (type.kind == SmithLangSlice_Slice) {
-            smith_lang_slice_view(&out, host, spans, type.tag, like);
-        } else {
-            const char *problem = nullptr;
-            uint32_t where = like->location;
-            if (shape.colon + 1 == stop) {
-                smith_lang_error(lang, host, like->location,
-                                 "slicing a pointer or an array needs both bounds: `p[a:b]`");
-                spans[2] = (SmithLangSliceSpan){&zero, 1};
-            }
-            if (!smith_lang_slice_from_pointer(lang, &out, host, spans, &type, like, &problem, &where)) {
-                smith_lang_error(lang, host, where, "%s", problem);
-                return;
-            }
-        }
+    } else if (!smith_lang_slice_cut(lang, host, &(SmithLangSliceSpan){inner, count}, shape, &type, cur, &out, like)) {
+        return 1;
     }
     *cur = out;
     cur->changed = true;
+    return 1;
 }
 
 // ---- Arrays become slices, and slices become C pointers
@@ -898,6 +1209,42 @@ static bool smith_lang_slice_is_string(const SmithToken *expr, size_t count) {
     return count > 0;
 }
 
+// A fixed array of more dimensions where a slice of more is wanted: `f32[4][2]` is an `f32[:][2]` of 4 rows. A `[:]`
+// takes the array's size, a number must be the array's.
+static void smith_lang_slice_convert_rows(SmithLang *lang, const SmithHost *host, const char *tag,
+                                          const SmithLangSliceDims *dims, const SmithLangSliceType *type,
+                                          const SmithToken *expr, size_t count, SmithLangSliceCur *cur) {
+    bool same = type->rank == dims->count;
+    for (size_t at = 0; same && at < dims->count; at++) { // each dimension
+        same = dims->runtime[at] || dims->fixed[at] == type->array_dims[at];
+    }
+    if (!same) {
+        smith_lang_error(lang, host, expr[0].location,
+                         "the array has not the shape of the slice: a `[:]` takes any size, a number must be the "
+                         "array's own (an `f32[4][2]` is an `f32[:][2]`)");
+        char empty[smith_lang_tuple_name_max + 24];
+        snprintf(empty, sizeof empty, "( struct %s ) { }", tag); // a value of the type, so that nothing else is said
+        cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, empty, nullptr, expr);
+        cur->changed = true;
+        return;
+    }
+    char counts[256] = "";
+    size_t used = 0;
+    char zeros[64] = "";
+    for (size_t at = 0; at < dims->count; at++) { // the run-time sizes, and one `[ 0 ]` for each dimension
+        if (dims->runtime[at]) {
+            used += (size_t)snprintf(counts + used, sizeof counts - used, "%s%llu", used > 0 ? " , " : "",
+                                     (unsigned long long)type->array_dims[at]);
+        }
+        snprintf(zeros + strlen(zeros), sizeof zeros - strlen(zeros), " [ 0 ]");
+    }
+    char pattern[smith_lang_tuple_name_max + 400];
+    snprintf(pattern, sizeof pattern, "( struct %s ) { . data = & ( @0 ) %s , . count = { %s } }", tag, zeros, counts);
+    SmithLangSliceSpan spans[1] = {{expr, count}};
+    cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, pattern, spans, expr);
+    cur->changed = true;
+}
+
 // An expression where a slice of `tag` is wanted: an array (or a string) is its elements, a slice is as it is. Returns
 // false for a pointer, which is an error.
 static bool smith_lang_slice_convert(SmithLang *lang, const SmithHost *host, const char *tag, const SmithToken *expr,
@@ -907,6 +1254,13 @@ static bool smith_lang_slice_convert(SmithLang *lang, const SmithHost *host, con
     if (count == 0 || !smith_lang_slice_text(lang, expr, count, text, sizeof text) ||
         !smith_lang_slice_type(host, text, &type)) {
         smith_lang_slice_add(cur, expr, count);
+        return true;
+    }
+    SmithLangSliceDims dims = smith_lang_slice_dims_one();
+    size_t stem = 0;
+    if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) dims = smith_lang_slice_dims_one();
+    if (type.kind == SmithLangSlice_Array && (type.rank > 1 || dims.count > 1)) {
+        smith_lang_slice_convert_rows(lang, host, tag, &dims, &type, expr, count, cur);
         return true;
     }
     if (type.kind == SmithLangSlice_Array) {
@@ -1079,12 +1433,12 @@ static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const
     if (!chain->subscripts && !chain->calls && !chain->assigned) return false;
     SmithLangSliceCur *cur = &smith_lang_slice_cur;
     cur->count = 0;
-    cur->changed = cur->overflow = false;
+    cur->changed = cur->overflow = cur->sliced = false;
     smith_lang_slice_add(cur, chain->tokens, chain->head_end);
     for (size_t i = 0; i < chain->element_count; i++) { // each member, call and subscript
         const SmithLangSliceElement *element = &chain->elements[i];
         if (element->kind == SmithLangSliceElement_Subscript) {
-            smith_lang_slice_subscript_element(lang, host, chain, element, cur);
+            i += smith_lang_slice_subscript_element(lang, host, chain, i, cur) - 1;
         } else if (element->kind == SmithLangSliceElement_Call && chain->calls) {
             smith_lang_slice_call(lang, host, chain, element, cur);
         } else {
@@ -1127,20 +1481,35 @@ static void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, cons
     (void)token;
 }
 
-// `countof(xs)` of a slice: `((xs).count[0])`. `span` holds the operand at 1 to close - 1.
+// `countof(xs)` of a slice: `((xs).count[0])`. `span` holds the operand at 1 to close - 1. A row, `countof(xs[0])`, is
+// a slice too: the operand is written again as a slice and the subscripts lower it.
 static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
                                      const char *tokens, const SmithToken *span, size_t close) {
     SmithLangSliceType type = {};
     bool sliced = false; // `countof(xs[a:b])`: the operand is a slice whatever it is a slice of
-    if (smith_lang_punct(&span[close - 1], "]")) {
-        size_t open = close - 1;
+    size_t end = close;  // the operand is [1, end) once its trailing subscripts are taken off
+    size_t indexes = 0;
+    for (size_t groups = 0; groups < smith_lang_slice_dims_max + 4 && end > 2 && smith_lang_punct(&span[end - 1], "]");
+         groups++) { // each trailing `[ ... ]`
+        size_t open = end - 1;
         int depth = 0;
         for (; open > 1; open--) { // back to the matching `[`
             depth += smith_lang_punct(&span[open], "]");
             depth -= smith_lang_punct(&span[open], "[");
             if (depth == 0) break;
         }
-        sliced = smith_lang_slice_shape(span + open + 1, close - 2 - open).colon != SIZE_MAX;
+        bool colon = smith_lang_slice_shape(span + open + 1, end - 2 - open).colon != SIZE_MAX;
+        if (groups == 0 && colon) sliced = true;
+        indexes += colon ? 0 : 1;
+        end = open;
+    }
+    if (!sliced && indexes > 0 && end > 1) { // `countof(xs[i])`: a row of a slice of more dimensions
+        char base[smith_lang_slice_text_max];
+        SmithLangSliceType of = {};
+        if (smith_lang_slice_text(lang, span + 1, end - 1, base, sizeof base) &&
+            smith_lang_slice_type(host, base, &of) && of.kind == SmithLangSlice_Slice && of.dims.count > indexes) {
+            sliced = true;
+        }
     }
     if (!sliced && (!smith_lang_slice_type(host, tokens, &type) || type.kind != SmithLangSlice_Slice)) return false;
     SmithLangSliceSpan spans[1] = {{span + 1, close - 1}};

@@ -1,0 +1,3 @@
+src/main.smith:5:23: a fixed array of more than one dimension has no slice: convert it, `f32 xs[:][2] = a;`
+src/main.smith:5:9: initializing 'struct smith_array_f32_n_2' with an expression of incompatible type 'f32[4][2]' (aka 'float[4][2]')
+src/main.smith:6:17: use of undeclared identifier 'countof'

@@ -144,6 +144,9 @@ typedef struct {
     bool is_function; // the expression is a function (a designator), before it becomes a pointer to one
     bool is_array;    // the expression is an array of known size (the types here are those it decays to: a pointer)
     uint64_t array_size;
+    uint32_t array_rank; // an array: its dimensions (`float[4][2]` is 2), `array_dims` the sizes (at most 8)
+    uint64_t array_dims[8];
+    char array_element[256]; // an array: its element type, every dimension stripped (`float`)
     uint64_t magnitude;
     double real;
 } SmithExprType;

@@ -1,6 +1,6 @@
 ---
 name: smith-lang-arrays
-description: "Arrays in a .smith module: run-time arrays `i32 xs[:]` (a slice: pointer and count; `countof(xs)`, `xs[i]`, `xs[a:b]`, `p[a:b]`, `char s[:] = \"abc\"`, `typeof(i32[:])`, checked in debug and release) and array parameters `i32 xs[4]` that keep their size (checked indexes, countof(xs)), `char **argv` for main, why `T xs[]` is an error. Load when a module has `[:]`, `xs[a:b]`, a parameter written as an array, `countof`, or on 'a slice has no step', 'an index is never negative', 'a pointer is no slice', 'cannot slice this expression', 'more than one dimension is not built yet', 'array parameter', 'an array parameter needs its size' or 'pass an array of that shape'."
+description: "Arrays in a .smith module: run-time arrays `i32 xs[:]` (a slice: pointer and count; `countof(xs)`, `xs[i]`, `xs[a:b]`, `p[a:b]`, `char s[:] = \"abc\"`, `typeof(i32[:])`, checked in debug and release) and array parameters `i32 xs[4]` that keep their size (checked indexes, countof(xs)), `char **argv` for main, why `T xs[]` is an error. Load when a module has `[:]`, `xs[a:b]`, a parameter written as an array, `countof`, or on 'a slice has no step', 'an index is never negative', 'a pointer is no slice', 'cannot slice this expression', 'a slice of rows has no strides', 'the array has not the shape of the slice', 'array parameter', 'an array parameter needs its size' or 'pass an array of that shape'."
 ---
 
 # Arrays
@@ -26,11 +26,29 @@ char word[:] = "abc";           // count 3, no terminating zero; `char s[] = "ab
 c::strncmp(word, "abc", countof(word));   // a slice is a pointer only as an argument of a c:: function
 ```
 
-- `xs[i]` and `xs[a:b]` are checked in debug and release builds, not fast: a failure is `contract::assert`'s report with the line and the stack. The program links the trace library with no line in its build file: the conventions (`smith_app`, `smith_tests`) find a `[:` or `:]` in a `.smith` source and link it (a hand-written `smith_program` names `smith_library(b, "trace")`). A constant negative index, a step (`xs[a:b:2]`), slicing a pointer or an array with one bound, passing a pointer where a slice is wanted, and `[:][:]` (more dimensions are #105; rows of different lengths are a struct) are errors.
+- `xs[i]` and `xs[a:b]` are checked in debug and release builds, not fast: a failure is `contract::assert`'s report with the line and the stack. The program links the trace library with no line in its build file: the conventions (`smith_app`, `smith_tests`) find a `[:` or `:]` in a `.smith` source and link it (a hand-written `smith_program` names `smith_library(b, "trace")`). A constant negative index, a step (`xs[a:b:2]`), slicing a pointer or an array with one bound, passing a pointer where a slice is wanted, and a slice across rows (below) are errors.
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, defined where used and in a generated header, so C writes `(struct smith_array_i32_n){.data = p, .count = {n}}` to call an export. The array expression of `xs[i]` and `xs[a:b]` runs once, so `get()[i]` calls `get` once.
 - `arena::push_slice(&a, T, n)` is a `T[:]` out of an arena (`smith-arena`); bind it to a `T xs[:]` before indexing it.
-- Not yet: `format` and `check_equal` over slices and `T xs[:][2]`. `smith prove`, the debugger and the editor know `[:]` (`smith-prove`, `smith-debug`, `smith-lsp`).
+- Not yet: `format` and `check_equal` over slices, and `arena::push_slice` of more than one size. `smith prove`, the debugger and the editor know `[:]` (`smith-prove`, `smith-debug`, `smith-lsp`).
+
+## More dimensions: `f32 xs[:][2]`, `xs[:][:]`
+
+Any number of dimensions (at most 8), each `[:]` (a size known at run time) or a number, in one contiguous row-major block: `f32 xs[:][2]` is rows of 2 with the row count at run time, `f32 t[:][:][:]` a tensor, `i32 c[:][3][:]` a mix. The first dimension is `[:]`.
+
+```
+f32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
+f32 pairs[:][2] = raw;          // a fixed f32[4][2] converts: count 4 (a number must match the array's own)
+f32 grid[:][:] = raw;           // counts {4, 2}
+f32 x = pairs[2][1];            // 6; countof(pairs) is 4 and countof(pairs[0]) is 2
+f32 row[:] = pairs[1];          // xs[i] of a 2-D array is a row, again a [:], sharing the elements
+f32 part[:] = pairs[3][0:1];    // xs[i][a:b] slices within a row
+f32 tail[:][2] = pairs[1:4];    // xs[a:b] takes rows, a view of the same shape
+```
+
+- `xs[i][j]` is checked against each dimension; `countof(xs)` is the first dimension, `countof(xs[0])` the next.
+- Slicing an inner dimension across rows (`xs[a:b][c:d]`) is an error: there are no strides, so slice each row. A fixed array of more than one dimension is not sliced either: convert it first.
+- Underneath: `struct smith_array_f32_n_2 { float *data; size_t count[1]; }`, `count[k]` for the k `[:]`, the fixed sizes in the name (`_n` run-time, `_2` a number); `typeof(f32[:][2])` is the type. Not yet: a fixed dimension that is not a number, a first dimension that is a number (`f32 xs[2][:]`), `arena::push_slice` of more sizes.
 
 ## Array parameters: `i32 xs[4]`
 

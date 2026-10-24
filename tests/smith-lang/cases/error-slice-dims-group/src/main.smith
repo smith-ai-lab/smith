@@ -1,6 +1,6 @@
 module main;
 
-i32 take(i32 rows[:][:]) {
+i32 take(f32 xs[:][2][n]) {
     return 0;
 }
 

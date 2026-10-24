@@ -1,0 +1,10 @@
+module main;
+
+i32 main(void) {
+    f32 raw[4][2] = {};
+    f32 xs[:][2] = raw;
+    // a slice within a row is fine; an inner dimension across rows needs strides
+    f32 ok[:] = xs[1][0:2];
+    f32 bad[:][2] = xs[1:3][0:1];
+    return (i32)(ok[0] + (f32)countof(bad));
+}
