@@ -17,6 +17,18 @@ static int countof(int x) {
 static int type_name(int type) {
     return type;
 }
+struct kind_item {
+    int type;
+    int size;
+};
+static int scaled(int type, int n) {
+    return (type * n + 1) * 2;
+}
+static int kind_total(const struct kind_item *item, int n) {
+    int type = item->type;
+    int sum = type * n;
+    return sum + item->type * item->size;
+}
 static void same_type(int a, typeof(a) b, int *out) {
     *out = a + b;
 }
@@ -34,6 +46,8 @@ int main(void) {
     printf("%d %d %d\n", imported, export, modular);
     printf("%d %d %d %d\n", countof(4), type_name(9), out, rest(4));
     printf("%d %d %s\n", io, u8, "x::y");
+    struct kind_item item = {3, 4};
+    printf("%d %d\n", scaled(2, 5), kind_total(&item, 2));
     if (constexpr_) printf("%d\n", countof(1));
     return 0;
 }

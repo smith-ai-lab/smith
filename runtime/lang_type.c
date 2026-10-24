@@ -33,6 +33,7 @@ typedef enum : uint8_t {
     SmithLangTy_Holder,    // a typedef name of a struct that holds a type
     SmithLangTy_HolderTag, // the tag of such a struct
     SmithLangTy_Func,      // a function that takes or returns a type
+    SmithLangTy_Plain,     // a variable, parameter or member named `type` of an ordinary type: C's identifier
 } SmithLangTyKind;
 
 typedef enum : uint8_t {
@@ -213,7 +214,7 @@ static void smith_lang_ty_forget(uint32_t depth) {
     size_t kept = 0;
     for (size_t i = 0; i < smith_lang_ty.name_count; i++) { // the names
         const SmithLangTyName *entry = &smith_lang_ty.names[i];
-        if (entry->kind == SmithLangTy_Var && entry->depth > depth) continue;
+        if ((entry->kind == SmithLangTy_Var || entry->kind == SmithLangTy_Plain) && entry->depth > depth) continue;
         smith_lang_ty.names[kept++] = *entry;
     }
     smith_lang_ty.name_count = kept;
@@ -815,6 +816,8 @@ static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_ident(token, "type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
     if (ty->paren > 0 && smith_lang_ty_last_is(0, "constexpr")) return false; // a generic's `constexpr type T`
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
+    // `type * x` where `type` is a variable declared here: the product, as in C. (`type x` is no C at all: the keyword.)
+    if (smith_lang_punct(next, "*") && smith_lang_ty_find("type", 4, SmithLangTy_Plain) != nullptr) return false;
     if (!smith_lang_ty_is_name_token(next) && !smith_lang_punct(next, "*")) return false;
     SmithToken made[3];
     made[0] = smith_lang_ty_made(SmithTokenKind_Identifier, "unsigned", token, token->space_before);
@@ -824,6 +827,17 @@ static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, cons
     smith_lang_ty_put(lang, 0, made, 3);
     ty->specifier = true;
     return true;
+}
+
+// `type` as the name of a variable, parameter or member of another type (`c::Kind type`, `int type;`): C's identifier,
+// which `type * n` after it must not read as the keyword. Remembered for the scope it is declared in.
+static void smith_lang_ty_plain(const SmithToken *token) {
+    SmithLangTy *ty = &smith_lang_ty;
+    if (!smith_lang_ident(token, "type") || ty->decl_name || smith_lang_ty_at_start() ||
+        !smith_lang_ty_declaration_before() || smith_lang_ty_last_is(0, ".") || smith_lang_ty_last_is(0, "->")) {
+        return;
+    }
+    smith_lang_ty_add("type", 4, SmithLangTy_Plain, (uint32_t)ty->frame_count + (ty->paren == 1 ? 1U : 0U));
 }
 
 // Called for each token of a file with type values, before the lowering looks at it. True when the token was replaced:
@@ -840,6 +854,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
         if (!replaced) replaced = as_value = smith_lang_ty_question(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_leaf(lang, host, token);
+        if (!replaced) smith_lang_ty_plain(token);
     }
     smith_lang_ty_track(lang, host, token, as_value);
     return replaced;
