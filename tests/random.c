@@ -1,7 +1,9 @@
-// Tests of <smith/random.h>, run by tests/random.sh. It includes lib/random.c to reach the static generator and the
-// normal's inverse CDF. With no argument it runs the checks. With an argument it runs one mode:
+// The white-box checks of <smith/random.h>, run by tests/random.sh; the rest of random's checks are in
+// tests/random_test.smith, on smith's test runner, through the exported API. It includes lib/random.c to reach the
+// static generator and the normal's inverse CDF. With no argument it runs the checks. With an argument it runs one
+// mode:
 //   digest   print a digest of many draws from every distribution (every build configuration must print the same)
-//   pins     print the pinned values below as C source, for updating them on purpose
+//   pins     print the pinned values as C source, for updating them in tests/random_test.smith on purpose
 //   assert   a normal with a deviation of 0, which must abort
 //   stats    print the measured worst errors
 #include "../bootstrap/lib/smith/random.c"
@@ -15,7 +17,6 @@
 
 // The constants of one run of tests: keys are fixed, so every check is deterministic.
 constexpr uint64_t test_seed = 20260101;
-constexpr size_t test_draws = 1000000;
 
 typedef struct {
     alignas(smith_arena_align_max) unsigned char bytes[4096];
@@ -60,200 +61,31 @@ static void test_philox(void) {
 // ---------------------------------------------------------------------------------------------------------------
 // Helpers.
 
-static double
-test_chi_limit(size_t degrees) { // Wilson-Hilferty at z = 5, about 3e-7 in the tail: a correct draw passes
-    double d = (double)degrees;
-    double t = 1.0 - 2.0 / (9.0 * d) + 5.0 * sqrt(2.0 / (9.0 * d));
-    return d * t * t * t;
-}
-
-static double test_chi_square(const size_t *observed, const double *expected, size_t cells) {
-    double sum = 0;
-    for (size_t i = 0; i < cells; i++) {
-        double difference = (double)observed[i] - expected[i];
-        sum += difference * difference / expected[i];
-    }
-    return sum;
-}
-
-// Distance in representable values between two finite doubles / floats.
-static int64_t test_ulps_double(double a, double b) {
-    int64_t x = (int64_t)smith_random_double_bits(a);
-    int64_t y = (int64_t)smith_random_double_bits(b);
-    if (x < 0) x = INT64_MIN - x;
-    if (y < 0) y = INT64_MIN - y;
-    return x > y ? x - y : y - x;
-}
-
-static int64_t test_ulps_float(float a, float b) {
-    int64_t x = (int32_t)smith_random_float_bits(a);
-    int64_t y = (int32_t)smith_random_float_bits(b);
-    if (x < 0) x = INT32_MIN - x;
-    if (y < 0) y = INT32_MIN - y;
-    return x > y ? x - y : y - x;
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // 3. Distributions.
 
-static void test_keys(void) {
-    SmithKey key = smith_key_make(7);
-    assert(smith_key_bits(key, 0) == smith_key_bits(key, 0)); // pure
-    assert(smith_key_bits(key, 0) != smith_key_bits(key, 1));
-    assert(smith_key_bits(key, 1) != smith_key_bits(key, 2));
-    assert(smith_key_derive(key, 0).bits != smith_key_derive(key, 1).bits);
-    assert(smith_key_derive(key, 0).bits != smith_key_bits(key, 0)); // derive's domain is not bits'
-    assert(smith_key_make(1).bits != smith_key_make(2).bits);
-    for (uint64_t n = 0; n < 1000; n++) {
-        assert(smith_key_unit_float(key, n) >= 0.0f && smith_key_unit_float(key, n) < 1.0f);
-        assert(smith_key_unit_double(key, n) >= 0.0 && smith_key_unit_double(key, n) < 1.0);
-        assert(1.0 - smith_key_unit_double(key, n) > 0.0);
-    }
-    uint64_t top = 0;
-    for (uint64_t n = 0; n < 1000; n++)
-        top += smith_key_bits(key, n) >> 63;
-    assert(top > 400 && top < 600); // the top bit is fair
-}
-
-static void test_uniform_int64(void) {
+// The full range is the word, zigzag decoded (the rest of the uniform integer is in tests/random_test.smith).
+static void test_uniform_int64_full_range_is_zigzag(void) {
     SmithKey key = smith_key_make(test_seed);
-    size_t observed[10] = {};
-    for (uint64_t i = 0; i < test_draws; i++) {
-        int64_t value = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){-3, 6});
-        assert(value >= -3 && value <= 6);
-        observed[value + 3]++;
-    }
-    double expected[10];
-    for (size_t i = 0; i < 10; i++)
-        expected[i] = (double)test_draws / 10.0;
-    assert(test_chi_square(observed, expected, 10) < test_chi_limit(9));
-    for (uint64_t i = 0; i < 100; i++) {
-        assert(smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){5, 5}) == 5);
-        assert(smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MIN, INT64_MIN}) ==
-               INT64_MIN);
-        assert(smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MAX, INT64_MAX}) ==
-               INT64_MAX);
-    }
-    // The full range is the word, zigzag decoded, so both signs and extremes of magnitude appear.
-    size_t negative = 0;
     for (uint64_t i = 0; i < 10000; i++) {
         int64_t value = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MIN, INT64_MAX});
         assert(value == smith_random_zigzag(smith_key_bits(smith_key_derive(key, i), 0)));
-        negative += value < 0;
     }
-    assert(negative > 4700 && negative < 5300);
 }
 
-// A span of 2^63 + 1 rejects about half of the candidates (2^64 mod span is 2^63 - 1); the offsets must still be
-// uniform, so the half above span / 2 is hit half of the time.
-static void test_uniform_int64_wide(void) {
-    SmithKey key = smith_key_make(test_seed + 1);
-    int64_t high = 0; // [INT64_MIN, 0] has 2^63 + 1 values
-    constexpr size_t draws = 400000;
-    size_t upper = 0;
-    size_t retried = 0;
-    for (uint64_t i = 0; i < draws; i++) {
-        SmithKey k = smith_key_derive(key, i);
-        int64_t value = smith_uniform_int64_sample(k, (SmithUniformInt64){INT64_MIN, high});
-        assert(value <= high);
-        upper += (uint64_t)value - (uint64_t)INT64_MIN >= ((uint64_t)1 << 62);
-        unsigned _BitInt(128) product = (unsigned _BitInt(128))smith_key_bits(k, 0) * (((uint64_t)1 << 63) + 1);
-        retried +=
-            (uint64_t)product >= ((uint64_t)1 << 63) + 1; // the first candidate is rejected: low >= 2^64 - threshold
-    }
-    double deviation = sqrt((double)draws * 0.25);
-    assert(fabs((double)upper - (double)draws / 2.0) < 5.0 * deviation);
-    assert(retried > 0);
-}
-
-static void test_uniform_real(void) {
-    SmithKey key = smith_key_make(test_seed + 2);
-    double sum = 0;
-    double square = 0;
-    for (uint64_t i = 0; i < test_draws; i++) {
-        double value = smith_uniform_double_sample(smith_key_derive(key, i), (SmithUniformDouble){2.0, 5.0});
-        assert(value >= 2.0 && value < 5.0);
-        sum += value;
-        square += (value - 3.5) * (value - 3.5);
-    }
-    double n = (double)test_draws;
-    assert(fabs(sum / n - 3.5) < 5.5 * 0.866 / sqrt(n)); // standard error of the mean: sigma / sqrt(n)
-    assert(fabs(square / n - 0.75) < 6.0 * 0.75 * 0.895 / sqrt(n));
-    sum = 0;
-    square = 0;
-    for (uint64_t i = 0; i < test_draws; i++) {
-        float value = smith_uniform_float_sample(smith_key_derive(key, i), (SmithUniformFloat){-1.0f, 3.0f});
-        assert(value >= -1.0f && value < 3.0f);
-        sum += (double)value;
-        square += ((double)value - 1.0) * ((double)value - 1.0);
-    }
-    assert(fabs(sum / n - 1.0) < 5.5 * 1.1547 / sqrt(n));
-    assert(fabs(square / n - 4.0 / 3.0) < 6.0 * (4.0 / 3.0) * 0.895 / sqrt(n));
-}
-
-static void test_uniform_grid_and_rounding(void) {
-    SmithKey key = smith_key_make(test_seed + 3);
-    for (uint64_t i = 0; i < 10000; i++) { // on the grid: the unit scaled by 2^24 / 2^53 is an integer
-        float f = smith_key_unit_float(smith_key_derive(key, i), 0);
-        assert(f == floorf(f * 0x1p24f) / 0x1p24f);
-        double d = smith_key_unit_double(smith_key_derive(key, i), 0);
-        assert(d == floor(d * 0x1p53) / 0x1p53);
-    }
-    // Ranges built so that low + (high - low) * unit rounds up to high: high is a power of two just above low's
-    // magnitude gap, so a unit near 1 rounds to high. The result must still be below high.
-    const float lows[] = {1.0f, -0x1p-30f, 16777216.0f, -1.0f, 0.0f};
-    const float highs[] = {1.0000001f, 0.0f, 16777218.0f, -0.99999994f, 0x1p-149f};
-    size_t reached = 0;
-    for (size_t r = 0; r < 5; r++) {
-        for (uint64_t i = 0; i < 200000; i++) {
-            SmithKey k = smith_key_derive(key, i);
-            float value = smith_uniform_float_sample(k, (SmithUniformFloat){lows[r], highs[r]});
-            assert(value >= lows[r] && value < highs[r]);
-            reached += lows[r] + (highs[r] - lows[r]) * smith_key_unit_float(k, 0) >= highs[r];
-        }
-    }
-    assert(reached > 0); // the rounding case happened, and was handled
+// The largest value below a bound, which the uniform draws return when rounding reaches the bound.
+static void test_below(void) {
     assert(smith_random_below_float(1.0f) == 0x1.fffffep-1f);
     assert(smith_random_below_float(0.0f) == -0x1p-149f);
     assert(smith_random_below_float(-1.0f) == -0x1.000002p+0f);
     assert(smith_random_below_double(1.0) == 0x1.fffffffffffffp-1);
     assert(smith_random_below_double(0.0) == -0x1p-1074);
     assert(smith_random_below_double(-1.0) == -0x1.0000000000001p+0);
-    const double dlows[] = {1.0, -0x1p-60, 9007199254740992.0, -1.0};
-    const double dhighs[] = {1.0000000000000002, 0.0, 9007199254740994.0, -0.9999999999999999};
-    for (size_t r = 0; r < 4; r++) {
-        for (uint64_t i = 0; i < 200000; i++) {
-            double value =
-                smith_uniform_double_sample(smith_key_derive(key, i), (SmithUniformDouble){dlows[r], dhighs[r]});
-            assert(value >= dlows[r] && value < dhighs[r]);
-        }
-    }
 }
 
 // Normal: the moments, the inverse CDF against libm's erfc (only the reference here), symmetry, and the reach.
 static double test_cdf(double z) {
     return 0.5 * erfc(-z / sqrt(2.0));
-}
-
-static void test_normal_moments(void) {
-    SmithKey key = smith_key_make(test_seed + 4);
-    double sum = 0;
-    double square = 0;
-    double sum_float = 0;
-    double square_float = 0;
-    for (uint64_t i = 0; i < test_draws; i++) {
-        double d = smith_normal_double_sample(smith_key_derive(key, i), (SmithNormalDouble){1.0, 2.0});
-        float f = smith_normal_float_sample(smith_key_derive(key, i), (SmithNormalFloat){-3.0f, 0.5f});
-        sum += d;
-        square += (d - 1.0) * (d - 1.0);
-        sum_float += (double)f;
-        square_float += ((double)f + 3.0) * ((double)f + 3.0);
-    }
-    double n = (double)test_draws;
-    assert(fabs(sum / n - 1.0) < 5.5 * 2.0 / sqrt(n));
-    assert(fabs(square / n - 4.0) < 5.5 * 4.0 * sqrt(2.0 / n));
-    assert(fabs(sum_float / n + 3.0) < 5.5 * 0.5 / sqrt(n));
-    assert(fabs(square_float / n - 0.25) < 5.5 * 0.25 * sqrt(2.0 / n));
 }
 
 static void test_normal_error_one_double(double p, double *worst, double *allowed) {
@@ -342,161 +174,6 @@ static void test_normal_cdf_symmetry_reach(void) {
     }
 }
 
-static void test_bernoulli(void) {
-    SmithKey key = smith_key_make(test_seed + 8);
-    size_t hits = 0;
-    for (uint64_t i = 0; i < test_draws; i++) {
-        SmithKey k = smith_key_derive(key, i);
-        assert(!smith_bernoulli_sample(k, (SmithBernoulli){0.0}));
-        assert(smith_bernoulli_sample(k, (SmithBernoulli){1.0}));
-        hits += smith_bernoulli_sample(k, (SmithBernoulli){0.3});
-    }
-    double n = (double)test_draws;
-    assert(fabs((double)hits - 0.3 * n) < 5.5 * sqrt(n * 0.3 * 0.7));
-}
-
-// Categorical: frequencies by chi-square, a zero weight never drawn, one category, and a pinned table.
-static void test_categorical(void) {
-    static TestMemory memory;
-    SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
-    const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
-    constexpr size_t count = sizeof weights / sizeof weights[0];
-    SmithCategorical categorical = smith_categorical_make(&arena, weights, count);
-    assert(categorical.count == count && arena.scopes == 0);
-    SmithKey key = smith_key_make(test_seed + 9);
-    size_t observed[count] = {};
-    for (uint64_t i = 0; i < test_draws; i++) {
-        size_t index = smith_categorical_sample(smith_key_derive(key, i), categorical);
-        assert(index < count);
-        observed[index]++;
-    }
-    assert(observed[3] == 0);
-    double expected[count - 1];
-    size_t cells[count - 1];
-    size_t used = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (weights[i] == 0.0) continue;
-        expected[used] = (double)test_draws * weights[i] / 20.0;
-        cells[used++] = observed[i];
-    }
-    assert(test_chi_square(cells, expected, used) < test_chi_limit(used - 1));
-    SmithCategorical one = smith_categorical_make(&arena, (const double[]){3.5}, 1);
-    for (uint64_t i = 0; i < 100; i++)
-        assert(smith_categorical_sample(smith_key_derive(key, i), one) == 0);
-    SmithCategorical same = smith_categorical_make(&arena, weights, count); // construction is deterministic
-    for (size_t i = 0; i < count; i++)
-        assert(same.probability[i] == categorical.probability[i] && same.alias[i] == categorical.alias[i]);
-    SmithCategorical tiny = smith_categorical_make(&arena, (const double[]){0.0, 1.0}, 2);
-    for (uint64_t i = 0; i < 1000; i++)
-        assert(smith_categorical_sample(smith_key_derive(key, i), tiny) == 1);
-}
-
-static void test_permutation(void) {
-    SmithKey key = smith_key_make(test_seed + 10);
-    size_t out[16];
-    smith_permutation_sample(key, (SmithPermutation){}, nullptr); // writes nothing
-    smith_permutation_sample(key, (SmithPermutation){1}, out);
-    assert(out[0] == 0);
-    for (uint64_t i = 0; i < 1000; i++) {
-        smith_permutation_sample(smith_key_derive(key, i), (SmithPermutation){16}, out);
-        bool seen[16] = {false};
-        for (size_t j = 0; j < 16; j++) {
-            assert(out[j] < 16 && !seen[out[j]]);
-            seen[out[j]] = true;
-        }
-    }
-    size_t orders[24] = {};
-    constexpr size_t draws = 240000;
-    for (uint64_t i = 0; i < draws; i++) {
-        smith_permutation_sample(smith_key_derive(key, i), (SmithPermutation){4}, out);
-        size_t rank = 0; // the Lehmer code gives each of the 24 orders its own number
-        for (size_t a = 0; a < 4; a++) {
-            size_t smaller = 0;
-            for (size_t b = a + 1; b < 4; b++)
-                smaller += out[b] < out[a];
-            rank = rank * (4 - a) + smaller;
-        }
-        assert(rank < 24);
-        orders[rank]++;
-    }
-    double expected[24];
-    for (size_t i = 0; i < 24; i++)
-        expected[i] = (double)draws / 24.0;
-    assert(test_chi_square(orders, expected, 24) < test_chi_limit(23));
-}
-
-// smith_log_*: within 1 ulp of libm's log and logf over about 1e6 inputs, across exponents and subnormals. Returns the
-// worst distance seen (the double reference is libm's log; the float one is logf, and the double log rounded to float).
-static int64_t test_log_worst_double(void) {
-    int64_t worst = 0;
-    SmithKey key = smith_key_make(test_seed + 11);
-    for (uint64_t i = 0; i < 1000000; i++) {
-        uint64_t bits = smith_key_bits(key, i);
-        double x = 0;
-        switch (i % 4) {
-        case 0:
-            x = smith_random_bits_double(bits & 0x7fffffffffffffffULL);
-            break; // every exponent
-        case 1:
-            x = smith_random_bits_double(bits & 0x000fffffffffffffULL);
-            break; // subnormals (and 0)
-        case 2:
-            x = 0.5 + 1.5 * smith_key_unit_double(smith_key_derive(key, i), 0);
-            break; // around 1
-        default:
-            x = 1.0 + ldexp(smith_key_unit_double(smith_key_derive(key, i), 0), -(int)(bits % 50));
-            break;
-        }
-        if (!isfinite(x) || x == 0.0) continue;
-        int64_t distance = test_ulps_double(smith_log_double(x), log(x));
-        if (distance > worst) worst = distance;
-    }
-    return worst;
-}
-
-static int64_t test_log_worst_float(void) {
-    int64_t worst = 0;
-    SmithKey key = smith_key_make(test_seed + 12);
-    for (uint64_t i = 0; i < 1000000; i++) {
-        uint64_t bits = smith_key_bits(key, i);
-        float x = 0;
-        switch (i % 4) {
-        case 0:
-            x = smith_random_bits_float((uint32_t)bits & 0x7fffffffU);
-            break;
-        case 1:
-            x = smith_random_bits_float((uint32_t)bits & 0x007fffffU);
-            break; // subnormals
-        case 2:
-            x = 0.5f + 1.5f * smith_key_unit_float(smith_key_derive(key, i), 0);
-            break;
-        default:
-            x = 1.0f + ldexpf(smith_key_unit_float(smith_key_derive(key, i), 0), -(int)(bits % 24));
-            break;
-        }
-        if (!isfinite(x) || x == 0.0f) continue;
-        int64_t distance = test_ulps_float(smith_log_float(x), logf(x));
-        if (distance > worst) worst = distance;
-    }
-    return worst;
-}
-
-static void test_log(void) {
-    assert(test_log_worst_double() <= 1);
-    assert(test_log_worst_float() <= 1);
-    assert(smith_log_double(0.0) == -INFINITY && smith_log_double(-0.0) == -INFINITY);
-    assert(smith_log_float(0.0f) == -INFINITY && smith_log_float(-0.0f) == -INFINITY);
-    assert(isnan(smith_log_double(-1.0)) && isnan(smith_log_double(-INFINITY)) && isnan(smith_log_double(-0x1p-1074)));
-    assert(isnan(smith_log_float(-1.0f)) && isnan(smith_log_float(-INFINITY)) && isnan(smith_log_float(-0x1p-149f)));
-    assert(smith_log_double(INFINITY) == INFINITY && smith_log_float(INFINITY) == INFINITY);
-    assert(isnan(smith_log_double(NAN)) && isnan(smith_log_float(NAN)));
-    assert(smith_log_double(1.0) == 0.0 && smith_log_float(1.0f) == 0.0f);
-    assert(test_ulps_double(smith_log_double(0x1p-1074), log(0x1p-1074)) <= 1); // the smallest subnormal
-    assert(test_ulps_float(smith_log_float(0x1p-149f), logf(0x1p-149f)) <= 1);
-    assert(test_ulps_double(smith_log_double(DBL_MAX), log(DBL_MAX)) <= 1);
-    assert(test_ulps_float(smith_log_float(FLT_MAX), logf(FLT_MAX)) <= 1);
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // The pinned values: bits of smith_key_bits for seeds 0, 1 and UINT64_MAX, smith_key_derive, and every distribution
 // for one key (floats as their bits). Run `pins` to print them.
@@ -557,101 +234,6 @@ static void test_pin_distributions(TestPins *pins) {
     smith_permutation_sample(key, (SmithPermutation){8}, order);
     for (size_t i = 0; i < 8; i++)
         test_pin(pins, "permutation", order[i]);
-}
-
-static constexpr uint64_t test_pinned_values[] = {
-    0xe169c58d6627e8d5ULL, // bits
-    0x9b00dbd8bc57ac4cULL, // bits
-    0x5cb200dbf8e4cca4ULL, // bits
-    0x097eff67b1a574ebULL, // bits
-    0xf08d6eaa844515e1ULL, // derive
-    0xd9c77dedca7cf69eULL, // derive
-    0xbe4bbd74c5fa1393ULL, // derive
-    0xe50a0ebce3e80670ULL, // bits
-    0xb615aa2795f222c0ULL, // bits
-    0xdfc5ccbeac08141bULL, // bits
-    0xa7f6609379c07a47ULL, // bits
-    0x428264b607071c12ULL, // derive
-    0xf04a50803b539b4fULL, // derive
-    0xa9b8bbe87d34a749ULL, // derive
-    0x1547473972a47709ULL, // bits
-    0x22799a5a9f41b01fULL, // bits
-    0x4b67e03419fed511ULL, // bits
-    0x9fe857b49d2c02e2ULL, // bits
-    0x7e853102a74236edULL, // derive
-    0xb9575d3a213c880dULL, // derive
-    0x71cfe040fa00339aULL, // derive
-    0x3fe0000000000000ULL, // categorical probability
-    0x0000000000000004ULL, // categorical alias
-    0x3ff0000000000000ULL, // categorical probability
-    0x0000000000000001ULL, // categorical alias
-    0x3ff0000000000000ULL, // categorical probability
-    0x0000000000000002ULL, // categorical alias
-    0x0000000000000000ULL, // categorical probability
-    0x0000000000000004ULL, // categorical alias
-    0x3fe0000000000000ULL, // categorical probability
-    0x0000000000000002ULL, // categorical alias
-    0x000000003ef30fa6ULL, // unit_float
-    0x3fde61f4fa7e2600ULL, // unit_double
-    0x00000000bf97e9c8ULL, // uniform_float
-    0x3ff2fd391c8ed7c0ULL, // uniform_double
-    0x0000000000000002ULL, // uniform_int64
-    0x00000000be8a7c9cULL, // normal_float
-    0x400229f29201b1cbULL, // normal_double
-    0x0000000000000000ULL, // bernoulli
-    0x0000000000000002ULL, // categorical
-    0x00000000bf8c4f9fULL, // log_float
-    0xbff189f3b6c24ca8ULL, // log_double
-    0x000000003f6f5147ULL, // unit_float
-    0x3fedea28f42121bcULL, // unit_double
-    0x00000000402b2598ULL, // uniform_float
-    0x400564b331296a2cULL, // uniform_double
-    0x0000000000000006ULL, // uniform_int64
-    0x00000000c02c0c06ULL, // normal_float
-    0x4012c0c0ac77efeaULL, // normal_double
-    0x0000000000000001ULL, // bernoulli
-    0x0000000000000000ULL, // categorical
-    0x000000003d634c72ULL, // log_float
-    0x3fac698d2d755d83ULL, // log_double
-    0x000000003f77aa93ULL, // unit_float
-    0x3feef552732b2b7aULL, // unit_double
-    0x0000000040359538ULL, // uniform_float
-    0x4006b2a70ff5f658ULL, // uniform_double
-    0x0000000000000006ULL, // uniform_int64
-    0x00000000c0519b22ULL, // normal_float
-    0xc00a33655f8a9c90ULL, // normal_double
-    0x0000000000000001ULL, // bernoulli
-    0x0000000000000000ULL, // categorical
-    0x00000000bed47034ULL, // log_float
-    0xbfda8e06607ae3c6ULL, // log_double
-    0x000000003f6c4500ULL, // unit_float
-    0x3fed88a0125f909bULL, // unit_double
-    0x0000000040275640ULL, // uniform_float
-    0x4004eac816f774c2ULL, // uniform_double
-    0x0000000000000006ULL, // uniform_int64
-    0x00000000409125d2ULL, // normal_float
-    0xc00449741659234aULL, // normal_double
-    0x0000000000000001ULL, // bernoulli
-    0x0000000000000002ULL, // categorical
-    0x000000003e57a913ULL, // log_float
-    0x3fcaf52321baddefULL, // log_double
-    0x0000000000000004ULL, // permutation
-    0x0000000000000005ULL, // permutation
-    0x0000000000000003ULL, // permutation
-    0x0000000000000000ULL, // permutation
-    0x0000000000000006ULL, // permutation
-    0x0000000000000002ULL, // permutation
-    0x0000000000000001ULL, // permutation
-    0x0000000000000007ULL, // permutation
-};
-
-static void test_pinned(void) {
-    static TestPins pins;
-    test_pin_keys(&pins);
-    test_pin_distributions(&pins);
-    assert(pins.count == sizeof test_pinned_values / sizeof test_pinned_values[0]);
-    for (size_t i = 0; i < pins.count; i++)
-        assert(pins.value[i] == test_pinned_values[i]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -729,12 +311,6 @@ static uint64_t test_hook_identity(const SmithRandomTap *tap, uint64_t key, uint
 static const SmithRandomTap test_tap_constant = {test_hook_constant};
 static const SmithRandomTap test_tap_identity = {test_hook_identity};
 
-// The word that makes Lemire's index equal `index` for a span: the smallest word whose high half is the index.
-static uint64_t test_word_for_index(uint64_t index, uint64_t span) {
-    unsigned _BitInt(128) shifted = (unsigned _BitInt(128))index << 64;
-    return (uint64_t)((shifted + span - 1) / span);
-}
-
 // A bijection: over each (count, origin), indices 0 to count - 1 give every position exactly once, and index 0 gives
 // the origin.
 static void test_around_bijection(void) {
@@ -786,63 +362,14 @@ static void test_index_zero_word(void) {
         assert(smith_random_draw_index(key, spans[i]) == 0);
 }
 
-static void test_zero_word_simplest(void) {
-    SmithKey key = smith_key_make(test_seed + 13);
-    static TestMemory memory;
-    SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
-    SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1.0, 2.0, 3.0}, 3);
-    test_hook_word = 0;
-    key.tap = &test_tap_constant;
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-3, 6}) == 0);
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){5, 9}) == 5);
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-9, -5}) == -5);
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, INT64_MAX}) == 0);
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, 1}) == 0);
-    assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MAX - 1, INT64_MAX}) == INT64_MAX - 1);
-    assert(smith_uniform_double_sample(key, (SmithUniformDouble){2.0, 5.0}) == 2.0);
-    assert(smith_uniform_float_sample(key, (SmithUniformFloat){2.0f, 5.0f}) == 2.0f);
-    assert(smith_uniform_double_sample(key, (SmithUniformDouble){0.0, 5.0}) == 0.0);
-    double d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 3.0}); // within one grid step of 0
-    assert(fabs(d) <= 4.0 * 0x1p-53);
-    float f = smith_uniform_float_sample(key, (SmithUniformFloat){-1.0f, 3.0f});
-    assert(fabsf(f) <= 4.0f * 0x1p-24f);
-    d = smith_uniform_double_sample(key, (SmithUniformDouble){-5.0, -1.0}); // the bound nearest 0: just below -1
-    assert(d < -1.0 && d >= -1.0 - 4.0 * 0x1p-53 * 4.0);
-    f = smith_uniform_float_sample(key, (SmithUniformFloat){-5.0f, -1.0f});
-    assert(f < -1.0f && f >= -1.0f - 4.0f * 0x1p-24f * 4.0f);
-    double nd = smith_normal_double_sample(key, (SmithNormalDouble){10.0, 2.0});
-    assert(nd >= 10.0 && nd - 10.0 < 2.0 * 1e-15);
-    float nf = smith_normal_float_sample(key, (SmithNormalFloat){10.0f, 2.0f});
-    assert(nf >= 10.0f && nf - 10.0f < 2.0f * 1e-6f);
-    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.3}));
-    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.0}));
-    assert(smith_bernoulli_sample(key, (SmithBernoulli){1.0}));
-    assert(smith_categorical_sample(key, categorical) == 0); // column 0 and its own coin, as without a hook
-    size_t order[9];
-    smith_permutation_sample(key, (SmithPermutation){9}, order);
-    for (size_t i = 0; i < 9; i++)
-        assert(order[i] == i);
-}
-
-// Words 1, 2 and 3 move the values away from the simplest one in the zigzag order.
+// Words 1, 2 and 3 move the values away from the simplest one in the zigzag order (the integers and the unit are in
+// tests/random_test.smith).
 static void test_small_words_zigzag(void) {
     SmithKey key = smith_key_make(test_seed + 14);
     key.tap = &test_tap_constant;
-    const uint64_t words[] = {0, 1, 2, 3, 4};
-    const int64_t full[] = {0, -1, 1, -2, 2};
-    for (size_t i = 0; i < 5; i++) {
-        test_hook_word = words[i];
-        assert(smith_uniform_int64_sample(key, (SmithUniformInt64){INT64_MIN, INT64_MAX}) == full[i]);
-        test_hook_word = test_word_for_index(i, 10); // indices 0 to 4 of a span of 10: [-3, 6]
-        assert(smith_uniform_int64_sample(key, (SmithUniformInt64){-3, 6}) == full[i]);
-    }
-    double previous = -1.0;
-    for (uint64_t w = 0; w < 5; w++) { // the real uniform: grid points 0, -1, +1, -2, +2 steps from 0
+    for (uint64_t w = 0; w < 5; w++) {
         test_hook_word = w << 11;
-        double d = smith_uniform_double_sample(key, (SmithUniformDouble){0.0, 1.0});
-        assert(d == (double)w * 0x1p-53 && d > previous);
-        previous = d;
-        d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 1.0}); // origin at the 2^52 grid point
+        double d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 1.0}); // origin at the 2^52 grid point
         assert(d == (double)smith_random_zigzag(w) * 0x1p-52 + 0.0);
     }
     for (uint64_t w = 0; w < 5; w++) { // the normal: u just above 0.5, just below, the next above...
@@ -855,24 +382,6 @@ static void test_small_words_zigzag(void) {
         float uf = smith_random_normal_u_float(key);
         assert(uf == 0.5f + (float)(2 * smith_random_zigzag(w) + 1) * 0x1p-24f);
     }
-    test_hook_word = (uint64_t)1 << 11; // the Bernoulli: only the last grid index is true, at probability 1 - 2^-53
-    assert(!smith_bernoulli_sample(key, (SmithBernoulli){0.5}));
-    test_hook_word = UINT64_MAX;
-    assert(smith_bernoulli_sample(key, (SmithBernoulli){0.5}));
-    test_hook_word = (uint64_t)1 << 11;
-    assert(smith_bernoulli_sample(key, (SmithBernoulli){1.0}));
-}
-
-static void test_zero_word_permutation_steps(void) {
-    SmithKey key = smith_key_make(test_seed + 15);
-    key.tap = &test_tap_constant;
-    size_t out[4];
-    test_hook_word = test_word_for_index(1, 4); // one step off the identity: only the last position swaps
-    smith_permutation_sample(key, (SmithPermutation){4}, out);
-    size_t moved = 0;
-    for (size_t i = 0; i < 4; i++)
-        moved += out[i] != i;
-    assert(moved > 0);
 }
 
 static void test_hook_identity_matches(void) {
@@ -885,8 +394,9 @@ static void test_print_pins(void) {
     static TestPins pins;
     test_pin_keys(&pins);
     test_pin_distributions(&pins);
-    printf("// Generated by `random pins`: the numbers are part of the API.\nstatic const uint64_t "
-           "test_pinned_values[] = {\n");
+    printf("// Generated by `random pins`, for tests/random_test.smith: the numbers are part of the API.\nstatic const "
+           "uint64_t "
+           "pinned_values[] = {\n");
     for (size_t i = 0; i < pins.count; i++)
         printf("    0x%016" PRIx64 "ULL, // %s\n", pins.value[i], pins.label[i]);
     printf("};\n");
@@ -908,8 +418,6 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc > 1 && strcmp(argv[1], "stats") == 0) {
-        printf("log double worst ulps vs libm log: %" PRId64 "\n", test_log_worst_double());
-        printf("log float worst ulps vs libm logf: %" PRId64 "\n", test_log_worst_float());
         double allowed = 0;
         printf("normal double worst relative CDF error: %.3e (%.2f of the allowed)\n",
                test_normal_error_double(&allowed), allowed);
@@ -918,23 +426,12 @@ int main(int argc, char **argv) {
         return 0;
     }
     test_philox();
-    test_keys();
-    test_pinned();
-    test_uniform_int64();
-    test_uniform_int64_wide();
-    test_uniform_real();
-    test_uniform_grid_and_rounding();
-    test_normal_moments();
+    test_uniform_int64_full_range_is_zigzag();
+    test_below();
     test_normal_cdf_symmetry_reach();
-    test_bernoulli();
-    test_categorical();
-    test_permutation();
-    test_log();
     test_around_bijection();
     test_index_zero_word();
-    test_zero_word_simplest();
     test_small_words_zigzag();
-    test_zero_word_permutation_steps();
     test_hook_identity_matches();
     printf("random: all checks passed\n");
     return 0;
