@@ -4796,6 +4796,13 @@ static typeof(i32[:]) fixed(void) {
     return data;
 }
 
+static i32 once_calls = 0;
+
+static typeof(i32[:]) once(void) {
+    once_calls += 1;
+    return fixed();
+}
+
 i32 main(void) {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;
@@ -4819,6 +4826,9 @@ i32 main(void) {
     i32 *none = nullptr;
     i32 empty[:] = none[0:0];
     c::printf("%zu %d\n", countof(empty), sum(empty));
+    i32 first_of_call = once()[0];
+    i32 part[:] = once()[1:3];
+    c::printf("%d %zu %d\n", first_of_call, countof(part), once_calls); // a call indexed or sliced runs once each
     return 0;
 }
 ==> std-default-c2y/src/main.smith <==

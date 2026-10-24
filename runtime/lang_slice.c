@@ -284,6 +284,9 @@ static size_t smith_lang_slice_leading(const SmithToken *span, size_t name) {
 }
 
 static void smith_lang_slice_flag(SmithLang *lang) {
+    // A generic's head (`typeof(T[:]) push_slice(...)`) is no slice written in the module: its importers keep the
+    // plain lowering unless they write a `[:]` of their own, since every module imports arena.
+    if (lang->decl.generic) return;
     lang->slices_seen = true;
     lang->tuples_seen = true;
 }
@@ -976,7 +979,16 @@ static bool smith_lang_slice_eligible(SmithLang *lang, const SmithHost *host, co
         token->location == lang->slice.skip) {
         return false;
     }
-    if (smith_lang_punct(token, "(")) return !smith_lang_slice_continues(lang, host);
+    if (smith_lang_punct(token, "(")) {
+        // The head of `if (`, `while (`, `for (` and `switch (` is no operand: reading its group would look at the
+        // token after the `)`, the body's, before the parser has the declarations of the header.
+        SmithToken keyword = {};
+        if (smith_lang_tuple_previous(lang, host, 1, &keyword) && keyword.kind == SmithTokenKind_Identifier &&
+            smith_lang_slice_statement_word(&keyword)) {
+            return false;
+        }
+        return !smith_lang_slice_continues(lang, host);
+    }
     if (token->kind != SmithTokenKind_Identifier ||
         smith_lang_word(token->text, token->length) != SmithLangWord_Other) {
         return false;

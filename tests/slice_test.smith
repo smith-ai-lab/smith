@@ -116,3 +116,47 @@ export void test_slice_a_view_that_ends_before_it_begins_stops(void) {
     i32 view[:] = all[low:1];
     (void)view;
 }
+
+static i32 calls = 0;
+static i32 backing[4] = {10, 20, 30, 40};
+
+static typeof(i32[:]) counted(void) {
+    calls += 1;
+    return backing;
+}
+
+static i32 *counted_pointer(void) {
+    calls += 1;
+    return backing;
+}
+
+export void test_slice_the_array_of_an_index_is_evaluated_once(void) {
+    calls = 0;
+    i32 second = counted()[1];
+    test::check_equal(second, 20);
+    test::check_equal(calls, 1);
+    counted()[2] = 33;
+    test::check_equal(calls, 2);
+    test::check_equal(backing[2], 33);
+    backing[2] = 30; // the other tests may run in this process
+}
+
+export void test_slice_the_array_of_a_slice_is_evaluated_once(void) {
+    calls = 0;
+    i32 middle[:] = counted()[1:3];
+    test::check_equal(countof(middle), 2);
+    test::check_equal(calls, 1);
+    i32 view[:] = counted_pointer()[0:2];
+    test::check_equal(countof(view), 2);
+    test::check_equal(calls, 2);
+    i32 nested = counted()[1:4][1];
+    test::check_equal(nested, 30);
+    test::check_equal(calls, 3);
+}
+
+export void test_slice_a_braceless_loop_body_may_call_a_generic(void) {
+    i32 raw[3] = {4, 5, 6};
+    i32 all[:] = raw;
+    for (usize i = 0; i < countof(all); i++)
+        test::check_equal(all[i], raw[i]); // the loop head's `(` is no operand, so its body is not read ahead
+}
