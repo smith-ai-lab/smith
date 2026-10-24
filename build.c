@@ -703,6 +703,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"docs", "docs", nullptr, nullptr, 0},
     {"effects", "effects", nullptr, nullptr, 0},
     {"effects-infer", "effects_infer", nullptr, nullptr, 0},
+    {"handlers", "handlers", nullptr, nullptr, 0},
     {"headers", "headers", nullptr, nullptr, 0},
     {"http", "http", nullptr, nullptr, 0},
     {"inflate", "inflate", nullptr, nullptr, 0},
