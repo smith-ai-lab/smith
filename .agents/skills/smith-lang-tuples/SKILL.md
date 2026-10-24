@@ -5,32 +5,43 @@ description: "Tuples in .smith: struct { i32, f32 }, a struct whose fields have 
 
 # Tuples
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lang-tuples/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`; the long reference is [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Tuples").
+C returns two values through a pointer or a named struct. A tuple is a struct whose fields have no names, written `struct { i32, f32 }` (a syntax error in C, so smith gives it a meaning). Its **identity is its shape**: the same field types in the same order are one type in every file and module.
 
-A tuple is a struct whose fields have no names, written `struct { i32, f32 }` (a syntax error in C, so smith gives it a meaning). Its **identity is its shape**: the same field types in the same order are one type in every file and module.
+```smith
+module pairs;
 
-```smith fragment
-typedef struct { i32, f32 } Pair;              // a name for the type; Pair is still struct { i32, f32 }
+export typedef struct { i32, f32 } Pair;           // a typedef names it; Pair is still struct { i32, f32 }
 
-struct { i32, f32 } make(i32 a, f32 b) {       // returned, passed by value or by pointer, stored in locals, fields, arrays
-    return {a, b};                            // in a function that returns a tuple; (struct { i32, f32 }){a, b} anywhere
+export struct { i32, f32 } make(i32 a, f32 b) {    // returned, passed, stored in locals, fields, arrays
+    return {a, b};                                 // in a function that returns a tuple
 }
 
-void use(void) {
+export f32 demo(void) {
     struct { i32, struct { f32, f32 } } n = {1, {2.0f, 3.0f}};   // tuples nest
     Pair p = make(3, 4.5f);
-    p[0] += n[0];                             // t[0], t[1]: a constant index; written like a field
-    usize count = countof(p);                 // 2
+    p[0] += n[0];                                  // p[0], p[1]: a constant index, written like a field
+    usize count = countof(p);                      // 2
     struct { i32, f32 } *q = &p;
-    (*q)[1] = n[1][0];                        // q->_1 also works
+    (*q)[1] = n[1][0];                             // q->_1 also works
+    return (f32)p[0] + p[1] + (f32)count;          // 4 + 2 + 2
 }
 ```
 
-- **The index is a constant** (a number or a `constexpr` name). `t[i]` and `t[2]` for two fields are errors that name the tuple and its count. A tuple of no fields, `struct { }`, is an error (C has no empty struct).
-- **A field is a type name** with stars and qualifiers (`const char *`, another tuple). An array, a function pointer or a `typeof` is named with a typedef first.
-- **How the fields are spelled makes the type.** A field is named by what is written, with a module's names resolved: `Meters` in `geo::a` and `a::Meters` elsewhere are one spelling. The sized, stdint and basic C types are unified (`i32`, `int32_t`, `int` and `signed` are one; `i64` is `long long`; `usize` is `size_t`), but **a typedef is not looked through**: `struct { Meters, f32 }` and `struct { f64, f32 }` are different types though `Meters` is `f64` (assigning one to the other is clang's "incompatible types" error).
-- **Underneath** `struct { i32, f32 }` is `struct smith_tuple_i32__f32 { int32_t _0; float _1; }`, defined where it is written (C23 accepts the same definition again); `t[0]` is `t._0`.
-- **A generated header** holds the struct once, before the declaration that uses it, guarded by `#ifndef SMITH_TUPLE_i32__f32`, so C and C++ include it, even from C11 (`struct smith_tuple_i32__f32 p = geo_a_make(2, 3.5f); p._0`). A module whose exports use tuples has a `// smith-tuples` line, which tells an importer to index them.
-- **Not yet, inside a generic function** (no use needs them; they keep their errors): a tuple type written there (`struct { T, i32 }`) asks for a typedef outside; `t[0]` and `countof(t)` are not rewritten in a generic's body (write `t._0`). `auto... rest` is the arguments' tuple but has its own spelling (`smith-lang-rest`); built lists (`auto args = {...}`) are gone, a tuple type written out holds the values.
+`(struct { i32, f32 }){a, b}` builds one anywhere; `smith fmt` leaves a tuple as written.
 
-`smith fmt` leaves a tuple as written; `smith lint` and `smith lsp` do not judge the lowered struct or its `_0` fields by the naming rules.
+## Rules
+
+- **The index is a constant** (a number or a `constexpr` name). A tuple of no fields, `struct { }`, is an error (C has no empty struct).
+- **A field is a type name** with stars and qualifiers (`const char *`, another tuple). An array, a function pointer or a `typeof` is named with a typedef first.
+- **How the fields are spelled makes the type.** A module's names are resolved (`Meters` in `geo::a` and `a::Meters` elsewhere are one spelling); sized, stdint and basic C types are unified (`i32`, `int32_t`, `int`, `signed` are one; `i64` is `long long`; `usize` is `size_t`). **A typedef is not looked through**: `struct { Meters, f32 }` and `struct { f64, f32 }` are different types though `Meters` is `f64`.
+- **Underneath** `struct { i32, f32 }` is `struct smith_tuple_i32__f32 { int32_t _0; float _1; }` and `t[0]` is `t._0`. A generated header holds the struct once, guarded by `#ifndef SMITH_TUPLE_i32__f32`, so C and C++ include it, even from C11 (`p._0`); a `// smith-tuples` line tells an importer to index them.
+- **Not yet, inside a generic**: a tuple type written there (`struct { T, i32 }`: use a typedef outside); `t[0]` and `countof(t)` are not rewritten in its body (write `t._0`). `auto... rest` is the arguments' tuple with its own spelling (`smith-lang-rest`).
+
+## Errors
+
+- ``the index of a tuple is a constant: `struct { i32, f32 }` has 2 fields, 0 to 1``
+- ``the index 2 is out of range: `struct { i32, f32 }` has 2 fields``
+- `a tuple has at least one field`; `a tuple field is a type` (name an array or function pointer with a typedef).
+- assigning `struct { Meters, f32 }` to `struct { f64, f32 }` is clang's `incompatible type` error.
+
+Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Tuples").
