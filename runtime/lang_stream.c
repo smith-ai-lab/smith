@@ -884,6 +884,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
             lang->slice.after_boundary = smith_lang_slice_boundary(token);
             if (at_start && smith_lang_slice_begin(lang, host, token)) return;
             smith_lang_slice_equals(lang, host, token);
+            if (smith_lang_slice_init_compound(lang, host, token)) return;
             if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
                 smith_lang_slice_typeof(lang, host, token)) {
                 return;

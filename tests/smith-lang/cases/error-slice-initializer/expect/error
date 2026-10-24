@@ -1,0 +1,2 @@
+src/main.smith:16:29: a slice takes a slice expression, not braces: write the array or the string it views (`.name = "abc"`), or assign the member afterwards
+src/main.smith:17:22: a designator of a struct with a slice member names one member, `.name = value`: a slice of a deeper designator or an array element is not read; write the braces of the inner struct, or assign the slice afterwards
