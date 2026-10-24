@@ -506,7 +506,7 @@ std::string captured(const std::function<int()> &run, int &status) {
     close(saved);
     std::string text;
     char buffer[4096];
-    std::rewind(file);
+    std::fseek(file, 0, SEEK_SET);
     for (size_t got; (got = std::fread(buffer, 1, sizeof buffer, file)) > 0;)
         text.append(buffer, got);
     std::fclose(file);
