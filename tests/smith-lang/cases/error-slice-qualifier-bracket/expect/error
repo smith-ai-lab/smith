@@ -1,3 +1,3 @@
-src/main.smith:12:26: a qualifier goes in the first bracket of a slice (`f32 m[const :][:]`): the rows of a slice of more dimensions are views, with no pointer of their own to qualify
+src/main.smith:12:26: only the outermost bracket may carry qualifiers, as in C (`f32 m[const :][:]`): the rows of a slice of more dimensions are views, with no pointer of their own to qualify
 src/main.smith:6:25: `static` has no meaning for a slice: it has no size to promise (C's `int a[static 4]`); write `[const :]` or `[restrict :]`
 src/main.smith:9:28: `volatile` has no meaning in a slice's brackets: write it on the element, `volatile u8 xs[:]`; the brackets take `const` and `restrict`

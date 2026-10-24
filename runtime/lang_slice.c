@@ -502,8 +502,8 @@ static size_t smith_lang_slice_groups(SmithLang *lang, const SmithHost *host, co
             break;
         size_t words = smith_lang_slice_bracket(lang, host, first, last + 1, nullptr);
         if (words != SIZE_MAX && words > 0 && dims->count < smith_lang_slice_dims_max) {
-            *problem = "a qualifier goes in the first bracket of a slice (`f32 m[const :][:]`): the rows of a "
-                       "slice of more dimensions are views, with no pointer of their own to qualify";
+            *problem = "only the outermost bracket may carry qualifiers, as in C (`f32 m[const :][:]`): the "
+                       "rows of a slice of more dimensions are views, with no pointer of their own to qualify";
             *where = open->location;
             dims->runtime[dims->count] = true;
             dims->count += 1;
