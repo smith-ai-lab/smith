@@ -201,7 +201,8 @@ export type slice_of(type element, usize count) {
     usize total = 1;
     for constexpr (usize i = 0; i < countof(dims); i++) {
         usize size = (usize)dims[i];
-        if (__builtin_mul_overflow(total, size, &total)) total = ~(usize)0; // the largest usize: push_array_raw stops on it
+        if (__builtin_mul_overflow(total, size, &total))
+            total = ~(usize)0; // the largest usize: push_array_raw stops on it
         result.count[i] = size;
     }
     result.data = push_array_raw(arena, sizeof(T), total, alignof(T));

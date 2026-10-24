@@ -20,7 +20,7 @@ typedef struct {
 
 // Memory is passed in, never malloc'd: a function that needs some takes an arena.
 Point *make_line(arena::Arena *a, usize count) {
-    Point points[:] = arena::push_slice(a, Point, count); // zeroed, count * size checked for overflow
+    Point *points = arena::push_slice(a, Point, count).data; // zeroed, count * size checked for overflow
     for (usize i = 0; i < count; i++) points[i] = (Point){.x = (f32)i, .y = 0};
     return points;
 }
