@@ -274,6 +274,39 @@ EOF
         failures=$((failures + 1))
         echo "FAIL  the slice program does not build"
     fi
+    # Many dimensions and the qualifier tags (issue #106): rows are children of children with the fixed sizes and every
+    # count, and the tags of `restrict` and `const` slices (written by hand here: their lowering is the compiler's) show
+    # their elements and the type as the language writes it.
+    mkdir "$work/slices2"
+    cat >"$work/slices2/main.smith" <<'EOF'
+module main;
+struct smith_array_restrict_u8_n { unsigned char * __restrict data; unsigned long count[1]; };
+struct smith_array_const_char_n { const char *data; unsigned long count[1]; };
+int main(void) {
+  f32 raw[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+  f32 rows[:][2] = raw;
+  f32 grid[:][:] = raw;
+  u8 bytes[4] = {7, 8, 9, 10};
+  struct smith_array_restrict_u8_n r = {bytes, {4}};
+  const struct smith_array_const_char_n c = {"hey", {3}};
+  return (int)countof(rows) + (int)countof(grid) + (int)r.count[0] + (int)c.count[0];
+}
+EOF
+    if (cd "$work/slices2" && "$smith" cc -g -O0 -c main.smith -o main.o && "$smith" cc -g main.o -o slices2); then
+        out=$("$smith" dbg -b -o 'b main.smith:11' -o run -o 'frame variable rows grid r c' -o 'frame variable rows[1][0]' \
+            "$work/slices2/slices2" 2>&1)
+        expect_contains "dbg shows f32[:][2] with its counts" "$out" "(f32[:][2]) rows = count=3x2 {"
+        expect_contains "dbg shows the rows of a slice as children of children" "$out" "[2] = ([0] = 5, [1] = 6)"
+        expect_contains "dbg shows f32[:][:] with its counts" "$out" "(f32[:][:]) grid = count=3x2 {"
+        expect_contains "dbg indexes a row's element" "$out" "(float) rows[1][0] = 3"
+        expect_contains "dbg shows a restrict slice as u8[restrict :]" "$out" "(u8[restrict :]) r = "
+        expect_contains "dbg shows a restrict slice's elements" "$out" "[3] = '\\n'"
+        expect_contains "dbg shows a const slice as text with its written type" "$out" '(const char[const :]) c = "hey" count=3'
+    else
+        total=$((total + 1))
+        failures=$((failures + 1))
+        echo "FAIL  the many-dimension slice program does not build"
+    fi
     cd "$work/src" || exit 1
 else
     echo "skipped: this smith has no token hook, so no .smith names"
