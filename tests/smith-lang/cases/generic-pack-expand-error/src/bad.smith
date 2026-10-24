@@ -1,0 +1,30 @@
+module bad;
+
+static i32 sq(i32 x) {
+    return x * x;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+// A pattern that names no pack expands nothing.
+export i32 no_pack(auto... rest) {
+    i32 x = 3;
+    return plus(sq(x)..., 1);
+}
+
+// `rest[0]` and `countof(rest)` are not the pack itself.
+export i32 only_index(auto... rest) {
+    return plus(sq(rest[0])..., 1);
+}
+
+// The pack outside an expansion is the tuple, not passed whole.
+export i32 whole(auto... rest) {
+    return plus(sq(rest), 1);
+}
+
+// Expansions do not nest.
+export i32 nested(auto... rest) {
+    return plus(plus(rest...)..., 1);
+}

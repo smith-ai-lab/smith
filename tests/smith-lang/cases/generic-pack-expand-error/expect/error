@@ -1,0 +1,4 @@
+src/bad.smith:14:22: `...` expands nothing: name an `auto...` parameter in the pattern before it
+src/bad.smith:19:28: `...` expands nothing: name an `auto...` parameter in the pattern before it
+src/bad.smith:24:20: `rest` is the tuple of the arguments, and is not passed whole: spread it into a call with `rest...`, or write `rest[i]` for one argument or `countof(rest)` for how many
+src/bad.smith:29:30: an expansion does not nest: the pattern before this `...` has a `...` in it

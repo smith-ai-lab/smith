@@ -90,6 +90,15 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   call to another generic is expanded before that call is read, so `forward(f, x, rest...)` types each element by its
   own type; a call of the generic needs at least the parameters before `rest`. No value-changing conversion check
   applies (no `typeof` target). The debugger names the instance with every type, `gradient<loss, Params *, Batch *>`.
+  **Pack expansion** (issue #123): `pattern...` is C++11's, within what Smith has. An argument (after `(`, `,` or `{`)
+  that ends in `...` outside brackets and names `rest` (not `rest[i]`, not `countof(rest)`) is written once per element
+  with `rest` replaced by `rest_k`, comma between: `smith_lang_pack_pattern_find` scans it, `smith_lang_pack_pattern_copies`
+  writes the copies as new pool tokens. A call's arguments are rewritten before the call is read
+  (`smith_lang_pack_patterns_range`, in front of the bare-pack pass of `smith_lang_pack_expand_range`); in a body the
+  replay writes the copies as a frame of their own (`smith_lang_replay_pattern`), so a call to a generic, `x->[f]` and
+  `rest[i]` in the copies are read as in any body. An empty pack writes nothing and its comma (the one before, else the
+  one after; `smith_lang_pack_comma_before_empty`). A pattern naming no pack and a `...` inside a pattern are errors. A
+  generic has one pack, so there is no lockstep over two. `autodiff::map` does not use it yet (#143).
 - **`typeof` of an expression in the result type.** The result type is written before the parameters, where C does not
   know them, so an `auto` parameter's name inside a `typeof(...)` there stands for a value of its type, `(*(T *)0)`
   (never evaluated): `export typeof(*x) gradient(constexpr auto f, auto x, auto... rest)` returns what `*x` is. In the

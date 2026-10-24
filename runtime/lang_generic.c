@@ -2365,16 +2365,77 @@ static SmithLangPackUse smith_lang_pack_use(SmithLang *lang, const SmithHost *ho
     return (SmithLangPackUse){.kind = SmithLangPack_Failed, .consumed = 1, .place = place};
 }
 
-// An empty `rest...` takes a comma with it: the one before it, else the one after. Whether the comma at `at` is the one
-// before an empty expansion (the expansion then writes nothing, and the comma is dropped).
-static bool smith_lang_pack_comma_before_empty(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
-    SmithLangPackRef args;
-    if (replay->generic == nullptr || replay->instance == nullptr || at + 2 >= limit ||
-        !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ",") || !smith_lang_pack_resolve(replay, at + 1, &args) ||
-        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "...")) {
+// ---- Pack expansion: `pattern...`
+// ------------------------------------------------------------------------------------------------
+
+// `pattern...` is an expression that names the pack, written once for each element, each name of the pack replaced by
+// the element (C++11's pack expansion, within what Smith has): `f(leaf(rest, off)...)` is `f(leaf(rest_0, off),
+// leaf(rest_1, off), ...)`. It stands as an argument (after `(`, `,` or `{`) and ends at the `...` outside brackets.
+// `rest...` alone is the pack's own spread, written by `smith_lang_pack_write`.
+typedef struct {
+    uint32_t dots; // the `...` that ends the argument
+    size_t named;  // the names of the pack in the pattern (`rest`, not `rest[i]` and not `countof(rest)`)
+    bool nested;   // another `...` inside the pattern
+    bool bare;     // the pattern is the pack alone
+} SmithLangPattern;
+
+// Whether the pack's name at `at` is a use of the whole pack (an element is `rest[i]`, a count `countof(rest)`).
+static bool smith_lang_pack_whole_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
+    SmithLangPackRef ref;
+    if (!smith_lang_pack_resolve(replay, at, &ref)) return false;
+    if (at + 1 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[")) return false;
+    return !(at >= 2 && smith_lang_pack_countof_at(replay, at - 2, limit, &ref));
+}
+
+// Whether `at` begins an argument: it is `lower`, or follows `(`, `,` or `{`.
+static bool smith_lang_pack_arg_start(uint32_t at, uint32_t lower) {
+    if (at <= lower) return true;
+    const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1];
+    return smith_lang_gt_punct(before, "(") || smith_lang_gt_punct(before, ",") || smith_lang_gt_punct(before, "{");
+}
+
+// Whether the argument at `start` ends in `...` (outside brackets, before the next comma): what it holds.
+static bool smith_lang_pack_pattern_find(const SmithLangReplay *replay, uint32_t start, uint32_t limit,
+                                         SmithLangPattern *out) {
+    *out = (SmithLangPattern){};
+    if (replay->generic == nullptr || replay->instance == nullptr || !smith_lang_has_pack(replay->generic)) {
         return false;
     }
-    return args.count == 0;
+    int depth = 0;
+    for (uint32_t at = start; at < limit; at++) { // bounded by the range
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (smith_lang_gt_punct(token, "...")) {
+            if (depth > 0) {
+                out->nested = true;
+                continue;
+            }
+            out->dots = at;
+            out->bare = at == start + 1 && smith_lang_pack_whole_at(replay, start, limit);
+            return at > start;
+        }
+        if (depth == 0 && (smith_lang_gt_punct(token, ",") || smith_lang_gt_punct(token, ";"))) return false;
+        if (smith_lang_gt_open(token)) {
+            depth += 1;
+        } else if (smith_lang_gt_close(token)) {
+            if (depth == 0) return false;
+            depth -= 1;
+        }
+        out->named += smith_lang_pack_whole_at(replay, at, limit) ? 1 : 0;
+    }
+    return false;
+}
+
+// An empty `rest...` takes a comma with it: the one before it, else the one after. Whether the comma at `at` is the one
+// before an empty expansion (the expansion then writes nothing, and the comma is dropped). With `bare` false only a
+// pattern counts (`rest...` alone is left to the pass that writes it).
+static bool smith_lang_pack_comma_before_empty(const SmithLangReplay *replay, uint32_t at, uint32_t limit, bool bare) {
+    SmithLangPattern pattern;
+    if (replay->generic == nullptr || replay->instance == nullptr || at + 2 >= limit ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ",") ||
+        !smith_lang_pack_pattern_find(replay, at + 1, limit, &pattern) || (pattern.bare && !bare)) {
+        return false;
+    }
+    return pattern.named > 0 && !pattern.nested && smith_lang_pack_size(replay->generic, replay->instance) == 0;
 }
 
 // An empty expansion at `at` (after `begin`, before `limit`): 1 when the comma after it goes too, because none came
@@ -2485,6 +2546,91 @@ static bool smith_lang_pack_named(const SmithLangReplay *replay, uint32_t at) {
     return smith_lang_pack_resolve(replay, at, &args) || smith_lang_var_value(replay, at, &number);
 }
 
+// Whether the argument at `at` is a pattern expansion that is to be written: 1 when it is (`pattern` says where it
+// ends), 0 when it is not one (or is the bare pack), -1 after an error.
+static int smith_lang_pack_pattern_open(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                        uint32_t at, uint32_t lower, uint32_t limit, SmithLangPattern *pattern) {
+    if (!smith_lang_pack_arg_start(at, lower) || !smith_lang_pack_pattern_find(replay, at, limit, pattern) ||
+        pattern->bare) {
+        return 0;
+    }
+    uint32_t place =
+        smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[pattern->dots], replay->location);
+    if (pattern->nested) {
+        smith_lang_error(lang, host, place,
+                         "an expansion does not nest: the pattern before this `...` has a `...` in it");
+        return -1;
+    }
+    if (pattern->named == 0) {
+        smith_lang_error(lang, host, place,
+                         "`...` expands nothing: name an `auto...` parameter in the pattern before it");
+        return -1;
+    }
+    return 1;
+}
+
+// The pattern at `start` written once for each element, in new tokens at the pool's end, a comma between the copies.
+static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32_t start,
+                                           const SmithLangPattern *pattern) {
+    size_t count = smith_lang_pack_size(replay->generic, replay->instance);
+    const SmithLangGenToken *pack = smith_lang_pack_name(replay->generic);
+    for (size_t element = 0; element < count; element++) { // one copy each
+        if (element > 0 &&
+            !smith_lang_pack_push(&smith_lang_gt.tokens[pattern->dots], SmithTokenKind_Punctuator, ",", false)) {
+            return false;
+        }
+        for (uint32_t at = start; at < pattern->dots; at++) {
+            const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+            char text[smith_lang_name_max];
+            bool good = false;
+            if (smith_lang_pack_whole_at(replay, at, pattern->dots)) {
+                snprintf(text, sizeof text, "%.*s_%zu", (int)pack->length, smith_lang_gt_str(pack), element);
+                good = smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
+            } else {
+                good = smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
+            }
+            if (!good) return false;
+        }
+    }
+    return true;
+}
+
+// The arguments [*begin, *end) with each pattern expansion written out, in new tokens at the pool's end; the range is
+// then the new one. False after an error.
+static bool smith_lang_pack_patterns_range(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                           uint32_t *begin, uint32_t *end) {
+    SmithLangPattern pattern;
+    bool any = false;
+    for (uint32_t at = *begin; at < *end && !any; at++) { // is there an expansion at all
+        any = smith_lang_pack_arg_start(at, *begin) && smith_lang_pack_pattern_find(replay, at, *end, &pattern) &&
+              !pattern.bare;
+    }
+    if (!any) return true;
+    uint32_t first = smith_lang_gt.count;
+    bool good = true;
+    for (uint32_t at = *begin; at < *end && good;) {
+        int opened = smith_lang_pack_pattern_open(lang, host, replay, at, *begin, *end, &pattern);
+        if (opened < 0) return false;
+        if (opened > 0) {
+            uint32_t consumed = pattern.dots + 1 - at;
+            if (smith_lang_pack_size(replay->generic, replay->instance) == 0) {
+                consumed += smith_lang_pack_comma_after_empty(at, *begin, *end, consumed);
+            }
+            good = smith_lang_pack_pattern_copies(replay, at, &pattern);
+            at += consumed;
+            continue;
+        }
+        const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+        good = smith_lang_pack_comma_before_empty(replay, at, *end, false) ||
+               smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
+        at += 1;
+    }
+    if (!good) return false;
+    *begin = first;
+    *end = smith_lang_gt.count;
+    return true;
+}
+
 // The tokens of a call's arguments [*begin, *end), with each use of a list or a loop variable written out as the
 // elements, the number or the name, in new tokens at the pool's end (the tokens of the generic are kept: another
 // instance reads them again). False after the error. The range is the new one.
@@ -2492,6 +2638,7 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
                                          uint32_t *begin, uint32_t *end) {
     const SmithLangGeneric *generic = replay->generic;
     if (generic == nullptr || replay->instance == nullptr) return true;
+    if (!smith_lang_pack_patterns_range(lang, host, replay, begin, end)) return false;
     bool used = false;
     for (uint32_t at = *begin; at < *end && !used; at++) // is there a use of a list at all
         used = smith_lang_pack_named(replay, at) || smith_lang_fields_begins(replay, at, *end);
@@ -2513,7 +2660,7 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
         }
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, at, *end);
         if (use.kind == SmithLangPack_None) {
-            bool skip = smith_lang_pack_comma_before_empty(replay, at, *end);
+            bool skip = smith_lang_pack_comma_before_empty(replay, at, *end, true);
             good = skip || smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
             at += 1;
             continue;
@@ -3644,6 +3791,29 @@ static bool smith_lang_typing_param(SmithLang *lang, const SmithHost *host, cons
     return true;
 }
 
+// A pattern expansion at the frame's position: written as its copies, in a frame of their own. True when the tokens
+// were one (an error writes what stands in their place).
+static bool smith_lang_replay_pattern(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                      SmithLangFrame *frame) {
+    SmithLangPattern pattern;
+    int opened = smith_lang_pack_pattern_open(lang, host, replay, frame->pos, frame->begin, frame->end, &pattern);
+    if (opened == 0) return false;
+    uint32_t consumed = pattern.dots + 1 - frame->pos;
+    uint32_t first = smith_lang_gt.count;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[pattern.dots], replay->location);
+    bool good = opened > 0 && smith_lang_pack_pattern_copies(replay, frame->pos, &pattern);
+    if (opened > 0 && smith_lang_pack_size(replay->generic, replay->instance) == 0) {
+        consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, consumed);
+    }
+    frame->pos += consumed;
+    if (!good) {
+        smith_lang_generic_poison(lang, host, place);
+    } else if (smith_lang_gt.count > first) {
+        smith_lang_replay_push(replay, first, smith_lang_gt.count, 0);
+    }
+    return true;
+}
+
 // Writes the tokens the replay holds, in order. A group becomes its call; a token that names T becomes the type.
 static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay) {
     for (size_t step = 0; replay->count > 0 && step < smith_lang_replay_steps_max; step++) { // bounded
@@ -3665,6 +3835,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             replay->count -= 1;
             continue;
         }
+        if (replay->instance != nullptr && smith_lang_replay_pattern(lang, host, replay, frame)) continue;
         SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
         if (token->special == SmithLangGen_CallBegin) {
             smith_lang_replay_group(lang, host, replay, frame->pos);
@@ -3682,7 +3853,8 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
         if (smith_lang_list_gone(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
-        if (use.kind == SmithLangPack_None && smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end)) {
+        if (use.kind == SmithLangPack_None &&
+            smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end, true)) {
             frame->pos += 1; // the comma before an empty `rest...` goes with it
             continue;
         }
