@@ -336,8 +336,8 @@ static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *o
     return true;
 }
 
-static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle);
+static bool smith_lang_ty_entry(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                                uint64_t *handle, char *canonical, size_t canonical_capacity);
 
 // The handle of the slice a tag names (what `typeof(xs)` of `f32 xs[:]` is): its element's handle at the depth of its
 // leading run-time dimensions, so it equals `f32[:]` made from the handle of `f32`. False when the tag is no slice of
@@ -363,15 +363,18 @@ static bool smith_lang_ty_from_tag(SmithLang *lang, const SmithHost *host, const
     for (size_t at = depth; at < dims.count && used + 24 < sizeof base; at++) // the fixed dimensions
         used += (size_t)snprintf(base + used, sizeof base - used, " [ %llu ]", (unsigned long long)dims.fixed[at]);
     uint64_t inner = 0;
-    if (!smith_lang_ty_handle(lang, host, base, location, &inner)) return false;
+    char ignored[smith_lang_ty_spelling_max];
+    if (!smith_lang_ty_entry(lang, host, base, location, &inner, ignored, sizeof ignored)) return false;
     *handle = smith_lang_ty_slice_make(smith_lang_ty_slice_facts(host), inner, depth);
     return true;
 }
 
 // The handle of the type written `spelling` (as the compiler reads it), added to the table when it is new. False after
 // an error.
-static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle) {
+// The handle of the type written `spelling` in the table of the file, whatever its canonical spelling is; the canonical
+// spelling goes to `canonical`.
+static bool smith_lang_ty_entry(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                                uint64_t *handle, char *canonical, size_t canonical_capacity) {
     if (host->type_query == nullptr) {
         smith_lang_error(lang, host, location,
                          "a type as a value needs smith's compiler to read it; the raw lowering has none");
@@ -382,14 +385,8 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
         smith_lang_error(lang, host, location, "the compiler cannot read the type `%s`", spelling);
         return false;
     }
-    char canonical[smith_lang_ty_spelling_max];
-    snprintf(canonical, sizeof canonical, "%.*s", (int)query.canonical_length, query.canonical);
+    snprintf(canonical, canonical_capacity, "%.*s", (int)query.canonical_length, query.canonical);
     SmithLangTyTable *table = &smith_lang_ty_table;
-    static const char slice_tag[] = "struct smith_array_";
-    if (strncmp(canonical, slice_tag, sizeof slice_tag - 1) == 0 &&
-        smith_lang_ty_from_tag(lang, host, canonical + 7, location, handle)) {
-        return true;
-    }
     for (size_t i = 0; i < table->count; i++) { // the types met
         if (strcmp(table->canonical[i], canonical) == 0) {
             *handle = table->handle[i];
@@ -406,6 +403,17 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
     snprintf(table->canonical[index], sizeof table->canonical[index], "%s", canonical);
     table->handle[index] = smith_lang_ty_pack(index, &query);
     *handle = table->handle[index];
+    return true;
+}
+
+static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                                 uint64_t *handle) {
+    char canonical[smith_lang_ty_spelling_max];
+    if (!smith_lang_ty_entry(lang, host, spelling, location, handle, canonical, sizeof canonical)) return false;
+    static const char slice_tag[] = "struct smith_array_";
+    if (strncmp(canonical, slice_tag, sizeof slice_tag - 1) == 0) {
+        smith_lang_ty_from_tag(lang, host, canonical + 7, location, handle); // a slice has no entry of its own
+    }
     return true;
 }
 

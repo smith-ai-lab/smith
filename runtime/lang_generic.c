@@ -896,7 +896,8 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
     }
     // i: inline, p: private (an exported generic calls it), q: both; f: a function over `type` (g: a private one)
     const char *kinds = generic->exported ? "-i" : "pq";
-    char kind = generic->plain ? (generic->exported ? 'f' : 'g') : kinds[generic->is_inline ? 1 : 0];
+    char kind = kinds[generic->is_inline ? 1U : 0U];
+    if (generic->plain) kind = generic->exported ? 'f' : 'g';
     used = smith_lang_append(out, capacity, used, "%c %u %u %u %u |", kind, generic->name_index, generic->open_index,
                              generic->close_index, generic->body_index);
     for (uint32_t i = 0; i < generic->count; i++) { // the head, then the body

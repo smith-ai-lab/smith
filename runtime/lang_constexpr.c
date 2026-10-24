@@ -504,6 +504,19 @@ static int smith_lang_cx_pack_operand(SmithLangCx *cx, uint32_t *at, uint32_t la
     return 0;
 }
 
+// The end of the call or the chain of fields that begins at `at`, or `at` when it begins none: a name followed by
+// `(`, `.` or `[`, or `m::f(args)` kept as a group (a function of an import, which this file defines, issue #107).
+static uint32_t smith_lang_cx_extent(uint32_t at, uint32_t last) {
+    const SmithLangGenToken *token = smith_lang_cx_token(at);
+    if (token->special == SmithLangGen_CallBegin) {
+        uint32_t end = smith_lang_group_end(at, last);
+        return end < last ? end + 1 : last;
+    }
+    return token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain
+               ? smith_lang_cx_primary_end(at, last)
+               : at;
+}
+
 // The operand at `at`: a number, a builtin question, or a type. Moves `at` past it.
 static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
     const SmithLangGenToken *token = smith_lang_cx_token(*at);
@@ -561,13 +574,7 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
         *at += 1;
         return true;
     }
-    uint32_t end = token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain
-                       ? smith_lang_cx_primary_end(*at, last)
-                       : *at;
-    if (token->special == SmithLangGen_CallBegin) { // `m::f(args)`: a function of an import, defined in this file
-        end = smith_lang_group_end(*at, last);
-        end = end < last ? end + 1 : last;
-    }
+    uint32_t end = smith_lang_cx_extent(*at, last);
     if (end > *at && cx->host->value_query != nullptr) return smith_lang_cx_ask(cx, at, end, value);
     cx->unknown_name = true;
     cx->unknown_at = *at;

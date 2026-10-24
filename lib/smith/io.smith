@@ -2827,7 +2827,8 @@ make_test(Test test) {
         __builtin_memcpy(copy, test.input, fake->input_size);
         fake->input = copy;
     }
-    const char **values = arena::push_array_raw(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
+    const char **values =
+        (const char **)arena::push_array_raw(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
     for (usize i = 0; i < test.argc; i++) {
         check(test.argv != nullptr);
         values[i] = test.argv[i];
@@ -2835,7 +2836,8 @@ make_test(Test test) {
     usize entries = 0;
     for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
     }
-    const char **variables = arena::push_array_raw(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
+    const char **variables =
+        (const char **)arena::push_array_raw(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
     for (usize i = 0; i < entries; i++)
         variables[i] = test.environment[i];
     fake->cores = test.cores > 0 ? test.cores : 1;
