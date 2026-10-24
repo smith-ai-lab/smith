@@ -11,10 +11,12 @@ module stats;
 import smith::contract;
 
 export i32 largest(i32 xs[:]) {
-    contract::requires(countof(xs) > 0 && countof(xs) <= 8);
+    contract::requires(countof(xs) > 0);
     i32 best = xs[0];
-    for (usize i = 1; i < countof(xs); i++)
+    for (usize i = 1; i < countof(xs); i++) {
+        contract::invariant(1 <= i && i <= countof(xs));
         best = xs[i] > best ? xs[i] : best;
+    }
     return best;
 }
 
@@ -67,13 +69,15 @@ unsigned spokes(unsigned turns);
 ```smith
 module wheel;
 
+// private: no other file can name it
 static u32 twice(u32 n) {
     return n * 2;
-} // private: no other file can name it
+}
 
+// callers write wheel::spokes(3)
 export u32 spokes(u32 turns) {
     return twice(turns) + 1;
-} // callers write wheel::spokes(3)
+}
 ```
 
 `import wheel;` brings the module in, and C's own headers come in as `import <math.h>;` with their names under `c::`.
@@ -338,9 +342,11 @@ module bytes;
 import smith::contract;
 
 export void copy(u8 dst[restrict:], const u8 src[const restrict:]) {
-    contract::requires(countof(dst) >= countof(src) && countof(src) <= 8);
-    for (usize i = 0; i < countof(src); i++)
+    contract::requires(countof(dst) >= countof(src));
+    for (usize i = 0; i < countof(src); i++) {
+        contract::invariant(i <= countof(src));
         dst[i] = src[i];
+    }
 }
 
 export void shift_in_place(u8 buf[:]) {
@@ -404,12 +410,15 @@ module report;
 import smith::format;
 import smith::io;
 
+// it can print: it was given a console
 export void report(io::Console *out, i32 top) {
     format::print(out, "largest ", top, "\n");
-} // given a console
+}
+
+// it cannot: nothing to print with
 export i32 twice(i32 x) {
     return x * 2;
-} // nothing to print with
+}
 ```
 
 [smith-io](.agents/skills/smith-io/SKILL.md), [smith-format](.agents/skills/smith-format/SKILL.md).
