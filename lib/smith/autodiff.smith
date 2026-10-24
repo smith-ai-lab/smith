@@ -49,34 +49,33 @@ import smith::contract;
 [[smith::c_name("enzyme_dupnoneed")]] export extern i32 dup_no_need;
 [[smith::c_name("enzyme_interleave")]] export extern i32 interleave;
 
-// The shape of a gradient: `proto` is a copy of what `p` points to, `n` of them in a row, all set to zero, and each
-// `[:]` field given a new block of the same length from the arena (a `[:]` of structs is walked element by element, a
-// fixed array of structs too). `proto` carries the type for `fields` and is read only when a slice has an element.
-void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
+// The shape of a gradient: the `n` values `p` points to, in a row, are all set to zero, and each `[:]` field given a
+// new block of the same length from the arena (a `[:]` of structs is walked element by element, a fixed array of
+// structs too).
+void shadow_walk(arena::Arena *a, auto p, usize n) {
     (void)a;
-    (void)proto;
-    if constexpr (is_record(typeof(proto))) {
+    if constexpr (is_record(typeof(*p))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
-                constexpr Field f = fields(typeof(proto))[i];
+            for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+                constexpr Field f = fields(typeof(*p))[i];
                 (void)f;
-                if constexpr (is_array(typeof(proto.[f]))) {
-                    shadow_walk(a, p->[f][0], &p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
-                } else if constexpr (is_slice(typeof(proto.[f]))) {
+                if constexpr (is_array(typeof(p->[f]))) {
+                    shadow_walk(a, &p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
+                } else if constexpr (is_slice(typeof(p->[f]))) {
                     if (countof(p->[f]) > 0) { // an empty slice has no element to read
                         typeof(p->[f].data) old = p->[f].data;
                         p->[f].data =
                             (typeof(old))arena::push_array_raw(a, sizeof(*old), countof(p->[f]), alignof(typeof(*old)));
                         __builtin_memcpy(p->[f].data, old, countof(p->[f]) * sizeof(*old));
-                        shadow_walk(a, *p->[f].data, p->[f].data, countof(p->[f]));
+                        shadow_walk(a, p->[f].data, countof(p->[f]));
                     }
                 } else {
-                    shadow_walk(a, p->[f], &p->[f], 1);
+                    shadow_walk(a, &p->[f], 1);
                 }
             }
             p += 1;
         }
-    } else if constexpr (is_pointer(typeof(proto))) {
+    } else if constexpr (is_pointer(typeof(*p))) {
         static_assert(false, "gradient: a field is a pointer; use a [:] slice");
     } else {
         __builtin_memset(p, 0, n * sizeof(*p));
@@ -88,7 +87,7 @@ void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
 // starts as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]`
 // holds).
 export typeof(v) zeros(arena::Arena *a, auto v) {
-    shadow_walk(a, v, &v, 1);
+    shadow_walk(a, &v, 1);
     return v;
 }
 
@@ -113,110 +112,103 @@ export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... re
 }
 
 // The walkers of `map`, one for each number of inputs (a generic has four parameters at most, so the inputs are
-// `typeof(out)` parameters and not a list): `proto` is a copy of what `out` points to, for its type, and `n` how many
-// are in a row.
-void map_walk1(constexpr auto f, auto proto, usize n, auto out, typeof(out) a) {
+// `typeof(out)` parameters and not a list): `n` is how many values `out` points to, in a row.
+void map_walk1(constexpr auto f, usize n, auto out, typeof(out) a) {
     (void)n;
     (void)out;
     (void)a;
-    (void)proto;
-    if constexpr (is_record(typeof(proto))) {
+    if constexpr (is_record(typeof(*out))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
-                constexpr Field fld = fields(typeof(proto))[i];
+            for constexpr (usize i = 0; i < countof(fields(typeof(*out))); i++) {
+                constexpr Field fld = fields(typeof(*out))[i];
                 (void)fld;
-                if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk1(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
-                              &a->[fld][0]);
-                } else if constexpr (is_slice(typeof(proto.[fld]))) {
+                if constexpr (is_array(typeof(out->[fld]))) {
+                    map_walk1(f, sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0]);
+                } else if constexpr (is_slice(typeof(out->[fld]))) {
                     contract::assert(countof(a->[fld]) == countof(out->[fld]));
                     if (countof(out->[fld]) > 0) { // an empty slice has no element to read
-                        map_walk1(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data);
+                        map_walk1(f, countof(out->[fld]), out->[fld].data, a->[fld].data);
                     }
                 } else {
-                    map_walk1(f, out->[fld], 1, &out->[fld], &a->[fld]);
+                    map_walk1(f, 1, &out->[fld], &a->[fld]);
                 }
             }
             out += 1;
             a += 1;
         }
-    } else if constexpr (is_float(typeof(proto))) {
+    } else if constexpr (is_float(typeof(*out))) {
         for (; n > 0; n--) {
             *out = (typeof(*out))f(*a);
             out += 1;
             a += 1;
         }
-    } else if constexpr (is_pointer(typeof(proto)) || is_array(typeof(proto))) {
+    } else if constexpr (is_pointer(typeof(*out)) || is_array(typeof(*out))) {
         static_assert(false, "map: a field is a pointer or an array of arrays; use a [:] slice");
     }
 }
 
-void map_walk2(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, typeof(out) b) {
+void map_walk2(constexpr auto f, usize n, auto out, typeof(out) a, typeof(out) b) {
     (void)n;
     (void)out;
     (void)a;
     (void)b;
-    (void)proto;
-    if constexpr (is_record(typeof(proto))) {
+    if constexpr (is_record(typeof(*out))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
-                constexpr Field fld = fields(typeof(proto))[i];
+            for constexpr (usize i = 0; i < countof(fields(typeof(*out))); i++) {
+                constexpr Field fld = fields(typeof(*out))[i];
                 (void)fld;
-                if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk2(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
-                              &a->[fld][0], &b->[fld][0]);
-                } else if constexpr (is_slice(typeof(proto.[fld]))) {
+                if constexpr (is_array(typeof(out->[fld]))) {
+                    map_walk2(f, sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0],
+                              &b->[fld][0]);
+                } else if constexpr (is_slice(typeof(out->[fld]))) {
                     contract::assert(countof(a->[fld]) == countof(out->[fld]));
                     contract::assert(countof(b->[fld]) == countof(out->[fld]));
                     if (countof(out->[fld]) > 0) { // an empty slice has no element to read
-                        map_walk2(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
-                                  b->[fld].data);
+                        map_walk2(f, countof(out->[fld]), out->[fld].data, a->[fld].data, b->[fld].data);
                     }
                 } else {
-                    map_walk2(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld]);
+                    map_walk2(f, 1, &out->[fld], &a->[fld], &b->[fld]);
                 }
             }
             out += 1;
             a += 1;
             b += 1;
         }
-    } else if constexpr (is_float(typeof(proto))) {
+    } else if constexpr (is_float(typeof(*out))) {
         for (; n > 0; n--) {
             *out = (typeof(*out))f(*a, *b);
             out += 1;
             a += 1;
             b += 1;
         }
-    } else if constexpr (is_pointer(typeof(proto)) || is_array(typeof(proto))) {
+    } else if constexpr (is_pointer(typeof(*out)) || is_array(typeof(*out))) {
         static_assert(false, "map: a field is a pointer or an array of arrays; use a [:] slice");
     }
 }
 
-void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c) {
+void map_walk3(constexpr auto f, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c) {
     (void)n;
     (void)out;
     (void)a;
     (void)b;
     (void)c;
-    (void)proto;
-    if constexpr (is_record(typeof(proto))) {
+    if constexpr (is_record(typeof(*out))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
-                constexpr Field fld = fields(typeof(proto))[i];
+            for constexpr (usize i = 0; i < countof(fields(typeof(*out))); i++) {
+                constexpr Field fld = fields(typeof(*out))[i];
                 (void)fld;
-                if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk3(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
-                              &a->[fld][0], &b->[fld][0], &c->[fld][0]);
-                } else if constexpr (is_slice(typeof(proto.[fld]))) {
+                if constexpr (is_array(typeof(out->[fld]))) {
+                    map_walk3(f, sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0], &b->[fld][0],
+                              &c->[fld][0]);
+                } else if constexpr (is_slice(typeof(out->[fld]))) {
                     contract::assert(countof(a->[fld]) == countof(out->[fld]));
                     contract::assert(countof(b->[fld]) == countof(out->[fld]));
                     contract::assert(countof(c->[fld]) == countof(out->[fld]));
                     if (countof(out->[fld]) > 0) { // an empty slice has no element to read
-                        map_walk3(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
-                                  b->[fld].data, c->[fld].data);
+                        map_walk3(f, countof(out->[fld]), out->[fld].data, a->[fld].data, b->[fld].data, c->[fld].data);
                     }
                 } else {
-                    map_walk3(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld]);
+                    map_walk3(f, 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld]);
                 }
             }
             out += 1;
@@ -224,7 +216,7 @@ void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
             b += 1;
             c += 1;
         }
-    } else if constexpr (is_float(typeof(proto))) {
+    } else if constexpr (is_float(typeof(*out))) {
         for (; n > 0; n--) {
             *out = (typeof(*out))f(*a, *b, *c);
             out += 1;
@@ -232,39 +224,37 @@ void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
             b += 1;
             c += 1;
         }
-    } else if constexpr (is_pointer(typeof(proto)) || is_array(typeof(proto))) {
+    } else if constexpr (is_pointer(typeof(*out)) || is_array(typeof(*out))) {
         static_assert(false, "map: a field is a pointer or an array of arrays; use a [:] slice");
     }
 }
 
-void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c,
-               typeof(out) d) {
+void map_walk4(constexpr auto f, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c, typeof(out) d) {
     (void)n;
     (void)out;
     (void)a;
     (void)b;
     (void)c;
     (void)d;
-    (void)proto;
-    if constexpr (is_record(typeof(proto))) {
+    if constexpr (is_record(typeof(*out))) {
         for (; n > 0; n--) {
-            for constexpr (usize i = 0; i < countof(fields(typeof(proto))); i++) {
-                constexpr Field fld = fields(typeof(proto))[i];
+            for constexpr (usize i = 0; i < countof(fields(typeof(*out))); i++) {
+                constexpr Field fld = fields(typeof(*out))[i];
                 (void)fld;
-                if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk4(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
-                              &a->[fld][0], &b->[fld][0], &c->[fld][0], &d->[fld][0]);
-                } else if constexpr (is_slice(typeof(proto.[fld]))) {
+                if constexpr (is_array(typeof(out->[fld]))) {
+                    map_walk4(f, sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0], &b->[fld][0],
+                              &c->[fld][0], &d->[fld][0]);
+                } else if constexpr (is_slice(typeof(out->[fld]))) {
                     contract::assert(countof(a->[fld]) == countof(out->[fld]));
                     contract::assert(countof(b->[fld]) == countof(out->[fld]));
                     contract::assert(countof(c->[fld]) == countof(out->[fld]));
                     contract::assert(countof(d->[fld]) == countof(out->[fld]));
                     if (countof(out->[fld]) > 0) { // an empty slice has no element to read
-                        map_walk4(f, *out->[fld].data, countof(out->[fld]), out->[fld].data, a->[fld].data,
-                                  b->[fld].data, c->[fld].data, d->[fld].data);
+                        map_walk4(f, countof(out->[fld]), out->[fld].data, a->[fld].data, b->[fld].data, c->[fld].data,
+                                  d->[fld].data);
                     }
                 } else {
-                    map_walk4(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld], &d->[fld]);
+                    map_walk4(f, 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld], &d->[fld]);
                 }
             }
             out += 1;
@@ -273,7 +263,7 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
             c += 1;
             d += 1;
         }
-    } else if constexpr (is_float(typeof(proto))) {
+    } else if constexpr (is_float(typeof(*out))) {
         for (; n > 0; n--) {
             *out = (typeof(*out))f(*a, *b, *c, *d);
             out += 1;
@@ -282,7 +272,7 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
             c += 1;
             d += 1;
         }
-    } else if constexpr (is_pointer(typeof(proto)) || is_array(typeof(proto))) {
+    } else if constexpr (is_pointer(typeof(*out)) || is_array(typeof(*out))) {
         static_assert(false, "map: a field is a pointer or an array of arrays; use a [:] slice");
     }
 }
@@ -297,12 +287,12 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
 export void map(constexpr auto f, auto out, auto... rest) {
     static_assert(countof(rest) >= 1 && countof(rest) <= 4, "map takes one to four input structs after the output");
     if constexpr (countof(rest) == 1) {
-        map_walk1(f, *out, 1, out, rest...);
+        map_walk1(f, 1, out, rest...);
     } else if constexpr (countof(rest) == 2) {
-        map_walk2(f, *out, 1, out, rest...);
+        map_walk2(f, 1, out, rest...);
     } else if constexpr (countof(rest) == 3) {
-        map_walk3(f, *out, 1, out, rest...);
+        map_walk3(f, 1, out, rest...);
     } else {
-        map_walk4(f, *out, 1, out, rest...);
+        map_walk4(f, 1, out, rest...);
     }
 }
