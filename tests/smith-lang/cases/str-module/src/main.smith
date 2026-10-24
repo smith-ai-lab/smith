@@ -1,0 +1,15 @@
+module main;
+
+import <stdio.h>;
+import words;
+
+i32 main(void) {
+    str s = "hello world";
+    str w = words::first_word(s);
+    str *p = &s;
+    usize n = 0;
+    while (words::pop(p)) n++;
+    struct words::Pair pair = {.key = w, .value = "x"};
+    c::printf("%zu %zu %zu %zu\n", words::total(w), n, countof(pair.key), countof(pair.value));
+    return 0;
+}

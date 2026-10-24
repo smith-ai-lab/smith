@@ -659,7 +659,7 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto ") ||
                              SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
-        host.maybe_slice = hasSlice(SM.getBufferData(MainFile));
+        host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile));
         host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
         host.import_lines = countImportLines(SM.getBufferData(MainFile));
@@ -2480,6 +2480,21 @@ class SmithHook final : public TokenHook, public NameSource {
             if (text[at] == '\\') at += 1;
         }
         return at < text.size() ? at + 1 : text.size();
+    }
+
+    // Whether the code of the text has the word `str`, the type `const char[:]` of a module (runtime/lang_slice.c).
+    static bool hasStr(StringRef text) {
+        for (size_t at = 0; at + 3 <= text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) || text[at - 1] == '_');
+            bool follows = at + 3 < text.size() && (isalnum((unsigned char)text[at + 3]) || text[at + 3] == '_');
+            if (!before && !follows && text.substr(at, 3) == "str") return true;
+        }
+        return false;
     }
 
     // Whether a `[ ]` of the text holds a `:` that is neither `::` nor the `:` of a `? :`: `T xs[:]` or `xs[a:b]`, a

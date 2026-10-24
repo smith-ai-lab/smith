@@ -81,6 +81,21 @@ static bool smith_lang_text_has_slice(const char *text, size_t length) {
     return false;
 }
 
+// Whether the code of the text has the word `str` (the type `const char[:]`, issue #85), outside comments and strings.
+static bool smith_lang_text_has_str(const char *text, size_t length) {
+    for (size_t at = 0; at + 3 <= length; at++) { // each place a word could begin
+        size_t after = smith_lang_text_skip(text, length, at);
+        if (after != at) {
+            at = after - 1;
+            continue;
+        }
+        bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) != 0 || text[at - 1] == '_');
+        bool follows = at + 3 < length && (isalnum((unsigned char)text[at + 3]) != 0 || text[at + 3] == '_');
+        if (!before && !follows && memcmp(text + at, "str", 3) == 0) return true;
+    }
+    return false;
+}
+
 bool smith_lang_slices_on(const SmithLang *lang) {
     return lang->slices_seen;
 }
@@ -723,6 +738,38 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_tuple_replace(lang, last + 1, made, used)) return false;
     smith_lang_slice_flag(lang);
     return true; // the `typeof` itself is dropped
+}
+
+// ---- `str`: the type `const char[:]` of a module (issue #85)
+
+// The word `str` in a file with a `module` line is the type `const char[:]`, as `u8` is the type `unsigned char`: it is
+// written again as `typeof(const char[:])`. A file with no `module` line means what C means (`str` is a name there), a
+// name the module declares itself wins (`typedef const char str[:];` still works), and as the name of a variable, a
+// field or a function it is an error: it is a type here, like `i32`. True when the token was replaced.
+static bool smith_lang_slice_str(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!lang->is_module || token->foreign || token->synthetic || token->declared || lang->recording ||
+        lang->in_attribute || lang->prev_member || token->location == lang->slice.skip ||
+        !smith_lang_ident(token, "str") || smith_lang_name_find(lang, token->text, token->length) != nullptr ||
+        (lang->statement_typedef && lang->brace_depth == lang->typedef_depth)) {
+        return false;
+    }
+    if (lang->prev_tag) return false;                           // `struct str`
+    if (lang->prev_char == '*' || lang->prev_name_length > 0) { // after a type: `str` names what is declared
+        smith_lang_error(lang, host, token->location,
+                         "`str` is a type in a module, `const char[:]`, as `i32` is one: it cannot name a variable, "
+                         "a field or a function; use another name");
+        return false;
+    }
+    static const char *const words[] = {"typeof", "(", "const", "char", "[", ":", "]", ")"};
+    SmithToken made[8];
+    for (size_t at = 0; at < 8; at++) { // `typeof ( const char [ : ] )`
+        bool word = at == 0 || at == 2 || at == 3;
+        made[at] = smith_lang_tuple_made(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, words[at],
+                                         strlen(words[at]), token, at == 2 || at == 3);
+    }
+    made[0].space_before = token->space_before;
+    made[0].line_start = token->line_start;
+    return smith_lang_tuple_replace(lang, 0, made, 8);
 }
 
 // Whether a token begins a declaration or ends one: where a slice's type may start.
@@ -1889,6 +1936,13 @@ static bool smith_lang_slice_declared(SmithLang *lang, const SmithHost *host, ch
         snprintf(tag, capacity, "%s", lang->slice.typeof_tag);
         return true;
     }
+    SmithToken outer = {};
+    if (smith_lang_punct(&before, "*") && smith_lang_tuple_previous(lang, host, 3, &outer) &&
+        smith_lang_punct(&outer, "}") && lang->slice.typeof_tag[0] != 0) { // `typeof(T[:]) *name =`, `str *name =`
+        *declares = true;
+        snprintf(tag, capacity, "*%s", lang->slice.typeof_tag);
+        return true;
+    }
     char text[smith_lang_slice_text_max];
     bool pointer = false;
     if (!smith_lang_slice_declared_text(lang, host, text, sizeof text, &pointer)) return false;
@@ -2203,6 +2257,13 @@ static void smith_lang_slice_init_array(SmithLang *lang, const SmithHost *host) 
     SmithToken tokens[9];
     if (!smith_lang_tuple_previous(lang, host, back, &name) || name.kind != SmithTokenKind_Identifier) return;
     size_t count = 0;
+    SmithToken typed = {};
+    if (lang->slice.typeof_tag[0] != 0 && smith_lang_tuple_previous(lang, host, back + 1, &typed) &&
+        (smith_lang_punct(&typed, "}") || smith_lang_punct(&typed, ")"))) { // an array of `typeof(T[:])`, of `str`
+        const SmithToken *brace = smith_lang_peek(lang, host, 0, false);
+        if (smith_lang_punct(brace, "{")) smith_lang_slice_init_unread(lang, host, brace, "in an array of slices");
+        return;
+    }
     tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &name, true);
     size_t words = smith_lang_slice_type_before(lang, host, back + 1, tokens + count);
     if (words == 0) return;
@@ -2215,11 +2276,11 @@ static void smith_lang_slice_init_array(SmithLang *lang, const SmithHost *host) 
     bool anonymous = false;
     if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text) ||
         !smith_lang_slice_init_record(host, text, type, sizeof type) ||
-        !smith_lang_slice_init_holds(host, type, &anonymous)) {
+        !(smith_lang_slice_init_holds(host, type, &anonymous) || strncmp(type, "struct smith_array_", 19) == 0)) {
         return;
     }
     const SmithToken *open = smith_lang_peek(lang, host, 0, false);
-    if (smith_lang_punct(open, "{")) smith_lang_slice_init_unread(lang, host, open, "in an array of structs");
+    if (smith_lang_punct(open, "{")) smith_lang_slice_init_unread(lang, host, open, "in an array of structs or slices");
 }
 
 // `T name = { ... }` where `T` is a struct: its slice members' values are slices (issue #173). True when written again.
