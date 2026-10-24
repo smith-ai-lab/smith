@@ -1866,7 +1866,7 @@ static void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, cons
 // The slice locals an instance's body has declared so far (issue #135): the replay writes a declaration `T v[:] = e;`
 // as the lowering does, so a later `countof(v)`, `v[i]` or call with `v` is lowered like a parameter's. The table
 // belongs to one instance; a name declared again (a sibling block's) takes the entry over.
-enum { smith_lang_slice_locals_max = 16 };
+constexpr size_t smith_lang_slice_locals_max = 16;
 static struct {
     uint32_t instance;
     size_t count;
@@ -1913,6 +1913,48 @@ static void smith_lang_slice_local_add(const SmithLangReplay *replay, const Smit
     snprintf(type->element, sizeof type->element, "%s *", element);
 }
 
+// The brackets `[ const restrict : ]` of a slice local whose `[` is at `open`: the index of the `:`, or UINT32_MAX when
+// they are no such brackets (or more dimensions follow, which are not written here yet).
+static uint32_t smith_lang_slice_local_bracket(uint32_t open, uint32_t end, SmithLangSliceDims *dims, bool *is_const) {
+    uint32_t at = open + 1;
+    for (; at < end && smith_lang_gt.tokens[at].kind == SmithTokenKind_Identifier; at++) { // each qualifier
+        const SmithLangGenToken *word = &smith_lang_gt.tokens[at];
+        if (smith_lang_gt_is(word, SmithTokenKind_Identifier, "const")) {
+            *is_const = true;
+        } else if (smith_lang_gt_is(word, SmithTokenKind_Identifier, "restrict")) {
+            dims->restrict_data = true;
+        } else {
+            return UINT32_MAX;
+        }
+    }
+    if (at + 1 >= end || !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ":") ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "]") ||
+        (at + 2 < end && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "["))) {
+        return UINT32_MAX;
+    }
+    return at;
+}
+
+// The element's tokens [first, last) of the generic as the lowering reads them: the pool holds `u8` as the compiler's
+// own name for it, which is mapped back so that the tag is the one an ordinary declaration gets.
+static size_t smith_lang_slice_local_element(uint32_t first, uint32_t last, SmithToken elem[12]) {
+    size_t count = 0;
+    for (uint32_t k = first; k < last; k++) { // the tokens before the name
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[k];
+        elem[count] = (SmithToken){.kind = (SmithTokenKind)token->kind,
+                                   .text = smith_lang_gt_str(token),
+                                   .length = token->length,
+                                   .location = token->location};
+        for (size_t s = 0; s < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; s++) { // 13 entries
+            if (!smith_lang_equals(elem[count].text, elem[count].length, smith_lang_sized[s].standard)) continue;
+            elem[count].text = smith_lang_sized[s].name;
+            elem[count].length = (uint32_t)strlen(smith_lang_sized[s].name);
+        }
+        count += 1;
+    }
+    return count;
+}
+
 // The declaration at the frame's position is a slice local, `T v[:]` or `const T v[restrict :]` (one dimension, an
 // element the generic's own tokens spell): write its struct, the name and what follows as the lowering does, and take
 // the name for a slice. False when it is no such declaration.
@@ -1946,39 +1988,10 @@ static bool smith_lang_slice_replay_local(SmithLang *lang, SmithLangReplay *repl
     }
     SmithLangSliceDims dims = smith_lang_slice_dims_one();
     bool is_const = false;
-    uint32_t at = open + 1;
-    for (; at < end && smith_lang_gt.tokens[at].kind == SmithTokenKind_Identifier; at++) { // `[const restrict :]`
-        const SmithLangGenToken *word = &smith_lang_gt.tokens[at];
-        if (smith_lang_gt_is(word, SmithTokenKind_Identifier, "const")) {
-            is_const = true;
-        } else if (smith_lang_gt_is(word, SmithTokenKind_Identifier, "restrict")) {
-            dims.restrict_data = true;
-        } else {
-            return false;
-        }
-    }
-    if (at + 1 >= end || !smith_lang_gt_punct(&smith_lang_gt.tokens[at], ":") ||
-        !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "]") ||
-        (at + 2 < end && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "["))) {
-        return false; // more dimensions are not written here yet
-    }
+    uint32_t at = smith_lang_slice_local_bracket(open, end, &dims, &is_const);
+    if (at == UINT32_MAX) return false;
     SmithToken elem[12] = {};
-    size_t count = 0;
-    for (uint32_t k = first; k < open - 1; k++) { // the element: the tokens before the name
-        const SmithLangGenToken *token = &smith_lang_gt.tokens[k];
-        elem[count] = (SmithToken){.kind = (SmithTokenKind)token->kind,
-                                   .text = smith_lang_gt_str(token),
-                                   .length = token->length,
-                                   .location = token->location};
-        for (size_t s = 0; s < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; s++) { // the pool holds `u8` as
-            if (smith_lang_equals(elem[count].text, elem[count].length,
-                                  smith_lang_sized[s].standard)) { // the compiler's
-                elem[count].text = smith_lang_sized[s].name;       // own name
-                elem[count].length = (uint32_t)strlen(smith_lang_sized[s].name);
-            }
-        }
-        count += 1;
-    }
+    size_t count = smith_lang_slice_local_element(first, open - 1, elem);
     char tag[smith_lang_tuple_name_max];
     const char *problem = nullptr;
     uint32_t where = 0;
