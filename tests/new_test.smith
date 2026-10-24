@@ -3,7 +3,8 @@
 // flags, a project with its own build file or another build system, git's states, the docs checks and the rules of the
 // templates. Git is isolated from the user's configuration: HOME is a folder of the test, and the identity comes from
 // the environment except in the no-identity case; SMITH_OUTPUT=full is set here too, as `smith test` sets it, so the
-// cases read the nested verbs' full output (and fail on an empty one) however the runner is started. Each test is a project of its own, so they run side by side.
+// cases read the nested verbs' full output (and fail on an empty one) however the runner is started. Each test is a
+// project of its own, so they run side by side.
 module new_test;
 
 import smith::arena;
