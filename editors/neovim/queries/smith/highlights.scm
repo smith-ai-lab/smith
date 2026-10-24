@@ -29,4 +29,6 @@
 ; if constexpr (T == f32 || is_integer(T)) { ... } in a generic
 (if_statement "constexpr" @keyword.conditional)
 ((call_expression function: (identifier) @function.builtin)
-  (#any-of? @function.builtin "is_integer" "is_float" "is_signed" "is_pointer" "is_bool" "is_enum" "is_record"))
+  (#any-of? @function.builtin "is_integer" "is_float" "is_signed" "is_pointer" "is_bool" "is_enum" "is_record"
+   "integer" "floating" "signed_integer" "unsigned_integer" "arithmetic" "boolean" "pointer" "enumeration"
+   "structure"))

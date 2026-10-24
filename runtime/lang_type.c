@@ -1099,12 +1099,32 @@ static bool smith_lang_ty_use(SmithLang *lang, const SmithHost *host, const Smit
 typedef struct {
     const char *name;
     unsigned shift;
+    unsigned mask;  // 0: one bit (1), or the slice's depth (15)
+    unsigned equal; // with a mask: the bits are equal to this (0: any of them is set)
 } SmithLangTyQuestion;
 
 static const SmithLangTyQuestion smith_lang_ty_questions[] = {
-    {"is_integer", 16}, {"is_float", 17},  {"is_signed", 18}, {"is_pointer", 19}, {"is_bool", 20},
-    {"is_enum", 21},    {"is_record", 22}, {"is_array", 23},  {"is_slice", 12}, // the handle's slice depth (bits 12 to
-                                                                                // 15), as 0 or 1
+    {"is_integer", 16, 0, 0},
+    {"is_float", 17, 0, 0},
+    {"is_signed", 18, 0, 0},
+    {"is_pointer", 19, 0, 0},
+    {"is_bool", 20, 0, 0},
+    {"is_enum", 21, 0, 0},
+    {"is_record", 22, 0, 0},
+    {"is_array", 23, 0, 0},
+    {"is_slice", 12, 0, 0}, // the handle's slice depth (bits 12 to
+                            // 15), as 0 or 1
+    {"integer", 16, 0, 0},
+    {"floating", 17, 0, 0},
+    {"pointer", 19, 0, 0},
+    {"boolean", 20, 0, 0},
+    {"enumeration", 21, 0, 0},
+    {"structure", 22, 0, 0},
+    {"array", 23, 0, 0},
+    {"slice", 12, 0, 0},
+    {"arithmetic", 16, 3, 0},       // integer or floating: bits 16 and 17
+    {"signed_integer", 16, 5, 5},   // integer and signed: bits 16 and 18
+    {"unsigned_integer", 16, 5, 1}, // integer and not signed
 };
 
 // `sizeof(t)` and its kin, where `t` holds a type: an expression over the handle, written in the C given to the
@@ -1113,7 +1133,7 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     bool size = smith_lang_ident(token, "sizeof");
     bool align = smith_lang_ident(token, "alignof") || smith_lang_ident(token, "_Alignof");
     const SmithLangTyQuestion *question = nullptr;
-    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 9 questions
+    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 17 questions
         if (smith_lang_ident(token, smith_lang_ty_questions[i].name)) question = &smith_lang_ty_questions[i];
     }
     if ((!size && !align && question == nullptr) || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
@@ -1131,12 +1151,14 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "<<", token, true);
     }
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, align ? true : token->space_before);
-    bool slice = question != nullptr && question->shift == 12;
+    bool slice = question != nullptr && (question->shift == 12 || (question->mask != 0 && question->equal == 0));
+    bool equals = question != nullptr && question->mask != 0 && question->equal != 0;
     if (slice) { // `(!!(((t) >> 12) & 15))`: any depth is a slice
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "!", token, false);
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "!", token, false);
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     }
+    if (equals) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     if (!size) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     if (size) { // the size is the handle's lower half shifted: a pointer's upper half is not in it
         static const char *const cast[] = {"(", "unsigned", "long", "long", ")"};
@@ -1154,7 +1176,19 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     if (!size) {
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "&", token, true);
-        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, align ? "31" : slice ? "15" : "1", token, true);
+        char mask[8];
+        snprintf(mask, sizeof mask, "%u",
+                 question != nullptr && question->mask != 0 ? question->mask
+                 : slice                                    ? 15U
+                                                            : 1U);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, align ? "31" : mask, token, true);
+        if (equals) {
+            char want[8];
+            snprintf(want, sizeof want, "%u", question->equal);
+            made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+            made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "==", token, true);
+            made[used++] = smith_lang_ty_made(SmithTokenKind_Number, want, token, true);
+        }
     }
     if (slice) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
