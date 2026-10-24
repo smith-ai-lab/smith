@@ -415,6 +415,8 @@ expect_contains "varargs: ... that names the call" "$out" "varargs.c:25: cannot 
 # before the fixes (else-if, col > 1) fails with a counterexample.
 prove --function=get_valid_diagonals "$cases/diagonals.c"
 expect "checkers: the fixed get_valid_diagonals is proved in the budget" 0 "$rc"
+prove --function=push_move "$cases/diagonals_prefix.c"
+expect "checkers: the append the move generator uses is proved, so its contract can be used" 0 "$rc"
 prove --function=get_valid_diagonals "$cases/diagonals_prefix.c"
 expect "checkers: the one before its fixes fails" 1 "$rc"
 expect_contains "checkers: ... on the legal moves it misses" "$out" "added_every_legal_step"
