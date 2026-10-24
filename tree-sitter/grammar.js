@@ -39,6 +39,8 @@ module.exports = grammar(C, {
     [$.type_qualifier, $.auto_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
     [$.pointer_field_declarator, $.tuple_field],
+    [$.type_specifier, $.payload_variant],
+    [$.field_designator, $.variant_expression],
   ]),
 
   rules: {
@@ -108,9 +110,24 @@ module.exports = grammar(C, {
       original,
       $.scoped_identifier,
       $.block_expression,
+      $.variant_expression,
       alias(choice(...sized), $.identifier),
       alias(choice(...soft), $.identifier),
     ),
+
+    // `draw({.circle = {.radius = 1}})`: braces that begin with a designator are no block: an enum's payload, as an argument
+    designated_list: $ => seq('{', $.field_designator, '=', choice($.expression, $.initializer_list),
+      repeat(seq(',', $._initializer_item)), optional(','), '}'),
+
+    // A sized type's name is a keyword where a type could begin (the first word in `enum { ... }` may be a payload's
+    // type), and still an enumerator's name there (`enum { i64 = 7, u8 }` in plain C).
+    enumerator: $ => seq(
+      field('name', choice($.identifier, alias(choice(...sized), $.identifier))),
+      optional(seq('=', field('value', $.expression))),
+    ),
+
+    // `.empty`: a variant of an enum with payloads, in the type the context gives (`Shape s = .empty;`, `case .empty:`)
+    variant_expression: $ => prec.dynamic(-1, seq('.', field('name', $.identifier))),
 
     // module = 0; (an assignment's left side is a short list of its own)
     _assignment_left_expression: ($, original) => choice(
@@ -217,6 +234,7 @@ module.exports = grammar(C, {
     _argument: $ => choice(
       prec.dynamic(3, $.expression),
       prec.dynamic(3, $.pack_expansion),
+      $.designated_list,
       $.compound_statement,
       prec.dynamic(-1, $.type_descriptor),
       alias(choice('==', '!=', '<', '>', '<=', '>=', '&&', '||'), $.operator),
@@ -288,15 +306,20 @@ module.exports = grammar(C, {
         seq(
           field('name', $._type_identifier),
           optional(seq(':', field('underlying_type', choice($.primitive_type, $.sized_type_specifier)))),
-          field('body', optional($.enumerator_list)),
+          field('body', optional(choice($.enumerator_list, $.payload_variant_list))),
         ),
         seq(
           optional(seq(':', field('underlying_type', choice($.primitive_type, $.sized_type_specifier)))),
-          field('body', $.enumerator_list),
+          field('body', choice($.enumerator_list, $.payload_variant_list)),
         ),
       ),
       optional($.attribute_specifier),
     ),
+
+    // `enum { Circle circle; Rect rect; empty; }`: the variants of an enum with payloads are written as union members, or
+    // a name alone
+    payload_variant_list: $ => prec.dynamic(-3, seq('{', repeat1(choice($.field_declaration, $.payload_variant)), '}')),
+    payload_variant: $ => seq(field('name', $.identifier), ';'),
 
     // _Atomic(SmithOp *)
     atomic_type_specifier: $ => seq('_Atomic', '(', $.type_descriptor, ')'),

@@ -234,6 +234,10 @@
       {
         "type": "update_expression",
         "named": true
+      },
+      {
+        "type": "variant_expression",
+        "named": true
       }
     ]
   },
@@ -521,6 +525,10 @@
       "types": [
         {
           "type": "compound_statement",
+          "named": true
+        },
+        {
+          "type": "designated_list",
           "named": true
         },
         {
@@ -1586,6 +1594,37 @@
     }
   },
   {
+    "type": "designated_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        },
+        {
+          "type": "field_designator",
+          "named": true
+        },
+        {
+          "type": "initializer_list",
+          "named": true
+        },
+        {
+          "type": "initializer_pair",
+          "named": true
+        },
+        {
+          "type": "pack_expansion",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "do_statement",
     "named": true,
     "fields": {
@@ -1636,6 +1675,10 @@
         "types": [
           {
             "type": "enumerator_list",
+            "named": true
+          },
+          {
+            "type": "payload_variant_list",
             "named": true
           }
         ]
@@ -3064,6 +3107,41 @@
         },
         {
           "type": "system_lib_string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "payload_variant",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "payload_variant_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "field_declaration",
+          "named": true
+        },
+        {
+          "type": "payload_variant",
           "named": true
         }
       ]
@@ -4675,6 +4753,22 @@
     "type": "variadic_parameter",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "variant_expression",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "while_statement",

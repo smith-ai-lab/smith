@@ -1,0 +1,43 @@
+module shapes;
+
+// An enum with payloads lowers to a struct that holds a tag and a union (issue #198); variants are written like
+// the members of a union, and a variant with nothing to carry is a name alone.
+
+export typedef struct {
+    f32 radius;
+} Circle;
+
+export typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+
+export typedef enum {
+    Circle circle;
+    Rect rect;
+    struct { i32 a; } inline_one;
+    empty;
+} Shape;
+
+export typedef enum {
+    none;
+    some;
+} Mark;
+
+export f32 area(Shape s) {
+    switch (s) {
+    case .circle: return s.circle.radius * s.circle.radius * 3;
+    case .rect: return s.rect.w * s.rect.h;
+    case .inline_one: return (f32)s.inline_one.a;
+    case .empty: return 0;
+    }
+    return -1;
+}
+
+export Shape unit(void) {
+    return {.circle = {.radius = 1}};
+}
+
+export bool is_empty(Shape s) {
+    return s == .empty;
+}

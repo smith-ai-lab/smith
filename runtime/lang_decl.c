@@ -570,7 +570,7 @@ static SmithLangLowered smith_lang_lower_sized(SmithLang *lang, const SmithHost 
 // A tag that an imported header declared, used without `c::` (in every file, a module or not).
 static void smith_lang_check_c_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location) {
-    if (!lang->has_c) return;
+    if (!lang->has_c || lang->generated_name) return;
     SmithLookup found = host->lookup(host->context, name, (uint32_t)length, SmithLookup_Tag);
     if (found.kind != SmithLookup_None && found.from_import && !found.in_main_file) {
         smith_lang_error(lang, host, location, "`struct %.*s` names a C tag; write `struct c::%.*s`", (int)length, name,

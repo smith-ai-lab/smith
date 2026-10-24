@@ -1,0 +1,6 @@
+src/main.smith:18:5: enumeration value 'Shape_tag_empty' not explicitly handled in switch [-Werror,-Wswitch-enum]
+src/main.smith:25:15: `.circle` carries a payload: write `{.circle = ...}`, as a designated initializer
+src/main.smith:26:15: `Shape` has no variant `nothing`
+src/main.smith:33:11: `.empty` needs a type to look in: write `Shape x = .empty;`, assign it to a variable, return it from a function that names the type, or pass it where a parameter does
+src/main.smith:33:11: expected expression
+src/main.smith:33:5: use of undeclared identifier 'ready'

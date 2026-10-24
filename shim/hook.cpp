@@ -660,7 +660,8 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
-        host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile));
+        host.maybe_tuple =
+            host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) || hasPayloadEnum(SM.getBufferData(MainFile));
         host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
         host.import_lines = countImportLines(SM.getBufferData(MainFile));
         host.type_values = &SmithHook::typeValues;
@@ -2470,6 +2471,32 @@ class SmithHook final : public TokenHook, public NameSource {
 
     static void typeValues(void *context) {
         static_cast<SmithHook *>(context)->host.maybe_type_value = true;
+    }
+
+    // Whether the text has `enum {` or `enum Name {` with a `;` at its own depth in the braces: an enum with payloads
+    // (runtime/lang_enum.c; comments and strings count).
+    static bool hasPayloadEnum(StringRef text) {
+        for (size_t at = text.find("enum"); at != StringRef::npos; at = text.find("enum", at + 4)) {
+            if ((at > 0 && isAsciiIdentifierContinue(text[at - 1])) ||
+                (at + 4 < text.size() && isAsciiIdentifierContinue(text[at + 4])))
+                continue;
+            size_t open = at + 4;
+            while (open < text.size() && isWhitespace(text[open]))
+                open += 1;
+            while (open < text.size() && isAsciiIdentifierContinue(text[open]))
+                open += 1;
+            while (open < text.size() && isWhitespace(text[open]))
+                open += 1;
+            if (open >= text.size() || text[open] != '{') continue;
+            int depth = 0;
+            for (size_t close = open; close < text.size(); close++) {
+                depth += text[close] == '{';
+                depth -= text[close] == '}';
+                if (depth == 1 && text[close] == ';') return true;
+                if (depth == 0) break;
+            }
+        }
+        return false;
     }
 
     // Whether the text has `struct {` and, before the matching `}`, no `;`: a tuple type (comments and strings count).

@@ -561,6 +561,7 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
     if (lang->tuples_seen)
         used = smith_lang_append(out, capacity, used, "// smith-tuples\n"); // an importer indexes them
     if (lang->slices_seen) used = smith_lang_append(out, capacity, used, "// smith-slices\n");
+    if (lang->enums_seen) used = smith_lang_append(out, capacity, used, "// smith-enums\n");
     used = smith_lang_types_line(lang, out, capacity, used);
     for (size_t i = 0; i < lang->body_names_count; i++) // the exported functions with a body: an importer may run them
         used = smith_lang_append(out, capacity, used, i == 0 ? "// smith-bodies: %s" : " %s",
@@ -885,6 +886,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
             }
             bool at_start = lang->slice.after_boundary;
             lang->slice.after_boundary = smith_lang_slice_boundary(token);
+            if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return;
             if (smith_lang_slice_str(lang, host, token)) return;
             if (at_start && smith_lang_slice_begin(lang, host, token)) return;
             smith_lang_slice_equals(lang, host, token);
@@ -897,6 +899,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
             if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
         }
         if (token->kind == SmithTokenKind_Identifier) {
+            if (smith_lang_ident(token, "enum") && !capturing && smith_lang_enum_begin(lang, host, token)) return;
             if (smith_lang_ident(token, "struct")) smith_lang_tuple_begin(lang, host, token);
             if (smith_lang_tuples_on(lang, host) && host->previous != nullptr && smith_lang_ident(token, "countof") &&
                 !smith_lang_sparse_member(lang, host) && smith_lang_tuple_countof(lang, host, token)) {
@@ -938,6 +941,7 @@ SmithLang *smith_lang_new(void) {
     SmithLang *lang = &smith_lang_instance;
     memset(lang, 0, sizeof *lang);
     smith_lang_tuple_used = 0;
+    smith_lang_enum_reset();
     smith_lang_ty_reset();
     smith_lang_word_buckets();
     lang->started = true;

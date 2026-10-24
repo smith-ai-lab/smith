@@ -252,6 +252,7 @@ static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, con
         if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
     }
     if (memmem(text, length, "// smith-slices", 15) != nullptr) lang->slices_seen = true;
+    if (memmem(text, length, "// smith-enums", 14) != nullptr) lang->enums_seen = true;
     if (!lang->type_import && memmem(text, length, "// smith-types:", 15) != nullptr) { // functions over `type` (#107)
         lang->type_import = true;
         if (host->type_values != nullptr) host->type_values(host->context);
