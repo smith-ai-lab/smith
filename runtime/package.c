@@ -29,8 +29,8 @@
 #include <time.h>
 #include <unistd.h>
 
-// The libraries are .smith modules, compiled by the smith that builds this file and linked beside it (smith.c's program,
-// the build program's manifest): only their headers are seen here.
+// The libraries are .smith modules, compiled by the smith that builds this file and linked beside it (smith.c's
+// program, the build program's manifest): only their headers are seen here.
 #include <smith/inflate.h>
 
 #ifdef __APPLE__

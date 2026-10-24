@@ -8,7 +8,7 @@ tags: [build, executor]
 
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
-`smith.c` includes after the lowering of `lib/smith/io.smith` (`bootstrap/lib/smith/io.c`), so `cc -std=gnu23 smith.c -o smith` still builds all of smith. It uses
+`smith.c` includes; it stands on the `io` module, compiled from `lib/smith/io.smith` and linked. It uses
 `smith::io` (`<smith/io.h>`; so it is macOS only until io has another backend): the manifest and the graph live in `io.arena`, the
 files are read and written through `io.files`, and one kqueue loop waits for every job's process and pipe.
 
@@ -17,7 +17,7 @@ files are read and written through `io.files`, and one kqueue loop waits for eve
 smith parses the `.smith/build.ninja` that build.c's program wrote; the program does not run the graph.
 - **Reuse.** The manifest is already the contract between the program and the runner: the program stays a small
   generator that exits, the runner is one binary for every project, and `SMITH_NINJA` can still run the same file. The
-  bootstrap (compiling `build.c` into `.smith/program`) is a manifest too, so one runner does both; a program that ran
+  build program's own compile (`build.c` into `.smith/program`) is a manifest too, so one runner does both; a program that ran
   its own graph could not compile itself.
 - **Simplicity.** The program runs `build()` on every `smith build` (globs, options and captures are read fresh), so
   it cannot also be a long-lived scheduler: when a `smith_defer` need changes mid-build, the build has to run the program

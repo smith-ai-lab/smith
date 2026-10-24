@@ -8,7 +8,7 @@ case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
 # The xz fixtures are made by tests/xz.py, which writes the container and lets Python's lzma module compress the blocks.
 xz() { "${PYTHON:-/usr/bin/python3}" -I "$here/tests/xz.py" "$@"; }
-cc=${CC:-cc}
+cc="$smith cc"
 work=$(mktemp -d)
 trap '[ -n "${KEEP_WORK:-}" ] || rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache
@@ -364,8 +364,9 @@ refuse "a tar with a damaged header" "$arc/bad-header.tar" "checksum does not ma
 
 # 5. The readers under AddressSanitizer and UndefinedBehaviorSanitizer: extraction, every shorter prefix of an archive
 # refused, and random damage that may not crash, hang, write outside the folder or leave a symlink that points out.
-flags="-std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror -Wno-unused-function"
-if ! $cc $flags "$here/tests/untar.c" -o "$work/untar" 2>"$work/compile.log"; then
+flags="-std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror -Wno-unused-function -I $here/include"
+libs="$here/lib/smith/arena.smith $here/lib/smith/contract.smith $here/lib/smith/inflate.smith $here/lib/smith/io.smith $here/lib/smith/random.smith" # the modules runtime/package.c sees through their headers
+if ! $cc $flags "$here/tests/untar.c" $libs -o "$work/untar" 2>"$work/compile.log"; then
     cat "$work/compile.log"
     echo "FAIL  tests/untar.c does not compile"
     exit 1

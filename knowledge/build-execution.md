@@ -13,10 +13,11 @@ The driver, in order:
 3. Split the arguments. Those that start with `-D` go to the build program, and everything else is the executor's:
    `-j`, `-k`, `-n`, `-v`, `--quiet`, `-t <tool>` and the targets. `-f` and `-C` are refused, because `smith build`
    names the manifest itself.
-4. Write `.smith/include/smith/build.h`, `.smith/runtime.c`, `.smith/bootstrap/build.ninja` and `.smith/.gitignore`.
+4. Write `.smith/include/smith/build.h`, `.smith/runtime.c`, `.smith/build-program/build.ninja` and `.smith/.gitignore`.
    Each is written only when its bytes changed, so its mtime changes only then.
-5. Run the bootstrap manifest, `.smith/bootstrap/build.ninja`, with the executor (quietly). It compiles `build.c`
-   into `.smith/program`, and rebuilds the program when `build.c`, a header it includes, or smith's runtime changed (a
+5. Run the manifest of the build program, `.smith/build-program/build.ninja`, with the executor (quietly). It compiles
+   `build.c`, the runtime and the five libraries the runtime links (`.smith` modules, compiled by smith itself) into
+   `.smith/program`, and rebuilds the program when `build.c`, a header it includes, or smith's runtime changed (a
    depfile).
 6. Run the program with the `-D` arguments. `build()` calls the `smith_*` functions, and the program writes
    `.smith/build.ninja` only when its bytes changed.
@@ -25,11 +26,11 @@ The driver, in order:
 
 The header and the runtime are embedded in smith with C23 `#embed`, so `smith build` needs nothing installed beside it.
 The compile command is `<compiler> -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include`, where the compiler is smith itself
-(it compiles in its own process, or runs `$SMITH_CLANG`) or, for a stage0 smith, the external clang it would pick.
-Bootstrapping still works with one `cc` command: that builds the stage0.
+(it compiles in its own process, or runs `$SMITH_CLANG`). A clone with no smith builds with the release of an ancestor
+commit ([smith-bootstrap](smith-bootstrap.md)).
 
 smith's own files all go in `.smith/`: the manifests, the logs (`builddir`), the build program, stamps and task
-outputs. The bootstrap manifest has its own `builddir`, `.smith/bootstrap`, so its logs are separate.
+outputs. That manifest has its own `builddir`, `.smith/build-program`, so its logs are separate.
 
 ## A change of compiler rebuilds everything
 

@@ -16,6 +16,6 @@ tags: [ci, release, bootstrap]
 
 **Pruning.** After publishing, the script lists the `stage0-*` releases and deletes (with `--cleanup-tag`) all beyond the newest 20 except the newest of each ISO week (Monday to Sunday). Other releases and tags are never touched. A failed prune is reported and leaves old releases; it never fails the release. The rule is `release.sh prune`, a function of "tag date" lines.
 
-**Download side.** `scripts/release.sh fetch <tag> <dir>` runs `gh release download`, checks the checksum and extracts `bin/` into `<dir>`.
+**Download side.** `scripts/release.sh fetch <tag> <dir>` runs `gh release download`, checks the checksum and extracts `bin/` into `<dir>`. `scripts/stage0.sh` picks the tag (the newest ancestor of HEAD with a release) and runs it: how a clone with no smith builds ([smith-bootstrap](smith-bootstrap.md)).
 
-**Tests.** `tests/release.sh` (task `test-release`) uses no network and no real repository: the package of the smith under test, the pruning rule on fake tags, the guard in scratch git repositories, and publish and fetch against a stub `gh` that keeps releases in a folder. The release step itself runs only on a push to main, so its first real run is the first merge after this change.
+**Tests.** `tests/stage0.sh` (task `test-stage0`) tests the choice of the release with a stub `gh`. `tests/release.sh` (task `test-release`) uses no network and no real repository: the package of the smith under test, the pruning rule on fake tags, the guard in scratch git repositories, and publish and fetch against a stub `gh` that keeps releases in a folder. The release step itself runs only on a push to main, so its first real run is the first merge after this change.

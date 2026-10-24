@@ -149,7 +149,7 @@ run_case() { # name
         echo "ok    $name: it builds"
     fi
     if [ -f expect/lower-error ] || { [ "${UPDATE:-}" = 1 ] && [ -f "$out/lower-stderr" ] && grep -q ': error: ' "$out/lower-stderr"; }; then
-        # The raw lowering (what bootstrap/ and the stage0 compile) has no compiler to type a generic call: it says so.
+        # The raw lowering (`--smith-lower`) has no compiler to type a generic call: it says so.
         sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' "$out/lower-stderr" | LC_ALL=C sort -u >"$out/lower-error"
         check "$name: the lowering's errors" expect/lower-error "$out/lower-error"
     fi

@@ -162,9 +162,10 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
 
 ## Bootstrapping
 
-- smith's own C stays plain C23 with libc only, and allocates nothing, so a fresh clone builds a stage0 with one command
-  and any C23 compiler: `cc -std=gnu23 smith.c -o smith` (checked with Apple clang 21). The stage0 has no C++ and no
-  LLVM, and runs an external clang. `smith build llvm` then builds our static LLVM (once, about 9 minutes), and
+- (History: until issue #112 a fresh clone built a stage0 with one command, `cc -std=gnu23 smith.c -o smith`, and the
+  libraries were compiled from a committed lowering; smith is now built by its previous release, see
+  [smith-bootstrap](smith-bootstrap.md).) smith's own C stays plain C23 with libc only, and allocates nothing. The stage0
+  had no C++ and no LLVM, and ran an external clang. `smith build llvm` then builds our static LLVM (once, about 9 minutes), and
   `smith build` links the full smith: `smith.c` with `-DSMITH_IN_PROCESS`, `shim/clang.cpp` (the only C++) and the
   archives of the LLVM install, with `-Wl,-dead_strip`. The stage0 then runs smith's own `build.c`, which is
   the second project built by `build.c`, after checkers: `smith build`, `smith test`, `smith check`,

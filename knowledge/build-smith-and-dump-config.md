@@ -7,7 +7,7 @@ tags: [build, dump-config]
 # build.smith, the module smith::build, and --dump-config
 
 **`build.smith`.** A project's root may hold `build.smith` instead of `build.c` (issue #43). It is the same build file
-in `.smith`: `smith build` compiles it as a `.smith` file (C2y, `smith cc build.smith`, through the same bootstrap
+in `.smith`: `smith build` compiles it as a `.smith` file (C2y, `smith cc build.smith`, through the same build-program
 manifest as a build.c and the embedded `.smith/conventions.c`) and links it with the same runtime, so the verbs (`run`,
 `test`, `lint`, `prove`, `check`, `docs`) work on it exactly as on a build.c. It is `module build;`, and the
 function the runtime calls is `export void build(build::Build *b)`: in a module named `build` that one export keeps the

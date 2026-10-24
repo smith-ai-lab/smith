@@ -1287,7 +1287,8 @@ typedef struct {
 static SmithCommandRow smith_command_rows[smith_objects_max];
 static size_t smith_command_row_count;
 
-// The flags `smith build` compiles build.c with; smith.c's bootstrap manifest holds the same words (a test compares).
+// The flags `smith build` compiles build.c with; smith.c's manifest of the build program holds the same words (a test
+// compares).
 static const char *const smith_build_c_words[] = {"smith-cc", "-std=gnu23",     "-g", "-O0",     "-Wall", "-Wextra",
                                                   "-I",       ".smith/include", "-c", "build.c", nullptr};
 
