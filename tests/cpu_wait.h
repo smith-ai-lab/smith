@@ -34,7 +34,7 @@ static uint64_t cpu_wait_wall_ms(void) {
 // Waits until `fd` is readable (cpu_wait_ready), `pid` has spent `cpu_ms` of CPU time since the call (cpu_wait_spent),
 // or ten minutes of wall time have passed (cpu_wait_hung). With `extend`, a server still spending CPU time is waited
 // for past `cpu_ms` of wall time instead: that is a settle, "it has been idle for cpu_ms", whose idle is the server's.
-static int cpu_wait_for(int fd, pid_t pid, int cpu_ms) {
+[[maybe_unused]] static int cpu_wait_for(int fd, pid_t pid, int cpu_ms) {
     uint64_t began = cpu_wait_wall_ms();
     uint64_t cpu_began = cpu_wait_cpu_ns(pid);
     for (int slice = 0; slice < cpu_wait_slices_max; slice++) {
