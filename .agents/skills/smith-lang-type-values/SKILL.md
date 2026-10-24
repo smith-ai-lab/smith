@@ -34,9 +34,9 @@ constexpr bool fits = small(i32);                  // true: a call with a type n
 
 export usize demo(void) {
     constexpr type local = wider(u8, i64);         // a function over types, at compile time
-    local big = 1;                                 // `t x;` declares a variable of the type t holds
     constexpr type second = kinds[1];
-    second ratio = 0.5;
+    local big = 1;                                 // `t x;` declares a variable of the type t holds
+    second ratio = 0.5;                            // a type read from an array: use it a statement later
     return sizeof(big) + (fits ? 1 : 0) + (usize)(ratio * 2);   // 8 + 1 + 1
 }
 ```
