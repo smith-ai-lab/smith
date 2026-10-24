@@ -102,9 +102,24 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
+    # one install or release at a time; a newer pending run replaces an older pending one
+    concurrency:
+      group: main-install
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      - name: Is this still the head of main
+        id: head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # two runners can run two main pushes at once: only the newest commit installs and releases
+          export PATH="/opt/homebrew/bin:$PATH"
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$current" = "$GITHUB_SHA" ]; then echo "current=true" >>"$GITHUB_OUTPUT"
+          else echo "current=false" >>"$GITHUB_OUTPUT"; echo "skipped: main is already at $current"; fi
       - name: Install
+        if: steps.head.outputs.current == 'true'
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           smith build
@@ -118,9 +133,23 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+    concurrency:
+      group: main-install
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      - name: Is this still the head of main
+        id: head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # two runners can run two main pushes at once: only the newest commit installs and releases
+          export PATH="/opt/homebrew/bin:$PATH"
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$current" = "$GITHUB_SHA" ]; then echo "current=true" >>"$GITHUB_OUTPUT"
+          else echo "current=false" >>"$GITHUB_OUTPUT"; echo "skipped: main is already at $current"; fi
       - name: Release
+        if: steps.head.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
