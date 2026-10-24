@@ -218,7 +218,7 @@ inline Verdict classify(const FunctionDecl *fn, const SourceManager &sm) {
     for (const FunctionDecl *redeclaration : fn->redecls()) {
         SourceLocation at = redeclaration->getLocation();
         if (at.isInvalid()) continue;
-        if (!sm.isInSystemHeader(at)) continue;
+        if (!sm.isInSystemHeader(at) || sm.getBufferName(at) == "<smith-bodies>") continue; // a copy for compile time
         system = true;
         llvm::StringRef file = sm.getFilename(sm.getExpansionLoc(at));
         if (file.empty()) file = sm.getPresumedLoc(at).getFilename();

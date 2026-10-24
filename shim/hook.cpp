@@ -1655,8 +1655,8 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     void enterHeader(const Action &action) {
-        if (action
-                .literal) { // a system file: the copies of an import's functions raise no diagnostic of the file's own
+        if (action.literal) { // the copies of an import's functions: a system file, so that no check of the file reads
+                              // them
             auto buffer = llvm::MemoryBuffer::getMemBufferCopy(action.body, "<smith-bodies>");
             FileID id = SM.createFileID(std::move(buffer), SrcMgr::C_System, 0, 0, action.at);
             importFiles.insert(id.getHashValue());
@@ -2688,51 +2688,57 @@ class SmithHook final : public TokenHook, public NameSource {
     bool compileTimeScanned = false;
 
     // The names the file writes where C requires a constant: in a statement that has `static_assert`, `constexpr`,
-    // `case`, `enum` or `static`, anywhere outside a function body (an initializer, a head), and in the condition of an
-    // `if constexpr`. A name is no more than that: whether it is a function of an import, the lowering asks.
+    // `case` or `enum` (so the condition of an `if constexpr` too), and, outside a function body, in an initializer or
+    // an array bound. A name is no more than that: whether it is a function of an import, the lowering asks.
     void scanCompileTime() {
         compileTimeScanned = true;
         StringRef text = SM.getBufferData(MainFile);
         Lexer lexer(SM.getLocForStartOfFile(MainFile), PP.getLangOpts(), text.begin(), text.begin(), text.end());
         std::vector<std::string> words;
         bool keyword = false;
+        bool equals = false; // `=` or `[` in the statement: an initializer or an array bound
         int bodies = 0;
         int open = 0;
         bool afterParen = false;
         Token token;
-        auto flushWords = [&] {
-            if (keyword || bodies == 0) compileTimeNames.insert(words.begin(), words.end());
+        // A function's head is no place for a call at compile time (a head's words are its own names), and a function
+        // body is one only where the statement says so.
+        auto flushWords = [&](bool head) {
+            if (keyword || (bodies == 0 && !head && (equals || open > 0)))
+                compileTimeNames.insert(words.begin(), words.end());
             words.clear();
             keyword = false;
+            equals = false;
         };
         for (lexer.LexFromRawLexer(token); token.isNot(tok::eof); lexer.LexFromRawLexer(token)) {
             if (token.is(tok::raw_identifier)) {
                 StringRef word = token.getRawIdentifier();
                 keyword = keyword || word == "static_assert" || word == "_Static_assert" || word == "constexpr" ||
-                          word == "case" || word == "enum" || word == "static";
+                          word == "case" || word == "enum";
                 words.push_back(word.str());
                 afterParen = false;
                 continue;
             }
+            equals = equals || token.is(tok::equal) || token.is(tok::l_square);
             if (token.is(tok::l_brace)) {
-                flushWords();
                 bool body = bodies > 0 || (open == 0 && afterParen);
+                flushWords(open == 0 && afterParen);
                 open += 1;
                 bodies += body ? 1 : 0;
                 bodyKinds.push_back(body);
             } else if (token.is(tok::r_brace)) {
-                flushWords();
+                flushWords(false);
                 if (open > 0) {
                     open -= 1;
                     bodies -= bodyKinds.back() ? 1 : 0;
                     bodyKinds.pop_back();
                 }
             } else if (token.is(tok::semi)) {
-                flushWords();
+                flushWords(false);
             }
             afterParen = token.is(tok::r_paren);
         }
-        flushWords();
+        flushWords(false);
         bodyKinds.clear();
     }
     std::vector<bool> bodyKinds;
@@ -2838,7 +2844,8 @@ class SmithHook final : public TokenHook, public NameSource {
         bool have = onDisk && !llvm::sys::fs::status(file, bodyStatus);
         bool stale = have && !source.empty() && !llvm::sys::fs::status(source, sourceStatus) &&
                      bodyStatus.getLastModificationTime() < sourceStatus.getLastModificationTime();
-        if (!have || stale) {
+        if (inEditor && !have) return found; // the editor reads what a build wrote, and starts no compile
+        if ((!have || stale) && !inEditor) {
             if (source.empty()) return found;
             std::string out = file + ".tmp" + std::to_string(::getpid());
             if (!onDisk) {
@@ -2851,7 +2858,10 @@ class SmithHook final : public TokenHook, public NameSource {
                                : llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>(std::error_code());
             bool kept =
                 made && onDisk && !llvm::sys::fs::rename(out, file); // a folder that cannot be written: in memory
-            if (!kept) llvm::sys::fs::remove(out);
+            if (!kept) {
+                std::error_code removed = llvm::sys::fs::remove(out);
+                (void)removed;
+            }
             if (!buffer) return found;
             found.text = (*buffer)->getBuffer().str();
             found.path = kept ? file : "";

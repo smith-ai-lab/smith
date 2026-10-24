@@ -694,6 +694,17 @@ static void smith_lang_finish_io_main(SmithLang *lang, const SmithHost *host) {
     smith_lang_emit_io_main(lang, host);
 }
 
+// An exported function with a body: an importer may run it (runtime/lang_body.c).
+static void smith_lang_body_listed_add(SmithLang *lang, bool is_main) {
+    if (!lang->emit_synthetic || !lang->decl.exported || is_main ||
+        lang->body_names_count >= smith_lang_body_names_max) {
+        return;
+    }
+    const SmithLangHeld *held = &lang->head[lang->decl.last_name];
+    lang->body_names[lang->body_names_count++] =
+        smith_lang_store(lang, smith_lang_scratch_str(held->original), held->original.length);
+}
+
 // The head is complete: the terminator says what follows. Writes the head, then the terminator, and picks the state.
 static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
     if (lang->decl.generic) { // recorded, not written
@@ -734,13 +745,7 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         // With a body the head is written twice: the prototype that carries the symbol is a copy, and the definition
         // after it has the tokens of the source.
         lang->emit_synthetic = smith_lang_punct(terminator, "{");
-        if (lang->emit_synthetic && lang->decl.exported && !is_main &&
-            lang->body_names_count < smith_lang_body_names_max) {
-            const SmithLangHeld *held =
-                &lang->head[lang->decl.last_name]; // an importer may run it (runtime/lang_body.c)
-            lang->body_names[lang->body_names_count++] =
-                smith_lang_store(lang, smith_lang_scratch_str(held->original), held->original.length);
-        }
+        smith_lang_body_listed_add(lang, is_main);
         smith_lang_emit_head(lang, host, true, false);
         if (!has_c_name) smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));

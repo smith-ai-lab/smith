@@ -180,6 +180,8 @@ typedef struct {
     bool paren_seen; // a `(` after a name, before any `=`: a function
     bool equals_seen;
     bool brace_seen;
+    bool after_equals; // the token before was the `=` of an initializer
+    bool lost;     // an initializer with nothing after its `=`: a macro the lowering did not write (a copy is wrong)
     bool in_tag;   // the token before was struct, union or enum
     bool tag_enum; // that word was enum
     bool enumerator_next;
@@ -234,6 +236,8 @@ static void smith_body_fact(SmithBodyFacts *facts, SmithBodyDecl *decl, const ch
         facts->has_const = facts->has_const || (!facts->equals_seen && (smith_body_is(text, start, end, "const") ||
                                                                         smith_body_is(text, start, end, "constexpr")));
     }
+    facts->lost = facts->lost || (facts->after_equals && facts->depth == 0 && (c == ';' || c == ','));
+    facts->after_equals = c == '=' && facts->depth == 0;
     smith_body_fact_tag(facts, decl, text, to, at, kind, start, end);
     if (c == '(' || c == '[' || c == '{') {
         if (c == '(' && facts->depth == 0 && !facts->paren_seen && !facts->equals_seen && facts->previous_kind == 'i') {
@@ -305,9 +309,12 @@ static void smith_body_classify(const SmithLang *lang, const char *text, size_t 
         declared_exported = declared_exported || smith_body_exported(lang, decl->names + i, j - i);
         i = j + 1;
     }
-    if (declared_exported || facts.has_extern || decl->names_used == 0) return;
+    // An exported type is in the header, but a tag defined here may be defined there only as an opaque name
+    // (`typedef struct SmithLoop SmithLoop;`): its definition is carried, and a second one that is the same is C's.
+    bool tag_definition = !facts.has_typedef && facts.brace_seen && !facts.equals_seen && !facts.paren_seen;
+    if ((declared_exported && !tag_definition) || facts.has_extern || decl->names_used == 0) return;
     bool state = !facts.has_typedef && !facts.has_const && (facts.equals_seen || !facts.brace_seen);
-    decl->kind = state ? 'V' : 'T';
+    decl->kind = state || facts.lost ? 'V' : 'T';
 }
 
 // ---- Writing the file
@@ -326,8 +333,27 @@ static void smith_body_put(FILE *file, const SmithBodyDecl *decl, const char *te
         i = j + 1;
     }
     fputc('\n', file);
-    if (decl->kind == 'F') fputs("[[gnu::gnu_inline]] extern inline ", file); // no code of its own: the module has it
-    fwrite(text + decl->from, 1, decl->to - decl->from, file);
+    size_t from = decl->from;
+    if (decl->kind ==
+        'F') { // no code of its own: the module has it. The attributes the function began with stay first.
+        size_t at = from;
+        size_t start = 0;
+        size_t end = 0;
+        for (size_t guard = 0; guard < decl->to - decl->from; guard++) { // one `[[...]]` per pass
+            size_t probe = at;
+            if (smith_body_next(text, decl->to, &probe, &start, &end) != 'p' || text[start] != '[') break;
+            if (smith_body_next(text, decl->to, &probe, &start, &end) != 'p' || text[start] != '[') break;
+            int depth = 2;
+            while (depth > 0 && smith_body_next(text, decl->to, &probe, &start, &end) != 0) {
+                depth += text[start] == '[' && end - start == 1 ? 1 : text[start] == ']' && end - start == 1 ? -1 : 0;
+            }
+            at = probe;
+        }
+        fwrite(text + from, 1, at - from, file);
+        from = at;
+        fputs(" [[gnu::gnu_inline]] extern inline ", file);
+    }
+    fwrite(text + from, 1, decl->to - from, file);
     fputs("\n#endif\n", file);
 }
 
@@ -337,6 +363,16 @@ static void smith_lang_body_write(SmithLang *lang) {
     FILE *file = fopen(path, "wb");
     if (file == nullptr) return;
     fprintf(file, "// smith-body: %s\n", lang->module);
+    char source[PATH_MAX];
+    if (lang->main_file != nullptr && realpath(lang->main_file, source) != nullptr) {
+        // The importer includes this file, and its depfile then names the module's source: an edit to it rebuilds
+        // the importer (the preprocessor reads `__has_include`'s file as a dependency).
+        fprintf(file, "#if __has_include(\"%s\")\n#endif\n", source);
+    }
+    if (lang->include_used > 0) { // the C headers the module's code needs: defined with the first thing a copy needs
+        fprintf(file, "//@ H SMITH_BODY_INCLUDES\n#if defined(SMITH_BODY_SMITH_BODY_INCLUDES)\n%.*s#endif\n",
+                (int)lang->include_used, lang->include_body);
+    }
     for (size_t i = 0; i < lang->body_count; i++) { // the declarations, in the order of the file
         const SmithLangBodySpan *span = &smith_lang_body_spans[i];
         size_t at = span->from;
@@ -545,8 +581,68 @@ static char smith_body_header_root[smith_body_header_max];
 static char smith_body_header_scan[smith_body_header_max];
 static char smith_body_header_other[smith_body_header_max];
 
-// What the text of an entry names of other things: the entries of its module it uses, and the modules its module
-// imports that it names (their headers are included; the functions of them that have a body are needed in turn).
+// Whether `ident` is the C name of an export of the module whose header is given: its member name in `member`.
+static bool smith_body_export_named(const char *header, uint32_t length, const char *prefix, const char *ident,
+                                    size_t ident_length, char *member, size_t capacity) {
+    size_t cursor = 0;
+    size_t start = 0;
+    size_t end = 0;
+    size_t prefix_length = strlen(prefix);
+    while (smith_lang_header_word(header, length, "// smith-names:", &cursor, &start, &end)) { // each export
+        const char *equals = memchr(header + start, '=', end - start);
+        size_t name = equals != nullptr ? (size_t)(equals - (header + start)) : end - start;
+        bool chosen = equals != nullptr;
+        const char *lowered = chosen ? equals + 1 : header + start;
+        size_t lowered_length = chosen ? end - start - name - 1 : name;
+        bool match = chosen ? lowered_length == ident_length && memcmp(lowered, ident, ident_length) == 0
+                            : prefix_length + name == ident_length && memcmp(prefix, ident, prefix_length) == 0 &&
+                                  memcmp(header + start, ident + prefix_length, name) == 0;
+        if (match && name < capacity) {
+            snprintf(member, capacity, "%.*s", (int)name, header + start);
+            return true;
+        }
+    }
+    return false;
+}
+
+// An identifier of an entry's text that is an export of a module its module imports: that module's header is included,
+// and if the export has a body it is needed in turn. False when the table is full.
+static bool smith_body_foreign(const SmithHost *host, const SmithBodyModule *module, const char *header,
+                               uint32_t header_length, const char *ident, size_t ident_length, size_t *pending_count) {
+    size_t cursor = 0;
+    size_t start = 0;
+    size_t end = 0;
+    while (smith_lang_header_word(header, header_length, "// smith-imports:", &cursor, &start, &end)) { // each import
+        char imported[smith_lang_name_max];
+        char prefix[smith_lang_name_max];
+        char member[smith_lang_name_max];
+        snprintf(imported, sizeof imported, "%.*s", (int)(end - start), header + start);
+        smith_body_prefix(imported, prefix, sizeof prefix);
+        const char *other_header = nullptr;
+        uint32_t other_length = 0;
+        if (!smith_body_header(host, imported, smith_body_header_other, &other_header, &other_length) ||
+            !smith_body_export_named(other_header, other_length, prefix, ident, ident_length, member, sizeof member)) {
+            continue;
+        }
+        int other = smith_body_module_add(host, imported, false);
+        if (other < 0) continue;
+        smith_body_modules[other].include = true;
+        if (!smith_body_words_have(other_header, other_length, "// smith-bodies:", member, strlen(member), false,
+                                   prefix)) {
+            continue;
+        }
+        if (*pending_count >= smith_body_pending_max) return false;
+        smith_body_pending[*pending_count].module = (uint8_t)other;
+        snprintf(smith_body_pending[*pending_count].name, sizeof smith_body_pending[0].name, "%.*s", (int)ident_length,
+                 ident);
+        *pending_count += 1;
+    }
+    (void)module;
+    return true;
+}
+
+// What the text of an entry names of other things: the entries of its module it uses, and the exports of the modules
+// its module imports (their headers are included; the ones that have a body are needed in turn).
 static bool smith_body_scan(const SmithHost *host, SmithBodyEntry *entry, size_t *pending_count) {
     SmithBodyModule *module = &smith_body_modules[entry->module];
     const char *text = module->file + entry->text;
@@ -568,34 +664,9 @@ static bool smith_body_scan(const SmithHost *host, SmithBodyEntry *entry, size_t
             snprintf(smith_body_pending[*pending_count].name, sizeof smith_body_pending[0].name, "%.*s",
                      (int)(end - start), text + start);
             *pending_count += 1;
-            continue;
-        }
-        if (used != nullptr || !has_header) continue;
-        size_t cursor = 0;
-        size_t word_start = 0;
-        size_t word_end = 0;
-        while (smith_lang_header_word(header, header_length, "// smith-imports:", &cursor, &word_start, &word_end)) {
-            char imported[smith_lang_name_max];
-            char prefix[smith_lang_name_max];
-            snprintf(imported, sizeof imported, "%.*s", (int)(word_end - word_start), header + word_start);
-            smith_body_prefix(imported, prefix, sizeof prefix);
-            size_t prefix_length = strlen(prefix);
-            if (end - start <= prefix_length || memcmp(text + start, prefix, prefix_length) != 0) continue;
-            int other = smith_body_module_add(host, imported, false);
-            if (other < 0) continue;
-            smith_body_modules[other].include = true;
-            const char *other_header = nullptr;
-            uint32_t other_length = 0;
-            if (!smith_body_header(host, imported, smith_body_header_other, &other_header, &other_length) ||
-                !smith_body_words_have(other_header, other_length, "// smith-bodies:", text + start, end - start, true,
-                                       prefix)) {
-                continue;
-            }
-            if (*pending_count >= smith_body_pending_max) return false;
-            smith_body_pending[*pending_count].module = (uint8_t)other;
-            snprintf(smith_body_pending[*pending_count].name, sizeof smith_body_pending[0].name, "%.*s",
-                     (int)(end - start), text + start);
-            *pending_count += 1;
+        } else if (used == nullptr && has_header &&
+                   !smith_body_foreign(host, module, header, header_length, text + start, end - start, pending_count)) {
+            return false;
         }
     }
     return true;
@@ -621,7 +692,10 @@ static bool smith_body_close(const SmithHost *host, uint32_t module, const char 
             break;
         }
         entry->selected = entry->added = true;
-        smith_body_modules[need.module].any = true;
+        SmithBodyModule *owner = &smith_body_modules[need.module];
+        SmithBodyEntry *includes = smith_body_entry_named(owner, "SMITH_BODY_INCLUDES", 19);
+        if (includes != nullptr && !includes->selected) includes->selected = includes->added = true;
+        owner->any = true;
         good = smith_body_scan(host, entry, &count);
     }
     for (size_t i = 0; i < smith_body_entry_count; i++) {
@@ -688,7 +762,12 @@ static bool smith_body_import(const SmithHost *host, const SmithLangBinding *bin
 // module uses is defined before it), and the `#include` of each body file, for the depfile (every section of it is
 // closed: no name is defined for it).
 static size_t smith_body_assemble(const SmithHost *host) {
-    size_t used = 0;
+    // The copies raise no warning of the importer's flags (they passed the module's own, and the importer's names may
+    // shadow their locals): the compiler says nothing of text it was given.
+    static const char head[] = "#pragma clang diagnostic push\n#pragma clang diagnostic ignored \"-Weverything\"\n";
+    static const char tail[] = "#pragma clang diagnostic pop\n";
+    size_t used = sizeof head - 1;
+    memcpy(smith_body_out, head, used);
     for (size_t m = smith_body_module_count; m > 0; m--) {
         const SmithBodyModule *module = &smith_body_modules[m - 1];
         if (module->include && !module->bound) {
@@ -702,6 +781,10 @@ static size_t smith_body_assemble(const SmithHost *host) {
     }
     for (size_t m = smith_body_module_count; m > 0; m--)
         used = smith_body_write_module(used, &smith_body_modules[m - 1]);
+    if (used + sizeof tail < sizeof smith_body_out) {
+        memcpy(smith_body_out + used, tail, sizeof tail - 1);
+        used += sizeof tail - 1;
+    }
     return used;
 }
 
