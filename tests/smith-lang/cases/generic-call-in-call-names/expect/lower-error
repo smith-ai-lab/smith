@@ -1,0 +1,3 @@
+src/main.smith:7:38: cannot tell the type of `2`, the argument of `a`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:54: cannot tell the type of `2`, the argument of `b`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:70: cannot tell the type of `2`, the argument of `c`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

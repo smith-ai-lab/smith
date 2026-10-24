@@ -2559,6 +2559,37 @@ export i32 not_a_list(i32 x) {
     auto pair = {x, 1};
     return pair;
 }
+==> generic-call-in-call-names/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import names;
+
+int main(void) {
+    c::printf("%d %d %d\n", names::a(2, 3), names::b(2, 3), names::c(2, 3));
+    return 0;
+}
+==> generic-call-in-call-names/src/names.smith <==
+module names;
+static i32 sq(i32 x) {
+    return x * x;
+}
+export typeof(x) same(auto x, usize k) {
+    (void)k;
+    return x;
+}
+export i32 inner(auto p, auto... rest) {
+    return (i32)p + (i32)countof(rest) * 100;
+}
+export i32 a(auto p, auto... rest) {
+    return inner(p, same(sq(rest[0]), 0));
+}
+export i32 b(auto p, auto... rest) {
+    return inner(p, same(sq(rest[0]) + 1, 0));
+}
+export i32 c(auto p, auto... rest) {
+    return inner(sq(p), same(sq(rest[0]), 1));
+}
 ==> generic-call-too-deep/src/main.smith <==
 import num;
 
@@ -7259,6 +7290,38 @@ i32 main(void) {
     c::printf("%d %d %d\n", take(d), take(c), take(b));
     c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
     return 0;
+}
+==> type-function-after-c-name/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import marks;
+
+i32 marker = 3;
+
+int main(void) {
+    f64 values[2] = {1.5, 2.5};
+    i32 one = 7;
+    c::printf("%g %d %d\n", marks::at(values), marks::at(one), marker);
+    return 0;
+}
+==> type-function-after-c-name/src/marks.smith <==
+module marks;
+
+// A declaration with a C name, then a function over `type`: the attribute must not leave the file inside brackets.
+[[smith::c_name("marks_const")]] export extern i32 marker;
+
+static type leaf_of(type t) {
+    if (is_pointer(t)) return typeof(*(t) nullptr);
+    return t;
+}
+
+export leaf_of(typeof(x)) at(auto x) {
+    if constexpr (is_pointer(typeof(x))) {
+        return x[0];
+    } else {
+        return x;
+    }
 }
 ==> type-function-pointee/src/leaves.smith <==
 module leaves;

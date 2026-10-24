@@ -305,6 +305,7 @@ static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, 
                          "[[smith::c_name]] goes before `export`: it names an export's C API");
         lang->pending_c_name = (SmithLangText){0, 0};
     }
+    smith_lang_ty_attribute_taken();
     return true;
 }
 

@@ -1,0 +1,2 @@
+src/main.smith:11:39: cannot tell the type of `values`, the argument of `at`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:58: cannot tell the type of `one`, the argument of `at`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1472,6 +1472,12 @@ static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, cons
         ty->call_pending = true;
 }
 
+// `[[smith::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
+// bracket it counted is closed here, or every declaration after it would read as inside brackets.
+static void smith_lang_ty_attribute_taken(void) {
+    if (smith_lang_ty.paren > 0) smith_lang_ty.paren -= 1;
+}
+
 // Called for each token of a file with type values, before the lowering looks at it. True when the token was replaced:
 // the tokens that stand for it are at the front of the queue.
 static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
