@@ -557,7 +557,7 @@ expect_contains "aborts: a SIGSEGV fails" "$out" "FAIL abort_segv"
 expect_contains "aborts: ... saying it crashed" "$out" "it crashed with SIGSEGV"
 expect_contains "aborts: ... and showing what it printed first" "$out" "before the crash"
 capture build/tests $iso --test abort_hangs --wall-timeout 1
-expect_contains "aborts: a hang is the test's timeout" "$out" "FAIL abort_hangs: timed out after 1."
+expect_contains "aborts: a hang is reported as a hang (wall time on purpose: these test the backstop)" "$out" "FAIL abort_hangs: hung after 1."
 capture build/tests $iso --test abort_exits_zero
 expect_contains "aborts: exit(0) is a return, not an abort" "$out" "expected an abort; the test returned"
 capture build/tests $iso --test abort_ --wall-timeout 1
@@ -688,7 +688,7 @@ expect_contains "isolation: an ASan report is shown" "$out" "AddressSanitizer: h
 expect_contains "isolation: ... under the test's FAIL line" "$out" "FAIL overflow: killed by SIGABRT"
 expect_contains "isolation: ... with the note" "$out" "    note: index 8"
 capture build/tests $iso --test sleeps --wall-timeout 1
-expect_contains "isolation: a timeout is reported" "$out" "FAIL sleeps: timed out after 1."
+expect_contains "isolation: a hang is reported (wall time on purpose: a test of the backstop)" "$out" "FAIL sleeps: hung after 1."
 capture build/tests $iso --test spins --timeout 1 --wall-timeout 600
 expect_contains "isolation: a busy test is over its CPU time limit" "$out" "FAIL spins: over its CPU time limit of 1 s ("
 expect_contains "isolation: ... and says the wall time, since threads add CPU time" "$out" "s of wall time passed; threads add CPU time)"
@@ -704,9 +704,9 @@ fi
 capture build/tests $iso --test naps --timeout 1 --verbose
 expect_contains "isolation: a blocked test spends no CPU time, so the CPU limit does not end it" "$out" "PASS naps"
 capture build/tests $iso --test naps --timeout 1 --wall-timeout 1
-expect_contains "isolation: ... and the wall-clock backstop does" "$out" "FAIL naps: timed out after 1."
+expect_contains "isolation: ... and the wall-clock backstop (a hang, wall time on purpose) does" "$out" "FAIL naps: hung after 1."
 capture build/tests $iso --test alarm_hangs
-expect_contains "isolation: a test's own alarm ends it as a timeout, with the measured time" "$out" "FAIL alarm_hangs: timed out after 1."
+expect_contains "isolation: a test's own alarm ends it as a hang, with the measured time" "$out" "FAIL alarm_hangs: hung after 1."
 capture build/tests $iso --test board_note
 expect_contains "note: several lines show in full" "$out" "    note: board
   . x .
@@ -1765,7 +1765,7 @@ expect_contains "workers: ... and the tests after it still run" "$out" "3 passed
 expect "workers: ... the crash cost a fresh worker (forks: 2 against one per test)" "$(by_mode 2 4)" "$(forks_of "$out")"
 
 capture build/tests $iso --test late_ --jobs 1 --wall-timeout 1 --stats
-expect_contains "workers: a timeout fails its test" "$out" "FAIL late_2_sleeps: timed out after 1."
+expect_contains "workers: a hang fails its test" "$out" "FAIL late_2_sleeps: hung after 1."
 expect_contains "workers: ... and the tests around it pass" "$out" "2 passed, 1 failed"
 expect "workers: ... it replaced the worker" "$(by_mode 2 3)" "$(forks_of "$out")"
 

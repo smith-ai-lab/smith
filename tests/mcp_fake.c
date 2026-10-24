@@ -180,9 +180,10 @@ static constexpr char test_source[] = "#include <stdio.h>\n"                  //
                                       "}\n";
 
 // Runs the server on the case; the transcript is test_output, and the requests it sent the adapter test_sent. The
-// alarm ends a test that hangs, which a wrong script can make the server do (it waits for a reply that never comes).
+// alarm (a wall backstop, large: a blocked test spends no CPU time) ends a test that hangs, which a wrong script can
+// make the server do (it waits for a reply that never comes).
 static void test_run(TestCase *test) {
-    alarm(120);
+    alarm(600);
     void *memory = mmap(nullptr, test_memory, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     SMITH_ASSERT(memory != MAP_FAILED);
     SmithIo io =

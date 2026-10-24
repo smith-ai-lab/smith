@@ -15,14 +15,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "cpu_wait.h"
+
 extern char **environ;
 
 constexpr size_t message_capacity = 1 << 20;
-constexpr int message_limit = 400;       // messages read while waiting for one, so a wait ends
-constexpr int wait_milliseconds = 30000; // for each read
+constexpr int message_limit = 400; // messages read while waiting for one, so a wait ends
+constexpr int wait_milliseconds =
+    30000; // of the adapter's CPU time, for each read (wall time is only a 10 minute backstop)
 
 static int to_adapter = -1;
 static int from_adapter = -1;
+static pid_t adapter_pid = 0;
 static char message[message_capacity];
 static int seq = 0;
 
@@ -46,8 +50,9 @@ static void send_request(const char *command, const char *arguments) {
 static void read_exactly(char *out, size_t count) {
     size_t have = 0;
     while (have < count) {
-        struct pollfd poller = {.fd = from_adapter, .events = POLLIN};
-        if (poll(&poller, 1, wait_milliseconds) <= 0) fail("timed out waiting for the adapter");
+        int waited = cpu_wait_for(from_adapter, adapter_pid, wait_milliseconds);
+        if (waited == cpu_wait_hung) fail("hung: no answer from the adapter in ten minutes of wall time");
+        if (waited != cpu_wait_ready) fail("the adapter spent its CPU time limit without answering");
         ssize_t got = read(from_adapter, out + have, count - have);
         if (got <= 0) fail("the adapter closed its output");
         have += (size_t)got;
@@ -112,6 +117,7 @@ static void start_adapter(const char *smith) {
     char *argv[] = {(char *)smith, (char *)"dap", nullptr};
     pid_t pid = 0;
     if (posix_spawn(&pid, smith, &actions, nullptr, argv, environ) != 0) fail("cannot start smith dap");
+    adapter_pid = pid;
     close(in[0]);
     close(out[1]);
     to_adapter = in[1];

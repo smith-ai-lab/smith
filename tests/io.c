@@ -531,7 +531,7 @@ static void test_real_environment_and_cores(void) {
 // ---------------------------------------------------------------- programs run by the script
 
 static int program_lines(void) {
-    alarm(10); // a read that never ends is a failure, not a hang
+    alarm(600); // a read that never ends is a hang: a blocked read spends no CPU time, so this wall backstop is large
     SmithIo io = smith_io_make(0, nullptr);
     size_t lines = 0;
     const char *last = "";

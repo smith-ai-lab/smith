@@ -123,7 +123,7 @@ capture sh -c "head -c 100000 /dev/zero | tr '\\0' x | '$work/bin/fast' lines"
 expect "console: a line longer than the buffer" "0 1 lines, last=$(head -c 100000 /dev/zero | tr '\0' x)" "$rc $out"
 
 # 5b. The same loop ends when stdin is a regular file, which kqueue never reports readable at its end, however it is
-# fed. The lines program stops itself with SIGALRM after 10 s, so a hang is a failure (status 142).
+# fed. The lines program stops itself with SIGALRM after 600 s of wall time, so a hang is a failure (status 142).
 printf 'a\nb\nlast' >"$work/lines.txt"
 : >"$work/empty.txt"
 capture sh -c "'$work/bin/fast' lines <'$work/lines.txt'"

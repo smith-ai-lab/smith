@@ -115,7 +115,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   as always.
 - **`--explain <smith>`, `--explain-max <n>`, `--no-explain`.** `smith test` starts the runner with `--explain <smith>` so that
   a failed `test::check`, contract or `assert` shows the variables its line names, read from the stopped test with lldb
-  ([failure reports](failure-reports-and-tests.md)); `--explain-max` (default 5) caps the failures read in a run, and the
+  ([failure reports](failure-reports-and-tests.md)); the wait for lldb is 5 s of the debugger's CPU time (a 120 s wall backstop reports "the debugger hung"); `--explain-max` (default 5) caps the failures read in a run, and the
   runner prints how many it left; `--no-explain` (to `smith test`) turns it off. `--stats` adds `explained: N failures in
   S s`. With `--in-process` the runner explains itself, so a test run under `smith dbg` does not pass `--explain`.
 - **`test::note(format, ...)`** (`smith_test_note`) prints under a failure, whether a failed check, a crash or a timeout; each note
@@ -123,7 +123,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `mmap`, given back before each test and each key.
 - **The runner** forks `--jobs` workers (the cores by default), once each and when one is needed, and sends each the
   tests to run, one after another, in its own process. Before each test and each key of a property test the worker gives
-  the arenas back, clears the note and starts two clocks, a CPU time limit (`setitimer(ITIMER_PROF)`, `--timeout`) and a wall-clock backstop (`ITIMER_REAL`, `--wall-timeout`); it clears both when the test ends. A failed check
+  the arenas back, clears the note and starts two clocks, a CPU time limit (`setitimer(ITIMER_PROF)`, `--timeout`) and a wall-clock backstop for a hang (`ITIMER_REAL`, `--wall-timeout`, 600 s); it clears both when the test ends. A failed check
   unwinds with `siglongjmp` to the worker's loop and the result goes back through shared memory, so the worker lives
   on. A crash, a timeout, an exit, output past 16 MiB or a sanitizer's report (in the output of a failed or a passing
   test) ends the worker: the runner records the failure as it always has, forks a fresh worker and goes on, so a
@@ -138,7 +138,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   shown only for a failing test (the first 64 KiB; a worker that writes 16 MiB in one test is killed). The options are the runner's arguments, which `smith test` gives it
   (`smith_args`): `--test <substring>` (a test named exactly that, else every test whose name contains it; a name written with `test_`, as in the source, selects the same test), `--seed <n>`
   (each property test on that one seed), `--seeds <n>` (keys per property test, 100 by default), `--jobs <n>` (default:
-  the cores), `--timeout <seconds>` (10 seconds of CPU time, per test and per key: a loaded machine slows a test and never fails it, as for `smith prove`), `--wall-timeout <seconds>` (the backstop for a test that is blocked and so spends no CPU time: 10 times `--timeout` by default), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
+  the cores), `--timeout <seconds>` (10 seconds of CPU time, per test and per key: a loaded machine slows a test and never fails it, as for `smith prove`), `--wall-timeout <seconds>` (the backstop for a test that is blocked and so spends no CPU time: 600 s by default, reported as a hang), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
   time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort the test did not expect or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
 - **Full size: `test::full()`** (`smith_test_full()`). It is false by default and true when the run was given `--full`. A test with a heavy check
@@ -168,7 +168,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   ```
 
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a test over its CPU limit is
-  `FAIL name: over its CPU time limit of 10 s (10.3 s of wall time passed; threads add CPU time)` (the CPU time is the process's, every thread's, so the wall time can be shorter), and a blocked one `FAIL name: timed out after 100.0 s` (the wall time it ran: a test that calls `alarm` itself replaces the backstop, and ends as a timeout after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
+  `FAIL name: over its CPU time limit of 10 s (10.3 s of wall time passed; threads add CPU time)` (the CPU time is the process's, every thread's, so the wall time can be shorter), and a blocked one `FAIL name: hung after 600.0 s of wall time (...)` (never a timeout: wall time says nothing about a test on a loaded machine; a test that calls `alarm` itself replaces the backstop, and ends as a hang after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
 - **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own whose keys carry the runner's
   `random::Tap`, which records each `(key, n)` the test asks `random::key_bits` for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest

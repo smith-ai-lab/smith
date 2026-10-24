@@ -12,6 +12,8 @@ import smith::random;
 import target;
 import <errno.h>;
 import <fcntl.h>;
+import <libproc.h>;
+import <mach/mach_time.h>;
 import <poll.h>;
 import <setjmp.h>;
 import <signal.h>;
@@ -69,9 +71,10 @@ import <unistd.h>;
 // The runner limits each test and each key of a property test by CPU time (`--timeout`, 10 s of the test's own user and
 // system time), as `smith prove` limits a proof, so a loaded machine slows a test and never fails it. A test that
 // spends the limit ends as a timeout ("over its CPU time limit of 10 s"). A test that is blocked rather than busy (it
-// sleeps, or waits on a pipe) spends no CPU time, so a wall-clock backstop ends it too: `--wall-timeout`, 10 times
-// `--timeout` by default ("timed out after 100.0 s"). A test that calls `alarm` itself replaces the backstop, and its
-// alarm ends the test as a timeout after its own time. The runner clears both timers when a test ends.
+// sleeps, or waits on a pipe) spends no CPU time, so a wall-clock backstop ends it too: `--wall-timeout`, 600 s by
+// default, reported as a hang ("hung after 600.0 s of wall time"), never as a timeout, because wall time says nothing
+// about the test when the machine is loaded. A test that calls `alarm` itself replaces the backstop, and its alarm ends
+// the test as a hang after its own time. The runner clears both timers when a test ends.
 //
 // A test whose heavy checks have a full size reads test::full(): false by default, true when the run was asked for it
 // (`smith test --full`). The test picks its size from it and checks the same properties either way; the default run
@@ -155,6 +158,7 @@ constexpr i32 sig_bus = c::SIGBUS;                           // NOLINT(smith-pre
 constexpr i32 sig_fpe = c::SIGFPE;                           // NOLINT(smith-preprocessor)
 constexpr i32 sig_ill = c::SIGILL;                           // NOLINT(smith-preprocessor)
 constexpr i32 sig_kill = c::SIGKILL;                         // NOLINT(smith-preprocessor)
+constexpr i32 sig_term = c::SIGTERM;                         // NOLINT(smith-preprocessor)
 constexpr i32 sig_pipe = c::SIGPIPE;                         // NOLINT(smith-preprocessor)
 constexpr i32 sig_prof = c::SIGPROF;                         // NOLINT(smith-preprocessor)
 constexpr i32 sig_segv = c::SIGSEGV;                         // NOLINT(smith-preprocessor)
@@ -618,10 +622,19 @@ void write_values(Line *lines, usize count) {
 // whole, so the process starts `smith --smith-explain --pid <its own pid>` and waits: that attaches lldb to it, reads
 // the variables of the line that failed, as a debugger does, and detaches. Nothing is captured in the program. The
 // answer is lines of `@ name = value` (or `@! why not`) that join the failure's detail, and `smith symbolize` prints
-// them under the source line. A run explains at most --explain-max failures and each for at most explain_seconds, and a
-// smith with no debugger, or a machine that refuses to debug, gives a note and the report as it was.
+// them under the source line. A run explains at most --explain-max failures and each for at most explain_seconds of the
+// debugger's CPU time (a loaded machine slows it and never fails it), with a wall-clock backstop of
+// explain_hang_seconds for a debugger that is blocked and spends none. A smith with no debugger, or a machine that
+// refuses to debug, gives a note and the report as it was.
 
-constexpr u64 explain_seconds = 5;
+constexpr u64 explain_seconds = 5;        // CPU seconds of the explaining child
+constexpr u64 explain_hang_seconds = 120; // wall seconds: the backstop, a hung debugger
+constexpr u64 explain_slice_ms = 50;
+constexpr usize explain_slices_max = explain_hang_seconds * 1000 / explain_slice_ms + detail_capacity;
+constexpr i32 rusage_version = c::RUSAGE_INFO_V2; // NOLINT(smith-preprocessor)
+constexpr u64 explain_read_ok = 0;
+constexpr u64 explain_read_cpu = 1;
+constexpr u64 explain_read_hung = 2;
 constexpr u64 explain_max_default = 5;
 constexpr u64 explain_stat_explained = 0;
 constexpr u64 explain_stat_skipped = 1;
@@ -662,28 +675,43 @@ i32 explain_start(c::pid_t *child) {
     return ends[0];
 }
 
-// Reads the debugger's answer until it ends or the time is up. True when the time was up.
-bool explain_read(i32 from, char *text, usize *used, u64 began) {
-    for (usize round = 0; round < detail_capacity; round++) { // each read takes bytes or ends
-        u64 elapsed = (explain_now_ns() - began) / 1'000'000;
-        if (elapsed >= explain_seconds * 1000) return true;
+// The CPU time (user and system, every thread) a process has spent, in nanoseconds; 0 when it cannot be read.
+u64 explain_cpu_ns(c::pid_t pid) {
+    struct c::rusage_info_v2 usage = {};
+    if (c::proc_pid_rusage(pid, rusage_version, (c::rusage_info_t *)&usage) != 0) return 0;
+    c::mach_timebase_info_data_t base = {};
+    c::mach_timebase_info(&base);
+    return (usage.ri_user_time + usage.ri_system_time) * base.numer / base.denom;
+}
+
+// Reads the debugger's answer until it ends, it has spent explain_seconds of CPU time, or explain_hang_seconds of wall
+// time have passed. Returns explain_read_ok, explain_read_cpu or explain_read_hung.
+u64 explain_read(i32 from, char *text, usize *used, u64 began, c::pid_t child) {
+    u64 cpu = 0;
+    for (usize slice = 0; slice < explain_slices_max; slice++) { // each slice reads bytes, waits or ends
+        u64 current = explain_cpu_ns(child);
+        if (current > cpu) cpu = current;
+        if (cpu >= explain_seconds * 1'000'000'000) return explain_read_cpu;
+        if ((explain_now_ns() - began) / 1'000'000 >= explain_hang_seconds * 1000) return explain_read_hung;
         struct c::pollfd wait = {.fd = from, .events = poll_in};
-        if (c::poll(&wait, 1, (i32)(explain_seconds * 1000 - elapsed)) < 0 && *c::__error() != interrupted)
-            return false;
+        if (c::poll(&wait, 1, (i32)explain_slice_ms) < 0 && *c::__error() != interrupted) return explain_read_ok;
         if (wait.revents == 0) continue;
         isize got = c::read(from, text + *used, detail_capacity - 1 - *used);
-        if (got <= 0) return false;
+        if (got <= 0) return explain_read_ok;
         *used += (usize)got;
-        if (*used >= detail_capacity - 1) return false;
+        if (*used >= detail_capacity - 1) return explain_read_ok;
     }
-    return false;
+    return explain_read_ok;
 }
 
 // Joins the debugger's answer to the failure's detail: whole lines only, and a note when there is none.
-void explain_join(const char *text, usize used, bool late, i32 status) {
+void explain_join(const char *text, usize used, u64 ended, i32 status) {
     usize at = c::strlen(shared->detail);
-    if (late) {
-        detail_add(&at, "@! values not shown: the debugger took more than %llu s\n", explain_seconds);
+    if (ended == explain_read_cpu) {
+        detail_add(&at, "@! values not shown: the debugger spent more than %llu s of CPU time\n", explain_seconds);
+    } else if (ended == explain_read_hung) {
+        detail_add(&at, "@! values not shown: the debugger hung (%llu s of wall time, no answer)\n",
+                   explain_hang_seconds);
     } else if (used == 0) {
         detail_add(&at, "@! values not shown: the debugger gave no answer (status %d)\n", status_code(status));
     }
@@ -713,12 +741,13 @@ void explain_join(const char *text, usize used, bool late, i32 status) {
     if (from < 0) return;
     char text[detail_capacity];
     usize used = 0;
-    bool late = explain_read(from, text, &used, began);
-    if (late) c::kill(child, sig_kill);
+    u64 ended = explain_read(from, text, &used, began, child);
+    if (ended != explain_read_ok)
+        c::kill(child, sig_term); // it lets the test go, then ends: a test left stopped cannot run
     c::close(from);
     i32 status = 0;
     c::waitpid(child, &status, 0);
-    explain_join(text, used, late, status);
+    explain_join(text, used, ended, status);
     __atomic_fetch_add(explained + explain_stat_nanoseconds, explain_now_ns() - began, __ATOMIC_RELAXED);
 }
 
@@ -1044,7 +1073,7 @@ typedef struct {
     u64 seed_count;
     usize jobs;
     u32 timeout;      // CPU seconds a test or a key may spend; 0 for none
-    u32 wall_timeout; // wall-clock seconds, the backstop for a blocked test; 0 for none
+    u32 wall_timeout; // wall-clock seconds, the backstop for a hung (blocked) test, never a limit; 0 for none
     bool shrink;
     u32 shrink_seconds; // the time shrinking one failure may take
     bool full;
@@ -1073,8 +1102,8 @@ typedef struct {
     u64 io_seed; // the seed an io test runs on when --seed is not given: the runner's own
 } Options;
 
-constexpr u32 lost_retries = 3; // fresh workers a test gets when its worker is stopped before the test began
-constexpr u32 wall_factor = 10; // the wall-clock backstop of a test, in CPU time limits
+constexpr u32 lost_retries = 3;   // fresh workers a test gets when its worker is stopped before the test began
+constexpr u32 wall_default = 600; // the wall-clock backstop of a test, in seconds: a hang, not a limit
 constexpr u64 seeds_default = 100;
 constexpr u64 seeds_max = 1'000'000'000;
 constexpr u64 seed_root = 0x5eed;            // the key the properties' seeds are drawn from
@@ -1821,7 +1850,7 @@ void print_reason(const Options *options, const Run *run) {
             say(options, ": over its CPU time limit of %u s (%.1f s of wall time passed; threads add CPU time)",
                 options->timeout, run->seconds);
         else
-            say(options, ": timed out after %.1f s", run->seconds);
+            say(options, ": hung after %.1f s of wall time (it spent no CPU time to speak of)", run->seconds);
         break;
     case End_Signal:
         if (name != nullptr)
@@ -2495,7 +2524,8 @@ void say_explained(const Options *options) {
         options.shrink = false; // shrinking reruns the test in workers of its own
         if (!options.timeout_given) options.timeout = 0;
     }
-    if (!options.wall_given) options.wall_timeout = options.timeout * wall_factor; // a blocked test spends no CPU time
+    if (!options.wall_given)
+        options.wall_timeout = options.timeout == 0 ? 0 : wall_default; // a blocked test spends no CPU time
     f64 start = seconds(&options);
     full_run = options.full;
     raise_files(options.jobs);

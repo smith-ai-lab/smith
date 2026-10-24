@@ -303,6 +303,28 @@ static int smith_explain_run(long pid, const char *self) {
     return 0;
 }
 
+// The limits of this process end it with the test let go: the test is stopped while lldb is attached, so a process
+// that just died would leave it stopped for ever (and it cannot judge any limit of its own while stopped). The limit
+// is this process's CPU time (SIGPROF, as the runner counts the debugger: a loaded machine slows it and never ends it),
+// with a wall-clock backstop for a hang (SIGALRM), and the runner's SIGTERM, which ends it the same way.
+constexpr unsigned smith_explain_cpu_seconds = 5;
+constexpr unsigned smith_explain_hang_seconds = 600;
+
+static void smith_explain_let_go(int signal_number) {
+    (void)signal_number;
+    smith_explain_detach();
+    _exit(0);
+}
+
+static void smith_explain_arm(void) {
+    signal(SIGPROF, smith_explain_let_go);
+    signal(SIGALRM, smith_explain_let_go);
+    signal(SIGTERM, smith_explain_let_go);
+    struct itimerval cpu = {.it_value = {.tv_sec = smith_explain_cpu_seconds}};
+    setitimer(ITIMER_PROF, &cpu, nullptr);
+    alarm(smith_explain_hang_seconds);
+}
+
 // `smith --smith-explain --pid <pid>` and `smith --smith-explain --available`.
 static int smith_explain_main(int argc, char **argv, const char *self) {
     long pid = 0;
@@ -311,7 +333,7 @@ static int smith_explain_main(int argc, char **argv, const char *self) {
         if (strcmp(argv[i], "--pid") == 0 && i + 1 < argc) pid = strtol(argv[++i], nullptr, 10);
     }
     if (pid <= 0) smith_die(smith_exit_usage, "usage: smith --smith-explain --pid <pid>", nullptr);
-    alarm(30); // a backstop: the runner ends this process at its own deadline
+    smith_explain_arm();
     int status = smith_explain_run(pid, self);
     fflush(stdout);
     return status;

@@ -30,18 +30,24 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "cpu_wait.h"
+
 extern char **environ;
 
 constexpr size_t lsp_message_capacity = 1 << 20;
 constexpr size_t lsp_text_capacity = 1 << 16;
 constexpr size_t lsp_slot_count = 16;
 constexpr size_t lsp_slot_capacity = 1 << 16;
-constexpr int lsp_wait_milliseconds = 60000; // for a reply
-constexpr int lsp_quiet_milliseconds = 600;  // without a new message, a server has said all it will about a file
-constexpr int lsp_retry_limit = 40;
+constexpr int lsp_wait_milliseconds =
+    60000; // of the server's CPU time, for a reply (wall time is only the 10 minute backstop)
+constexpr int lsp_quiet_milliseconds = 600; // wall time on purpose: a settle. A server idle this long has said all it
+                                            // will about a file; CPU time it spends restarts the count
+constexpr int lsp_retry_limit = 2400;       // attempts 250 ms apart: ten minutes of wall time, the backstop for a hang
+constexpr int lsp_retry_cpu_milliseconds = 10000; // of the server's CPU time (indexing) the retries wait for
 
 static int lsp_to_server = -1;
 static int lsp_from_server = -1;
+static pid_t lsp_server_pid = 0;
 static char lsp_message[lsp_message_capacity];
 static int lsp_next_id = 1;
 static const char *lsp_root;
@@ -72,8 +78,10 @@ static void lsp_send(const char *body) {
 static bool lsp_read_exactly(char *out, size_t count, int timeout) {
     size_t have = 0;
     while (have < count) {
-        struct pollfd poller = {.fd = lsp_from_server, .events = POLLIN};
-        if (poll(&poller, 1, timeout) <= 0) return false;
+        int waited = timeout == lsp_quiet_milliseconds ? cpu_wait_quiet(lsp_from_server, lsp_server_pid, timeout)
+                                                       : cpu_wait_for(lsp_from_server, lsp_server_pid, timeout);
+        if (waited == cpu_wait_hung) lsp_fail("hung: no answer in ten minutes of wall time", "");
+        if (waited != cpu_wait_ready) return false;
         ssize_t got = read(lsp_from_server, out + have, count - have);
         if (got <= 0) lsp_fail("the server closed its output", "");
         have += (size_t)got;
@@ -81,7 +89,8 @@ static bool lsp_read_exactly(char *out, size_t count, int timeout) {
     return true;
 }
 
-// Reads one message into lsp_message; false when none came in `timeout` milliseconds.
+// Reads one message into lsp_message; false when none came in `timeout` milliseconds (CPU time of the server, or a
+// quiet settle for lsp_quiet_milliseconds).
 static bool lsp_read_message(int timeout) {
     char header[256] = {};
     size_t used = 0;
@@ -323,7 +332,9 @@ static void lsp_command_definition(const char *file, const char *line, const cha
     char params[1024];
     char where[1024];
     lsp_position_params(params, sizeof params, file, line, column, "");
+    uint64_t cpu_began = cpu_wait_cpu_ns(lsp_server_pid);
     for (int attempt = 0; attempt < lsp_retry_limit; attempt++) {
+        if ((cpu_wait_cpu_ns(lsp_server_pid) - cpu_began) / 1000000 >= (uint64_t)lsp_retry_cpu_milliseconds) break;
         lsp_request("textDocument/definition", params);
         lsp_first_location(where, sizeof where);
         size_t have = strlen(where);
@@ -528,6 +539,7 @@ static void lsp_start(const char *smith) {
     char *argv[] = {(char *)smith, (char *)"lsp", nullptr};
     pid_t pid = 0;
     if (posix_spawn(&pid, smith, &actions, nullptr, argv, environ) != 0) lsp_fail("cannot start smith lsp", "");
+    lsp_server_pid = pid;
     close(in[0]);
     close(out[1]);
     lsp_to_server = in[1];
