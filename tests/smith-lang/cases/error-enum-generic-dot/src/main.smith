@@ -1,0 +1,20 @@
+module main;
+
+export typedef struct {
+    f32 radius;
+} Circle;
+
+export typedef enum {
+    Circle circle;
+    empty;
+} Shape;
+
+export bool is_empty(auto s) {
+    return s == .empty;
+}
+
+export Shape pick(auto flag) {
+    Shape s = .empty;
+    if (flag) return {.circle = {.radius = 1}};
+    return s;
+}

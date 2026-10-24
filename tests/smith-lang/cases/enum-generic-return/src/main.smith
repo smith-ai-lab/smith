@@ -1,0 +1,21 @@
+module main;
+
+import <stdio.h>;
+import find;
+
+i32 main(void) {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    u8 bytes[:] = raw;
+    i32 numbers[3] = {10, 20, 30};
+    i32 ints[:] = numbers;
+    find::Position a = find::position(bytes, 3);
+    find::Position b = find::position(bytes, 9);
+    find::Position c = find::position(ints, 30);
+    find::Position none = find::first_or_none(bytes[5:]);
+    switch (a) {
+    case .some: c::printf("a %zu\n", a.some); break;
+    case .none: c::printf("a none\n"); break;
+    }
+    c::printf("%s %zu %s\n", b == .none ? "b none" : "b some", c == .some ? c.some : 99, none == .none ? "empty" : "full");
+    return 0;
+}

@@ -1,0 +1,2 @@
+src/main.smith:13:17: `.empty` in a generic's body needs the type it stands for, and a generic's body is written without the compiler, so only `return .variant;` and `return {.variant = payload};` are built for now (known gap)
+src/main.smith:17:15: `.empty` in a generic's body needs the type it stands for, and a generic's body is written without the compiler, so only `return .variant;` and `return {.variant = payload};` are built for now (known gap)
