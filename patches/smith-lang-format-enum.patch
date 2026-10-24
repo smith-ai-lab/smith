@@ -1,0 +1,79 @@
+diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator.cpp
+--- a/clang/lib/Format/TokenAnnotator.cpp	2026-10-24 13:23:41
++++ b/clang/lib/Format/TokenAnnotator.cpp	2026-10-24 13:23:41
+@@ -5260,6 +5260,15 @@
+   }
+   if (Right.is(TT_SmithTupleLBrace) && Left.is(tok::kw_struct))
+     return true;
++  // A variant of a .smith enum where an operand stands: `case .v:`, `x == .v`,
++  // `return .v;`, `x = .v;` (issue #215). A designator is in braces, after
++  // `{` or `,`, and keeps its spacing.
++  if (Line.IsSmith && Right.is(tok::period) &&
++      Left.isOneOf(tok::kw_case, tok::kw_return, tok::equalequal,
++                   tok::exclaimequal, tok::equal, tok::question, tok::ampamp,
++                   tok::pipepipe)) {
++    return true;
++  }
+ 
+   const bool IsVerilog = Style.isVerilog();
+   assert(!IsVerilog || !IsCpp);
+diff -ru a/clang/lib/Format/UnwrappedLineParser.cpp b/clang/lib/Format/UnwrappedLineParser.cpp
+--- a/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-24 13:23:41
++++ b/clang/lib/Format/UnwrappedLineParser.cpp	2026-10-24 13:23:41
+@@ -1894,6 +1894,13 @@
+         break;
+       }
+ 
++      // An enum of a .smith file whose members are declarations (`T name;`,
++      // `name;`) is laid out like a struct, with its name after the `}`.
++      if (IsSmith && isSmithPayloadEnum()) {
++        parseStructLike();
++        break;
++      }
++
+       // parseEnum falls through and does not yet add an unwrapped line as an
+       // enum definition can start a structural element.
+       if (!parseEnum())
+@@ -4348,6 +4355,31 @@
+   }
+   FormatTok = Tokens->setPosition(StoredPosition);
+   return IsTuple;
++}
++
++// Whether the `enum` being read has a body with a `;` between its braces: its
++// members are declarations (a payload enum of a .smith file, issue #215).
++bool UnwrappedLineParser::isSmithPayloadEnum() {
++  assert(FormatTok->is(tok::kw_enum));
++  unsigned StoredPosition = Tokens->getPosition();
++  int Depth = 0;
++  bool IsPayload = false;
++  for (FormatToken *Tok = Tokens->getNextToken(); Tok->isNot(tok::eof);
++       Tok = Tokens->getNextToken()) {
++    if (Depth == 0 && Tok->is(tok::semi))
++      break; // `enum E;`, no body
++    if (Tok->is(tok::l_brace)) {
++      ++Depth;
++    } else if (Tok->is(tok::r_brace)) {
++      if (--Depth <= 0)
++        break;
++    } else if (Depth == 1 && Tok->is(tok::semi)) {
++      IsPayload = true;
++      break;
++    }
++  }
++  FormatTok = Tokens->setPosition(StoredPosition);
++  return IsPayload;
+ }
+ 
+ void UnwrappedLineParser::parseObjCMethod() {
+diff -ru a/clang/lib/Format/UnwrappedLineParser.h b/clang/lib/Format/UnwrappedLineParser.h
+--- a/clang/lib/Format/UnwrappedLineParser.h	2026-10-24 13:23:41
++++ b/clang/lib/Format/UnwrappedLineParser.h	2026-10-24 13:23:41
+@@ -341,6 +341,7 @@
+   // Whether the `{` the parser is on starts a tuple type body (issue #96):
+   // `struct { i32, f32 }`, a braced list without a `;`.
+   bool isSmithTuple();
++  bool isSmithPayloadEnum();
+   LangOptions LangOpts;
+   const AdditionalKeywords &Keywords;
+ 
