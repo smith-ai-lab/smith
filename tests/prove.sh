@@ -345,6 +345,34 @@ for pair in shifted:34:copy same:40:copy whole:45:copy unknown:50:copy pointer_i
     expect_contains "restrict slice: $function ... at the call, naming both" "$out" "restrict_slices.smith:$line: the call of geometry::restrict_slices::$callee passes \`"
 done
 
+# 7c4c. A `[:][k]` and a `[:][:]` slice point at their rows (#106): an index proved in range needs no contract, an inner
+# index is checked per dimension (one past its own count is refuted at its line), the row is a `[:]` again, and `restrict`
+# on a slice of rows is read at the call as on a `[:]`.
+grids=$cases/geometry/grids.smith
+for function in fixed_at rows_at volume_at mixed_at roundtrip; do
+    prove --function=geometry::grids::$function "$grids"
+    expect "grid: $function is proved" 0 "$rc"
+done
+for pair in fixed_wide:14 rows_wide:26 row_wide:59; do
+    function=${pair%%:*}
+    line=${pair#*:}
+    prove --function=geometry::grids::$function "$grids"
+    expect "grid: $function fails" 1 "$rc"
+    expect_contains "grid: $function ... at the line of the index" "$out" "grids.smith:$line: assert(an index or a slice is in range) may fail"
+done
+rgrids=$cases/geometry/restrict_grids.smith
+for function in apart apart_slots; do
+    prove --function=geometry::restrict_grids::$function "$rgrids"
+    expect "restrict grid: $function is proved" 0 "$rc"
+done
+for pair in overlapping:32 same:38; do
+    function=${pair%%:*}
+    line=${pair#*:}
+    prove --function=geometry::restrict_grids::$function "$rgrids"
+    expect "restrict grid: $function fails" 1 "$rc"
+    expect_contains "restrict grid: $function ... at the call, naming both" "$out" "restrict_grids.smith:$line: the call of geometry::restrict_grids::copy passes \`dst\` (restrict) and \`src\`"
+done
+
 # 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
 for function in apply_move count_of bump_count is_step; do
     prove --function=$function "$cases/by_value.c"

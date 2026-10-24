@@ -443,28 +443,65 @@ uint64_t pointee_alignment(const DIType *type) {
 
 // ---- slice parameters ----
 
-// `T xs[:]` is the struct smith_array_<T>_n { T *data; usize count[1]; }: the size of T in bytes when `type` is one (a
-// typedef of one too), else 0, and its alignment in `align`. Only the one-dimension form is read: it is 16 bytes, which
-// arm64 passes as one [2 x i64]; a bigger count array (more dimensions) is passed in memory.
-uint64_t slice_element_bytes(const DIType *type, uint64_t &align) {
+// A run-time array is the struct smith_array_<T><dims> { T *data; usize count[k]; }, k the number of `:`, the fixed
+// dimensions in its name (`f32[:][2]` is smith_array_f32_n_2, `f32[:][:]` smith_array_f32_n_n). `element` is the size
+// of T in bytes (0 when the type is none of these; a typedef or a const of one is peeled), `fixed` the product of the
+// fixed dimensions and `runtime` the number of `count`s: the data holds count[0] * ... * count[k-1] * fixed objects. A
+// struct of one count is 16 bytes, which arm64 passes as one [2 x i64]; one with more is passed in memory.
+struct SliceLayout {
+    uint64_t element = 0, align = 1, fixed = 1;
+    unsigned runtime = 1;
+    SmallVector<uint64_t, 4> dims; // each dimension in order: its size, 0 for a count
+};
+
+SliceLayout slice_layout(const DIType *type) {
     while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
         unsigned tag = derived->getTag();
         if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type)
             break;
         type = derived->getBaseType();
     }
+    SliceLayout layout;
     auto *composite = dyn_cast_or_null<DICompositeType>(type);
     if (composite == nullptr || composite->getTag() != dwarf::DW_TAG_structure_type ||
-        !composite->getName().starts_with("smith_array_") || !composite->getName().ends_with("_n") ||
-        composite->getSizeInBits() != 128)
-        return 0;
+        !composite->getName().starts_with("smith_array_") || composite->getSizeInBits() % 64 != 0 ||
+        composite->getSizeInBits() < 128 || composite->getSizeInBits() > 64 * 9)
+        return layout;
+    layout.runtime = static_cast<unsigned>(composite->getSizeInBits() / 64 - 1);
+    // the dimensions, from the end of the name: `_2` is fixed, `_n` is a count; the last `_n` that makes k of them is
+    // the first dimension, so what is before it is the element's name
+    StringRef name = composite->getName().drop_front(12);
+    unsigned counts = 0;
+    SmallVector<uint64_t, 4> reversed;
+    while (counts < layout.runtime) {
+        size_t at = name.rfind('_');
+        if (at == StringRef::npos) return SliceLayout();
+        StringRef token = name.drop_front(at + 1);
+        uint64_t value = 0;
+        if (token == "n")
+            counts++, reversed.push_back(0);
+        else if (token.empty() || token.getAsInteger(10, value) || value == 0)
+            return SliceLayout();
+        else
+            layout.fixed *= value, reversed.push_back(value);
+        name = name.take_front(at);
+    }
+    layout.dims.assign(reversed.rbegin(), reversed.rend());
     for (const Metadata *member : composite->getElements()) {
         auto *field = dyn_cast<DIDerivedType>(member);
         if (field == nullptr || field->getName() != "data") continue;
-        align = pointee_alignment(field->getBaseType());
-        return pointee_bytes(field->getBaseType());
+        layout.align = pointee_alignment(field->getBaseType());
+        layout.element = pointee_bytes(field->getBaseType());
+        return layout;
     }
-    return 0;
+    return SliceLayout();
+}
+
+// The size of T in bytes of a slice type with one count (the form arm64 passes as a pair), else 0, and its alignment.
+uint64_t slice_element_bytes(const DIType *type, uint64_t &align) {
+    SliceLayout layout = slice_layout(type);
+    align = layout.align;
+    return layout.runtime == 1 ? layout.element * layout.fixed : 0;
 }
 
 bool points_to_const(const DIType *type);
@@ -514,9 +551,133 @@ void relax_slice_arithmetic(const std::vector<Value *> &roots) {
     }
 }
 
+// The body reads the slot of a slice passed in memory with loads at constant offsets (`data`, `count[j]`): each is the
+// value the unit was given, so the pointer the body computes with is the parameter itself (what
+// `relax_slice_arithmetic` follows, and what an index is checked against). Left as it is when the slot is used in any
+// other way (before the unit's own stores into it).
+void forward_slot_loads(AllocaInst *slot, Value *data, const std::vector<Value *> &sizes) {
+    const DataLayout &layout = slot->getModule()->getDataLayout();
+    std::vector<std::pair<LoadInst *, Value *>> forwards;
+    SmallVector<std::pair<Value *, uint64_t>, 8> work = {{slot, 0}};
+    while (!work.empty()) {
+        auto [pointer, offset] = work.pop_back_val();
+        for (User *user : pointer->users()) {
+            if (auto *gep = dyn_cast<GetElementPtrInst>(user)) {
+                APInt step(64, 0);
+                if (!gep->accumulateConstantOffset(layout, step)) return;
+                work.push_back({gep, offset + step.getZExtValue()});
+            } else if (auto *load = dyn_cast<LoadInst>(user)) {
+                unsigned index = static_cast<unsigned>(offset / 8);
+                bool pointer_slot = index == 0 && load->getType()->isPointerTy();
+                if (offset % 8 != 0 || index > sizes.size() || (index != 0 && !load->getType()->isIntegerTy(64)) ||
+                    (index == 0 && !pointer_slot) || load->isVolatile())
+                    return;
+                forwards.emplace_back(load, index == 0 ? data : sizes[index - 1]);
+            } else {
+                return; // a write or a use of the address
+            }
+        }
+    }
+    for (auto &[load, value] : forwards) {
+        load->replaceAllUsesWith(value);
+        load->eraseFromParent();
+    }
+}
+
+// What a slice of rows (more than one count) is assumed to hold, and what its index arithmetic is given.
+//
+// Every dimension and every prefix of them (`P_j`, the product of the first j + 1) is below 2^20 (a million elements:
+// the solver's time grows with the bound, 2 s for a read at 2^20, 5 s at 2^28 and 6 s at 2^32; a slice of one count is
+// held to 2^32): no object here is bigger, and the products cannot wrap. The solver is slow at a product of two
+// variables in an index (`r * count + c` against `count0 * count1`: nothing in 10 s even for counts of 8 bits), so
+// `P_j` of a count is a parameter of the unit that is only known by what is true of a product (`given`): it is 0 when a
+// factor is, it is at least each factor when none is 0, it is at least `P_(j-1)` when the count is not 0, and each
+// multiplication of the body by a count is followed by `x < P_(j-1)` gives `x * count_j + count_j <= P_j`. Every one of
+// them holds of the real product (the bounds keep it from wrapping), so a proof from them is a proof for it, and an
+// index `x * count_j + i`, i < count_j, is inside the object by additions and comparisons. A product the program takes
+// itself (`rows * cols`) is the solver's own. Returns the number of elements, P of the last dimension.
+Value *assume_row_products(IRBuilder<> &builder, Function *unit, const SmallVector<uint64_t, 4> &dims,
+                           const std::vector<Value *> &sizes, const std::vector<Value *> &given,
+                           unsigned &next_product) {
+    Type *i64 = builder.getInt64Ty();
+    Value *zero = ConstantInt::get(i64, 0);
+    auto below = [&](Value *value) {
+        builder.CreateAssumption(builder.CreateICmpULT(value, ConstantInt::get(i64, 1ull << 20)));
+    };
+    auto implies = [&](Value *when, Value *then) {
+        builder.CreateAssumption(builder.CreateOr(builder.CreateNot(when), then));
+    };
+    std::vector<Value *> prefix;    // P_j
+    std::vector<Value *> dimension; // the size of dimension j
+    unsigned count = 0, next = 0;
+    for (uint64_t size : dims) {
+        Value *value = size == 0 ? sizes[count++] : static_cast<Value *>(ConstantInt::get(i64, size));
+        dimension.push_back(value);
+        below(value);
+        if (prefix.empty()) {
+            prefix.push_back(value);
+            continue;
+        }
+        Value *before = prefix.back();
+        if (size != 0) { // a product by a constant is linear
+            prefix.push_back(builder.CreateMul(before, value));
+            below(prefix.back());
+            continue;
+        }
+        Value *product = given[next++];
+        prefix.push_back(product);
+        below(product);
+        Value *before_zero = builder.CreateICmpEQ(before, zero), *value_zero = builder.CreateICmpEQ(value, zero);
+        Value *product_zero = builder.CreateICmpEQ(product, zero);
+        implies(before_zero, product_zero);
+        implies(value_zero, product_zero);
+        implies(builder.CreateAnd(builder.CreateNot(before_zero), builder.CreateNot(value_zero)),
+                builder.CreateAnd(builder.CreateICmpUGE(product, value), builder.CreateICmpUGE(product, before)));
+    }
+    for (size_t j = 1; j < dims.size(); j++) {
+        if (dims[j] != 0) continue;
+        Value *size = dimension[j];
+        SmallVector<BinaryOperator *, 4> sites;
+        for (User *user : size->users()) {
+            auto *multiply = dyn_cast<BinaryOperator>(user);
+            if (multiply != nullptr && multiply->getOpcode() == Instruction::Mul && multiply->getFunction() == unit &&
+                !isa<ConstantInt>(multiply->getOperand(0)) && !isa<ConstantInt>(multiply->getOperand(1)) &&
+                multiply->getOperand(0) != multiply->getOperand(1) && !multiply->hasNoUnsignedWrap() &&
+                !multiply->hasNoSignedWrap()) // a product that can be poison stays what it is
+                sites.push_back(multiply);
+        }
+        std::map<Value *, Value *> known; // the product of x and this count, one value for every site of the same x
+        for (BinaryOperator *multiply : sites) {
+            if (next_product >= unit->arg_size()) break;
+            Value *x = multiply->getOperand(0) == size ? multiply->getOperand(1) : multiply->getOperand(0);
+            auto [found, fresh] = known.emplace(x, nullptr);
+            if (fresh) found->second = unit->getArg(next_product++);
+            Value *product = found->second;
+            IRBuilder<> at(multiply);
+            Value *x_zero = at.CreateICmpEQ(x, zero), *size_zero = at.CreateICmpEQ(size, zero);
+            Value *product_zero = at.CreateICmpEQ(product, zero);
+            at.CreateAssumption(at.CreateOr(at.CreateNot(x_zero), product_zero));
+            at.CreateAssumption(at.CreateOr(at.CreateNot(size_zero), product_zero));
+            Value *inside = at.CreateICmpULT(x, prefix[j - 1]);
+            // x * count + count <= P_j, written without the sum that could wrap
+            Value *fits = at.CreateAnd(at.CreateICmpULE(size, prefix[j]),
+                                       at.CreateICmpULE(product, at.CreateSub(prefix[j], size)));
+            at.CreateAssumption(at.CreateOr(at.CreateNot(inside), fits));
+            at.CreateAssumption(
+                at.CreateOr(at.CreateNot(at.CreateAnd(inside, at.CreateNot(size_zero))), at.CreateICmpUGE(product, x)));
+            multiply->replaceAllUsesWith(product);
+            multiply->eraseFromParent();
+        }
+    }
+    return prefix.back();
+}
+
 // The slice parameters of the function being proved point at `count` elements: its `data` is dereferenceable for
 // count * sizeof(T) bytes, which is what makes `xs[i]` with `i < countof(xs)` defined with no other contract. Only
 // the unit has it: a slice a callee receives is whatever its caller built, and the caller proves that.
+//
+// A slice with more than one count (`[:][:]`) is passed in memory: the unit takes (ptr data, i64 count...) and builds
+// the struct in a slot of its own, which the body reads as it read the argument.
 //
 // arm64 passes the struct as one [2 x i64], so the pointer is an integer that the body turns back with inttoptr, a
 // pointer with no object that Alive2 can check an index against. The unit gets a function of its own whose slice is
@@ -528,6 +689,8 @@ Function *split_slice_parameters(Function *function) {
     if (types.size() != function->arg_size() + 1) return function; // a hidden sret result moves them; not read
     LLVMContext &context = function->getContext();
     std::vector<uint64_t> elements(function->arg_size(), 0), aligns(function->arg_size(), 1);
+    std::vector<unsigned> counts(function->arg_size(), 1);            // the counts of a slice parameter
+    std::vector<SmallVector<uint64_t, 4>> dims(function->arg_size()); // and the dimensions of the ones in memory
     std::vector<Type *> parameters;
     bool any = false;
     for (unsigned i = 0; i < function->arg_size(); i++) {
@@ -535,23 +698,48 @@ Function *split_slice_parameters(Function *function) {
         auto *pair = dyn_cast<ArrayType>(type);
         if (pair != nullptr && pair->getNumElements() == 2 && pair->getElementType()->isIntegerTy(64))
             elements[i] = slice_element_bytes(types[i + 1], aligns[i]);
+        else if (type->isPointerTy()) { // in memory
+            SliceLayout layout = slice_layout(types[i + 1]);
+            if (layout.runtime > 1) elements[i] = layout.element, aligns[i] = layout.align, dims[i] = layout.dims;
+            counts[i] = layout.runtime;
+        }
         if (elements[i] == 0) {
             parameters.push_back(type);
             continue;
         }
         any = true;
         parameters.push_back(PointerType::getUnqual(context));
-        parameters.push_back(Type::getInt64Ty(context));
+        for (unsigned count = 0; count < counts[i]; count++)
+            parameters.push_back(Type::getInt64Ty(context));
     }
     if (!any) return function;
+    // more parameters for what the solver is not given as a product (see assume_row_products)
+    unsigned extras = 0, rows = 0;
+    for (unsigned i = 0; i < function->arg_size(); i++) {
+        if (counts[i] > 1 && elements[i] != 0) extras += counts[i] - 1, rows++;
+    }
+    if (rows != 0) { // and one for each product the body may take of a count with something else
+        for (Instruction &instruction : instructions(*function)) {
+            if (instruction.getOpcode() == Instruction::Mul && !isa<ConstantInt>(instruction.getOperand(0)) &&
+                !isa<ConstantInt>(instruction.getOperand(1)))
+                extras++;
+        }
+    }
+    for (unsigned extra = 0; extra < extras; extra++)
+        parameters.push_back(Type::getInt64Ty(context));
     auto *type = FunctionType::get(function->getReturnType(), parameters, function->isVarArg());
     Function *unit = Function::Create(type, function->getLinkage(), "", function->getParent());
     unit->copyAttributesFrom(function);
     SmallVector<AttributeSet, 8> attributes;
     for (unsigned i = 0; i < function->arg_size(); i++) {
         attributes.push_back(function->getAttributes().getParamAttrs(i));
-        if (elements[i] != 0) attributes.back() = AttributeSet(), attributes.push_back(AttributeSet());
+        if (elements[i] == 0) continue;
+        attributes.back() = AttributeSet();
+        for (unsigned count = 0; count < counts[i]; count++)
+            attributes.push_back(AttributeSet());
     }
+    for (unsigned extra = 0; extra < extras; extra++)
+        attributes.push_back(AttributeSet());
     unit->setAttributes(AttributeList::get(context, function->getAttributes().getFnAttrs(),
                                            function->getAttributes().getRetAttrs(), attributes));
     unit->copyMetadata(function, 0);
@@ -563,7 +751,7 @@ Function *split_slice_parameters(Function *function) {
     unit->splice(unit->end(), function);
     BasicBlock &entry = unit->getEntryBlock();
     IRBuilder<> builder(&*entry.getFirstInsertionPt());
-    unsigned next = 0;
+    unsigned next = 0, products = unit->arg_size() - extras;
     std::vector<Value *> slices;
     for (unsigned i = 0; i < function->arg_size(); i++, next++) {
         Argument *old = function->getArg(i);
@@ -572,30 +760,55 @@ Function *split_slice_parameters(Function *function) {
             unit->getArg(next)->takeName(old);
             continue;
         }
-        Argument *data = unit->getArg(next), *count = unit->getArg(next + 1);
+        Argument *data = unit->getArg(next);
+        std::vector<Value *> sizes;
+        for (unsigned count = 0; count < counts[i]; count++)
+            sizes.push_back(unit->getArg(++next));
         slices.push_back(data);
         data->setName("xs.data");
-        count->setName("xs.count");
-        next++;
-        for (User *user : make_early_inc_range(old->users())) {
-            auto *extract = dyn_cast<ExtractValueInst>(user);
-            if (extract == nullptr || extract->getNumIndices() != 1) continue;
-            if (extract->getIndices()[0] == 1) {
-                extract->replaceAllUsesWith(count);
-                continue;
+        for (Value *size : sizes)
+            size->setName("xs.count");
+        Type *i64 = Type::getInt64Ty(context);
+        if (counts[i] == 1) {
+            Value *count = sizes[0];
+            for (User *user : make_early_inc_range(old->users())) {
+                auto *extract = dyn_cast<ExtractValueInst>(user);
+                if (extract == nullptr || extract->getNumIndices() != 1) continue;
+                if (extract->getIndices()[0] == 1) {
+                    extract->replaceAllUsesWith(count);
+                    continue;
+                }
+                for (User *use : make_early_inc_range(extract->users())) {
+                    if (isa<IntToPtrInst>(use)) use->replaceAllUsesWith(data);
+                }
             }
-            for (User *use : make_early_inc_range(extract->users())) {
-                if (isa<IntToPtrInst>(use)) use->replaceAllUsesWith(data);
-            }
+            Value *address = builder.CreatePtrToInt(data, i64);
+            Value *pair = builder.CreateInsertValue(PoisonValue::get(old->getType()), address, 0);
+            old->replaceAllUsesWith(builder.CreateInsertValue(pair, count, 1));
+        } else { // the struct in a slot of the unit's own
+            AllocaInst *slot = builder.CreateAlloca(ArrayType::get(i64, counts[i] + 1));
+            slot->setAlignment(Align(8));
+            old->replaceAllUsesWith(slot);
+            forward_slot_loads(slot, data, sizes);
+            builder.CreateAlignedStore(data, slot, Align(8));
+            for (unsigned count = 0; count < counts[i]; count++)
+                builder.CreateAlignedStore(sizes[count], builder.CreateConstInBoundsGEP1_64(i64, slot, count + 1),
+                                           Align(8));
         }
-        Value *address = builder.CreatePtrToInt(data, Type::getInt64Ty(context));
-        Value *pair = builder.CreateInsertValue(PoisonValue::get(old->getType()), address, 0);
-        old->replaceAllUsesWith(builder.CreateInsertValue(pair, count, 1));
-        // no object is 2^40 bytes; the bound keeps the solver's sizes small
-        builder.CreateAssumption(builder.CreateICmpULE(count, ConstantInt::get(count->getType(), 1ull << 32)));
-        Value *bytes = builder.CreateMul(count, ConstantInt::get(count->getType(), elements[i]), "", true);
+        Value *bytes = nullptr;
+        if (counts[i] == 1) {
+            // no object is 2^40 bytes; the bound keeps the solver's sizes small
+            builder.CreateAssumption(builder.CreateICmpULE(sizes[0], ConstantInt::get(i64, 1ull << 32)));
+            bytes = builder.CreateMul(sizes[0], ConstantInt::get(i64, elements[i]), "", true);
+        } else {
+            std::vector<Value *> given;
+            for (unsigned count = 1; count < counts[i]; count++)
+                given.push_back(unit->getArg(products++));
+            bytes = builder.CreateMul(assume_row_products(builder, unit, dims[i], sizes, given, products),
+                                      ConstantInt::get(i64, elements[i]));
+        }
         SmallVector<Value *, 2> sized = {data, bytes};
-        SmallVector<Value *, 2> aligned = {data, ConstantInt::get(count->getType(), aligns[i])};
+        SmallVector<Value *, 2> aligned = {data, ConstantInt::get(i64, aligns[i])};
         builder.CreateAssumption({OperandBundleDef("dereferenceable", sized), OperandBundleDef("align", aligned)});
     }
     relax_slice_arithmetic(slices);
@@ -2090,15 +2303,20 @@ bool only_read(const Function &callee, unsigned index) {
     return false;
 }
 
-// A slice parameter (`T xs[:]`): the size of T in bytes, 0 when the parameter is not one; `restricted` is whether its
-// data pointer is `restrict` (`T xs[restrict :]`, which the debug info keeps as DW_TAG_restrict_type on `data`).
-uint64_t slice_parameter(const Function &callee, unsigned index, bool &restricted) {
-    auto *pair = dyn_cast<ArrayType>(callee.getArg(index)->getType());
+// A slice parameter (`T xs[:]`, `T xs[:][2]`, `T xs[:][:]`): the bytes one step of each count holds (T times the fixed
+// dimensions), 0 when the parameter is not one; `counts` is how many counts it has (more than one is passed in memory:
+// its argument points at the struct) and `restricted` whether its data pointer is `restrict` (`T xs[restrict :]`,
+// which the debug info keeps as DW_TAG_restrict_type on `data`; only the outermost bracket carries it).
+uint64_t slice_parameter(const Function &callee, unsigned index, bool &restricted, unsigned &counts) {
+    Type *argument = callee.getArg(index)->getType();
+    auto *pair = dyn_cast<ArrayType>(argument);
     const DIType *type = parameter_type(callee, index);
-    if (pair == nullptr || pair->getNumElements() != 2 || !pair->getElementType()->isIntegerTy(64) || type == nullptr)
-        return 0;
-    uint64_t align = 1;
-    uint64_t bytes = slice_element_bytes(type, align);
+    if (type == nullptr) return 0;
+    SliceLayout layout = slice_layout(type);
+    counts = layout.runtime;
+    bool in_registers = pair != nullptr && pair->getNumElements() == 2 && pair->getElementType()->isIntegerTy(64);
+    if (counts == 1 ? !in_registers : !argument->isPointerTy()) return 0;
+    uint64_t bytes = layout.element * layout.fixed;
     restricted = false;
     while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
         unsigned tag = derived->getTag();
@@ -2151,11 +2369,12 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
                                                                               MDString::get(llvm_context, second)}));
     };
     unsigned count = std::min<unsigned>(call.arg_size(), callee.arg_size());
-    std::vector<uint64_t> slice(count, 0); // the element size of a slice argument
+    std::vector<uint64_t> slice(count, 0);  // the element size of a slice argument
+    std::vector<unsigned> counts(count, 1); // and its counts
     std::vector<bool> restricted(count, false);
     for (unsigned i = 0; i < count; i++) {
         bool by_slice = false;
-        slice[i] = slice_parameter(callee, i, by_slice);
+        slice[i] = slice_parameter(callee, i, by_slice, counts[i]);
         restricted[i] = slice[i] != 0 ? by_slice
                                       : callee.hasParamAttribute(i, Attribute::NoAlias) &&
                                             !callee.hasParamAttribute(i, Attribute::StructRet) &&
@@ -2199,6 +2418,16 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
             auto object = [&](unsigned k, uint64_t constant) -> std::pair<Value *, Value *> {
                 if (slice[k] == 0) return {call.getArgOperand(k), builder.getInt64(constant)};
                 Value *pair = call.getArgOperand(k);
+                if (counts[k] > 1) { // in memory: the struct the argument points at
+                    Value *data = builder.CreateAlignedLoad(builder.getPtrTy(), pair, Align(8));
+                    Value *bytes = builder.getInt64(slice[k]);
+                    for (unsigned at = 0; at < counts[k]; at++) {
+                        Value *address = builder.CreateConstInBoundsGEP1_64(builder.getInt64Ty(), pair, at + 1);
+                        bytes = builder.CreateMul(
+                            bytes, builder.CreateAlignedLoad(builder.getInt64Ty(), address, Align(8)), "", true);
+                    }
+                    return {data, bytes};
+                }
                 Value *data = builder.CreateIntToPtr(builder.CreateExtractValue(pair, 0), builder.getPtrTy());
                 Value *bytes =
                     builder.CreateMul(builder.CreateExtractValue(pair, 1), builder.getInt64(slice[k]), "", true);
@@ -2230,8 +2459,9 @@ void check_restrict_calls(Module &module) {
                 continue;
             for (unsigned i = 0; i < callee->arg_size(); i++) {
                 bool restricted_slice = false;
+                unsigned counts = 1;
                 if (callee->hasParamAttribute(i, Attribute::NoAlias) ||
-                    (slice_parameter(*callee, i, restricted_slice) != 0 && restricted_slice)) {
+                    (slice_parameter(*callee, i, restricted_slice, counts) != 0 && restricted_slice)) {
                     calls.push_back(call);
                     break;
                 }
