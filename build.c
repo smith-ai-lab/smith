@@ -717,6 +717,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"prove", "prove", nullptr, nullptr, 1},
     {"prove-sound", "prove_sound", nullptr, nullptr, 1},
     {"random", "random", nullptr, nullptr, 0},
+    {"readme", "readme", nullptr, nullptr, 0},
     {"release", "release", nullptr, nullptr, 0},
     {"resource", "resource", nullptr, nullptr, 0},
     {"run", "run", nullptr, nullptr, 0},
