@@ -2059,6 +2059,8 @@ static SmithLangReplay smith_lang_replay;
 static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangFrame *frame);
 static SmithTokenKind smith_lang_slice_kind(const char *word);
+static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame);
 static const char *smith_lang_tuple_keep(const char *text, size_t length);
 
 // Writes the words of a frame, then the frame is done.
@@ -4096,6 +4098,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         }
         if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
         if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
+        if (smith_lang_enum_replay(lang, host, replay, frame)) continue;
         if (smith_lang_list_gone(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
         if (use.kind == SmithLangPack_None &&

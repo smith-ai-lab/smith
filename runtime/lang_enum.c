@@ -491,6 +491,83 @@ static void smith_lang_enum_reset(void) {
     smith_lang_enum_shapes_reset();
 }
 
+// ---- The dot rule in a generic instance's body (issue #198)
+//
+// An instance's body is written at the end of the file from the tokens the generic recorded, so the compiler has read
+// nothing of it and cannot be asked the type a `.name` or `{.name = ...}` stands for. In a `return` the type is the
+// function's own: the generic's declared result, a payload enum (a typedef'd name, as the module spells it) that the
+// compiler has read already, wherever the generic's module is. The replay writes the compound literal the lowering
+// writes for a source's own `return`. Other contexts (a comparison, an assignment, an argument) are an error where the
+// generic is recorded.
+
+// The payload enum a generic's declared result type is, from the token before the function's name (`Opt`, `x::Opt` or
+// `struct smith_enum_...`), or false when it is none.
+static bool smith_lang_enum_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                   SmithLangEnumType *type) {
+    if (generic == nullptr || generic->name_index < 1) return false;
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[generic->first + generic->name_index];
+    uint32_t at = generic->first + generic->name_index;
+    SmithToken span[3];
+    size_t count = 0;
+    const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1];
+    if (before->kind != SmithTokenKind_Identifier) return false;
+    if (at >= generic->first + 3 && smith_lang_gt_punct(&smith_lang_gt.tokens[at - 2], "::")) {
+        span[count++] = smith_lang_gt_token(&smith_lang_gt, &smith_lang_gt.tokens[at - 3]);
+        span[count++] = smith_lang_gt_token(&smith_lang_gt, &smith_lang_gt.tokens[at - 2]);
+    }
+    span[count++] = smith_lang_gt_token(&smith_lang_gt, before);
+    char canonical[smith_lang_enum_name_max + 16];
+    if (count == 1 && before->length > 11 && memcmp(smith_lang_gt_str(before), "smith_enum_", 11) == 0) {
+        snprintf(canonical, sizeof canonical, "struct %.*s", (int)before->length, smith_lang_gt_str(before));
+    } else {
+        char resolved[smith_lang_name_max];
+        smith_lang_tuple_resolve(lang, span, 0, count, resolved, sizeof resolved);
+        snprintf(canonical, sizeof canonical, "struct smith_enum_%s", resolved);
+    }
+    (void)name;
+    return smith_lang_enum_type(host, canonical, type);
+}
+
+// At `return` in an instance's body: `return .name ;` and `return { .name = payload }` are written as the compound
+// literal of the function's payload enum. True when the frame's tokens were taken.
+static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    if (replay->instance == nullptr || replay->typing || at + 3 >= frame->end) return false;
+    SmithLangGenToken *keyword = &smith_lang_gt.tokens[at];
+    if (keyword->special != SmithLangGen_Plain || keyword->param != 0 ||
+        !smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "return")) {
+        return false;
+    }
+    bool braced = smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "{");
+    uint32_t dot = at + (braced ? 2 : 1);
+    const SmithLangGenToken *variant = &smith_lang_gt.tokens[dot + 1];
+    bool bare = !braced && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 3], ";");
+    if (!smith_lang_gt_punct(&smith_lang_gt.tokens[dot], ".") || variant->kind != SmithTokenKind_Identifier ||
+        (braced && !smith_lang_gt_punct(&smith_lang_gt.tokens[dot + 2], "=")) || (!braced && !bare)) {
+        return false;
+    }
+    SmithLangEnumType type;
+    if (!smith_lang_enum_result(lang, host, replay->generic, &type)) return false;
+    SmithToken dot_token = smith_lang_gt_token(&smith_lang_gt, &smith_lang_gt.tokens[dot]);
+    SmithToken name_token = smith_lang_gt_token(&smith_lang_gt, variant);
+    char constant[smith_lang_enum_name_max + 64];
+    uint32_t place = smith_lang_gen_place(host, replay->generic, keyword, replay->location);
+    char words[smith_lang_enum_name_max * 3 + 96];
+    if (!smith_lang_enum_variant(lang, host, &type, &dot_token, &name_token, bare, constant, sizeof constant)) {
+        snprintf(words, sizeof words, "return ( %s ) { }", type.type); // a value of the type: nothing else is said
+    } else if (bare) {
+        snprintf(words, sizeof words, "return ( %s ) { . tag = %s }", type.type, constant);
+    } else {
+        snprintf(words, sizeof words, "return ( %s ) { . tag = %s , . %.*s =", type.type, constant,
+                 (int)variant->length, smith_lang_gt_str(variant));
+    }
+    frame->pos = dot + (braced ? 3 : 2);
+    SmithLangSlicePart parts[] = {{words, 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, 1);
+    return true;
+}
+
 // ---- A type function that returns an enum (issue #198, PR 3b)
 //
 // `type option(type T) { return enum { T some; none; }; }` is read by the lowering, never run: its body is the shape of
@@ -634,6 +711,28 @@ static bool smith_lang_eshape_other(SmithLang *lang, const SmithHost *host, cons
         }
     }
     return false;
+}
+
+// A `.name` (a variant by itself) in a generic's body other than after `return`: the instance's body is written without
+// the compiler, so the type it stands for is unknown there. Said where the generic is recorded, with the fix.
+static uint32_t smith_lang_enum_return_dot; // where the `.` after the last `return` of a generic's body is
+
+static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (smith_lang_ident(token, "return")) {
+        const SmithToken *next = smith_lang_peek(lang, host, 0, false);
+        smith_lang_enum_return_dot = smith_lang_punct(next, ".") ? next->location : 0;
+        return;
+    }
+    if (!smith_lang_punct(token, ".") || !token->space_before || token->location == smith_lang_enum_return_dot) return;
+    const SmithToken *name = smith_lang_peek(lang, host, 0, false);
+    const SmithToken *after = smith_lang_peek(lang, host, 1, false);
+    if (name->kind != SmithTokenKind_Identifier || smith_lang_punct(after, "=")) return; // `{.x = 1}` is C's own
+    smith_lang_error(
+        lang, host, token->location,
+        "`.%.*s` in a generic's body needs the type it stands for, and a generic's body is written without "
+        "the compiler, so only `return .variant;` and `return {.variant = payload};` are built for now "
+        "(known gap)",
+        (int)name->length, name->text);
 }
 
 // At `type` where a declaration begins: `type f(type T, ...) { return enum { ... }; }` is recorded and dropped. False
@@ -909,6 +1008,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     }
     if (token->foreign || lang->in_attribute || !lang->is_module || token->synthetic) return false;
     if (lang->recording) {
+        smith_lang_enum_generic_dot(lang, host, token);
         const SmithLangEnumShape *inside =
             lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
         if (inside != nullptr) {

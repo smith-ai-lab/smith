@@ -1,0 +1,1 @@
+-I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/enum-generic-return/src/find.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program

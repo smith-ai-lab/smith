@@ -692,6 +692,54 @@ int main() {
     printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
     return 0;
 }
+==> enum-generic-return/src/find.smith <==
+module find;
+
+// A generic returns a payload enum: `return .none;` and `return {.some = i};` are the function's own enum's, written in
+// each instance (the compiler has read nothing of the instance's body when they are lowered).
+
+export typedef enum {
+    usize some;
+    none;
+} Position;
+
+export Position position(auto xs, auto v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return {.some = i};
+    return .none;
+}
+
+export Position first_or_none(auto xs) {
+    if (countof(xs) == 0) return .none;
+    return {.some = 0};
+}
+==> enum-generic-return/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import find;
+
+i32 main(void) {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    u8 bytes[:] = raw;
+    i32 numbers[3] = {10, 20, 30};
+    i32 ints[:] = numbers;
+    find::Position a = find::position(bytes, 3);
+    find::Position b = find::position(bytes, 9);
+    find::Position c = find::position(ints, 30);
+    find::Position none = find::first_or_none(bytes[5:]);
+    switch (a) {
+    case .some:
+        c::printf("a %zu\n", a.some);
+        break;
+    case .none:
+        c::printf("a none\n");
+        break;
+    }
+    c::printf("%s %zu %s\n", b == .none ? "b none" : "b some", c == .some ? c.some : 99,
+              none == .none ? "empty" : "full");
+    return 0;
+}
 ==> enum-payload-lowering/src/shapes.smith <==
 module shapes;
 
@@ -1288,6 +1336,27 @@ module main;
 i32 main() {
     i32 defer = 1;
     return defer - 1;
+}
+==> error-enum-generic-dot/src/main.smith <==
+module main;
+
+export typedef struct {
+    f32 radius;
+} Circle;
+
+export typedef enum {
+    Circle circle;
+    empty;
+} Shape;
+
+export bool is_empty(auto s) {
+    return s == .empty;
+}
+
+export Shape pick(auto flag) {
+    Shape s = .empty;
+    if (flag) return {.circle = {.radius = 1}};
+    return s;
 }
 ==> error-enum-payload/src/main.smith <==
 module main;

@@ -1,0 +1,20 @@
+module find;
+
+// A generic returns a payload enum: `return .none;` and `return {.some = i};` are the function's own enum's, written in
+// each instance (the compiler has read nothing of the instance's body when they are lowered).
+
+export typedef enum {
+    usize some;
+    none;
+} Position;
+
+export Position position(auto xs, auto v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return {.some = i};
+    return .none;
+}
+
+export Position first_or_none(auto xs) {
+    if (countof(xs) == 0) return .none;
+    return {.some = 0};
+}
