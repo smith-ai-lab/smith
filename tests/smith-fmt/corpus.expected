@@ -4315,6 +4315,90 @@ i32 main(void) {
     c::printf("%zu\n", through_restrict(xs));
     return 0;
 }
+==> generic-slice-local/src/conv.smith <==
+module conv;
+
+// A slice local in a generic's body (issue #135): declared from a parameter, counted, indexed, cut, passed to a
+// function, and the cut of a cut. The replay writes the declaration as an ordinary function's is lowered.
+
+static usize read_sum(const u8 xs[:]) {
+    usize total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+static usize plain_sum(u8 xs[:]) {
+    return read_sum(xs);
+}
+
+export usize total(auto xs) {
+    u8 v[:] = xs;
+    usize t = 0;
+    for (usize i = 0; i < countof(v); i++) {
+        t += v[i];
+    }
+    return t;
+}
+
+export usize from_cut(auto xs) {
+    u8 v[:] = xs[1:];
+    u8 w[:] = v[1:3];
+    return countof(v) * 100 + countof(w) * 10 + w[0];
+}
+
+export usize passed(auto xs) {
+    u8 v[:] = xs;
+    return plain_sum(v);
+}
+
+export usize fixed(void) {
+    u8 raw[3] = {7, 8, 9};
+    u8 v[:] = raw;
+    return plain_sum(v) + countof(v);
+}
+
+export usize read_only(auto xs) {
+    const u8 v[:] = xs;
+    return read_sum(v);
+}
+
+export usize restricted(auto xs) {
+    u8 v[restrict:] = xs;
+    return countof(v);
+}
+
+export usize twice(auto xs, auto ys) {
+    usize t = 0;
+    {
+        u8 v[:] = xs;
+        t += countof(v);
+    }
+    {
+        u8 v[:] = ys;
+        t += v[0];
+    }
+    return t;
+}
+==> generic-slice-local/src/main.smith <==
+module main;
+
+import conv;
+import <stdio.h>;
+
+i32 main(void) {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    u8 xs[:] = raw;
+    u8 big[:] = raw;
+    u8 res[restrict:] = raw;
+    c::printf("%zu %zu\n", conv::total(xs), conv::from_cut(xs));
+    c::printf("%zu %zu\n", conv::passed(xs), conv::fixed());
+    c::printf("%zu\n", conv::twice(xs, big));
+    const u8 read[:] = xs;
+    c::printf("%zu %zu\n", conv::read_only(read), conv::restricted(res));
+    return 0;
+}
 ==> generic-slice-type-argument/src/main.smith <==
 module main;
 
