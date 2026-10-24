@@ -1,0 +1,47 @@
+module typed;
+
+static i32 sq(i32 x) {
+    return x * x;
+}
+
+// A generic that gives each argument back, and one that counts and adds what it is given.
+export typeof(x) same(auto x, usize k) {
+    (void)k;
+    return x;
+}
+
+export i32 total(auto p, auto... rest) {
+    i32 sum = (i32)(*p) + (i32)countof(rest) * 100;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        sum += (i32)rest[i];
+    }
+    return sum;
+}
+
+// An expansion among the arguments of a call to a generic: the other arguments are expressions of the parameters, the
+// pattern calls a generic, and a plain function.
+export i32 with_generic(auto p, auto... rest) {
+    return total(p + 0, same(rest, 1)...);
+}
+
+export i32 with_function(auto p, auto... rest) {
+    return total(&p[0], 1000, sq(rest)..., 7);
+}
+
+// A call of a generic with `rest[k]` in an argument that is itself a call of a generic.
+export i32 nested(auto p, auto... rest) {
+    return total(&p[0], 1, same(rest[0], 2));
+}
+
+export i32 mixed(auto p, auto... rest) {
+    return total(p + 0, rest...) + total(p, same(rest, 0)...);
+}
+
+// A local of the instance as an argument of a call of a generic inside the pattern, and in a call inside a call.
+export i32 with_local(auto p, auto... rest) {
+    i32 sum = 0;
+    for (usize k = 0; k < 2; k++) {
+        sum += total(p + k, same(rest, k)...) + total(p, same(*p, k));
+    }
+    return sum;
+}

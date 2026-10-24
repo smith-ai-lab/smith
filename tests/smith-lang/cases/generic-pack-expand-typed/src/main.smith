@@ -1,0 +1,14 @@
+module main;
+
+import <stdio.h>;
+import typed;
+
+int main(void) {
+    i32 a[2] = {1, 2};
+    c::printf("%d %d\n", typed::with_generic(a, 5, (u8)6), typed::with_generic(a));
+    c::printf("%d %d\n", typed::with_function(a, 2, 3), typed::with_function(a));
+    c::printf("%d\n", typed::nested(a, 4));
+    c::printf("%d\n", typed::mixed(a, 2, 3));
+    c::printf("%d\n", typed::with_local(a, 7, 8));
+    return 0;
+}
