@@ -6610,6 +6610,32 @@ export Numbers first_two(Numbers all) {
     Numbers two = all[:2];
     return two;
 }
+==> slice-module-type-argument/src/key.smith <==
+module key;
+
+export typedef struct {
+    u64 a;
+    u64 b;
+} Key;
+
+export u64 total(Key ks[:]) {
+    u64 t = 0;
+    for (usize i = 0; i < countof(ks); i++)
+        t += ks[i].a;
+    return t;
+}
+==> slice-module-type-argument/src/main.smith <==
+module main;
+import <stdio.h>;
+import key;
+
+// A fixed array passed to a slice parameter of an imported module's type, in a file that imports a C header: the
+// lowering's own spelling of the type is no C name of the user's (issue #203).
+i32 main(void) {
+    key::Key ks[2] = {{1, 2}, {3, 4}};
+    c::printf("%llu\n", (unsigned long long)key::total(ks));
+    return 0;
+}
 ==> slice-pointer-lowering/src/pointers.smith <==
 module pointers;
 

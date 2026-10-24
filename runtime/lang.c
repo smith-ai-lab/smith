@@ -479,6 +479,7 @@ struct SmithLang {
     SmithLangBrace braces[smith_lang_braces_max];
     uint32_t paren_depth;
     bool imports_watched; // the host watches the names the imported headers declared
+    bool generated_name;  // the token being lowered is the lowering's own spelling: no check of C names (issue #203)
     bool body_sparse;     // inside a function body the host offers only braces and watched names
     bool in_function;     // inside a function body: nothing declared here is the module's
     char params[smith_lang_params_max][smith_lang_param_max]; // the parameters of the function being declared whose
