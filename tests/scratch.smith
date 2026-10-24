@@ -10,6 +10,12 @@ import smith::io;
 import smith::test;
 import <string.h>;
 
+// The bytes of a buffer, for the calls of io that take a slice.
+static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+    const u8 *bytes = data;
+    return bytes[0:size];
+}
+
 export typedef struct {
     io::Io *io;
     const char *dir;    // where commands run
@@ -98,7 +104,8 @@ export Run build(const Project *p, const char *arguments) {
 }
 
 export void write(const Project *p, const char *name, const char *text) {
-    io::Error written = io::files_write(&p->io->files, path_in(p, name), text, c::strlen(text), io::Replace);
+    io::Error written =
+        io::files_write(&p->io->files, path_in(p, name), test_io_bytes(text, c::strlen(text)), io::Replace);
     test::check_equal(written.code, 0);
 }
 

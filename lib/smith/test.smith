@@ -1196,10 +1196,6 @@ void *map_bytes(usize bytes, i32 flags) {
     return result;
 }
 
-T *map(constexpr type T, usize count, i32 flags) {
-    return (T *)map_bytes(count * sizeof(T), flags);
-}
-
 // Printing goes through the console of the runner's io.
 [[gnu::format(__printf__, 2, 3)]] void say(const Options *options, const char *format, ...) {
     char buffer[8192];
@@ -2101,7 +2097,7 @@ bool shrink_confirm(Shrink *shrink) {
 // Shrinks the failing key of a finished property test in place. It runs here, while the other tests' children go on;
 // the same seed gives the same shrunk case unless the time budget ends the search.
 void shrink_run(const Test *test, const Options *options, Run *run) {
-    Shrink *shrink = map(Shrink, 1, map_private);
+    Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
     *shrink = (Shrink){.test = test,
                        .options = options,
                        .seed = run->seed,
@@ -2453,9 +2449,9 @@ void shuffle(usize *order_of, usize count, u64 seed) {
 
 // The tests the options choose, in order, with a run for each.
 Plan *make_plan(const Options *options) {
-    Plan *plan = map(Plan, 1, map_private);
+    Plan *plan = (Plan *)map_bytes((1) * sizeof(Plan), map_private);
     plan->options = options;
-    plan->tests = map(const Test *, table_size + 1, map_private);
+    plan->tests = (const Test **)map_bytes((table_size + 1) * sizeof(const Test *), map_private);
     for (usize i = 0; i < table_size; i++) {
         const Test *test = &table[i];
         contract::assert(test->name != nullptr);
@@ -2464,19 +2460,19 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
-    plan->runs = map(Run, plan->count, map_private);
-    plan->order = map(usize, plan->count + 1, map_private);
+    plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
+    plan->order = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
     for (usize i = 0; i < plan->count; i++)
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
-    shared_slots = map(Shared, jobs_max + 1, map_shared);
+    shared_slots = (Shared *)map_bytes((jobs_max + 1) * sizeof(Shared), map_shared);
     const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
     if (kill_workers != nullptr) {
-        workers_to_kill = map(u32, 1, map_shared);
+        workers_to_kill = (u32 *)map_bytes((1) * sizeof(u32), map_shared);
         *workers_to_kill = (u32)c::strtoul(kill_workers, nullptr, 10);
     }
-    recorded = map(Draws, 1, map_shared);
-    overrides = map(Draws, 1, map_shared);
+    recorded = (Draws *)map_bytes((1) * sizeof(Draws), map_shared);
+    overrides = (Draws *)map_bytes((1) * sizeof(Draws), map_shared);
     return plan;
 }
 
@@ -2542,12 +2538,12 @@ void say_explained(const Options *options) {
     full_run = options.full;
     raise_files(options.jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
-    forks = map(u64, 1, map_shared);
-    explained = map(u64, explain_stats, map_shared);
+    forks = (u64 *)map_bytes((1) * sizeof(u64), map_shared);
+    explained = (u64 *)map_bytes((explain_stats) * sizeof(u64), map_shared);
     explain_path = options.explain;
     explain_limit = options.explain_max;
 
-    memory_block = map(u8, memory_capacity, map_private);
+    memory_block = (u8 *)map_bytes((memory_capacity) * sizeof(u8), map_private);
     Plan *plan = make_plan(&options);
     if (options.list) {
         for (usize i = 0; i < plan->count; i++)

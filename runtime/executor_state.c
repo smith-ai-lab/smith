@@ -194,7 +194,9 @@ static void smith_state_compact_log(SmithExec *exec) {
         SMITH_ASSERT(length > 0 && (size_t)length < sizeof line);
         smith_grow_append(&grow, line, (size_t)length);
     }
-    SmithError error = smith_files_write(&exec->io->files, state->log_path, grow.data, grow.size, SmithWrite_Atomic);
+    SmithError error = smith_files_write(
+        &exec->io->files, state->log_path,
+        (struct smith_array_const_u8_n){.data = (const uint8_t *)(grow.data), .count = {grow.size}}, SmithWrite_Atomic);
     if (error.code != 0) smith_exec_fail("%s", error.message);
     state->log_lines = state->log_count;
 }
@@ -215,7 +217,9 @@ static void smith_state_compact_deps(SmithExec *exec) {
             smith_grow_append(&grow, "\n", 1);
         }
     }
-    SmithError error = smith_files_write(&exec->io->files, state->deps_path, grow.data, grow.size, SmithWrite_Atomic);
+    SmithError error = smith_files_write(
+        &exec->io->files, state->deps_path,
+        (struct smith_array_const_u8_n){.data = (const uint8_t *)(grow.data), .count = {grow.size}}, SmithWrite_Atomic);
     if (error.code != 0) smith_exec_fail("%s", error.message);
     state->deps_records = state->deps_count;
 }
@@ -243,7 +247,10 @@ static void smith_state_open(SmithExec *exec) {
         if (smith_state_wasteful(state->log_lines, state->log_count) && !exec->options.dry_run)
             smith_state_compact_log(exec);
     } else if (log.error.code == 0 && !exec->options.dry_run) {
-        (void)smith_files_write(&exec->io->files, log_path, "# smith log 1\n", 14, SmithWrite_Atomic);
+        (void)smith_files_write(
+            &exec->io->files, log_path,
+            (struct smith_array_const_u8_n){.data = (const uint8_t *)("# smith log 1\n"), .count = {14}},
+            SmithWrite_Atomic);
     }
     SmithRead deps = smith_files_read(&exec->io->files, exec->arena, deps_path);
     if (smith_state_has_header(&deps, "# smith deps 1\n")) {
@@ -251,7 +258,10 @@ static void smith_state_open(SmithExec *exec) {
         if (smith_state_wasteful(state->deps_records, state->deps_count) && !exec->options.dry_run)
             smith_state_compact_deps(exec);
     } else if (deps.error.code == 0 && !exec->options.dry_run) {
-        (void)smith_files_write(&exec->io->files, deps_path, "# smith deps 1\n", 15, SmithWrite_Atomic);
+        (void)smith_files_write(
+            &exec->io->files, deps_path,
+            (struct smith_array_const_u8_n){.data = (const uint8_t *)("# smith deps 1\n"), .count = {15}},
+            SmithWrite_Atomic);
     }
 }
 
@@ -260,8 +270,13 @@ static void smith_state_append(SmithExec *exec, const char *path, const char *he
     if (exec->options.dry_run) return;
     SmithFileInfo info = smith_files_info(&exec->io->files, path);
     if (info.error.code != 0)
-        (void)smith_files_write(&exec->io->files, path, header, strlen(header), SmithWrite_Append);
-    SmithError error = smith_files_write(&exec->io->files, path, text, length, SmithWrite_Append);
+        (void)smith_files_write(
+            &exec->io->files, path,
+            (struct smith_array_const_u8_n){.data = (const uint8_t *)(header), .count = {strlen(header)}},
+            SmithWrite_Append);
+    SmithError error = smith_files_write(
+        &exec->io->files, path, (struct smith_array_const_u8_n){.data = (const uint8_t *)(text), .count = {length}},
+        SmithWrite_Append);
     if (error.code != 0) smith_exec_fail("%s", error.message);
 }
 

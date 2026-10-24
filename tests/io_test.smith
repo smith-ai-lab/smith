@@ -10,6 +10,18 @@ import smith::test;
 import <errno.h>;
 import <signal.h>;
 
+// The bytes of a buffer, for the calls of io that take a slice.
+static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+    const u8 *bytes = data;
+    return bytes[0:size];
+}
+
+// A buffer io fills.
+static typeof(u8[:]) test_io_buffer(void *data, usize size) {
+    u8 *bytes = data;
+    return bytes[0:size];
+}
+
 constexpr usize rounds_max = 100000;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
@@ -185,11 +197,13 @@ export void test_io_fake_files_write_and_read_back(void) {
     io::Read up = io::files_read(&fake.files, &fake.arena, "../up.txt");
     test::check_equal(up.error.code, 0);
     test::check_equal(up.size, 3);
-    test::check_equal(io::files_write(&fake.files, "new.txt", "xyz", 3, io::Replace).code, 0); // writes land in memory
+    test::check_equal(io::files_write(&fake.files, "new.txt", test_io_bytes("xyz", 3), io::Replace).code,
+                      0); // writes land in memory
     io::Read back = io::files_read(&fake.files, &fake.arena, "new.txt");
     test::check_equal(back.size, 3);
     test::check(is(back.data, "xyz"));
-    test::check_equal(io::files_write(&fake.files, "new.txt", "q", 1, io::Replace).code, 0); // and replace
+    test::check_equal(io::files_write(&fake.files, "new.txt", test_io_bytes("q", 1), io::Replace).code,
+                      0); // and replace
     test::check_equal(io::files_read(&fake.files, &fake.arena, "new.txt").size, 1);
 }
 
@@ -208,8 +222,8 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check_equal(folder.size, 0);
 
     __builtin_snprintf(path, sizeof path, "%s/a/one.txt", root);
-    test::check_equal(io::files_write(files, path, "first", 5, io::New).code, 0);
-    io::Error taken = io::files_write(files, path, "second", 6, io::New);
+    test::check_equal(io::files_write(files, path, test_io_bytes("first", 5), io::New).code, 0);
+    io::Error taken = io::files_write(files, path, test_io_bytes("second", 6), io::New);
     test::check_equal(taken.code, eexist);
     test::check(contains(taken.message, "one.txt"));
     io::Read kept = io::files_read(files, a, path);
@@ -222,9 +236,9 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check_equal(file.size, 5);
 
     __builtin_snprintf(path, sizeof path, "%s/log", root);
-    test::check_equal(io::files_write(files, path, "one\n", 4, io::Append).code, 0); // creates
-    test::check_equal(io::files_write(files, path, "two\n", 4, io::Append).code, 0);
-    test::check_equal(io::files_write(files, path, "", 0, io::Append).code, 0);
+    test::check_equal(io::files_write(files, path, test_io_bytes("one\n", 4), io::Append).code, 0); // creates
+    test::check_equal(io::files_write(files, path, test_io_bytes("two\n", 4), io::Append).code, 0);
+    test::check_equal(io::files_write(files, path, test_io_bytes("", 0), io::Append).code, 0);
     io::Read log = io::files_read(files, a, path);
     test::check_equal(log.error.code, 0);
     test::check_equal(log.size, 8);
@@ -256,7 +270,7 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check_equal(io::files_list(files, a, path).error.code, enoent);
 
     __builtin_snprintf(path, sizeof path, "%s/a/one.txt", root);
-    test::check_equal(io::files_write(files, path, "replaced!", 9, io::Atomic).code, 0);
+    test::check_equal(io::files_write(files, path, test_io_bytes("replaced!", 9), io::Atomic).code, 0);
     io::Read replaced = io::files_read(files, a, path);
     test::check_equal(replaced.error.code, 0);
     test::check(is(replaced.data, "replaced!"));
@@ -277,7 +291,7 @@ static void check_map_and_remove(io::Files *files, arena::Arena *a, const char *
     io::Read unchanged = io::files_read(files, a, path);
     test::check(is(unchanged.data, "replaced!"));
     __builtin_snprintf(path, sizeof path, "%s/empty", root);
-    test::check_equal(io::files_write(files, path, "", 0, io::Replace).code, 0);
+    test::check_equal(io::files_write(files, path, test_io_bytes("", 0), io::Replace).code, 0);
     test::check_equal(io::files_map(files, path).error.code, einval);
     __builtin_snprintf(path, sizeof path, "%s/nothing", root);
     test::check_equal(io::files_map(files, path).error.code, enoent);
@@ -311,7 +325,8 @@ export void test_io_fake_append_many_times(void) {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     for (usize i = 0; i < 2000; i++)
-        test::check_equal(io::files_write(&fake.files, "log.txt", "0123456789\n", 11, io::Append).code, 0);
+        test::check_equal(io::files_write(&fake.files, "log.txt", test_io_bytes("0123456789\n", 11), io::Append).code,
+                          0);
     io::Read log = io::files_read(&fake.files, &fake.arena, "log.txt");
     test::check_equal(log.error.code, 0);
     test::check_equal(log.size, 22000);
@@ -323,7 +338,7 @@ export void test_io_fake_append_many_times(void) {
 static isize read_all(io::Net *net, io::Connection *connection, char *buffer, usize capacity) {
     usize total = 0;
     for (usize round = 0; round < rounds_max; round++) {
-        io::Read read = io::net_receive(net, connection, buffer + total, capacity - total - 1);
+        io::Read read = io::net_receive(net, connection, test_io_buffer(buffer + total, capacity - total - 1));
         if (read.error.code != 0) {
             return -1;
         }
@@ -353,22 +368,23 @@ static void check_scripted_net(io::Io *io) {
 
     error = io::net_connect(&io->net, &connection, "a.example", 443, true);
     test::check_equal(error.code, 0);
-    test::check_equal(io::net_send(&io->net, &connection, "GET / ", 6).code, 0);
-    test::check_equal(io::net_send(&io->net, &connection, "HTTP/1.1\r\n\r\n", 12).code, 0);
+    test::check_equal(io::net_send(&io->net, &connection, test_io_bytes("GET / ", 6)).code, 0);
+    test::check_equal(io::net_send(&io->net, &connection, test_io_bytes("HTTP/1.1\r\n\r\n", 12)).code, 0);
     test::check(is(io::test_request(io, "a.example", 443, 0), "GET / HTTP/1.1\r\n\r\n"));
     char buffer[64];
-    io::Read read = io::net_receive(&io->net, &connection, buffer, sizeof buffer);
+    io::Read read = io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(read.error.code, 0);
     test::check_equal(read.size, 4);
     test::check(!read.end);
     test::check_equal(__builtin_memcmp(buffer, "HELL", 4), 0); // a chunk at a time
     test::check_equal(read_all(&io->net, &connection, buffer, sizeof buffer), 7);
     test::check(is(buffer, "O WORLD"));
-    read = io::net_receive(&io->net, &connection, buffer, sizeof buffer);
+    read = io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer));
     test::check(read.end);
     test::check_equal(read.size, 0); // the end is stable
     test::check_equal(io::net_close(&io->net, &connection).code, 0);
-    test::check_equal(io::net_receive(&io->net, &connection, buffer, sizeof buffer).error.code, ecanceled);
+    test::check_equal(io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer)).error.code,
+                      ecanceled);
     test::check(io::test_request(io, "a.example", 443, 1) == nullptr);
 
     // A server serves one connection; the next to the same host is refused, until another is scripted.
@@ -418,8 +434,8 @@ static void check_two_connections(io::Io *io) {
     char two[8] = {};
     io::Op op_one = {};
     io::Op op_two = {};
-    io::net_receive_async(&io->net, &op_one, &first, one, 7);
-    io::net_receive_async(&io->net, &op_two, &second, two, 7);
+    io::net_receive_async(&io->net, &op_one, &first, test_io_buffer(one, 7));
+    io::net_receive_async(&io->net, &op_two, &second, test_io_buffer(two, 7));
     test::check_equal(io::run(io, io::forever), 2);
     test::check(op_one.done);
     test::check(op_two.done);
@@ -458,7 +474,7 @@ static usize child_read(io::Io *io, io::Child *child, char *buffer, usize capaci
     usize got = 0;
     io::Op read = {};
     for (usize round = 0; round < rounds_max && got < total; round++) {
-        io::child_read_async(child, &read, buffer + got, capacity - got);
+        io::child_read_async(child, &read, test_io_buffer(buffer + got, capacity - got));
         child_until(io, &read);
         test::check_equal(read.error.code, 0);
         if (read.end) {
@@ -491,18 +507,18 @@ export void test_io_fake_child_output_input_and_exit(void) {
     io::Op read = {};
     char buffer[32];
     for (usize i = 0; i < 3; i++) { // in pieces of 8
-        io::child_read_async(&first, &read, buffer, sizeof buffer);
+        io::child_read_async(&first, &read, test_io_buffer(buffer, sizeof buffer));
         test::check_equal(io::run(&fake, 0), 1);
         test::check(read.done);
         test::check_equal(read.error.code, 0);
         test::check_equal(read.size, __builtin_strlen(pieces[i]));
         test::check_equal(__builtin_memcmp(buffer, pieces[i], read.size), 0);
     }
-    io::child_read_async(&first, &read, buffer, sizeof buffer);
+    io::child_read_async(&first, &read, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(io::run(&fake, 0), 0); // nothing more, and not over
     test::check(!read.done);
     io::Op write = {};
-    io::child_write_async(&first, &write, "request", 7);
+    io::child_write_async(&first, &write, test_io_bytes("request", 7));
     test::check_equal(io::run(&fake, 0), 1);
     test::check(write.done);
     test::check_equal(write.error.code, 0);
@@ -519,7 +535,7 @@ export void test_io_fake_child_output_input_and_exit(void) {
     test::check(wait.done);
     test::check_equal(wait.exit_status, 7);
     test::check_equal(wait.signal, 0);
-    io::child_write_async(&first, &write, "late", 4);
+    io::child_write_async(&first, &write, test_io_bytes("late", 4));
     test::check_equal(io::run(&fake, 0), 1);
     test::check_equal(write.error.code, epipe);
     io::child_close(&first);
@@ -546,7 +562,7 @@ export void test_io_fake_two_children_of_one_program_and_kill(void) {
     io::Op wait = {};
     io::Op read = {};
     io::processes_wait_async(&fake.processes, &wait, second.process);
-    io::child_read_async(&second, &read, buffer, sizeof buffer);
+    io::child_read_async(&second, &read, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(io::run(&fake, 0), 0);
     test::check_equal(io::child_kill(&second, sigkill).code, 0);
     test::check_equal(io::run(&fake, 0), 2);
@@ -567,7 +583,7 @@ export void test_io_fake_child_that_exited_at_start(void) {
     io::Child dead = {};
     test::check_equal(io::processes_start_piped(&fake.processes, quick_argv, &dead).code, 0);
     io::Op write = {};
-    io::child_write_async(&dead, &write, "x", 1);
+    io::child_write_async(&dead, &write, test_io_bytes("x", 1));
     test::check_equal(io::run(&fake, 0), 1);
     test::check_equal(write.error.code, epipe);
     char buffer[32];

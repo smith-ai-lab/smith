@@ -623,7 +623,8 @@ struct Loop {
 // the trap after it stops one without them (`fast`).
 void check(bool holds) {
     contract::trusted();
-    contract::assert(holds);
+    contract::check_assert(
+        holds); // not contract::assert: a header's `assert` macro makes that a name error beside slices
     if (!holds) __builtin_trap();
 }
 
@@ -639,7 +640,7 @@ error_make(i32 code, const char *what, const char *path) {
     return error;
 }
 
-[[gnu::format(printf, 2, 3)]] Error error_text(i32 code, const char *format, ...) {
+[[gnu::format(__printf__, 2, 3)]] Error error_text(i32 code, const char *format, ...) {
     Error error = {.code = code};
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
@@ -1603,14 +1604,13 @@ files_read_async(Files *files, Op *op, arena::Arena *arena, const char *path) {
 }
 
 [[smith::c_name("smith_files_write_async")]] export [[clang::annotate("smith::edge")]] void
-files_write_async(Files *files, Op *op, const char *path, const void *data, usize size, Write mode) {
+files_write_async(Files *files, Op *op, const char *path, const u8 data[:], Write mode) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires((data != nullptr || size == 0));
     op_start(op, files->loop, FileWrite);
     op->internal.path = path;
     op->internal.mode = mode;
-    op->internal.input = data;
-    op->size = size;
+    op->internal.input = data.data;
+    op->size = countof(data);
     loop_submit(files->loop, op);
 }
 
@@ -1623,11 +1623,11 @@ files_read(Files *files, arena::Arena *arena, const char *path) {
     return (Read){.error = op.error, .data = op.data, .size = op.size};
 }
 
-// Writes size bytes to the file as the mode says.
+// Writes the bytes of data to the file as the mode says.
 [[smith::c_name("smith_files_write")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
-files_write(Files *files, const char *path, const void *data, usize size, Write mode) {
+files_write(Files *files, const char *path, const u8 data[:], Write mode) {
     Op op = {};
-    files_write_async(files, &op, path, data, size, mode);
+    files_write_async(files, &op, path, data, mode);
     if (!op.done) loop_wait(files->loop, &op);
     return op.error;
 }
@@ -1696,8 +1696,8 @@ console_print_error(Console *console, const char *text) {
     return console_write(console, true, text);
 }
 
-[[gnu::format(printf, 3, 0)]] Error console_format(Console *console, bool errors, const char *format,
-                                                   __builtin_va_list arguments) {
+[[gnu::format(__printf__, 3, 0)]] Error console_format(Console *console, bool errors, const char *format,
+                                                       __builtin_va_list arguments) {
     char text[print_max];
     i32 length = __builtin_vsnprintf(text, sizeof text, format, arguments);
     if (length < 0) return error_make(einval, "format for", errors ? "stderr" : "stdout");
@@ -1707,8 +1707,9 @@ console_print_error(Console *console, const char *text) {
 
 // printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
-[[smith::c_name("smith_console_printf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
-console_printf(Console *console, const char *format, ...) {
+[[smith::c_name("smith_console_printf")]] export
+    [[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+    console_printf(Console *console, const char *format, ...) {
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, false, format, arguments);
@@ -1716,8 +1717,9 @@ console_printf(Console *console, const char *format, ...) {
     return error;
 }
 
-[[smith::c_name("smith_console_eprintf")]] export [[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] Error
-console_eprintf(Console *console, const char *format, ...) {
+[[smith::c_name("smith_console_eprintf")]] export
+    [[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+    console_eprintf(Console *console, const char *format, ...) {
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, true, format, arguments);
@@ -2009,18 +2011,17 @@ processes_start_piped(Processes *processes, const char *const *argv, Child *chil
     return child_start_real(processes->loop, argv, child);
 }
 
-// Completes when all size bytes are in the child's stdin pipe (op->size is size), or fails: EPIPE when the child has
-// closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program. The data
-// stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child reads, and a
-// program that also reads its output (io::child_read_async) cannot deadlock on it.
+// Completes when all bytes of data are in the child's stdin pipe (op->size is its count), or fails: EPIPE when the
+// child has closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program.
+// The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child
+// reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
 [[smith::c_name("smith_child_write_async")]] export [[clang::annotate("smith::edge")]] void
-child_write_async(Child *child, Op *op, const void *data, usize size) {
+child_write_async(Child *child, Op *op, const u8 data[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires((data != nullptr || size == 0));
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeWrite);
-    op->internal.input = data;
-    op->internal.capacity = size;
+    op->internal.input = data.data;
+    op->internal.capacity = countof(data);
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
@@ -2030,18 +2031,18 @@ child_write_async(Child *child, Op *op, const void *data, usize size) {
     loop_submit(loop, op);
 }
 
-// Completes with whatever the child's stdout holds, at least one byte and at most capacity, in buffer (op->data,
+// Completes with whatever the child's stdout holds, at least one byte and at most countof(buffer), in buffer (op->data,
 // op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
 // and nothing was read.
 [[smith::c_name("smith_child_read_async")]] export [[clang::annotate("smith::edge")]] void
-child_read_async(Child *child, Op *op, void *buffer, usize capacity) {
+child_read_async(Child *child, Op *op, u8 buffer[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires(capacity > 0);
+    contract::requires(countof(buffer) > 0);
     Loop *loop = child->internal.loop;
     op_start(op, loop, PipeRead);
-    op->internal.destination = buffer;
-    op->internal.capacity = capacity;
-    op->data = buffer;
+    op->internal.destination = buffer.data;
+    op->internal.capacity = countof(buffer);
+    op->data = (const char *)buffer.data;
     if (loop->fake != nullptr) {
         op->internal.child = fake_child_of(loop->fake, child->process.id);
     } else {
@@ -2443,13 +2444,13 @@ net_connect_async(Net *net, Op *op, Connection *connection, const char *host, u1
     if (!net_scripted(net->loop)) net_begin(net->loop, op, connection, host, port, tls);
 }
 
-// Sends all size bytes (the library copies them, so they need not outlive the call).
+// Sends all bytes of data (the library copies them, so they need not outlive the call).
 [[smith::c_name("smith_net_send_async")]] export [[clang::annotate("smith::edge")]] void
-net_send_async(Net *net, Op *op, Connection *connection, const void *data, usize size) {
+net_send_async(Net *net, Op *op, Connection *connection, const u8 data[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires(data != nullptr || size == 0);
+    usize size = countof(data);
     net_start(net, op, connection, NetSend);
-    op->internal.input = data;
+    op->internal.input = data.data;
     op->size = size;
     loop_submit(net->loop, op);
     if (net_scripted(net->loop)) return;
@@ -2460,15 +2461,15 @@ net_send_async(Net *net, Op *op, Connection *connection, const void *data, usize
     net_send_real(net->loop, op, connection);
 }
 
-// Completes with whatever has arrived, at least one byte and at most capacity, in buffer (op->data, op->size; not
-// NUL-terminated); op->end is true when the peer is done sending and nothing was read.
+// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data, op->size;
+// not NUL-terminated); op->end is true when the peer is done sending and nothing was read.
 [[smith::c_name("smith_net_receive_async")]] export [[clang::annotate("smith::edge")]] void
-net_receive_async(Net *net, Op *op, Connection *connection, void *buffer, usize capacity) {
+net_receive_async(Net *net, Op *op, Connection *connection, u8 buffer[:]) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
-    contract::requires(capacity > 0 && capacity <= math::max(u32));
+    contract::requires(countof(buffer) > 0 && countof(buffer) <= math::max(u32));
     net_start(net, op, connection, NetReceive);
-    op->internal.destination = buffer;
-    op->internal.capacity = capacity;
+    op->internal.destination = buffer.data;
+    op->internal.capacity = countof(buffer);
     loop_submit(net->loop, op);
     if (net_scripted(net->loop)) return;
     if (__c11_atomic_load(&connection->internal.closed, seq_cst)) {
@@ -2508,17 +2509,17 @@ net_connect(Net *net, Connection *connection, const char *host, u16 port, bool t
 }
 
 [[smith::c_name("smith_net_send")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
-net_send(Net *net, Connection *connection, const void *data, usize size) {
+net_send(Net *net, Connection *connection, const u8 data[:]) {
     Op op = {};
-    net_send_async(net, &op, connection, data, size);
+    net_send_async(net, &op, connection, data);
     loop_wait(net->loop, &op);
     return op.error;
 }
 
 [[smith::c_name("smith_net_receive")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Read
-net_receive(Net *net, Connection *connection, void *buffer, usize capacity) {
+net_receive(Net *net, Connection *connection, u8 buffer[:]) {
     Op op = {};
-    net_receive_async(net, &op, connection, buffer, capacity);
+    net_receive_async(net, &op, connection, buffer);
     loop_wait(net->loop, &op);
     return (Read){.error = op.error, .data = op.data, .size = op.size, .end = op.end};
 }

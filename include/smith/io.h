@@ -3,6 +3,8 @@
 // smith-module: smith::io
 // smith-imports: smith::arena smith::contract smith::math smith::random
 // smith-names: Error=SmithError Read=SmithRead Loop=SmithLoop None=SmithOpKind_None FileRead=SmithOpKind_FileRead FileWrite=SmithOpKind_FileWrite ConsoleRead=SmithOpKind_ConsoleRead PipeRead=SmithOpKind_PipeRead PipeWrite=SmithOpKind_PipeWrite Timeout=SmithOpKind_Timeout ProcessWait=SmithOpKind_ProcessWait NetConnect=SmithOpKind_NetConnect NetSend=SmithOpKind_NetSend NetReceive=SmithOpKind_NetReceive NetClose=SmithOpKind_NetClose OpKind=SmithOpKind Replace=SmithWrite_Replace Atomic=SmithWrite_Atomic Append=SmithWrite_Append New=SmithWrite_New Write=SmithWrite Op=SmithOp forever=smith_io_forever Console=SmithConsole Files=SmithFiles Clock=SmithClock Processes=SmithProcesses Net=SmithNet Args=SmithArgs Io=SmithIo FileInfo=SmithFileInfo FileEntry=SmithFileEntry FileList=SmithFileList Mapped=SmithMapped Process=SmithProcess ProcessResult=SmithProcessResult Capture=SmithCapture Child=SmithChild Connection=SmithConnection Test=SmithIoTest Never=SmithChildExit_Never Start=SmithChildExit_Start InputClosed=SmithChildExit_InputClosed OutputRead=SmithChildExit_OutputRead ChildExit=SmithChildExit ChildScript=SmithChildScript NetServer=SmithNetServer error_make=smith_error_make run=smith_io_run files_read_async=smith_files_read_async files_write_async=smith_files_write_async files_read=smith_files_read files_write=smith_files_write files_remove=smith_files_remove files_make_folder=smith_files_make_folder files_info=smith_files_info files_list=smith_files_list files_map=smith_files_map console_print=smith_console_print console_print_error=smith_console_print_error console_printf=smith_console_printf console_eprintf=smith_console_eprintf console_read_async=smith_console_read_async console_read_line=smith_console_read_line clock_now=smith_clock_now clock_wall=smith_clock_wall clock_advance=smith_clock_advance clock_timeout_async=smith_clock_timeout_async clock_sleep=smith_clock_sleep processes_spawn=smith_processes_spawn processes_spawn_terminal=smith_processes_spawn_terminal processes_wait_async=smith_processes_wait_async child_wait_async=smith_child_wait_async processes_cores=smith_processes_cores processes_start_piped=smith_processes_start_piped child_write_async=smith_child_write_async child_read_async=smith_child_read_async child_close_input=smith_child_close_input child_kill=smith_child_kill child_close=smith_child_close processes_run=smith_processes_run net_connect_async=smith_net_connect_async net_send_async=smith_net_send_async net_receive_async=smith_net_receive_async net_close_async=smith_net_close_async net_connect=smith_net_connect net_send=smith_net_send net_receive=smith_net_receive net_close=smith_net_close test_add_server=smith_io_test_add_server test_request=smith_io_test_request processes_capture_async=smith_processes_capture_async capture_poll=smith_capture_poll capture_stop=smith_capture_stop args_get=smith_args_get args_env=smith_args_env make=smith_io_make close=smith_io_close make_test=smith_io_make_test test_add_file=smith_io_test_add_file test_add_program=smith_io_test_add_program test_add_child=smith_io_test_add_child test_child_input=smith_io_test_child_input test_output=smith_io_test_output test_errors=smith_io_test_errors
+// smith-tuples
+// smith-slices
 // smith-bodies: error_make run files_read_async files_write_async files_read files_write files_remove files_make_folder files_info files_list files_map console_print console_print_error console_printf console_eprintf console_read_async console_read_line clock_now clock_wall clock_advance clock_timeout_async clock_sleep processes_spawn processes_spawn_terminal processes_wait_async child_wait_async processes_cores processes_start_piped child_write_async child_read_async child_close_input child_kill child_close processes_run net_connect_async net_send_async net_receive_async net_close_async net_connect net_send net_receive net_close test_add_server test_request processes_capture_async capture_poll capture_stop args_get args_env make close make_test test_add_file test_add_program test_add_child test_child_input test_output test_errors
 // clang-format on
 #pragma once
@@ -312,16 +314,24 @@ typedef struct {
 [[clang::annotate("smith::edge")]] void smith_files_read_async(SmithFiles *files, SmithOp *op, SmithArena *arena,
                                                                const char *path);
 
+#ifndef SMITH_ARRAY_const_u8_n
+#define SMITH_ARRAY_const_u8_n
+struct smith_array_const_u8_n {
+    const uint8_t *data;
+    size_t count[1];
+};
+#endif
+
 [[clang::annotate("smith::edge")]] void smith_files_write_async(SmithFiles *files, SmithOp *op, const char *path,
-                                                                const void *data, size_t size, SmithWrite mode);
+                                                                struct smith_array_const_u8_n data, SmithWrite mode);
 
 // The whole file, in the arena.
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead smith_files_read(SmithFiles *files, SmithArena *arena,
                                                                             const char *path);
 
-// Writes size bytes to the file as the mode says.
+// Writes the bytes of data to the file as the mode says.
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
-smith_files_write(SmithFiles *files, const char *path, const void *data, size_t size, SmithWrite mode);
+smith_files_write(SmithFiles *files, const char *path, struct smith_array_const_u8_n data, SmithWrite mode);
 
 // Deletes a file (not a folder: EPERM).
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_files_remove(SmithFiles *files, const char *path);
@@ -351,10 +361,10 @@ smith_files_write(SmithFiles *files, const char *path, const void *data, size_t 
 
 // printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
-[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] SmithError
 smith_console_printf(SmithConsole *console, const char *format, ...);
 
-[[clang::annotate("smith::edge")]] [[gnu::format(printf, 2, 3)]] SmithError
+[[clang::annotate("smith::edge")]] [[gnu::format(__printf__, 2, 3)]] SmithError
 smith_console_eprintf(SmithConsole *console, const char *format, ...);
 
 // Completes with whatever is available, at most max bytes, in the arena; size 0 and end set mean the input is over.
@@ -408,18 +418,26 @@ smith_processes_spawn_terminal(SmithProcesses *processes, const char *const *arg
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError
 smith_processes_start_piped(SmithProcesses *processes, const char *const *argv, SmithChild *child);
 
-// Completes when all size bytes are in the child's stdin pipe (op->size is size), or fails: EPIPE when the child has
-// closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program. The data
-// stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child reads, and a
-// program that also reads its output (io::child_read_async) cannot deadlock on it.
-[[clang::annotate("smith::edge")]] void smith_child_write_async(SmithChild *child, SmithOp *op, const void *data,
-                                                                size_t size);
+// Completes when all bytes of data are in the child's stdin pipe (op->size is its count), or fails: EPIPE when the
+// child has closed its stdin or exited (op->size says how much was taken before that). SIGPIPE cannot kill the program.
+// The data stays the caller's until done. The pipe takes 64 KiB at a time, so a larger write completes as the child
+// reads, and a program that also reads its output (io::child_read_async) cannot deadlock on it.
+[[clang::annotate("smith::edge")]] void smith_child_write_async(SmithChild *child, SmithOp *op,
+                                                                struct smith_array_const_u8_n data);
 
-// Completes with whatever the child's stdout holds, at least one byte and at most capacity, in buffer (op->data,
+#ifndef SMITH_ARRAY_u8_n
+#define SMITH_ARRAY_u8_n
+struct smith_array_u8_n {
+    uint8_t *data;
+    size_t count[1];
+};
+#endif
+
+// Completes with whatever the child's stdout holds, at least one byte and at most countof(buffer), in buffer (op->data,
 // op->size; not NUL-terminated); op->end is true when the child (and every process that kept the pipe) has closed it
 // and nothing was read.
-[[clang::annotate("smith::edge")]] void smith_child_read_async(SmithChild *child, SmithOp *op, void *buffer,
-                                                               size_t capacity);
+[[clang::annotate("smith::edge")]] void smith_child_read_async(SmithChild *child, SmithOp *op,
+                                                               struct smith_array_u8_n buffer);
 
 // Closes the child's stdin, so it sees the end of its input. A child that reads until then, as cat does, exits.
 [[clang::annotate("smith::edge")]] void smith_child_close_input(SmithChild *child);
@@ -442,14 +460,14 @@ smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *co
 [[clang::annotate("smith::edge")]] void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
                                                                 const char *host, uint16_t port, bool tls);
 
-// Sends all size bytes (the library copies them, so they need not outlive the call).
+// Sends all bytes of data (the library copies them, so they need not outlive the call).
 [[clang::annotate("smith::edge")]] void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-                                                             const void *data, size_t size);
+                                                             struct smith_array_const_u8_n data);
 
-// Completes with whatever has arrived, at least one byte and at most capacity, in buffer (op->data, op->size; not
-// NUL-terminated); op->end is true when the peer is done sending and nothing was read.
+// Completes with whatever has arrived, at least one byte and at most countof(buffer), in buffer (op->data, op->size;
+// not NUL-terminated); op->end is true when the peer is done sending and nothing was read.
 [[clang::annotate("smith::edge")]] void smith_net_receive_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
-                                                                void *buffer, size_t capacity);
+                                                                struct smith_array_u8_n buffer);
 
 // Closes the connection.
 [[clang::annotate("smith::edge")]] void smith_net_close_async(SmithNet *net, SmithOp *op, SmithConnection *connection);
@@ -459,10 +477,10 @@ smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *co
 smith_net_connect(SmithNet *net, SmithConnection *connection, const char *host, uint16_t port, bool tls);
 
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_net_send(SmithNet *net, SmithConnection *connection,
-                                                                           const void *data, size_t size);
+                                                                           struct smith_array_const_u8_n data);
 
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithRead smith_net_receive(SmithNet *net, SmithConnection *connection,
-                                                                             void *buffer, size_t capacity);
+                                                                             struct smith_array_u8_n buffer);
 
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_net_close(SmithNet *net, SmithConnection *connection);
 

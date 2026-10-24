@@ -140,8 +140,10 @@ static bool smith_http_resolve(const SmithHttpUrl *base, const char *location, c
 // Writes what is buffered to the file. Errors stay in the result and stop later writes.
 static void smith_http_flush(SmithHttp *http) {
     if (http->write_used == 0 || http->result.error.code != 0) return;
-    http->result.error =
-        smith_files_write(http->files, http->path, http->write_buffer, http->write_used, SmithWrite_Append);
+    http->result.error = smith_files_write(
+        http->files, http->path,
+        (struct smith_array_const_u8_n){.data = (const uint8_t *)(http->write_buffer), .count = {http->write_used}},
+        SmithWrite_Append);
     http->write_used = 0;
 }
 
@@ -194,7 +196,8 @@ static bool smith_http_header(const SmithHttp *http, const char *name, char *out
 static SmithRead smith_http_receive(SmithHttp *http, SmithConnection *connection, void *buffer, size_t capacity) {
     constexpr size_t rounds_max = (size_t)1 << 20;
     SmithOp receive = {};
-    smith_net_receive_async(http->net, &receive, connection, buffer, capacity);
+    smith_net_receive_async(http->net, &receive, connection,
+                            (struct smith_array_u8_n){.data = (uint8_t *)(buffer), .count = {capacity}});
     uint64_t start = smith_clock_now(&http->io->clock);
     for (size_t round = 0; round < rounds_max && !receive.done; round++) {
         uint64_t waited = smith_clock_now(&http->io->clock) - start;
@@ -390,7 +393,9 @@ static void smith_http_request(SmithHttp *http, SmithConnection *connection) {
                            "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
                            http->parsed.target, http->parsed.authority);
     if (written <= 0 || (size_t)written >= sizeof request) __builtin_trap(); // the url and host are capped to fit
-    http->result.error = smith_net_send(http->net, connection, request, (size_t)written);
+    http->result.error =
+        smith_net_send(http->net, connection,
+                       (struct smith_array_const_u8_n){.data = (const uint8_t *)(request), .count = {(size_t)written}});
 }
 
 // Reads until the end of the response head (a blank line). The bytes after it stay in the buffer: the return is how
@@ -557,8 +562,8 @@ SmithHttpResult smith_http_get(SmithIo *io, const char *url, const char *path) {
     http->path = path;
     http->read_buffer = smith_arena_push(arena, smith_http_read_size, 1);
     http->write_buffer = smith_arena_push(arena, smith_http_write_size, 1);
-    http->result.error =
-        smith_files_write(&io->files, path, "", 0, SmithWrite_Replace); // an empty file, or none if it fails
+    http->result.error = smith_files_write(&io->files, path, (struct smith_array_const_u8_n){},
+                                           SmithWrite_Replace); // an empty file, or none if it fails
     if (http->result.error.code == 0) smith_http_run(http, url);
     SmithHttpResult result = http->result;
     smith_arena_scope_end(scope);

@@ -299,7 +299,9 @@ static void smith_mcp_dap_frames(SmithMcpServer *server, SmithMcpSession *sessio
 }
 
 static void smith_mcp_session_read_submit(SmithMcpSession *session) {
-    smith_child_read_async(&session->child, &session->read, session->chunk, sizeof session->chunk);
+    smith_child_read_async(
+        &session->child, &session->read,
+        (struct smith_array_u8_n){.data = (uint8_t *)(session->chunk), .count = {sizeof session->chunk}});
     session->read_pending = true;
 }
 
@@ -353,7 +355,9 @@ static bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *sess
     unsigned char *start = session->frame_out + 64 - (size_t)length;
     memcpy(start, header, (size_t)length);
     if (session->input_closed) return false;
-    smith_child_write_async(&session->child, &session->write, start, (size_t)length + body.count[0]);
+    smith_child_write_async(
+        &session->child, &session->write,
+        (struct smith_array_const_u8_n){.data = (const uint8_t *)(start), .count = {(size_t)length + body.count[0]}});
     session->write_pending = true;
     uint64_t deadline = smith_mcp_deadline(server, smith_mcp_request_timeout);
     for (size_t turn = 0; turn < smith_mcp_turns_max && session->write_pending; turn++) {

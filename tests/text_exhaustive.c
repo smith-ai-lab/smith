@@ -70,7 +70,7 @@ static bool exhaustive_agrees_f64(const char *text, double original, bool compar
 
 static bool exhaustive_written(double d) {
     char out[smith_text_f64_capacity + 1];
-    size_t length = smith_text_write_f64(out, d);
+    size_t length = smith_text_write_f64((struct smith_array_char_n){.data = out, .count = {sizeof out}}, d);
     out[length] = '\0';
     return exhaustive_agrees_f64(out, d, true);
 }

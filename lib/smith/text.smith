@@ -559,33 +559,51 @@ bool decimal_scan(const char word[:], Decimal *decimal, bool *negative) {
 // ---------------------------------------------------------------------------------------------------------------
 // Writing numbers
 
-[[smith::c_name("smith_text_write_u64")]] export usize write_u64(char *out, u64 value) {
+[[smith::c_name("smith_text_write_u64")]] export usize write_u64(char out[:], u64 value) {
+    contract::requires(countof(out) >= number_capacity);
     char reversed[number_capacity];
     usize count = 0;
     do {
         reversed[count++] = (char)('0' + value % 10);
         value /= 10;
     } while (value != 0 && count < number_capacity);
-    check(value == 0); // a number has more digits than number_capacity
-    for (usize i = 0; i < count; i++) {
+    check(value == 0);                                      // a number has more digits than number_capacity
+    for (usize i = 0; i < count && i < countof(out); i++) { // the requires holds, the guard shows it to the prover
         out[i] = reversed[count - 1 - i];
     }
+    contract::ensures(count >= 1 && count <= number_capacity);
     return count;
 }
 
-[[smith::c_name("smith_text_write_i64")]] export usize write_i64(char *out, i64 value) {
+[[smith::c_name("smith_text_write_i64")]] export usize write_i64(char out[:], i64 value) {
+    contract::requires(countof(out) >= number_capacity);
     if (value >= 0) return write_u64(out, (u64)value);
-    out[0] = '-';
-    return 1 + write_u64(out + 1, 0 - (u64)value);
+    char text[number_capacity + 1] = {'-'};
+    usize count = write_u64(text[1:number_capacity + 1], 0 - (u64)value);
+    for (usize i = 0; i <= count && i < countof(out) && i <= number_capacity; i++) {
+        out[i] = text[i];
+    }
+    return count + 1;
 }
 
 // 16 digits, so every hash lines up.
-[[smith::c_name("smith_text_write_hex")]] export usize write_hex(char *out, u64 value) {
-    for (usize i = 0; i < 16; i++) {
+[[smith::c_name("smith_text_write_hex")]] export usize write_hex(char out[:], u64 value) {
+    contract::requires(countof(out) >= 16);
+    for (usize i = 0; i < 16 && i < countof(out); i++) {
         u64 digit = (value >> (60 - 4 * i)) & 0xf;
         out[i] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
     }
     return 16;
+}
+
+// write_i64 at a pointer: the callers below have room for it by the capacities they keep.
+usize append_i64(char *out, i64 value) {
+    char digits[number_capacity];
+    usize count = write_i64(digits, value);
+    for (usize i = 0; i < count && i < number_capacity; i++) {
+        out[i] = digits[i];
+    }
+    return count;
 }
 
 // A f64, as the fewest digits (at most 17) that read back as the same f64. With the value m * 2^e, the p-digit
@@ -677,7 +695,7 @@ bool f64_reads_back(u64 q, i64 s, u64 bits) {
     char text[number_capacity * 2];
     usize length = write_u64(text, q);
     text[length++] = 'e';
-    length += write_i64(text + length, s);
+    length += append_i64(text + length, s);
     f64 back = 0;
     if (length > sizeof text) return false;
     return parse_f64(text[0:length], &back) && __builtin_bit_cast(u64, back) == bits;
@@ -712,14 +730,11 @@ usize f64_format(char *out, u64 q, u32 p, i64 first) {
         out[used++] = digits[i];
     }
     out[used++] = 'e';
-    return used + write_i64(out + used, first);
+    return used + append_i64(out + used, first);
 }
 
-// An f64 in the fewest digits, at most 17, that parse_f64 reads back as the same bits, signs of zero
-// included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
-// exponent (no plus), always valid JSON. Room for f64_capacity characters; no terminator. The value must be
-// finite (checked): infinity and nan have no text.
-[[smith::c_name("smith_text_write_f64")]] export usize write_f64(char *out, f64 value) {
+// Writes the text of a f64 at out, which has room for f64_capacity.
+usize f64_write(char *out, f64 value) {
     u64 bits = __builtin_bit_cast(u64, value);
     u64 field = (bits >> 52) & 0x7ff;
     check(field != 0x7ff); // infinity and nan have no text
@@ -750,6 +765,22 @@ usize f64_format(char *out, u64 q, u32 p, i64 first) {
     return used + f64_format(out + used, q, low, s + (i64)low - 1);
 }
 
+// An f64 in the fewest digits, at most 17, that parse_f64 reads back as the same bits, signs of zero
+// included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
+// exponent (no plus), always valid JSON. Room for f64_capacity characters; no terminator. The value must be
+// finite (checked): infinity and nan have no text.
+[[smith::c_name("smith_text_write_f64")]] export usize write_f64(char out[:], f64 value) {
+    check(
+        countof(out) >=
+        f64_capacity); // a run-time check, not a contract: the arithmetic below costs the prover more than it is worth
+    char text[f64_capacity];
+    usize count = f64_write(text, value);
+    for (usize i = 0; i < count && i < f64_capacity && i < countof(out); i++) {
+        out[i] = text[i];
+    }
+    return count;
+}
+
 constexpr u32 f32_digits_max = 9;
 static_assert(f32_capacity >= 1 + f64_positional_max + 2 + 5, "sign, a positional integer, a point and e-45");
 
@@ -757,17 +788,14 @@ bool f32_reads_back(u64 q, i64 s, u32 bits) {
     char text[number_capacity * 2];
     usize length = write_u64(text, q);
     text[length++] = 'e';
-    length += write_i64(text + length, s);
+    length += append_i64(text + length, s);
     f32 back = 0;
     if (length > sizeof text) return false;
     return parse_f32(text[0:length], &back) && __builtin_bit_cast(u32, back) == bits;
 }
 
-// An f32 in the fewest digits, at most 9, that parse_f32 reads back as the same bits: 0.1f is "0.1", where its f64
-// value is 0.10000000149011612. Written as write_f64 writes (positional or scientific, no plus), so a f32's text and
-// its widened f64's differ only in the digits. Room for f32_capacity characters; no terminator. The value must be
-// finite (checked).
-[[smith::c_name("smith_text_write_f32")]] export usize write_f32(char *out, f32 value) {
+// Writes the text of a f32 at out, which has room for f32_capacity.
+usize f32_write(char *out, f32 value) {
     u32 bits = __builtin_bit_cast(u32, value);
     u32 field = (bits >> 23) & 0xff;
     check(field != 0xff); // infinity and nan have no text
@@ -796,4 +824,20 @@ bool f32_reads_back(u64 q, i64 s, u32 bits) {
     i64 s = 0;
     u64 q = f64_round_to(m, e, first, low, &s);
     return used + f64_format(out + used, q, low, s + (i64)low - 1);
+}
+
+// An f32 in the fewest digits, at most 9, that parse_f32 reads back as the same bits: 0.1f is "0.1", where its f64
+// value is 0.10000000149011612. Written as write_f64 writes (positional or scientific, no plus), so a f32's text and
+// its widened f64's differ only in the digits. Room for f32_capacity characters; no terminator. The value must be
+// finite (checked).
+[[smith::c_name("smith_text_write_f32")]] export usize write_f32(char out[:], f32 value) {
+    check(
+        countof(out) >=
+        f32_capacity); // a run-time check, not a contract: the arithmetic below costs the prover more than it is worth
+    char text[f32_capacity];
+    usize count = f32_write(text, value);
+    for (usize i = 0; i < count && i < f32_capacity && i < countof(out); i++) {
+        out[i] = text[i];
+    }
+    return count;
 }

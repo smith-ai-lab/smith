@@ -22,7 +22,7 @@ while (smith_text_take_line(&text, &line)) {
     }
 }
 char out[smith_text_number_capacity];
-size_t length = smith_text_write_u64(out, tick);
+size_t length = smith_text_write_u64((struct smith_array_char_n){.data = out, .count = {sizeof out}}, tick);
 ```
 
 ## Get the library in build.c

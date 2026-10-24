@@ -945,12 +945,14 @@ static void smith_json_write_number(SmithJsonWriter *writer, const char *text, s
 
 void smith_json_write_u64(SmithJsonWriter *writer, uint64_t value) {
     char text[smith_text_number_capacity];
-    smith_json_write_number(writer, text, smith_text_write_u64(text, value));
+    smith_json_write_number(
+        writer, text, smith_text_write_u64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_i64(SmithJsonWriter *writer, int64_t value) {
     char text[smith_text_number_capacity];
-    smith_json_write_number(writer, text, smith_text_write_i64(text, value));
+    smith_json_write_number(
+        writer, text, smith_text_write_i64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_f64(SmithJsonWriter *writer, double value) {
@@ -960,7 +962,8 @@ void smith_json_write_f64(SmithJsonWriter *writer, double value) {
         return;
     }
     char text[smith_text_f64_capacity];
-    smith_json_write_number(writer, text, smith_text_write_f64(text, value));
+    smith_json_write_number(
+        writer, text, smith_text_write_f64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_bool(SmithJsonWriter *writer, bool value) {

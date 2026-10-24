@@ -10,6 +10,12 @@ import smith::test;
 import <errno.h>;
 import <smith/http.h>;
 
+// The bytes of a buffer, for the calls of io that take a slice.
+static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+    const u8 *bytes = data;
+    return bytes[0:size];
+}
+
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor)
 constexpr i32 eauth = c::EAUTH;
@@ -260,7 +266,8 @@ static void check_urls(Client *client) {
 }
 
 static void check_local(Client *client) {
-    test::check_equal(io::files_write(&client->io->files, client->source, "local bytes", 11, io::Replace).code, 0);
+    test::check_equal(
+        io::files_write(&client->io->files, client->source, test_io_bytes("local bytes", 11), io::Replace).code, 0);
     char url[300];
     (void)format::to(url, sizeof url, "file://", client->source);
     c::SmithHttpResult result = get(client, url);

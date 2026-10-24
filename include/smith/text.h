@@ -88,24 +88,32 @@ struct smith_array_const_char_n {
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
 [[nodiscard]] bool smith_text_parse_f64(struct smith_array_const_char_n word, double *value);
 
-size_t smith_text_write_u64(char *out, uint64_t value);
+#ifndef SMITH_ARRAY_char_n
+#define SMITH_ARRAY_char_n
+struct smith_array_char_n {
+    char *data;
+    size_t count[1];
+};
+#endif
 
-size_t smith_text_write_i64(char *out, int64_t value);
+size_t smith_text_write_u64(struct smith_array_char_n out, uint64_t value);
+
+size_t smith_text_write_i64(struct smith_array_char_n out, int64_t value);
 
 // 16 digits, so every hash lines up.
-size_t smith_text_write_hex(char *out, uint64_t value);
+size_t smith_text_write_hex(struct smith_array_char_n out, uint64_t value);
 
 // An f64 in the fewest digits, at most 17, that parse_f64 reads back as the same bits, signs of zero
 // included: 0.1 is "0.1", 1e22 is "1e22", 5e-324 is "5e-324". It writes digits with an optional point and an optional
 // exponent (no plus), always valid JSON. Room for f64_capacity characters; no terminator. The value must be
 // finite (checked): infinity and nan have no text.
-size_t smith_text_write_f64(char *out, double value);
+size_t smith_text_write_f64(struct smith_array_char_n out, double value);
 
 // An f32 in the fewest digits, at most 9, that parse_f32 reads back as the same bits: 0.1f is "0.1", where its f64
 // value is 0.10000000149011612. Written as write_f64 writes (positional or scientific, no plus), so a f32's text and
 // its widened f64's differ only in the digits. Room for f32_capacity characters; no terminator. The value must be
 // finite (checked).
-size_t smith_text_write_f32(char *out, float value);
+size_t smith_text_write_f32(struct smith_array_char_n out, float value);
 #ifdef __cplusplus
 }
 #endif

@@ -32,16 +32,16 @@ void parse(const char word[:]) {
 ```smith
 import smith::text;
 
-usize write_line(char *out, u64 tick, u64 hash) {
-    usize length = text::write_u64(out, tick);   // out has room for text::number_capacity (20), the longest: -9223372036854775808
+usize write_line(char out[:], u64 tick, u64 hash) {   // out has room for the three numbers and two spaces
+    usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808
     out[length++] = ' ';
-    length += text::write_i64(out + length, -7);
+    length += text::write_i64(out[length:countof(out)], -7);
     out[length++] = ' ';
-    length += text::write_hex(out + length, hash); // always 16 digits, so hashes line up
+    length += text::write_hex(out[length:countof(out)], hash); // always 16 digits, so hashes line up
     return length;
 }
 ```
 
-There is no terminator and no failure: give room for `text::number_capacity` characters (16 for hex). `text::write_f64(out, d)` writes a finite double in the fewest digits (at most 17) that read back as the same bits (`0.1`, `1e22`, `-0`), in room for `text::f64_capacity` (32). `text::write_f32(out, f)` does the same for a float (at most 9 digits, `0.1f` is `0.1`, room for `text::f32_capacity`, 24); both stop on infinity and nan. A replay that must not depend on text records bits as hex or whole numbers.
+There is no terminator and no failure: the writes take a `char out[:]` and return the count written; `out` must have room for `text::number_capacity` characters (16 for hex; `contract::requires`, which `smith prove` makes the caller prove). `text::write_f64(out, d)` writes a finite double in the fewest digits (at most 17) that read back as the same bits (`0.1`, `1e22`, `-0`), in room for `text::f64_capacity` (32; a run-time check, not a contract, because the arithmetic is too costly to prove). `text::write_f32(out, f)` does the same for a float (at most 9 digits, `0.1f` is `0.1`, room for `text::f32_capacity`, 24); both stop on infinity and nan. A replay that must not depend on text records bits as hex or whole numbers.
 
 Also in this family: [smith-text](../smith-text/SKILL.md), [smith-text-c](../smith-text-c/SKILL.md).
