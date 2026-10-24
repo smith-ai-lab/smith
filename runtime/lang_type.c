@@ -842,8 +842,13 @@ static bool smith_lang_ty_chain(SmithLang *lang, const SmithHost *host, const Sm
     size_t used = 0;
     for (size_t i = 0; i < chain->count && used + chain->tokens[i].length + 2 < sizeof chain->text; i++) {
         if (i > 0) chain->text[used++] = '\x1f';
-        memcpy(chain->text + used, chain->tokens[i].text, chain->tokens[i].length);
-        used += chain->tokens[i].length;
+        size_t length = chain->tokens[i].length;
+        // The compiler is asked a module's name as the lowering spells it (`main_big`); the tokens stay as written.
+        const char *spelling =
+            i == 0 ? smith_lang_ty_lowered(chain->tokens[i].text, length, &length) : chain->tokens[i].text;
+        if (used + length + 2 >= sizeof chain->text) break;
+        memcpy(chain->text + used, spelling, length);
+        used += length;
     }
     chain->text[used] = 0;
     return true;
