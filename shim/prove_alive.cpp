@@ -771,10 +771,23 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
             smt::expr condition;
         };
         std::vector<Assumed> assumed;
+        // What a caller's memory holds is values on every path: a load that runs reads one, whether or not it
+        // dominates the block that uses it (an unrolled loop's phi takes values from loads of passes that did not run).
+        smt::expr given_values = true;
+        for (IR::BasicBlock *block : transform.src.getBBs()) {
+            if (block->getName() == "#init") continue;
+            for (const IR::Instr &instruction : block->instrs()) {
+                const IR::State::ValTy *value = state->at(instruction);
+                if (value == nullptr) break;
+                if (dynamic_cast<const IR::Load *>(&instruction) != nullptr &&
+                    given_memory.count(instruction.getName()) != 0 && value->val.non_poison.isBool())
+                    given_values = given_values && (!state->getPath(*block) || value->val.non_poison);
+            }
+        }
         for (IR::BasicBlock *block : transform.src.getBBs()) {
             if (block->getName() == "#init") continue;
             smt::expr path = state->getPath(*block);
-            smt::expr facts = true;
+            smt::expr facts = given_values;
             for (const Assumed &fact : assumed) {
                 if (fact.block != block && dominators_of_blocks.dominates(fact.block, block))
                     facts = facts && fact.condition;
