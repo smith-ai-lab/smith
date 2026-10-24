@@ -285,6 +285,8 @@ typedef struct {
 typedef struct {
     char armed[96]; // the name of a slice just declared, whose `=` may convert an array
     char armed_tag[512];
+    char qualified[96]; // the name `m::T` was resolved to, at the place `qualified_at` (a declaration's type)
+    uint32_t qualified_at;
     char typeof_tag[512]; // the slice a `typeof(T[:])` just wrote, which a declaration's `=` may convert to
     uint32_t skip;        // the location of the first token of a chain that was written again
     bool after_boundary;  // the token before the one being lowered opens or ends a statement

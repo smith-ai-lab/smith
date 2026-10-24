@@ -6666,6 +6666,143 @@ i32 main() {
     printf("%zu\n", count);
     return 0;
 }
+==> str-typedef-lowering/src/text.smith <==
+module text;
+
+export typedef const char str[:];
+
+export struct Pair {
+    str key;
+    str value;
+};
+
+export usize total(str xs) {
+    return countof(xs);
+}
+
+export str first_word(str xs) {
+    usize n = 0;
+    while (n < countof(xs) && xs[n] != ' ')
+        n++;
+    return xs[0:n];
+}
+
+export bool pop(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+
+export usize count_of(auto x) {
+    if constexpr (is_slice(typeof(x))) return countof(x);
+    return 0;
+}
+==> str-typedef-module/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import text;
+
+i32 main(void) {
+    text::str s = "hello world";
+    text::str w = text::first_word(s);
+    text::str *p = &s;
+    usize n = 0;
+    while (text::pop(p))
+        n++;
+    struct text::Pair pair = {.key = w};
+    pair.value = "x";
+    c::printf("%zu %zu %zu %zu\n", text::total(w), n, countof(pair.key), countof(pair.value));
+    c::printf("%zu %zu\n", text::count_of(s), text::count_of(pair.key));
+    return 0;
+}
+==> str-typedef-module/src/text.smith <==
+module text;
+
+export typedef const char str[:];
+
+export struct Pair {
+    str key;
+    str value;
+};
+
+export usize total(str xs) {
+    return countof(xs);
+}
+
+export str first_word(str xs) {
+    usize n = 0;
+    while (n < countof(xs) && xs[n] != ' ')
+        n++;
+    return xs[0:n];
+}
+
+export bool pop(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+
+export usize count_of(auto x) {
+    if constexpr (is_slice(typeof(x))) return countof(x);
+    return 0;
+}
+==> str-typedef-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// C's typedef of an array declarator names a slice type (issue #148): `typedef const char str[:];`, `typedef char
+// bytes[:];`.
+
+typedef const char str[:];
+typedef char bytes[:];
+
+struct Named {
+    str name;
+};
+
+static usize length(str xs) {
+    return countof(xs);
+}
+
+static str tail(str xs) {
+    return xs[1:];
+}
+
+static bool next(str *p) {
+    if (countof(*p) == 0) return false;
+    *p = (*p)[1:];
+    return true;
+}
+
+static void poke(bytes *b) {
+    (*b)[0] = 'Z';
+}
+
+i32 main(void) {
+    str s = "abc";
+    c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
+    str cut = s[0:2];
+    str *p = &s;
+    usize steps = 0;
+    while (next(p))
+        steps++;
+    c::printf("%zu %zu %zu\n", countof(cut), steps, countof(s));
+
+    char raw[4] = {'a', 'b', 'c', 'd'};
+    bytes w = raw;
+    str r = w;    // const is added implicitly
+    str *pr = &w; // a pointer to bytes is a pointer to str (C23, N2607)
+    poke(&w);
+    c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
+
+    struct Named n = {};
+    n.name = "field";
+    typeof(s) same = n.name;
+    c::printf("%zu %zu\n", countof(n.name), countof(same));
+    return 0;
+}
 ==> target-facts/src/main.smith <==
 import target;
 import <stdio.h>;
