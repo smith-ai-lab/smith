@@ -1330,6 +1330,53 @@ expect_contains "struct: ... and the other struct's value" "$out" "b.pair.b = 3.
 expect_contains "struct: an array element is named by its index" "$out" "a.values[2] = 3   (i32)"
 expect_contains "struct: a bit-field is compared by its value" "$out" "b.flags = 2   (i32)"
 
+# 5c. Two slices are equal when their counts and every element are; the first count or index that differs is named
+# (issue #119).
+project "$work/slices"
+cat >tests/test_slices.smith <<'C'
+import smith::test;
+
+void test_same(void) {
+    i32 left[3] = {1, 2, 3};
+    i32 right[3] = {1, 2, 3};
+    i32 a[:] = left;
+    i32 b[:] = right;
+    test::check_equal(a, b);
+    f32 rows[2][2] = {{1, 2}, {3, 4}};
+    f32 grid[:][2] = rows;
+    test::check_equal(grid[1], grid[1]);
+}
+
+void test_element(void) {
+    i32 left[3] = {1, 2, 3};
+    i32 right[3] = {1, 5, 3};
+    i32 a[:] = left;
+    i32 b[:] = right;
+    test::check_equal(a, b);
+}
+
+void test_count(void) {
+    i32 raw[3] = {1, 2, 3};
+    i32 a[:] = raw;
+    i32 b[:] = a[0:2];
+    test::check_equal(a, b);
+}
+
+void test_row(void) {
+    f32 rows[2][2] = {{1, 2}, {3, 4}};
+    f32 grid[:][2] = rows;
+    test::check_equal(grid[0], grid[1]);
+}
+C
+capture "$smith" build
+expect "slice: the runner builds" 0 "$rc"
+capture build/tests $iso
+expect_contains "slice: equal slices pass, the other three fail" "$out" "1 passed, 3 failed"
+expect_contains "slice: the first element that differs is named" "$out" "a[1] = 2   (i32)"
+expect_contains "slice: ... and the other slice's" "$out" "b[1] = 5   (i32)"
+expect_contains "slice: a different count is named" "$out" "a.count = 3"
+expect_contains "slice: a row compares as a slice" "$out" "a[0] = 1 [0x1p+0]     (f32)"
+
 # 6. Finding the tests: in .smith and in C files, side by side.
 project "$work/finding"
 cat >tests/test_a.smith <<'C'

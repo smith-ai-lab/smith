@@ -781,8 +781,9 @@ constexpr usize label_capacity = 128;
 [[noreturn]] void fail_field(const char *path, Value a, Value b) {
     char label_a[label_capacity + 2];
     char label_b[label_capacity + 2];
-    __builtin_snprintf(label_a, sizeof label_a, "a.%s", path);
-    __builtin_snprintf(label_b, sizeof label_b, "b.%s", path);
+    const char *dot = path[0] == '[' ? "" : "."; // a slice's own element is `a[2]`, a field's `a.values[2]`
+    __builtin_snprintf(label_a, sizeof label_a, "a%s%s", dot, path);
+    __builtin_snprintf(label_b, sizeof label_b, "b%s%s", dot, path);
     Line lines[2] = {{.text = label_a, .value = a}, {.text = label_b, .value = b}};
     write_values(lines, 2);
     stop();
@@ -898,11 +899,22 @@ void check_part(const char *path, auto a, typeof(a) b, usize count) {
     }
 }
 
+// Two slices (a slice type, whose `countof(a)` and `a[i]` an instance writes as the lowering does): equal when counts
+// and every element is as check_part compares one, through the pointers to the first elements. The first that differs
+// is named, the count (`a.count = 3`) or the index (`a[1] = 5`, `b[1] = 6`).
+void check_slices(auto a, typeof(a) b) {
+    if (countof(a) != countof(b)) fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
+    check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
+}
+
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
 // values print with it. Two structs are equal when every field is, and the first that differs is named
-// (`a.pair.m = 1`, `b.pair.m = 2`); a fixed array field is compared element by element.
+// (`a.pair.m = 1`, `b.pair.m = 2`); a fixed array field is compared element by element, and two slices by their counts
+// and then their elements (`a[1] = 5`, `b[1] = 6`).
 export void check_equal(auto a, typeof(a) b) {
-    if constexpr (is_record(typeof(a))) {
+    if constexpr (is_slice(typeof(a))) {
+        check_slices(a, b);
+    } else if constexpr (is_record(typeof(a))) {
         check_part("", a, b, 0);
     } else if constexpr (target::static_analyzer) {
         __builtin_assume(a == b); // the analyzer cannot see what a failed check does: it is told what a pass means
