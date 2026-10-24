@@ -1,7 +1,51 @@
 #!/bin/sh
 # End-to-end tests for `smith build`, with real ninja and the real clang smith picks. Each case runs in its own
-# temporary project. Usage: sh tests/build.sh path/to/smith
+# temporary project. Usage: sh tests/build.sh path/to/smith [K/N]
+# `K/N` runs shard K of N (0 based): the blocks that start with a "# 9k. title" line (those of one number together,
+# except the 9s) are dealt out, longest first, to the shard with the fewest lines so far, so the shards run as tasks
+# side by side (issue #116). Block 1 makes the copy project the later blocks read, so every shard runs it. Every shard
+# keeps the preamble and the summary.
 set -u
+if [ $# -ge 2 ]; then
+    dir=$(cd "$(dirname "$0")" && pwd)
+    shard=$(mktemp)
+    awk -v want="${2%/*}" -v count="${2#*/}" '
+        { line[NR] = $0 }
+        END {
+            last = NR
+            while (line[last] != "echo") last--
+            for (i = 1; i <= NR; i++) if (line[i] ~ /^# [0-9]+[a-z0-9]*\. /) {
+                number = line[i]; sub(/^# /, "", number); sub(/[^0-9].*/, "", number)
+                if (number != before || number == 9) { blocks++; start[blocks] = i }
+                before = number
+            }
+            for (b = 1; b <= blocks; b++) {
+                stop = (b < blocks ? start[b + 1] : last) - 1
+                size[b] = stop - start[b] + 1
+                bound[b] = stop
+            }
+            for (b = 1; b <= blocks; b++) {
+                if (line[start[b]] ~ /^# 1\. /) owner[b] = -1
+            }
+            for (round = 1; round <= blocks; round++) {
+                best = 0
+                for (b = 1; b <= blocks; b++) if (!(b in owner) && (!best || size[b] > size[best])) best = b
+                if (!best) break
+                low = 0
+                for (k = 1; k < count; k++) if (used[k] < used[low]) low = k
+                owner[best] = low
+                used[low] += size[best]
+            }
+            for (i = 1; i < start[1]; i++) print line[i]
+            for (b = 1; b <= blocks; b++) if (owner[b] == want || owner[b] == -1) for (i = start[b]; i <= bound[b]; i++) print line[i]
+            for (i = last; i <= NR; i++) print line[i]
+        }' "$0" >"$shard"
+    sed "s|\$(dirname \"\$0\")|$dir|" "$shard" >"$shard.sh" && rm -f "$shard"
+    sh "$shard.sh" "$1"
+    status=$?
+    rm -f "$shard.sh"
+    exit $status
+fi
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
