@@ -1,0 +1,17 @@
+module main;
+
+import reach;
+import <stdio.h>;
+
+struct State {
+    i32 jumps[3];
+    f32 grid[2][2];
+};
+
+i32 main(void) {
+    struct State s = {{1, 2, 3}, {{1, 2}, {3, 4}}};
+    struct State *p = &s;
+    c::printf("%zu %zu %zu\n", reach::bytes(&p->jumps), reach::elements(&p->jumps), reach::bytes(&s.grid));
+    c::printf("%zu %d\n", reach::elements(&s.grid), reach::is_a_pointer(&p->jumps));
+    return 0;
+}

@@ -2199,7 +2199,9 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
         while (word && (isalnum((unsigned char)written[end]) || written[end] == '_'))
             end += 1;
         SmithLangGenToken token = {};
-        token.kind = word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator;
+        token.kind = !word                       ? SmithTokenKind_Punctuator
+                     : isdigit((unsigned char)c) ? SmithTokenKind_Number
+                                                 : SmithTokenKind_Identifier;
         token.location = location;
         if (at > 0) token.flags = (uint8_t)smith_lang_gen_flag_space;
         if (smith_lang_pool_add(&smith_lang_it, token, written + at, end - at) == UINT32_MAX) return false;
