@@ -505,11 +505,10 @@ static const char *const build_linked_libraries[] = {"arena", "contract", "infla
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
 static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *config) {
     if (config->linkable) return smith_list(b, nullptr);
+    const char *message =
+        smith_fmt(b, "smith: no usable LLVM install at %s: run smith build llvm (9 minutes once)", config->llvm);
     SmithStep stop = {
-        .command = (const char *[]){"sh", "-c",
-                                    "echo \"smith: the LLVM install $0 is missing or too old: run smith build llvm "
-                                    "(about 9 minutes once)\" >&2; exit 1",
-                                    config->llvm, nullptr},
+        .command = (const char *[]){"sh", "-c", "echo \"$0\" >&2; exit 1", message, nullptr},
         .outputs = (const char *[]){"build/llvm-required", nullptr},
     };
     smith_step(b, &stop);
@@ -518,18 +517,20 @@ static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *
 
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
+    const char *const *flags = smith_cat(
+        b, config->cflags, (const char *[]){"-I", "include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+        (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
+        smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
+        smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
+        smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+        smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
+    // The libraries have smith.c's flags: `smith prove` proves sources whose compile flags are alike together, so a
+    // call in smith.c into a library finds the library's body.
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
-        .flags = smith_cat(
-            b, config->cflags,
-            (const char *[]){"-I", "include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
-            (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
-            smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
-            smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
-            smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
+        .flags = flags,
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs,
                                      build_llvm_required(b, config), nullptr),
     };
@@ -544,7 +545,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
             .compiler = config->cc,
             .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
-            .flags = build_smith_flags(b, config),
+            .flags = flags,
         };
         smith_object(b, &libraries[i]);
         objects[count++] = &libraries[i];
@@ -595,7 +596,11 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     const char *const *flags = smith_cat(b, config->cflags, smith_list(b, "-I", "include", nullptr), nullptr);
     const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
-        if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0) continue;
+        // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
+        // raw lowering of random.smith, which tests/random.sh writes when it runs
+        if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0 ||
+            strcmp(sources[i], "tests/random.c") == 0)
+            continue;
         smith_compile_command(b, config->cc, sources[i], flags);
     }
     // The modules are linted as written, and `.smith` is C2y (as `smith cc` compiles it), so `_Countof` works.
