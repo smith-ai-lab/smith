@@ -11,8 +11,13 @@ cmd=${1:-}
 case $cmd in
 tree) git rev-parse 'HEAD^{tree}' ;;
 run)
-    gh api "repos/${GITHUB_REPOSITORY:-}/artifacts?name=tree-$2" \
-        --jq '[.artifacts[] | select(.expired == false)] | first | .workflow_run.id // empty' 2>/dev/null || true
+    # fail safe: only a single run id (digits) counts; an error, an empty or a malformed answer is "nothing"
+    id=$(gh api "repos/${GITHUB_REPOSITORY:-}/artifacts?name=tree-$2" \
+        --jq '[.artifacts[] | select(.expired == false)] | first | .workflow_run.id // empty' 2>/dev/null) || id=
+    case $id in
+    '' | *[!0-9]*) ;;
+    *) printf '%s\n' "$id" ;;
+    esac
     ;;
 checked)
     if [ -n "$(sh "$0" run "$2")" ]; then echo yes; else echo no; fi
