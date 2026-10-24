@@ -1,0 +1,3 @@
+src/main.smith:7:5: `double` is not `integer`: the initializer of `n` has that type
+src/main.smith:8:5: `const char *` is not `arithmetic`: the initializer of `text` has that type
+src/main.smith:9:5: `Pair` is not `floating`: the initializer of `pair` has that type

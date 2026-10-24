@@ -657,7 +657,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic = SM.getBufferData(MainFile).contains("type ") ||
                              SM.getBufferData(MainFile).contains("auto ") ||
-                             SM.getBufferData(MainFile).contains("auto...");
+                             SM.getBufferData(MainFile).contains("auto...") || namesConcept(SM.getBufferData(MainFile));
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
         host.maybe_tuple =
@@ -2425,6 +2425,17 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // Whether the code (not its comments or strings) has `type` before a name or a `*`, other than in a generic's
     // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
+    // Whether the text has a concept's name and a space (`arithmetic x`, issue #193): it may declare a generic.
+    static bool namesConcept(StringRef text) {
+        static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
+                                               "arithmetic ", "boolean ",  "pointer ",        "enumeration ",
+                                               "structure ",  "array ",    "slice "};
+        for (const char *name : concepts) {
+            if (text.contains(name)) return true;
+        }
+        return false;
+    }
+
     static bool hasTypeValue(StringRef text) {
         int paren = 0;
         StringRef previous;

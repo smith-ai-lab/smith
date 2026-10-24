@@ -237,6 +237,7 @@ typedef struct {
     uint8_t type_token[smith_lang_type_params_max];    // the T of each `type T`: the index of its token in the head
     uint8_t type_position[smith_lang_type_params_max]; // and which parameter it is
     uint8_t type_kind[smith_lang_type_params_max];     // a SmithLangSlot
+    uint8_t type_concept[smith_lang_type_params_max];  // of an `auto` parameter written `arithmetic x`: 1 + the concept
     bool is_inline;
     bool exported;
     bool own;            // the module being lowered defines it (else an import's)

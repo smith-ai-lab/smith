@@ -1,0 +1,11 @@
+typedef struct {
+    int a;
+} Pair;
+
+int main(void) {
+    const char *name = "x";
+    integer n = 2.5;
+    arithmetic text = name;
+    floating pair = (Pair){1};
+    return n;
+}

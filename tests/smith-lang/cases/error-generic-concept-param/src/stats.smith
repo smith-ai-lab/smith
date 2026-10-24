@@ -1,0 +1,18 @@
+module stats;
+
+// A concept stands for a type where `auto` does: the argument's type, which must be of the concept (issue #193).
+export typeof(x) twice(arithmetic x) {
+    return x + x;
+}
+
+export typeof(a) larger(integer a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize width(pointer p) {
+    return sizeof(*p);
+}
+
+export i32 sign_of(signed_integer n) {
+    return n < 0 ? -1 : 1;
+}

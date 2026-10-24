@@ -81,6 +81,7 @@
     "./.agents/skills/smith-lang-generics-auto/",
     "./.agents/skills/smith-lang-generics-more/",
     "./.agents/skills/smith-lang-if-constexpr/",
+    "./.agents/skills/smith-lang-concepts/",
     "./.agents/skills/smith-lang-rest/",
     "./.agents/skills/smith-lang-rest-expand/",
     "./.agents/skills/smith-lang-slice-qualifiers/",

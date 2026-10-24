@@ -1256,6 +1256,58 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-generic-concept-local/src/main.smith <==
+typedef struct {
+    int a;
+} Pair;
+
+int main(void) {
+    const char *name = "x";
+    integer n = 2.5;
+    arithmetic text = name;
+    floating pair = (Pair){1};
+    return n;
+}
+==> error-generic-concept-param/src/main.smith <==
+module main;
+
+import stats;
+
+typedef struct {
+    i32 a;
+} Pair;
+
+i32 main(void) {
+    const char *name = "x";
+    Pair pair = {1};
+    u32 unsigned_value = 4;
+    f64 real = 2.0;
+    stats::twice(name);
+    stats::twice(pair);
+    stats::larger(real, 1.0);
+    stats::sign_of(unsigned_value);
+    stats::width(real);
+    return 0;
+}
+==> error-generic-concept-param/src/stats.smith <==
+module stats;
+
+// A concept stands for a type where `auto` does: the argument's type, which must be of the concept (issue #193).
+export typeof(x) twice(arithmetic x) {
+    return x + x;
+}
+
+export typeof(a) larger(integer a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize width(pointer p) {
+    return sizeof(*p);
+}
+
+export i32 sign_of(signed_integer n) {
+    return n < 0 ? -1 : 1;
+}
 ==> error-generic-number-parameter/src/main.smith <==
 module main;
 
@@ -3156,6 +3208,74 @@ int main(void) {
     q->x = p->x + 10;
     printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
     return 0;
+}
+==> generic-concept-local/src/main.smith <==
+#include <stdio.h>
+
+typedef struct {
+    int a;
+} Pair;
+
+int scaled(int k) {
+    return k * 3;
+}
+
+int main(void) {
+    integer n = 3;
+    floating ratio = 0.5;
+    arithmetic total = n + scaled(2);
+    signed_integer delta = -4;
+    unsigned_integer bits = 12u;
+    pointer where = &n;
+    structure pair = (Pair){7};
+    printf("%d %g %d %d %u %d %d\n", n, ratio, total, delta, bits, *(int *)where, pair.a);
+    return 0;
+}
+==> generic-concept-param/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import stats;
+
+i32 main(void) {
+    i32 a = 21;
+    f64 b = 1.25;
+    u8 c = 7;
+    i16 d = -3;
+    c::printf("%d %g %d %d\n", stats::twice(a), stats::twice(b), stats::larger(a, 5), stats::larger(c, (u8)9));
+    c::printf("%zu %d\n", stats::width(&b), stats::sign_of(d));
+    c::printf("%d %g %d\n", stats::shifted(a), stats::shifted(b), stats::plain(a));
+    return 0;
+}
+==> generic-concept-param/src/stats.smith <==
+module stats;
+
+// A concept stands for a type where `auto` does: the argument's type, which must be of the concept (issue #193).
+export typeof(x) twice(arithmetic x) {
+    return x + x;
+}
+
+export typeof(a) larger(integer a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+export usize width(pointer p) {
+    return sizeof(*p);
+}
+
+export i32 sign_of(signed_integer n) {
+    return n < 0 ? -1 : 1;
+}
+
+export typeof(x) shifted(arithmetic x) {
+    integer one = 1;
+    arithmetic y = x + one;
+    return y;
+}
+
+export i32 plain(i32 q) {
+    integer r = q * 2;
+    return r;
 }
 ==> generic-countof-member/src/main.smith <==
 module main;

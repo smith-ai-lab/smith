@@ -34,6 +34,7 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | slices | `i32 xs[:]`, `xs[a:b]`, `countof(xs)` | `smith-lang-arrays` |
 | generics | `constexpr type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
 | argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
+| concepts | `arithmetic x`, `integer n = 3;` | `smith-lang-concepts` |
 | compile time | `constexpr i32 x = fib(10);`, `static_assert(f() == 3)` | `smith-lang-constexpr` |
 | type values | `constexpr type t = i32;` | `smith-lang-type-values` |
 | tuples, used once | `struct { i32, f32 }`, `[[smith::affine]]` | `smith-lang-tuples`, `smith-lang-affine` |
