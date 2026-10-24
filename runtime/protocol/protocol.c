@@ -76,8 +76,16 @@ bool smith_protocol_text_is(struct smith_array_const_char_n text, const char *st
 // ---------------------------------------------------------------------------------------------------------------
 // The random makers' choices
 
+// The next key of a stream: `stream` moves on and the key returned is for one use (the reassignment pattern).
+SmithKey smith_protocol_take(SmithKey *stream) {
+    SmithKey next[2];
+    smith_key_split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 bool smith_protocol_coin(SmithKey key) {
-    return (smith_key_bits(key, 0) & 1) != 0;
+    return (smith_key_bits(key) & 1) != 0;
 }
 
 size_t smith_protocol_pick(SmithKey key, size_t count) {
@@ -120,12 +128,13 @@ constexpr size_t smith_protocol_piece_count = sizeof smith_protocol_pieces / siz
 constexpr size_t smith_protocol_string_pieces_max = 5;
 
 void smith_protocol_string_random(SmithArena *arena, SmithKey key, struct smith_array_const_char_n *out) {
-    size_t pieces = smith_protocol_pick(smith_key_derive(key, 0), smith_protocol_string_pieces_max);
+    SmithKey *stream = &key;
+    size_t pieces = smith_protocol_pick(smith_protocol_take(stream), smith_protocol_string_pieces_max);
     char *bytes = smith_arena_push_array(arena, 1, pieces * 4 + 1, 1);
     size_t length = 0;
     for (size_t i = 0; i < pieces; i++) { // bounded by smith_protocol_string_pieces_max
         const char *piece =
-            smith_protocol_pieces[smith_protocol_pick(smith_key_derive(key, i + 1), smith_protocol_piece_count)];
+            smith_protocol_pieces[smith_protocol_pick(smith_protocol_take(stream), smith_protocol_piece_count)];
         size_t piece_length = strlen(piece);
         memcpy(bytes + length, piece, piece_length);
         length += piece_length;
@@ -152,10 +161,11 @@ bool smith_protocol_integer_equal(const int64_t *a, const int64_t *b) {
 }
 
 void smith_protocol_integer_random([[maybe_unused]] SmithArena *arena, SmithKey key, int64_t *out) {
-    if (smith_protocol_coin(smith_key_derive(key, 0)))
-        *out = smith_uniform_int64_sample(smith_key_derive(key, 1), (SmithUniformInt64){.low = -5, .high = 1000});
+    SmithKey *stream = &key;
+    if (smith_protocol_coin(smith_protocol_take(stream)))
+        *out = smith_uniform_int64_sample(smith_protocol_take(stream), (SmithUniformInt64){.low = -5, .high = 1000});
     else
-        *out = (int64_t)smith_key_bits(smith_key_derive(key, 2), 0);
+        *out = (int64_t)smith_key_bits(smith_protocol_take(stream));
 }
 
 bool smith_protocol_number_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, double *out,
@@ -174,10 +184,11 @@ bool smith_protocol_number_equal(const double *a, const double *b) {
 }
 
 void smith_protocol_number_random([[maybe_unused]] SmithArena *arena, SmithKey key, double *out) {
-    double d = __builtin_bit_cast(double, smith_key_bits(smith_key_derive(key, 0), 0));
+    SmithKey *stream = &key;
+    double d = __builtin_bit_cast(double, smith_key_bits(smith_protocol_take(stream)));
     bool finite = ((__builtin_bit_cast(uint64_t, d) >> 52) & 0x7ff) != 0x7ff;
-    if (smith_protocol_coin(smith_key_derive(key, 1)) || !finite)
-        d = smith_uniform_double_sample(smith_key_derive(key, 2), (SmithUniformDouble){.low = -100, .high = 100});
+    if (smith_protocol_coin(smith_protocol_take(stream)) || !finite)
+        d = smith_uniform_double_sample(smith_protocol_take(stream), (SmithUniformDouble){.low = -100, .high = 100});
     *out = d;
 }
 
@@ -292,9 +303,10 @@ typedef struct {
 // One random scalar, or the start of a container (pushed on the stack of open ones).
 static void smith_protocol_random_item(SmithArena *arena, SmithJsonWriter *writer, SmithKey key, bool force_object,
                                        SmithProtocolOpen *open, size_t *depth) {
-    size_t kind = force_object ? 7 : smith_protocol_pick(smith_key_derive(key, 0), 8);
+    SmithKey *stream = &key;
+    size_t kind = force_object ? 7 : smith_protocol_pick(smith_protocol_take(stream), 8);
     if (kind >= 6 && *depth >= smith_protocol_random_depth) kind = 0;
-    SmithKey rest = smith_key_derive(key, 1);
+    SmithKey rest = smith_protocol_take(stream);
     if (kind == 6 || kind == 7) {
         if (kind == 6)
             smith_json_write_array_begin(writer);
@@ -342,9 +354,10 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
     size_t depth = 0;
     size_t values = 0;
     bool due = true; // a value is due, rather than the next element or an end
+    SmithKey *stream = &key;
     for (size_t step = 0; step < 4 * smith_protocol_random_values; step++) { // each step makes a value or an end
         if (due) {
-            SmithKey item = smith_key_derive(key, step);
+            SmithKey item = smith_protocol_take(stream);
             bool force = force_object && values == 0;
             if (values < smith_protocol_random_values || force) {
                 smith_protocol_random_item(arena, &writer, item, force, open, &depth);
@@ -459,7 +472,8 @@ bool smith_protocol_extra_equal(const SmithProtocolExtra *a, const SmithProtocol
 }
 
 void smith_protocol_extra_random(SmithArena *arena, SmithKey key, SmithProtocolExtra *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     *out = (SmithProtocolExtra){};
     if (count == 0) return;
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n),
@@ -468,7 +482,7 @@ void smith_protocol_extra_random(SmithArena *arena, SmithKey key, SmithProtocolE
         (SmithProtocolAny *)smith_protocol_block(arena, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_protocol_any_random(arena, smith_key_derive(key, i + 1), &values[i]);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &values[i]);
     }
     out->keys = keys;
     out->values = values;

@@ -6,10 +6,10 @@
 
 SOUND_MAIN({
     SOUND_RUN("protocol_pick", sound_count, {
-        const SmithKey key = smith_key_make(sound_u64());
+        const uint64_t seed = sound_u64(); // a key is used once, so it is made where it is used
         const size_t count = (size_t)(sound_next() & 1 ? sound_u64() >> (sound_next() % 3) : sound_between(0, 9));
-        SOUND_NOTE("protocol_pick(key %llu, count %zu)", (unsigned long long)key.bits, count);
-        const size_t index = smith_protocol_pick(key, count);
+        SOUND_NOTE("protocol_pick(key %llu, count %zu)", (unsigned long long)seed, count);
+        const size_t index = smith_protocol_pick(smith_key_make(seed), count);
         if (index >= count) exit(1);
     });
     SOUND_RUN("protocol_fail", sound_count, {

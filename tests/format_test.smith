@@ -21,9 +21,18 @@ static bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
 }
 
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 static u64 test_format_draw(random::Key key) {
-    u64 shift = random::key_bits(random::key_derive(key, 1), 0) % 64;
-    return random::key_bits(random::key_derive(key, 0), 0) >> shift;
+    random::Key *key_stream = &key;
+    u64 shift = random::key_bits(take(key_stream)) % 64;
+    return random::key_bits(take(key_stream)) >> shift;
 }
 
 typedef struct {
@@ -121,10 +130,11 @@ export void test_format_integers_at_their_limits(void) {
 }
 
 export void test_format_signed_matches_libc(random::Key key) {
+    random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    i64 value = (i64)test_format_draw(key);
-    if ((random::key_bits(random::key_derive(key, 2), 0) & 1) != 0) value = -value;
+    i64 value = (i64)test_format_draw(take(key_stream));
+    if ((random::key_bits(take(key_stream)) & 1) != 0) value = -value;
     (void)format::to(out, sizeof out, value);
     __builtin_snprintf(expected, sizeof expected, "%lld", value);
     test::check(is(out, expected));
@@ -140,10 +150,11 @@ export void test_format_unsigned_matches_libc(random::Key key) {
 }
 
 export void test_format_hex_matches_libc(random::Key key) {
+    random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    u64 value = test_format_draw(key);
-    u32 width = (u32)(random::key_bits(random::key_derive(key, 3), 0) % 20); // past 16 stops at 16
+    u64 value = test_format_draw(take(key_stream));
+    u32 width = (u32)(random::key_bits(take(key_stream)) % 20); // past 16 stops at 16
     (void)format::to(out, sizeof out, format::hex(value, width));
     u32 libc_width = width < 16 ? width : 16;
     __builtin_snprintf(expected, sizeof expected, "%0*llx", (i32)libc_width, value);
@@ -175,7 +186,8 @@ export void test_format_floats_known(void) {
 }
 
 export void test_format_floats_read_back(random::Key key) {
-    u64 bits = random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream));
     f64 value = __builtin_bit_cast(f64, bits);
     if (!math::is_finite(value)) return;
     char out[capacity];
@@ -228,16 +240,17 @@ export void test_format_fixed_places_up_to_the_limit(void) {
 }
 
 export void test_format_fixed_matches_libc(random::Key key) {
-    u64 bits = random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream));
     f64 value = __builtin_bit_cast(f64, bits);
-    u32 places = (u32)(random::key_bits(key, 1) % 21);
+    u32 places = (u32)(random::key_bits(take(key_stream)) % 21);
     if (!math::is_finite(value)) return;
     f64 magnitude = value < 0 ? -value : value;
     if (magnitude >= 9.2e18) return; // past 2^63 is written as a float
     check_fixed(value, places);
     // A value spread over the useful range, which random bits rarely give: a mantissa times a small power of two.
-    u64 mantissa = random::key_bits(key, 2) >> 11;
-    i32 exponent = (i32)(random::key_bits(key, 3) % 80) - 70;
+    u64 mantissa = random::key_bits(take(key_stream)) >> 11;
+    i32 exponent = (i32)(random::key_bits(take(key_stream)) % 80) - 70;
     f64 near = (f64)mantissa * __builtin_ldexp(1.0, exponent);
     check_fixed(near, places);
 }
@@ -288,10 +301,11 @@ export void test_format_capacity_zero_measures(void) {
 
 // A number cut in the middle keeps the digits before the cut, and the length is the whole number's.
 export void test_format_cut_in_a_number(random::Key key) {
-    u64 value = test_format_draw(key);
+    random::Key *key_stream = &key;
+    u64 value = test_format_draw(take(key_stream));
     char whole[capacity];
     usize length = format::to(whole, sizeof whole, value).length;
-    usize room = (usize)(random::key_bits(key, 5) % (length + 2));
+    usize room = (usize)(random::key_bits(take(key_stream)) % (length + 2));
     char out[capacity];
     format::Written written = format::to(out, room, value);
     test::check_equal(written.length, length);
@@ -458,13 +472,15 @@ export void test_format_general_and_scientific_extremes_match_libc(void) {
 }
 
 export void test_format_general_and_scientific_match_libc(random::Key key) {
-    u64 bits = random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream));
     f64 value = __builtin_bit_cast(f64, bits);
-    u32 digits = (u32)(random::key_bits(key, 1) % 25);
+    u32 digits = (u32)(random::key_bits(take(key_stream)) % 25);
     if (!math::is_finite(value)) return;
     check_general(value, digits);
     check_scientific(value, digits);
-    f64 near = (f64)(random::key_bits(key, 2) % 100000) / 1000.0; // values with few digits, where rounding is near
+    f64 near =
+        (f64)(random::key_bits(take(key_stream)) % 100000) / 1000.0; // values with few digits, where rounding is near
     check_general(near, digits);
     check_scientific(near, digits);
 }
@@ -496,14 +512,15 @@ export void test_format_padding_known(void) {
 
 // The printf forms the callers use, each against snprintf.
 export void test_format_padding_matches_libc(random::Key key) {
+    random::Key *key_stream = &key;
     char out[capacity];
     char expected[capacity];
-    u32 width = (u32)(random::key_bits(key, 0) % 14);
-    i64 number = (i64)(random::key_bits(key, 1) >> (random::key_bits(key, 2) % 64));
-    u64 unsigned_number = random::key_bits(key, 3) >> (random::key_bits(key, 4) % 64);
-    f64 value = (f64)(random::key_bits(key, 5) % 2000000) / 1000.0 - 1000.0;
+    u32 width = (u32)(random::key_bits(take(key_stream)) % 14);
+    i64 number = (i64)(random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64));
+    u64 unsigned_number = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
+    f64 value = (f64)(random::key_bits(take(key_stream)) % 2000000) / 1000.0 - 1000.0;
     const char *words[] = {"", "a", "knight", "a longer name than most"};
-    const char *word = words[random::key_bits(key, 6) % 4];
+    const char *word = words[random::key_bits(take(key_stream)) % 4];
     __builtin_snprintf(expected, sizeof expected, "[%*lld|%-*lld|%*llu|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width, number,
                        (i32)width, number, (i32)width, unsigned_number, (i32)width, word, (i32)width, word, (i32)width,
                        value, (i32)width, value, (i32)width, value);

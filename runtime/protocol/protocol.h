@@ -148,6 +148,7 @@ void smith_protocol_key(SmithJsonWriter *writer, const char *name);
 [[nodiscard]] struct smith_array_const_char_n smith_protocol_name(SmithArena *arena, size_t i);
 
 // The random makers' choices. All come from the key, so a key replays a value. word 0 of each is the simplest choice.
+[[nodiscard]] SmithKey smith_protocol_take(SmithKey *stream);         // the next key of a stream
 [[nodiscard]] bool smith_protocol_coin(SmithKey key);                 // true half the time
 [[nodiscard]] size_t smith_protocol_count(SmithKey key);              // 0 to 2 elements
 [[nodiscard]] size_t smith_protocol_pick(SmithKey key, size_t count); // 0 to count - 1

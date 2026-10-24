@@ -12,19 +12,21 @@ import smith::arena;
 import smith::random;
 
 void distributions(random::Key key, arena::Arena *a) {
-    f32 x = random::uniform_float_sample(key, (random::UniformFloat){.low = 0, .high = 1});        // [low, high)
-    f64 y = random::uniform_double_sample(key, (random::UniformDouble){.low = -1, .high = 1});     // [low, high)
-    i64 die = random::uniform_int64_sample(key, (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
-    f32 gauss = random::normal_float_sample(key, (random::NormalFloat){.mean = 0, .deviation = 1});
-    f64 gauss64 = random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
-    bool coin = random::bernoulli_sample(key, (random::Bernoulli){.probability = 0.3});
+    random::Key k[8];
+    random::split(key, k);                                  // each draw below has its own key
+    f32 x = random::uniform_float_sample(k[0], (random::UniformFloat){.low = 0, .high = 1});        // [low, high)
+    f64 y = random::uniform_double_sample(k[1], (random::UniformDouble){.low = -1, .high = 1});     // [low, high)
+    i64 die = random::uniform_int64_sample(k[2], (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
+    f32 gauss = random::normal_float_sample(k[3], (random::NormalFloat){.mean = 0, .deviation = 1});
+    f64 gauss64 = random::normal_double_sample(k[4], (random::NormalDouble){.mean = 0, .deviation = 1});
+    bool coin = random::bernoulli_sample(k[5], (random::Bernoulli){.probability = 0.3});
 
     f64 weights[] = {1, 2, 3};
     random::Categorical table = random::categorical_make(a, weights, _Countof(weights)); // built once, in the arena
-    usize pick = random::categorical_sample(key, table);                                  // an index below count
+    usize pick = random::categorical_sample(k[6], table);                                 // an index below count
 
     usize *order = arena::push_slice(a, usize, 52).data;
-    random::permutation_sample(key, (random::Permutation){.count = 52}, order);          // 0..51, uniformly ordered
+    random::permutation_sample(k[7], (random::Permutation){.count = 52}, order);         // 0..51, uniformly ordered
     (void)x, (void)y, (void)die, (void)gauss, (void)gauss64, (void)coin, (void)pick;
 }
 ```
@@ -32,23 +34,27 @@ void distributions(random::Key key, arena::Arena *a) {
 - Parameters are `assert`ed: `low < high` and finite, `deviation > 0`, a probability in [0, 1], categorical weights finite, not negative, with a positive sum. A real uniform never returns `high`.
 - The integer uniform is Lemire's multiply-and-reject: every value exactly as likely, up to 64 attempts. Needing all 64 has a probability below 2^-64, and then the last candidate is returned.
 - The normal is the inverse CDF (Wichura's AS241), computed in `float` for `float`. Its reach is about +-8.2 deviations for `double` and about +-5.3 for `float`: the grid never reaches 0 or 1, so a draw is finite, and the distribution is exactly symmetric. A `float` normal is a poor fit when the tails past 5.3 sigma matter; use `double`.
-- The zero word gives the simplest value, and values move away from it as the word grows (this is for the test runner, which shrinks a failing test by making its words smaller; it changes no distribution, only which word gives which value). The integer uniform gives 0 clamped into the range, then 0 - 1, 0 + 1, 0 - 2... (zigzag), and the real uniforms do the same on their grid; the normals give the mean to within one grid step; the Bernoulli gives `false`; the categorical gives column 0; the permutation gives the identity. Draws are pure functions of (key, n), so shrinking one word never shifts another: item i's key is `random::key_derive(key, i)` however many items came before.
-- `random::Tap` is for smith's test runner and nothing else: a key the runner made carries a `tap` (a field of `random::Key`, `nullptr` for every key a program makes), and `random::key_bits` passes each word through the tap, so the runner can record a failing test's words and replace them with smaller ones; `key_derive` copies the tap to the keys it derives. There is no global to set, and a program's own keys stay pure functions of their bits.
-- A zero weight is never drawn. The categorical table lives in the arena, which must outlive it; a sample is an index from `derive(key, 0)` and a coin from `derive(key, 1)`.
+- The zero word gives the simplest value, and values move away from it as the word grows (this is for the test runner, which shrinks a failing test by making its words smaller; it changes no distribution, only which word gives which value). The integer uniform gives 0 clamped into the range, then 0 - 1, 0 + 1, 0 - 2... (zigzag), and the real uniforms do the same on their grid; the normals give the mean to within one grid step; the Bernoulli gives `false`; the categorical gives column 0; the permutation gives the identity. A draw is a pure function of its key, so shrinking one word never shifts another: part i of a `split` is the same however many parts came with it.
+- `random::Tap` is for smith's test runner and nothing else: a key the runner made carries a `tap` (a field of `random::Key`, `nullptr` for every key a program makes), and `random::key_bits` passes each word through the tap, so the runner can record a failing test's words and replace them with smaller ones; `split` copies the tap to the keys it makes. There is no global to set, and a program's own keys stay pure functions of their bits.
+- A zero weight is never drawn. The categorical table lives in the arena, which must outlive it; a sample is an index from the first part of a split of the key and a coin from the second.
 
 ## Fill an array: a loop
 
-There is no `fill`. Filling is one loop that works for any distribution and parallelizes, since no draw depends on another:
+There is no `fill`. Filling is one loop that works for any distribution: each turn takes a key from the reassignment pattern, or you split into an array and use the plain loop (`smith-lang-affine`):
 
 ```smith
 import smith::random;
 
-void fill(random::Key key, f32 *out, usize count) {
-    for (usize i = 0; i < count; i++)
-        out[i] = random::normal_float_sample(random::key_derive(key, i), (random::NormalFloat){.mean = 0, .deviation = 1});
+void fill(random::Key key, f32 out[:]) {
+    for (usize i = 0; i < countof(out); i++) {
+        random::Key next[2];
+        random::split(key, next);
+        key = next[0];                      // the key moves on; next[1] is for this item
+        out[i] = random::normal_float_sample(next[1], (random::NormalFloat){.mean = 0, .deviation = 1});
+    }
 }
 ```
 
-Run the iterations in any order, on any number of threads: the array is the same.
+With the split into an array the iterations run in any order, on any number of threads: the array is the same.
 
 Also in this family: [smith-random](../smith-random/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md), [smith-random-c](../smith-random-c/SKILL.md).

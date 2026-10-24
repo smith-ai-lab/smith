@@ -45,7 +45,7 @@ expect_contains() { # name, text, needle
 }
 
 # The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
-expected_digest=4a2e897669d609ac
+expected_digest=0453abcbd4531af9
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
 # tests/random.c reaches the module's static functions by including its raw lowering (what `smith cc --smith-lower` writes).
 mkdir "$work/lowered" || exit 1
@@ -145,19 +145,22 @@ cat >main.c <<'C'
 
 // Your own distribution, written like smith's: built only from the public primitives.
 static double exponential_sample(SmithKey key, double rate) {
-    return -smith_log_double(1.0 - smith_key_unit_double(key, 0)) / rate;
+    return -smith_log_double(1.0 - smith_key_unit_double(key)) / rate;
 }
 
 int main(void) {
-    SmithKey key = smith_key_make(42);
+    SmithKey parts[3];
+    smith_key_split_n(smith_key_make(42), parts, 3); // each key is used once
+    SmithKey many[1000];
+    smith_key_split_n(parts[0], many, 1000);
     double mean = 0;
-    for (uint64_t i = 0; i < 1000; i++)
-        mean += exponential_sample(smith_key_derive(key, i), 2.0) / 1000.0;
-    float x = smith_normal_float_sample(smith_key_derive(key, 5000), (SmithNormalFloat){.mean = 0, .deviation = 1});
+    for (size_t i = 0; i < 1000; i++)
+        mean += exponential_sample(many[i], 2.0) / 1000.0;
+    float x = smith_normal_float_sample(parts[1], (SmithNormalFloat){.mean = 0, .deviation = 1});
     alignas(smith_arena_align_max) static unsigned char memory[1024];
     SmithArena arena = smith_arena_make(memory, sizeof memory);
     SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1, 1, 2}, 3);
-    printf("mean %.1f, normal %d, index %zu\n", mean, x > -6.0f && x < 6.0f, smith_categorical_sample(key, categorical) < 3 ? (size_t)1 : (size_t)0);
+    printf("mean %.1f, normal %d, index %zu\n", mean, x > -6.0f && x < 6.0f, smith_categorical_sample(parts[2], categorical) < 3 ? (size_t)1 : (size_t)0);
     return 0;
 }
 C

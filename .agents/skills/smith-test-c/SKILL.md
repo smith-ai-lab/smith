@@ -16,7 +16,9 @@ void test_addition(void) {
 
 void test_sorted_stays_sorted(SmithKey key) {      // a property test: runs on 100 keys
     SmithArena arena = smith_test_arena(1 << 16);  // this test's memory, given back before each key
-    size_t count = (size_t)smith_uniform_int64_sample(smith_key_derive(key, 0), (SmithUniformInt64){.low = 0, .high = 100});
+    SmithKey parts[2];
+    smith_key_split_n(key, parts, 2);              // a key is used once: split it for each use
+    size_t count = (size_t)smith_uniform_int64_sample(parts[0], (SmithUniformInt64){.low = 0, .high = 100});
     smith_test_note("count %zu", count);           // printed under a failure
 }
 

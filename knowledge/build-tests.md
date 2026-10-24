@@ -96,7 +96,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   remove a scratch folder. The checks reach the running test's state (the shared block the runner reads after the test)
   through module variables, since a check takes no context parameter; they are the only state a test can reach.
 - **The shrinking hook is a field of the key.** `random::Key` has a `tap` (`nullptr` for every key a program makes) and
-  `key_derive` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
+  `random::split` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
   `(key, n)` a property test draws and replaces it from an override table in shared memory; no global of
   `smith::random` is set.
 - **`test::expect_abort()`** (`smith_test_expect_abort()` in C) says that from this call on the running test must stop the program on purpose, and is
@@ -170,7 +170,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   A crash is `FAIL name: killed by SIGSEGV` with the captured stderr (a sanitizer's report), a test over its CPU limit is
   `FAIL name: over its CPU time limit of 10 s (10.3 s of wall time passed; threads add CPU time)` (the CPU time is the process's, every thread's, so the wall time can be shorter), and a blocked one `FAIL name: hung after 600.0 s of wall time (...)` (never a timeout: wall time says nothing about a test on a loaded machine; a test that calls `alarm` itself replaces the backstop, and ends as a hang after its own time). Color goes on only when stdout is a terminal and `NO_COLOR` is unset.
 - **A failing property test is shrunk.** The runner reruns the failing key in a worker of its own whose keys carry the runner's
-  `random::Tap`, which records each `(key, n)` the test asks `random::key_bits` for, in first-use order, in
+  `random::Tap`, which records each `(key, n)` the test's draws ask for, in first-use order, in
   shared memory (at most 65,536 words; past that it stops recording). Every distribution maps word 0 to its simplest
   value (0 or the bound nearest it for an integer, about the mean for a normal, false, the identity permutation). For
   each recorded word in order the runner tries 0; if the test then stops failing it binary-searches between 0 and the

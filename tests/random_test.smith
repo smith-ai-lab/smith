@@ -55,6 +55,14 @@ static i64 ulps_float(f32 a, f32 b) {
     return x > y ? x - y : y - x;
 }
 
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 static random::UniformInt64 range(i64 low, i64 high) {
     return (random::UniformInt64){.low = low, .high = high};
 }
@@ -63,28 +71,42 @@ static random::UniformInt64 range(i64 low, i64 high) {
 // Keys and the uniform distributions
 
 export void test_random_keys_are_pure_and_distinct(random::Key key) {
-    test::check_equal(random::key_bits(key, 0), random::key_bits(key, 0)); // pure
-    test::check_not_equal(random::key_bits(key, 0), random::key_bits(key, 1));
-    test::check_not_equal(random::key_bits(key, 1), random::key_bits(key, 2));
-    test::check_not_equal(random::key_derive(key, 0).bits, random::key_derive(key, 1).bits);
-    test::check_not_equal(random::key_derive(key, 0).bits, random::key_bits(key, 0)); // derive's domain is not bits'
+    u64 seed_of_key = key.bits; // a read of the key's bits: its one use
+    test::check_equal(random::key_bits(random::key_make(seed_of_key)), random::key_bits(random::key_make(seed_of_key)));
+    random::Key parts[3];
+    random::split_n(random::key_make(seed_of_key), parts, 3);
+    u64 part_0 = parts[0].bits;
+    u64 part_1 = parts[1].bits;
+    u64 part_2 = parts[2].bits;
+    test::check_not_equal(part_0, part_1);
+    test::check_not_equal(part_1, part_2);
+    random::Key again[3];
+    random::split_n(random::key_make(seed_of_key), again, 3);
+    test::check_equal(again[1].bits, part_1); // split is pure
+    u64 again_0 = again[0].bits;
+    test::check_not_equal(again_0, seed_of_key); // split's domain is not the words'
     test::check_not_equal(random::key_make(1).bits, random::key_make(2).bits);
-    for (u64 n = 0; n < 1000; n++) {
-        test::check(random::key_unit_float(key, n) >= 0.0F && random::key_unit_float(key, n) < 1.0F);
-        test::check(random::key_unit_double(key, n) >= 0.0 && random::key_unit_double(key, n) < 1.0);
-        test::check(1.0 - random::key_unit_double(key, n) > 0.0);
-    }
+    random::Key root = random::key_make(seed_of_key);
+    random::Key *stream = &root;
     u64 top = 0;
     for (u64 n = 0; n < 1000; n++) {
-        top += random::key_bits(key, n) >> 63;
+        random::Key unit[3];
+        random::split_n(take(stream), unit, 3);
+        f32 f = random::key_unit_float(unit[0]);
+        f64 d = random::key_unit_double(unit[1]);
+        test::check(f >= 0.0F && f < 1.0F);
+        test::check(d >= 0.0 && d < 1.0);
+        test::check(1.0 - d > 0.0);
+        top += random::key_bits(unit[2]) >> 63;
     }
     test::check(top > 400 && top < 600); // the top bit is fair
 }
 
 export void test_random_uniform_int64_is_uniform_and_in_range(random::Key key) {
+    random::Key *stream = &key;
     usize observed[10] = {};
     for (u64 i = 0; i < draws; i++) {
-        i64 value = random::uniform_int64_sample(random::key_derive(key, i), range(-3, 6));
+        i64 value = random::uniform_int64_sample(take(stream), range(-3, 6));
         test::check(value >= -3 && value <= 6);
         observed[value + 3]++;
     }
@@ -94,14 +116,14 @@ export void test_random_uniform_int64_is_uniform_and_in_range(random::Key key) {
     }
     test::check_less(chi_square(observed, expected, 10), chi_limit(9));
     for (u64 i = 0; i < 100; i++) {
-        test::check_equal(random::uniform_int64_sample(random::key_derive(key, i), range(5, 5)), 5);
-        test::check_equal(random::uniform_int64_sample(random::key_derive(key, i), range(i64_min, i64_min)), i64_min);
-        test::check_equal(random::uniform_int64_sample(random::key_derive(key, i), range(i64_max, i64_max)), i64_max);
+        test::check_equal(random::uniform_int64_sample(take(stream), range(5, 5)), 5);
+        test::check_equal(random::uniform_int64_sample(take(stream), range(i64_min, i64_min)), i64_min);
+        test::check_equal(random::uniform_int64_sample(take(stream), range(i64_max, i64_max)), i64_max);
     }
     // The full range has both signs.
     usize negative = 0;
     for (u64 i = 0; i < draws; i++) {
-        negative += random::uniform_int64_sample(random::key_derive(key, i), range(i64_min, i64_max)) < 0 ? 1 : 0;
+        negative += random::uniform_int64_sample(take(stream), range(i64_min, i64_max)) < 0 ? 1 : 0;
     }
     test::check(negative > draws * 47 / 100 && negative < draws * 53 / 100);
 }
@@ -109,17 +131,19 @@ export void test_random_uniform_int64_is_uniform_and_in_range(random::Key key) {
 // A span of 2^63 + 1 rejects about half of the candidates (2^64 mod span is 2^63 - 1); the offsets must still be
 // uniform, so the half above span / 2 is hit half of the time.
 export void test_random_uniform_int64_wide_span(void) {
-    random::Key key = random::key_make(seed + 1);
+    random::Key root = random::key_make(seed + 1);
+    random::Key *stream = &root;
     i64 high = 0; // [INT64_MIN, 0] has 2^63 + 1 values
     constexpr usize count = 400000;
     usize upper = 0;
     usize retried = 0;
     for (u64 i = 0; i < count; i++) {
-        random::Key k = random::key_derive(key, i);
-        i64 value = random::uniform_int64_sample(k, range(i64_min, high));
+        u64 word = random::key_bits(take(stream)); // two keys of the same seed: the draw and the check of its word
+        i64 value = random::uniform_int64_sample(random::key_make(word), range(i64_min, high));
         test::check(value <= high);
         upper += (u64)value - (u64)i64_min >= ((u64)1 << 62) ? 1 : 0;
-        unsigned _BitInt(128) product = (unsigned _BitInt(128))random::key_bits(k, 0) * (((u64)1 << 63) + 1);
+        unsigned _BitInt(128) product =
+            (unsigned _BitInt(128))random::key_bits(random::key_make(word)) * (((u64)1 << 63) + 1);
         retried += (u64)product >= ((u64)1 << 63) + 1 ? 1 : 0; // the first candidate is rejected
     }
     f64 deviation = __builtin_sqrt((f64)count * 0.25);
@@ -128,10 +152,11 @@ export void test_random_uniform_int64_wide_span(void) {
 }
 
 export void test_random_uniform_real_moments(random::Key key) {
+    random::Key *stream = &key;
     f64 sum = 0;
     f64 square = 0;
     for (u64 i = 0; i < draws; i++) {
-        f64 value = random::uniform_double_sample(random::key_derive(key, i), (random::UniformDouble){2.0, 5.0});
+        f64 value = random::uniform_double_sample(take(stream), (random::UniformDouble){2.0, 5.0});
         test::check(value >= 2.0 && value < 5.0);
         sum += value;
         square += (value - 3.5) * (value - 3.5);
@@ -142,7 +167,7 @@ export void test_random_uniform_real_moments(random::Key key) {
     sum = 0;
     square = 0;
     for (u64 i = 0; i < draws; i++) {
-        f32 value = random::uniform_float_sample(random::key_derive(key, i), (random::UniformFloat){-1.0F, 3.0F});
+        f32 value = random::uniform_float_sample(take(stream), (random::UniformFloat){-1.0F, 3.0F});
         test::check(value >= -1.0F && value < 3.0F);
         sum += (f64)value;
         square += ((f64)value - 1.0) * ((f64)value - 1.0);
@@ -152,10 +177,11 @@ export void test_random_uniform_real_moments(random::Key key) {
 }
 
 export void test_random_unit_values_are_on_their_grid(random::Key key) {
+    random::Key *stream = &key;
     for (u64 i = 0; i < 1000; i++) { // the unit scaled by 2^24 / 2^53 is an integer
-        f32 f = random::key_unit_float(random::key_derive(key, i), 0);
+        f32 f = random::key_unit_float(take(stream));
         test::check_equal(f, __builtin_floorf(f * 0x1p24F) / 0x1p24F);
-        f64 d = random::key_unit_double(random::key_derive(key, i), 0);
+        f64 d = random::key_unit_double(take(stream));
         test::check_equal(d, __builtin_floor(d * 0x1p53) / 0x1p53);
     }
 }
@@ -163,16 +189,18 @@ export void test_random_unit_values_are_on_their_grid(random::Key key) {
 // Ranges built so that low + (high - low) * unit rounds up to high: high is a power of two just above low's magnitude
 // gap, so a unit near 1 rounds to high. The result must still be below high.
 export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it(void) {
-    random::Key key = random::key_make(seed + 3);
+    random::Key root = random::key_make(seed + 3);
+    random::Key *stream = &root;
     const f32 lows[] = {1.0F, -0x1p-30F, 16777216.0F, -1.0F, 0.0F};
     const f32 highs[] = {1.0000001F, 0.0F, 16777218.0F, -0.99999994F, 0x1p-149F};
     usize reached = 0;
     for (usize r = 0; r < 5; r++) {
         for (u64 i = 0; i < 200000; i++) {
-            random::Key k = random::key_derive(key, i);
-            f32 value = random::uniform_float_sample(k, (random::UniformFloat){lows[r], highs[r]});
+            u64 word = random::key_bits(take(stream)); // two keys of one seed: the draw and its unit
+            f32 value = random::uniform_float_sample(random::key_make(word), (random::UniformFloat){lows[r], highs[r]});
             test::check(value >= lows[r] && value < highs[r]);
-            reached += lows[r] + (highs[r] - lows[r]) * random::key_unit_float(k, 0) >= highs[r] ? 1 : 0;
+            reached +=
+                lows[r] + (highs[r] - lows[r]) * random::key_unit_float(random::key_make(word)) >= highs[r] ? 1 : 0;
         }
     }
     test::check_greater(reached, 0); // the rounding case happened, and was handled
@@ -180,8 +208,7 @@ export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it(v
     const f64 dhighs[] = {1.0000000000000002, 0.0, 9007199254740994.0, -0.9999999999999999};
     for (usize r = 0; r < 4; r++) {
         for (u64 i = 0; i < 200000; i++) {
-            f64 value =
-                random::uniform_double_sample(random::key_derive(key, i), (random::UniformDouble){dlows[r], dhighs[r]});
+            f64 value = random::uniform_double_sample(take(stream), (random::UniformDouble){dlows[r], dhighs[r]});
             test::check(value >= dlows[r] && value < dhighs[r]);
         }
     }
@@ -191,13 +218,14 @@ export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it(v
 // Normal, Bernoulli, categorical, permutation
 
 export void test_random_normal_moments(random::Key key) {
+    random::Key *stream = &key;
     f64 sum = 0;
     f64 square = 0;
     f64 sum_float = 0;
     f64 square_float = 0;
     for (u64 i = 0; i < draws; i++) {
-        f64 d = random::normal_double_sample(random::key_derive(key, i), (random::NormalDouble){1.0, 2.0});
-        f32 f = random::normal_float_sample(random::key_derive(key, i), (random::NormalFloat){-3.0F, 0.5F});
+        f64 d = random::normal_double_sample(take(stream), (random::NormalDouble){1.0, 2.0});
+        f32 f = random::normal_float_sample(take(stream), (random::NormalFloat){-3.0F, 0.5F});
         sum += d;
         square += (d - 1.0) * (d - 1.0);
         sum_float += (f64)f;
@@ -212,23 +240,24 @@ export void test_random_normal_moments(random::Key key) {
 
 // The documented reach: every value finite and within the grid's extremes (about 8.2 and 5.3 deviations).
 export void test_random_normal_stays_within_its_reach(random::Key key) {
+    random::Key *stream = &key;
     for (u64 i = 0; i < draws; i++) {
-        test::check_less(
-            __builtin_fabs(random::normal_double_sample(random::key_derive(key, i), (random::NormalDouble){0.0, 1.0})),
-            8.3);
-        test::check_less(
-            __builtin_fabsf(random::normal_float_sample(random::key_derive(key, i), (random::NormalFloat){0.0F, 1.0F})),
-            5.4F);
+        test::check_less(__builtin_fabs(random::normal_double_sample(take(stream), (random::NormalDouble){0.0, 1.0})),
+                         8.3);
+        test::check_less(__builtin_fabsf(random::normal_float_sample(take(stream), (random::NormalFloat){0.0F, 1.0F})),
+                         5.4F);
     }
 }
 
 export void test_random_bernoulli_frequency(random::Key key) {
+    random::Key *stream = &key;
     usize hits = 0;
     for (u64 i = 0; i < draws; i++) {
-        random::Key k = random::key_derive(key, i);
-        test::check(!random::bernoulli_sample(k, (random::Bernoulli){0.0}));
-        test::check(random::bernoulli_sample(k, (random::Bernoulli){1.0}));
-        hits += random::bernoulli_sample(k, (random::Bernoulli){0.3}) ? 1 : 0;
+        random::Key k[3];
+        random::split_n(take(stream), k, 3);
+        test::check(!random::bernoulli_sample(k[0], (random::Bernoulli){0.0}));
+        test::check(random::bernoulli_sample(k[1], (random::Bernoulli){1.0}));
+        hits += random::bernoulli_sample(k[2], (random::Bernoulli){0.3}) ? 1 : 0;
     }
     f64 n = (f64)draws;
     test::check_less(__builtin_fabs((f64)hits - 0.3 * n), 5.5 * __builtin_sqrt(n * 0.3 * 0.7));
@@ -236,6 +265,7 @@ export void test_random_bernoulli_frequency(random::Key key) {
 
 // Categorical: frequencies by chi-square, a zero weight never drawn, one category, and a deterministic table.
 export void test_random_categorical(random::Key key) {
+    random::Key *stream = &key;
     arena::Arena a = test::memory(1 << 14);
     const f64 weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     constexpr usize count = 7;
@@ -244,7 +274,7 @@ export void test_random_categorical(random::Key key) {
     test::check_equal(a.scopes, 0);
     usize observed[count] = {};
     for (u64 i = 0; i < draws; i++) {
-        usize index = random::categorical_sample(random::key_derive(key, i), categorical);
+        usize index = random::categorical_sample(take(stream), categorical);
         test::check_less(index, count);
         observed[index]++;
     }
@@ -262,7 +292,7 @@ export void test_random_categorical(random::Key key) {
     test::check_less(chi_square(cells, expected, used), chi_limit(used - 1));
     random::Categorical one = random::categorical_make(&a, (const f64[]){3.5}, 1);
     for (u64 i = 0; i < 100; i++) {
-        test::check_equal(random::categorical_sample(random::key_derive(key, i), one), 0);
+        test::check_equal(random::categorical_sample(take(stream), one), 0);
     }
     random::Categorical same = random::categorical_make(&a, weights, count); // construction is deterministic
     for (usize i = 0; i < count; i++) {
@@ -271,17 +301,18 @@ export void test_random_categorical(random::Key key) {
     }
     random::Categorical tiny = random::categorical_make(&a, (const f64[]){0.0, 1.0}, 2);
     for (u64 i = 0; i < 1000; i++) {
-        test::check_equal(random::categorical_sample(random::key_derive(key, i), tiny), 1);
+        test::check_equal(random::categorical_sample(take(stream), tiny), 1);
     }
 }
 
 export void test_random_permutations_are_permutations(random::Key key) {
     usize out[16];
-    random::permutation_sample(key, (random::Permutation){}, nullptr); // writes nothing
-    random::permutation_sample(key, (random::Permutation){1}, out);
+    random::Key *stream = &key;
+    random::permutation_sample(take(stream), (random::Permutation){}, nullptr); // writes nothing
+    random::permutation_sample(take(stream), (random::Permutation){1}, out);
     test::check_equal(out[0], 0);
     for (u64 i = 0; i < 100; i++) {
-        random::permutation_sample(random::key_derive(key, i), (random::Permutation){16}, out);
+        random::permutation_sample(take(stream), (random::Permutation){16}, out);
         bool seen[16] = {false};
         for (usize j = 0; j < 16; j++) {
             test::check(out[j] < 16 && !seen[out[j]]);
@@ -291,11 +322,12 @@ export void test_random_permutations_are_permutations(random::Key key) {
 }
 
 export void test_random_permutations_of_four_are_uniform(random::Key key) {
+    random::Key *stream = &key;
     usize out[16];
     usize orders[24] = {};
     constexpr usize count = 6000;
     for (u64 i = 0; i < count; i++) {
-        random::permutation_sample(random::key_derive(key, i), (random::Permutation){4}, out);
+        random::permutation_sample(take(stream), (random::Permutation){4}, out);
         usize rank = 0; // the Lehmer code gives each of the 24 orders its own number
         for (usize a = 0; a < 4; a++) {
             usize smaller = 0;
@@ -319,9 +351,12 @@ export void test_random_permutations_of_four_are_uniform(random::Key key) {
 
 static i64 log_worst_double(void) {
     i64 worst = 0;
-    random::Key key = random::key_make(seed + 11);
+    random::Key root = random::key_make(seed + 11);
+    random::Key *stream = &root;
     for (u64 i = 0; i < 1000000; i++) {
-        u64 bits = random::key_bits(key, i);
+        random::Key parts[2];
+        random::split_n(take(stream), parts, 2);
+        u64 bits = random::key_bits(parts[0]);
         f64 x = 0;
         switch (i % 4) {
         case 0:
@@ -331,10 +366,10 @@ static i64 log_worst_double(void) {
             x = __builtin_bit_cast(f64, bits & 0x000fffffffffffffULL); // subnormals (and 0)
             break;
         case 2:
-            x = 0.5 + 1.5 * random::key_unit_double(random::key_derive(key, i), 0); // around 1
+            x = 0.5 + 1.5 * random::key_unit_double(parts[1]); // around 1
             break;
         default:
-            x = 1.0 + c::ldexp(random::key_unit_double(random::key_derive(key, i), 0), -(i32)(bits % 50));
+            x = 1.0 + c::ldexp(random::key_unit_double(parts[1]), -(i32)(bits % 50));
             break;
         }
         if (!__builtin_isfinite(x) || x == 0.0) {
@@ -350,9 +385,12 @@ static i64 log_worst_double(void) {
 
 static i64 log_worst_float(void) {
     i64 worst = 0;
-    random::Key key = random::key_make(seed + 12);
+    random::Key root = random::key_make(seed + 12);
+    random::Key *stream = &root;
     for (u64 i = 0; i < 1000000; i++) {
-        u64 bits = random::key_bits(key, i);
+        random::Key parts[2];
+        random::split_n(take(stream), parts, 2);
+        u64 bits = random::key_bits(parts[0]);
         f32 x = 0;
         switch (i % 4) {
         case 0:
@@ -362,10 +400,10 @@ static i64 log_worst_float(void) {
             x = __builtin_bit_cast(f32, (u32)bits & 0x007fffffU); // subnormals
             break;
         case 2:
-            x = 0.5F + 1.5F * random::key_unit_float(random::key_derive(key, i), 0);
+            x = 0.5F + 1.5F * random::key_unit_float(parts[1]);
             break;
         default:
-            x = 1.0F + c::ldexpf(random::key_unit_float(random::key_derive(key, i), 0), -(i32)(bits % 24));
+            x = 1.0F + c::ldexpf(random::key_unit_float(parts[1]), -(i32)(bits % 24));
             break;
         }
         if (!__builtin_isfinite(x) || x == 0.0F) {
@@ -414,31 +452,22 @@ export void test_random_log_special_values(void) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The pinned values: bits of key_bits for seeds 0, 1 and UINT64_MAX, key_derive, and every distribution for one key
-// (floats as their bits). The numbers are part of the API: a change to any of them is a breaking change.
+// The pinned values: bits of key_bits for seeds 0, 1 and UINT64_MAX, split, and every distribution for one key (floats
+// as their bits). The numbers are part of the API: a change to any of them is a breaking change.
 
 static constexpr u64 pinned_values[] = {
     0xe169c58d6627e8d5, // bits
-    0x9b00dbd8bc57ac4c, // bits
-    0x5cb200dbf8e4cca4, // bits
-    0x097eff67b1a574eb, // bits
-    0xf08d6eaa844515e1, // derive
-    0xd9c77dedca7cf69e, // derive
-    0xbe4bbd74c5fa1393, // derive
+    0xf08d6eaa844515e1, // split
+    0xd9c77dedca7cf69e, // split
+    0xbe4bbd74c5fa1393, // split
     0xe50a0ebce3e80670, // bits
-    0xb615aa2795f222c0, // bits
-    0xdfc5ccbeac08141b, // bits
-    0xa7f6609379c07a47, // bits
-    0x428264b607071c12, // derive
-    0xf04a50803b539b4f, // derive
-    0xa9b8bbe87d34a749, // derive
+    0x428264b607071c12, // split
+    0xf04a50803b539b4f, // split
+    0xa9b8bbe87d34a749, // split
     0x1547473972a47709, // bits
-    0x22799a5a9f41b01f, // bits
-    0x4b67e03419fed511, // bits
-    0x9fe857b49d2c02e2, // bits
-    0x7e853102a74236ed, // derive
-    0xb9575d3a213c880d, // derive
-    0x71cfe040fa00339a, // derive
+    0x7e853102a74236ed, // split
+    0xb9575d3a213c880d, // split
+    0x71cfe040fa00339a, // split
     0x3fe0000000000000, // categorical probability
     0x0000000000000004, // categorical alias
     0x3ff0000000000000, // categorical probability
@@ -458,8 +487,8 @@ static constexpr u64 pinned_values[] = {
     0x400229f29201b1cb, // normal_double
     0x0000000000000000, // bernoulli
     0x0000000000000002, // categorical
-    0x00000000bf8c4f9f, // log_float
-    0xbff189f3b6c24ca8, // log_double
+    0x00000000bea4d7a8, // log_float
+    0xbfd49af4a1babd83, // log_double
     0x000000003f6f5147, // unit_float
     0x3fedea28f42121bc, // unit_double
     0x00000000402b2598, // uniform_float
@@ -469,8 +498,8 @@ static constexpr u64 pinned_values[] = {
     0x4012c0c0ac77efea, // normal_double
     0x0000000000000001, // bernoulli
     0x0000000000000000, // categorical
-    0x000000003d634c72, // log_float
-    0x3fac698d2d755d83, // log_double
+    0x000000003e2dac53, // log_float
+    0x3fc5b58a44f624ee, // log_double
     0x000000003f77aa93, // unit_float
     0x3feef552732b2b7a, // unit_double
     0x0000000040359538, // uniform_float
@@ -480,8 +509,8 @@ static constexpr u64 pinned_values[] = {
     0xc00a33655f8a9c90, // normal_double
     0x0000000000000001, // bernoulli
     0x0000000000000000, // categorical
-    0x00000000bed47034, // log_float
-    0xbfda8e06607ae3c6, // log_double
+    0x000000003e497a52, // log_float
+    0x3fc92f4a290f0e12, // log_double
     0x000000003f6c4500, // unit_float
     0x3fed88a0125f909b, // unit_double
     0x0000000040275640, // uniform_float
@@ -491,8 +520,8 @@ static constexpr u64 pinned_values[] = {
     0xc00449741659234a, // normal_double
     0x0000000000000001, // bernoulli
     0x0000000000000002, // categorical
-    0x000000003e57a913, // log_float
-    0x3fcaf52321baddef, // log_double
+    0x000000003e2354c6, // log_float
+    0x3fc46a98ed1913b5, // log_double
     0x0000000000000004, // permutation
     0x0000000000000005, // permutation
     0x0000000000000003, // permutation
@@ -508,7 +537,7 @@ typedef struct {
 } Pins;
 
 static void pin(Pins *pins, u64 value) {
-    test::check_less(pins->count, 83);
+    test::check_less(pins->count, 74);
     test::note("pinned value number %zu", pins->count);
     test::check_equal(value, pinned_values[pins->count]);
     pins->count++;
@@ -526,41 +555,44 @@ export void test_random_pinned_values(void) {
     Pins pins = {};
     const u64 seeds[] = {0, 1, 18446744073709551615ULL};
     for (usize s = 0; s < 3; s++) {
-        for (u64 n = 0; n < 4; n++) {
-            pin(&pins, random::key_bits(random::key_make(seeds[s]), n));
-        }
-        for (u64 i = 0; i < 3; i++) {
-            pin(&pins, random::key_derive(random::key_make(seeds[s]), i).bits);
+        pin(&pins, random::key_bits(random::key_make(seeds[s])));
+        random::Key parts[3];
+        random::split_n(random::key_make(seeds[s]), parts, 3);
+        for (usize i = 0; i < 3; i++) {
+            pin(&pins, parts[i].bits);
         }
     }
     arena::Arena a = test::memory(1 << 12);
-    random::Key key = random::key_make(42);
     const f64 weights[] = {1.0, 2.0, 3.0, 0.0, 4.0};
     random::Categorical categorical = random::categorical_make(&a, weights, 5);
     for (usize i = 0; i < 5; i++) {
         pin(&pins, double_bits(categorical.probability[i]));
         pin(&pins, categorical.alias[i]);
     }
-    for (u64 i = 0; i < 4; i++) {
-        random::Key k = random::key_derive(key, i);
-        pin(&pins, float_bits(random::key_unit_float(k, 0)));
-        pin(&pins, double_bits(random::key_unit_double(k, 0)));
-        pin(&pins, float_bits(random::uniform_float_sample(k, (random::UniformFloat){-2.0F, 3.0F})));
-        pin(&pins, double_bits(random::uniform_double_sample(k, (random::UniformDouble){-2.0, 3.0})));
-        pin(&pins, (u64)random::uniform_int64_sample(k, range(-3, 6)));
-        pin(&pins, float_bits(random::normal_float_sample(k, (random::NormalFloat){1.0F, 2.0F})));
-        pin(&pins, double_bits(random::normal_double_sample(k, (random::NormalDouble){1.0, 2.0})));
-        pin(&pins, random::bernoulli_sample(k, (random::Bernoulli){0.3}) ? 1 : 0);
-        pin(&pins, random::categorical_sample(k, categorical));
-        pin(&pins, float_bits(random::log_float(random::key_unit_float(k, 1) + 0.25F)));
-        pin(&pins, double_bits(random::log_double(random::key_unit_double(k, 1) + 0.25)));
+    random::Key cases[4];
+    random::split_n(random::key_make(42), cases, 4);
+    for (usize i = 0; i < 4; i++) {
+        u64 word = cases[i].bits; // every draw below is made from a key of this seed
+        pin(&pins, float_bits(random::key_unit_float(random::key_make(word))));
+        pin(&pins, double_bits(random::key_unit_double(random::key_make(word))));
+        pin(&pins,
+            float_bits(random::uniform_float_sample(random::key_make(word), (random::UniformFloat){-2.0F, 3.0F})));
+        pin(&pins,
+            double_bits(random::uniform_double_sample(random::key_make(word), (random::UniformDouble){-2.0, 3.0})));
+        pin(&pins, (u64)random::uniform_int64_sample(random::key_make(word), range(-3, 6)));
+        pin(&pins, float_bits(random::normal_float_sample(random::key_make(word), (random::NormalFloat){1.0F, 2.0F})));
+        pin(&pins, double_bits(random::normal_double_sample(random::key_make(word), (random::NormalDouble){1.0, 2.0})));
+        pin(&pins, random::bernoulli_sample(random::key_make(word), (random::Bernoulli){0.3}) ? 1 : 0);
+        pin(&pins, random::categorical_sample(random::key_make(word), categorical));
+        pin(&pins, float_bits(random::log_float(random::key_unit_float(random::key_make(word)) + 0.25F)));
+        pin(&pins, double_bits(random::log_double(random::key_unit_double(random::key_make(word)) + 0.25)));
     }
     usize order[8];
-    random::permutation_sample(key, (random::Permutation){8}, order);
+    random::permutation_sample(random::key_make(42), (random::Permutation){8}, order);
     for (usize i = 0; i < 8; i++) {
         pin(&pins, order[i]);
     }
-    test::check_equal(pins.count, 83);
+    test::check_equal(pins.count, 74);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -593,36 +625,38 @@ static u64 word_for_index(u64 index, u64 span) {
 
 export void test_random_zero_word_gives_the_simplest_value(void) {
     ConstantTap zero = {.tap = {tap_constant}, .word = 0};
-    random::Key key = tapped(&zero);
     arena::Arena a = test::memory(1 << 12);
     random::Categorical categorical = random::categorical_make(&a, (const f64[]){1.0, 2.0, 3.0}, 3);
-    test::check_equal(random::uniform_int64_sample(key, range(-3, 6)), 0);
-    test::check_equal(random::uniform_int64_sample(key, range(5, 9)), 5);
-    test::check_equal(random::uniform_int64_sample(key, range(-9, -5)), -5);
-    test::check_equal(random::uniform_int64_sample(key, range(i64_min, i64_max)), 0);
-    test::check_equal(random::uniform_int64_sample(key, range(i64_min, 1)), 0);
-    test::check_equal(random::uniform_int64_sample(key, range(i64_max - 1, i64_max)), i64_max - 1);
-    test::check_equal(random::uniform_double_sample(key, (random::UniformDouble){2.0, 5.0}), 2.0);
-    test::check_equal(random::uniform_float_sample(key, (random::UniformFloat){2.0F, 5.0F}), 2.0F);
-    test::check_equal(random::uniform_double_sample(key, (random::UniformDouble){0.0, 5.0}), 0.0);
-    f64 d = random::uniform_double_sample(key, (random::UniformDouble){-1.0, 3.0}); // within one grid step of 0
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-3, 6)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(5, 9)), 5);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-9, -5)), -5);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_min, i64_max)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_min, 1)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_max - 1, i64_max)), i64_max - 1);
+    test::check_equal(random::uniform_double_sample(tapped(&zero), (random::UniformDouble){2.0, 5.0}), 2.0);
+    test::check_equal(random::uniform_float_sample(tapped(&zero), (random::UniformFloat){2.0F, 5.0F}), 2.0F);
+    test::check_equal(random::uniform_double_sample(tapped(&zero), (random::UniformDouble){0.0, 5.0}), 0.0);
+    f64 d =
+        random::uniform_double_sample(tapped(&zero), (random::UniformDouble){-1.0, 3.0}); // within one grid step of 0
     test::check_less_equal(__builtin_fabs(d), 4.0 * 0x1p-53);
-    f32 f = random::uniform_float_sample(key, (random::UniformFloat){-1.0F, 3.0F});
+    f32 f = random::uniform_float_sample(tapped(&zero), (random::UniformFloat){-1.0F, 3.0F});
     test::check_less_equal(__builtin_fabsf(f), 4.0F * 0x1p-24F);
-    d = random::uniform_double_sample(key, (random::UniformDouble){-5.0, -1.0}); // the bound nearest 0: just below -1
+    d = random::uniform_double_sample(tapped(&zero),
+                                      (random::UniformDouble){-5.0, -1.0}); // the bound nearest 0: just below -1
     test::check(d < -1.0 && d >= -1.0 - 4.0 * 0x1p-53 * 4.0);
-    f = random::uniform_float_sample(key, (random::UniformFloat){-5.0F, -1.0F});
+    f = random::uniform_float_sample(tapped(&zero), (random::UniformFloat){-5.0F, -1.0F});
     test::check(f < -1.0F && f >= -1.0F - 4.0F * 0x1p-24F * 4.0F);
-    f64 nd = random::normal_double_sample(key, (random::NormalDouble){10.0, 2.0});
+    f64 nd = random::normal_double_sample(tapped(&zero), (random::NormalDouble){10.0, 2.0});
     test::check(nd >= 10.0 && nd - 10.0 < 2.0 * 1e-15);
-    f32 nf = random::normal_float_sample(key, (random::NormalFloat){10.0F, 2.0F});
+    f32 nf = random::normal_float_sample(tapped(&zero), (random::NormalFloat){10.0F, 2.0F});
     test::check(nf >= 10.0F && nf - 10.0F < 2.0F * 1e-6F);
-    test::check(!random::bernoulli_sample(key, (random::Bernoulli){0.3}));
-    test::check(!random::bernoulli_sample(key, (random::Bernoulli){0.0}));
-    test::check(random::bernoulli_sample(key, (random::Bernoulli){1.0}));
-    test::check_equal(random::categorical_sample(key, categorical), 0); // column 0 and its own coin, as without a hook
+    test::check(!random::bernoulli_sample(tapped(&zero), (random::Bernoulli){0.3}));
+    test::check(!random::bernoulli_sample(tapped(&zero), (random::Bernoulli){0.0}));
+    test::check(random::bernoulli_sample(tapped(&zero), (random::Bernoulli){1.0}));
+    test::check_equal(random::categorical_sample(tapped(&zero), categorical),
+                      0); // column 0 and its own coin, as without a hook
     usize order[9];
-    random::permutation_sample(key, (random::Permutation){9}, order);
+    random::permutation_sample(tapped(&zero), (random::Permutation){9}, order);
     for (usize i = 0; i < 9; i++) {
         test::check_equal(order[i], i);
     }
@@ -630,9 +664,8 @@ export void test_random_zero_word_gives_the_simplest_value(void) {
 
 export void test_random_one_step_off_the_identity_moves_a_position(void) {
     ConstantTap step = {.tap = {tap_constant}, .word = word_for_index(1, 4)};
-    random::Key key = tapped(&step);
     usize out[4];
-    random::permutation_sample(key, (random::Permutation){4}, out);
+    random::permutation_sample(tapped(&step), (random::Permutation){4}, out);
     usize moved = 0;
     for (usize i = 0; i < 4; i++) {
         moved += out[i] != i ? 1 : 0;

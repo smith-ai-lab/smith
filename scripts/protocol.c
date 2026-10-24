@@ -1083,6 +1083,8 @@ static void gen_head(Generator *g, Sink *s, int id, const char *verb, bool defin
     else
         gen_emit(s, "void %s(%sSmithArena *arena, %sSmithKey key, %s *out)", name, m, m, c);
     gen_emit(s, definition ? " {\n" : ";\n");
+    // a random value takes a key for each part, the reassignment pattern: the key is used once, here
+    if (definition && strcmp(verb, "random") == 0) gen_emit(s, "    [[maybe_unused]] SmithKey *stream = &key;\n");
 }
 
 static const char *const gen_verbs[] = {"parse", "write", "equal", "random"};
@@ -1265,17 +1267,15 @@ static void gen_equal_member(Generator *g, Sink *s, const GenField *f) {
              f->ident, f->ident);
 }
 
-static void gen_random_member(Generator *g, Sink *s, const GenField *f, size_t index) {
+static void gen_random_member(Generator *g, Sink *s, const GenField *f) {
     if (gen_field_constant(g, f) != 0) return;
     if (f->required) {
-        gen_emit(s, "    %s(arena, smith_key_derive(key, %zu), &out->%s);\n", gen_fn(g, f->type, "random"),
-                 2 * index + 1, f->ident);
+        gen_emit(s, "    %s(arena, smith_protocol_take(stream), &out->%s);\n", gen_fn(g, f->type, "random"), f->ident);
         return;
     }
-    gen_emit(s, "    if (smith_protocol_coin(smith_key_derive(key, %zu))) {\n        out->has_%s = true;\n", 2 * index,
+    gen_emit(s, "    if (smith_protocol_coin(smith_protocol_take(stream))) {\n        out->has_%s = true;\n", f->ident);
+    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &out->%s);\n    }\n", gen_fn(g, f->type, "random"),
              f->ident);
-    gen_emit(s, "        %s(arena, smith_key_derive(key, %zu), &out->%s);\n    }\n", gen_fn(g, f->type, "random"),
-             2 * index + 1, f->ident);
 }
 
 static void gen_source_struct(Generator *g, Sink *s, int id) {
@@ -1299,10 +1299,10 @@ static void gen_source_struct(Generator *g, Sink *s, int id) {
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    *out = (%s){};\n", t->name);
     for (size_t i = 0; i < t->field_count; i++)
-        gen_random_member(g, s, &t->fields[i], i); // bounded by the members
+        gen_random_member(g, s, &t->fields[i]); // bounded by the members
     if (t->extras) {
-        gen_emit(s, "    smith_protocol_extra_random(arena, smith_key_derive(key, %zu), &out->additionalProperties);\n",
-                 2 * t->field_count);
+        gen_emit(s,
+                 "    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);\n");
     }
     gen_emit(s, "}\n\n");
 }
@@ -1353,14 +1353,15 @@ static void gen_source_enum(Generator *g, Sink *s, int id) {
         gen_emit(s, "    return *a == *b;\n}\n\n");
     gen_head(g, s, id, "random", true);
     if (open) {
-        gen_emit(s, "    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), %zu);\n", t->value_count + 1);
+        gen_emit(s, "    size_t pick = smith_protocol_pick(smith_protocol_take(stream), %zu);\n", t->value_count + 1);
         gen_emit(s, "    out->known = (%sKnown)pick;\n", t->name);
         gen_emit(
             s,
             "    out->text = pick < %zu ? smith_text_make(%s_names[pick]) : smith_protocol_name(arena, pick);\n}\n\n",
             t->value_count, t->stem);
     } else {
-        gen_emit(s, "    *out = (%s)smith_protocol_pick(key, %zu);\n}\n\n", t->name, t->value_count);
+        gen_emit(s, "    *out = (%s)smith_protocol_pick(smith_protocol_take(stream), %zu);\n}\n\n", t->name,
+                 t->value_count);
     }
 }
 
@@ -1390,11 +1391,10 @@ static void gen_source_array(Generator *g, Sink *s, int id) {
     gen_emit(s, "        if (!%s(&a->items[i], &b->items[i])) return false;\n    }\n    return true;\n}\n\n",
              gen_fn(g, t->element, "equal"));
     gen_head(g, s, id, "random", true);
-    gen_emit(s, "    size_t count = smith_protocol_count(smith_key_derive(key, 0));\n");
+    gen_emit(s, "    size_t count = smith_protocol_count(smith_protocol_take(stream));\n");
     gen_emit(s, "    %s *items = smith_protocol_block(arena, sizeof(%s), alignof(%s), count);\n", e, e, e);
     gen_emit(s, "    for (size_t i = 0; i < count; i++) { // bounded by the count\n");
-    gen_emit(s, "        %s(arena, smith_key_derive(key, i + 1), &items[i]);\n    }\n",
-             gen_fn(g, t->element, "random"));
+    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n", gen_fn(g, t->element, "random"));
     gen_emit(s, "    out->items = items;\n    out->count = count;\n}\n\n");
 }
 
@@ -1425,14 +1425,13 @@ static void gen_source_map(Generator *g, Sink *s, int id) {
     gen_emit(s, "        if (!%s(&a->values[i], &b->values[i])) return false;\n    }\n    return true;\n}\n\n",
              gen_fn(g, t->element, "equal"));
     gen_head(g, s, id, "random", true);
-    gen_emit(s, "    size_t count = smith_protocol_count(smith_key_derive(key, 0));\n");
+    gen_emit(s, "    size_t count = smith_protocol_count(smith_protocol_take(stream));\n");
     gen_emit(s, "    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct "
                 "smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);\n");
     gen_emit(s, "    %s *items = smith_protocol_block(arena, sizeof(%s), alignof(%s), count);\n", e, e, e);
     gen_emit(s, "    for (size_t i = 0; i < count; i++) { // bounded by the count\n");
     gen_emit(s, "        keys[i] = smith_protocol_name(arena, i);\n");
-    gen_emit(s, "        %s(arena, smith_key_derive(key, i + 1), &items[i]);\n    }\n",
-             gen_fn(g, t->element, "random"));
+    gen_emit(s, "        %s(arena, smith_protocol_take(stream), &items[i]);\n    }\n", gen_fn(g, t->element, "random"));
     gen_emit(s, "    out->keys = keys;\n    out->values = items;\n    out->count = count;\n}\n\n");
 }
 
@@ -1452,8 +1451,8 @@ static void gen_source_nullable(Generator *g, Sink *s, int id) {
     gen_emit(s, "    if (a->is_null != b->is_null) return false;\n");
     gen_emit(s, "    return a->is_null || %s(&a->value, &b->value);\n}\n\n", gen_fn(g, t->element, "equal"));
     gen_head(g, s, id, "random", true);
-    gen_emit(s, "    *out = (%s){};\n    out->is_null = smith_protocol_coin(smith_key_derive(key, 0));\n", t->name);
-    gen_emit(s, "    if (!out->is_null) %s(arena, smith_key_derive(key, 1), &out->value);\n}\n\n",
+    gen_emit(s, "    *out = (%s){};\n    out->is_null = smith_protocol_coin(smith_protocol_take(stream));\n", t->name);
+    gen_emit(s, "    if (!out->is_null) %s(arena, smith_protocol_take(stream), &out->value);\n}\n\n",
              gen_fn(g, t->element, "random"));
 }
 
@@ -1518,11 +1517,12 @@ static void gen_source_union(Generator *g, Sink *s, int id) {
     gen_emit(s, "    }\n    return false;\n}\n\n");
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    *out = (%s){};\n", t->name);
-    gen_emit(s,
-             "    out->kind = (%sKind)smith_protocol_pick(smith_key_derive(key, 0), %zu);\n    switch (out->kind) {\n",
-             t->name, t->alt_count);
+    gen_emit(
+        s, "    out->kind = (%sKind)smith_protocol_pick(smith_protocol_take(stream), %zu);\n    switch (out->kind) {\n",
+        t->name, t->alt_count);
     for (size_t i = 0; i < t->alt_count; i++) { // bounded by the alternatives
-        gen_emit(s, "    case %sKind_%s:\n        %s(arena, smith_key_derive(key, 1), &out->as.%s);\n        break;\n",
+        gen_emit(s,
+                 "    case %sKind_%s:\n        %s(arena, smith_protocol_take(stream), &out->as.%s);\n        break;\n",
                  t->name, t->alt_tags[i], gen_fn(g, t->alts[i], "random"), t->alt_members[i]);
     }
     gen_emit(s, "    }\n}\n\n");

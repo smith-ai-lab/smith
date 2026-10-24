@@ -10,25 +10,24 @@ A C program includes the generated header `.smith/include/smith/random.h`, and t
 ```c
 #include <smith/random.h>
 
-SmithKey key = smith_key_make(seed);              // a seed is any uint64_t
-SmithKey world = smith_key_derive(key, 0);        // JAX's fold_in
-uint64_t bits = smith_key_bits(key, n);
-float u = smith_key_unit_float(key, n);           // [0, 1), a grid of 2^-24
-double v = smith_key_unit_double(key, n);         // [0, 1), a grid of 2^-53
+SmithKey key = smith_key_make(seed);              // a seed is any uint64_t; a key is used once ([[smith::affine]])
+SmithKey k[8];
+smith_key_split_n(key, k, 8);                     // key is used here; each draw below has its own key
+uint64_t bits = smith_key_bits(k[0]);
+float u = smith_key_unit_float(k[1]);             // [0, 1), a grid of 2^-24
+double v = smith_key_unit_double(k[2]);           // [0, 1), a grid of 2^-53
 
-float a = smith_uniform_float_sample(key, (SmithUniformFloat){.low = 0, .high = 1});
-int64_t c = smith_uniform_int64_sample(key, (SmithUniformInt64){.low = 1, .high = 6});
-float d = smith_normal_float_sample(key, (SmithNormalFloat){.mean = 0, .deviation = 1});
-bool f = smith_bernoulli_sample(key, (SmithBernoulli){.probability = 0.3});
+float a = smith_uniform_float_sample(k[3], (SmithUniformFloat){.low = 0, .high = 1});
+int64_t c = smith_uniform_int64_sample(k[4], (SmithUniformInt64){.low = 1, .high = 6});
+float d = smith_normal_float_sample(k[5], (SmithNormalFloat){.mean = 0, .deviation = 1});
+bool f = smith_bernoulli_sample(k[6], (SmithBernoulli){.probability = 0.3});
 SmithCategorical weights = smith_categorical_make(&arena, (const double[]){1, 2, 3}, 3);
-size_t g = smith_categorical_sample(key, weights);
-size_t order[52];
-smith_permutation_sample(key, (SmithPermutation){.count = 52}, order);
+size_t g = smith_categorical_sample(k[7], weights);
 ```
 
 ```c
 double exponential_sample(SmithKey key, double rate) {
-    return -smith_log_double(1.0 - smith_key_unit_double(key, 0)) / rate;
+    return -smith_log_double(1.0 - smith_key_unit_double(key)) / rate;
 }
 ```
 

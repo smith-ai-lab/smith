@@ -24,27 +24,40 @@ import smith::math;
 //   SmithKey key = smith_key_make(seed);
 //   double x = smith_uniform_double_sample(key, (SmithUniformDouble){.low = 0, .high = 1});
 //
-// Derive one key for every use. Drawing twice from the same key repeats the same numbers, which is a bug: the second
-// use is not independent of the first. key_derive(key, i) is the key for part or item i, so a program gives each of its
-// parts a derived key, and each of theirs another:
-//   random::Key world_key = random::key_derive(key, 0);
-//   random::Key noise_key = random::key_derive(key, 1);
+// A key is used once. Drawing twice from the same key repeats the same numbers, which is a bug, so a key is affine
+// ([[smith::affine]]): a second use of one is a compile error naming the first. split(key, keys) uses key and fills an
+// array or a slice with independent keys, each for one use:
+//   random::Key keys[2];
+//   random::split(key, keys);
+//   f64 a = random::normal_double_sample(keys[0], n);
+//   f64 b = random::normal_double_sample(keys[0], n);   // error: 'keys[0]' is used again; it was already used at line
+//   N
 //
-// Filling an array is a loop, which works for any distribution and parallelizes, since no draw depends on another:
-//   for (usize i = 0; i < count; i++)
-//       out[i] = random::normal_float_sample(random::key_derive(key, i), (random::NormalFloat){.mean = 0, .deviation =
-//       1});
+// Filling an array is the plain loop over keys, which works for any distribution and parallelizes, since no draw
+// depends on another:
+//   random::Key per_item[count];
+//   random::split(key, per_item);
+//   for (usize i = 0; i < countof(per_item); i++)
+//       out[i] = random::normal_float_sample(per_item[i], (random::NormalFloat){.mean = 0, .deviation = 1});
 //
-// A distribution is a struct of its parameters and a function `<name>_sample(key, d)` that is built only from the
-// public primitives below, so your own is written exactly like smith's. It takes a key and spends it with key_bits,
-// key_unit_float or key_unit_double (draw n of the same key are different numbers), or derives keys for its parts. An
-// exponential distribution with a rate, where 1 - unit lies in (0, 1], so the log is safe:
-//   f64 exponential_sample(random::Key key, f64 rate) {
-//       return -random::log_double(1.0 - random::key_unit_double(key, 0)) / rate;
+// A loop that needs a key for each turn reassigns it:
+//   for (usize i = 0; i < count; i++) {
+//       random::Key next[2];
+//       random::split(key, next);
+//       key = next[0];
+//       out[i] = random::uniform_double_sample(next[1], u);
 //   }
 //
-// A draw is a pure function of (key, n), so it does not depend on the draws before it: item i's key is
-// key_derive(key, i) however many items came before, and changing one draw never shifts another.
+// A distribution is a struct of its parameters and a function `<name>_sample(key, d)` built only from the public
+// primitives below, so your own is written exactly like smith's. It takes a key and spends it once, with key_bits,
+// key_unit_float or key_unit_double, or splits it for its parts. An exponential distribution with a rate, where
+// 1 - unit lies in (0, 1], so the log is safe:
+//   f64 exponential_sample(random::Key key, f64 rate) {
+//       return -random::log_double(1.0 - random::key_unit_double(key)) / rate;
+//   }
+//
+// A draw is a pure function of its key, so it does not depend on the draws before it: part i of a split is the same
+// however many parts came with it, and changing one draw never shifts another.
 //
 // Every distribution maps the zero word to its simplest value, and values move away from it as the word grows, so a
 // test runner that makes the words of a failing test smaller (as unsigned integers) finds a simple failure. A
@@ -64,17 +77,18 @@ import smith::math;
 // On platforms where sqrt is not inlined, link libm (-lm).
 //
 // A tap watches the words a key hands out. For smith's test runner, and nothing else: a key made by the runner carries
-// one, and key_bits passes each word through its `word` (the key's bits, the draw's number and the word), so the runner
+// one, and a draw passes each word through its `word` (the key's bits, the draw's number and the word), so the runner
 // can record a failing test's words and replace them with smaller ones. The tap travels with the key, through
-// key_derive, so there is no global to set and a program's own keys, which carry none, stay pure functions of their
+// split, so there is no global to set and a program's own keys, which carry none, stay pure functions of their
 // bits. `word` is given the tap it is called through, to find the runner's state around it.
 [[smith::c_name("SmithRandomTap")]] export typedef struct Tap {
     u64 (*word)(const struct Tap *tap, u64 key, u64 n, u64 bits);
 } Tap;
 
-// A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. Keys are
-// values; copy them freely.
-[[smith::c_name("SmithKey")]] export typedef struct {
+// A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. A key is
+// affine, [[smith::affine]]: each key is used at most once, a second use is a compile error naming the first, and
+// split(key, keys) is how one key becomes many.
+[[smith::c_name("SmithKey")]] export [[smith::affine]] typedef struct {
     u64 bits;
     const Tap *tap; // nullptr, except for a key the test runner made
 } Key;
@@ -285,37 +299,58 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
     return (Key){.bits = seed};
 }
 
-// Counter word 2 separates derive's domain (1) from bits' domain (0).
-// JAX's fold_in: the key for part or item i of key. Deriving is how a key is split, so each use gets its own.
-[[smith::c_name("smith_key_derive")]] export [[nodiscard]] Key key_derive(Key key, u64 i) {
+// Counter word 2 separates split's domain (1) from the words' domain (0). The key for part i of key (JAX's fold_in).
+Key derive(const Key *key, u64 i) {
     contract::trusted(); // Philox is 64 multiplications a draw, which a proof of its callers should not repeat
     Block counter = {{(u32)i, (u32)(i >> 32), 1, 0}};
-    return (Key){.bits = philox_low(counter, (u32)key.bits, (u32)(key.bits >> 32)), .tap = key.tap};
+    return (Key){.bits = philox_low(counter, (u32)key->bits, (u32)(key->bits >> 32)), .tap = key->tap};
 }
 
-// Every distribution draws through here, so the runner's tap sees every word. key_derive does not change the bits a
-// tap sees: keys stay the same, and only words change.
-// The key's n-th 64 random bits. Draws n = 0, 1, 2... of one key are different numbers; they are a stream a
-// distribution may spend, while a program gives each use its own derived key.
-[[smith::c_name("smith_key_bits")]] export [[nodiscard]] u64 key_bits(Key key, u64 n) {
+// split for C: a pointer and a count.
+[[smith::c_name("smith_key_split_n")]] export void split_n(Key key, Key *keys, usize count) {
+    contract::trusted(); // its loop runs over the count, which has no bound a proof can use
+    contract::requires(keys != nullptr || count == 0);
+    const Key *parent = &key;
+    for (usize i = 0; i < count; i++)
+        keys[i] = derive(parent, i);
+}
+
+// Uses key and fills keys with countof(keys) new keys, independent of each other and of key: the way one key becomes
+// many, each then used once. The keys of a count are the first keys of a larger count, so adding a part never changes
+// the others. An array or a slice (a plain loop gives each item its key):
+//   random::Key keys[3];
+//   random::split(key, keys);
+//   for (usize i = 0; i < countof(keys); i++) out[i] = random::uniform_double_sample(keys[i], u);
+[[smith::c_name("smith_key_split")]] export void split(Key key, Key keys[:]) {
+    split_n(key, keys.data, keys.count[0]);
+}
+
+// The key's n-th 64 random bits, through the tap, if the key carries one: every distribution draws through here, so the
+// runner's tap sees every word. Draws n = 0, 1, 2... of one key are different numbers, a stream a distribution may
+// spend inside the library; a program gives each use its own key, from split.
+u64 word(const Key *key, u64 n) {
     contract::trusted(); // the runner's tap is a call through a function pointer, the edge a proof cannot read
     u64 block = n >> 1;
     Block counter = {{(u32)block, (u32)(block >> 32), 0, 0}};
-    u32 key_0 = (u32)key.bits;
-    u32 key_1 = (u32)(key.bits >> 32);
-    u64 word = (n & 1) == 0 ? philox_low(counter, key_0, key_1) : philox_high(counter, key_0, key_1);
-    return key.tap != nullptr ? key.tap->word(key.tap, key.bits, n, word) : word;
+    u32 key_0 = (u32)key->bits;
+    u32 key_1 = (u32)(key->bits >> 32);
+    u64 bits = (n & 1) == 0 ? philox_low(counter, key_0, key_1) : philox_high(counter, key_0, key_1);
+    return key->tap != nullptr ? key->tap->word(key->tap, key->bits, n, bits) : bits;
 }
 
-// A real in [0, 1) on a grid of 2^-24, from the key's bits n. 1 - unit is then exact and lies in (0, 1]: the safe way
-// to take a log.
-[[smith::c_name("smith_key_unit_float")]] export [[nodiscard]] f32 key_unit_float(Key key, u64 n) {
-    return (f32)(key_bits(key, n) >> 40) * 0x1p-24f;
+// 64 random bits: a key is one draw.
+[[smith::c_name("smith_key_bits")]] export [[nodiscard]] u64 key_bits(Key key) {
+    return word(&key, 0);
 }
 
-// A real in [0, 1) on a grid of 2^-53, from the key's bits n. 1 - unit is exact and lies in (0, 1].
-[[smith::c_name("smith_key_unit_double")]] export [[nodiscard]] f64 key_unit_double(Key key, u64 n) {
-    return (f64)(key_bits(key, n) >> 11) * 0x1p-53;
+// A real in [0, 1) on a grid of 2^-24. 1 - unit is then exact and lies in (0, 1]: the safe way to take a log.
+[[smith::c_name("smith_key_unit_float")]] export [[nodiscard]] f32 key_unit_float(Key key) {
+    return (f32)(word(&key, 0) >> 40) * 0x1p-24f;
+}
+
+// A real in [0, 1) on a grid of 2^-53. 1 - unit is exact and lies in (0, 1].
+[[smith::c_name("smith_key_unit_double")]] export [[nodiscard]] f64 key_unit_double(Key key) {
+    return (f64)(word(&key, 0) >> 11) * 0x1p-53;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -503,13 +538,13 @@ constexpr u64 attempts = 64;
 
 typedef unsigned _BitInt(128) Wide; // the product of two words, whose high half is the index
 
-u64 draw_index(Key key, u64 n) {
+u64 draw_index(const Key *key, u64 n) {
     contract::trusted(); // 64 attempts of a 128-bit product: callers use the promise, which the tests check
     contract::requires(n > 0);
     u64 threshold = (0 - n) % n; // 2^64 mod n
     u64 index = 0;
     for (u64 attempt = 0; attempt < attempts; attempt++) {
-        Wide product = (Wide)key_bits(key, attempt) * n;
+        Wide product = (Wide)word(key, attempt) * n;
         index = (u64)(product >> 64);
         if (threshold == 0 || (u64)product < 0 - threshold) break;
     }
@@ -534,8 +569,8 @@ i64 int_value(i64 low, i64 high, u64 index) {
                                                                                               UniformInt64 uniform) {
     contract::requires(uniform.low <= uniform.high);
     u64 span = (u64)uniform.high - (u64)uniform.low + 1;
-    if (span == 0) return zigzag(key_bits(key, 0)); // the whole i64 range
-    return int_value(uniform.low, uniform.high, draw_index(key, span));
+    if (span == 0) return zigzag(word(&key, 0)); // the whole i64 range
+    return int_value(uniform.low, uniform.high, draw_index(&key, span));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -586,7 +621,7 @@ u64 origin_double(f64 low, f64 high) {
                        uniform.low < uniform.high);
     contract::requires(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_float(uniform.low, uniform.high);
-    u64 grid = around(key_bits(key, 0) >> 40, origin, (u64)1 << 24);
+    u64 grid = around(word(&key, 0) >> 40, origin, (u64)1 << 24);
     f32 value = uniform.low + mul_float(uniform.high - uniform.low, (f32)grid * 0x1p-24f);
     return value < uniform.high ? value : below_float(uniform.high);
 }
@@ -599,7 +634,7 @@ u64 origin_double(f64 low, f64 high) {
                        uniform.low < uniform.high);
     contract::requires(__builtin_isfinite(uniform.high - uniform.low));
     u64 origin = origin_double(uniform.low, uniform.high);
-    u64 grid = around(key_bits(key, 0) >> 11, origin, (u64)1 << 53);
+    u64 grid = around(word(&key, 0) >> 11, origin, (u64)1 << 53);
     f64 value = uniform.low + mul_double(uniform.high - uniform.low, (f64)grid * 0x1p-53);
     return value < uniform.high ? value : below_double(uniform.high);
 }
@@ -697,12 +732,12 @@ f32 ppnd7(f32 p) {
 // The midpoint-grid index is ordered by distance from the centre, so word 0 gives the u just above 0.5 (about the
 // mean), word 1 the u just below it, and so on outwards. Only which word gives which u changes, not the u's.
 f64 normal_u_double(Key key) {
-    u64 grid = around(key_bits(key, 0) >> 12, (u64)1 << 51, (u64)1 << 52);
+    u64 grid = around(word(&key, 0) >> 12, (u64)1 << 51, (u64)1 << 52);
     return (f64)(grid * 2 + 1) * 0x1p-53;
 }
 
 f32 normal_u_float(Key key) {
-    u64 grid = around(key_bits(key, 0) >> 41, (u64)1 << 22, (u64)1 << 23);
+    u64 grid = around(word(&key, 0) >> 41, (u64)1 << 22, (u64)1 << 23);
     return (f32)(grid * 2 + 1) * 0x1p-24f;
 }
 
@@ -726,7 +761,7 @@ f32 normal_u_float(Key key) {
 
 [[smith::c_name("smith_bernoulli_sample")]] export [[nodiscard]] bool bernoulli_sample(Key key, Bernoulli bernoulli) {
     contract::requires(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
-    u64 grid = key_bits(key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
+    u64 grid = word(&key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
     return (f64)(((u64)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
 }
 
@@ -799,8 +834,11 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
     contract::trusted(); // its tables are pointers inside a struct passed by value, which a proof does not know to be
                          // valid
     contract::requires(categorical.count >= 1);
-    usize index = (usize)draw_index(key_derive(key, 0), categorical.count);
-    bool keep = key_unit_double(key_derive(key, 1), 0) < categorical.probability[index];
+    Key parts[2];
+    split_n(key, parts, 2);
+    Key index_key = parts[0];
+    usize index = (usize)draw_index(&index_key, categorical.count);
+    bool keep = key_unit_double(parts[1]) < categorical.probability[index];
     return keep ? index : categorical.alias[index];
 }
 
@@ -811,8 +849,10 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
     contract::requires(out != nullptr || permutation.count == 0);
     for (usize i = 0; i < permutation.count; i++)
         out[i] = i;
+    const Key *root = &key;
     for (usize i = permutation.count; i > 1; i--) { // step i swaps position i - 1 with a position in [0, i)
-        usize j = i - 1 - (usize)draw_index(key_derive(key, i - 1), i); // index 0 swaps with itself
+        Key step = derive(root, i - 1);
+        usize j = i - 1 - (usize)draw_index(&step, i); // index 0 swaps with itself
         usize swap = out[i - 1];
         out[i - 1] = out[j];
         out[j] = swap;
