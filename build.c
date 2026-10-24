@@ -40,8 +40,8 @@ static const char *build_variable(SmithBuild *b, const char *name, const char *f
     return smith_option_value(b, name, smith_env(b, name, fallback), description);
 }
 
-// The flags of a .smith source: the build's C flags, the include folder of the generated headers, and C2y (as `smith cc`
-// compiles a module, so `_Countof` works).
+// The flags of a .smith source: the build's C flags, the include folder of the generated headers, and C2y (as `smith
+// cc` compiles a module, so `_Countof` works).
 static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *config) {
     return smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-std=gnu2y", nullptr}, nullptr);
 }
@@ -106,12 +106,9 @@ static int build_protocol_run(SmithRun *run) {
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
 static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {"scripts/protocol.c",
-                                   "lib/smith/arena.smith",
-                                   "lib/smith/contract.smith",
-                                   "lib/smith/text.smith",
-                                   "lib/json.c",
-                                   "lib/trace.c"};
+    const char *const sources[] = {
+        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
+        "lib/trace.c"};
     SmithObject objects[6] = {};
     const SmithObject *linked[7] = {};
     for (size_t i = 0; i < 6; i++) {
@@ -526,7 +523,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = smith_cat(
-            b, config->cflags, (const char *[]){"-I", "include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+            b, config->cflags,
+            (const char *[]){"-I", "include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
             (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
             smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
             smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
@@ -615,11 +613,11 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
     // The units runner's files are built in the project of tests/units (by the smith under test); here they are objects
     // nobody asks for, so that their modules' headers are written (by the smith under test too) and lint reads them.
-    // (A fresh clone has no such smith yet: its first build leaves them out, since the libraries' compiles wait for every
-    // header and these headers would wait for the smith those compiles make.)
-    const char *const *tests =
-        access(smith_fmt(b, "%s/smith-cc", folder), X_OK) == 0 ? smith_glob(b, smith_list(b, "tests/*.smith", nullptr))
-                                                               : smith_list(b, nullptr);
+    // (A fresh clone has no such smith yet: its first build leaves them out, since the libraries' compiles wait for
+    // every header and these headers would wait for the smith those compiles make.)
+    const char *const *tests = access(smith_fmt(b, "%s/smith-cc", folder), X_OK) == 0
+                                   ? smith_glob(b, smith_list(b, "tests/*.smith", nullptr))
+                                   : smith_list(b, nullptr);
     SmithObject units[64] = {};
     for (size_t i = 0; tests[i] != nullptr && i < _Countof(units); i++) {
         units[i] = (SmithObject){.compiler = smith_fmt(b, "%s/smith-cc", folder),
@@ -694,6 +692,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-lang-1", "smith-lang", "1/3", nullptr, 1},
     {"smith-lang-2", "smith-lang", "2/3", nullptr, 1},
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
+    {"stage0", "stage0", nullptr, nullptr, 0},
     {"main", "test", "main", nullptr, 1},
     {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
     {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},

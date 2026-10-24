@@ -5,7 +5,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 ## Decisions (change one only with the owner)
 
 **Compiler and tools**
-- One compiler, upstream LLVM 23.1.3, built by `smith build llvm` and linked into smith; no LLVM install at run time; Homebrew's pinned `llvm` is only what the stage0 runs; `.metal` goes to Apple's `metal`. [one-compiler](knowledge/one-compiler.md), [llvm-build](knowledge/llvm-build.md)
+- One compiler, upstream LLVM 23.1.3, built by `smith build llvm` and linked into smith; no LLVM install at run time; smith is built by its previous release, never by Homebrew's `llvm`; `.metal` goes to Apple's `metal`. [one-compiler](knowledge/one-compiler.md), [llvm-build](knowledge/llvm-build.md), [smith-bootstrap](knowledge/smith-bootstrap.md)
 - smith compiles in its own process (`clang_main`); `SMITH_CLANG` runs an external clang; a change of compiler rebuilds every object. [one-compiler](knowledge/one-compiler.md)
 - The files the driver looks up are embedded and written once to a runtime folder that smith never removes; the programs are clones (never hard links) in a per-binary folder. [embedded-files-and-programs-folders](knowledge/embedded-files-and-programs-folders.md)
 - The linker is lld in smith's process; the system's other tools (`dsymutil`, `libtool`, `xcrun`) stay the system's. [linker](knowledge/linker.md)
@@ -45,7 +45,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 
 ## How to work
 
-- Load [smith-dev](.agents/skills/smith-dev/SKILL.md) for any change to smith itself; it names the small skills (build, LLVM, tests, verbs, language, libraries, bootstrap, C, docs).
+- Load [smith-dev](.agents/skills/smith-dev/SKILL.md) for any change to smith itself; it names the small skills (build, LLVM, tests, verbs, language, libraries, C, docs).
 - Load [smith](.agents/skills/smith/SKILL.md), the map, when using smith; it names the small skills for the compiler, `build.c`, `run` and `test`, `check`, `fmt`, `lint` and `lsp`. They ship in the plugin from `.agents/skills`; no project carries a copy.
 - Load [smith-build](.agents/skills/smith-build/SKILL.md) to run, write or edit a build.c, smith's own included.
 - `~/Documents/checkers`, `~/Documents/virtual-cell/learner` and `~/Documents/game` are the test beds: read them and run the installed smith on them in place; build, test or prove them with a smith under test only in a scratch copy, so lanes never share a `.smith/`. They follow smith: when smith changes its idiom or breaks their code, change them to match (the owner's own projects for trying smith: commit and push to their main freely); the commit says what changed and why, naming the smith issue, and their AGENTS.md carries no change log (the plugin's skills teach the current idiom). [test-beds](knowledge/test-beds.md)

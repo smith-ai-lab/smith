@@ -26,7 +26,7 @@ build.c has two layers, and a project may use either or both.
   a `smith_object` entry or an earlier `smith_compile_command` is skipped (the first entry for a file wins), and
   calling it after `smith_compile_commands` is an error.
 - Then one entry for build.c: `file` "build.c" and `arguments` `smith-cc -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include
-  -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's bootstrap).
+  -c build.c`, the flags `smith build` compiles build.c with (a test checks they match smith.c's build-program manifest).
 - The JSON is escaped (`"`, `\`, control characters as `\u00XX`), indented two spaces, ends with a newline, and is
   written only when its bytes change, through `smith_write`'s rules. A `.run` step does not run build(), so it writes nothing there.
 - Calling `smith_compile_commands` twice is an error, and so is a path under `.smith/`. Call it last.

@@ -11,8 +11,7 @@ tags: [preprocessor, target]
 `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions`,
 `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer`. A compile asks clang's preprocessor from
 the token hook (`SmithHost.target_fact`, no patch) and writes literals, so they work in `static_assert`, array sizes
-and `constexpr` initializers; the raw lowering (`--smith-lower`, `--smith-header`, which is where `bootstrap/` and the
-stage0 get their C) has no preprocessor and writes the equivalent macro (defined at the top by an `#if` chain) and
+and `constexpr` initializers; the raw lowering (`--smith-lower`, `--smith-header`, which are the header pass and what `smith cc --smith-lower` writes) has no preprocessor and writes the equivalent macro (defined at the top by an `#if` chain) and
 `#if`/`#else`/`#endif`. **`if constexpr` works in any function body** (blocks; the condition is `target::` facts,
 `constexpr` constants and literals): the branch not taken is dropped before the parser. A file that contains `if
 constexpr` is offered every token of a body by the hook (keywords are not identifiers), others are untouched. **An
@@ -42,8 +41,7 @@ is compiled for.
   for the sanitizers and `assertions`). So a fact is a constant expression anywhere C wants one: `static_assert`, an array
   size, a `constexpr` initializer. `target::float_eval_method` must not be negative (indeterminate). A name that is not a
   fact is an error that lists them. The name `target` is reserved for this import, whatever its alias (`import target as t;`).
-- **The raw lowering has no preprocessor** (`smith cc --smith-lower` and `--smith-header`, which is how `bootstrap/` and
-  the stage0 get their C). It writes the equivalent into its output: a macro for each fact used
+- **The raw lowering has no preprocessor** (`smith cc --smith-lower` and `--smith-header`, which are the header pass and what `smith cc --smith-lower` writes). It writes the equivalent into its output: a macro for each fact used
   (`SMITH_TARGET_ARCH`), defined at the top of the output by an `#if` chain (`#if defined(__aarch64__)`, `#if
   __has_feature(address_sanitizer)`, `#define SMITH_TARGET_F32_MANTISSA_BITS __FLT_MANT_DIG__`), and for an `if
   constexpr` the branches between `#if`, `#else` and `#endif`. The preprocessor lives only in generated output. A fact

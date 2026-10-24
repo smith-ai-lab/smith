@@ -11,7 +11,7 @@ tags: [gaps]
   the command smith runs, not by bytes.
 - `arena::push_slice(&a, T, sizes...)` (#82, #105, #107) gives a slice with a size for each `[:]` (`push_slice(&a, f32,
   n, m)` is `f32[:][:]`, `push_slice(&a, f32[2], n)` is `f32[:][2]`; its type is `arena::slice_of`, an exported function
-  over `type`), and `arena::push_array` is gone (a bootstrapped module uses `push_array_raw`). The instance of a generic
+  over `type`), and `arena::push_array` is gone (a module that goes through the raw lowering uses `push_array_raw`). The instance of a generic
   cannot name a local of its own body in a call that has an `auto` parameter (`push_slice(arena, char, characters +
   1)` where `characters` is that body's local: the parser has not seen it), so write the raw call or a cast of a
   parameter. The result of a

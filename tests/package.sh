@@ -3,8 +3,11 @@
 # truncated body, a broken connection, a wrong hash, a TLS failure and a killed fetch's leftovers. The cache and tar are
 # real; the network is io's scripted one. Usage: sh tests/package.sh path/to/smith
 set -u
+case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
-cc=${CC:-cc}
+cc="$smith cc"
+# runtime/package.c sees the libraries through their headers; the modules are linked.
+libs="$here/lib/smith/arena.smith $here/lib/smith/contract.smith $here/lib/smith/inflate.smith $here/lib/smith/io.smith $here/lib/smith/random.smith"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 failures=0
@@ -39,11 +42,11 @@ chmod +x "$work/src/pkg-1.0/bin/tool"
 (cd "$work/src" && tar -czf ../pkg.tar.gz pkg-1.0)
 cd "$work/scratch" || exit 1
 
-$cc -std=gnu23 $warn -I "$here/include" -O0 -g -fsanitize=address,undefined "$here/tests/package.c" -o "$work/bin/asan" || exit 1
+$cc -std=gnu23 $warn -I "$here/include" -O0 -g -fsanitize=address,undefined "$here/tests/package.c" $libs -o "$work/bin/asan" || exit 1
 capture "$work/bin/asan" "$work/pkg.tar.gz" "$work/scratch"
 expect "checks: pass at -O0 under ASan and UBSan" "0 package: all checks passed" "$rc $out"
 expect "checks: ... and nothing was printed to stderr" "" "$err"
-$cc -std=gnu23 $warn -I "$here/include" -O2 "$here/tests/package.c" -o "$work/bin/fast" || exit 1
+$cc -std=gnu23 $warn -I "$here/include" -O2 "$here/tests/package.c" $libs -o "$work/bin/fast" || exit 1
 rm -rf "$work/scratch" && mkdir "$work/scratch" && cd "$work/scratch" || exit 1
 capture "$work/bin/fast" "$work/pkg.tar.gz" "$work/scratch"
 expect "checks: pass at -O2" "0 package: all checks passed" "$rc $out"

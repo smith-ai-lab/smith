@@ -13,7 +13,7 @@ stays a parameter (`math::max(u32)`) and leaving it out is an error (issue #61).
 its argument (`export void check_equal(auto a, typeof(a) b)`), `typeof(a)` names it in later parameters, the body and
 the return type (`export typeof(x) sqrt(auto x)`), a later argument converts to it by C's rules but a conversion that
 changes the value is an error at the call (judged by value for a literal or a constant of the file, else by type; no
-warning flag involved), and a module the bootstrap lowers calls no `auto` function (no compiler to type the argument).
+warning flag involved), and a module that goes through the raw lowering (the header pass) calls no `auto` function (no compiler to type the argument).
 The lowering records the
 generic's tokens (no clang patch), writes one weak, hidden instance per canonical list of types at the end of the file,
 and chooses the branch of each `if constexpr` for it, so the parser only ever sees ordinary functions; an error in an
@@ -106,8 +106,8 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   converts to u8, the type of its first argument `small`, which may change its value; cast it, `(u8)big`, or the
   first argument, `(u32)small` ``.
 - **Without a compiler.** The header pass writes declarations only and skips a call in a body whose type it cannot
-  tell (a module's test can call `test::check_equal(a, 1)`); the raw lowering (`--smith-lower`, the bootstrap, the
-  stage0) has no compiler to type an `auto` argument, so a bootstrapped module calls no `auto` function (it calls
+  tell (a module's test can call `test::check_equal(a, 1)`); the raw lowering (`--smith-lower`, the header pass)
+  has no compiler to type an `auto` argument, so a module that goes through it calls no `auto` function (it calls
   the builtins, or a function with `constexpr type` parameters and the types written).
 - **An instance** is one function for each distinct list of types, compared by the parser's canonical spelling (`u32`
   and `uint32_t` are one instance). It is written at the end of the file as a weak, hidden definition with a symbol of

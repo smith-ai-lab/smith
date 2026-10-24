@@ -1320,26 +1320,28 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
     // standard) by smith itself, never by an external clang.
     size_t source_length = strlen(build_source);
     bool is_smith = source_length > 6 && strcmp(build_source + source_length - 6, ".smith") == 0;
-    int written = snprintf(out, capacity,
-                           "# Written by smith build. It compiles the build file into .smith/program.\n"
-                           "ninja_required_version = 1.10\n"
-                           "builddir = .smith/build-program\n"
-                           "rule cc\n"
-                           "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
-                           "  depfile = $out.d\n"
-                           "  deps = gcc\n"
-                           "  description = smith: compile $in\n"
-                           "rule cc_smith\n"
-                           "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
-                           "  depfile = $out.d\n"
-                           "  deps = gcc\n"
-                           "  description = smith: compile $in\n"
-                           "rule link\n"
-                           "  command = %s $in -o $out\n"
-                           "  description = smith: link $out\n"
-                           "build .smith/build-program/build.o: %s %s\n"
-                           "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
-                           quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
+    int written =
+        snprintf(out, capacity,
+                 "# Written by smith build. It compiles the build file into .smith/program.\n"
+                 "ninja_required_version = 1.10\n"
+                 "builddir = .smith/build-program\n"
+                 "rule cc\n"
+                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
+                 "  depfile = $out.d\n"
+                 "  deps = gcc\n"
+                 "  description = smith: compile $in\n"
+                 "rule cc_smith\n"
+                 "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MMD -MF $out.d "
+                 "-c $in -o $out\n"
+                 "  depfile = $out.d\n"
+                 "  deps = gcc\n"
+                 "  description = smith: compile $in\n"
+                 "rule link\n"
+                 "  command = %s $in -o $out\n"
+                 "  description = smith: link $out\n"
+                 "build .smith/build-program/build.o: %s %s\n"
+                 "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
+                 quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
     char objects[1024] = ".smith/build-program/build.o .smith/build-program/runtime.o";
     size_t objects_length = strlen(objects);
@@ -1351,8 +1353,8 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
                             name, flags);
         SMITH_ASSERT(line > 0 && (size_t)line < capacity - (size_t)written);
         written += line;
-        int more = snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/%s.o",
-                            name);
+        int more =
+            snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/%s.o", name);
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
@@ -1602,9 +1604,9 @@ static void smith_build_prepare(const char *self, const char *clang, bool in_pro
     smith_make_folder(".smith/build-program");
     static char manifest[smith_build_manifest_max];
     size_t length = smith_build_program_manifest(manifest, sizeof manifest, self, clang, in_process,
-                                             file == SmithBuildFile_Conventions ? smith_conventions_path
-                                             : file == SmithBuildFile_Smith     ? "build.smith"
-                                                                                : "build.c");
+                                                 file == SmithBuildFile_Conventions ? smith_conventions_path
+                                                 : file == SmithBuildFile_Smith     ? "build.smith"
+                                                                                    : "build.c");
     // Git ignores smith's folder with no change to the project, as pytest, ruff and mypy do for their caches.
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
     smith_write_if_changed(".smith/include/smith/build.h", smith_build_header, sizeof smith_build_header);

@@ -24,7 +24,7 @@ find_release() {
         echo "$SMITH_STAGE0_RELEASE"
         return 0
     fi
-    git fetch --quiet --tags --prune --prune-tags origin || echo "stage0: cannot fetch the tags; using the ones here" >&2
+    git fetch --quiet --tags --prune --prune-tags origin 2>/dev/null || echo "stage0: cannot fetch the tags; using the ones here" >&2
     if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
         git fetch --quiet --unshallow origin || die "cannot fetch the history of a shallow clone"
     fi
