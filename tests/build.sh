@@ -2019,17 +2019,15 @@ rule single
   command = $cmd
   pool = one
 build a: single
-  cap = 20
-  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt $cap ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
+  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt 20 ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
 build b: single
-  cap = 20
-  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt $cap ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
+  cmd = echo start >> order; n=0; while [ $$(grep -c start order) -lt 2 ] && [ $$n -lt 20 ]; do n=$$((n+1)); sleep 0.05; done; echo end >> order
 default a b
 N
 exec_run -j4
 expect "pool: a pool of depth 1 runs one job at a time" "start end start end" "$(tr '\n' ' ' <order | sed 's/ $//')"
 rm -f order a b
-sed -i.bak -e 's/  pool = one//' -e 's/cap = 20/cap = 12000/' build.ninja # the other's start is waited for as long as it takes
+sed -i.bak -e 's/  pool = one//' -e 's/-lt 20 /-lt 12000 /' build.ninja # the other's start is waited for as long as it takes
 exec_run -j4
 expect "pool: without it the two run together" "start start end end" "$(tr '\n' ' ' <order | sed 's/ $//')"
 cat >build.ninja <<'N'
