@@ -1,7 +1,7 @@
 status 1
-enum_narrowing_ends.smith:21:16: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
-enum_narrowing_ends.smith:29:12: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
-enum_narrowing_ends.smith:34:12: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
-enum_narrowing_ends.smith:39:16: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
-enum_narrowing_ends.smith:48:16: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
-enum_narrowing_ends.smith:59:16: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
+enum_narrowing_ends.smith:24:16: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
+enum_narrowing_ends.smith:32:12: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
+enum_narrowing_ends.smith:37:12: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
+enum_narrowing_ends.smith:42:16: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
+enum_narrowing_ends.smith:51:16: error: smith-enum: 'p->circle' is read where '*p' may not be a circle; test '*p == .circle' or switch on '*p'
+enum_narrowing_ends.smith:62:16: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'
