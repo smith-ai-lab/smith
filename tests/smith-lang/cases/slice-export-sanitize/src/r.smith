@@ -1,0 +1,18 @@
+module r;
+
+// An exported function with a slice parameter, compiled under -fsanitize=function (issue #152): the prototype and the
+// definition share one struct, defined at file scope; clang overflowed its stack mangling two in the parameter lists.
+export i32 first(i32 xs[:]) {
+    return xs[0];
+}
+
+export i32 total(i32 xs[:], i32 ys[:]) {
+    i32 sum = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        sum += xs[i];
+    }
+    for (usize i = 0; i < countof(ys); i++) {
+        sum += ys[i];
+    }
+    return sum;
+}

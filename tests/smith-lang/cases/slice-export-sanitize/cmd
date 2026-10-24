@@ -1,0 +1,1 @@
+-fsanitize=function -fsanitize-trap=function -I @REPO@/include main.smith r.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program

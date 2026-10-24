@@ -123,3 +123,10 @@ tags: [lowering, internals]
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
   has no hook (a stage0, or an LLVM built before the patch) refuses a `.smith` input with a message that says so.
+- **A slice's struct is defined at file scope for an exported function** (issue #152): the prototype that carries the
+  `__asm__` symbol and the definition after it each had `struct smith_array_T_n { ... }` in their parameter lists, two
+  types; clang 23's `-fsanitize=function` (in `-fsanitize=undefined`, the debug profile) mangles a prototype-scope struct
+  through its function and overflowed the stack on that pair (the same two C lines crash Homebrew's clang). The head
+  writer (`smith_lang_hoist_slice_structs`, runtime/lang_head.c) writes each definition once before the head and
+  registers the tag, so both prototype and definition name it; the generated header keeps the definition in the
+  prototype. Corpus: `slice-export-sanitize`; the template's `primes::total` runs it in debug.

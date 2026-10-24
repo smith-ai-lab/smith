@@ -233,7 +233,7 @@ static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, c
     scratch::Run tested = run_in(p, dir, "smith test");
     scratch::expect_status(say(label, "smith test passes out of the box"), 0, &tested);
     scratch::expect_contains(say(label, "... on the tests of the template"), tested.out,
-                             smith_language ? "4 passed, 0 failed" : "2 passed, 0 failed");
+                             smith_language ? "5 passed, 0 failed" : "2 passed, 0 failed");
     scratch::Run one = run_in(p, dir, "smith test --test no_primes");
     scratch::expect_contains(say(label, "smith test --test runs one test"), one.out, "1 passed, 0 failed");
     prove_the_template(p, dir, label, main_file);
@@ -326,6 +326,20 @@ export void test_new_hello_the_verbs_on_a_new_smith_project(io::Io *io) {
     scratch::Project p = fresh(io);
     generated(&p, "generate hello");
     verbs_on_a_new_project(&p, "hello", "new hello", true);
+}
+
+// The template exports a function over a slice, and `smith run` compiles it in the default debug profile, which has
+// -fsanitize=function: clang overflowed its stack on that pair (issue #152).
+export void test_new_hello_runs_an_exported_slice_function_in_debug(io::Io *io) {
+    scratch::Project p = fresh(io);
+    generated(&p, "generate hello");
+    scratch::expect_contains("new hello: primes.smith exports a function over a slice",
+                             scratch::read(&p, "hello/primes.smith"), "export i32 total(i32 xs[:])");
+    scratch::Run ran = run_in(&p, "hello", "rm -rf build && smith run");
+    scratch::expect_status("new hello: smith run builds the slice function in debug", 0, &ran);
+    scratch::expect_contains("new hello: ... under -fsanitize=undefined",
+                             capture(&p, "hello", "smith build -t commands build/debug/primes.o"),
+                             "-fsanitize=address,undefined");
 }
 
 export void test_new_hello_the_profiles_of_a_new_smith_project(io::Io *io) {

@@ -6152,6 +6152,37 @@ i32 main(void) {
     c::printf("%zu %d %d\n", countof(cut), cut[0], cut[1]);
     return 0;
 }
+==> slice-export-sanitize/src/main.smith <==
+module main;
+
+import r;
+import <stdio.h>;
+
+i32 main(void) {
+    i32 a[] = {4, 5, 6};
+    i32 b[] = {10};
+    c::printf("%d %d\n", r::first(a[0:3]), r::total(a[0:3], b[0:1]));
+    return 0;
+}
+==> slice-export-sanitize/src/r.smith <==
+module r;
+
+// An exported function with a slice parameter, compiled under -fsanitize=function (issue #152): the prototype and the
+// definition share one struct, defined at file scope; clang overflowed its stack mangling two in the parameter lists.
+export i32 first(i32 xs[:]) {
+    return xs[0];
+}
+
+export i32 total(i32 xs[:], i32 ys[:]) {
+    i32 sum = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        sum += xs[i];
+    }
+    for (usize i = 0; i < countof(ys); i++) {
+        sum += ys[i];
+    }
+    return sum;
+}
 ==> slice-lowering/src/slices.smith <==
 module slices;
 
