@@ -816,7 +816,8 @@ static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_ident(token, "type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
     if (ty->paren > 0 && smith_lang_ty_last_is(0, "constexpr")) return false; // a generic's `constexpr type T`
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
-    // `type * x` where `type` is a variable declared here: the product, as in C. (`type x` is no C at all: the keyword.)
+    // `type * x` where `type` is a variable declared here: the product, as in C. (`type x` is no C at all: the
+    // keyword.)
     if (smith_lang_punct(next, "*") && smith_lang_ty_find("type", 4, SmithLangTy_Plain) != nullptr) return false;
     if (!smith_lang_ty_is_name_token(next) && !smith_lang_punct(next, "*")) return false;
     SmithToken made[3];
