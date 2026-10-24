@@ -177,7 +177,7 @@ function tests.lsp_attach_smith()
     check(not diagnostic.message:find("compiler job", 1, true), "clangd has a compile command: " .. diagnostic.message)
     table.insert(messages, diagnostic.lnum .. ":" .. diagnostic.col .. " " .. diagnostic.message)
   end
-  check(#messages == 1 and messages[1]:find("^2:44 ") and messages[1]:find("missing", 1, true),
+  check(#messages == 1 and messages[1]:find("^2:40 ") and messages[1]:find("missing", 1, true),
     "the one error is clang's, on line 3: " .. vim.inspect(messages))
   local client = vim.lsp.get_clients({ bufnr = buffer, name = "smith" })[1]
   client:stop(true)

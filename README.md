@@ -303,7 +303,7 @@ module main;
 
 import meta;
 
-i32 main(void) {
+i32 main() {
     return (i32)meta::mean(1, "two");
 }
 ```
@@ -366,7 +366,7 @@ module main;
 
 import bytes;
 
-i32 main(void) {
+i32 main() {
     u8 raw[5] = {1, 2, 3, 4, 5};
     bytes::shift_in_place(raw);
     return 0;
@@ -386,7 +386,7 @@ import smith::random;
 import smith::test;
 import stats;
 
-export void test_clamp_cuts_a_big_value(void) { // (void): pure, it can touch nothing
+export void test_clamp_cuts_a_big_value() { // (void): pure, it can touch nothing
     test::check_equal(stats::clamp(9, 0, 5), 5);
 }
 

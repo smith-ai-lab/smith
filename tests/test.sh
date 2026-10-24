@@ -2594,18 +2594,18 @@ import smith::random;
 import smith::test;
 import smith::test::helpers as helpers;
 
-export void test_area(void) {
+export void test_area() {
     u64 area = box::area(2, 3);
     test::check_equal_u64(area, 6); // the named instance: the header pass of a module cannot lower a generic call
 }
 
-export void test_area_fails(void) {
+export void test_area_fails() {
     u64 expected = 7;
     u64 area = box::area(2, 3);
     test::check_equal_u64(area, expected);
 }
 
-export void test_area_through_a_library(void) {
+export void test_area_through_a_library() {
     helpers::require(box::area(2, 3) == 7);
 }
 
@@ -2616,7 +2616,7 @@ export void test_area_property(random::Key key) {
 }
 
 // Not exported: private to the module, nothing can call it, so it is not a test.
-[[maybe_unused]] void test_private(void) {
+[[maybe_unused]] void test_private() {
 }
 C
     capture "$smith" build

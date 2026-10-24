@@ -67,7 +67,7 @@ cat >t/two.smith <<'S'
 module t::two;
 import <string.h>;
 import <stdio.h>;
-export c::FILE *two_stream(void);
+export c::FILE *two_stream();
 export u32 two_length(const char *s) {
     return (u32)c::strlen(s);
 }
@@ -93,7 +93,7 @@ export typedef struct {
     i32 x;
     i32 y;
 } Point;
-export Point origin(void) {
+export Point origin() {
     return (Point){0, 0};
 }
 S
@@ -105,7 +105,7 @@ S
 cat >t/body_module.smith <<'S'
 module t::body_module;
 import t::point;
-export i32 body_module_x(void) {
+export i32 body_module_x() {
     return point::origin().x;
 }
 S
@@ -169,7 +169,7 @@ done
 cat >t/typed_call.smith <<'S'
 module t::typed_call;
 import smith::test;
-export void typed_call_test(void) {
+export void typed_call_test() {
     test::check_equal(1, 1);
 }
 S
@@ -203,7 +203,7 @@ cat >chain/last.smith <<'S'
 module chain::last;
 import chain::m0;
 import t::point;
-export point::Point last(void) {
+export point::Point last() {
     return point::origin();
 }
 S

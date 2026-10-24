@@ -132,7 +132,7 @@ module main;
 import geometry::box;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     box::Box b = {2.0f, 3.0f};
     f32 a = box::area(b);
     c::printf("area %f\n", (double)a);
@@ -144,7 +144,7 @@ module bad;
 import geometry::box;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     box::Box b = {2.0f, 3.0f};
     printf("area %f\n", (double)box::area(b));
     box::missing(b);
@@ -155,7 +155,7 @@ cat >complete.smith <<'EOF'
 module complete;
 import geometry::box;
 
-int f(void) {
+int f() {
     geometry_box_ar
 }
 EOF
@@ -180,7 +180,7 @@ export i32 never(i32 y) {
     return 0;
 }
 
-export i32 sized(void) {
+export i32 sized() {
     static_assert(target::f32_mantissa_bits == 24);
     return target::f32_mantissa_bits;
 }
@@ -217,7 +217,7 @@ cat >genuse.smith <<'EOF'
 module genuse;
 import pick;
 
-export int f(void) {
+export int f() {
     i32 a = 3;
     i32 b = 8;
     i32 first = pick::larger(a, b);
@@ -229,15 +229,15 @@ static i32 inc(i32 x) {
     return x + 1;
 }
 
-export int g(void) {
+export int g() {
     return pick::apply_twice(inc, 4);
 }
 
-export usize h(void) {
+export usize h() {
     return pick::count_args(1, 2.5, 3);
 }
 
-export i32 k(void) {
+export i32 k() {
     return pick::gathered(5, 6);
 }
 EOF
@@ -250,7 +250,7 @@ export struct { i32, f32 } make(i32 a, f32 b) {
     return {a, b};
 }
 
-export f32 total(void) {
+export f32 total() {
     auto p = make(1, 2.0f);
     p[0] += 1;
     struct { i32, struct { f32, f32 } } n = {1, {2.0f, 3.0f}};
@@ -573,7 +573,7 @@ module main;
 import foo;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i32 x = foo::f(10);
     c::printf("%d\n", x);
     return 0;
@@ -596,7 +596,7 @@ cat >modules/qualified.smith <<'EOF'
 module qualified;
 import foo;
 
-i32 g(void) {
+i32 g() {
     return foo::;
 }
 EOF
@@ -794,7 +794,7 @@ usize measure(const char *text) {
     return c::strlen(text);
 }
 
-void say(void) {
+void say() {
     c::puts("hello");
 }
 SMITH
