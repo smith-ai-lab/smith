@@ -1,0 +1,12 @@
+module main;
+
+import number;
+
+int main(void) {
+    usize runtime = 3;
+    f64 real = 2.0;
+    i32 a = number::scaled(runtime, 1);
+    i32 b = number::scaled(2.5, 1);
+    i32 c = number::scaled(real, 1);
+    return a + b + c;
+}

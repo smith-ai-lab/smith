@@ -821,6 +821,59 @@ export static int hidden(void) {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-generic-number-parameter/src/main.smith <==
+module main;
+
+import number;
+
+int main(void) {
+    usize runtime = 3;
+    f64 real = 2.0;
+    i32 a = number::scaled(runtime, 1);
+    i32 b = number::scaled(2.5, 1);
+    i32 c = number::scaled(real, 1);
+    return a + b + c;
+}
+==> error-generic-number-parameter/src/number.smith <==
+module number;
+
+// A number known at compile time as a parameter: each value is an instance, the name is that number in the body.
+export i32 scaled(constexpr usize i, i32 x) {
+    return (i32)(i * 10) + x;
+}
+
+export i32 pick(constexpr i32 which, i32 a, i32 b) {
+    if constexpr (which == 0) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+export typedef struct {
+    i32 a;
+    i32 b;
+    i32 c;
+} Triple;
+
+// The field `i` of a struct: the number is the index of `fields`.
+export i32 field_of(auto p, constexpr usize i) {
+    constexpr Field f = fields(typeof(*p))[i];
+    return (i32)p->[f];
+}
+
+export i32 sum_all(auto p) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+        sum = sum * 10 + field_of(p, i);
+    }
+    return sum;
+}
+
+// A number among the arguments of a call that holds a pattern: the other parameters are no number.
+export i32 over_pack(auto p, auto... rest) {
+    return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
+}
 ==> error-generic-private-generic/src/main.smith <==
 module main;
 
@@ -3605,6 +3658,63 @@ int main(void) {
     usize after_point = list::measure(&a, u64);
     c::printf("%d %zu %zu\n", p->x, after_point, a.used);
     return 0;
+}
+==> generic-number-parameter/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import number;
+
+constexpr usize seven = 7;
+
+int main(void) {
+    number::Triple t = {1, 2, 3};
+    i32 x = 5;
+    c::printf("%d %d %d\n", number::scaled(3, 1), number::scaled(seven, 1), number::scaled(2 + 3, x));
+    c::printf("%d %d\n", number::pick(0, 8, 9), number::pick(1, 8, 9));
+    c::printf("%d %d %d\n", number::field_of(&t, 0), number::field_of(&t, 2), number::sum_all(&t));
+    c::printf("%d\n", number::over_pack(&x, 1, 2, 3));
+    return 0;
+}
+==> generic-number-parameter/src/number.smith <==
+module number;
+
+// A number known at compile time as a parameter: each value is an instance, the name is that number in the body.
+export i32 scaled(constexpr usize i, i32 x) {
+    return (i32)(i * 10) + x;
+}
+
+export i32 pick(constexpr i32 which, i32 a, i32 b) {
+    if constexpr (which == 0) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+export typedef struct {
+    i32 a;
+    i32 b;
+    i32 c;
+} Triple;
+
+// The field `i` of a struct: the number is the index of `fields`.
+export i32 field_of(auto p, constexpr usize i) {
+    constexpr Field f = fields(typeof(*p))[i];
+    return (i32)p->[f];
+}
+
+export i32 sum_all(auto p) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+        sum = sum * 10 + field_of(p, i);
+    }
+    return sum;
+}
+
+// A number among the arguments of a call that holds a pattern: the other parameters are no number.
+export i32 over_pack(auto p, auto... rest) {
+    return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
 }
 ==> generic-own-names/src/main.smith <==
 module main;

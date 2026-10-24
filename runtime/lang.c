@@ -210,13 +210,15 @@ typedef struct {
 } SmithLangGenToken;
 
 // What a compile-time parameter of a generic is: `constexpr type T`, `auto x`, `constexpr auto f` (a function known at
-// compile time) or `auto... rest` (the last parameter: the types of the arguments that remain).
+// compile time), `constexpr usize i` (a number known at compile time) or `auto... rest` (the last parameter: the types
+// of the arguments that remain).
 typedef enum {
     SmithLangSlot_Plain, // an ordinary parameter (only of a parameter, never of a slot)
     SmithLangSlot_Type,
     SmithLangSlot_Auto,
     SmithLangSlot_Function,
     SmithLangSlot_Pack,
+    SmithLangSlot_Number, // `constexpr usize i`: an integer constant, one instance for each value
 } SmithLangSlot;
 
 typedef struct {
