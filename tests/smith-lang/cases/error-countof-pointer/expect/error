@@ -1,1 +1,1 @@
-src/main.smith:5:17: use of undeclared identifier 'countof'
+src/main.smith:5:24: '_Countof' requires an argument of array type; 'u32 *' (aka 'unsigned int *') invalid

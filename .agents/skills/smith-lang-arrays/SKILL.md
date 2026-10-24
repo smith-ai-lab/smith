@@ -30,6 +30,7 @@ export i32 demo(void) {
 ## Rules
 
 - `xs[i]` and `xs[a:b]` are checked in debug and release: a failure is `contract::assert`'s report with the line and the stack. The conventions link the trace library when a source has `[:`; a hand-written `smith_program` names `smith_library(b, "trace")`.
+- `countof(xs)` of a local or member FIXED array (`u32 xs[4]`) is C2y's `_Countof`: the outer count, in a plain function and in a generic's instance; of a pointer it is clang's error.
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - A slice is a pointer only as an argument of a `c::` function (`c::strncmp(word, "abc", countof(word))`).
 - A slice is a parameter, a result (`typeof(i32[:]) f(...)`), a local, a global or a field. `arena::push_slice(&a, T, n, m...)` makes one out of an arena (`push_slice(&a, f32, n, m)` is `f32[:][:]`; `smith-arena`): bind it to a `T xs[:]` before indexing.

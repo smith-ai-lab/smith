@@ -504,6 +504,54 @@ i32 main(void) {
     c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
     return 0;
 }
+==> countof-fixed-array-plain/src/main.smith <==
+// No module and no import: `countof` of a fixed array is C's own (issue #167).
+u32 plain(void) {
+    u32 xs[] = {1, 2, 3};
+    return (u32)countof(xs);
+}
+
+i32 main(void) {
+    return (i32)plain() - 3;
+}
+==> countof-fixed-array/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// `countof` of a fixed array is C's own: the outer count, in a plain function and in a generic's instance (issue #167).
+struct Grid {
+    u32 cells[6];
+};
+
+u32 plain(void) {
+    u32 xs[] = {1, 2, 3};
+    return (u32)countof(xs);
+}
+
+u32 outer(void) {
+    f32 m[3][5] = {};
+    return (u32)countof(m) * 10 + (u32)countof(m[0]);
+}
+
+u32 shaped(u32 xs[4]) {
+    return (u32)countof(xs);
+}
+
+export u32 pack(auto... args) {
+    u32 xs[] = {(u32)args...};
+    return (u32)countof(xs);
+}
+
+export u32 member(auto g) {
+    return (u32)countof(g.cells);
+}
+
+i32 main(void) {
+    u32 four[4] = {};
+    struct Grid g = {};
+    c::printf("%u %u %u %u %u\n", plain(), outer(), shaped(four), pack(1, 2), member(g));
+    return 0;
+}
 ==> cycle-by-source/src/a.smith <==
 module a;
 import b;
@@ -791,6 +839,18 @@ i32 main(void) {
     const i32 automatic[2] = {1, 2};
     constexpr const i32 *pointer = automatic;
     return *pointer;
+}
+==> error-countof-pointer/src/main.smith <==
+module main;
+
+// `countof` of a pointer is an error, as in C: a pointer has no count (issue #167).
+u32 bad(u32 *p) {
+    return (u32)countof(p);
+}
+
+i32 main(void) {
+    u32 x = 0;
+    return (i32)bad(&x);
 }
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {
