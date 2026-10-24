@@ -89,7 +89,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
         // A name that is not a simple identifier (an Objective-C selector, an operator, a conversion) has no identifier
         // to ask for, and Objective-C naming is not smith's to enforce: ivars, properties and methods are skipped.
         if (!Decl->getDeclName().isIdentifier() || isObjC(Decl)) return std::nullopt;
-        if (isTuplePart(Decl)) return std::nullopt;
+        if (isTuplePart(Decl) || isEnumPart(Decl)) return std::nullopt;
         const smith::WrittenName *written = writtenName(Decl, SM);
         if (written == nullptr || written->member.empty()) return (inner.*reach(DeclFn{}))(Decl, SM);
         // The first declaration of an exported function is the lowering's copy of its prototype, which is in no file
@@ -139,6 +139,27 @@ class SmithNaming final : public RenamerClangTidyCheck {
         };
         if (const auto *record = dyn_cast<RecordDecl>(Decl)) return made(record->getName());
         if (const auto *field = dyn_cast<FieldDecl>(Decl)) return made(field->getParent()->getName());
+        return false;
+    }
+
+    // A payload enum (`typedef enum { Circle circle; empty; } Shape;`) is lowered to a struct marked `smith::enum` that
+    // holds the enum `Shape_tag` with the constants `Shape_tag_circle`, and the member `tag`: the lowering's own names.
+    static bool isEnumRecord(const Decl *decl) {
+        const auto *record = dyn_cast_or_null<RecordDecl>(decl);
+        if (record == nullptr) return false;
+        for (const Decl *each : record->redecls())
+            for (const auto *attr : each->specific_attrs<AnnotateAttr>())
+                if (attr->getAnnotation() == "smith::enum") return true;
+        return false;
+    }
+
+    static bool isEnumPart(const NamedDecl *Decl) {
+        if (const auto *constant = dyn_cast<EnumConstantDecl>(Decl))
+            return isEnumPart(cast<EnumDecl>(constant->getDeclContext()));
+        if (const auto *tag = dyn_cast<EnumDecl>(Decl))
+            return isEnumRecord(dyn_cast<RecordDecl>(tag->getLexicalDeclContext()));
+        if (const auto *field = dyn_cast<FieldDecl>(Decl))
+            return field->getName() == "tag" && isEnumRecord(field->getParent());
         return false;
     }
 

@@ -825,6 +825,8 @@ SMITH
 log=$(client_in "$(cd editor-enum && pwd -P)" open shapes.smith)
 expect_line "editor: a file with a payload enum is read, and the dot rule's error is at the written place" "$log" \
     "diag shapes.smith:13:12: \`Shape\` has no variant \`nothing\`"
+expect "editor: and the names the lowering writes for the enum (its tag and constants) are not judged" 0 \
+    "$(printf '%s\n' "$log" | grep -c 'Invalid case style')"
 
 fi
 echo
