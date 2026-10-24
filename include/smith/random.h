@@ -91,9 +91,10 @@ typedef struct SmithRandomTap {
 } SmithRandomTap;
 
 // A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. A key is
-// affine, [[smith::affine]]: each key is used at most once, a second use is a compile error naming the first, and
-// split(key, keys) is how one key becomes many.
-[[smith::affine]] typedef struct {
+// affine: each key is used at most once, a second use is a compile error naming the first, and split(key, keys) is how
+// one key becomes many. The mark is written [[clang::annotate("smith::affine")]], which is what [[smith::affine]] makes
+// and which every clang accepts, so a program that includes this header with another compiler gets no warning.
+[[clang::annotate("smith::affine")]] typedef struct {
     uint64_t bits;
     const SmithRandomTap *tap; // nullptr, except for a key the test runner made
 } SmithKey;

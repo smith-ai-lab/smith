@@ -24,7 +24,7 @@ export u64 total(Key key, Key parts[:]) {
 }
 ```
 
-The mark is a valid C23 attribute (in C: `[[smith::affine]] typedef struct { ... } Key;`). smith checks it on every compile and in the editor, with no flag.
+The mark is a valid C23 attribute (in C: `[[smith::affine]] typedef struct { ... } Key;`; `[[clang::annotate("smith::affine")]]` is the same mark, which a compiler without smith's plugin accepts without a warning). smith checks it on every compile and in the editor, with no flag.
 
 ## The rules
 
