@@ -35,6 +35,7 @@ module.exports = grammar(C, {
     [$.type_parameter, $.type_specifier],
     [$.type_parameter, $.type_qualifier],
     [$.storage_class_specifier, $.list_declaration, $.auto_declaration],
+    [$.type_qualifier, $.auto_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
     [$.pointer_field_declarator, $.tuple_field],
   ]),
@@ -171,8 +172,9 @@ module.exports = grammar(C, {
 
     // auto args = {a, b}; makes a list (C23 leaves `auto x = {...}` invalid, so a declaration cannot read it)
     list_declaration: $ => seq('auto', field('name', $.identifier), '=', field('value', $.initializer_list), ';'),
-    // auto x = expr; (C23's type inference; there is no type for a declaration to read)
+    // auto x = expr; (C23's type inference; there is no type for a declaration to read), also constexpr auto f = fields(T)[i];
     auto_declaration: $ => seq(
+      optional('constexpr'),
       'auto',
       field('name', $.identifier),
       '=',

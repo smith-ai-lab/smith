@@ -10916,6 +10916,18 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "constexpr"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "auto"
         },
@@ -11478,6 +11490,10 @@
     [
       "storage_class_specifier",
       "list_declaration",
+      "auto_declaration"
+    ],
+    [
+      "type_qualifier",
       "auto_declaration"
     ],
     [
