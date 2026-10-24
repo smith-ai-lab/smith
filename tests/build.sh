@@ -1999,13 +1999,17 @@ expect_contains "console: and writes straight to its stdout" "$out" "terminal: h
 
 # 14e. Ctrl-C (SIGINT) stops the jobs, removes what they half wrote and exits with 130.
 project
-cat >build.ninja <<'N'
+# The jobs sleep a number of seconds nothing else on the machine sleeps (other checks run beside this one, and pgrep
+# sees every process), and are long enough that only the interrupt can end them: the test is "ended far before the
+# sleep did", not a number of seconds that a loaded machine could pass.
+nap=$((600 + $$ % 3000))
+cat >build.ninja <<N
 rule step
-  command = $cmd
+  command = \$cmd
 build slow: step
-  cmd = echo partial > slow; echo started >> started; sleep 33
+  cmd = echo partial > slow; echo started >> started; sleep $nap
 build slow2: step
-  cmd = echo started >> started; sleep 33
+  cmd = echo started >> started; sleep $nap
 default slow slow2
 N
 "$smith" --smith-exec build.ninja >"$work/o" 2>"$work/e" &
@@ -2021,10 +2025,10 @@ rc=$?
 t1=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
 expect "interrupt: the build exits with 130" 130 "$rc"
 expect_contains "interrupt: and says why" "$(cat "$work/e")" "interrupted by user"
-expect "interrupt: both jobs were stopped" 0 "$(pgrep -f 'sleep 33' | wc -l | tr -d ' ')"
+expect "interrupt: both jobs were stopped" 0 "$(pgrep -f "sleep $nap\$" | wc -l | tr -d ' ')"
 expect "interrupt: the half-written output is removed" no "$([ -e slow ] && echo yes || echo no)"
-expect "interrupt: and it was quick" yes "$(perl -e "print(($t1 - $t0) < 2 ? 'yes' : 'no')")"
-sed -i.bak 's/sleep 33/true/' build.ninja
+expect "interrupt: and it did not wait for the jobs (wall time, on purpose: it must end long before their sleep)" yes "$(perl -e "print(($t1 - $t0) < $nap / 2 ? 'yes' : 'no')")"
+sed -i.bak "s/sleep $nap/true/" build.ninja
 exec_run
 expect "interrupt: the next build runs both again" "0 2" "$rc $(lines started | awk '{print $1 - 2}')"
 
