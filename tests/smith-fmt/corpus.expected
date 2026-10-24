@@ -7930,6 +7930,74 @@ i32 main(void) {
     c::printf("%u %u %.1f\n", (u32)x, (u32)total, (f64)y);
     return 0;
 }
+==> type-value-nouns/src/main.smith <==
+import nouns;
+#include <stdio.h>
+
+// The questions of a type are named as the C standard names the kinds of types: integer, floating, signed_integer,
+// unsigned_integer, arithmetic, boolean, pointer, enumeration, structure, array and slice (issue #193). The is_ names
+// stay until a release has the new ones.
+typedef struct {
+    int a;
+} Pair;
+
+typedef enum { red, green } Color;
+typedef int Three[3];
+
+constexpr type kinds[10] = {i32, u8, f64, Pair, bool, char *, Color, Three, i32, usize};
+static type to_slice(type T) {
+    return T[:];
+}
+
+constexpr type sliced = to_slice(i32);
+
+static_assert(integer(kinds[0]) && integer(kinds[1]) && !integer(kinds[2]) && !integer(kinds[4]) && !integer(kinds[6]));
+static_assert(floating(kinds[2]) && !floating(kinds[0]));
+static_assert(signed_integer(kinds[0]) && !signed_integer(kinds[1]) && !signed_integer(kinds[2]));
+static_assert(unsigned_integer(kinds[1]) && unsigned_integer(kinds[9]) && !unsigned_integer(kinds[0]) &&
+              !unsigned_integer(kinds[2]));
+static_assert(arithmetic(kinds[0]) && arithmetic(kinds[2]) && !arithmetic(kinds[3]) && !arithmetic(kinds[5]));
+static_assert(boolean(kinds[4]) && !boolean(kinds[0]));
+static_assert(pointer(kinds[5]) && !pointer(kinds[0]));
+static_assert(enumeration(kinds[6]) && !enumeration(kinds[0]));
+static_assert(structure(kinds[3]) && !structure(kinds[0]));
+static_assert(array(kinds[7]) && !array(kinds[0]));
+static_assert(slice(sliced) && !slice(kinds[5]));
+static_assert(integer(kinds[0]) == is_integer(kinds[0]) &&
+              arithmetic(kinds[2]) == (is_integer(kinds[2]) || is_float(kinds[2])));
+
+int main(void) {
+    printf("%d %d %d %d\n", (int)integer(kinds[0]), (int)arithmetic(kinds[2]), (int)unsigned_integer(kinds[2]),
+           (int)signed_integer(kinds[2]));
+    i32 a = 1;
+    u8 b = 2;
+    f64 c = 3;
+    Pair p = {4};
+    printf("%d %d %d %d %d\n", nouns::kind_of(i32, a), nouns::kind_of(u8, b), nouns::kind_of(f64, c),
+           nouns::kind_of(char *, nullptr), nouns::kind_of(Pair, p));
+    return 0;
+}
+==> type-value-nouns/src/nouns.smith <==
+module nouns;
+
+// The kinds of types by their C-standard nouns in a generic's `if constexpr` (issue #193).
+export i32 kind_of(constexpr type T, T value) {
+    if constexpr (signed_integer(T)) {
+        return 1;
+    } else if constexpr (unsigned_integer(T)) {
+        return 2;
+    } else if constexpr (floating(T)) {
+        return 3;
+    } else if constexpr (pointer(T)) {
+        return 4;
+    } else if constexpr (structure(T)) {
+        return 5;
+    } else if constexpr (arithmetic(T) || boolean(T) || enumeration(T) || array(T) || slice(T)) {
+        return 6;
+    } else {
+        return 0;
+    }
+}
 ==> type-value-slice/src/main.smith <==
 module main;
 
