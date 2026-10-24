@@ -1,11 +1,9 @@
 --- a/clang/lib/Sema/SemaExpr.cpp
 +++ b/clang/lib/Sema/SemaExpr.cpp
-@@ -17949,6 +17949,27 @@
- Sema::SemaDiagnosticBuilder
- Sema::VerifyICEDiagnoser::diagnoseFold(Sema &S, SourceLocation Loc) {
+@@ -17951,6 +17951,27 @@
    return S.Diag(Loc, diag::ext_expr_not_ice) << S.LangOpts.CPlusPlus;
-+}
-+
+ }
+ 
 +/// smith: whether an expression that folded to a constant holds what a .smith
 +/// file adds to C's constants: a call of a function the evaluator ran, or an
 +/// element of a `constexpr` array (a list of types). Any other folding is still
@@ -25,24 +23,29 @@
 +    if (SmithFoldsLikeConstexpr(Child))
 +      return true;
 +  return false;
- }
- 
++}
++
  ExprResult
-@@ -18098,6 +18119,17 @@
-     return E;
+ Sema::VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
+                                       VerifyICEDiagnoser &Diagnoser,
+@@ -18117,6 +18138,20 @@
+     return ExprError();
    }
  
 +  // smith: in a .smith file a call of a C function that the evaluator ran
 +  // (LangOptions::SmithConstexprC) is a constant expression where C requires
-+  // one, and folding it is no GNU extension: no -Wgnu-folding-constant. Only an
-+  // evaluation with no note at all counts (a real extension keeps its warning).
-+  if (Folded && getLangOpts().SmithConstexprC && !getLangOpts().CPlusPlus &&
++  // one and allows folding (static_assert, an enum value, a case label, a
++  // bit-field width), and folding it is no GNU extension: no
++  // -Wgnu-folding-constant. A caller that forbids folding (an array bound at
++  // block scope, which C makes a VLA) is not here, and only an evaluation with
++  // no note at all counts (a real extension keeps its warning).
++  if (getLangOpts().SmithConstexprC && !getLangOpts().CPlusPlus &&
 +      Notes.empty() && SmithFoldsLikeConstexpr(E)) {
 +    if (Result)
 +      *Result = EvalResult.Val.getInt();
 +    return E;
 +  }
 +
-   // If our only note is the usual "invalid subexpression" note, just point
-   // the caret at its location rather than producing an essentially
-   // redundant note.
+   Diagnoser.diagnoseFold(*this, DiagLoc) << E->getSourceRange();
+   for (const PartialDiagnosticAt &Note : Notes)
+     Diag(Note.first, Note.second);
