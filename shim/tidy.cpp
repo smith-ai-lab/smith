@@ -135,7 +135,8 @@ class SmithNaming final : public RenamerClangTidyCheck {
 
     static bool isTuplePart(const NamedDecl *Decl) {
         auto made = [](StringRef name) {
-            return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") || name == "smith_field";
+            return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") ||
+                   name.starts_with("smith_enum_") || name == "smith_field";
         };
         if (const auto *record = dyn_cast<RecordDecl>(Decl)) return made(record->getName());
         if (const auto *field = dyn_cast<FieldDecl>(Decl)) return made(field->getParent()->getName());
