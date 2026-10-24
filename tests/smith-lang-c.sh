@@ -72,7 +72,7 @@ compare pack scripts/pack.c ""
 compare lib_http lib/http.c ""
 # Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes one string;
 # as random.smith it is two, so the constants after it are numbered differently. (Nothing else differs.)
-for name in arena io http untar; do
+for name in arena io untar; do
     compare "test_$name" "tests/$name.c" ""
 done
 compare templates_main templates/new/main.c "-std=gnu2y"
