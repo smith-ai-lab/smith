@@ -1,6 +1,34 @@
 --- a/clang/lib/Sema/SemaExpr.cpp
 +++ b/clang/lib/Sema/SemaExpr.cpp
-@@ -18098,6 +18098,17 @@
+@@ -17949,6 +17949,27 @@
+ Sema::SemaDiagnosticBuilder
+ Sema::VerifyICEDiagnoser::diagnoseFold(Sema &S, SourceLocation Loc) {
+   return S.Diag(Loc, diag::ext_expr_not_ice) << S.LangOpts.CPlusPlus;
++}
++
++/// smith: whether an expression that folded to a constant holds what a .smith
++/// file adds to C's constants: a call of a function the evaluator ran, or an
++/// element of a `constexpr` array (a list of types). Any other folding is still
++/// the GNU extension C has it as (`int c[y + 1]` of a `static const int y`).
++static bool SmithFoldsLikeConstexpr(const Stmt *S) {
++  if (!S)
++    return false;
++  if (isa<CallExpr>(S))
++    return true;
++  if (const auto *A = dyn_cast<ArraySubscriptExpr>(S))
++    if (const auto *R =
++            dyn_cast<DeclRefExpr>(A->getBase()->IgnoreParenImpCasts()))
++      if (const auto *V = dyn_cast<VarDecl>(R->getDecl()))
++        if (V->isConstexpr())
++          return true;
++  for (const Stmt *Child : S->children())
++    if (SmithFoldsLikeConstexpr(Child))
++      return true;
++  return false;
+ }
+ 
+ ExprResult
+@@ -18098,6 +18119,17 @@
      return E;
    }
  
@@ -9,7 +37,7 @@
 +  // one, and folding it is no GNU extension: no -Wgnu-folding-constant. Only an
 +  // evaluation with no note at all counts (a real extension keeps its warning).
 +  if (Folded && getLangOpts().SmithConstexprC && !getLangOpts().CPlusPlus &&
-+      Notes.empty()) {
++      Notes.empty() && SmithFoldsLikeConstexpr(E)) {
 +    if (Result)
 +      *Result = EvalResult.Val.getInt();
 +    return E;
