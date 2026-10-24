@@ -1,0 +1,9 @@
+module main;
+
+import pool;
+import <stdio.h>;
+
+i32 main(void) {
+    c::printf("%g %s\n", pool::first(), pool::note);
+    return 0;
+}
