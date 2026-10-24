@@ -4,9 +4,9 @@ import <stdio.h>;
 import smith::text;
 
 i32 main(void) {
-    text::Text input = text::make("move 3 4 # go\nturn -90.5\n\nhash 00ff\n");
-    text::Text line;
-    text::Text word;
+    const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";
+    const char line[:];
+    const char word[:];
     u32 lines = 0;
     while (text::take_line(&input, &line)) {
         if (!text::take_word(&line, &word)) continue;

@@ -8,7 +8,7 @@ description: "Parsing and writing numbers with smith::text: u64, i64, hex, f32 a
 ```smith
 import smith::text;
 
-void parse(text::Text word) {
+void parse(const char word[:]) {
     u64 u, h;
     i64 i;
     f32 f;

@@ -91,7 +91,7 @@ export void test_format_strings_and_text(void) {
     const char word[:] = whole[0:5];
     (void)format::to(out, 128, path, ":", mutable_string, ":", word, ":", format::bytes("abcdef", 3), ":", nothing);
     test::check(is(out, "src/main.smith:x:hello:abc:(null)"));
-    const char empty[:] = "";
+    const char empty[:] = {};
     test::check_equal(format::to(out, sizeof out, empty).length, 0);
 }
 
