@@ -2164,10 +2164,10 @@ static bool smith_lang_slice_replay_member(SmithLang *lang, const SmithHost *hos
 
 // The arguments of a call in an instance's body (issue #135): a slice parameter of the instance that is the whole
 // argument and whose type differs from the callee's slice parameter by `const` or `restrict` is converted as an
-// ordinary function's call converts it (`smith_lang_slice_requalify`: the same pointer and counts in the wanted struct);
-// taking `const` away is the same error. The compiler has not read the instance's parameters, so only a bare name of one
-// is typed (from the instance's own record); any other argument is written as it is. The callee is a name the compiler
-// has declared at file scope, asked its type as an ordinary call is.
+// ordinary function's call converts it (`smith_lang_slice_requalify`: the same pointer and counts in the wanted
+// struct); taking `const` away is the same error. The compiler has not read the instance's parameters, so only a bare
+// name of one is typed (from the instance's own record); any other argument is written as it is. The callee is a name
+// the compiler has declared at file scope, asked its type as an ordinary call is.
 static bool smith_lang_slice_replay_call(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                          SmithLangFrame *frame, uint32_t place) {
     uint32_t at = frame->pos;
