@@ -301,7 +301,7 @@ done
 
 # 7c4. `restrict` is checked at the call (issue #65): the objects a call reaches through a restrict argument and another
 # pointer argument are apart, or the call fails naming both parameters and its line.
-for function in apart_locals apart_elements apart_member reads trusted_twice; do
+for function in apart_locals apart_elements apart_member reads trusted_twice returns_wide; do
     prove --function=$function "$cases/restrict_call.c"
     expect "restrict call: $function is proved" 0 "$rc"
 done

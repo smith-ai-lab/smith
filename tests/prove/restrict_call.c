@@ -100,3 +100,21 @@ void trusted_twice(Pair *pair) {
     trusted_set(pair, pair);
     smith_ensures(true);
 }
+
+// A struct returned through `sret` (a hidden pointer LLVM marks noalias, which the source never wrote as `restrict`)
+// is not a restrict parameter: calling a function that returns one with a pointer argument is no overlap to check.
+typedef struct {
+    int32_t a, b, c, d, e, f;
+} Wide;
+
+static Wide wide_of(const Pair *pair) {
+    Wide wide = {pair->x, pair->y, 0, 0, 0, 0};
+    return wide;
+}
+
+void returns_wide(const Pair *pair) {
+    smith_requires(true);
+    Wide wide = wide_of(pair);
+    (void)wide;
+    smith_ensures(true);
+}

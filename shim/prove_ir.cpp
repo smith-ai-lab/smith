@@ -2118,10 +2118,13 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
     };
     std::set<std::pair<unsigned, unsigned>> done;
     for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
-        if (!callee.hasParamAttribute(i, Attribute::NoAlias) || !call.getArgOperand(i)->getType()->isPointerTy())
-            continue;
+        if (!callee.hasParamAttribute(i, Attribute::NoAlias) || callee.hasParamAttribute(i, Attribute::StructRet) ||
+            !call.getArgOperand(i)->getType()->isPointerTy())
+            continue; // the hidden result pointer of an sret is noalias in the IR, never a `restrict` of the source
         for (unsigned j = 0; j < call.arg_size() && j < callee.arg_size(); j++) {
-            if (j == i || !call.getArgOperand(j)->getType()->isPointerTy()) continue;
+            if (j == i || callee.hasParamAttribute(j, Attribute::StructRet) ||
+                !call.getArgOperand(j)->getType()->isPointerTy())
+                continue;
             if ((only_read(callee, i) && only_read(callee, j)) || !done.insert({std::min(i, j), std::max(i, j)}).second)
                 continue;
             std::string why;
