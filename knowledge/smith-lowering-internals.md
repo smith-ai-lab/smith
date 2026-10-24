@@ -73,7 +73,7 @@ tags: [lowering, internals]
   long double is an error. The lowering reads an integer from it where its own evaluator meets a name followed by
   `(`, `.`, `[` or `->` (`if constexpr (table_size(sizeof(T)) > 64)`, `i < config.count`); the function must be defined
   in the file the instance is written in (a generic's instance is compiled where it is called, where another module's
-  function is a declaration). The raw lowering has no `value_query` and says so. `SMITH_LANG_ASK='!grid.cells,!f(3)'`
+  function is a declaration, except an import's functions over `type`, which the importer defines, #107). The raw lowering has no `value_query` and says so. `SMITH_LANG_ASK='!grid.cells,!f(3)'`
   prints the tree.
 - **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
   clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with

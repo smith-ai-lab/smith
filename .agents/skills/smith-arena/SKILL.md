@@ -1,6 +1,6 @@
 ---
 name: smith-arena
-description: "Using smith::arena (import smith::arena; arena::push, push_array): memory without malloc. Load when code imports smith::arena or includes <smith/arena.h>, or on allocating memory in C without malloc."
+description: "Using smith::arena (import smith::arena; arena::push, push_slice): memory without malloc. Load when code imports smith::arena or includes <smith/arena.h>, or on allocating memory in C without malloc."
 ---
 
 # Memory without malloc: smith's arena
@@ -20,7 +20,7 @@ typedef struct {
 
 // Memory is passed in, never malloc'd: a function that needs some takes an arena.
 Point *make_line(arena::Arena *a, usize count) {
-    Point *points = arena::push_array(a, Point, count); // zeroed, count * size checked for overflow
+    Point points[:] = arena::push_slice(a, Point, count); // zeroed, count * size checked for overflow
     for (usize i = 0; i < count; i++) points[i] = (Point){.x = (f32)i, .y = 0};
     return points;
 }
@@ -36,8 +36,8 @@ i32 main(void) {
 
 In a program the arena is `io.arena` (`smith-io`), made in `main` and passed down; the static block above is for a program without io.
 
-- `arena::push(&a, T)` (a `T *`), `arena::push_array(&a, T, count)` (a `T *`) and `arena::push_slice(&a, T, count)` (a `T[:]`: the pointer and the count together, `Point line[:] = arena::push_slice(&a, Point, 10);`, zeroed, `countof(line)` is 10; bind it before indexing it) are the calls to write. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
-- The module's names: `arena::make`, `fits`, `push`, `push_array`, `push_slice`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library.
+- `arena::push(&a, T)` (a `T *`) and `arena::push_slice(&a, T, sizes...)` (a slice, with a size for each `[:]` of the result: `Point line[:] = arena::push_slice(&a, Point, 10);`, `f32 grid[:][:] = arena::push_slice(&a, f32, rows, cols);`, `f32 rows[:][2] = arena::push_slice(&a, f32[2], count);`, zeroed, one contiguous block, `countof(line)` is 10; bind it before indexing it; its type is `arena::slice_of(T, countof(sizes))`; `.data` is the pointer for a C function) are the calls to write. There is no `arena::push_array`. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
+- The module's names: `arena::make`, `fits`, `push`, `push_slice`, `slice_of`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library.
 - `arena::fits(&a, size, align)` asks whether a push would fit. `align` of the raw calls is a power of two, at most `arena::align_max` (64).
 - A scope gives back what a stretch of work pushed, and scopes end in reverse order of beginning:
 
@@ -46,7 +46,7 @@ import smith::arena;
 
 usize scratch_sum(arena::Arena *a, usize count) {
     arena::Scope scope = arena::scope_begin(a);
-    usize *items = arena::push_array(a, usize, count);
+    usize items[:] = arena::push_slice(a, usize, count);
     usize sum = 0;
     for (usize i = 0; i < count; i++) {
         items[i] = i;

@@ -29,8 +29,8 @@ c::strncmp(word, "abc", countof(word));   // a slice is a pointer only as an arg
 - `xs[i]` and `xs[a:b]` are checked in debug and release builds, not fast: a failure is `contract::assert`'s report with the line and the stack. The program links the trace library with no line in its build file: the conventions (`smith_app`, `smith_tests`) find a `[:` or `:]` in a `.smith` source and link it (a hand-written `smith_program` names `smith_library(b, "trace")`). A constant negative index, a step (`xs[a:b:2]`), slicing a pointer or an array with one bound, passing a pointer where a slice is wanted, and a slice across rows (below) are errors.
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, defined where used and in a generated header, so C writes `(struct smith_array_i32_n){.data = p, .count = {n}}` to call an export. The array expression of `xs[i]` and `xs[a:b]` runs once, so `get()[i]` calls `get` once.
-- `arena::push_slice(&a, T, n)` is a `T[:]` out of an arena (`smith-arena`); bind it to a `T xs[:]` before indexing it.
-- Not yet: `format` and `check_equal` over slices, and `arena::push_slice` of more than one size. `smith prove`, the debugger and the editor know `[:]` (`smith-prove`, `smith-debug`, `smith-lsp`).
+- `arena::push_slice(&a, T, n, m...)` is a slice out of an arena with a size for each `[:]` (`push_slice(&a, f32, n, m)` is `f32[:][:]`, `push_slice(&a, f32[2], n)` is `f32[:][2]`; `smith-arena`); bind it to a `T xs[:]` before indexing it. The type of a slice is `T[:]`-built from a type value in a function over types (`smith-lang-type-values`).
+- Not yet: `format` and `check_equal` over slices. `smith prove`, the debugger and the editor know `[:]` (`smith-prove`, `smith-debug`, `smith-lsp`).
 
 ## More dimensions: `f32 xs[:][2]`, `xs[:][:]`
 
@@ -48,7 +48,7 @@ f32 tail[:][2] = pairs[1:4];    // xs[a:b] takes rows, a view of the same shape
 
 - `xs[i][j]` is checked against each dimension; `countof(xs)` is the first dimension, `countof(xs[0])` the next.
 - Slicing an inner dimension across rows (`xs[a:b][c:d]`) is an error: there are no strides, so slice each row. A fixed array of more than one dimension is not sliced either: convert it first.
-- Underneath: `struct smith_array_f32_n_2 { float *data; size_t count[1]; }`, `count[k]` for the k `[:]`, the fixed sizes in the name (`_n` run-time, `_2` a number); `typeof(f32[:][2])` is the type. Not yet: a fixed dimension that is not a number, a first dimension that is a number (`f32 xs[2][:]`), `arena::push_slice` of more sizes.
+- Underneath: `struct smith_array_f32_n_2 { float *data; size_t count[1]; }`, `count[k]` for the k `[:]`, the fixed sizes in the name (`_n` run-time, `_2` a number); `typeof(f32[:][2])` is the type. Not yet: a fixed dimension that is not a number, a first dimension that is a number (`f32 xs[2][:]`).
 
 ## Array parameters: `i32 xs[4]`
 

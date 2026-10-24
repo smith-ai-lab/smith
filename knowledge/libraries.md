@@ -27,7 +27,7 @@ or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row
 bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
 (names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `text`, `random`, `arena`, `test` and `io` are `.smith` (issue #39; #45). C passes `sizeof` and
 `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
-`arena::push_array(&a, T, n)`.
+`arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 
 **Talking to the OS:** `smith::io` (`import smith::io;`, `<smith/io.h>` from C) is the one way a program touches the
 world outside it (memory, randomness, console, files, clock, processes, the network), each platform behind it on its

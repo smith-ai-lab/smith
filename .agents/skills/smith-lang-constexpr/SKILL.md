@@ -37,4 +37,4 @@ main.smith:18:23: note: in call to 'make_table(0)'
 ```
 
 - **A constexpr pointer may point into a string literal or into another `constexpr` object** (`constexpr const char *s = "abc";`, a struct `{ ptr, len }`, `&hello[1]`, `nums + 2`); C23 requires null, so a `.c` file still rejects it. A pointer to an automatic object is an error; a `static constexpr` one is fine; reading past the object is an error.
-- **Not here yet**: long computations are bounded by the step budget.
+- **A function of another module** runs in the compiler only when it is an exported function over `type` (`smith-lang-type-values`: the importer defines it from its module's header, #107); any other function must be defined in the file that runs it, and a call to one that is only declared is the error above. **Not here yet**: long computations are bounded by the step budget.

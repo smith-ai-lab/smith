@@ -1160,6 +1160,53 @@ void use(void) {
     struct { f64, f32 } plain = m;
     (void)plain;
 }
+==> error-type-value-import/src/main.smith <==
+module main;
+
+import shapes;
+
+// The result type is another module's function, and the body checks the sizes: no size is a message at the call.
+export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes) {
+    static_assert(countof(sizes) > 0, "make needs a size for each [:]");
+    struct smith_array_T_n result = {};
+    for constexpr (usize i = 0; i < countof(sizes); i++)
+        result.count[i] = (usize)sizes[i];
+    return result;
+}
+
+int main(void) {
+    f32 xs[:] = make(f32);
+    return 0;
+}
+==> error-type-value-import/src/shapes.smith <==
+module shapes;
+
+// A function over `type` is a compile-time function: an importing module runs it, wherever a type is computed, from the
+// record in this module's header (it has no symbol and no declaration for C).
+static bool is_wide(type t) {
+    return sizeof(t) > 4;
+}
+
+export bool small(type t) {
+    return !is_wide(t);
+}
+
+export type wider(type a, type b) {
+    return sizeof(a) >= sizeof(b) ? a : b;
+}
+
+// `t[:]` once for each size: `slice_of(f32, 2)` is `f32[:][:]`.
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+
+// A function over types may call another, exported or not.
+export type slice_if_small(type t) {
+    return small(t) ? slice_of(t, 1) : t;
+}
 ==> error-type-value-runtime/src/main.smith <==
 typedef struct {
     char name[8];

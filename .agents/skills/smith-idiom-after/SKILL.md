@@ -22,7 +22,7 @@ export typedef struct {
 
 // count rolls of a die, each from its own key derived from `key`.
 export Rolls make(arena::Arena *arena, random::Key key, usize count) {
-    Rolls rolls = {.faces = arena::push_array(arena, u32, count), .count = count};
+    Rolls rolls = {.faces = arena::push_slice(arena, u32, count).data, .count = count};
     for (usize i = 0; i < count; i++) {
         random::Key roll = random::key_derive(key, i);
         rolls.faces[i] = (u32)random::uniform_int64_sample(roll, (random::UniformInt64){.low = 1, .high = sides});

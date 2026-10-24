@@ -23,7 +23,7 @@ void distributions(random::Key key, arena::Arena *a) {
     random::Categorical table = random::categorical_make(a, weights, _Countof(weights)); // built once, in the arena
     usize pick = random::categorical_sample(key, table);                                  // an index below count
 
-    usize *order = arena::push_array(a, usize, 52);
+    usize order[:] = arena::push_slice(a, usize, 52);
     random::permutation_sample(key, (random::Permutation){.count = 52}, order);          // 0..51, uniformly ordered
     (void)x, (void)y, (void)die, (void)gauss, (void)gauss64, (void)coin, (void)pick;
 }

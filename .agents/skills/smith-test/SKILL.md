@@ -31,7 +31,7 @@ export void test_sorted_stays_sorted(random::Key key) { // a property test: runs
     arena::Arena a = test::memory(1 << 16); // this test's memory, given back before each key
     usize count = (usize)random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 100});
     test::note("count %zu", count); // printed under a failure
-    usize *items = arena::push_array(&a, usize, count);
+    usize items[:] = arena::push_slice(&a, usize, count);
     for (usize i = 0; i < count; i++) {
         items[i] = (usize)random::uniform_int64_sample(random::key_derive(key, i + 1), (random::UniformInt64){.low = 0, .high = 9});
     }

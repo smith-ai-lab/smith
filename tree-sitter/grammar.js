@@ -27,6 +27,7 @@ module.exports = grammar(C, {
   conflicts: ($, original) => original.concat([
     [$.scoped_identifier, $.scoped_type_identifier],
     [$.macro_type_specifier, $._argument],
+    [$.expression, $.macro_type_specifier],
     [$.type_specifier, $.expression, $.macro_type_specifier, $.macro_invocation],
     [$.sized_type_specifier, $.enum_specifier],
     [$.expression, $.primitive_type],
@@ -59,7 +60,7 @@ module.exports = grammar(C, {
     // f(...): a generic's result type computed from its parameters has a list of them
     macro_type_specifier: ($, original) => choice(
       original,
-      prec.dynamic(-2, seq(field('name', $.identifier), '(', commaSep1(field('argument', $.expression)), ')')),
+      prec.dynamic(-2, seq(field('name', choice($.identifier, $.scoped_identifier)), '(', commaSep1(field('argument', $.expression)), ')')),
     ),
 
     // x.[f] and x->[f]: the member named by a field f of fields(T)

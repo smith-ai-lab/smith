@@ -10473,8 +10473,17 @@
                 "type": "FIELD",
                 "name": "name",
                 "content": {
-                  "type": "SYMBOL",
-                  "name": "identifier"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "identifier"
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "scoped_identifier"
+                    }
+                  ]
                 }
               },
               {
@@ -11481,6 +11490,10 @@
     [
       "macro_type_specifier",
       "_argument"
+    ],
+    [
+      "expression",
+      "macro_type_specifier"
     ],
     [
       "type_specifier",

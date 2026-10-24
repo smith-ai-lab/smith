@@ -10,7 +10,7 @@ What changed, by rule:
 - 2: no `c::` name is left: the C headers it included were smith's libraries, which are modules (`import smith::io;`, `io::Console`, `io::console_printf`, `io::Io`, `io::make`); `<smith/io.h>` is their C API for C callers, and `smith-module-library` reports it in a `.smith` file.
 - `main` takes the io (`i32 main(io::Io *io)`): smith makes it and closes it after (smith-io); `i32 main(i32 argc, char **argv)` with `io::make` is still accepted, and is what a renamed `.c` file has.
 - 3: `rolls.h` is gone; `import smith::arena;`, `import smith::io;` and `import smith::random;` replace three includes and their C names (`SmithArena` is `arena::Arena`, `SmithKey` is `random::Key`, `SmithConsole` is `io::Console`). `main` imports `rolls`.
-- 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_array(arena, u32, count)`: the size and alignment cannot disagree, and the result is typed.
+- 4: `smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t))` is `arena::push_slice(arena, u32, count)` (a `u32[:]`; `.data` is the `u32 *`): the size and alignment cannot disagree, and the result is typed.
 - 5: `ROLLS_SIDES` is `constexpr i64 sides`.
 - 6: `print` takes the `io::Console` and nothing more; `make` takes the arena and the key; only `main` makes the io. `smith lint` would report `c::printf` here.
 - 9: `rolls_make` is `rolls::make`; the module name is the prefix.

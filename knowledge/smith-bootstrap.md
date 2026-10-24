@@ -33,7 +33,7 @@ beside the file, else from the module's source at the path its name implies unde
 (`lib/smith/arena.smith` for `smith::random` in `lib/smith/random.smith`, as `smith cc` finds it), so `arena::Arena` is
 `SmithArena` (its `c_name`) and a call to a generic of that module is expanded into its instance. With no parser the
 raw run cannot type an argument: a generic call in a module that is bootstrapped writes the types as arguments (and calls no `auto` function)
-(`arena::push_array(arena, f64, count)`) and asks no `if constexpr` condition about a type (`is_float(T)`; `T == f32`
+(`arena::push(arena, f64)`) and asks no `if constexpr` condition about a type (`is_float(T)`; `T == f32`
 works), and a call that does not is an error of `--smith-lower`, the one that tells the author to write the type. The
 header's `typedef struct` blocks are compared with the lowering's with both written in the same type spelling
 (`uint64_t` and `__UINT64_TYPE__` are one), since the header says the standard C types and the lowering the compiler's

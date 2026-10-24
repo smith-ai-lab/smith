@@ -1,8 +1,7 @@
-#!/bin/sh
-# Tests of <smith/arena.h> and of how a project gets a smith library, with real clang, ninja and clangd. Usage:
-# sh tests/arena.sh path/to/smith
-set -u
-case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
+#!/ bin / sh
+#Tests of < smith / arena.h> and of how a project gets a smith library, with real clang, ninja and clangd.Usage:
+#sh tests / arena.sh path / to / smith
+set - u case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
 work=$(mktemp -d)
@@ -232,9 +231,9 @@ i32 main(i32 argc, char **argv) {
 }
 S
 capture "$smith" build
-expect "typed: a .smith file using arena::push and arena::push_array builds" 0 "$rc"
+expect "typed: a .smith file using arena::push and arena::push_slice builds" 0 "$rc"
 capture build/typed
-expect "typed: push and push_array give zeroed, usable memory" "0 3 9 5 zeroed 1" "$rc $(echo "$out" | cut -d, -f1)"
+expect "typed: push and push_slice give zeroed, usable memory" "0 3 9 5 zeroed 1" "$rc $(echo "$out" | cut -d, -f1)"
 capture build/typed 18446744073709551615
 expect "typed: a count that overflows size_t is refused" 134 "$rc"
 expect_contains "typed: ... with the C message" "$err" "items of 16 bytes overflow size_t"
@@ -258,3 +257,4 @@ expect_contains "unknown: the message names the library" "$err" 'smith: build.c:
 echo
 echo "$total arena checks, $failures failed"
 [ "$failures" -eq 0 ]
+

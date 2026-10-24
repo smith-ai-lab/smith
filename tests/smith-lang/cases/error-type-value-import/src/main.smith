@@ -1,0 +1,17 @@
+module main;
+
+import shapes;
+
+// The result type is another module's function, and the body checks the sizes: no size is a message at the call.
+export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes) {
+    static_assert(countof(sizes) > 0, "make needs a size for each [:]");
+    struct smith_array_T_n result = {};
+    for constexpr (usize i = 0; i < countof(sizes); i++)
+        result.count[i] = (usize)sizes[i];
+    return result;
+}
+
+int main(void) {
+    f32 xs[:] = make(f32);
+    return 0;
+}
