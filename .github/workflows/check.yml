@@ -106,3 +106,22 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           smith build
           build/Darwin-arm64/smith build install
+
+  release:
+    # a job of its own after install, so a failure here cannot fail the check or the install; only it may write
+    needs: install
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+          gh --version
+          smith build
+          build/Darwin-arm64/smith build release

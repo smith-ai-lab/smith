@@ -12,7 +12,7 @@ tags: [ci, process]
 
 **LLVM is never built here.** If `~/.cache/smith/llvm/<name>` is missing for the pinned name, the job fails and says the lead must run `smith build llvm`.
 
-**On `main`,** after a green check the `install` job runs `smith build install`, so the installed smith is the merged commit (`smith build release` joins when it exists).
+**On `main`,** after a green check the `install` job runs `smith build install`, so the installed smith is the merged commit; the `release` job then publishes it ([release](release.md)).
 
 **The process.** An implementer pushes its branch, opens a pull request with `gh pr create` linking the issue, and runs only the tests for what it changed. The lead merges (`gh pr merge --squash`, or `--rebase` to keep commits) only when CI is green on the head commit, so the commit that was checked is the commit that is merged.
 
