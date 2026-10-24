@@ -9,7 +9,7 @@ smith has [Enzyme](https://enzyme.mit.edu) (v0.0.303, LLVM's automatic different
 
 **`autodiff::gradient(&arena, f, &x, rest...)`** (`.smith` only) is the gradient of `f(&x, rest...)` with respect to `x`, a value of `x`'s type; every other argument is held constant. The arena comes first even when nothing is allocated:
 
-```smith
+```smith fragment
 import smith::arena;
 import smith::autodiff;
 
