@@ -1,0 +1,41 @@
+module shapes;
+
+export typedef struct {
+    f64 r;
+} Circle;
+
+export typedef enum { Circle circle; f64 square; empty; }
+Shape;
+
+export f64 area(Shape s) {
+    switch (s) {
+    case.circle:
+        return 3.14 * s.circle.r * s.circle.r;
+    case.square:
+        return s.square * s.square;
+    case.empty:
+        return 0;
+    }
+}
+
+export bool is_empty(Shape s) {
+    return s ==.empty;
+}
+export bool not_empty(Shape s) {
+    return s !=.empty;
+}
+export Shape none(void) {
+    return.empty;
+}
+export Shape one(void) {
+    Shape x =.empty;
+    x =.square;
+    g(.square, 1);
+    return {.square = 1};
+}
+
+void cleanup(void) {
+    defer f(x);
+    errdefer mem::free(b);
+    T x = try f();
+}

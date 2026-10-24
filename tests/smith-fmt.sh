@@ -153,6 +153,11 @@ expect "a .smith file's own header sorts first, as in a .c file" '#include "foo.
 expect "... and the same in the .c file" "$(printf '#include <stdlib.h>\n#include "foo.h"\n' | format "$here/foo.smith")" \
     "$(printf '#include <stdlib.h>\n#include "foo.h"\n' | format "$here/foo.c")"
 
+# A payload enum is laid out like a struct, and a variant in the dot rule (`case .v:`, `== .v`, `return .v;`) has an operand's
+# spacing (issue #215, patches/smith-lang-format-enum.patch, LLVM r8): the file is already as fmt writes it.
+expect "a payload enum and the dot rule are kept as written" "$(cat tests/smith-fmt/payload_enum.smith)" \
+    "$(as_smith <tests/smith-fmt/payload_enum.smith)"
+
 # --- `smith fmt` with no arguments --------------------------------------------------------------------------------------
 # In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
 project=$work/project
