@@ -1,0 +1,5 @@
+src/main.smith:10:12: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only
+src/main.smith:16:18: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only
+src/main.smith:18:13: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only
+src/main.smith:19:18: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only
+src/main.smith:20:18: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only

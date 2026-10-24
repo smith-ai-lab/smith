@@ -1,0 +1,21 @@
+module main;
+
+// const u8[:] converts to u8[:] only by a cast of the data: the implicit way discards qualifiers, as in C.
+
+static u8 first(u8 xs[:]) {
+    return xs[0];
+}
+
+static typeof(u8[:]) give(const u8 xs[:]) {
+    return xs;
+}
+
+i32 main(void) {
+    u8 raw[4] = {1, 2, 3, 4};
+    const u8 read[:] = raw;
+    u8 same[:] = read;
+    u8 other[:] = raw;
+    other = read;
+    u8 part[:] = read[1:3];
+    return first(read);
+}

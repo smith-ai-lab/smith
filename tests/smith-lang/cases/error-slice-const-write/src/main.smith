@@ -1,0 +1,18 @@
+module main;
+
+// Writes through a const element, and the reassignment of a slice that is itself const: C's own errors.
+
+i32 main(void) {
+    u8 raw[4] = {1, 2, 3, 4};
+    const u8 west[:] = raw;
+    u8 const east[:] = raw;
+    west[0] = 9;
+    east[1] = 9;
+    const u8 cut[:] = west[1:3];
+    cut[0] = 9;
+    u8 fixed[const :] = raw;
+    fixed[0] = 9;
+    fixed = raw;
+    fixed = fixed[1:];
+    return 0;
+}

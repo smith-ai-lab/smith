@@ -1,0 +1,44 @@
+module main;
+
+import stats;
+import <stdio.h>;
+
+struct View {
+    const char name[:];
+    i32 n;
+};
+
+static i64 total_of(u8 xs[restrict :]) {
+    return stats::total(xs);
+}
+
+i32 main(void) {
+    char raw[4] = {'a', 'b', 'c', 'd'};
+    char plain[:] = raw;
+    const char read[:] = plain;
+    const char cut[:] = read[1:];
+
+    // A const slice passes as itself, and the element's qualifier is part of its type.
+    c::printf("%zu %zu %lld %lld\n", stats::count(plain), stats::count(read), (long long)stats::total(plain),
+              (long long)stats::total(read));
+    const char rest[:] = stats::tail(read);
+    char writable[:] = stats::tail(plain);
+    c::printf("%zu %zu\n", countof(rest), countof(writable));
+
+    constexpr type plain_type = typeof(plain);
+    constexpr type read_type = typeof(read);
+    static_assert(plain_type != read_type);
+    static_assert(is_slice(read_type) && read_type == typeof(cut));
+    c::printf("%zu %zu %zu %zu\n", stats::calls(plain), stats::calls(read), stats::calls(plain),
+              stats::calls(cut)); // the instance for const char[:] is not the one for char[:]
+
+    // fields(T) of a struct with a const slice.
+    struct View view = {.name = read, .n = 2};
+    stats::names(view);
+    c::printf("%zu\n", countof(view.name));
+
+    // A restrict slice goes to a generic too.
+    u8 bytes[3] = {1, 2, 3};
+    c::printf("%lld\n", (long long)total_of(bytes[0:3]));
+    return 0;
+}
