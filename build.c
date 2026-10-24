@@ -12,7 +12,7 @@
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
 // prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
 // smith build: the default, text-exhaustive, headers, bootstrap, test-compare -DREAL=..., install (-DCC=...,
-// -DPREFIX=...), llvm and clean.
+// -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
 #include <stdio.h>
@@ -714,6 +714,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"prove", "prove", nullptr, nullptr, 1},
     {"prove-sound", "prove_sound", nullptr, nullptr, 1},
     {"random", "random", nullptr, nullptr, 0},
+    {"release", "release", nullptr, nullptr, 0},
     {"resource", "resource", nullptr, nullptr, 0},
     {"run", "run", nullptr, nullptr, 0},
     {"skills", "skills", nullptr, nullptr, 0},
@@ -906,6 +907,18 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
         .inputs = tested,
     };
     smith_task(b, "install", &install);
+}
+
+// `smith build release` (issue #111, knowledge/release.md): publishes the built smith as the GitHub Release
+// `stage0-<commit>` and prunes the old ones. scripts/release.sh refuses unless HEAD is main's tip (or CI's push to
+// main). No test or install is an input: CI's check and install jobs come first, and a failure here breaks neither.
+static void build_release(SmithBuild *b, const char *binary) {
+    SmithStep release = {
+        .command = (const char *[]){"sh", "scripts/release.sh", "publish", binary, nullptr},
+        .description = "publishing the stage0 release",
+        .inputs = (const char *[]){binary, nullptr},
+    };
+    smith_task(b, "release", &release);
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
@@ -1153,6 +1166,7 @@ void build(SmithBuild *b) {
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_compare(b, &config, config.binary);
     build_install(b, &config, config.binary, tested);
+    build_release(b, config.binary);
     build_llvm(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);

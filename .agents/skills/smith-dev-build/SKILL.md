@@ -39,3 +39,4 @@ From a fresh clone: `mkdir -p build && cc -std=gnu23 smith.c -o build/stage0`, t
   needs no knowledge of `.smith` and the protocol generator builds with the stage0. To get the full smith, run
   `build/stage0 build llvm` (about 9 minutes once) and then `build/stage0 build install -DCC=cc`, which links clang in.
   `-DCC=` picks the compiler that builds smith; `smith build clean` removes `build/`.
+- `smith build release` (CI only: the `release` job after install) publishes the built smith as the release `stage0-<commit>` (`smith-<os>-<arch>.tar.xz` and `.sha256`) and prunes old ones; `scripts/release.sh` refuses by hand unless HEAD is main's tip. `tests/release.sh` tests it with a stub `gh`. See [release](../../../knowledge/release.md).
