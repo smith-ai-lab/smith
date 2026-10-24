@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check:
@@ -32,7 +33,26 @@ jobs:
             exit 1
           fi
 
+      - name: Was this tree already checked
+        id: tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # a push to main whose tree a green run already checked (the pull request's, when main had not moved) skips the
+          # Full check; a pull request never skips, its run is what records the tree (scripts/ci-tree.sh)
+          export PATH="/opt/homebrew/bin:$PATH"
+          tree=$(sh scripts/ci-tree.sh tree)
+          echo "tree=$tree" >>"$GITHUB_OUTPUT"
+          set -- $(sh scripts/ci-tree.sh decide "$GITHUB_EVENT_NAME" "$tree")
+          if [ "$1" = skip ]; then
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+            echo "::notice::the full check is skipped: tree $tree was already checked by run $2"
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
+
       - name: Debugger permission
+        if: steps.tree.outputs.skip != 'true'
         timeout-minutes: 2
         shell: bash
         run: |
@@ -54,9 +74,11 @@ jobs:
           esac
 
       - name: Build smith
+        if: steps.tree.outputs.skip != 'true'
         run: smith build
 
       - name: Full check
+        if: steps.tree.outputs.skip != 'true'
         # no shared lock: CI runs in its own clone and must not queue behind the agents' local checks.
         # The step ends before the job does, so the log steps below always run.
         timeout-minutes: 25
@@ -80,6 +102,18 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
           exit $rc
+
+      - name: Record the checked tree
+        if: success() && steps.tree.outputs.skip != 'true'
+        run: sh scripts/ci-tree.sh record "${{ steps.tree.outputs.tree }}" "$RUNNER_TEMP/tree"
+
+      - name: Upload the checked tree
+        if: success() && steps.tree.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/tree
+          retention-days: 7
 
       - name: Collect the logs
         if: always()
