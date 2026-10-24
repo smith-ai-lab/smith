@@ -2308,6 +2308,24 @@ expect "library needs: ... and brings trace's object" build/smith/trace.o "$(ls 
 capture build/app
 expect_status "library needs: a failing contract aborts" fail
 expect_contains "library needs: ... with its report" "$err" "requires failed"
+
+# 13z2. A program that indexes a slice links the trace library with no line in a build file: the conventions find
+# `[:` in a .smith source (issue #82).
+project
+cat >main.smith <<'C'
+module main;
+
+i32 first(i32 xs[:]) { return xs[0]; }
+
+i32 main(void) {
+    i32 raw[2] = {7, 8};
+    i32 all[:] = raw;
+    return first(all) == 7 ? 0 : 1;
+}
+C
+build
+expect "slices: a program that indexes one builds with no build file" 0 "$rc"
+expect "slices: ... and links trace" build/debug/smith/trace.o "$(ls build/debug/smith/trace.o)"
 project
 cat >build.c <<'C'
 #include <smith/build.h>

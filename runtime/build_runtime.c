@@ -2939,6 +2939,10 @@ static const char *smith_app_blanks(const char *text) {
 // One statement of a cleaned line: `#include`, `#import` or, in a .smith file, `import`.
 static void smith_app_statement(const char *from, const char *statement, bool smith_file, bool libraries_only) {
     statement = smith_app_blanks(statement);
+    // A run-time array (`T xs[:]`, `xs[a:]`) is checked by smith_failure, which the trace library defines: a file
+    // that writes one brings the library in, so a program that indexes a slice links it with no line in build.c.
+    if (smith_file && (strstr(statement, "[:") != nullptr || strstr(statement, ":]") != nullptr))
+        smith_app_library("trace", strlen("trace"));
     if (*statement == '#') {
         statement = smith_app_blanks(statement + 1);
         if (smith_app_word(statement, "include")) smith_app_header(from, statement + strlen("include"), libraries_only);
