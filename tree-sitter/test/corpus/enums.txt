@@ -1,0 +1,99 @@
+================================================================================
+an enum with payloads (issue #198)
+================================================================================
+
+typedef enum {
+    Circle circle;
+    struct { i32 a; } inline_one;
+    empty;
+} Shape;
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (type_definition
+    (enum_specifier
+      (payload_variant_list
+        (field_declaration
+          (type_identifier)
+          (field_identifier))
+        (field_declaration
+          (struct_specifier
+            (field_declaration_list
+              (field_declaration
+                (primitive_type)
+                (field_identifier))))
+          (field_identifier))
+        (payload_variant
+          (identifier))))
+    (type_identifier)))
+
+================================================================================
+a variant with a dot, in an initializer, a return, a comparison, a case and an argument
+================================================================================
+
+void f(Shape s) {
+    Shape a = .empty;
+    s = {.circle = {.radius = 1}};
+    draw({.circle = {.radius = 1}});
+    if (s == .empty) return;
+    switch (s) { case .circle: break; }
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_identifier)
+          (identifier))))
+    (compound_statement
+      (declaration
+        (type_identifier)
+        (init_declarator
+          (identifier)
+          (variant_expression
+            (identifier))))
+      (expression_statement
+        (list_assignment
+          (identifier)
+          (initializer_list
+            (initializer_pair
+              (field_designator
+                (field_identifier))
+              (initializer_list
+                (initializer_pair
+                  (field_designator
+                    (field_identifier))
+                  (number_literal)))))))
+      (expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (designated_list
+              (field_designator
+                (field_identifier))
+              (initializer_list
+                (initializer_pair
+                  (field_designator
+                    (field_identifier))
+                  (number_literal)))))))
+      (if_statement
+        (parenthesized_expression
+          (binary_expression
+            (identifier)
+            (variant_expression
+              (identifier))))
+        (return_statement))
+      (switch_statement
+        (parenthesized_expression
+          (identifier))
+        (compound_statement
+          (case_statement
+            (variant_expression
+              (identifier))
+            (break_statement)))))))

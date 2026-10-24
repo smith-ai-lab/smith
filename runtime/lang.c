@@ -392,6 +392,7 @@ struct SmithLang {
     SmithLangSliceState slice;
     bool field_import;  // an import's generics use `fields`: `Field` is defined at this file's first declaration
     bool field_defined; // `Field` (runtime/lang_fields.c) is defined in this file
+    bool enums_seen;    // an enum with payloads was written in this file, or an import's header has one (lang_enum.c)
     bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
     bool io_import;     // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
@@ -849,6 +850,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
+
+// Enums with payloads: `typedef enum { Circle circle; empty; } Shape;`, `.empty`, `case .circle:`.
+#include "lang_enum.c"
 
 // Types as values: `constexpr type t = i32;`, a type handle, and what is asked of one.
 #include "lang_type.c"

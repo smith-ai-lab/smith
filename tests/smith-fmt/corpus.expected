@@ -657,6 +657,247 @@ i32 main(void) {
     jump();
     return 0;
 }
+==> enum-c-rule/src/main.smith <==
+// No `module` line: plain C enums mean what they mean in C. A `;` in the braces is what makes an enum one with
+// payloads.
+#include <stdio.h>
+
+enum Color { Red, Green = 5, Blue };
+
+typedef enum { Low = 1, High } Level;
+
+struct Pair {
+    int first;
+    int second;
+};
+
+static int pick(enum Color color) {
+    switch (color) {
+    case Red:
+        return 1;
+    case Green:
+        return 2;
+    default:
+        return 3;
+    }
+}
+
+static struct Pair make(void) {
+    return (struct Pair){.first = 4, .second = High};
+}
+
+int main(void) {
+    struct Pair p = make();
+    Level level = Low;
+    printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
+    return 0;
+}
+==> enum-payload-lowering/src/shapes.smith <==
+module shapes;
+
+// An enum with payloads lowers to a struct that holds a tag and a union (issue #198); variants are written like
+// the members of a union, and a variant with nothing to carry is a name alone.
+
+export typedef struct {
+    f32 radius;
+} Circle;
+
+export typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+
+export typedef enum { Circle circle; Rect rect; struct {i32 a;}
+inline_one;
+empty;
+}
+Shape;
+
+export typedef enum { none; some; }
+Mark;
+
+export f32 area(Shape s) {
+    switch (s) {
+    case.circle:
+        return s.circle.radius * s.circle.radius * 3;
+    case.rect:
+        return s.rect.w * s.rect.h;
+    case.inline_one:
+        return (f32)s.inline_one.a;
+    case.empty:
+        return 0;
+    }
+    return -1;
+}
+
+export Shape unit(void) {
+    return {.circle = {.radius = 1}};
+}
+
+export bool is_empty(Shape s) {
+    return s ==.empty;
+}
+==> enum-payload-module/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import shapes;
+
+static shapes::Shape grown(shapes::Shape s) {
+    if (s ==.circle) return {.circle = {.radius = s.circle.radius * 2}};
+    return s;
+}
+
+i32 main(void) {
+    shapes::Shape a = shapes::unit();
+    shapes::Shape b =.empty;
+    shapes::Shape c = {.rect = {.w = 2, .h = 5}};
+    b =.empty;
+    a = grown(a);
+    c::printf("%g %g %g\n", shapes::area(a), shapes::area(b), shapes::area(c));
+    c::printf("%d %d %g\n", shapes::is_empty(b), b ==.empty, shapes::area(grown(.empty)));
+    return 0;
+}
+==> enum-payload-module/src/shapes.smith <==
+module shapes;
+
+// An enum with payloads lowers to a struct that holds a tag and a union (issue #198); variants are written like
+// the members of a union, and a variant with nothing to carry is a name alone.
+
+export typedef struct {
+    f32 radius;
+} Circle;
+
+export typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+
+export typedef enum { Circle circle; Rect rect; struct {i32 a;}
+inline_one;
+empty;
+}
+Shape;
+
+export typedef enum { none; some; }
+Mark;
+
+export f32 area(Shape s) {
+    switch (s) {
+    case.circle:
+        return s.circle.radius * s.circle.radius * 3;
+    case.rect:
+        return s.rect.w * s.rect.h;
+    case.inline_one:
+        return (f32)s.inline_one.a;
+    case.empty:
+        return 0;
+    }
+    return -1;
+}
+
+export Shape unit(void) {
+    return {.circle = {.radius = 1}};
+}
+
+export bool is_empty(Shape s) {
+    return s ==.empty;
+}
+==> enum-payload-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// An enum with payloads (issue #198): variants written like union members, picked with a leading dot in the type the
+// context gives, and lowered to a struct that holds a tag and a union.
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+
+typedef enum { Circle circle; Rect rect; struct {i32 a;}
+inline_one;
+empty;
+}
+Shape;
+
+typedef enum { empty; full; }
+Token;
+
+static f32 area(Shape s) {
+    switch (s) {
+    case.circle:
+        return s.circle.radius * s.circle.radius * 3;
+    case.rect:
+        return s.rect.w * s.rect.h;
+    case.inline_one:
+        return (f32)s.inline_one.a;
+    case.empty:
+        return 0;
+    }
+    return -1;
+}
+
+static Shape make(bool big) {
+    if (big) return {.rect = {.w = 2, .h = 3}};
+    return.empty;
+}
+
+static bool is_empty(Shape s) {
+    return s ==.empty;
+}
+
+static bool is_big_circle(Shape s) {
+    return s ==.circle && s.circle.radius > 1.0f;
+}
+
+static void grow(Shape *p) {
+    switch (*p) {
+    case.circle:
+        p->circle.radius *= 2;
+        break;
+    case.rect:
+        p->rect.w *= 2;
+        p->rect.h *= 2;
+        break;
+    case.inline_one:
+    case.empty:
+        break;
+    }
+}
+
+static Token flip(Token t) {
+    if (t !=.full) return.full;
+    return.empty;
+}
+
+static f32 twice(Shape s) {
+    return area(s) * 2;
+}
+
+i32 main(void) {
+    Shape a = {.circle = {.radius = 2}};
+    Shape b =.empty;
+    Shape c = make(true);
+    Shape d;
+    d =.empty;
+    d = {.inline_one = {.a = 5}};
+    c::printf("%g %g %g %g %d %d\n", area(a), area(b), area(c), area(d), is_empty(b), is_empty(a));
+    grow(&a);
+    grow(&c);
+    Shape *p = &b;
+    c::printf("%g %g %d %d\n", area(a), area(c), is_big_circle(a), *p ==.empty);
+    c::printf("%g %d %d\n", twice(.empty), .empty == b, twice({.circle = {.radius = 1}}) > 5);
+    Token t =.empty;
+    t = flip(t);
+    c::printf("%d %d\n", t ==.full, flip(t) ==.empty);
+    return 0;
+}
 ==> error-array-param-index/src/main.smith <==
 module main;
 
@@ -950,6 +1191,41 @@ module main;
 i32 main(void) {
     i32 defer = 1;
     return defer - 1;
+}
+==> error-enum-payload/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// Errors of an enum with payloads: a variant the switch does not name (even with a default), a variant the type does
+// not have, one that carries a payload used alone, and a dot with no type to look in.
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef enum { Circle circle; empty; }
+Shape;
+
+static i32 describe(Shape s) {
+    switch (s) {
+    case.circle:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+i32 main(void) {
+    Shape a =.circle;
+    Shape b =.nothing;
+    Shape c =.empty;
+    c::printf("%d\n", 0);
+    return describe(a) + describe(b) + (i32)(c ==.empty) + describe(.empty);
+}
+
+static void nowhere(void) {
+    ready(.empty);
 }
 ==> error-export-no-module/src/main.smith <==
 export int helper(void) {

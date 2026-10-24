@@ -1,0 +1,34 @@
+module main;
+
+import <stdio.h>;
+
+// Errors of an enum with payloads: a variant the switch does not name (even with a default), a variant the type does
+// not have, one that carries a payload used alone, and a dot with no type to look in.
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef enum {
+    Circle circle;
+    empty;
+} Shape;
+
+static i32 describe(Shape s) {
+    switch (s) {
+    case .circle: return 1;
+    default: return 0;
+    }
+}
+
+i32 main(void) {
+    Shape a = .circle;
+    Shape b = .nothing;
+    Shape c = .empty;
+    c::printf("%d\n", 0);
+    return describe(a) + describe(b) + (i32)(c == .empty) + describe(.empty);
+}
+
+static void nowhere(void) {
+    ready(.empty);
+}

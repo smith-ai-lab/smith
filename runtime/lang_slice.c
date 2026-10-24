@@ -104,6 +104,9 @@ static bool smith_lang_slice_active(const SmithLang *lang, const SmithHost *host
     return host->maybe_slice || lang->slices_seen;
 }
 
+static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host);
+static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host);
+
 // ---- Tokens from a pattern
 
 typedef struct {
@@ -1776,6 +1779,9 @@ static void smith_lang_slice_convert_pointer(SmithLang *lang, const SmithHost *h
 
 // The arguments of a call, converted: an array where the function wants a slice, and, for a C function, a slice
 // where it wants a pointer (`xs.data`; its length is `countof(xs)`).
+static bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, const char *callee, size_t index,
+                                     const SmithToken *tokens, size_t count, SmithLangSliceCur *cur);
+
 static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const SmithLangSliceChain *chain,
                                   const SmithLangSliceElement *element, SmithLangSliceCur *cur) {
     static char tags[smith_lang_slice_args_max][smith_lang_tuple_name_max];
@@ -1799,7 +1805,10 @@ static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const 
             if (!(depth == 0 && smith_lang_punct(token, ","))) continue;
         }
         size_t from = start;
-        if (argument < params && tags[argument][0] == '*') {
+        if (lang->enums_seen && at > from &&
+            smith_lang_enum_argument(lang, host, found.canonical, argument, &chain->tokens[from], at - from, cur)) {
+            // `draw(.empty)`: a variant for a parameter that is a payload enum
+        } else if (argument < params && tags[argument][0] == '*') {
             smith_lang_slice_convert_pointer(lang, host, tags[argument] + 1, &chain->tokens[from], at - from, cur);
         } else if (argument < params && tags[argument][0] != 0) {
             smith_lang_slice_convert(lang, host, tags[argument], &chain->tokens[from], at - from, cur);
@@ -2348,6 +2357,7 @@ static void smith_lang_slice_equals(SmithLang *lang, const SmithHost *host, cons
     SmithToken before;
     char tag[smith_lang_tuple_name_max] = "";
     bool declares = false;
+    if (lang->enums_seen && smith_lang_enum_equals(lang, host)) return;
     if (smith_lang_slice_init_equals(lang, host)) return;
     if (lang->slice.armed_tag[0] != 0 && smith_lang_tuple_previous(lang, host, 1, &before) &&
         smith_lang_equals(before.text, before.length, lang->slice.armed)) {
@@ -2481,6 +2491,7 @@ static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const
 
 // `return array;` in a function that returns a slice.
 static void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->enums_seen && smith_lang_enum_return(lang, host)) return;
     char type[256];
     if (host->return_type == nullptr || !host->return_type(host->context, type, sizeof type) ||
         strncmp(type, "struct smith_array_", 19) != 0 || strchr(type + 7, ' ') != nullptr ||

@@ -1,0 +1,87 @@
+module main;
+
+import <stdio.h>;
+
+// An enum with payloads (issue #198): variants written like union members, picked with a leading dot in the type the
+// context gives, and lowered to a struct that holds a tag and a union.
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+
+typedef enum {
+    Circle circle;
+    Rect rect;
+    struct { i32 a; } inline_one;
+    empty;
+} Shape;
+
+typedef enum {
+    empty;
+    full;
+} Token;
+
+static f32 area(Shape s) {
+    switch (s) {
+    case .circle: return s.circle.radius * s.circle.radius * 3;
+    case .rect: return s.rect.w * s.rect.h;
+    case .inline_one: return (f32)s.inline_one.a;
+    case .empty: return 0;
+    }
+    return -1;
+}
+
+static Shape make(bool big) {
+    if (big) return {.rect = {.w = 2, .h = 3}};
+    return .empty;
+}
+
+static bool is_empty(Shape s) {
+    return s == .empty;
+}
+
+static bool is_big_circle(Shape s) {
+    return s == .circle && s.circle.radius > 1.0f;
+}
+
+static void grow(Shape *p) {
+    switch (*p) {
+    case .circle: p->circle.radius *= 2; break;
+    case .rect: p->rect.w *= 2; p->rect.h *= 2; break;
+    case .inline_one:
+    case .empty: break;
+    }
+}
+
+static Token flip(Token t) {
+    if (t != .full) return .full;
+    return .empty;
+}
+
+static f32 twice(Shape s) {
+    return area(s) * 2;
+}
+
+i32 main(void) {
+    Shape a = {.circle = {.radius = 2}};
+    Shape b = .empty;
+    Shape c = make(true);
+    Shape d;
+    d = .empty;
+    d = {.inline_one = {.a = 5}};
+    c::printf("%g %g %g %g %d %d\n", area(a), area(b), area(c), area(d), is_empty(b), is_empty(a));
+    grow(&a);
+    grow(&c);
+    Shape *p = &b;
+    c::printf("%g %g %d %d\n", area(a), area(c), is_big_circle(a), *p == .empty);
+    c::printf("%g %d %d\n", twice(.empty), .empty == b, twice({.circle = {.radius = 1}}) > 5);
+    Token t = .empty;
+    t = flip(t);
+    c::printf("%d %d\n", t == .full, flip(t) == .empty);
+    return 0;
+}

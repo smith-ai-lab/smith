@@ -319,13 +319,17 @@ static bool smith_lang_body_c_name(SmithLang *lang, const SmithHost *host, const
     const SmithToken *next = nullptr;
     if (smith_lang_previous(lang, host, 1, &before) && before.kind == SmithTokenKind_Identifier &&
         smith_lang_word(before.text, before.length) == SmithLangWord_Tag) {
+        lang->generated_name = token->synthetic;
         smith_lang_lower_tag(lang, host, token->text, token->length, token->location, &next);
+        lang->generated_name = false;
         return true;
     }
     next = smith_lang_peek(lang, host, 0, false);
     bool declarator = smith_lang_follows_declarator(next) && smith_lang_sparse_typeish(lang, host);
     bool is_type = false;
+    lang->generated_name = token->synthetic;
     if (!declarator) smith_lang_check_c_name(lang, host, token->text, token->length, token->location, &is_type);
+    lang->generated_name = false;
     return true;
 }
 

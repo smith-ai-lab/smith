@@ -1,0 +1,20 @@
+module main;
+
+import <stdio.h>;
+import shapes;
+
+static shapes::Shape grown(shapes::Shape s) {
+    if (s == .circle) return {.circle = {.radius = s.circle.radius * 2}};
+    return s;
+}
+
+i32 main(void) {
+    shapes::Shape a = shapes::unit();
+    shapes::Shape b = .empty;
+    shapes::Shape c = {.rect = {.w = 2, .h = 5}};
+    b = .empty;
+    a = grown(a);
+    c::printf("%g %g %g\n", shapes::area(a), shapes::area(b), shapes::area(c));
+    c::printf("%d %d %g\n", shapes::is_empty(b), b == .empty, shapes::area(grown(.empty)));
+    return 0;
+}

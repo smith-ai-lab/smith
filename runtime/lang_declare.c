@@ -551,8 +551,8 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
     lang->recent_count = 0;
     if (smith_lang_type_on(lang, host) && !lang->recording) return smith_lang_act(SmithLangAct_Slow); // lang_type.c
     if (token->kind == SmithTokenKind_Identifier && smith_lang_tuples_on(lang, host) &&
-        smith_lang_ident(token, "struct")) {
-        return smith_lang_act(SmithLangAct_Slow); // a tuple is read ahead
+        (smith_lang_ident(token, "struct") || smith_lang_ident(token, "enum"))) {
+        return smith_lang_act(SmithLangAct_Slow); // a tuple, an enum with payloads, is read ahead
     }
     if (lang->is_module && !lang->body_sparse) {
         if (lang->state == SmithLangState_Stream) return smith_lang_fast_stream(lang, host, token);
