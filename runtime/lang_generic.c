@@ -3788,6 +3788,17 @@ static void smith_lang_pack_clash(SmithLang *lang, const SmithHost *host, const 
     }
 }
 
+// How many brackets are open at `at` counting from `first`, the call's own `(` among them: an argument itself stands
+// at depth 1, a name inside a call or an index of an argument deeper.
+static int smith_lang_depth_at(uint32_t first, uint32_t at) {
+    int depth = 0;
+    for (uint32_t i = first; i < at; i++) {
+        depth += smith_lang_gt_open(&smith_lang_gt.tokens[i]) ? 1 : 0;
+        depth -= smith_lang_gt_close(&smith_lang_gt.tokens[i]) ? 1 : 0;
+    }
+    return depth;
+}
+
 // Whether an argument of the call [first, last) is an expression with a parameter of the instance in it (`*first`,
 // `piece.m`, `first + 1`), not just the parameter: the parameters are not declared while the body is written, so the
 // arguments are typed with them written as values of their types.
@@ -3812,7 +3823,7 @@ static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32
             const SmithLangGenToken *after = &smith_lang_gt.tokens[close + 1];
             bool starts = smith_lang_gt_punct(before, ",") || smith_lang_gt_punct(before, "(");
             bool ends = smith_lang_gt_punct(after, ",") || smith_lang_gt_punct(after, ")");
-            if (!starts || !ends) return true;
+            if (!starts || !ends || smith_lang_depth_at(first, at) != 1) return true;
             at = close;
             continue;
         }
@@ -3825,7 +3836,7 @@ static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32
             const SmithLangGenToken *around[2] = {&smith_lang_gt.tokens[at - 1], &smith_lang_gt.tokens[at + 1]};
             bool lone = (smith_lang_gt_punct(around[0], ",") || smith_lang_gt_punct(around[0], "(")) &&
                         (smith_lang_gt_punct(around[1], ",") || smith_lang_gt_punct(around[1], ")"));
-            if (!lone || types_arguments) return true;
+            if (!lone || types_arguments || smith_lang_depth_at(first, at) != 1) return true;
             continue;
         }
         if (smith_lang_param_type_of(replay->generic, replay->instance, (SmithLangSpan){at, at + 1}) < 0) continue;
@@ -3833,7 +3844,7 @@ static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32
         const SmithLangGenToken *after = &smith_lang_gt.tokens[at + 1];
         bool starts = smith_lang_gt_punct(before, ",") || smith_lang_gt_punct(before, "(");
         bool ends = smith_lang_gt_punct(after, ",") || smith_lang_gt_punct(after, ")");
-        if (!starts || !ends) return true;
+        if (!starts || !ends || smith_lang_depth_at(first, at) != 1) return true;
     }
     return false;
 }

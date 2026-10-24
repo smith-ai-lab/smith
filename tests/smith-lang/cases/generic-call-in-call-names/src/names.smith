@@ -1,0 +1,7 @@
+module names;
+static i32 sq(i32 x) { return x * x; }
+export typeof(x) same(auto x, usize k) { (void)k; return x; }
+export i32 inner(auto p, auto... rest) { return (i32)p + (i32)countof(rest) * 100; }
+export i32 a(auto p, auto... rest) { return inner(p, same(sq(rest[0]), 0)); }
+export i32 b(auto p, auto... rest) { return inner(p, same(sq(rest[0]) + 1, 0)); }
+export i32 c(auto p, auto... rest) { return inner(sq(p), same(sq(rest[0]), 1)); }

@@ -1,0 +1,1 @@
+extern __INT32_TYPE__ marks_const; [ [ clang :: unavailable ( "marks::leaf_of is a function over `type`: it exists only at compile time" ) ] ] void marks_leaf_of ( void ) ; [ [ clang :: unavailable ( "marks::at is a generic function: call it from a .smith module" ) ] ] void marks_at ( void ) ;

@@ -1,0 +1,9 @@
+module main;
+
+import <stdio.h>;
+import names;
+
+int main(void) {
+    c::printf("%d %d %d\n", names::a(2, 3), names::b(2, 3), names::c(2, 3));
+    return 0;
+}
