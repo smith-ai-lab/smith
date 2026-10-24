@@ -551,6 +551,7 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
     used = smith_lang_append(out, capacity, used, "\n");
     if (lang->tuples_seen)
         used = smith_lang_append(out, capacity, used, "// smith-tuples\n"); // an importer indexes them
+    if (lang->slices_seen) used = smith_lang_append(out, capacity, used, "// smith-slices\n");
     used = smith_lang_generic_lines(lang, out, capacity, used);
     used = smith_lang_priv_linked_line(lang, out, capacity, used);
     return smith_lang_priv_hidden_line(lang, out, capacity, used);
@@ -854,6 +855,19 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         smith_lang_tuple_in_generic(lang, host, token);
     if (!token->foreign && !lang->recording) {
         bool capturing = smith_lang_capturing(lang); // the arguments of a call to a generic are kept, and typed later
+        if (smith_lang_slice_active(lang, host)) {
+            if (smith_lang_punct(token, ";") && !token->synthetic) lang->slice.armed[0] = 0;
+            bool at_start = lang->slice.after_boundary;
+            lang->slice.after_boundary = smith_lang_slice_boundary(token);
+            if (at_start && smith_lang_slice_begin(lang, host, token)) return;
+            smith_lang_slice_equals(lang, host, token);
+            if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
+                smith_lang_slice_typeof(lang, host, token)) {
+                return;
+            }
+            if (smith_lang_slice_chain(lang, host, token)) return;
+            if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
+        }
         if (token->kind == SmithTokenKind_Identifier) {
             if (smith_lang_ident(token, "struct")) smith_lang_tuple_begin(lang, host, token);
             if (smith_lang_tuples_on(lang, host) && host->previous != nullptr && smith_lang_ident(token, "countof") &&
@@ -880,6 +894,9 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         }
     }
     smith_lang_dispatch(lang, host, token);
+    if (!token->foreign && (smith_lang_ident(token, "module") || smith_lang_ident(token, "import"))) {
+        lang->slice.after_boundary = true; // a module or import line ends in a `;` that no token carries on
+    }
     if (host->previous != nullptr && smith_lang_tuples_on(lang, host) &&
         (lang->recent_count == 0 || lang->recent[0].text != token->text)) {
         smith_lang_remember(lang, token); // `t[0]` asks for the tokens before it, and the host may not have them yet
@@ -895,6 +912,7 @@ SmithLang *smith_lang_new(void) {
     smith_lang_ty_reset();
     smith_lang_word_buckets();
     lang->started = true;
+    lang->slice.after_boundary = true;
     lang->pending = SIZE_MAX;
     lang->dump_enabled = getenv("SMITH_LANG_DUMP") != nullptr;
     lang->gen_dump_on = getenv("SMITH_LANG_GENERICS") != nullptr;

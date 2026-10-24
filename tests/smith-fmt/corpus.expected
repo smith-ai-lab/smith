@@ -967,6 +967,67 @@ int main(void) {
     struct stat info;
     return (int)sizeof info;
 }
+==> error-slice-more-dimensions/src/main.smith <==
+module main;
+
+i32 take(i32 rows[:][:]) {
+    return 0;
+}
+
+i32 main(void) {
+    return 0;
+}
+==> error-slice-negative/src/main.smith <==
+module main;
+
+i32 main(void) {
+    i32 raw[3] = {1, 2, 3};
+    i32 all[:] = raw;
+    i32 last = all[-1];
+    return last;
+}
+==> error-slice-not-sliceable/src/main.smith <==
+module main;
+
+i32 main(void) {
+    i32 number = 5;
+    i32 view[:] = number[0:1];
+    return view[0];
+}
+==> error-slice-pointer-argument/src/main.smith <==
+module main;
+
+i32 take(i32 xs[:]) {
+    return xs[0];
+}
+
+i32 main(void) {
+    i32 raw[3] = {1, 2, 3};
+    i32 *p = raw;
+    return take(p);
+}
+==> error-slice-pointer-bounds/src/main.smith <==
+module main;
+
+i32 main(void) {
+    i32 raw[3] = {1, 2, 3};
+    i32 *p = raw;
+    i32 rest[:] = p[1:];
+    return rest[0];
+}
+==> error-slice-step/src/main.smith <==
+module main;
+
+i32 take(i32 xs[:]) {
+    return xs[0];
+}
+
+i32 main(void) {
+    i32 raw[6] = {1, 2, 3, 4, 5, 6};
+    i32 all[:] = raw;
+    i32 every_other[:] = all[0:6:2];
+    return take(every_other);
+}
 ==> error-stale-header/src/main.smith <==
 import shapes;
 
@@ -4539,6 +4600,95 @@ int main(void) {
     static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
     bool flag = true;
     printf("%d\n", flag);
+    return 0;
+}
+==> slice-lowering/src/slices.smith <==
+module slices;
+
+// A slice in every place a declaration goes: a parameter, a result, a field, a typedef and a local. The struct is
+// defined where it is written, once in the header, and the same shape is one type.
+
+export typedef struct {
+    f32 weights[:];
+    char name[:];
+} Layer;
+
+export typedef i32 Numbers[:];
+
+export usize total(i32 xs[:], usize skip) {
+    usize sum = 0;
+    for (usize i = skip; i < countof(xs); i++) {
+        sum += (usize)xs[i];
+    }
+    return sum;
+}
+
+export typeof(i32[:]) middle(i32 xs[:]) {
+    return xs[1:countof(xs) - 1];
+}
+
+export typeof(char[:]) label(Layer *layer) {
+    return layer->name;
+}
+
+export Numbers first_two(Numbers all) {
+    Numbers two = all[:2];
+    return two;
+}
+==> slice-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <string.h>;
+
+// Run-time arrays of one dimension: declared in a parameter, a result, a field and a local; counted, indexed, sliced
+// and passed on; made from a fixed array, a string and a pointer; handed to C as a pointer.
+
+struct Bag {
+    i32 items[:];
+    char name[:];
+};
+
+static i32 sum(i32 xs[:]) {
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+static typeof(i32[:]) inner(i32 xs[:]) {
+    return xs[1:countof(xs) - 1];
+}
+
+static typeof(i32[:]) fixed(void) {
+    static i32 data[3] = {7, 8, 9};
+    return data;
+}
+
+i32 main(void) {
+    i32 raw[5] = {1, 2, 3, 4, 5};
+    i32 all[:] = raw;
+    i32 mid[:] = all[1:4];
+    mid[0] = 40;
+    i32 *p = raw;
+    i32 view[:] = p[2:5];
+    char word[:] = "abc";
+    char with_zero[] = "abc";
+    char zero[:] = with_zero;
+    struct Bag bag = {};
+    bag.items = all;
+    bag.name = word;
+    bag.items[4] += 100;
+    c::printf("%zu %d %zu %d %d\n", countof(all), sum(all), countof(mid), raw[1], view[0]);
+    c::printf("%zu %zu %zu %zu\n", countof(word), countof(zero), countof(bag.items), countof(all[:2]));
+    c::printf("%d %d %d %zu\n", sum(inner(bag.items)), fixed()[2], all[3:][0], countof(fixed()));
+    char copy[8] = {};
+    c::memcpy(copy, bag.name, countof(bag.name));
+    c::printf("%s %d\n", copy, sum(p[0:2]));
+    i32 *none = nullptr;
+    i32 empty[:] = none[0:0];
+    c::printf("%zu %d\n", countof(empty), sum(empty));
     return 0;
 }
 ==> std-default-c2y/src/main.smith <==

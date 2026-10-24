@@ -647,7 +647,8 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto ") ||
                              SM.getBufferData(MainFile).contains("auto...");
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
-        host.maybe_tuple = hasTuple(SM.getBufferData(MainFile));
+        host.maybe_slice = hasSlice(SM.getBufferData(MainFile));
+        host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile));
         host.maybe_type_value = hasTypeValue(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
@@ -929,6 +930,7 @@ class SmithHook final : public TokenHook, public NameSource {
     // The declarations of a module, as they stream by: the lowering decides each token without looking ahead, or says
     // it must (Slow).
     Fast tryFast(Token &tok) {
+        if (host.maybe_slice || smith_lang_slices_on(lang)) return Fast::No; // the lowering reads every token
         bool body = smith_lang_body_sparse(lang);
         if (body || !smith_lang_is_module(lang)) return tryFastSparse(tok, body);
         SmithToken view = lite(tok);
@@ -1967,6 +1969,10 @@ class SmithHook final : public TokenHook, public NameSource {
         ASTContext &ast = self->sema->getASTContext();
         foldedValue(expression, ast, out);
         out->is_function = type->isFunctionType();
+        if (const auto *constant = ast.getAsConstantArrayType(type)) {
+            out->is_array = true;
+            out->array_size = constant->getSize().getZExtValue();
+        }
         type = self->finishType(type);
         const PrintingPolicy &policy = ast.getPrintingPolicy();
         snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
@@ -2277,6 +2283,32 @@ class SmithHook final : public TokenHook, public NameSource {
                 if (depth == 0 || semicolon) break;
             }
             if (!semicolon && close < text.size()) return true;
+        }
+        return false;
+    }
+
+    // Whether a `[ ]` of the text holds a `:` that is neither `::` nor the `:` of a `? :`: `T xs[:]` or `xs[a:b]`, a
+    // run-time array (runtime/lang_slice.c). Comments and strings count.
+    static bool hasSlice(StringRef text) {
+        for (size_t at = text.find('['); at != StringRef::npos; at = text.find('[', at + 1)) {
+            int depth = 0;
+            int conditions = 0;
+            for (size_t scan = at; scan < text.size(); scan++) {
+                char c = text[scan];
+                if (c == '[' || c == '(' || c == '{') depth += 1;
+                if (c == ']' || c == ')' || c == '}') depth -= 1;
+                if (depth <= 0 || c == ';') break;
+                if (depth != 1) continue;
+                if (c == '?') conditions += 1;
+                if (c != ':') continue;
+                if (scan + 1 < text.size() && text[scan + 1] == ':') {
+                    scan += 1;
+                } else if (conditions > 0) {
+                    conditions -= 1;
+                } else {
+                    return true;
+                }
+            }
         }
         return false;
     }

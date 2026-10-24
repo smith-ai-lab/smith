@@ -52,7 +52,9 @@ static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangR
     held->handle = token->handle;
     held->paren_depth = lang->paren_depth;
     held->text = smith_lang_scratch_store(lang, token->text, token->length);
-    held->header_text = (SmithLangText){0, 0};
+    held->header_text = token->header_text != nullptr && token->header_length > 0
+                            ? smith_lang_scratch_store(lang, token->header_text, token->header_length)
+                            : (SmithLangText){0, 0};
     held->original = held->text;
 }
 
@@ -92,7 +94,9 @@ static bool smith_lang_in_typeof(const SmithLang *lang, size_t index) {
 
 // Whether the identifier just held introduces a name, given what follows it.
 static bool smith_lang_declares_here(const SmithLang *lang, const SmithLangHeld *held, const SmithToken *next) {
-    if (held->after_member || held->after_tag || !lang->decl.saw_type || lang->decl.name_found) return false;
+    if (held->synthetic || held->after_member || held->after_tag || !lang->decl.saw_type || lang->decl.name_found) {
+        return false; // a name the lowering made (a slice's `data`) declares nothing
+    }
     if (held->paren_depth == 0) {
         return smith_lang_punct(next, "(") || smith_lang_punct(next, "[") || smith_lang_punct(next, "=") ||
                smith_lang_punct(next, ";") || smith_lang_punct(next, ",");
@@ -321,7 +325,7 @@ static SmithLangArray smith_lang_array_size(const SmithToken *token) {
 
 static void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t location) {
     smith_lang_error(lang, host, location,
-                     "an array parameter needs its size: write `T xs[N]`, `T xs[..]` for a length known at run time, "
+                     "an array parameter needs its size: write `T xs[N]`, `T xs[:]` for a length known at run time, "
                      "or `T *xs` for a pointer");
 }
 
@@ -404,7 +408,7 @@ static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool he
             if (i > 0) {
                 const SmithLangHeld *before = &lang->head[i - 1];
                 named =
-                    before->kind == SmithTokenKind_Identifier &&
+                    before->kind == SmithTokenKind_Identifier && !before->synthetic && // not a slice's `count[1]`
                     smith_lang_word(smith_lang_scratch_str(before->text), before->text.length) == SmithLangWord_Other;
             }
             param_bracket = brackets == 0 && held->paren_depth == 1 && named;

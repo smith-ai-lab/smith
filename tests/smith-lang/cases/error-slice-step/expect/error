@@ -1,0 +1,1 @@
+src/main.smith:10:29: a slice has no step: `xs[a:b]` takes the elements a to b - 1

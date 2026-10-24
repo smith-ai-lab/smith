@@ -7,7 +7,7 @@
 # program prints it (its extension): __FILE__ is set to one name, and the file's own name with ".smith" in a string is
 # read as ".c" (only its own: other strings that end in ".smith" are code, and must match). Then each program in
 # tests/smith-lang-c/ (array parameters and sizeof of one, a [*] prototype, the language's words as names, ordinary
-# constructs) is built and run as x.c and as x.smith, and both must print what x.out holds. The test needs a smith with clang inside; a stage0 skips it.
+# constructs, text arrays and `?:` in brackets, which run-time arrays must leave alone) is built and run as x.c and as x.smith, and both must print what x.out holds. The test needs a smith with clang inside; a stage0 skips it.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -109,7 +109,7 @@ behave() { # name
     fi
 }
 
-for name in arrays names ordinary sized_names; do
+for name in arrays names ordinary sized_names slices; do
     behave "$name"
 done
 

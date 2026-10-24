@@ -278,6 +278,17 @@ typedef struct {
     SmithLangText c_name;
 } SmithLangCName;
 
+// What the lowering of run-time arrays (runtime/lang_slice.c) keeps between tokens, with the rest of the lowering's
+// state so that a module read aside keeps its own.
+typedef struct {
+    char armed[96];                // the name of a slice just declared, whose `=` may convert an array
+    char armed_tag[512];
+    uint32_t skip;                 // the location of the first token of a chain that was written again
+    bool after_boundary;           // the token before the one being lowered opens or ends a statement
+    char tags[32][512];            // the tags defined at file scope so far
+    uint32_t tag_count;
+} SmithLangSliceState;
+
 typedef struct {
     SmithLangText name;
     SmithLangText prefix; // game_replay_
@@ -367,6 +378,8 @@ struct SmithLang {
     bool broken;
     bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
                        // (runtime/lang_tuple.c)
+    SmithLangSliceState slice;
+    bool slices_seen;  // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;  // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
     bool io_import;    // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
     bool io_main;      // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
@@ -802,6 +815,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Tuples: `struct { i32, f32 }`, `t[0]`, `countof(t)`.
 #include "lang_tuple.c"
+
+// Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
+#include "lang_slice.c"
 
 // Types as values: `constexpr type t = i32;`, a type handle, and what is asked of one.
 #include "lang_type.c"

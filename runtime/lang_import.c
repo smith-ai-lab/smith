@@ -230,7 +230,9 @@ static bool smith_lang_import_is_target(SmithLang *lang, const char *module, con
 // A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
 // the host offers it every token.
 static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length) {
-    if (text == nullptr || memmem(text, length, "// smith-tuples", 15) == nullptr) return;
+    if (text == nullptr) return;
+    if (memmem(text, length, "// smith-slices", 15) != nullptr) lang->slices_seen = true;
+    if (memmem(text, length, "// smith-tuples", 15) == nullptr && !lang->slices_seen) return;
     lang->tuples_seen = true;
     if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
 }

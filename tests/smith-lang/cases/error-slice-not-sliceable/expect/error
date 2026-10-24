@@ -1,0 +1,2 @@
+src/main.smith:5:25: cannot slice this expression: it is not a slice, a pointer or an array
+src/main.smith:5:25: subscripted value is not an array, pointer, or vector

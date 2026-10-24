@@ -1,0 +1,32 @@
+module slices;
+
+// A slice in every place a declaration goes: a parameter, a result, a field, a typedef and a local. The struct is
+// defined where it is written, once in the header, and the same shape is one type.
+
+export typedef struct {
+    f32 weights[:];
+    char name[:];
+} Layer;
+
+export typedef i32 Numbers[:];
+
+export usize total(i32 xs[:], usize skip) {
+    usize sum = 0;
+    for (usize i = skip; i < countof(xs); i++) {
+        sum += (usize)xs[i];
+    }
+    return sum;
+}
+
+export typeof(i32[:]) middle(i32 xs[:]) {
+    return xs[1:countof(xs) - 1];
+}
+
+export typeof(char[:]) label(Layer *layer) {
+    return layer->name;
+}
+
+export Numbers first_two(Numbers all) {
+    Numbers two = all[:2];
+    return two;
+}

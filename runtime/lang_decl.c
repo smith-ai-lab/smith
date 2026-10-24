@@ -575,6 +575,7 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
     SmithLangLowered kept = smith_lang_keep();
     kept.is_type = true;
     if (length > 12 && memcmp(name, "smith_tuple_", 12) == 0) return kept; // a tuple's tag is no name of the module's
+    if (length > 12 && memcmp(name, "smith_array_", 12) == 0) return kept; // nor is a slice's
     if (!lang->is_module) { // a file with no `module` line has no tags of its own to lower, only a C tag to refuse
         smith_lang_check_c_tag(lang, host, name, length, location);
         return kept;

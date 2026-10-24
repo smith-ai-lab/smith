@@ -1,3 +1,3 @@
-src/main.smith:11:31: an array parameter needs its size: write `T xs[N]`, `T xs[..]` for a length known at run time, or `T *xs` for a pointer
-src/main.smith:3:18: an array parameter needs its size: write `T xs[N]`, `T xs[..]` for a length known at run time, or `T *xs` for a pointer
-src/main.smith:7:37: an array parameter needs its size: write `T xs[N]`, `T xs[..]` for a length known at run time, or `T *xs` for a pointer
+src/main.smith:11:31: an array parameter needs its size: write `T xs[N]`, `T xs[:]` for a length known at run time, or `T *xs` for a pointer
+src/main.smith:3:18: an array parameter needs its size: write `T xs[N]`, `T xs[:]` for a length known at run time, or `T *xs` for a pointer
+src/main.smith:7:37: an array parameter needs its size: write `T xs[N]`, `T xs[:]` for a length known at run time, or `T *xs` for a pointer

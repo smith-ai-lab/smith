@@ -1,0 +1,9 @@
+module main;
+
+i32 take(i32 rows[:][:]) {
+    return 0;
+}
+
+i32 main(void) {
+    return 0;
+}

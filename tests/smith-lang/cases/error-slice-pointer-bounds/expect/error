@@ -1,0 +1,1 @@
+src/main.smith:6:20: slicing a pointer or an array needs both bounds: `p[a:b]`

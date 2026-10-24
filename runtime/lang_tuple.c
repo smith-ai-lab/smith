@@ -485,6 +485,9 @@ static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, 
                      "typedef (`typedef struct { i32, f32 } Pair;`)");
 }
 
+static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token, const char *tokens,
+                                     const SmithToken *span, size_t close);
+
 // ---- An expression that is a tuple: `t[0]` and `countof(t)`
 
 // The token `back` places before the one being lowered: in the arguments of a call to a generic, which are kept and not
@@ -696,6 +699,7 @@ static bool smith_lang_tuple_countof(SmithLang *lang, const SmithHost *host, con
     }
     if (close < 2) return false;
     tokens[used] = 0;
+    if (smith_lang_slice_countof(lang, host, token, tokens, span, close)) return true;
     char type[256];
     uint32_t fields = 0;
     if (!smith_lang_tuple_typed(host, tokens, type, sizeof type, &fields)) return false;
@@ -721,7 +725,7 @@ static void smith_lang_tuple_return(SmithLang *lang, const SmithHost *host, cons
         return;
     }
     char type[256];
-    if (!host->return_type(host->context, type, sizeof type) || strncmp(type, "struct smith_tuple_", 19) != 0 ||
+    if (!host->return_type(host->context, type, sizeof type) || (strncmp(type, "struct smith_tuple_", 19) != 0 && strncmp(type, "struct smith_array_", 19) != 0) ||
         strchr(type, ' ') != type + 6 || strchr(type + 7, ' ') != nullptr) {
         return;
     }
@@ -791,11 +795,16 @@ static size_t smith_lang_tuple_decl_start(const char *body, size_t before) {
 
 // The first definition of a tuple in the text that holds no other: the index of its `struct` and of the byte after its
 // `}`; `name` is where the tag ends. False when there is none.
-static bool smith_lang_tuple_find(const char *body, size_t used, size_t *found, size_t *name, size_t *end) {
-    constexpr char marker[] = "struct smith_tuple_";
+static bool smith_lang_tuple_find(const char *body, size_t used, const char *tag_prefix, const char *guard,
+                                  size_t *found, size_t *name, size_t *end) {
+    char marker[48];
+    snprintf(marker, sizeof marker, "struct %s", tag_prefix);
+    size_t marker_size = strlen(marker) + 1;
+    char define_marker[48];
+    snprintf(define_marker, sizeof define_marker, "#define %s", guard);
     bool any = false;
-    for (size_t at = 0; at + sizeof marker < used; at++) { // each use of a tuple's tag
-        if (memcmp(body + at, marker, sizeof marker - 1) != 0) continue;
+    for (size_t at = 0; at + marker_size < used; at++) { // each use of a tuple's tag
+        if (memcmp(body + at, marker, marker_size - 1) != 0) continue;
         size_t line = at;
         while (line > 0 && body[line - 1] != '\n')
             line -= 1;
@@ -803,9 +812,9 @@ static bool smith_lang_tuple_find(const char *body, size_t used, size_t *found, 
             size_t above = line >= 2 ? line - 2 : 0;
             while (above > 0 && body[above - 1] != '\n')
                 above -= 1;
-            if (memcmp(body + above, "#define SMITH_TUPLE_", 20) == 0) continue;
+            if (memcmp(body + above, define_marker, strlen(define_marker)) == 0) continue;
         }
-        size_t after = at + sizeof marker - 1;
+        size_t after = at + marker_size - 1;
         while (after < used && smith_lang_word_char(body[after]))
             after += 1;
         size_t open = after;
@@ -825,9 +834,9 @@ static bool smith_lang_tuple_find(const char *body, size_t used, size_t *found, 
         *end = close + 1;
         any = true;
         bool holds = false;
-        for (size_t inner = open + 1; inner + sizeof marker < close; inner++) { // a tuple defined inside it
-            if (memcmp(body + inner, marker, sizeof marker - 1) != 0) continue;
-            size_t stop = inner + sizeof marker - 1;
+        for (size_t inner = open + 1; inner + marker_size < close; inner++) { // a tuple defined inside it
+            if (memcmp(body + inner, marker, marker_size - 1) != 0) continue;
+            size_t stop = inner + marker_size - 1;
             while (stop < close && smith_lang_word_char(body[stop]))
                 stop += 1;
             while (stop < close && (body[stop] == ' ' || body[stop] == '\n'))
@@ -839,25 +848,25 @@ static bool smith_lang_tuple_find(const char *body, size_t used, size_t *found, 
     return any;
 }
 
-static void smith_lang_tuple_hoist(char *body, size_t *used, size_t capacity) {
+static void smith_lang_tuple_hoist_kind(char *body, size_t *used, size_t capacity, const char *tag_prefix,
+                                        const char *guard) {
     for (size_t pass = 0; pass < 1024; pass++) { // a definition is hoisted in each pass
         size_t found = 0;
         size_t name = 0;
         size_t end = 0;
-        if (!smith_lang_tuple_find(body, *used, &found, &name, &end)) return;
+        if (!smith_lang_tuple_find(body, *used, tag_prefix, guard, &found, &name, &end)) return;
         size_t tag_length = name - found - 7; // past `struct `
         char suffix[smith_lang_tuple_name_max];
         if (tag_length >= sizeof suffix) return;
-        memcpy(suffix, body + found + 7 + strlen(smith_lang_tuple_prefix),
-               tag_length - strlen(smith_lang_tuple_prefix));
-        suffix[tag_length - strlen(smith_lang_tuple_prefix)] = 0;
+        memcpy(suffix, body + found + 7 + strlen(tag_prefix), tag_length - strlen(tag_prefix));
+        suffix[tag_length - strlen(tag_prefix)] = 0;
         char block[8192];
-        int written = snprintf(block, sizeof block, "\n\n#ifndef SMITH_TUPLE_%s\n#define SMITH_TUPLE_%s\n%.*s;\n#endif",
-                               suffix, suffix, (int)(end - found), body + found);
+        int written = snprintf(block, sizeof block, "\n\n#ifndef %s%s\n#define %s%s\n%.*s;\n#endif",
+                               guard, suffix, guard, suffix, (int)(end - found), body + found);
         if (written <= 0 || (size_t)written >= sizeof block) return;
         size_t start = smith_lang_tuple_decl_start(body, found);
         char define[smith_lang_tuple_name_max + 24];
-        snprintf(define, sizeof define, "#define SMITH_TUPLE_%s\n", suffix);
+        snprintf(define, sizeof define, "#define %s%s\n", guard, suffix);
         bool present = memmem(body, start, define, strlen(define)) != nullptr;
         size_t cut = end - found - (7 + tag_length);                     // the definition's text but for `struct tag`
         memmove(body + found + 7 + tag_length, body + end, *used - end); // the use keeps `struct tag`
@@ -868,4 +877,9 @@ static void smith_lang_tuple_hoist(char *body, size_t *used, size_t capacity) {
         memcpy(body + start, block, (size_t)written);
         *used += (size_t)written;
     }
+}
+
+static void smith_lang_tuple_hoist(char *body, size_t *used, size_t capacity) {
+    smith_lang_tuple_hoist_kind(body, used, capacity, smith_lang_tuple_prefix, "SMITH_TUPLE_");
+    smith_lang_tuple_hoist_kind(body, used, capacity, "smith_array_", "SMITH_ARRAY_");
 }

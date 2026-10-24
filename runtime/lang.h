@@ -141,6 +141,8 @@ typedef struct {
     bool negative;
     bool overflow;
     bool is_function; // the expression is a function (a designator), before it becomes a pointer to one
+    bool is_array;    // the expression is an array of known size (the types here are those it decays to: a pointer)
+    uint64_t array_size;
     uint64_t magnitude;
     double real;
 } SmithExprType;
@@ -271,6 +273,7 @@ typedef struct {
     // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
     // token, because a type value is found by the tokens around a type name.
     bool maybe_type_value;
+    bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook alone
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).
@@ -328,6 +331,8 @@ bool smith_lang_is_module(const SmithLang *lang);
 bool smith_lang_io_import(const SmithLang *lang);
 // In a module's function body, whether the host offers only braces and the names it watches (the host's fast paths).
 bool smith_lang_body_sparse(const SmithLang *lang);
+// Whether the file has run-time arrays from an import (the host then offers every token and keeps none).
+bool smith_lang_slices_on(const SmithLang *lang);
 // Whether `name` is a parameter of the function whose body is being read, and so is no name of the module even when
 // the module exports one by that name (the host must leave it as written).
 bool smith_lang_param_name(const SmithLang *lang, const char *name, size_t length);

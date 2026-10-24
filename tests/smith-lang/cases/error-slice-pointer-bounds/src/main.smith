@@ -1,0 +1,8 @@
+module main;
+
+i32 main(void) {
+    i32 raw[3] = {1, 2, 3};
+    i32 *p = raw;
+    i32 rest[:] = p[1:];
+    return rest[0];
+}

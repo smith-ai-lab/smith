@@ -1,0 +1,1 @@
+src/main.smith:6:20: an index is never negative: the last element is `xs[countof(xs) - 1]`

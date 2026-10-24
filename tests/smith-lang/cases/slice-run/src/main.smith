@@ -1,0 +1,55 @@
+module main;
+
+import <stdio.h>;
+import <string.h>;
+
+// Run-time arrays of one dimension: declared in a parameter, a result, a field and a local; counted, indexed, sliced
+// and passed on; made from a fixed array, a string and a pointer; handed to C as a pointer.
+
+struct Bag {
+    i32 items[:];
+    char name[:];
+};
+
+static i32 sum(i32 xs[:]) {
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+static typeof(i32[:]) inner(i32 xs[:]) {
+    return xs[1:countof(xs) - 1];
+}
+
+static typeof(i32[:]) fixed(void) {
+    static i32 data[3] = {7, 8, 9};
+    return data;
+}
+
+i32 main(void) {
+    i32 raw[5] = {1, 2, 3, 4, 5};
+    i32 all[:] = raw;
+    i32 mid[:] = all[1:4];
+    mid[0] = 40;
+    i32 *p = raw;
+    i32 view[:] = p[2:5];
+    char word[:] = "abc";
+    char with_zero[] = "abc";
+    char zero[:] = with_zero;
+    struct Bag bag = {};
+    bag.items = all;
+    bag.name = word;
+    bag.items[4] += 100;
+    c::printf("%zu %d %zu %d %d\n", countof(all), sum(all), countof(mid), raw[1], view[0]);
+    c::printf("%zu %zu %zu %zu\n", countof(word), countof(zero), countof(bag.items), countof(all[:2]));
+    c::printf("%d %d %d %zu\n", sum(inner(bag.items)), fixed()[2], all[3:][0], countof(fixed()));
+    char copy[8] = {};
+    c::memcpy(copy, bag.name, countof(bag.name));
+    c::printf("%s %d\n", copy, sum(p[0:2]));
+    i32 *none = nullptr;
+    i32 empty[:] = none[0:0];
+    c::printf("%zu %d\n", countof(empty), sum(empty));
+    return 0;
+}

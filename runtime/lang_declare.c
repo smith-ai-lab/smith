@@ -269,7 +269,7 @@ static SmithLangAct smith_lang_head_name(SmithLang *lang, const SmithHost *host,
     if (token->watched && (smith_lang_previous_is(lang, host, 1, ".") || smith_lang_previous_is(lang, host, 1, "->"))) {
         return smith_lang_act(SmithLangAct_Keep);
     }
-    if (smith_lang_declarator_here(lang)) { // the name the declaration introduces (or a redeclaration of it)
+    if (!token->synthetic && smith_lang_declarator_here(lang)) { // the name the declaration introduces
         decl->name_found = true;
         decl->prev_star = false;
         if (!decl->is_typedef && (smith_lang_equals(token->text, token->length, "main") ||
