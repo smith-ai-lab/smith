@@ -1,0 +1,15 @@
+module main;
+
+import probe;
+import <stdio.h>;
+
+i32 main(void) {
+    u8 raw[4] = {1, 2, 3, 4};
+    u8 plain[:] = raw;
+    constexpr type plain_type = typeof(plain);
+    constexpr type wide = u16;
+    constexpr type other_type = wide[:];
+    c::printf("%d %d %d\n", probe::same_size(plain, plain_type), probe::same_size(plain, other_type),
+              probe::same_size(raw[0], plain_type));
+    return 0;
+}

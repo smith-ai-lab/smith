@@ -1,0 +1,8 @@
+module probe;
+
+// A type argument after an auto argument: the slice's type binds like any other constexpr type.
+
+export bool same_size(auto x, constexpr type T) {
+    return sizeof(typeof(x)) == sizeof(T);
+}
+

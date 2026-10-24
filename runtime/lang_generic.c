@@ -1442,6 +1442,18 @@ static void smith_lang_instance_description(const SmithLangGeneric *generic, con
     snprintf(out + used, capacity - (size_t)used, ")");
 }
 
+// Whether the entries written so far (`slot\x1ftag\x1fdata\x1fcount\x1e` each) already name this tag: a slice
+// passed as an argument and as a `constexpr type` is one struct, defined once (issue #129).
+static bool smith_lang_slices_listed(const char *text, size_t used, const char *tag) {
+    size_t length = strlen(tag);
+    for (size_t at = 0; at < used; at++) { // each entry's tag follows its first separator
+        if (text[at] != '\x1f') continue;
+        if (at + 1 + length < used && memcmp(text + at + 1, tag, length) == 0 && text[at + 1 + length] == '\x1f')
+            return true;
+    }
+    return false;
+}
+
 // A slice struct is a local of the function that first wrote it, and an instance is written at the end of the file: its
 // signature would name a tag of its own, an incomplete type of the prototype. So the instance defines the struct at
 // file scope first (C23: the same definition in another scope is the same type), from what the compiler says of the
@@ -1468,6 +1480,7 @@ static void smith_lang_instance_slices(SmithLang *lang, const SmithHost *host, S
             continue;
         }
         if (used + strlen(canonical) + strlen(data.type) + 32 > sizeof text) continue;
+        if (smith_lang_slices_listed(text, used, canonical + 7)) continue; // a type argument is the same struct again
         used += (size_t)snprintf(text + used, sizeof text - used, "%zu\x1f%s\x1f%s\x1f%lu\x1e", k, canonical + 7,
                                  data.type, count);
     }

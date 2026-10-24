@@ -154,7 +154,7 @@ static uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
 
 // runtime/lang_type.c, which comes after this file
 static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity);
+                                        size_t capacity, bool bare);
 static unsigned smith_lang_ty_depth_of(uint64_t handle);
 
 #include "lang_fields.c"
@@ -981,7 +981,7 @@ static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *ho
     uint32_t saved_count = lang->slice.tag_count;
     memcpy(saved, lang->slice.tags, sizeof saved);
     lang->slice.tag_count = 0;
-    size_t count = smith_lang_ty_type_tokens(lang, instance->result_handle, &like, tokens, 256);
+    size_t count = smith_lang_ty_type_tokens(lang, instance->result_handle, &like, tokens, 256, false);
     memcpy(lang->slice.tags, saved, sizeof saved);
     lang->slice.tag_count = saved_count;
     for (size_t at = 0; at < count; at++) { // the struct's tokens

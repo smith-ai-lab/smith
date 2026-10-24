@@ -873,7 +873,7 @@ static bool smith_lang_ty_slice_op(SmithLang *lang, const SmithHost *host, const
 // The tokens of the type a handle names, written where a type is: the spelling's, or for a slice its struct (defined
 // there when no earlier declaration at file scope has, as `T xs[:]` does).
 static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity) {
+                                        size_t capacity, bool bare) {
     unsigned depth = 0;
     const char *base = smith_lang_ty_split(handle, &depth);
     if (base == nullptr) return 0;
@@ -883,6 +883,11 @@ static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const 
     size_t count = 0;
     SmithLangSliceDims dims;
     if (!smith_lang_ty_slice_tag(lang, base, depth, tag, sizeof tag, elem, &count, 48, &dims, like)) return 0;
+    if (bare && capacity >= 2) { // an argument of a generic names the tag; the instance defines the struct (issue #129)
+        out[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, like, like->space_before);
+        out[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, tag, strlen(tag), like, true);
+        return 2;
+    }
     return smith_lang_slice_define(lang, nullptr, out, 0, capacity, tag, elem, count, &dims, like);
 }
 
@@ -906,7 +911,7 @@ static bool smith_lang_ty_use(SmithLang *lang, const SmithHost *host, const Smit
     static SmithToken made[smith_lang_ty_spelling_max];
     size_t count = 0;
     if (smith_lang_ty_chain_value(lang, host, &chain, &handle)) {
-        count = smith_lang_ty_type_tokens(lang, handle, token, made, smith_lang_ty_spelling_max);
+        count = smith_lang_ty_type_tokens(lang, handle, token, made, smith_lang_ty_spelling_max, argument);
     }
     if (count == 0) {
         made[0] = smith_lang_ty_made(SmithTokenKind_Identifier, "int", token, token->space_before);
