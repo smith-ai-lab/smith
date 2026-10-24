@@ -50,10 +50,12 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <sstream>
 
@@ -741,6 +743,10 @@ void mark_library(Module &module) {
 
 } // namespace
 
+namespace {
+void hide_loop_tests(Function &function); // below, with the loops' own code
+} // namespace
+
 bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error, size_t libraries) {
     Clock::time_point begin = Clock::now();
     program.context = std::make_unique<LLVMContext>();
@@ -807,6 +813,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     Analyses analyses;
     for (Function &function : module) {
         if (function.isDeclaration()) continue;
+        hide_loop_tests(function);
         freeze_locals(function);
         if (!analyses.run_function(function, light_pipeline, error)) return false;
         mark_pointer_parameters(function);
@@ -1387,10 +1394,10 @@ bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
 // inserted before `at`. (llvm.memcpy of a whole object becomes a lambda over the memory array in Alive2's encoding,
 // which Bitwuzla cannot read.) Returns the last store.
 Instruction *copy_object(Instruction *at, const DebugLoc &location, Value *destination, Value *source, uint64_t bytes,
-                         Align align) {
+                         Align align, bool unaligned_words = false) {
     IRBuilder<> builder(at);
     builder.SetCurrentDebugLocation(location);
-    unsigned widest = align.value() >= 8 ? 8 : static_cast<unsigned>(align.value());
+    unsigned widest = align.value() >= 8 || unaligned_words ? 8 : static_cast<unsigned>(align.value());
     Instruction *last = nullptr;
     for (uint64_t offset = 0; offset < bytes;) {
         unsigned size = widest;
@@ -1653,7 +1660,7 @@ bool resolve_calls(UnitContext &context) {
                 return false;
             }
             if (callee->isIntrinsic() || contract_of(call) != Contract::None || is_assert_failure(call) ||
-                is_abort(call) || name == "smith_point") {
+                is_abort(call) || name == "smith_point" || name == "smith.opaque") {
                 call->setMetadata("smith.resolved", MDNode::get(function.getContext(), {}));
                 target = nullptr;
                 continue;
@@ -1757,6 +1764,7 @@ class Normalizer {
             instruction.setMetadata("smith.resolved", nullptr);
             instruction.setMetadata("smith.callsite", nullptr);
             instruction.setMetadata("smith.owner", nullptr);
+            instruction.setMetadata("smith.induction", nullptr);
         }
         return true;
     }
@@ -1844,6 +1852,12 @@ class Normalizer {
         auto *marker = builder.CreateCall(point_function, {builder.getInt32(info.id), value});
         marker->setDebugLoc(call->getDebugLoc());
         info.assume = assume_after && condition != nullptr;
+        if (kind == Kind::Invariant) {
+            if (MDNode *induction = call->getMetadata("smith.induction")) {
+                info.induction_loop = static_cast<int>(id_of(induction) / 2) - 1;
+                info.induction_step = id_of(induction) % 2 == 1;
+            }
+        }
         info.where = marker;
         context_points.push_back(info);
         call->eraseFromParent();
@@ -2040,7 +2054,14 @@ void describe_unbounded_loop(const Unit &unit, int index, Unprovable &failure) {
         for (const std::string &name : info->controls)
             names += (names.empty() ? "`" : ", `") + name + "`";
     }
-    if (info != nullptr && info->counted && !info->controls.empty()) {
+    if (info != nullptr && !info->not_cut.empty()) {
+        failure.what =
+            "the loop has no bound the prover can see, and its smith_invariant cannot be proved by induction: " +
+            info->not_cut;
+        failure.fix =
+            "give the loop a bound (contract::requires(count <= ...)), or write what the loop changes so that "
+            "the prover can name it";
+    } else if (info != nullptr && info->counted && !info->controls.empty()) {
         failure.what = "the loop has no bound the prover can see: it runs " + names + " times";
         failure.fix = "state its worst case, contract::requires(" + info->controls.front() +
                       " <= ...), which callers then prove (a loop's count comes from a constant or from a requires "
@@ -2140,6 +2161,530 @@ bool find_loop(Function &function, std::string &where, int &index) {
     }
     where = location_of(found);
     return true;
+}
+
+// ---- the tests of a loop that has an invariant, hidden from the optimizer ----
+
+// An optimizer knows in a loop's body what the loop's test says (`i <= n` where `i < n` is true), and so writes an
+// invariant `i <= n && total == 3 * i` as `total == 3 * i`. Proving it by induction evaluates it where the test is,
+// with no such knowledge (it must hold when the loop exits too), so while the passes run, each test that decides
+// whether the body is reached is read through a call of smith.opaque, which cut_loops removes.
+FunctionCallee opaque_function(Module &module) {
+    Type *boolean = Type::getInt1Ty(module.getContext());
+    FunctionCallee callee = module.getOrInsertFunction("smith.opaque", boolean, boolean);
+    auto *function = cast<Function>(callee.getCallee());
+    function->setMemoryEffects(MemoryEffects::none());
+    function->addFnAttr(Attribute::NoUnwind);
+    function->addFnAttr(Attribute::NoFree);
+    function->addFnAttr(Attribute::WillReturn);
+    return callee;
+}
+
+void hide_loop_tests(Function &function) {
+    bool has_invariant = false;
+    for (const Instruction &instruction : instructions(function))
+        has_invariant = has_invariant || contract_of(&instruction) == Contract::Invariant;
+    if (!has_invariant) return;
+    DominatorTree dominators(function);
+    LoopInfo info(dominators);
+    FunctionCallee opaque = opaque_function(*function.getParent());
+    SmallPtrSet<BasicBlock *, 8> done;
+    for (Loop *loop : info.getLoopsInPreorder()) {
+        for (BasicBlock *block : loop->blocks()) {
+            if (info.getLoopFor(block) != loop) continue;
+            for (Instruction &instruction : *block) {
+                if (contract_of(&instruction) != Contract::Invariant) continue;
+                for (BasicBlock *test = block;; test = dominators.getNode(test)->getIDom()->getBlock()) {
+                    auto *branch = dyn_cast<CondBrInst>(test->getTerminator());
+                    if (branch != nullptr && done.insert(test).second)
+                        branch->setCondition(
+                            CallInst::Create(opaque, {branch->getCondition()}, "", branch->getIterator()));
+                    if (test == loop->getHeader()) break;
+                }
+            }
+        }
+    }
+}
+
+void reveal_loop_tests(Function &function) {
+    std::vector<CallInst *> calls;
+    for (Instruction &instruction : instructions(function)) {
+        auto *call = dyn_cast<CallInst>(&instruction);
+        if (call != nullptr && call->getCalledFunction() != nullptr &&
+            call->getCalledFunction()->getName() == "smith.opaque")
+            calls.push_back(call);
+    }
+    for (CallInst *call : calls) {
+        call->replaceAllUsesWith(call->getArgOperand(0));
+        call->eraseFromParent();
+    }
+}
+
+// ---- a loop with smith_invariant, proved by induction instead of unrolled ----
+//
+// The loop is cut in the IR, before Alive2 reads it. With the header H (its test), the preheader P and the one latch:
+//   P:  the invariant `c`, evaluated for the values the loop starts with, is a proof point (it holds on entry);
+//   H:  every value a pass changes is an arbitrary one: the header's phis become loads of a global nothing writes, and
+//       each object the loop writes (found from its stores and calls) is overwritten with the bytes of one. `c`,
+//       evaluated here, is assumed. What follows is the loop as it was: its test, one pass of the body (its own checks
+//       are proof points as everywhere), and the exits, which see `c` and the failed test;
+//   the back edge: goes to code that evaluates `c` for the values the next pass would start with, as a proof point,
+//       and returns (a path that ends; nothing is compared with what it returns).
+// So the loop costs one pass, whatever its bound. `c` is evaluated where the loop's test is, by a copy of the blocks
+// between the header and the invariant (the test itself left out, its traps kept), so it must hold when the loop exits
+// too. What a pass changes that `c` does not mention is arbitrary at its start: a weak invariant fails at the back
+// edge, and the report says what the body writes.
+
+bool is_bookkeeping(const Instruction &instruction) {
+    if (contract_of(&instruction) != Contract::None) return true;
+    auto *call = dyn_cast<CallBase>(&instruction);
+    if (call == nullptr || call->getCalledFunction() == nullptr) return false;
+    if (call->getCalledFunction()->getName() == "smith_loop") return true;
+    switch (call->getCalledFunction()->getIntrinsicID()) {
+    case Intrinsic::assume:
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+    case Intrinsic::experimental_noalias_scope_decl:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The objects a loop writes, each traced from the pointer that is written; false (and why) when one cannot be.
+bool add_written(Value *pointer, std::vector<Value *> &objects, std::string &why) {
+    Value *object = const_cast<Value *>(getUnderlyingObject(pointer));
+    auto *global = dyn_cast<GlobalVariable>(object);
+    auto *local = dyn_cast<AllocaInst>(object);
+    if ((local == nullptr || !local->isStaticAlloca()) && !isa<Argument>(object) &&
+        (global == nullptr || global->isConstant())) {
+        why = "it writes through a pointer that is not traced to a local, a parameter or a global";
+        return false;
+    }
+    if (std::find(objects.begin(), objects.end(), object) == objects.end()) objects.push_back(object);
+    return true;
+}
+
+bool loop_writes(Loop *loop, std::vector<Value *> &objects, std::string &why) {
+    for (BasicBlock *block : loop->blocks()) {
+        for (Instruction &instruction : *block) {
+            if (is_bookkeeping(instruction)) continue;
+            if (auto *store = dyn_cast<StoreInst>(&instruction)) {
+                if (!store->isUnordered()) {
+                    why = "it has a volatile or atomic store";
+                    return false;
+                }
+                if (!add_written(store->getPointerOperand(), objects, why)) return false;
+                continue;
+            }
+            if (!instruction.mayWriteToMemory()) continue;
+            if (auto *intrinsic = dyn_cast<MemIntrinsic>(&instruction)) {
+                if (intrinsic->isVolatile() || !add_written(intrinsic->getDest(), objects, why)) return false;
+                continue;
+            }
+            auto *call = dyn_cast<CallBase>(&instruction);
+            if (call == nullptr) {
+                why = "it has an atomic operation";
+                return false;
+            }
+            MemoryEffects effects = call->getMemoryEffects();
+            // what only a call can see (inaccessible memory: a trap's state, a library's) is not an object of this
+            // function, and a call's own results are arbitrary anyway
+            if (isModSet(effects.getModRef(IRMemLocation::Other))) {
+                why = "it calls " +
+                      (call->getCalledFunction() != nullptr ? source_name(*call->getCalledFunction())
+                                                            : std::string("a function")) +
+                      ", which may write memory the prover cannot name";
+                return false;
+            }
+            for (unsigned i = 0; i < call->arg_size(); i++) {
+                if (!call->getArgOperand(i)->getType()->isPointerTy() || call->paramHasAttr(i, Attribute::ReadOnly) ||
+                    call->paramHasAttr(i, Attribute::ReadNone))
+                    continue;
+                if (!add_written(call->getArgOperand(i), objects, why)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+// How many bytes an object that is havoced has (and how it is aligned); 0 when that is not a constant.
+uint64_t havoc_bytes(Function &function, Value *object, Align &align) {
+    const DataLayout &layout = function.getParent()->getDataLayout();
+    if (auto *local = dyn_cast<AllocaInst>(object)) {
+        std::optional<TypeSize> size = local->getAllocationSize(layout);
+        align = local->getAlign();
+        return size && !size->isScalable() ? size->getFixedValue() : 0;
+    }
+    if (auto *argument = dyn_cast<Argument>(object)) {
+        align = argument->getParamAlign().value_or(Align(1));
+        return argument->getDereferenceableBytes();
+    }
+    auto *global = cast<GlobalVariable>(object);
+    align = global->getAlign().value_or(layout.getABITypeAlign(global->getValueType()));
+    return layout.getTypeAllocSize(global->getValueType()).getFixedValue();
+}
+
+// The invariants of a loop: the smith_invariant calls written in the loop itself, not in an inner one.
+std::vector<CallInst *> loop_invariants(Loop *loop, LoopInfo &info) {
+    std::vector<CallInst *> invariants;
+    for (BasicBlock *block : loop->blocks()) {
+        if (info.getLoopFor(block) != loop) continue;
+        for (Instruction &instruction : *block) {
+            if (contract_of(&instruction) == Contract::Invariant) invariants.push_back(cast<CallInst>(&instruction));
+        }
+    }
+    return invariants;
+}
+
+// A block that ends the program: a check that traps, the failure of an assert.
+bool is_terminal(const BasicBlock *block) {
+    return isa<UnreachableInst>(block->getTerminator());
+}
+
+// The blocks that lead from the loop's header to an invariant (header first, the invariant's block last), when copies
+// of them can evaluate it elsewhere: nothing in them writes memory, no inner loop is among them, and the only branches
+// that leave them go to a block that ends the program (a check that traps) or are the loop's test.
+bool invariant_region(Function &function, Loop *loop, LoopInfo &info, CallInst *call, std::vector<BasicBlock *> &region,
+                      std::string &why) {
+    BasicBlock *header = loop->getHeader();
+    BasicBlock *last = call->getParent();
+    SmallPtrSet<BasicBlock *, 16> after, before;
+    std::vector<BasicBlock *> work = {header};
+    while (!work.empty()) { // reachable from the header in the loop, not round the back edge
+        BasicBlock *block = work.back();
+        work.pop_back();
+        if (!after.insert(block).second) continue;
+        for (BasicBlock *next : successors(block)) {
+            if (loop->contains(next) && next != header) work.push_back(next);
+        }
+    }
+    work = {last};
+    while (!work.empty()) { // that reach the invariant
+        BasicBlock *block = work.back();
+        work.pop_back();
+        if (!before.insert(block).second || block == header) continue;
+        for (BasicBlock *previous : predecessors(block)) {
+            if (loop->contains(previous)) work.push_back(previous);
+        }
+    }
+    for (BasicBlock &block : function) {
+        if (after.count(&block) != 0 && before.count(&block) != 0) region.push_back(&block);
+    }
+    SmallPtrSet<BasicBlock *, 16> inside(region.begin(), region.end());
+    for (BasicBlock *block : region) {
+        if (info.getLoopFor(block) != loop) {
+            why = "an inner loop comes before its invariant";
+            return false;
+        }
+        for (Instruction &instruction : *block) {
+            if (&instruction == call) break;
+            if (!is_bookkeeping(instruction) && instruction.mayWriteToMemory()) {
+                why = "its invariant is not the first statement of the body: something before it writes memory";
+                return false;
+            }
+        }
+        if (block == last) continue;
+        auto *branch = dyn_cast<CondBrInst>(block->getTerminator());
+        if (!isa<UncondBrInst>(block->getTerminator()) && branch == nullptr) {
+            why = "something other than a branch comes before its invariant";
+            return false;
+        }
+        unsigned outside = 0;
+        for (BasicBlock *next : successors(block)) {
+            if (inside.count(next) == 0 && !is_terminal(next)) outside++;
+        }
+        if (outside > 1 || (outside == 1 && branch == nullptr)) {
+            why = "something that leaves the loop comes before its invariant";
+            return false;
+        }
+    }
+    return true;
+}
+
+// A copy of a region that ends at a copy of the invariant's call: where the header's phis stand, the values
+// `phi_values` gives. The loop's test is not part of it (a branch to a block outside the region that does not end the
+// program becomes a jump to the other one), and its end has no terminator yet. The checks that trap are kept, as proof
+// points; with `trust_checks` (the invariant is assumed) they are assumed to pass instead.
+struct Evaluation {
+    BasicBlock *entry = nullptr;
+    BasicBlock *tail = nullptr;
+    CallInst *call = nullptr;
+};
+
+Evaluation clone_region(Function &function, const std::vector<BasicBlock *> &region, CallInst *call,
+                        const DenseMap<PHINode *, Value *> &phi_values, bool trust_checks) {
+    BasicBlock *header = region.front();
+    SmallPtrSet<BasicBlock *, 16> inside(region.begin(), region.end());
+    ValueToValueMapTy mapped;
+    SmallVector<BasicBlock *, 16> made;
+    auto copy = [&](BasicBlock *block) {
+        BasicBlock *clone = CloneBasicBlock(block, mapped, ".ind", &function);
+        mapped[block] = clone;
+        made.push_back(clone);
+    };
+    for (BasicBlock *block : region)
+        copy(block);
+    for (BasicBlock *block : region) { // the checks that trap (assumed to pass, when the invariant is assumed)
+        if (block == call->getParent() || trust_checks) continue;
+        for (BasicBlock *next : successors(block)) {
+            if (inside.count(next) == 0 && is_terminal(next) && mapped.count(next) == 0) copy(next);
+        }
+    }
+    for (PHINode &phi : header->phis()) {
+        cast<PHINode>(mapped[&phi])->eraseFromParent();
+        mapped[&phi] = phi_values.lookup(&phi);
+    }
+    for (BasicBlock *block : region) { // the test: only the way that stays
+        auto *branch = block == call->getParent() ? nullptr : dyn_cast<CondBrInst>(block->getTerminator());
+        if (branch == nullptr) continue;
+        for (unsigned i = 0; i < 2; i++) {
+            BasicBlock *stay = branch->getSuccessor(i);
+            BasicBlock *leave = branch->getSuccessor(1 - i);
+            bool test = inside.count(stay) != 0 && inside.count(leave) == 0 && !is_terminal(leave);
+            bool check = trust_checks && inside.count(stay) != 0 && is_terminal(leave);
+            if (!test && !check) continue;
+            auto *clone = cast<BasicBlock>(mapped[block]);
+            IRBuilder<> builder(clone->getTerminator());
+            builder.CreateBr(stay);
+            clone->getTerminator()->eraseFromParent();
+            break;
+        }
+    }
+    remapInstructionsInBlocks(made, mapped);
+    Evaluation result;
+    result.entry = cast<BasicBlock>(mapped[header]);
+    result.tail = cast<BasicBlock>(mapped[call->getParent()]);
+    result.call = cast<CallInst>(mapped[call]);
+    while (&result.tail->back() != result.call)
+        result.tail->back().eraseFromParent();
+    return result;
+}
+
+// The names of what a pass changes, as the source writes them: loop variables whose next value is not their own, and
+// the objects it writes.
+std::vector<std::string> written_names(Loop *loop, const std::vector<Value *> &objects) {
+    std::vector<std::string> names;
+    auto add = [&](Value *value) {
+        std::string name = source_name_of(value);
+        if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+    };
+    for (PHINode &phi : loop->getHeader()->phis()) {
+        if (phi.getIncomingValueForBlock(loop->getLoopLatch()) != &phi) add(&phi);
+    }
+    for (Value *object : objects)
+        add(object);
+    return names;
+}
+
+// The number of a loop in the unit, from the mark in its header; -1 without one.
+int marker_index(BasicBlock *header) {
+    for (Instruction &instruction : *header) {
+        auto *call = dyn_cast<CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() != nullptr &&
+            call->getCalledFunction()->getName() == "smith_loop")
+            return static_cast<int>(cast<ConstantInt>(call->getArgOperand(0))->getZExtValue());
+    }
+    return -1;
+}
+
+enum class Cut { Skipped, Done, Refused };
+
+// What cutting a loop has worked out before it changes anything.
+struct Plan {
+    std::vector<CallInst *> invariants;
+    std::vector<std::vector<BasicBlock *>> regions;
+    std::vector<Value *> objects;
+    std::vector<uint64_t> sizes;
+    std::vector<Align> alignments;
+};
+
+bool plan_cut(UnitContext &context, Loop *loop, LoopInfo &info, Plan &plan, std::string &why) {
+    BasicBlock *latch = loop->getLoopLatch();
+    if (loop->getLoopPreheader() == nullptr || latch == nullptr ||
+        !isa<UncondBrInst>(loop->getLoopPreheader()->getTerminator())) {
+        why = "the loop has no preheader or no single back edge";
+        return false;
+    }
+    for (CallInst *call : plan.invariants) {
+        plan.regions.emplace_back();
+        if (!invariant_region(context.function, loop, info, call, plan.regions.back(), why)) return false;
+    }
+    if (!loop_writes(loop, plan.objects, why)) return false;
+    for (PHINode &phi : loop->getHeader()->phis()) {
+        Type *type = phi.getType();
+        if (!type->isIntegerTy() && !type->isFloatingPointTy() && phi.getIncomingValueForBlock(latch) != &phi) {
+            why = "a loop variable is a pointer or a vector";
+            return false;
+        }
+    }
+    for (Value *object : plan.objects) {
+        Align align(1);
+        uint64_t bytes = havoc_bytes(context.function, object, align);
+        if (bytes == 0) {
+            why = "it writes an object whose size the prover does not know (a slice or a pointer to an array)";
+            return false;
+        }
+        plan.sizes.push_back(bytes);
+        plan.alignments.push_back(align);
+    }
+    return true;
+}
+
+// Evaluations of every invariant one after the other; each call is given to `use`. Returns the first block and the
+// last, which has no terminator yet.
+std::pair<BasicBlock *, BasicBlock *> chain_evaluations(Function &function, const Plan &plan,
+                                                        const DenseMap<PHINode *, Value *> &phi_values,
+                                                        bool trust_checks,
+                                                        const std::function<void(size_t, CallInst *)> &use) {
+    std::vector<Evaluation> all;
+    for (size_t i = 0; i < plan.invariants.size(); i++) {
+        all.push_back(clone_region(function, plan.regions[i], plan.invariants[i], phi_values, trust_checks));
+        use(i, all.back().call);
+    }
+    for (size_t i = 0; i + 1 < all.size(); i++) {
+        IRBuilder<> builder(all[i].tail);
+        builder.CreateBr(all[i + 1].entry);
+    }
+    return {all.front().entry, all.back().tail};
+}
+
+// Cuts one loop as described above. Skipped: it has no invariant, or it is better unrolled. Refused: it has one and the
+// loop cannot be cut, `why`.
+Cut cut_loop(UnitContext &context, const Options &options, Loop *loop, LoopInfo &info, std::string &why) {
+    Function &function = context.function;
+    Module &module = context.module;
+    LLVMContext &llvm_context = module.getContext();
+    BasicBlock *header = loop->getHeader();
+    Plan plan;
+    plan.invariants = loop_invariants(loop, info);
+    if (plan.invariants.empty()) return Cut::Skipped;
+    int index = marker_index(header);
+    if (index < 0) {
+        why = "the loop has no mark";
+        return Cut::Refused;
+    }
+    UnrolledLoop &record = context.unit.loops[static_cast<size_t>(index)];
+    // Both are possible when the loop has a bound: by default the loop is unrolled when it has few passes.
+    if (options.loops == Options::Loops::Unroll ||
+        (options.loops == Options::Loops::Auto && record.passes != 0 && record.passes <= options.induction_from_passes))
+        return Cut::Skipped;
+    if (!plan_cut(context, loop, info, plan, why)) return Cut::Refused;
+    record.writes = written_names(loop, plan.objects);
+    BasicBlock *preheader = loop->getLoopPreheader();
+    BasicBlock *latch = loop->getLoopLatch();
+    for (Instruction &instruction : *header) { // the mark is for the unroller
+        auto *call = dyn_cast<CallBase>(&instruction);
+        if (call != nullptr && call->getCalledFunction() != nullptr &&
+            call->getCalledFunction()->getName() == "smith_loop") {
+            call->eraseFromParent();
+            break;
+        }
+    }
+    FunctionCallee requires_function = module.getOrInsertFunction(
+        "smith_contract_requires", plan.invariants.front()->getCalledFunction()->getFunctionType(),
+        plan.invariants.front()->getCalledFunction()->getAttributes());
+    auto tag = [&](CallInst *call, bool step) {
+        call->setMetadata("smith.induction", id_node(llvm_context, (static_cast<unsigned>(index) + 1) * 2 + step));
+    };
+    DenseMap<PHINode *, Value *> from_preheader, from_latch, as_they_are;
+    for (PHINode &phi : header->phis()) {
+        from_preheader[&phi] = phi.getIncomingValueForBlock(preheader);
+        from_latch[&phi] = phi.getIncomingValueForBlock(latch);
+        as_they_are[&phi] = &phi;
+    }
+    // on entry, at the back edge, and at the start of an arbitrary pass (assumed, not proved)
+    auto [entry_first, entry_last] =
+        chain_evaluations(function, plan, from_preheader, false, [&](size_t, CallInst *call) { tag(call, false); });
+    auto [back_first, back_last] =
+        chain_evaluations(function, plan, from_latch, false, [&](size_t, CallInst *call) { tag(call, true); });
+    auto assume = [&](size_t i, CallInst *call) {
+        auto *assumption = CallInst::Create(requires_function, {call->getArgOperand(0)}, "", call->getIterator());
+        assumption->setDebugLoc(plan.invariants[i]->getDebugLoc());
+        assumption->setMetadata("smith.owner", id_node(llvm_context, function_id(function)));
+        call->eraseFromParent();
+    };
+    auto [test_first, test_last] = chain_evaluations(function, plan, as_they_are, true, assume);
+    std::vector<PHINode *> phis;
+    for (PHINode &phi : header->phis())
+        phis.push_back(&phi);
+    IRBuilder<> wiring(entry_last);
+    wiring.CreateBr(header);
+    preheader->getTerminator()->replaceSuccessorWith(header, entry_first);
+    Type *result = function.getReturnType();
+    ReturnInst::Create(llvm_context, result->isVoidTy() ? nullptr : Constant::getNullValue(result), back_last);
+    latch->getTerminator()->replaceSuccessorWith(header, back_first);
+    BasicBlock *rest = header->splitBasicBlock(header->getFirstNonPHIIt(), "smith.test");
+    Instruction *jump = header->getTerminator();
+    IRBuilder<> assuming(test_last);
+    assuming.CreateBr(rest);
+    jump->replaceSuccessorWith(rest, test_first);
+    // arbitrary values in the phis and in what the loop writes
+    function.setMemoryEffects(MemoryEffects::unknown()); // it now reads globals, whatever it inferred
+    const DataLayout &layout = module.getDataLayout();
+    IRBuilder<> builder(jump);
+    builder.SetCurrentDebugLocation(loop->getStartLoc());
+    std::vector<std::pair<PHINode *, Value *>> replaced;
+    for (PHINode *phi : phis) {
+        Value *value = phi->getIncomingValueForBlock(latch) == phi ? phi->getIncomingValueForBlock(preheader) : nullptr;
+        if (value == nullptr) {
+            auto *source = new GlobalVariable(module, phi->getType(), false, GlobalValue::InternalLinkage,
+                                              Constant::getNullValue(phi->getType()),
+                                              "smith.havoc." + std::to_string(context.havocs++));
+            source->setAlignment(layout.getABITypeAlign(phi->getType()));
+            auto *load = builder.CreateAlignedLoad(phi->getType(), source, source->getAlign());
+            load->takeName(phi);
+            value = load;
+        }
+        replaced.push_back({phi, value});
+    }
+    for (size_t i = 0; i < plan.objects.size(); i++) {
+        auto *type = ArrayType::get(Type::getInt8Ty(llvm_context), plan.sizes[i]);
+        auto *source =
+            new GlobalVariable(module, type, false, GlobalValue::InternalLinkage, ConstantAggregateZero::get(type),
+                               "smith.havoc." + std::to_string(context.havocs++));
+        source->setAlignment(plan.alignments[i]);
+        if (auto *local = dyn_cast<AllocaInst>(plan.objects[i]))
+            local->setMetadata("smith.havoced", MDNode::get(llvm_context, {}));
+        copy_object(jump, loop->getStartLoc(), plan.objects[i], source, plan.sizes[i], plan.alignments[i], true);
+    }
+    for (CallInst *call : plan.invariants)
+        call->eraseFromParent();
+    for (auto &[phi, value] : replaced) {
+        phi->replaceAllUsesWith(value);
+        phi->eraseFromParent();
+    }
+    record.induction = true;
+    return Cut::Done;
+}
+
+// The loops with an invariant that are proved by induction (innermost first, the loop information read again after each
+// cut), and the others left to the unroller; a loop that has an invariant and could not be cut says why.
+void cut_loops(UnitContext &context, Analyses &analyses, const Options &options) {
+    Function &function = context.function;
+    std::string error;
+    analyses.run_function(function, "loop-simplify", error);
+    std::set<const BasicBlock *> left;
+    for (bool changed = true; changed;) {
+        changed = false;
+        DominatorTree dominators(function);
+        LoopInfo info(dominators);
+        SmallVector<Loop *, 8> loops = info.getLoopsInPreorder();
+        for (auto at = loops.rbegin(); at != loops.rend() && !changed; ++at) {
+            if (left.count((*at)->getHeader()) != 0) continue;
+            std::string why;
+            Cut result = cut_loop(context, options, *at, info, why);
+            if (result == Cut::Done) {
+                changed = true;
+                continue;
+            }
+            left.insert((*at)->getHeader());
+            int index = marker_index((*at)->getHeader());
+            if (result == Cut::Refused && index >= 0) context.unit.loops[static_cast<size_t>(index)].not_cut = why;
+        }
+        if (changed) analyses.run_function(function, "simplifycfg,dce", error);
+    }
+    analyses.functions.invalidate(function, PreservedAnalyses::none());
 }
 
 // ---- what a proof costs the solver ----
@@ -2254,11 +2799,18 @@ void collect_costs(Function &function, Unit &unit) {
     }
     for (const UnrolledLoop &loop : unit.loops) {
         Cost cost;
-        cost.what = loop.passes != 0 ? "a loop unrolled into " + std::to_string(loop.passes) + " passes"
-                                     : "a loop unrolled (its pass count is not a constant LLVM reads before unrolling)";
+        if (loop.induction) {
+            cost.what = "a loop proved by induction: one pass of its body, whatever its bound";
+        } else if (!loop.not_cut.empty()) {
+            cost.what = "a loop unrolled into " + std::to_string(loop.passes) +
+                        " passes, its invariant checked in each (" + loop.not_cut + ", so not proved by induction)";
+        } else
+            cost.what = loop.passes != 0
+                            ? "a loop unrolled into " + std::to_string(loop.passes) + " passes"
+                            : "a loop unrolled (its pass count is not a constant LLVM reads before unrolling)";
         cost.file = loop.file;
         cost.line = loop.line;
-        cost.count = loop.passes;
+        cost.count = loop.induction ? 1 : loop.passes;
         cost.weight = 1;
         found.push_back(cost);
     }
@@ -2268,7 +2820,7 @@ void collect_costs(Function &function, Unit &unit) {
 
 } // namespace
 
-Prepared program_prepare(Program &program, const std::string &name) {
+Prepared program_prepare(Program &program, const std::string &name, const Options &options) {
     Prepared prepared;
     prepared.module = CloneModule(*program.module);
     prepared.function = split_slice_parameters(prepared.module->getFunction(name));
@@ -2343,11 +2895,13 @@ Prepared program_prepare(Program &program, const std::string &name) {
     std::string error;
     allow_unlimited_unrolling();
     analyses.run_function(function, clean_pipeline, error);
+    reveal_loop_tests(function);
     std::string loop;
     int index = -1;
     std::vector<Argument *> bounded = assume_requires(function);
     analyses.functions.invalidate(function, PreservedAnalyses::none());
     mark_loops(analyses, function, prepared.unit);
+    cut_loops(context, analyses, options);
     for (int round = 0; round < 4 && find_loop(function, loop, index); round++) {
         analyses.run_function(function, unroll_pipeline, error);
     }

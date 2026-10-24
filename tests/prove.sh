@@ -623,6 +623,34 @@ prove "$cases/clamp.c" "$here/bootstrap/lib/smith/contract.c"
 expect "contract.c in the program: the contracts are still proved" 0 "$rc"
 expect_contains "contract.c in the program: ... as before" "$out" "proved, 0 failed"
 
+# 16d. A loop with a smith_invariant is proved by induction (issue #56): the invariant on entry, then one pass of the body from
+# an arbitrary state that satisfies it. A bound of 4096 costs one pass (unrolled, it runs out of its budget), and a loop with
+# no bound proves.
+prove -v --no-cache "$cases/induction.c" --function=triple
+expect "induction: n <= 4096 with an inductive invariant proves" 0 "$rc"
+expect_contains "induction: ... and the cost report says which mode the loop used" "$out" "a loop proved by induction: one pass of its body"
+prove --unroll --budget=3 "$cases/induction.c" --function=triple
+expect "induction: --unroll pays for 4096 passes, and runs out" 1 "$rc"
+prove "$cases/induction.c" --function=countdown
+expect "induction: a loop with no bound proves from its invariant" 0 "$rc"
+prove "$cases/induction.c" --function=filled
+expect "induction: a local array the loop writes is arbitrary at the start of a pass, and the loop proves" 0 "$rc"
+prove "$cases/induction.c" --function=too_small
+expect "induction: an invariant that is not inductive is refuted" 1 "$rc"
+expect_contains "induction: ... at the line of the invariant, after a pass" "$out" "induction.c:39: smith_invariant(total <= 10) may be false after a pass of the loop"
+expect_contains "induction: ... saying it may be too weak and what the body writes" "$out" "the invariant may be too weak: the body writes"
+expect_contains "induction: ... with the values of the pass" "$out" "counterexample:"
+prove "$cases/induction.c" --function=not_on_entry
+expect "induction: an invariant that is false on entry is refuted" 1 "$rc"
+expect_contains "induction: ... when the loop is entered" "$out" "induction.c:50: smith_invariant(total == 3 * i) may be false when the loop is entered"
+prove -v --induction "$cases/loop_count.c" --function=sum_bounded
+expect "induction: a loop without an invariant is unrolled as before, whatever the mode" 0 "$rc"
+prove -v "$cases/board.c" --function=occupied
+expect "induction: an invariant too weak to be inductive still proves by unrolling when the loop has a count" 0 "$rc"
+expect_contains "induction: ... and -v says it was unrolled" "$out" "so it was proved by unrolling its loops"
+prove -v --induction-from=2 "$cases/induction.c" --function=countdown
+expect "induction: --induction-from only moves the threshold" 0 "$rc"
+
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
 # rebuild of smith with the same prover keeps the proofs.
 if grep -q '__DATE__\|__TIME__' "$here/shim/prove.cpp"; then

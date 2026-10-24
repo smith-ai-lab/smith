@@ -16,5 +16,5 @@ them or all of them divided by 8, whichever is more. The child process has the k
 large wall-clock limit for one that is blocked. `smith prove -v` first prints each phase's time and the module's size (read and link, the gate, flattening, verify); the gate skips flattening when no function has a contract of its own (asserts alone are not one), so a program with nothing to prove costs seconds. It then lists every function with wall, CPU and charged time (a
 cached one marked cached, with the time it took), the slowest query of each and, for one that took a second or
 ran out, what made it costly: the IR's divisions by a variable, products of variables, loads and stores by line, copies
-of large objects and unrolled loops. Proofs are cached by content (`$XDG_CACHE_HOME/smith/proofs`, a hash of the IR the
+of large objects and loops (each with its mode: unrolled into N passes, or proved by induction, one pass whatever the bound: a loop with a `smith_invariant` and more than 16 passes is cut, #56). Proofs are cached by content (`$XDG_CACHE_HOME/smith/proofs`, a hash of the IR the
 prover checks, 31 days unused removed), and only what changed is proved again; `--no-cache` proves again.

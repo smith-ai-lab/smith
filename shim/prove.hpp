@@ -38,6 +38,8 @@ struct Point {
     int call_site = -1;               // the call of a callee whose contract this is, an index of Unit::call_sites
     std::vector<std::string> inlined; // "function at file:line" for each helper this point was inlined from
     const llvm::Instruction *where = nullptr; // the call that was replaced, for the values visible there
+    int induction_loop = -1;                  // a loop proved by induction: its index in Unit::loops
+    bool induction_step = false;              // ... and this is its check at the back edge (else: on entry)
 };
 
 // A call of a function whose contract replaced it.
@@ -61,6 +63,9 @@ struct UnrolledLoop {
     unsigned shrink_passes = 0;        // with no count: the most passes a divide or shift of a value to zero takes
     std::string shrink_what;           // "a 64-bit value divided by 10"
     std::vector<std::string> controls; // the variables that decide the trip count (or, with no count, the exit)
+    bool induction = false;            // not unrolled: its smith_invariant is proved by induction, one pass of its body
+    std::vector<std::string> writes;   // with an invariant: what a pass changes (the variables and objects it writes)
+    std::string not_cut;               // with an invariant but unrolled: why it could not be proved by induction
 };
 
 // Something in the code being proved that makes a query costly for the solver, with the line it comes from. Facts of
@@ -124,6 +129,12 @@ struct Options {
     std::string emit_ir;           // a file that gets the IR of each function, as it is checked (--emit-ir)
     bool emit_ir_append = false;   // the file is not emptied first (the project verb proves several groups)
     bool no_cache = false;         // prove again what a cached proof has proved
+    // A loop with a smith_invariant that has a bound can be unrolled (the invariant is proved on each pass) or proved
+    // by induction (once, for any pass). Auto: by induction when it has more than `induction_from_passes` passes or no
+    // count. --induction and --unroll say it for every loop.
+    enum class Loops { Auto, Induction, Unroll };
+    Loops loops = Loops::Auto;
+    unsigned induction_from_passes = 16;
 };
 
 // ---- shim/prove_ir.cpp ----
@@ -171,7 +182,7 @@ struct Prepared {
     Unit unit;
     std::unique_ptr<Unprovable> unprovable;
 };
-Prepared program_prepare(Program &program, const std::string &name);
+Prepared program_prepare(Program &program, const std::string &name, const Options &options = {});
 
 // What a proof of this prepared function costs the solver, by the line (Unit::costs, Unit::loops are filled by
 // program_prepare); the instructions whose value `root` depends on, through operands only.

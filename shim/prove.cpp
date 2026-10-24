@@ -24,6 +24,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <libproc.h>
 #include <string>
 #include <sys/resource.h>
@@ -42,7 +43,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // Bump when a change to the prover can change what a function proves or how it fails.
-#define SMITH_PROVER_VERSION "6"
+#define SMITH_PROVER_VERSION "7"
 
 // The checks of UBSan that become explicit branches to a trap in the IR. null, alignment and object-size are left to
 // Alive2's memory model, which treats an invalid access as undefined behaviour itself; pointer-overflow, bool and enum
@@ -68,6 +69,9 @@ struct Arguments {
                  "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
                  "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
                  "  --no-cache        prove again what a cached proof already proved\n"
+                 "  --induction       prove every loop that has a smith_invariant by induction (one pass)\n"
+                 "  --unroll          unroll every loop that has a bound, its invariant checked on each pass\n"
+                 "  --induction-from=N  by default a loop with an invariant is unrolled up to N passes (16)\n"
                  "  -v                print the functions that are proved too, with their time, the slowest\n"
                  "                    query of each and, when it took a second, what made it costly\n");
     std::exit(2);
@@ -91,6 +95,13 @@ Arguments parse(int argc, char **argv) {
             arguments.options.emit_ir_append = true;
         } else if (argument.rfind("--library=", 0) == 0) {
             arguments.libraries.push_back(argument.substr(10));
+        } else if (argument == "--induction") {
+            arguments.options.loops = prove::Options::Loops::Induction;
+        } else if (argument == "--unroll") {
+            arguments.options.loops = prove::Options::Loops::Unroll;
+        } else if (argument.rfind("--induction-from=", 0) == 0) {
+            arguments.options.induction_from_passes =
+                static_cast<unsigned>(std::strtoul(argument.c_str() + 17, nullptr, 10));
         } else if (argument == "--no-cache") {
             arguments.options.no_cache = true;
         } else if (argument.rfind("--function=", 0) == 0) {
@@ -184,6 +195,43 @@ const char *describe(prove::Kind kind) {
     }
 }
 
+// Whether `name` is written in `text` as a word.
+bool mentions(const std::string &text, const std::string &name) {
+    for (size_t found = text.find(name); found != std::string::npos; found = text.find(name, found + 1)) {
+        auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        bool before = found > 0 && word(text[found - 1]);
+        bool after = found + name.size() < text.size() && word(text[found + name.size()]);
+        if (!before && !after) return true;
+    }
+    return false;
+}
+
+// An invariant of a loop proved by induction that fails: on entry, or (the usual case) at the back edge, where the
+// values shown are those of the arbitrary pass it started from.
+void print_induction_finding(const prove::Unit &unit, const prove::Point &point) {
+    const prove::UnrolledLoop &loop = unit.loops[static_cast<size_t>(point.induction_loop)];
+    if (!point.induction_step) {
+        std::printf("  %s: smith_invariant(%s) may be false when the loop is entered\n",
+                    at(point.file, point.line).c_str(), point.text.c_str());
+        return;
+    }
+    std::printf(
+        "  %s: smith_invariant(%s) may be false after a pass of the loop (it is proved by induction: assumed at "
+        "the start of an arbitrary pass, one pass of the body, checked again)\n",
+        at(point.file, point.line).c_str(), point.text.c_str());
+    std::string unmentioned;
+    for (const std::string &name : loop.writes) {
+        if (!mentions(point.text, name)) unmentioned += (unmentioned.empty() ? "`" : ", `") + name + "`";
+    }
+    if (unmentioned.empty())
+        std::printf("      the invariant may be too weak to carry the proof, or wrong: the counterexample is a pass it "
+                    "allows\n");
+    else
+        std::printf("      the invariant may be too weak: the body writes %s, which it does not mention (what a pass "
+                    "changes is arbitrary at its start)\n",
+                    unmentioned.c_str());
+}
+
 void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
     if (finding.point == nullptr) {
         std::printf(
@@ -207,8 +255,13 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
                         at(point.file, point.line).c_str());
             break;
         }
-        case prove::Kind::Ensures:
         case prove::Kind::Invariant:
+            if (point.induction_loop >= 0) {
+                print_induction_finding(unit, point);
+                break;
+            }
+            [[fallthrough]];
+        case prove::Kind::Ensures:
             std::printf("  %s: %s(%s) may be false\n", at(point.file, point.line).c_str(), describe(point.kind),
                         point.text.c_str());
             break;
@@ -340,6 +393,13 @@ void print_costs(const prove::Unit &unit, size_t limit) {
     if (unit.costs.empty()) std::printf("      nothing stands out: many small operations\n");
 }
 
+// The loops of the function, each with the mode it used.
+void print_loops(const prove::Unit &unit) {
+    for (const prove::Cost &cost : unit.costs) {
+        if (cost.weight == 1) std::printf("  %s: %s\n", at(cost.file, cost.line).c_str(), cost.what.c_str());
+    }
+}
+
 // Under a proof that took long enough to matter (or one that ran out), or with -v for all of them.
 void print_time_report(const prove::Unit &unit, const prove::Outcome &outcome, const prove::Options &options) {
     bool slow = outcome.charged >= 1.0 || outcome.status == prove::Outcome::Timeout;
@@ -358,7 +418,11 @@ void print_time_report(const prove::Unit &unit, const prove::Outcome &outcome, c
                     prove::Options::solver_threads);
         print_queries(unit, outcome, slow ? 4 : 1);
     }
-    if (slow) print_costs(unit, 8);
+    if (slow) {
+        print_costs(unit, 8);
+    } else {
+        print_loops(unit); // which mode each loop used: unrolled, or proved by induction
+    }
 }
 
 void emit_ir(const prove::Prepared &prepared, const prove::Options &options) {
@@ -367,10 +431,9 @@ void emit_ir(const prove::Prepared &prepared, const prove::Options &options) {
     file << prove::program_ir_text(prepared);
 }
 
-// Proves one function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not, and 2
-// when it is proved by a cached proof.
-int prove_unit(prove::Program &loaded, const std::string &name, const prove::Options &options) {
-    prove::Prepared prepared = prove::program_prepare(loaded, name);
+// Proves a prepared function and prints what there is to say about it. Returns 0 when it is proved, 1 when it is not,
+// and 2 when it is proved by a cached proof.
+int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     std::string label = prepared.unit.name + "  (" + at(prepared.unit.file, prepared.unit.line) + ")";
     emit_ir(prepared, options);
     if (prepared.unprovable != nullptr) {
@@ -429,6 +492,64 @@ int prove_unit(prove::Program &loaded, const std::string &name, const prove::Opt
     for (const std::string &note : prepared.unit.notes)
         std::printf("  %s\n", note.c_str());
     return status;
+}
+
+// Runs `run` with what it prints kept in a string instead.
+std::string captured(const std::function<int()> &run, int &status) {
+    std::fflush(stdout);
+    FILE *file = std::tmpfile();
+    int saved = dup(1);
+    dup2(fileno(file), 1);
+    status = run();
+    std::fflush(stdout);
+    dup2(saved, 1);
+    close(saved);
+    std::string text;
+    char buffer[4096];
+    std::rewind(file);
+    for (size_t got; (got = std::fread(buffer, 1, sizeof buffer, file)) > 0;)
+        text.append(buffer, got);
+    std::fclose(file);
+    return text;
+}
+
+// A loop with an invariant that has a bound could be proved either way: the unit used induction on loops that all have
+// a count of at most `unroll_fallback_passes` (a loop with no count can only be proved by induction, and unrolling a
+// bigger one would run out of its budget).
+constexpr unsigned unroll_fallback_passes = 128;
+
+bool could_unroll(const prove::Unit &unit) {
+    bool cut = false;
+    for (const prove::UnrolledLoop &loop : unit.loops) {
+        if (loop.induction && (loop.passes == 0 || loop.passes > unroll_fallback_passes)) return false;
+        cut = cut || loop.induction;
+    }
+    return cut;
+}
+
+// Proves one function. By default a loop with an invariant of more passes than --induction-from is proved by induction,
+// which costs one pass but needs an invariant strong enough to carry the proof; when that fails and unrolling is
+// possible, the function is proved by unrolling too, so nothing that unrolling proves is lost.
+int prove_unit(prove::Program &loaded, const std::string &name, const prove::Options &options) {
+    prove::Prepared prepared = prove::program_prepare(loaded, name, options);
+    if (options.loops != prove::Options::Loops::Auto || prepared.unprovable != nullptr || !could_unroll(prepared.unit))
+        return prove_prepared(prepared, options);
+    int first = 0;
+    std::string first_report = captured([&] { return prove_prepared(prepared, options); }, first);
+    if (first != 1) {
+        std::fputs(first_report.c_str(), stdout);
+        return first;
+    }
+    prove::Options unrolled = options;
+    unrolled.loops = prove::Options::Loops::Unroll;
+    prove::Prepared again = prove::program_prepare(loaded, name, unrolled);
+    int second = 0;
+    std::string second_report = captured([&] { return prove_prepared(again, unrolled); }, second);
+    std::fputs((second == 1 ? first_report : second_report).c_str(), stdout);
+    if (second != 1 && options.verbose)
+        std::printf("  its invariants are not inductive (or too costly to prove by induction), so it was proved by "
+                    "unrolling its loops\n");
+    return second;
 }
 
 double cpu_of(const rusage &usage) {
