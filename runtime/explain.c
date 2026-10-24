@@ -312,7 +312,8 @@ constexpr unsigned smith_explain_hang_seconds = 600;
 
 static void smith_explain_let_go(int signal_number) {
     (void)signal_number;
-    smith_explain_detach();
+    smith_explain_detach(); // NOLINT(bugprone-signal-handler): not async-safe, but the alternative is a test stopped
+                            // for ever
     _exit(0);
 }
 

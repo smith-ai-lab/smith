@@ -144,10 +144,16 @@ extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, 
     process = target.Attach(info, error);
     if (!error.Success() || !process.IsValid()) {
         std::snprintf(problem, capacity, "%s", error.GetCString() != nullptr ? error.GetCString() : "attach failed");
+        if (process.IsValid()) process.Detach(); // a test left attached stays stopped for ever
         return false;
     }
     thread = find_thread();
-    return thread.IsValid();
+    if (!thread.IsValid()) {
+        std::snprintf(problem, capacity, "no thread of the test is stopped at its check");
+        process.Detach();
+        return false;
+    }
+    return true;
 }
 
 extern "C" size_t smith_explain_frames(SmithExplainFrame *out, size_t capacity) {

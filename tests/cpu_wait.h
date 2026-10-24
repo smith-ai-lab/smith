@@ -14,7 +14,10 @@
 constexpr int cpu_wait_slice_milliseconds = 50;
 constexpr int cpu_wait_hang_milliseconds = 600000; // the wall backstop: ten minutes
 
-enum { cpu_wait_ready, cpu_wait_spent, cpu_wait_hung };
+constexpr int cpu_wait_ready = 0;
+constexpr int cpu_wait_spent = 1;
+constexpr int cpu_wait_hung = 2;
+constexpr int cpu_wait_slices_max = cpu_wait_hang_milliseconds / cpu_wait_slice_milliseconds + 1;
 
 static uint64_t cpu_wait_cpu_ns(pid_t pid) {
     struct rusage_info_v2 usage = {};
@@ -34,21 +37,22 @@ static uint64_t cpu_wait_wall_ms(void) {
 static int cpu_wait_for(int fd, pid_t pid, int cpu_ms) {
     uint64_t began = cpu_wait_wall_ms();
     uint64_t cpu_began = cpu_wait_cpu_ns(pid);
-    for (;;) {
+    for (int slice = 0; slice < cpu_wait_slices_max; slice++) {
         struct pollfd poller = {.fd = fd, .events = POLLIN};
         if (poll(&poller, 1, cpu_wait_slice_milliseconds) > 0) return cpu_wait_ready;
         if ((cpu_wait_cpu_ns(pid) - cpu_began) / 1000000 >= (uint64_t)cpu_ms) return cpu_wait_spent;
         if (cpu_wait_wall_ms() - began >= (uint64_t)cpu_wait_hang_milliseconds) return cpu_wait_hung;
     }
+    return cpu_wait_hung;
 }
 
 // A settle: ready when a message came, spent when the server has been idle for `quiet_ms` of wall time in a row (any
 // CPU time it spends restarts the count), hung after ten minutes.
-static int cpu_wait_quiet(int fd, pid_t pid, int quiet_ms) {
+[[maybe_unused]] static int cpu_wait_quiet(int fd, pid_t pid, int quiet_ms) {
     uint64_t began = cpu_wait_wall_ms();
     uint64_t idle_began = began;
     uint64_t cpu_last = cpu_wait_cpu_ns(pid);
-    for (;;) {
+    for (int slice = 0; slice < cpu_wait_slices_max; slice++) {
         struct pollfd poller = {.fd = fd, .events = POLLIN};
         if (poll(&poller, 1, cpu_wait_slice_milliseconds) > 0) return cpu_wait_ready;
         uint64_t cpu_now = cpu_wait_cpu_ns(pid);
@@ -58,6 +62,7 @@ static int cpu_wait_quiet(int fd, pid_t pid, int quiet_ms) {
         if (now - idle_began >= (uint64_t)quiet_ms) return cpu_wait_spent;
         if (now - began >= (uint64_t)cpu_wait_hang_milliseconds) return cpu_wait_hung;
     }
+    return cpu_wait_hung;
 }
 
 #endif
