@@ -146,6 +146,29 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   holds a call: the parameters are written as `(*(T *)0)` for the compiler to type (a local of the body, a runtime loop
   variable, cannot be named there). The grammar (`tree-sitter/grammar.js`) reads `x.[e]` and `x->[e]`; clang-format
   needs nothing. `[:]` fields are #82's.
+  **`fields(T)` is an array of `Field`** (issue #100, ticket 5 of #95). `Field` is `struct smith_field { char name[:];
+  unsigned long long type; }` (a type value is a handle, `runtime/lang_type.c`), `typedef`ed `Field` and defined with the
+  `static inline Field smith_field_make(char *name, size_t length, unsigned long long kind)` that builds one, raw (the
+  tokens `smith_lang_field_words*` in `runtime/lang_fields.c`) once per file: after the last `import` line of a module
+  whose text has `fields(` or `Field` (`host->maybe_field`, which also makes `maybe_type_value` true so that every token
+  is offered) or that imports a header with a generic that reflects (`=fields p@` in its lines, `lang->field_import`),
+  else where the first instance that needs it is written. `fields(T)[i]` that is no `.name` and no `.[F]` becomes
+  `smith_field_make("m", 1, handle)`, a call the compiler evaluates (the r6 evaluator runs C functions and a
+  `constexpr` pointer may point into a literal); `fields(T)` alone becomes `smith_fields_<instance>_<k>`, a
+  `static constexpr Field[N]` declared before the instance. The conditions the compiler decides while an instance is
+  written (`if constexpr`, `.[F]` of anything but `fields(T)[i]`) cannot name a local of the instance, whose body the
+  parser has not read: `smith_lang_fields_alias` remembers `constexpr Field f = E;` (or `constexpr auto`) with `E`
+  already written out as an expression (the `for constexpr` variables as numbers, `fields(T)[i]` as the call of the
+  maker), and `smith_lang_cx_text` writes the name as that expression in the text it asks `value_query` about. `.[E]`
+  asks `value_query` for `(E).name.data` (the host reads a pointer to a whole string literal as its characters, the one
+  pointer `value_query` accepts) and for `(E).type`, a handle `smith_lang_ty_spelling_of` turns back into the field's
+  type; a tuple's members `_0` are named "0". The type of `f.type` in `is_float(f.type)` is asked the same way
+  (`smith_lang_fields_valued_type`). The definition goes out through `gen_put` with the generics dump off (a test reads
+  the instances only); it cannot be queued as source, because a function body in the queue is read as the lowering's
+  sparse body and loses the `}` that ends it. Limits: the functions a condition calls must be defined in the file that
+  instantiates the generic (the instance is compiled there), `typeof(x->[f])` of a bit-field kept in a variable is C's
+  error, a file that defines its own `Field` and also uses `fields(` is a redefinition, `countof(f.name)` is not
+  lowered in a generic's body (use `f.name.count[0]`).
 - **`for constexpr`** (issue #71, skill smith-lang-rest). Smith is C plus compile time. The lowering keeps, for the
   instance being written, the loop variables of the `for constexpr` it is inside, and writes plain C.
   - *Built lists are gone* (issue #101). `auto name = {a, b};` and `name = {name..., x};` made a list of variables
@@ -186,5 +209,5 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
 
 `smith_lang_ty_token` is called from `smith_lang_process` for each token of a file whose host set `maybe_type_value` (`hasTypeValue`: `type` before a name or `*`, outside a generic's `constexpr type T` and outside comments). It follows the file's shape (parentheses, braces, a declaration's specifiers) and recognises four **regions** where a type name is a value: the initializer of a declaration whose type is or holds a `type`, the arguments of a call to a function that takes a type, the `return` of a function that returns one, and either side of `==` and `!=`. Inside `sizeof(` and the like a type is a type, and `(i32)x` is a cast. A type value is turned back into the type it names where a type is written: `t x;` at the start of a declaration, `(t)y`, and an argument of a generic call (`pool::width(t)`), by asking the compiler for the variable's value (`value_query`, a chain of names, `.field` and `[n]`) and reading the index. A generic's `if constexpr (small(T))` writes `T` as its handle when it is a whole argument of a call. A variable of a `type` or of a struct that holds one, declared without `constexpr`, is an error that names the field. The fast paths of the hook and of the module's declarations do not run in such a file (every token is offered, and a sized name is read with its neighbours).
 
-Not built, by design of the stages: a type value inside a generic's body or as its parameter, functions that return a type where a type is written (ticket 7, `List(f32)`), `fields(T)` as an array of `{name, type}` (ticket 5), `typeof(x)` as a leaf. A `constexpr type` initialized from an array element or a member is known to the compiler only after the next statement has begun (the parser has not attached the initializer yet when the lowering reads the next token), so the first use is one statement later.
+Not built, by design of the stages: a type value inside a generic's body or as its parameter, functions that return a type where a type is written (ticket 7, `List(f32)`), `typeof(x)` as a leaf. A `constexpr type` initialized from an array element or a member is known to the compiler only after the next statement has begun (the parser has not attached the initializer yet when the lowering reads the next token), so the first use is one statement later.
 

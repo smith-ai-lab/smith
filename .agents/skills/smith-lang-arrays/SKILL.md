@@ -29,7 +29,7 @@ c::strncmp(word, "abc", countof(word));   // a slice is a pointer only as an arg
 - `xs[i]` and `xs[a:b]` are checked in debug and release builds, not fast: a failure is `contract::assert`'s report with the line and the stack. The program links the trace library (`smith_library(b, "trace")`; tests have it). A constant negative index, a step (`xs[a:b:2]`), slicing a pointer or an array with one bound, passing a pointer where a slice is wanted, and `[:][:]` (more dimensions are #105; rows of different lengths are a struct) are errors.
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, defined where used and in a generated header, so C writes `(struct smith_array_i32_n){.data = p, .count = {n}}` to call an export. The array expression of `xs[i]` is written twice at most as a name or member chain: do not index the result of a call with side effects.
-- Not yet: `arena::push(&a, T, n)` (use `push_array`), `fields`, `format` and `check_equal` over slices, `T xs[:][2]`, the prover and the debugger.
+- Not yet: `arena::push(&a, T, n)` (use `push_array`), `format` and `check_equal` over slices, `T xs[:][2]`, the prover and the debugger.
 
 ## Array parameters: `i32 xs[4]`
 
