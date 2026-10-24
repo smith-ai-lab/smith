@@ -689,6 +689,7 @@ static const BuildTestScript build_test_scripts[] = {
     {"build-3", "build", "3/4", nullptr, 1},
     {"build-smith", "build-smith", nullptr, nullptr, 1},
     {"cache", "cache", nullptr, nullptr, 0},
+    {"ci_tree", "ci_tree", nullptr, nullptr, 0},
     {"contract", "contract", nullptr, nullptr, 0},
     {"conventions", "conventions", nullptr, nullptr, 1},
     {"dap", "dap", nullptr, nullptr, 0},
