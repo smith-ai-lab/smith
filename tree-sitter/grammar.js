@@ -245,15 +245,16 @@ module.exports = grammar(C, {
     ),
 
     // A run-time array (issue #82): `i32 xs[:]` declares a slice, `xs[a:b]`, `xs[:b]`, `xs[a:]` and `xs[:]` slice one
-    // (`xs[a:b:2]`, a step, is an error of the lowering and parses).
+    // (`xs[a:b:2]`, a step, is an error of the lowering and parses). Issue #126: the brackets take C's qualifiers,
+    // `xs[const :]` and `xs[const restrict :]` (`static` and `volatile` parse and are errors of the lowering).
     array_declarator: ($, original) => choice(original, prec(1, seq(
-      field('declarator', $._declarator), '[', field('size', ':'), ']'))),
+      field('declarator', $._declarator), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     array_field_declarator: ($, original) => choice(original, prec(1, seq(
-      field('declarator', $._field_declarator), '[', field('size', ':'), ']'))),
+      field('declarator', $._field_declarator), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     array_type_declarator: ($, original) => choice(original, prec(1, seq(
-      field('declarator', $._type_declarator), '[', field('size', ':'), ']'))),
+      field('declarator', $._type_declarator), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     abstract_array_declarator: ($, original) => choice(original, prec(1, seq(
-      field('declarator', optional($._abstract_declarator)), '[', field('size', ':'), ']'))),
+      field('declarator', optional($._abstract_declarator)), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     subscript_expression: ($, original) => choice(original, prec(C.PREC.SUBSCRIPT, seq(
       field('argument', $.expression), '[', field('index', $.slice_range), ']'))),
     slice_range: $ => choice(

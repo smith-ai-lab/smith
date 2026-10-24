@@ -611,3 +611,35 @@ i32 take(i32 xs[:]) {
               (slice_range
                 (number_literal)))
             (number_literal)))))))
+
+================================================================================
+a slice takes C's qualifiers in its brackets (issue #126)
+================================================================================
+
+void copy(u8 dst[restrict :], const u8 src[const restrict :], u8 const rest[:]);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (array_declarator
+            (identifier)
+            (type_qualifier)))
+        (parameter_declaration
+          (type_qualifier)
+          (primitive_type)
+          (array_declarator
+            (identifier)
+            (type_qualifier)
+            (type_qualifier)))
+        (parameter_declaration
+          (primitive_type)
+          (type_qualifier)
+          (array_declarator
+            (identifier)))))))

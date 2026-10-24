@@ -4423,6 +4423,22 @@
                 "value": "["
               },
               {
+                "type": "REPEAT",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "type_qualifier"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "static"
+                    }
+                  ]
+                }
+              },
+              {
                 "type": "FIELD",
                 "name": "size",
                 "content": {
@@ -4527,6 +4543,22 @@
                 "value": "["
               },
               {
+                "type": "REPEAT",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "type_qualifier"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "static"
+                    }
+                  ]
+                }
+              },
+              {
                 "type": "FIELD",
                 "name": "size",
                 "content": {
@@ -4629,6 +4661,22 @@
               {
                 "type": "STRING",
                 "value": "["
+              },
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "type_qualifier"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "static"
+                    }
+                  ]
+                }
               },
               {
                 "type": "FIELD",
@@ -4749,6 +4797,22 @@
               {
                 "type": "STRING",
                 "value": "["
+              },
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "type_qualifier"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "static"
+                    }
+                  ]
+                }
               },
               {
                 "type": "FIELD",

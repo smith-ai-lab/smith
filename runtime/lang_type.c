@@ -350,6 +350,7 @@ static bool smith_lang_ty_from_tag(SmithLang *lang, const SmithHost *host, const
     size_t stem = 0;
     if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) return false;
     size_t prefix = sizeof smith_lang_slice_prefix - 1;
+    if (dims.restrict_data) prefix += 9; // the slice's own `restrict` is no part of the type a value holds
     unsigned depth = 0;
     while (depth < dims.count && dims.runtime[depth])
         depth += 1;
