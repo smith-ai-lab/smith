@@ -10482,12 +10482,37 @@
                 "value": "("
               },
               {
-                "type": "FIELD",
-                "name": "argument",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "expression"
-                }
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "FIELD",
+                    "name": "argument",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "expression"
+                    }
+                  },
+                  {
+                    "type": "REPEAT",
+                    "content": {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": ","
+                        },
+                        {
+                          "type": "FIELD",
+                          "name": "argument",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "expression"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
               },
               {
                 "type": "STRING",

@@ -55,10 +55,11 @@ module.exports = grammar(C, {
     // SMITH_TEST_DEFINE_VALUE(bool, bool, ...) at file scope, whose expansion is a definition: no semicolon
     macro_invocation: $ => prec.dynamic(-2, seq(field('name', $.identifier), $.argument_list)),
 
-    // typeof(*x) f(auto x): the operand of a type-like macro or of typeof may be an expression
+    // typeof(*x) f(auto x): the operand of a type-like macro or of typeof may be an expression; slice_of(T, countof(rest))
+    // f(...): a generic's result type computed from its parameters has a list of them
     macro_type_specifier: ($, original) => choice(
       original,
-      prec.dynamic(-2, seq(field('name', $.identifier), '(', field('argument', $.expression), ')')),
+      prec.dynamic(-2, seq(field('name', $.identifier), '(', commaSep1(field('argument', $.expression)), ')')),
     ),
 
     // x.[f] and x->[f]: the member named by a field f of fields(T)
