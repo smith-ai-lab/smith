@@ -57,6 +57,7 @@ constexpr unsigned smith_lang_gen_flag_space = 2U;
 constexpr unsigned smith_lang_gen_flag_expand = 4U;
 constexpr unsigned smith_lang_gen_flag_name = 8U;
 constexpr unsigned smith_lang_gen_flag_value = 16U; // an `auto` parameter's name in the result type's `typeof(...)`
+constexpr unsigned smith_lang_gen_flag_slice = 32U; // `smith_array_T_n`: the tag of a slice of the type parameter T
 
 // Adds a token, with its text; the index it got, or UINT32_MAX when the pool is full.
 static uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token, const char *text, size_t length) {

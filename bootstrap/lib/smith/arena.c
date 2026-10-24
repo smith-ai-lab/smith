@@ -95,7 +95,7 @@ smith_requires(arena->used <= arena->capacity);
 smith_requires(smith_arena_align_valid(align));
 __SIZE_TYPE__ padding = 0;
 return smith_arena_measure(arena, size, align, &padding);
-} [ [ clang :: unavailable ( "smith::arena::push is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_type ( void ) ; [ [ clang :: unavailable ( "smith::arena::push_array is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_array_type ( void ) ;
+} [ [ clang :: unavailable ( "smith::arena::push is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_type ( void ) ; [ [ clang :: unavailable ( "smith::arena::push_array is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_array_type ( void ) ; [ [ clang :: unavailable ( "smith::arena::push_slice is a generic function: call it from a .smith module" ) ] ] void smith_arena_push_slice_type ( void ) ;
 [[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, __SIZE_TYPE__ capacity);
 [[nodiscard]] SmithArena smith_arena_carve(SmithArena *parent, __SIZE_TYPE__ capacity) {
 smith_trusted();

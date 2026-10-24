@@ -36,8 +36,8 @@ i32 main(void) {
 
 In a program the arena is `io.arena` (`smith-io`), made in `main` and passed down; the static block above is for a program without io.
 
-- `arena::push(&a, T)` and `arena::push_array(&a, T, count)` are the calls to write. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
-- The module's names: `arena::make`, `fits`, `push`, `push_array`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library.
+- `arena::push(&a, T)` (a `T *`), `arena::push_array(&a, T, count)` (a `T *`) and `arena::push_slice(&a, T, count)` (a `T[:]`: the pointer and the count together, `Point line[:] = arena::push_slice(&a, Point, 10);`, zeroed, `countof(line)` is 10; bind it before indexing it) are the calls to write. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
+- The module's names: `arena::make`, `fits`, `push`, `push_array`, `push_slice`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library.
 - `arena::fits(&a, size, align)` asks whether a push would fit. `align` of the raw calls is a power of two, at most `arena::align_max` (64).
 - A scope gives back what a stretch of work pushed, and scopes end in reverse order of beginning:
 

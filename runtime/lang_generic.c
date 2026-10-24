@@ -90,11 +90,33 @@ static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, si
     return lang->recording && smith_lang_param_named(&smith_lang_generics[lang->recording_generic], name, length) >= 0;
 }
 
+// runtime/lang_tuple.c and runtime/lang_slice.c, which come after this file
+static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
+                                   size_t capacity, const char **problem, uint32_t *where);
+static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity);
+
+// The type parameter a slice's tag is made of: `smith_array_T_n` in `typeof(T[:]) push_slice(...)`, whose struct is
+// named after its element. The token is marked as a slice tag (the instance spells the tag of the type it was asked
+// for); -1 for any other token.
+static int smith_lang_slice_tag_param(const SmithLangGeneric *generic, SmithLangGenToken *token) {
+    static const char prefix_text[] = "smith_array_"; // runtime/lang_slice.c's smith_lang_slice_prefix
+    size_t prefix = sizeof prefix_text - 1;
+    const char *text = smith_lang_gt_str(token);
+    if (token->length <= prefix + 2 || memcmp(text, prefix_text, prefix) != 0 ||
+        memcmp(text + token->length - 2, "_n", 2) != 0) {
+        return -1;
+    }
+    int found = smith_lang_param_named(generic, text + prefix, token->length - prefix - 2);
+    if (found >= 0) token->flags |= (uint8_t)smith_lang_gen_flag_slice;
+    return found;
+}
+
 // A token that names the T of the generic being recorded is marked, unless it is a member (`x.T`).
 static void smith_lang_capture_mark(SmithLang *lang, uint32_t index) {
     const SmithLangGeneric *generic = &smith_lang_generics[lang->recording_generic];
     SmithLangGenToken *token = &smith_lang_gt.tokens[index];
     int found = smith_lang_param_named(generic, smith_lang_gt_str(token), token->length);
+    if (found < 0) found = smith_lang_slice_tag_param(generic, token);
     if (found < 0) return;
     if (index > generic->first) {
         const SmithLangGenToken *before = &smith_lang_gt.tokens[index - 1];
@@ -832,6 +854,7 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
         if (token->param != 0) used = smith_lang_append(out, capacity, used, "P%u", token->param);
         if ((token->flags & smith_lang_gen_flag_expand) != 0) used = smith_lang_append(out, capacity, used, "x");
         if ((token->flags & smith_lang_gen_flag_space) != 0) used = smith_lang_append(out, capacity, used, "w");
+        if ((token->flags & smith_lang_gen_flag_slice) != 0) used = smith_lang_append(out, capacity, used, "g");
         size_t line = smith_lang_lines_known() ? smith_lang_line_of(token->location) : 0;
         size_t column = smith_lang_lines_known() ? smith_lang_column_of(token->location) : 0;
         used = smith_lang_append(out, capacity, used, "@%zu:%zu=", line, column);
@@ -929,6 +952,8 @@ static bool smith_lang_generic_read_token(const char *word, size_t length, Smith
             out->flags |= smith_lang_gen_flag_expand;
         } else if (word[at] == 'w') {
             out->flags |= smith_lang_gen_flag_space;
+        } else if (word[at] == 'g') {
+            out->flags |= smith_lang_gen_flag_slice;
         } else {
             return false;
         }
@@ -1448,6 +1473,34 @@ static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const
     if (wrap) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ")", location, instance_id);
 }
 
+// The tag of a slice of the type argument, as `T xs[:]` would name it where the instance is written.
+static void smith_lang_gen_put_slice_tag(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                         unsigned param, uint32_t location, uint32_t instance_id) {
+    static SmithToken span[48];
+    uint32_t first = instance->arg_first[param];
+    uint32_t count = instance->arg_count[param];
+    if (count > sizeof span / sizeof span[0]) count = sizeof span / sizeof span[0];
+    for (uint32_t i = 0; i < count; i++) // the tokens of the type
+    {
+        span[i] = smith_lang_gt_token(&smith_lang_it, &smith_lang_it.tokens[first + i]);
+        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // `u8` was lowered
+            if (!smith_lang_equals(span[i].text, span[i].length, smith_lang_sized[k].standard)) continue;
+            span[i].text = smith_lang_sized[k].name;
+            span[i].length = (uint32_t)strlen(smith_lang_sized[k].name);
+        }
+    }
+    char spelled[512];
+    char tag[640];
+    const char *problem = nullptr;
+    uint32_t where = location;
+    if (!smith_lang_tuple_spell(lang, span, 0, count, spelled, sizeof spelled, &problem, &where)) {
+        smith_lang_error(lang, host, location, "%s", problem != nullptr ? problem : "cannot spell the slice's type");
+        snprintf(spelled, sizeof spelled, "error");
+    }
+    smith_lang_slice_tag(spelled, tag, sizeof tag);
+    smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, tag, location, instance_id);
+}
+
 // A token of a generic with the type arguments of `instance` in place of T (none: as it is).
 static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                      const SmithLangInstance *instance, SmithLangGenToken *token, uint32_t fallback,
@@ -1466,6 +1519,11 @@ static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, con
             smith_lang_gen_puts(lang, host, open, sizeof open / sizeof open[0], at, instance_id);
             smith_lang_gen_put_arg(lang, host, instance, (unsigned)token->param - 1, instance_id);
             smith_lang_gen_puts(lang, host, close, sizeof close / sizeof close[0], at, instance_id);
+            return;
+        }
+        if ((token->flags & smith_lang_gen_flag_slice) != 0) {
+            smith_lang_gen_put_slice_tag(lang, host, instance, (unsigned)token->param - 1,
+                                         token->location != UINT32_MAX ? token->location : fallback, instance_id);
             return;
         }
         smith_lang_gen_put_arg(lang, host, instance, (unsigned)token->param - 1, instance_id);

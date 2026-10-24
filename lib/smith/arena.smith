@@ -25,6 +25,7 @@ import <stdint.h>;
 // result is typed:
 //   Foo *foo = arena::push(&arena, Foo);
 //   Foo *foos = arena::push_array(&arena, Foo, count);
+//   Foo foos[:] = arena::push_slice(&arena, Foo, count); // a slice: the pointer and the count together
 // C and C++ cannot call a generic. C passes the type's size and alignment to the functions that return a void *,
 // converted with no cast:
 //   Foo *foo = smith_arena_push(arena, sizeof(Foo), alignof(Foo));
@@ -180,6 +181,16 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 [[smith::c_name("smith_arena_push_array_type")]] export [[nodiscard]] T *push_array(Arena *arena, constexpr type T,
                                                                                     usize count) {
     return (T *)push_array_raw(arena, sizeof(T), count, alignof(T));
+}
+
+// count zeroed Ts as a slice: T[:], a pointer and its count, the memory from the arena. For .smith; a count that
+// overflows is the same stop as in push_array_raw. One size gives one dimension; push_array stays for pointers.
+[[smith::c_name("smith_arena_push_slice_type")]] export [[nodiscard]] typeof(T[:])
+push_slice(Arena *arena, constexpr type T, usize count) {
+    T *items = (T *)push_array_raw(arena, sizeof(T), count, alignof(T));
+    // The body is written as tokens before T is known, so it names the slice's struct (the one the result type
+    // makes, `smith_array_<element>_n`) itself; an instance spells it for its T.
+    return (struct smith_array_T_n){.data = items, .count = {count}};
 }
 
 // A second arena of capacity bytes out of the memory the parent has not used: the next capacity bytes after its cursor,
