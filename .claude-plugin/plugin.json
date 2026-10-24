@@ -54,6 +54,7 @@
     "./.agents/skills/smith-idiom-port/",
     "./.agents/skills/smith-inflate/",
     "./.agents/skills/smith-inflate-sink/",
+    "./.agents/skills/smith-http/",
     "./.agents/skills/smith-io/",
     "./.agents/skills/smith-io-async/",
     "./.agents/skills/smith-io-c/",
