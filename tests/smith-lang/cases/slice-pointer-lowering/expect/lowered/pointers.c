@@ -9,7 +9,8 @@ __SIZE_TYPE__ pointers_length(pointers_Text *text) __asm__("_pointers::length");
 __SIZE_TYPE__ pointers_length(pointers_Text *text) {
 return countof(*text);
 }
-void pointers_grow(struct smith_array_i32_n_2 {__INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } *const xs) __asm__("_pointers::grow");
-void pointers_grow(struct smith_array_i32_n_2 {__INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } *const xs) {
+struct smith_array_i32_n_2 {__INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; };
+void pointers_grow(struct smith_array_i32_n_2 *const xs) __asm__("_pointers::grow");
+void pointers_grow(struct smith_array_i32_n_2 *const xs) {
 (*xs)[0][1] = 1;
 }
