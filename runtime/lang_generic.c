@@ -1858,6 +1858,7 @@ typedef enum {
     SmithLangFrame_Loop,        // a `for constexpr`
     SmithLangFrame_TypedStart,  // the arguments of a call that holds a call are written to the pool, to be typed
     SmithLangFrame_TypedFinish, // ... and the call is written, now that they are typed
+    SmithLangFrame_CountFinish, // the member `countof` takes is typed, and the count is written (lang_fields.c)
 } SmithLangFrameAction;
 
 typedef struct {
@@ -3314,6 +3315,9 @@ static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, Smi
         return true;
     case SmithLangFrame_TypedFinish:
         smith_lang_typed_finish(lang, host, replay, frame);
+        return true;
+    case SmithLangFrame_CountFinish:
+        smith_lang_countof_finish(lang, host, replay, frame);
         return true;
     case SmithLangFrame_Tokens:
         break;

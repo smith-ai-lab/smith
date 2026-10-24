@@ -267,7 +267,38 @@ static bool smith_lang_fields_count(const SmithHost *host, const SmithLangGeneri
 
 // ---- In a condition
 
-// The index after `typeof ( ... . [ fields(T)[i] ] )` at `at`, or 0 when the tokens are not that: the type of a field.
+// The `[` that matches the `]` at `close`, searching down to `floor`, or UINT32_MAX.
+static uint32_t smith_lang_fields_open_of(uint32_t close, uint32_t floor) {
+    int depth = 0;
+    for (uint32_t i = close + 1; i > floor; i--) { // bounded by the group
+        const SmithLangGenToken *part = smith_lang_cx_token(i - 1);
+        depth += smith_lang_gt_close(part) ? 1 : smith_lang_gt_open(part) ? -1 : 0;
+        if (depth == 0) return i - 1;
+    }
+    return UINT32_MAX;
+}
+
+// In `typeof ( ... . [ F ] [ i ] [ j ] )` from `at` to `after` (the index after its `)`): the `]` that closes the field
+// group and how many subscripts follow it (the element of a slice or an array: `typeof(x.[f][0])`). False when the tokens
+// are no member of a struct.
+static bool smith_lang_fields_typeof_parts(uint32_t at, uint32_t after, uint32_t *close, uint32_t *subscripts) {
+    *close = after - 2;
+    *subscripts = 0;
+    for (size_t guard = 0; guard < 8; guard++) { // the subscripts
+        if (!smith_lang_gt_punct(smith_lang_cx_token(*close), "]")) return false;
+        uint32_t open = smith_lang_fields_open_of(*close, at + 1);
+        if (open == UINT32_MAX || open <= at + 2) return false;
+        const SmithLangGenToken *before = smith_lang_cx_token(open - 1);
+        if (smith_lang_gt_punct(before, ".") || smith_lang_gt_punct(before, "->")) return true;
+        if (!smith_lang_gt_punct(before, "]")) return false;
+        *subscripts += 1;
+        *close = open - 1;
+    }
+    return false;
+}
+
+// The index after `typeof ( ... . [ fields(T)[i] ] )` at `at`, or 0 when the tokens are not that: the type of a field
+// (or of an element of it, `typeof(x.[f][0])`).
 static uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
     const SmithLangGenToken *token = smith_lang_cx_token(at);
     if (at + 5 >= limit || !(smith_lang_cx_word(token, "typeof") || smith_lang_cx_word(token, "__typeof__")) ||
@@ -275,46 +306,66 @@ static uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
         return 0;
     }
     uint32_t after = smith_lang_cx_skip_group(at + 1, limit);
-    if (after == UINT32_MAX || after < at + 8 || !smith_lang_fields_punct(after - 2, limit, "]")) return 0;
-    uint32_t open = after - 2; // the `[` that matches this `]`
-    int depth = 0;
-    for (uint32_t i = after - 2; i > at + 1; i--) { // bounded by the group
-        const SmithLangGenToken *part = smith_lang_cx_token(i);
-        depth += smith_lang_gt_close(part) ? 1 : smith_lang_gt_open(part) ? -1 : 0;
-        if (depth == 0) {
-            open = i;
-            break;
-        }
+    uint32_t close = 0;
+    uint32_t subscripts = 0;
+    if (after == UINT32_MAX || after < at + 8 || !smith_lang_fields_typeof_parts(at, after, &close, &subscripts)) {
+        return 0;
     }
-    bool member = open > at + 2 &&
-                  (smith_lang_fields_punct(open - 1, limit, ".") || smith_lang_fields_punct(open - 1, limit, "->"));
-    return member ? after : 0;
+    return after;
 }
 
-// The field in `typeof ( ... [ F ] )`, the tokens [first, last): 1 and the field, -1 and the message.
+// The field in `typeof ( ... [ F ] )`, the tokens [first, last): 1 and the field, -1 and the message. `subscripts` is how
+// many `[i]` follow the field.
 static int smith_lang_fields_in_typeof(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                       uint32_t place, uint32_t first, uint32_t last, SmithLangFieldRef *ref) {
-    uint32_t close = last - 2; // the `]`
-    uint32_t open = close;
-    int depth = 0;
-    for (uint32_t i = close; i > first + 1; i--) { // bounded by the group
-        const SmithLangGenToken *part = smith_lang_cx_token(i);
-        depth += smith_lang_gt_close(part) ? 1 : smith_lang_gt_open(part) ? -1 : 0;
-        if (depth == 0) {
-            open = i;
-            break;
-        }
-    }
+                                       uint32_t place, uint32_t first, uint32_t last, SmithLangFieldRef *ref,
+                                       uint32_t *subscripts) {
+    uint32_t close = 0;
+    smith_lang_fields_typeof_parts(first, last, &close, subscripts);
+    uint32_t open = smith_lang_fields_open_of(close, first + 1);
     return smith_lang_fields_group(lang, host, replay, open + 1, close, place, ref);
+}
+
+// The element of a type: what a subscript of a value of it is. `spelling` is rewritten (a pointer or an array, or the
+// struct of a slice, whose element is what its `data` points to). False when there is none.
+static bool smith_lang_fields_element(const SmithHost *host, char *spelling, size_t capacity) {
+    size_t length = strlen(spelling);
+    char *open = strchr(spelling, '[');
+    if (open != nullptr && length > 0 && spelling[length - 1] == ']') { // `double[4]`: the first dimension goes
+        char *close = strchr(open, ']');
+        memmove(open, close + 1, strlen(close + 1) + 1);
+        length = strlen(spelling);
+        while (length > 0 && spelling[length - 1] == ' ')
+            spelling[--length] = 0;
+        return true;
+    }
+    if (strncmp(spelling, "struct smith_array_", 19) == 0 && host->type_field != nullptr) {
+        SmithFieldInfo info = {};
+        host->type_field(host->context, spelling, (uint32_t)length, 0, &info);
+        if (info.status != SmithFields_Ok || strcmp(info.name, "data") != 0) return false;
+        snprintf(spelling, capacity, "%s", info.type);
+        length = strlen(spelling);
+    }
+    if (length == 0 || spelling[length - 1] != '*') return false;
+    spelling[--length] = 0;
+    while (length > 0 && spelling[length - 1] == ' ')
+        spelling[--length] = 0;
+    return true;
 }
 
 // The spelling of the type of the field in `typeof ( ... [ F ] )` at `first`..`last`, for the parser to read.
 static bool smith_lang_cx_field_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling, size_t capacity) {
     SmithLangFieldRef ref;
-    if (smith_lang_fields_in_typeof(cx->lang, cx->host, cx->replay, cx->location, first, last, &ref) != 1) {
+    uint32_t subscripts = 0;
+    if (smith_lang_fields_in_typeof(cx->lang, cx->host, cx->replay, cx->location, first, last, &ref, &subscripts) !=
+        1) {
         return smith_lang_cx_fail(cx, "%s", ref.message);
     }
     snprintf(spelling, capacity, "%s", ref.info.type);
+    for (uint32_t i = 0; i < subscripts; i++) { // the element of the field
+        if (!smith_lang_fields_element(cx->host, spelling, capacity)) {
+            return smith_lang_cx_fail(cx, "`%s` has no element: it is not a slice, an array or a pointer", spelling);
+        }
+    }
     return true;
 }
 
@@ -384,8 +435,10 @@ typedef struct {
 // member that is not a bit-field (typeof of it as it is), 1 written, -1 an error.
 static int smith_lang_fields_use_typeof(SmithLangFieldUse *use) {
     uint32_t end = smith_lang_fields_typeof_end(use->at, use->limit);
-    int found = smith_lang_fields_in_typeof(use->lang, use->host, use->replay, use->place, use->at, end, &use->ref);
-    if (found == 1 && !use->ref.info.bit_field) return 0;
+    uint32_t subscripts = 0;
+    int found =
+        smith_lang_fields_in_typeof(use->lang, use->host, use->replay, use->place, use->at, end, &use->ref, &subscripts);
+    if (found == 1 && (!use->ref.info.bit_field || subscripts != 0)) return 0;
     use->consumed = end - use->at;
     if (found != 1) return found;
     char text[smith_lang_name_max];
@@ -582,6 +635,119 @@ static int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const S
     return -1;
 }
 
+// ---- `countof` of a member in an instance's body (issue #123)
+
+// `countof(x.[f])`, `countof(p->[f])`, `countof(p->rows[1])`: the member is a slice or a fixed array of a struct the
+// instance was given, which the compiler has not read (the body is written at the end of the file). The member is typed
+// the way a call's arguments are (its names as values of their types), and then the count is written: a number for an
+// array, the `count` of a slice's struct.
+
+// Whether the tokens at `at` are `countof ( E )` with a member access in E: where E is, [*first, *last), and the index
+// after the `)`.
+static bool smith_lang_countof_member_at(const SmithLangFrame *frame, uint32_t *first, uint32_t *last,
+                                         uint32_t *after) {
+    uint32_t at = frame->pos;
+    const SmithLangGenToken *token = smith_lang_cx_token(at);
+    if (at + 4 >= frame->end || !smith_lang_cx_word(token, "countof") || token->special != SmithLangGen_Plain ||
+        token->param != 0 || smith_lang_member_before(at) || !smith_lang_fields_punct(at + 1, frame->end, "(") ||
+        smith_lang_fields_countof_at(at, frame->end)) {
+        return false;
+    }
+    uint32_t close = smith_lang_cx_skip_group(at + 1, frame->end);
+    if (close == UINT32_MAX) return false;
+    bool member = false;
+    for (uint32_t i = at + 2; i + 1 < close; i++) { // bounded by the group
+        const SmithLangGenToken *part = smith_lang_cx_token(i);
+        member = member || (part->special == SmithLangGen_Plain &&
+                            (smith_lang_gt_punct(part, ".") || smith_lang_gt_punct(part, "->")));
+    }
+    *first = at + 2;
+    *last = close - 1;
+    *after = close;
+    return member;
+}
+
+static bool smith_lang_countof_words(SmithLangReplay *replay, uint32_t place, const char *words) {
+    if (!smith_lang_replay_push(replay, 0, 0, 0)) return false;
+    SmithLangFrame *frame = &replay->frames[replay->count - 1];
+    snprintf(frame->words, sizeof frame->words, "%s", words);
+    frame->place = place;
+    return true;
+}
+
+// The `countof` at the frame's position, if it takes a member: true when the tokens were taken.
+static bool smith_lang_countof_begin(SmithLangReplay *replay, uint32_t place, SmithLangFrame *frame) {
+    uint32_t first = 0;
+    uint32_t last = 0;
+    uint32_t after = 0;
+    if (!smith_lang_countof_member_at(frame, &first, &last, &after) || replay->count + 4 > smith_lang_replay_depth_max) {
+        return false;
+    }
+    frame->pos = after;
+    if (replay->typing) { // only a number of the type is wanted
+        smith_lang_countof_words(replay, place, "( ( __SIZE_TYPE__ ) 0 )");
+        return true;
+    }
+    smith_lang_replay_push(replay, first, last, 0);
+    SmithLangFrame *finish = &replay->frames[replay->count - 1];
+    finish->action = SmithLangFrame_CountFinish;
+    finish->place = place;
+    size_t finish_at = replay->count - 1;
+    smith_lang_replay_push(replay, first, last, 0); // the member, written to be typed
+    smith_lang_replay_push(replay, 0, 0, 0);
+    SmithLangFrame *start = &replay->frames[replay->count - 1];
+    start->action = SmithLangFrame_TypedStart;
+    start->source = (int32_t)finish_at;
+    return true;
+}
+
+// The member was written to the pool: ask the compiler its type, then write the count.
+static void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                      SmithLangFrame *frame) {
+    const SmithLangFrame done = *frame;
+    replay->count -= 1;
+    lang->cap_frames -= 1;
+    replay->typing = done.started;
+    char tokens[1024];
+    size_t used = 0;
+    bool fits = true;
+    for (uint32_t at = done.pool_first; at < smith_lang_gt.count; at++) { // the captured tokens
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (used + token->length + 2 >= sizeof tokens) {
+            fits = false;
+            break;
+        }
+        if (at > done.pool_first) tokens[used++] = '\x1f';
+        memcpy(tokens + used, smith_lang_gt_str(token), token->length);
+        used += token->length;
+    }
+    tokens[used] = 0;
+    smith_lang_gt.count = done.pool_first;
+    smith_lang_gt.text_used = done.pool_text;
+    SmithExprType type = {.explain = true};
+    bool typed = fits && host->expr_type != nullptr && host->expr_type(host->context, tokens, (uint32_t)used, &type);
+    uint32_t place = done.place;
+    if (!typed) {
+        smith_lang_error(lang, host, place, "cannot tell what `countof` counts here: %s",
+                         !fits ? "the member is too long" : type.why != nullptr ? type.why : "the compiler cannot say");
+        smith_lang_generic_poison(lang, host, place);
+        return;
+    }
+    static const char tag[] = "struct smith_array_";
+    if (type.is_array) {
+        char number[32];
+        snprintf(number, sizeof number, "%llu", (unsigned long long)type.array_size);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Number, number, place, replay->instance_id);
+    } else if (strncmp(type.canonical, tag, sizeof tag - 1) == 0 && strpbrk(type.canonical + 7, "*[( ") == nullptr) {
+        smith_lang_countof_words(replay, place, ") . count [ 0 ] )");
+        smith_lang_replay_push(replay, done.pos, done.end, 0);
+        smith_lang_countof_words(replay, place, "( (");
+    } else {
+        smith_lang_error(lang, host, place, "`countof` of this is no slice or array: it is `%s`", type.written);
+        smith_lang_generic_poison(lang, host, place);
+    }
+}
+
 // Writes the use of `fields` at the frame's position, if there is one: true when the tokens were taken.
 static bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      SmithLangFrame *frame) {
@@ -589,6 +755,12 @@ static bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, Smi
     uint32_t consumed = 0;
     if (replay->instance != nullptr && smith_lang_cx_word(smith_lang_cx_token(frame->pos), "constexpr")) {
         smith_lang_fields_alias(lang, host, replay, frame);
+    }
+    if (replay->instance != nullptr &&
+        smith_lang_countof_begin(replay, smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(frame->pos),
+                                                              replay->location),
+                                 frame)) {
+        return true;
     }
     int found = smith_lang_fields_use(lang, host, replay, frame->pos, frame->end, &pieces, &consumed);
     if (found == 0) return false;
