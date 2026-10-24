@@ -117,14 +117,24 @@ double seconds_since(Clock::time_point start) {
 // A proof point in Alive's IR: it evaluates its condition where it stands and does nothing else.
 class SmithPoint final : public IR::Instr {
   public:
-    SmithPoint(unsigned id, IR::Value *condition)
-        : Instr(IR::Type::voidTy, "#point" + std::to_string(id)), condition(condition), id(id) {}
+    SmithPoint(unsigned id, IR::Value *condition, IR::Value *first = nullptr, IR::Value *second = nullptr,
+               uint64_t first_bytes = 0, uint64_t second_bytes = 0)
+        : Instr(IR::Type::voidTy, "#point" + std::to_string(id)), condition(condition), id(id), first(first),
+          second(second), first_bytes(first_bytes), second_bytes(second_bytes) {}
 
     IR::Value *condition;
     unsigned id;
+    // A restrict call (issue #65): the objects of two pointers, of this many bytes each, are apart. Said about the
+    // blocks and offsets Alive2 holds, not about addresses, which are far dearer for the solver.
+    IR::Value *first, *second;
+    uint64_t first_bytes, second_bytes;
     mutable IR::StateValue seen;
 
+    bool is_restrict() const {
+        return first != nullptr;
+    }
     std::vector<IR::Value *> operands() const override {
+        if (is_restrict()) return {first, second};
         return condition != nullptr ? std::vector<IR::Value *>{condition} : std::vector<IR::Value *>{};
     }
     bool propagatesPoison() const override {
@@ -135,19 +145,34 @@ class SmithPoint final : public IR::Instr {
     }
     void rauw(const IR::Value &what, IR::Value &with) override {
         if (condition == &what) condition = &with;
+        if (first == &what) first = &with;
+        if (second == &what) second = &with;
     }
     void print(std::ostream &os) const override {
         os << "point " << id;
     }
     IR::StateValue toSMT(IR::State &state) const override {
         if (condition != nullptr) seen = state[*condition];
+        if (is_restrict()) {
+            const IR::StateValue &a = state[*first];
+            const IR::StateValue &b = state[*second];
+            IR::Pointer pa(state.getMemory(), a.value);
+            IR::Pointer pb(state.getMemory(), b.value);
+            smt::expr offset_a = pa.getOffset(), offset_b = pb.getOffset();
+            unsigned bits = offset_a.bits();
+            smt::expr apart = pa.getBid() != pb.getBid() ||
+                              (offset_a + smt::expr::mkUInt(first_bytes, bits)).sle(offset_b) ||
+                              (offset_b + smt::expr::mkUInt(second_bytes, bits)).sle(offset_a);
+            seen = {smt::expr::mkIf(apart, smt::expr::mkUInt(1, 1), smt::expr::mkUInt(0, 1)),
+                    a.non_poison && b.non_poison};
+        }
         return {};
     }
     smt::expr getTypeConstraints(const IR::Function &) const override {
         return true;
     }
     std::unique_ptr<IR::Instr> dup(IR::Function &, const std::string &) const override {
-        return std::make_unique<SmithPoint>(id, condition);
+        return std::make_unique<SmithPoint>(id, condition, first, second, first_bytes, second_bytes);
     }
 };
 
@@ -391,6 +416,18 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         for (IR::BasicBlock *block : source->getBBs()) {
             for (size_t i = 0; i < block->size(); i++) {
                 auto *call = dynamic_cast<IR::FnCall *>(&block->at(i));
+                if (call != nullptr && call->getFnName() == "@smith_restrict") {
+                    auto id = IR::getInt(*call->getArgs()[0].first);
+                    auto first_bytes = IR::getInt(*call->getArgs()[3].first);
+                    auto second_bytes = IR::getInt(*call->getArgs()[4].first);
+                    if (!id || !first_bytes || !second_bytes) continue;
+                    auto *point = new SmithPoint(static_cast<unsigned>(*id), nullptr, call->getArgs()[1].first,
+                                                 call->getArgs()[2].first, static_cast<uint64_t>(*first_bytes),
+                                                 static_cast<uint64_t>(*second_bytes));
+                    points.push_back(point);
+                    block->getInstr(i) = std::unique_ptr<IR::Instr>(point);
+                    continue;
+                }
                 if (call == nullptr || call->getFnName() != "@smith_point") continue;
                 auto id = IR::getInt(*call->getArgs()[0].first);
                 IR::Value *argument = call->getArgs()[1].first;
@@ -749,7 +786,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 if (auto *point = dynamic_cast<const SmithPoint *>(&instruction)) {
                     const Point &info = unit.points[point->id];
                     if (info.kind != Kind::Premise) {
-                        smt::expr broken = point->condition != nullptr
+                        smt::expr broken = point->condition != nullptr || point->is_restrict()
                                                ? !(point->seen.value == 1 && point->seen.non_poison)
                                                : smt::expr(true);
                         tasks.push_back({path && facts && broken,

@@ -26,6 +26,7 @@ enum class Kind {
     Abort,     // abort() or __builtin_trap() is never reached
     Premise,   // this function's smith_requires: assumed, and the inputs that break it are not the function's concern
     Write,     // a write of a function with a smith_modifies is inside the ranges it names
+    Restrict,  // the objects a call reaches through a `restrict` argument and another argument do not overlap (#65)
 };
 
 // Where a proof point came from, to print it like a test failure.

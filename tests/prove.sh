@@ -299,6 +299,27 @@ for function in restricted restricted_other_type reads_both; do
     expect "alias: $function is proved, restrict being what says they are different" 0 "$rc"
 done
 
+# 7c4. `restrict` is checked at the call (issue #65): the objects a call reaches through a restrict argument and another
+# pointer argument are apart, or the call fails naming both parameters and its line.
+for function in apart_locals apart_elements apart_member reads trusted_twice; do
+    prove --function=$function "$cases/restrict_call.c"
+    expect "restrict call: $function is proved" 0 "$rc"
+done
+for pair in same_object:48:a:b overlapping:55:pair:member unknown:62:a:b; do
+    function=${pair%%:*}
+    rest=${pair#*:}
+    line=${rest%%:*}
+    rest=${rest#*:}
+    prove --function=$function "$cases/restrict_call.c"
+    expect "restrict call: $function fails" 1 "$rc"
+    expect_contains "restrict call: $function ... at the call, naming both" "$out" "restrict_call.c:$line: the call of set_"
+done
+prove --function=same_object "$cases/restrict_call.c"
+expect_contains "restrict call: ... naming both parameters" "$out" "passes \`a\` (restrict) and \`b\`"
+prove --function=copies "$cases/restrict_call.c"
+expect "restrict call: a restrict array with no range is an error" 1 "$rc"
+expect_contains "restrict call: ... at the declaration, naming the parameter" "$out" "restrict_call.c:77: cannot be proved: cannot check that the arguments of restrict \`dst\` of copy"
+
 # 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
 for function in apply_move count_of bump_count is_step; do
     prove --function=$function "$cases/by_value.c"

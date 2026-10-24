@@ -7,8 +7,7 @@
 #    was proved and not what merely compiles.
 # 2. False claims: tests/prove/unsound/<case>.c holds functions whose contract is false, each with the input that
 #    refutes it (`// unsound: <function> <text the refuting run prints>`). smith prove must fail the function and the
-#    refuting run must die with the text. `unsound-until-65` marks a claim smith prove still proves (issue #65): its
-#    run refutes it, and the day the prover refuses it this script says to change the marker.
+#    refuting run must die with the text.
 # `full` runs each harness on 8 seeds of 50000 inputs (about a minute), the default on one seed of 2000 (a few seconds).
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
@@ -105,12 +104,6 @@ corpus() { # source file of the corpus
             case $out in
             *"FAIL  $function  ("*) ;;
             *) echo "$function: smith prove should fail it, and says: $(printf '%s\n' "$out" | tail -1)" >>"$log" ;;
-            esac
-            ;;
-        unsound-until-65)
-            case $out in
-            *"ok    $function  ("*) ;;
-            *) echo "$function: smith prove no longer proves it: the marker is now \`unsound:\` (issue #65)" >>"$log" ;;
             esac
             ;;
         esac

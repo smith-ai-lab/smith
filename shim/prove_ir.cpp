@@ -749,6 +749,7 @@ void mark_library(Module &module) {
 
 namespace {
 void hide_loop_tests(Function &function); // below, with the loops' own code
+void check_restrict_calls(Module &module);
 } // namespace
 
 bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error, size_t libraries) {
@@ -827,6 +828,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         if (!is_trusted(function)) mark_returned_pointer(function);
     }
 
+    check_restrict_calls(module); // issue #65: before inlining loses what the callee says is restrict
     // Callees first. A function that calls itself, directly or through others, is not inlined, and cannot be proved.
     CallGraph graph(module);
     std::vector<Function *> order;
@@ -1898,6 +1900,218 @@ void instrument_writes(UnitContext &context) {
     }
 }
 
+// ---- restrict at the call (issue #65) ----
+
+// The type a pointer type points to, without typedefs and qualifiers.
+const DIType *pointee_type(const DIType *type) {
+    auto strip = [](const DIType *t) {
+        while (auto *derived = dyn_cast_or_null<DIDerivedType>(t)) {
+            unsigned tag = derived->getTag();
+            if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type &&
+                tag != dwarf::DW_TAG_restrict_type && tag != dwarf::DW_TAG_atomic_type)
+                break;
+            t = derived->getBaseType();
+        }
+        return t;
+    };
+    auto *pointer = dyn_cast_or_null<DIDerivedType>(strip(type));
+    if (pointer == nullptr || pointer->getTag() != dwarf::DW_TAG_pointer_type) return nullptr;
+    return strip(pointer->getBaseType());
+}
+
+// The source's type of the parameter `index` of `callee` (the sret result, which the source never names, not counted).
+const DIType *parameter_type(const Function &callee, unsigned index) {
+    const DISubprogram *subprogram = callee.getSubprogram();
+    if (subprogram == nullptr || subprogram->getType() == nullptr) return nullptr;
+    auto types = subprogram->getType()->getTypeArray();
+    unsigned hidden = callee.arg_size() > 0 && callee.getArg(0)->hasStructRetAttr() ? 1 : 0;
+    if (index < hidden || types.size() != callee.arg_size() + 1 - hidden) return nullptr;
+    return types[index - hidden + 1];
+}
+
+std::string parameter_name(const Function &callee, unsigned index) {
+    if (const DISubprogram *subprogram = callee.getSubprogram()) {
+        for (const MDNode *node : subprogram->getRetainedNodes()) {
+            auto *variable = dyn_cast<DILocalVariable>(node);
+            if (variable != nullptr && variable->getArg() == index + 1) return variable->getName().str();
+        }
+    }
+    for (const Instruction &instruction : instructions(callee)) {
+        for (const DbgRecord &record : instruction.getDbgRecordRange()) {
+            auto *variable = dyn_cast<DbgVariableRecord>(&record);
+            if (variable != nullptr && variable->getVariable()->getArg() == index + 1 &&
+                variable->getVariable()->getScope()->getSubprogram() == callee.getSubprogram())
+                return variable->getVariable()->getName().str();
+        }
+    }
+    return "argument " + std::to_string(index + 1);
+}
+
+// Whether the body of `callee` uses the pointer parameter `index` as an array: arithmetic on it, an index that is not
+// the object itself, or a use the check cannot follow. A struct pointer handed on to another function stays one object.
+bool used_as_array(const Function &callee, unsigned index, bool is_struct) {
+    SmallVector<const Value *, 8> work{callee.getArg(index)};
+    SmallPtrSet<const Value *, 8> seen, members; // members: addresses inside the object, whatever is done with them
+    while (!work.empty()) {
+        const Value *value = work.pop_back_val();
+        if (!seen.insert(value).second) continue;
+        bool inside = members.contains(value);
+        for (const User *user : value->users()) {
+            if (auto *load = dyn_cast<LoadInst>(user)) {
+                if (isa<AllocaInst>(value) && load->getType()->isPointerTy()) work.push_back(load);
+            } else if (auto *store = dyn_cast<StoreInst>(user)) {
+                if (store->getValueOperand() != value) continue; // written through it
+                auto *slot = dyn_cast<AllocaInst>(store->getPointerOperand());
+                if (slot == nullptr) {
+                    if (inside) continue;
+                    return true;
+                }
+                work.push_back(slot);
+            } else if (auto *gep = dyn_cast<GetElementPtrInst>(user)) {
+                auto *first = dyn_cast<ConstantInt>(gep->getOperand(1));
+                if (!inside && (first == nullptr || !first->isZero() || !is_struct)) return true;
+                members.insert(gep);
+                work.push_back(gep);
+            } else if (auto *call = dyn_cast<CallBase>(user)) {
+                const Function *called = call->getCalledFunction();
+                if (!inside && !is_struct && (called == nullptr || !called->isIntrinsic())) return true;
+            } else if (!inside && (isa<AllocaInst>(value) || isa<PtrToIntInst>(user) || !isa<CastInst>(user))) {
+                return true;
+            } else if (isa<CastInst>(user)) {
+                if (inside) members.insert(user);
+                work.push_back(user);
+            }
+        }
+    }
+    return false;
+}
+
+// The bytes the callee may reach through its pointer parameter `index`: one object of the type it points to. 0 when
+// that is not what the body does (an array, or a type with no size), with the reason in `why`.
+uint64_t accessed_bytes(const Function &callee, unsigned index, std::string &why) {
+    const DIType *type = pointee_type(parameter_type(callee, index));
+    uint64_t bytes = type != nullptr ? (type->getSizeInBits() + 7) / 8 : callee.getParamDereferenceableBytes(index);
+    if (bytes == 0) {
+        why = "its type has no size the prover knows";
+        return 0;
+    }
+    bool is_struct = isa_and_nonnull<DICompositeType>(type) && type->getTag() != dwarf::DW_TAG_array_type;
+    if (used_as_array(callee, index, is_struct)) {
+        why = "the function uses it as an array";
+        return 0;
+    }
+    return bytes;
+}
+
+// Whether the parameter is a `const T *`: the attribute (inferred late) or the source's type.
+bool only_read(const Function &callee, unsigned index) {
+    if (callee.hasParamAttribute(index, Attribute::ReadOnly) || callee.hasParamAttribute(index, Attribute::ReadNone))
+        return true;
+    auto *derived = dyn_cast_or_null<DIDerivedType>(parameter_type(callee, index));
+    while (derived != nullptr && derived->getTag() != dwarf::DW_TAG_pointer_type) {
+        if (derived->getTag() != dwarf::DW_TAG_typedef && derived->getTag() != dwarf::DW_TAG_restrict_type &&
+            derived->getTag() != dwarf::DW_TAG_const_type && derived->getTag() != dwarf::DW_TAG_volatile_type)
+            return false;
+        derived = dyn_cast_or_null<DIDerivedType>(derived->getBaseType());
+    }
+    if (derived == nullptr) return false;
+    for (auto *base = dyn_cast_or_null<DIDerivedType>(derived->getBaseType()); base != nullptr;
+         base = dyn_cast_or_null<DIDerivedType>(base->getBaseType())) {
+        if (base->getTag() == dwarf::DW_TAG_const_type) return true;
+        if (base->getTag() != dwarf::DW_TAG_typedef && base->getTag() != dwarf::DW_TAG_volatile_type) return false;
+    }
+    return false;
+}
+
+// At a call of a function with a `restrict` parameter: the object it reaches through that argument is not the object of
+// any other pointer argument (unless both are only read), a point that names both and the line of the call. The size
+// of each object is what its type says; where the function uses a pointer as an array the range is not known, which is
+// an error at the function's declaration (a call of `smith.restrict_unknown`, which resolve_calls reports). A trusted
+// function's calls are not checked. Done before anything is inlined, which would lose the attribute.
+void check_restrict(Module &module, CallBase &call, Function &callee) {
+    if (is_trusted(callee)) return;
+    LLVMContext &llvm_context = module.getContext();
+    Type *i64 = Type::getInt64Ty(llvm_context);
+    FunctionCallee check = module.getOrInsertFunction(
+        "smith.restrict_check",
+        FunctionType::get(Type::getVoidTy(llvm_context),
+                          {PointerType::getUnqual(llvm_context), PointerType::getUnqual(llvm_context), i64, i64},
+                          false));
+    FunctionCallee unknown = module.getOrInsertFunction("smith.restrict_unknown",
+                                                        FunctionType::get(Type::getVoidTy(llvm_context), {}, false));
+    for (FunctionCallee function : {check, unknown}) {
+        if (auto *declaration = dyn_cast<Function>(function.getCallee())) {
+            declaration->setDoesNotAccessMemory();
+            declaration->setDoesNotThrow();
+        }
+    }
+    auto text = [&](CallBase *marker, const std::string &first, const std::string &second) {
+        marker->setMetadata("smith.restrict_text", MDNode::get(llvm_context, {MDString::get(llvm_context, first),
+                                                                              MDString::get(llvm_context, second)}));
+    };
+    std::set<std::pair<unsigned, unsigned>> done;
+    for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
+        if (!callee.hasParamAttribute(i, Attribute::NoAlias) || !call.getArgOperand(i)->getType()->isPointerTy())
+            continue;
+        for (unsigned j = 0; j < call.arg_size() && j < callee.arg_size(); j++) {
+            if (j == i || !call.getArgOperand(j)->getType()->isPointerTy()) continue;
+            if ((only_read(callee, i) && only_read(callee, j)) || !done.insert({std::min(i, j), std::max(i, j)}).second)
+                continue;
+            std::string why;
+            unsigned bad = i;
+            uint64_t size_i = accessed_bytes(callee, i, why);
+            uint64_t size_j = size_i != 0 ? (bad = j, accessed_bytes(callee, j, why)) : 0;
+            IRBuilder<> builder(&call);
+            builder.SetCurrentDebugLocation(call.getDebugLoc());
+            if (size_i == 0 || size_j == 0) {
+                auto *marker = builder.CreateCall(unknown, {});
+                std::string name = parameter_name(callee, bad);
+                text(marker,
+                     "cannot check that the arguments of restrict `" + name + "` of " + source_name(callee) +
+                         " do not overlap: " + why,
+                     "state the range the function accesses: smith_modifies(" + name +
+                         ", size) or a smith_requires on its size; the call is never assumed fine");
+                if (const DISubprogram *subprogram = callee.getSubprogram())
+                    marker->setMetadata(
+                        "smith.restrict_at",
+                        MDNode::get(llvm_context, {MDString::get(llvm_context, subprogram->getFilename()),
+                                                   ConstantAsMetadata::get(ConstantInt::get(
+                                                       Type::getInt32Ty(llvm_context), subprogram->getLine()))}));
+                continue;
+            }
+            auto *marker = builder.CreateCall(check, {call.getArgOperand(i), call.getArgOperand(j),
+                                                      builder.getInt64(size_i), builder.getInt64(size_j)});
+            marker->setMetadata("smith.resolved", MDNode::get(llvm_context, {}));
+            text(marker,
+                 "the call of " + source_name(callee) + " passes `" + parameter_name(callee, i) + "` (restrict) and `" +
+                     parameter_name(callee, j) + "` objects that may be the same or overlap",
+                 "");
+        }
+    }
+}
+
+// The calls of every function that is read (a trusted one's body never is) are checked.
+void check_restrict_calls(Module &module) {
+    SmallVector<CallBase *, 16> calls;
+    for (Function &function : module) {
+        if (function.isDeclaration() || is_trusted(function)) continue;
+        for (Instruction &instruction : instructions(function)) {
+            auto *call = dyn_cast<CallBase>(&instruction);
+            Function *callee = call != nullptr ? call->getCalledFunction() : nullptr;
+            if (callee == nullptr || callee->isDeclaration() || callee->isIntrinsic() || callee->arg_size() == 0)
+                continue;
+            for (unsigned i = 0; i < callee->arg_size(); i++) {
+                if (callee->hasParamAttribute(i, Attribute::NoAlias)) {
+                    calls.push_back(call);
+                    break;
+                }
+            }
+        }
+    }
+    for (CallBase *call : calls)
+        check_restrict(module, *call, *call->getCalledFunction());
+}
+
 bool resolve_calls(UnitContext &context) {
     Function &function = context.function;
     lower_memcpy_chk(function);
@@ -1930,6 +2144,17 @@ bool resolve_calls(UnitContext &context) {
                 return false;
             }
             StringRef name = callee->getName();
+            if (name == "smith.restrict_unknown") {
+                MDNode *words = call->getMetadata("smith.restrict_text");
+                context.fail(call, cast<MDString>(words->getOperand(0))->getString().str(),
+                             cast<MDString>(words->getOperand(1))->getString().str());
+                if (MDNode *at = call->getMetadata("smith.restrict_at")) {
+                    context.unprovable->file = cast<MDString>(at->getOperand(0))->getString().str();
+                    context.unprovable->line =
+                        static_cast<unsigned>(mdconst::extract<ConstantInt>(at->getOperand(1))->getZExtValue());
+                }
+                return false;
+            }
             if (name.starts_with("objc_msgSend")) {
                 context.fail(call,
                              "an Objective-C message send in " + writer_of(context, call) +
@@ -2019,6 +2244,12 @@ class Normalizer {
             }
             if (auto *call = dyn_cast<CallBase>(instruction);
                 call != nullptr && call->getCalledFunction() != nullptr &&
+                call->getCalledFunction()->getName() == "smith.restrict_check") {
+                point(instruction, Kind::Restrict, nullptr, false);
+                continue;
+            }
+            if (auto *call = dyn_cast<CallBase>(instruction);
+                call != nullptr && call->getCalledFunction() != nullptr &&
                 call->getCalledFunction()->getName() == "smith.write_check") {
                 point(instruction, Kind::Write, instruction->getOperand(0), true);
                 continue;
@@ -2057,6 +2288,8 @@ class Normalizer {
             instruction.setMetadata("smith.owner", nullptr);
             instruction.setMetadata("smith.induction", nullptr);
             instruction.setMetadata("smith.frame_ok", nullptr);
+            instruction.setMetadata("smith.restrict_text", nullptr);
+            instruction.setMetadata("smith.restrict_at", nullptr);
         }
         return true;
     }
@@ -2105,6 +2338,9 @@ class Normalizer {
             info.file = string_of(base->getArgOperand(1));
             if (auto *line = dyn_cast<ConstantInt>(base->getArgOperand(2)))
                 info.line = static_cast<unsigned>(line->getZExtValue());
+        } else if (kind == Kind::Restrict) {
+            if (MDNode *text = call->getMetadata("smith.restrict_text"))
+                info.text = cast<MDString>(text->getOperand(0))->getString().str();
         } else if (kind == Kind::Write) {
             info.text = "the function writes here, outside the ranges its smith_modifies names";
         } else if (kind == Kind::Trap) {
@@ -2143,7 +2379,25 @@ class Normalizer {
             info.text = source_line(info.file, info.line);
         IRBuilder<> builder(call);
         Value *value = condition != nullptr ? condition : builder.getFalse();
-        auto *marker = builder.CreateCall(point_function, {builder.getInt32(info.id), value});
+        CallInst *marker = nullptr;
+        if (kind == Kind::Restrict) { // smith_restrict(id, first, second, first bytes, second bytes)
+            FunctionCallee restrict_point = module.getOrInsertFunction(
+                "smith_restrict",
+                FunctionType::get(Type::getVoidTy(module.getContext()),
+                                  {Type::getInt32Ty(module.getContext()), base->getArgOperand(0)->getType(),
+                                   base->getArgOperand(1)->getType(), base->getArgOperand(2)->getType(),
+                                   base->getArgOperand(3)->getType()},
+                                  false));
+            if (auto *declaration = dyn_cast<Function>(restrict_point.getCallee())) {
+                declaration->setDoesNotAccessMemory();
+                declaration->setDoesNotThrow();
+            }
+            marker = builder.CreateCall(restrict_point,
+                                        {builder.getInt32(info.id), base->getArgOperand(0), base->getArgOperand(1),
+                                         base->getArgOperand(2), base->getArgOperand(3)});
+        } else {
+            marker = builder.CreateCall(point_function, {builder.getInt32(info.id), value});
+        }
         marker->setDebugLoc(call->getDebugLoc());
         info.assume = assume_after && condition != nullptr;
         if (kind == Kind::Invariant) {
@@ -2544,7 +2798,8 @@ bool is_bookkeeping(const Instruction &instruction) {
     auto *call = dyn_cast<CallBase>(&instruction);
     if (call == nullptr || call->getCalledFunction() == nullptr) return false;
     if (call->getCalledFunction()->getName() == "smith_loop" ||
-        call->getCalledFunction()->getName() == "smith.write_check")
+        call->getCalledFunction()->getName() == "smith.write_check" ||
+        call->getCalledFunction()->getName() == "smith.restrict_check")
         return true;
     switch (call->getCalledFunction()->getIntrinsicID()) {
     case Intrinsic::assume:
@@ -3268,6 +3523,8 @@ const char *kind_name(Kind kind) {
         return "smith_requires, assumed";
     case Kind::Write:
         return "a write inside the ranges smith_modifies names, proved";
+    case Kind::Restrict:
+        return "the objects of a restrict call do not overlap, proved";
     }
     return "";
 }
