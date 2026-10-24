@@ -27,12 +27,12 @@ i32 mixed(constexpr type T) {
     return 30;
 }
 
-export i32 small(void) {
+export i32 small() {
     return choose(u8);
 }
-export i32 big(void) {
+export i32 big() {
     return choose(Big);
 }
-export i32 all(void) {
+export i32 all() {
     return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
 }

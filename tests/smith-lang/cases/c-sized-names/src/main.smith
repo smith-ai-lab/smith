@@ -17,7 +17,7 @@ static int local(int x) {
     return x + i8 + u8_local;
 }
 
-int main(void) {
+int main() {
     int sum = (int)i64 + (int)u8 + (int)u16;
     printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
     printf("%d %d %d\n", u32(1), f64(4), local(1));

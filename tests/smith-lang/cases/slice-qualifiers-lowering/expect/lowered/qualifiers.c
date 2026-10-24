@@ -18,8 +18,8 @@ for (__SIZE_TYPE__ i = 0; i < countof(dst) && i < countof(src); i++) {
 dst[i] = src[i];
 }
 }
-__SIZE_TYPE__ qualifiers_greet(void) __asm__("_qualifiers::greet");
-__SIZE_TYPE__ qualifiers_greet(void) {struct smith_array_const_char_n word = "abc";
+__SIZE_TYPE__ qualifiers_greet() __asm__("_qualifiers::greet");
+__SIZE_TYPE__ qualifiers_greet() {struct smith_array_const_char_n word = "abc";
 __UINT8_TYPE__ bytes[3] = {1, 2, 3};const struct smith_array_u8_n {
 __UINT8_TYPE__ * data; __SIZE_TYPE__ count [1]; } writable = bytes;struct smith_array_const_u8_n view = writable[1:];
 return countof(word) + qualifiers_total(view) + qualifiers_total(writable);

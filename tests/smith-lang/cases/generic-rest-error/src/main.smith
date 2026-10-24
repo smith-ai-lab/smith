@@ -3,7 +3,7 @@ module main;
 import bad;
 import plain;
 
-int main(void) {
+int main() {
     i32 a = bad::run_time_bound(3);
     i32 b = bad::bare(1);
     i32 c = bad::out_of_range(1, 2);

@@ -9,7 +9,7 @@ i32 take(struct { i32, f32 } t) {
     return t[0];
 }
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } a = {1, 2.0f};
     struct { c::int32_t, float } b = a;
     struct { int, float } c = b;

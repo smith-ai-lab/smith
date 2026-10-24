@@ -8,7 +8,7 @@ static int increment(int value) {
     return value + 1;
 }
 
-int main(void) {
+int main() {
     k::Node last = {.next = nullptr, .value = 3, .mode = 2, .point = {.x = 1, .y = 2}};
     k::Node first = {.next = &last, .value = 4, .mode = 1};
     c::printf("%d %d\n", OPEN_SUM(&first), k::run(increment, 5));

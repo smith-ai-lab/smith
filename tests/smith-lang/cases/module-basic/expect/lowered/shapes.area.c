@@ -26,8 +26,8 @@ double shapes_area_triangle(shapes_area_Rect shape) __asm__("_shapes::area::tria
 double shapes_area_triangle(shapes_area_Rect shape) {
 return shapes_area_half(shapes_area_rect(shape));
 }
-__UINT32_TYPE__ shapes_area_private_count(void) __asm__("_shapes::area::private_count");
-__UINT32_TYPE__ shapes_area_private_count(void) {
+__UINT32_TYPE__ shapes_area_private_count() __asm__("_shapes::area::private_count");
+__UINT32_TYPE__ shapes_area_private_count() {
 return shapes_area_private_calls;
 }
 enum shapes_area_Kind shapes_area_kind_of(__UINT32_TYPE__ side_count) __asm__("_shapes::area::kind_of");

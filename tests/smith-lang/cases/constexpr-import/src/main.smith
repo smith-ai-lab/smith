@@ -18,7 +18,7 @@ export i32 pick(constexpr type T) {
     }
 }
 
-int main(void) {
+int main() {
     c::printf("%d %zu %d %d %d\n", mid::fib_plus(6), sizeof table / sizeof table[0], Wide, pick(i64), pick(u8));
     return 0;
 }

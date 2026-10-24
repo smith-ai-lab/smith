@@ -6,7 +6,7 @@ i32 move(i32 xs[2], i32 *other) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 xs[2] = {};
     return move(xs, xs);
 }

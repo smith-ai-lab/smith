@@ -4,7 +4,7 @@ typedef struct {
 __INT32_TYPE__ x;
 __INT32_TYPE__ y;
 } Point;
-int main(void) {
+int main() {
 __UINT8_TYPE__ storage[256];
 arena_Arena a = arena_make(storage, sizeof storage);
 Point *p =__extension__({extern Point*arena_push__Point(arena_Arena*a)__asm__("_arena::push(Point)");arena_push__Point(&a);});

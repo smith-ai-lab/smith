@@ -11,6 +11,6 @@ export usize length(Text text) {
     return text.length;
 }
 
-usize unused_helper(void) {
+usize unused_helper() {
     return 0;
 }

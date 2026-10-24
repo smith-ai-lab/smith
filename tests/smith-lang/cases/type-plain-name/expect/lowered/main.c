@@ -13,7 +13,7 @@ int sum = type * n;
 sum += item->type * item->size;
 return sum;
 }
-int main(void) {
+int main() {
 Item item = {3, 4};
 wide big = 5;
 printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);

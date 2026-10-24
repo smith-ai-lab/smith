@@ -1,7 +1,7 @@
 #include "expand.h"
 #include <stdio.h>
 
-int main(void) {
+int main() {
 printf("%d %d\n",smith_call_failed,__extension__({extern __INT32_TYPE__ expand_shifted__(__INT32_TYPE__ off)__asm__("_expand::shifted()");expand_shifted__(10);}));
 printf("%d %d %d\n",__extension__({extern __INT32_TYPE__ expand_around__(void)__asm__("_expand::around()");expand_around__();}),smith_call_failed,smith_call_failed);
 printf("%d %d\n",__extension__({extern __INT32_TYPE__ expand_rest_empty__(void)__asm__("_expand::rest_empty()");expand_rest_empty__();}),smith_call_failed);

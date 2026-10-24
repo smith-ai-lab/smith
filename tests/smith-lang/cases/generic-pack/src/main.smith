@@ -15,7 +15,7 @@ static i32 add3(i32 a, i32 b, i32 c) {
     return a + b + c;
 }
 
-int main(void) {
+int main() {
     usize n0 = args::count(1);
     usize n1 = args::count(1, 2.5);
     usize n3 = args::count(1, 2.5, (u8)3, "four");

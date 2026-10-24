@@ -17,7 +17,7 @@ export f64 largest(auto first, auto... rest) {
     return best;
 }
 
-export f64 demo(void) {
+export f64 demo() {
     return largest(4, 9.5, 2);                                    // 9.5
 }
 ```

@@ -11,7 +11,7 @@ static struct { i32, f32 } make(i32 a, f32 b) {
     return {a, b};
 }
 
-static struct { i32, struct { f32, f32 } } nested(void) {
+static struct { i32, struct { f32, f32 } } nested() {
     return (struct { i32, struct { f32, f32 } }){7, {1.5f, 2.5f}};
 }
 
@@ -24,13 +24,13 @@ static i32 sum(Pair p) {
     return p[0] + (i32)p[1];
 }
 
-export void test_tuple_returned_from_a_function(void) {
+export void test_tuple_returned_from_a_function() {
     auto p = make(3, 4.5f);
     test::check_equal(p[0], 3);
     test::check_equal(p[1], 4.5f);
 }
 
-export void test_tuple_fields_are_written(void) {
+export void test_tuple_fields_are_written() {
     Pair p = make(1, 2.0f);
     p[0] = 10;
     p[1] += 0.5f;
@@ -38,7 +38,7 @@ export void test_tuple_fields_are_written(void) {
     test::check_equal(p[1], 2.5f);
 }
 
-export void test_tuple_is_passed_by_value_and_by_pointer(void) {
+export void test_tuple_is_passed_by_value_and_by_pointer() {
     Pair p = make(2, 3.0f);
     test::check_equal(sum(p), 5);
     bump(&p);
@@ -47,7 +47,7 @@ export void test_tuple_is_passed_by_value_and_by_pointer(void) {
     test::check_equal(sum(p), 9); // the call before took a copy
 }
 
-export void test_tuple_nests(void) {
+export void test_tuple_nests() {
     auto n = nested();
     test::check_equal(n[0], 7);
     test::check_equal(n[1][0], 1.5f);
@@ -56,14 +56,14 @@ export void test_tuple_nests(void) {
     test::check_equal(n[1][1], 4.0f);
 }
 
-export void test_tuple_has_a_count_and_the_size_of_a_struct(void) {
+export void test_tuple_has_a_count_and_the_size_of_a_struct() {
     Pair p = make(0, 0.0f);
     test::check_equal(countof(p), 2);
     test::check_equal(sizeof p, sizeof(struct { i32, f32 }));
     test::check_equal(countof(nested()[1]), 2);
 }
 
-export void test_tuples_of_one_shape_are_one_type(void) {
+export void test_tuples_of_one_shape_are_one_type() {
     struct { i32, f32 } a = make(4, 1.0f);
     Pair b = a;
     struct { i32, f32 } list[2] = {a, b};

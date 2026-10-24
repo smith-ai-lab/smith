@@ -12,7 +12,7 @@ struct Wrap {
     const char note[:];
 };
 
-i32 main(void) {
+i32 main() {
     struct Pair a = {.key = {"k"}};
     struct Wrap w = {.pair.key = "k"};
     return (i32)(countof(a.key) + countof(w.note));

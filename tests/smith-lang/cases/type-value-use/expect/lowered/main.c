@@ -8,7 +8,7 @@ constexpr type of;
 __INT32_TYPE__ count;
 } Column;
 constexpr Column column = {.of = __UINT8_TYPE__, .count = 3};
-int main(void) {
+int main() {
 constexpr type t = __INT32_TYPE__;
 t a = 7;
 element b = 2.5;

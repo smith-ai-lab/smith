@@ -1,6 +1,6 @@
 // The file's own u32 is kept: the error names its type, not the built-in one.
 typedef unsigned char u32;
-void f(void) {
+void f() {
     u32 x = "hello";
     (void)x;
 }

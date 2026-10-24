@@ -2,7 +2,7 @@ module main;
 
 import fmt;
 
-int main(void) {
+int main() {
     u8 small = 200;
     i64 negative = -5;
     fmt::print();

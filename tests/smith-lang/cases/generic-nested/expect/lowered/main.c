@@ -6,7 +6,7 @@ typedef struct {
 __INT32_TYPE__ x;
 __INT32_TYPE__ y;
 } main_Point;
-int main(void) {
+int main() {
 __UINT8_TYPE__ storage[256];
 arena_Arena a = arena_make(storage, sizeof storage);
 main_Point *p =__extension__({extern main_Point*list_make_two__Point(arena_Arena*a)__asm__("_list::make_two(main_Point)");list_make_two__Point(&a);});

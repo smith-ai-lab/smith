@@ -11,7 +11,7 @@ static int measure(const char *str) {
     return n;
 }
 
-int main(void) {
+int main() {
     const char *str = "abcd";
     struct Holder holder = {.str = str};
     printf("%d %d\n", measure(str), measure(holder.str));

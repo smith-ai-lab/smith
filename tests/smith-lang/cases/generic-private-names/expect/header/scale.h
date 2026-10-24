@@ -15,7 +15,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int32_t scale_calls(void) __asm__("_scale::calls");
+int32_t scale_calls() __asm__("_scale::calls");
 #ifdef SMITH_INSTANCES
 constexpr int32_t scale_base = 10;
 constexpr int32_t scale_slots = scale_base / 2;

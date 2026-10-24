@@ -6,7 +6,7 @@ if (n > 0) return 1;
 puts("not early");
 return 0;
 }
-static void main_jump(void) {
+static void main_jump() {
 {
 defer puts("cleanup before the jump");
 goto out;
@@ -14,7 +14,7 @@ goto out;
 out:
 puts("after the jump");
 }
-__INT32_TYPE__ main(void) {
+__INT32_TYPE__ main() {
 {
 defer puts("first deferred, runs last");
 defer puts("second deferred, runs first");

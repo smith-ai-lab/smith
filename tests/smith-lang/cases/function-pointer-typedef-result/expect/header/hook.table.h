@@ -29,7 +29,7 @@ typedef hook_table_Box (*hook_table_Make)(uint32_t v);
 
 extern uint64_t (*hook_table_hook)(uint64_t bits);
 
-hook_table_Plain hook_table_plain(void) __asm__("_hook::table::plain");
+hook_table_Plain hook_table_plain() __asm__("_hook::table::plain");
 
 uint64_t hook_table_call(HookFn fn, uint64_t bits) __asm__("_hook::table::call");
 

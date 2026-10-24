@@ -23,11 +23,11 @@ i32 opaque(i32 value) {
     return value;
 }
 
-usize capacity(void) {
+usize capacity() {
     return size;
 }
 
-bool poisons_memory(void) {
+bool poisons_memory() {
     return sanitized;
 }
 ```

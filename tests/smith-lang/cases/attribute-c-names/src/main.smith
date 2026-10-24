@@ -2,7 +2,7 @@ module main;
 import log::fmt;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     fmt::say("%d\n", 7);
     fmt::said("done\n");
     c::printf("%d\n", 1);

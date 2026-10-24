@@ -15,6 +15,6 @@ i32 choose(constexpr type T) {
     }
 }
 
-export i32 run(void) {
+export i32 run() {
     return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
 }

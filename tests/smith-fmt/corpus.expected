@@ -120,7 +120,7 @@ module main;
 import log::fmt;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     fmt::say("%d\n", 7);
     fmt::said("done\n");
     c::printf("%d\n", 1);
@@ -150,18 +150,18 @@ export struct Board {
     u32 n;
 };
 
-export usize board_size(void) {
+export usize board_size() {
     return sizeof(struct Board);
 }
 
-export usize other_sizes(void) {
+export usize other_sizes() {
     return sizeof(struct Plain) + sizeof(Typed) + sizeof(struct Nested) + sizeof table;
 }
 ==> c-array-bound/src/main.smith <==
 import grid;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     struct grid::Board board = {};
     board.cells[15] = 1;
     printf("%zu %zu %zu\n", grid::board_size(), grid::other_sizes(), sizeof board.cells);
@@ -177,7 +177,7 @@ import <stdio.h>;
 
 static_assert(sizeof(usize) == sizeof(u64));
 
-int main(void) {
+int main() {
     usize small = 3;
     c::assert(small < c::SIZE_MAX);
     c::assert(c::UINT64_MAX > 0 && small != c::SIZE_MAX);
@@ -239,7 +239,7 @@ static int local(int x) {
     return x + i8 + u8_local;
 }
 
-int main(void) {
+int main() {
     int sum = (int)i64 + (int)u8 + (int)u16;
     printf("%d %d %d %d\n", sum, (int)i32, (int)u64, (int)last);
     printf("%d %d %d\n", u32(1), f64(4), local(1));
@@ -283,7 +283,7 @@ static type wider(type a, type b) {
 
 static_assert(wider(u8, f64) == f64);
 
-i32 main(void) {
+i32 main() {
     i32 n = 13;
     switch (n) {
     case fib(7):
@@ -308,7 +308,7 @@ static int sum_to(int n) {
         s += i;
     return s;
 }
-static unsigned long width(void) {
+static unsigned long width() {
     return sizeof(long);
 }
 
@@ -335,7 +335,7 @@ struct Bits {
 };
 static int cached = fib(12);
 
-int main(void) {
+int main() {
     switch (x) {
     case fib(10):
         printf("%d %d %d %lu %d %d\n", x, table.v[5], table.n, w, Fib7, cached);
@@ -360,7 +360,7 @@ constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
     c::exit(code);
 }
 
-int main(void) {
+int main() {
     c::printf("%d %d\n", chosen, shapes::dot(2));
     return 0;
 }
@@ -416,7 +416,7 @@ export kinds::slice_of(T, counts::dims(2, 3)) make(constexpr type T, usize rows,
     return result;
 }
 
-int main(void) {
+int main() {
     f32 grid[:][:];
     grid = make(f32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
@@ -472,7 +472,7 @@ export i32 pick(constexpr type T) {
     }
 }
 
-int main(void) {
+int main() {
     c::printf("%d %zu %d %d %d\n", mid::fib_plus(6), sizeof table / sizeof table[0], Wide, pick(i64), pick(u8));
     return 0;
 }
@@ -501,7 +501,7 @@ static i32 clamp(i32 x, i32 low, i32 high) {
 constexpr i32 limit = clamp(300, 0, 255);
 static_assert(clamp(-5, 0, 9) == 0);
 
-i32 main(void) {
+i32 main() {
     c::printf("%d %d\n", limit, clamp(5, 0, 9));
     return 0;
 }
@@ -536,19 +536,19 @@ static_assert(small.ptr[1] == 'y' && small.len == 2);
 static_assert(prefix.ptr[4] == 'o');
 static_assert(length(prefix.ptr) == 11);
 
-i32 main(void) {
+i32 main() {
     static constexpr const i32 *kept = nums;
     c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
     return 0;
 }
 ==> countof-fixed-array-plain/src/main.smith <==
 // No module and no import: `countof` of a fixed array is C's own (issue #167).
-u32 plain(void) {
+u32 plain() {
     u32 xs[] = {1, 2, 3};
     return (u32)countof(xs);
 }
 
-i32 main(void) {
+i32 main() {
     return (i32)plain() - 3;
 }
 ==> countof-fixed-array/src/main.smith <==
@@ -560,12 +560,12 @@ struct Grid {
     u32 cells[6];
 };
 
-u32 plain(void) {
+u32 plain() {
     u32 xs[] = {1, 2, 3};
     return (u32)countof(xs);
 }
 
-u32 outer(void) {
+u32 outer() {
     f32 m[3][5] = {};
     return (u32)countof(m) * 10 + (u32)countof(m[0]);
 }
@@ -583,7 +583,7 @@ export u32 member(auto g) {
     return (u32)countof(g.cells);
 }
 
-i32 main(void) {
+i32 main() {
     u32 four[4] = {};
     struct Grid g = {};
     c::printf("%u %u %u %u %u\n", plain(), outer(), shaped(four), pack(1, 2), member(g));
@@ -593,14 +593,14 @@ i32 main(void) {
 module a;
 import b;
 
-export i32 from_a(void) {
+export i32 from_a() {
     return b::from_b();
 }
 ==> cycle-by-source/src/b.smith <==
 module b;
 import a;
 
-export i32 from_b(void) {
+export i32 from_b() {
     return a::from_a();
 }
 ==> defer-run/src/main.smith <==
@@ -616,7 +616,7 @@ static i32 early(i32 n) {
     return 0;
 }
 
-static void jump(void) {
+static void jump() {
     {
         defer c::puts("cleanup before the jump");
         goto out;
@@ -625,7 +625,7 @@ out:
     c::puts("after the jump");
 }
 
-i32 main(void) {
+i32 main() {
     {
         defer c::puts("first deferred, runs last");
         defer c::puts("second deferred, runs first");
@@ -682,11 +682,11 @@ static int pick(enum Color color) {
     }
 }
 
-static struct Pair make(void) {
+static struct Pair make() {
     return (struct Pair){.first = 4, .second = High};
 }
 
-int main(void) {
+int main() {
     struct Pair p = make();
     Level level = Low;
     printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
@@ -730,7 +730,7 @@ export f32 area(Shape s) {
     return -1;
 }
 
-export Shape unit(void) {
+export Shape unit() {
     return {.circle = {.radius = 1}};
 }
 
@@ -748,7 +748,7 @@ static shapes::Shape grown(shapes::Shape s) {
     return s;
 }
 
-i32 main(void) {
+i32 main() {
     shapes::Shape a = shapes::unit();
     shapes::Shape b =.empty;
     shapes::Shape c = {.rect = {.w = 2, .h = 5}};
@@ -796,7 +796,7 @@ export f32 area(Shape s) {
     return -1;
 }
 
-export Shape unit(void) {
+export Shape unit() {
     return {.circle = {.radius = 1}};
 }
 
@@ -880,7 +880,7 @@ static f32 twice(Shape s) {
     return area(s) * 2;
 }
 
-i32 main(void) {
+i32 main() {
     Shape a = {.circle = {.radius = 2}};
     Shape b =.empty;
     Shape c = make(true);
@@ -909,7 +909,7 @@ f32 matrix(f32 m[3][2]) {
     return m[2][1] + m[3][0] + m[0][2];
 }
 
-i32 main(void) {
+i32 main() {
     i32 xs[2] = {};
     f32 m[3][2] = {};
     return vector(xs) + (i32)matrix(m);
@@ -923,7 +923,7 @@ i32 move(i32 xs[2], i32 *other) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 xs[2] = {};
     return move(xs, xs);
 }
@@ -934,7 +934,7 @@ i32 take(i32 xs[2]) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 same[2] = {};
     i32 longer[3] = {};
     i32 *pointer = same;
@@ -947,7 +947,7 @@ usize bytes(i32 xs[2]) {
     return sizeof(xs);
 }
 
-i32 main(void) {
+i32 main() {
     i32 xs[2] = {};
     return (i32)bytes(xs);
 }
@@ -981,83 +981,83 @@ export f32 root_ok(f32 value) {
 module uses::macro;
 import <stdio.h>;
 
-export int end_bad(void) {
+export int end_bad() {
     return EOF;
 }
 
-export int end_ok(void) {
+export int end_ok() {
     return c::EOF;
 }
 ==> error-c-name-tag/src/uses/tag.smith <==
 module uses::tag;
 import <sys/stat.h>;
 
-export int size_bad(void) {
+export int size_bad() {
     struct stat info;
     return (int)sizeof info;
 }
 
-export int size_ok(void) {
+export int size_ok() {
     struct c::stat info;
     return (int)sizeof info;
 }
 ==> error-c-name/src/smith/names.smith <==
 module smith::names;
 
-[[smith::c_name("smith_names_one")]] export int first(void) {
+[[smith::c_name("smith_names_one")]] export int first() {
     return 1;
 }
 
 // the same C name twice
-[[smith::c_name("smith_names_one")]] export int second(void) {
+[[smith::c_name("smith_names_one")]] export int second() {
     return 2;
 }
 
 // the name the prefix makes of an export with no C name
-[[smith::c_name("smith_names_plain")]] export int third(void) {
+[[smith::c_name("smith_names_plain")]] export int third() {
     return 3;
 }
-export int plain(void) {
+export int plain() {
     return 4;
 }
 
 // the name the prefix makes of a private one, declared first
-int hidden(void) {
+int hidden() {
     return 5;
 }
-[[smith::c_name("smith_names_hidden")]] export int fourth(void) {
+[[smith::c_name("smith_names_hidden")]] export int fourth() {
     return 6;
 }
 
 // a chosen name that a later declaration would also get
-[[smith::c_name("smith_names_later")]] export int fifth(void) {
+[[smith::c_name("smith_names_later")]] export int fifth() {
     return 7;
 }
-int later(void) {
+int later() {
     return 8;
 }
 
 // not an export
-[[smith::c_name("smith_names_private")]] int sixth(void) {
+[[smith::c_name("smith_names_private")]] int sixth() {
     return 9;
 }
 
 // not a C identifier, not a keyword, not a string, nor the only thing in the attribute
-[[smith::c_name("not an identifier")]] export int seventh(void) {
+[[smith::c_name("not an identifier")]] export int seventh() {
     return 10;
 }
-[[smith::c_name("int")]] export int eighth(void) {
+[[smith::c_name("int")]] export int eighth() {
     return 11;
 }
-[[smith::c_name(ninth)]] export int ninth(void) {
+[[smith::c_name(ninth)]] export int ninth() {
     return 12;
 }
-[[smith::c_name("a"), gnu::unused]] export int tenth(void) {
+[[smith::c_name("a"), gnu::unused]] export int tenth() {
     return 13;
 }
 
 // two on one export
-[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh(void) {
+[[smith::c_name("smith_names_a")]] [[smith::c_name("smith_names_b")]] export int eleventh() {
     return 14;
 }
 
@@ -1068,11 +1068,11 @@ int later(void) {
 
 // An "i" operand needs a literal constant: a call is still an error, as in C (asm is not a place the evaluator is
 // used).
-static int forty(void) {
+static int forty() {
     return 40 + 2;
 }
 
-int main(void) {
+int main() {
     int r;
     asm("mov %w0, %1" : "=r"(r) : "i"(forty()));
     printf("%d\n", r);
@@ -1141,7 +1141,7 @@ module counter;
 
 static i32 count = 0;
 
-export i32 next(void) {
+export i32 next() {
     count += 1;
     return count;
 }
@@ -1158,7 +1158,7 @@ import counter;
 static_assert(counter::plain(1) == 2);
 static_assert(counter::next() == 1);
 
-int main(void) {
+int main() {
     return 0;
 }
 ==> error-constexpr-pointers/src/main.smith <==
@@ -1167,7 +1167,7 @@ constexpr const char *word = "abc";
 constexpr const char *outside = hello + 9;
 static_assert(word[0] == 'z');
 
-i32 main(void) {
+i32 main() {
     const i32 automatic[2] = {1, 2};
     constexpr const i32 *pointer = automatic;
     return *pointer;
@@ -1180,7 +1180,7 @@ u32 bad(u32 *p) {
     return (u32)countof(p);
 }
 
-i32 main(void) {
+i32 main() {
     u32 x = 0;
     return (i32)bad(&x);
 }
@@ -1188,7 +1188,7 @@ i32 main(void) {
 module main;
 
 // In a module `defer` is a keyword, so it cannot name a variable (issue #210).
-i32 main(void) {
+i32 main() {
     i32 defer = 1;
     return defer - 1;
 }
@@ -1216,7 +1216,7 @@ static i32 describe(Shape s) {
     }
 }
 
-i32 main(void) {
+i32 main() {
     Shape a =.circle;
     Shape b =.nothing;
     Shape c =.empty;
@@ -1224,15 +1224,15 @@ i32 main(void) {
     return describe(a) + describe(b) + (i32)(c ==.empty) + describe(.empty);
 }
 
-static void nowhere(void) {
+static void nowhere() {
     ready(.empty);
 }
 ==> error-export-no-module/src/main.smith <==
-export int helper(void) {
+export int helper() {
     return 1;
 }
 
-int main(void) {
+int main() {
     return helper();
 }
 ==> error-export-private-type/src/e/priv.smith <==
@@ -1243,14 +1243,14 @@ typedef struct {
 } Hidden;
 typedef Hidden Alias;
 
-export Hidden make(void);
+export Hidden make();
 export typedef struct {
     Alias inner;
 } Wrapper;
 ==> error-export-static/src/s.smith <==
 module s;
 
-export static int hidden(void) {
+export static int hidden() {
     return 1;
 }
 ==> error-export-two-names/src/two.smith <==
@@ -1313,7 +1313,7 @@ module main;
 
 import number;
 
-int main(void) {
+int main() {
     usize runtime = 3;
     f64 real = 2.0;
     i32 a = number::scaled(runtime, 1);
@@ -1366,7 +1366,7 @@ module main;
 
 import shape;
 
-int main(void) {
+int main() {
     return shape::padded(1) + shape::framed(2);
 }
 ==> error-generic-private-generic/src/shape.smith <==
@@ -1397,7 +1397,7 @@ module main;
 import scale;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     // The instance of `spread` calls these, but the source of an importer cannot name them.
     c::printf("%d\n", scale::clamp_to_base(5));
     scale::Range r = {0, 1};
@@ -1446,7 +1446,7 @@ static inline i32 clamp_to_base(i32 x) {
     return x > base ? base : x;
 }
 
-export i32 calls(void) {
+export i32 calls() {
     return counter.calls + unused(0) - 1;
 }
 
@@ -1480,7 +1480,7 @@ export missing(T) not_declared(constexpr type T) {
     return 0;
 }
 
-int main(void) {
+int main() {
     not_a_type(u8, (u8)1);
     not_computable(u8, (u8)1);
     not_declared(u8);
@@ -1489,7 +1489,7 @@ int main(void) {
 ==> error-if-constexpr/src/main.smith <==
 import target;
 
-int main(void) {
+int main() {
     int n = 3;
     if constexpr (n > 2) {
         return 1;
@@ -1506,7 +1506,7 @@ int main(void) {
 ==> error-import-broken-module/src/broken.smith <==
 module broken;
 
-export i32 f(void) {
+export i32 f() {
     return 1;
 }
 export struct S {
@@ -1536,14 +1536,14 @@ export i32 sum(i32 a, i32 b) {
 module cycle::a;
 import cycle::b;
 
-export int from_a(void) {
+export int from_a() {
     return 1;
 }
 ==> error-import-cycle/src/cycle/b.smith <==
 module cycle::b;
 import cycle::a;
 
-export int from_b(void) {
+export int from_b() {
     return 2;
 }
 ==> error-import-eof/src/lib/text.smith <==
@@ -1588,7 +1588,7 @@ export usize length(Text text) {
 int before;
 import lib::text;
 
-int main(void) {
+int main() {
     return before;
 }
 ==> error-import-self/src/me.smith <==
@@ -1674,13 +1674,13 @@ module late;
 ==> error-module-missing/src/main.smith <==
 import no::such::module;
 
-int main(void) {
+int main() {
     return 0;
 }
 ==> error-module-name/src/wrong.smith <==
 module right::name;
 
-export int f(void) {
+export int f() {
     return 1;
 }
 ==> error-module-syntax/src/syntax.smith <==
@@ -1689,7 +1689,7 @@ int x;
 ==> error-plain-c-macro/src/main.smith <==
 import <stdio.h>;
 
-int main(void) {
+int main() {
     return EOF;
 }
 ==> error-plain-c-name/src/main.smith <==
@@ -1702,7 +1702,7 @@ i32 main() {
 ==> error-plain-c-tag/src/main.smith <==
 import <sys/stat.h>;
 
-int main(void) {
+int main() {
     struct stat info;
     return (int)sizeof info;
 }
@@ -1719,7 +1719,7 @@ static typeof(u8[:]) give(const u8 xs[:]) {
     return xs;
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     const u8 read[:] = raw;
     u8 same[:] = read;
@@ -1733,7 +1733,7 @@ module main;
 
 // Writes through a const element, and the reassignment of a slice that is itself const: C's own errors.
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     const u8 west[:] = raw;
     u8 const east[:] = raw;
@@ -1750,7 +1750,7 @@ i32 main(void) {
 ==> error-slice-dims-across-rows/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     f32 raw[4][2] = {};
     f32 xs[:][2] = raw;
     // a slice within a row is fine; an inner dimension across rows needs strides
@@ -1761,7 +1761,7 @@ i32 main(void) {
 ==> error-slice-dims-fixed-slice/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     f32 raw[4][2] = {};
     f32 xs[:][2] = raw[1:3];
     return (i32)countof(xs);
@@ -1773,13 +1773,13 @@ i32 take(f32 xs[:][2][n]) {
     return 0;
 }
 
-i32 main(void) {
+i32 main() {
     return 0;
 }
 ==> error-slice-dims-shape/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     f32 three[4][3] = {};
     f32 one[4] = {};
     f32 rows[:][2] = three;
@@ -1815,7 +1815,7 @@ struct Holder {
     struct Anon inner;
 };
 
-i32 main(void) {
+i32 main() {
     struct Pair ps[2] = {{.key = "a"}, {.key = "b"}};
     struct Anon an = {.name = "x"};
     struct Holder h = {.inner = {.name = "y"}};
@@ -1844,7 +1844,7 @@ struct Wrap {
     const char note[:];
 };
 
-i32 main(void) {
+i32 main() {
     struct Pair a = {.key = {"k"}};
     struct Wrap w = {.pair.key = "k"};
     return (i32)(countof(a.key) + countof(w.note));
@@ -1852,7 +1852,7 @@ i32 main(void) {
 ==> error-slice-negative/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     i32 raw[3] = {1, 2, 3};
     i32 all[:] = raw;
     i32 last = all[-1];
@@ -1861,7 +1861,7 @@ i32 main(void) {
 ==> error-slice-not-sliceable/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     i32 number = 5;
     i32 view[:] = number[0:1];
     return view[0];
@@ -1873,7 +1873,7 @@ i32 take(i32 xs[:]) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[3] = {1, 2, 3};
     i32 *p = raw;
     return take(p);
@@ -1881,7 +1881,7 @@ i32 main(void) {
 ==> error-slice-pointer-bounds/src/main.smith <==
 module main;
 
-i32 main(void) {
+i32 main() {
     i32 raw[3] = {1, 2, 3};
     i32 *p = raw;
     i32 rest[:] = p[1:];
@@ -1896,7 +1896,7 @@ static void touch(char (*xs)[:]) {
     (*xs)[0] = 'x';
 }
 
-i32 main(void) {
+i32 main() {
     const char s[:] = "abc";
     touch(&s);
     return 0;
@@ -1913,7 +1913,7 @@ static void unstable(u8 xs[volatile :]) {}
 
 static void rows(f32 m[:][const :]) {}
 
-i32 main(void) {
+i32 main() {
     return 0;
 }
 ==> error-slice-step/src/main.smith <==
@@ -1923,7 +1923,7 @@ i32 take(i32 xs[:]) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[6] = {1, 2, 3, 4, 5, 6};
     i32 all[:] = raw;
     i32 every_other[:] = all[0:6:2];
@@ -1948,7 +1948,7 @@ module main;
 
 // An array of `str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
 
-i32 main(void) {
+i32 main() {
     str names[1] = {"a"};
     return (i32)sizeof names;
 }
@@ -1965,7 +1965,7 @@ static int measure(const char *str) {
     return str[0];
 }
 
-i32 main(void) {
+i32 main() {
     const char *str = "abcd";
     return measure(str);
 }
@@ -2009,7 +2009,7 @@ export i32 second(constexpr type T, T x) {
 ==> error-tuple-index/src/main.smith <==
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } t = {1, 2.0f};
     i32 i = 1;
     c::printf("%d\n", t[i]);
@@ -2021,7 +2021,7 @@ i32 main(void) {
 // A typedef is not looked through: `Meters` is the field's name, so these are two types though both fields are f64.
 typedef f64 Meters;
 
-void use(void) {
+void use() {
     struct { Meters, f32 } m = {1.0, 2.0f};
     struct { f64, f32 } plain = m;
     (void)plain;
@@ -2037,7 +2037,7 @@ static type twice(type t) {
     return t;
 }
 
-int main(void) {
+int main() {
     constexpr type once = twice(i32 *);
     constexpr type deep = twice(twice(i32 **));
     once x = 1;
@@ -2059,7 +2059,7 @@ export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes)
     return result;
 }
 
-int main(void) {
+int main() {
     f32 xs[:] = make(f32);
     return 0;
 }
@@ -2101,7 +2101,7 @@ typedef struct {
 type kinds[2] = {i32, f32};
 Column table = {"a", u8};
 
-int main(void) {
+int main() {
     type local = i32;
     Column column = {"b", f64};
     constexpr type fine = i32;
@@ -2122,7 +2122,7 @@ static type worse(type T) {
     return T[:3];
 }
 
-int main(void) {
+int main() {
     constexpr type q = bad(f32);
     constexpr type r = worse(f32);
     return 0;
@@ -2141,7 +2141,7 @@ i32 broken(constexpr type T) {
     return 0;
 }
 
-export i32 call(void) {
+export i32 call() {
     return broken(i32);
 }
 ==> export-inline-attributes/src/hint.smith <==
@@ -2200,7 +2200,7 @@ export const char *const names[2] = {"low", "high"};
 export constexpr u32 limit = 4;
 u32 hidden = 2;
 
-export u32 sum(void) {
+export u32 sum() {
     return total + spare + limit + hidden;
 }
 ==> exported-variable-declared/src/main.smith <==
@@ -2209,7 +2209,7 @@ module main;
 import counter::state as state;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     state::total = 5;
     c::printf("%u %s %llu\n", state::sum(), state::names[1], (unsigned long long)state::chosen);
     return 0;
@@ -2224,14 +2224,14 @@ extern char **environ;
 extern u32 foreign_counter;
 extern u32 foreign_triple(u32 x);
 
-export u32 env_count(void) {
+export u32 env_count() {
     u32 count = 0;
     for (char **entry = environ; *entry != nullptr; entry++)
         count += 1;
     return count;
 }
 
-export u32 counter_times_three(void) {
+export u32 counter_times_three() {
     return foreign_triple(foreign_counter);
 }
 
@@ -2262,7 +2262,7 @@ static uint64_t twice(uint64_t bits) {
 uint64_t (*chosen)(uint64_t bits) = twice;
 [[smith::c_name("hook_table_hook")]] export uint64_t (*hook)(uint64_t bits) = twice;
 
-export Plain plain(void) {
+export Plain plain() {
     Private private_twice = twice;
     return private_twice;
 }
@@ -2280,7 +2280,7 @@ module main;
 import hook::table as table;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     table::Plain plain = table::plain();
     c::printf("%llu %llu %llu %llu\n", (unsigned long long)plain(21), (unsigned long long)table::call(plain, 4),
               (unsigned long long)table::chosen_value(5), (unsigned long long)table::hook(8));
@@ -2326,7 +2326,7 @@ module main;
 import args;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i64 v = 5;
     i32 x = 3;
     f64 y = 4.0;
@@ -2345,7 +2345,7 @@ struct State {
     f32 grid[2][2];
 };
 
-i32 main(void) {
+i32 main() {
     struct State s = {{1, 2, 3}, {{1, 2}, {3, 4}}};
     struct State *p = &s;
     c::printf("%zu %zu %zu\n", reach::bytes(&p->jumps), reach::elements(&p->jumps), reach::bytes(&s.grid));
@@ -2376,7 +2376,7 @@ export bool is_a_pointer(auto p) {
 ==> generic-auto-arguments/src/main.smith <==
 import pick;
 
-int main(void) {
+int main() {
     u8 small = 5;
     i32 neg = -1;
     // The type of the first argument must be known.
@@ -2430,7 +2430,7 @@ export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
 import pick;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     i32 x = 0;
     i32 *p = &x;
     usize m = (usize)p % 64;
@@ -2481,7 +2481,7 @@ static i32 triple(i32 v) {
 
 // The compiler types every argument, whatever it is made of: a cast of an index, a member of an anonymous union,
 // the enumerators of a fixed type, an operator with a side effect, a call inside a call, a statement expression.
-int main(void) {
+int main() {
     u8 block[16] = {0, 1, 2};
     void *bytes = block;
     usize size = 16;
@@ -2527,7 +2527,7 @@ export typeof(a) zero_like(auto a) {
 import pick;
 import "k.h";
 
-int main(void) {
+int main() {
     u32 count = 7;
     u8 small = 1;
     u32 a = pick::larger(count, 4294967296);
@@ -2579,7 +2579,7 @@ import "k.h";
 #include <stdio.h>
 
 // A constant is judged by its value, and by its own type: all ones in a u32 fits a u32.
-int main(void) {
+int main() {
     u32 count = 7;
     u8 small = 1;
     u64 wide = 1;
@@ -2638,7 +2638,7 @@ import pick;
 
 constexpr i32 limit = 300;
 
-int main(void) {
+int main() {
     u8 small = 5;
     u32 big = 7;
     i32 neg = -1;
@@ -2704,7 +2704,7 @@ export typeof(a) pair(auto a, typeof(a) b, constexpr type T) {
 ==> generic-auto-lower-error/src/main.smith <==
 import pick;
 
-int main(void) {
+int main() {
     u64 big = 5;
     return (int)pick::larger(big, 1);
 }
@@ -2744,7 +2744,7 @@ export i32 bigger(i32 a, i32 b) {
 import box;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %d\n", box::bigger(3, 8), box::bigger(30, 8));
     return 0;
 }
@@ -2774,7 +2774,7 @@ export typeof(a) zero_like(auto a) {
 import num;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     f32 f = 1.5f;
     u64 w = 5;
     u8 b = 1;
@@ -2840,7 +2840,7 @@ import pick;
 import "v2.h";
 #include <stdio.h>
 
-int main(void) {
+int main() {
     c::F4 v = {1, 2, 3, 4};
     c::F2 w = {5, 6};
     // The lanes of an ext-vector: one lane is its element, several are a vector.
@@ -2874,7 +2874,7 @@ export typeof(a) zero_like(auto a) {
 ==> generic-auto-written/src/main.smith <==
 import pick;
 
-int main(void) {
+int main() {
     i32 a = 3;
     // The argument is quoted as written, a nested call to a generic included; a nested call has its result's type.
     i32 r = pick::larger(a, pick::larger(a, 3) + 1 + __builtin_abs(a));
@@ -2920,7 +2920,7 @@ static f64 half(f64 v) {
     return v / 2;
 }
 
-int main(void) {
+int main() {
     i32 a = 3;
     i32 b = 8;
     f64 d = 2.5;
@@ -2990,7 +2990,7 @@ export T add(type T, T a, T b) {
 import twice;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     i32 a = 3;
     i32 b = 2;
     // The same shapes at a call site, in main.
@@ -3058,7 +3058,7 @@ module main;
 import bad;
 import plain;
 
-int main(void) {
+int main() {
     i32 a = bad::built(1);
     i32 b = bad::grown(1);
     i32 p = plain::not_a_list(1);
@@ -3078,7 +3078,7 @@ module main;
 import <stdio.h>;
 import names;
 
-int main(void) {
+int main() {
     c::printf("%d %d %d\n", names::a(2, 3), names::b(2, 3), names::c(2, 3));
     return 0;
 }
@@ -3106,7 +3106,7 @@ export i32 c(auto p, auto... rest) {
 ==> generic-call-too-deep/src/main.smith <==
 import num;
 
-int main(void) {
+int main() {
     int x = num::id(
         i32,
         num::id(
@@ -3146,7 +3146,7 @@ export T id(constexpr type T, T x) {
 ==> generic-call-unclosed-statement/src/main.smith <==
 import num;
 
-int main(void) {
+int main() {
     int x = num::id(i32, 1;
     int y = num::id(i32, 2);
     return x + y;
@@ -3196,7 +3196,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     u8 storage[256];
     arena::Arena a = arena::make(storage, sizeof storage);
     Point *p = arena::push(&a, Point);
@@ -3294,7 +3294,7 @@ struct R {
     i32 rows[2][5];
 };
 
-int main(void) {
+int main() {
     i32 a[2] = {1, 2};
     f64 b[3] = {1, 2, 3};
     struct S s = {.xs = a[0:2], .ys = b[0:3], .fixed = {1, 2, 3}};
@@ -3347,7 +3347,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     i32 three = num::add(i32, 1, 2);
     Point a = {1, 2};
     Point b = num::add(Point, a, a);
@@ -3384,7 +3384,7 @@ struct Mixed {
     struct Point points[:];
 };
 
-int main(void) {
+int main() {
     struct Floats floats = {};
     struct Ints ints = {};
     struct Mixed mixed = {};
@@ -3437,7 +3437,7 @@ typedef struct {
     i32 a;
 } One;
 
-i32 main(void) {
+i32 main() {
     i32 total = 0;
     total += reflect::count_int(i32);
     total += reflect::count_union(Either);
@@ -3503,7 +3503,7 @@ typedef struct {
     u8 flag;
 } Sample;
 
-i32 main(void) {
+i32 main() {
     Sample s = {1, 2.5f, 4};
     lib::show(Sample, &s);
     return 0;
@@ -3521,7 +3521,7 @@ f32 one(constexpr type T, T *x) {
     return x->[f][1][0:1][0];
 }
 
-i32 main(void) {
+i32 main() {
     f32 r[3][2] = {};
     f32 rows[:][2] = r;
     Grid g = {.rows = rows};
@@ -3586,7 +3586,7 @@ f64 first(constexpr type T, Outer *o) {
     return o->bag.[f][0] + o->bag.[f][countof(o->bag.[f]) - 1];
 }
 
-i32 main(void) {
+i32 main() {
     f64 v[4] = {1, 2, 3, 4};
     f32 r[3][2] = {{1, 2}, {3, 4}, {5, 6}};
     f32 rows[:][2] = r;
@@ -3628,7 +3628,7 @@ void show_member(auto p) {
     c::printf("\n");
 }
 
-i32 main(void) {
+i32 main() {
     Outer o = {};
     show_pointee(&o);
     show_member(&o);
@@ -3667,7 +3667,7 @@ void show(constexpr type T, T *x) {
     }
 }
 
-i32 main(void) {
+i32 main() {
     char *words[2] = {"one", "two"};
     Table t = {.names = words[0:2], .n = 2};
     show(Table, &t);
@@ -3678,7 +3678,7 @@ module main;
 
 import walk;
 
-i32 main(void) {
+i32 main() {
     walk::run();
     return 0;
 }
@@ -3764,7 +3764,7 @@ usize second_length(constexpr type T) {
     return all[1].name.count[0];
 }
 
-export void run(void) {
+export void run() {
     Sample s = {1, 2.5f, 3.0, 4};
     Pair p = {7, 1.5f};
     show(Sample, &s);
@@ -3793,7 +3793,7 @@ typedef struct {
     f64 scale;
 } Mixed;
 
-i32 main(void) {
+i32 main() {
     Pair pair = {1, 2.5f};
     Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};
     reflect::show(Pair, &pair);
@@ -3884,7 +3884,7 @@ module main;
 
 import bad;
 
-int main(void) {
+int main() {
     i32 a = bad::no_step();
     i32 b = bad::no_variable();
     i32 c = bad::clash(1);
@@ -3932,7 +3932,7 @@ static i32 plus(i32 a, i32 b) {
     return a + b;
 }
 
-int main(void) {
+int main() {
     i32 (*pointer)(i32) = inc;
     i32 number = 3;
     // A pointer is known only when the program runs: the parameter takes a function by its name.
@@ -3993,7 +3993,7 @@ static i32 plus(i32 a, i32 b) {
     return a + b;
 }
 
-int main(void) {
+int main() {
     i32 a = apply::twice(inc, 5);
     i32 b = apply::twice(apply::triple, 2);
     f64 c = apply::twice(half, 10.0);
@@ -4018,7 +4018,7 @@ static f64 plain(const shape::Params *p) {
     return p->a * 2;
 }
 
-int main(void) {
+int main() {
     shape::Params p = {1.0, 2.0};
     shape::Batch batch = {3.0};
     shape::Params g = shape::gradient(loss, &p, &batch);
@@ -4069,7 +4069,7 @@ export T pick_one(constexpr type T, T a, T b) {
 import guard;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %g\n", guard::pick_one(i32, 3, 9), guard::pick_one(f64, 2.5, 1.5));
     return 0;
 }
@@ -4096,7 +4096,7 @@ import kind;
 import "shape.h";
 #include <stdio.h>
 
-int main(void) {
+int main() {
     c::V2 a = {1, 2};
     c::F4 f = {1, 2, 3, 4};
     const c::V2 *p = &a;
@@ -4106,7 +4106,7 @@ int main(void) {
 ==> generic-if-constexpr-error/src/main.smith <==
 import num;
 
-int main(void) {
+int main() {
     return num::sign(i32, 3) + num::many(i32);
 }
 ==> generic-if-constexpr-error/src/num.smith <==
@@ -4145,7 +4145,7 @@ export T pick_one(constexpr type T, T a, T b) {
 import guard;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %g\n", guard::pick_one(i32, 3, 9), guard::pick_one(f64, 2.5, 1.5));
     return 0;
 }
@@ -4189,7 +4189,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     f32 f = 1.5f;
     u64 big = 9;
     i32 small = -3;
@@ -4207,7 +4207,7 @@ module main;
 import many;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d %d %d %d\n", many::sum6(1, 2, 3, 4, 5, 6), many::sum_as(i64, 1, (u8)2, 3, 4.0, 5),
               many::sum8(1, 2, 3, 4, 5, 6, 7), many::sum8(1, 2, 3, 4, 5, 6, 7, 8, (i64)9));
     return 0;
@@ -4263,7 +4263,7 @@ static f64 half(f64 x) {
     return x / 2;
 }
 
-int main(void) {
+int main() {
     c::printf("%d %d %.2f\n", apply::four(inc, 0), apply::five(inc, 0), apply::four(half, 16.0));
     return 0;
 }
@@ -4324,7 +4324,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     u8 storage[256];
     arena::Arena a = arena::make(storage, sizeof storage);
     Point *p = list::make_two(&a, Point);
@@ -4341,7 +4341,7 @@ import number;
 
 constexpr usize seven = 7;
 
-int main(void) {
+int main() {
     number::Triple t = {1, 2, 3};
     i32 x = 5;
     c::printf("%d %d %d\n", number::scaled(3, 1), number::scaled(seven, 1), number::scaled(2 + 3, x));
@@ -4396,7 +4396,7 @@ module main;
 import smith::tools;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     const i32 value = 5;
     i32 a = tools::shifted(&value);
     i32 b = tools::shifted(&value, 1, 2.5);
@@ -4413,7 +4413,7 @@ import <stdio.h>;
 
 export i32 offset = 10;
 
-export i32 pick(void) {
+export i32 pick() {
     return tools::offset + 1;
 }
 
@@ -4483,7 +4483,7 @@ module main;
 import args;
 import last;
 
-int main(void) {
+int main() {
     i64 a = args::runtime_index(1, 2, 3);
     i64 b = args::out_of_range(1, 2);
     i64 c = args::bare(1, 2);
@@ -4530,7 +4530,7 @@ module main;
 
 import bad;
 
-int main(void) {
+int main() {
     return bad::no_pack(1) + bad::only_index(1) + bad::whole(1) + bad::nested(1, 2);
 }
 ==> generic-pack-expand-typed/src/main.smith <==
@@ -4539,7 +4539,7 @@ module main;
 import <stdio.h>;
 import typed;
 
-int main(void) {
+int main() {
     i32 a[2] = {1, 2};
     c::printf("%d %d\n", typed::with_generic(a, 5, (u8)6), typed::with_generic(a));
     c::printf("%d %d\n", typed::with_function(a, 2, 3), typed::with_function(a));
@@ -4680,7 +4680,7 @@ module main;
 import expand;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d %d\n", expand::shifted(10, 1, 2, 3), expand::shifted(10));
     c::printf("%d %d %d\n", expand::around(), expand::around(2), expand::around((u8)3, 5));
     c::printf("%d %d\n", expand::rest_empty(), expand::rest_empty(2, 3));
@@ -4760,7 +4760,7 @@ static i32 add3(i32 a, i32 b, i32 c) {
     return a + b + c;
 }
 
-int main(void) {
+int main() {
     usize n0 = args::count(1);
     usize n1 = args::count(1, 2.5);
     usize n3 = args::count(1, 2.5, (u8)3, "four");
@@ -4820,7 +4820,7 @@ typedef struct {
     i32 x;
 } Point;
 
-int main(void) {
+int main() {
     Point p = {1};
     fmt::print("a point:", p);
     return 0;
@@ -4859,7 +4859,7 @@ module main;
 
 import fmt;
 
-int main(void) {
+int main() {
     u8 small = 200;
     i64 negative = -5;
     fmt::print();
@@ -4874,7 +4874,7 @@ module main;
 import shape;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d %.1f %d\n", shape::framed(10), shape::framed(1.5), shape::plain(7));
     return 0;
 }
@@ -4906,7 +4906,7 @@ module main;
 import scale;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i32 a = scale::spread(0, 0);
     f64 b = scale::spread(0.5, 1);
     c::printf("%d %.1f %d\n", a, b, scale::calls());
@@ -4954,7 +4954,7 @@ static inline i32 clamp_to_base(i32 x) {
     return x > base ? base : x;
 }
 
-export i32 calls(void) {
+export i32 calls() {
     return counter.calls + unused(0) - 1;
 }
 
@@ -5003,7 +5003,7 @@ module main;
 import bad;
 import plain;
 
-int main(void) {
+int main() {
     i32 a = bad::run_time_bound(3);
     i32 b = bad::bare(1);
     i32 c = bad::out_of_range(1, 2);
@@ -5091,7 +5091,7 @@ module main;
 import arguments;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i32 a = arguments::total(1, 2, 3);
     i32 b = arguments::total();
     i32 c = arguments::total((u8)200, (i64)5, 2.5);
@@ -5128,7 +5128,7 @@ export wide_of(T) widen(constexpr type T, auto x) {
     return x;
 }
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %zu\n", sizeof(from_count(u8)), sizeof(from_count(u8, (u8)1)),
               sizeof(from_count(u8, (u8)1, (u8)2)));
     c::printf("%zu %zu\n", sizeof(widen(u8, (u8)3)), sizeof(widen(f32, 3.0f)));
@@ -5138,7 +5138,7 @@ int main(void) {
 import size;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     u8 buffer[6];
     u32 n = (u32)sizeof(buffer);
     printf("%u %u\n", n, size::bytes_of((u16)1, (u16)2));
@@ -5167,7 +5167,7 @@ static i64 total_of(u8 xs[restrict :]) {
     return stats::total(xs);
 }
 
-i32 main(void) {
+i32 main() {
     char raw[4] = {'a', 'b', 'c', 'd'};
     char plain[:] = raw;
     const char read[:] = plain;
@@ -5253,7 +5253,7 @@ module main;
 
 import conv;
 
-i32 main(void) {
+i32 main() {
     u8 raw[2] = {1, 2};
     const u8 read[:] = raw;
     return (i32)(conv::ordinary(read) + conv::generic(read));
@@ -5319,7 +5319,7 @@ static usize through_restrict(u8 xs[restrict :]) {
     return conv::call_plain(xs) + conv::call_read(xs) + conv::call_fast(xs) + conv::pass_on(xs);
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     u8 xs[:] = raw;
     const u8 read[:] = xs;
@@ -5367,7 +5367,7 @@ export usize passed(auto xs) {
     return plain_sum(v);
 }
 
-export usize fixed(void) {
+export usize fixed() {
     u8 raw[3] = {7, 8, 9};
     u8 v[:] = raw;
     return plain_sum(v) + countof(v);
@@ -5401,7 +5401,7 @@ module main;
 import conv;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     u8 raw[5] = {1, 2, 3, 4, 5};
     u8 xs[:] = raw;
     u8 big[:] = raw;
@@ -5419,7 +5419,7 @@ module main;
 import probe;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     u8 plain[:] = raw;
     constexpr type plain_type = typeof(plain);
@@ -5457,7 +5457,7 @@ static bool slicy(type t) {
     return is_slice(t);
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 xs[:] = raw;
     f32 rows_type[:][2];
@@ -5554,7 +5554,7 @@ export usize element_size(auto xs) {
 }
 ==> generic-static-assert/src/main.smith <==
 import sa;
-int main(void) {
+int main() {
     return sa::twice(1) + (int)sa::twice(1.5);
 }
 ==> generic-static-assert/src/sa.smith <==
@@ -5587,15 +5587,15 @@ export typedef struct {
 #endif
 
 #if defined(WIDE) && WIDE > 1
-export u32 width(void) {
+export u32 width() {
     return 128;
 }
 #elif defined(WIDE)
-export u32 width(void) {
+export u32 width() {
     return 64;
 }
 #else
-export u32 width(void) {
+export u32 width() {
     return 32;
 }
 #endif
@@ -5606,24 +5606,24 @@ static u32 hidden = 1;
 #endif
 
 #if 0
-export u32 never(void) {
+export u32 never() {
     return 0;
 }
 #else
-export u32 always(void) {
+export u32 always() {
     return 1;
 }
 #endif
 
 #ifdef OUTER
 #ifdef INNER
-export u32 nested(void) {
+export u32 nested() {
     return 3;
 }
 #endif
 #endif
 
-export u32 plain(void) {
+export u32 plain() {
     return 5;
 }
 ==> header-conditional/src/cfg/mode.smith <==
@@ -5641,15 +5641,15 @@ export typedef struct {
 #endif
 
 #if defined(WIDE) && WIDE > 1
-export u32 width(void) {
+export u32 width() {
     return 128;
 }
 #elif defined(WIDE)
-export u32 width(void) {
+export u32 width() {
     return 64;
 }
 #else
-export u32 width(void) {
+export u32 width() {
     return 32;
 }
 #endif
@@ -5660,24 +5660,24 @@ static u32 hidden = 1;
 #endif
 
 #if 0
-export u32 never(void) {
+export u32 never() {
     return 0;
 }
 #else
-export u32 always(void) {
+export u32 always() {
     return 1;
 }
 #endif
 
 #ifdef OUTER
 #ifdef INNER
-export u32 nested(void) {
+export u32 nested() {
     return 3;
 }
 #endif
 #endif
 
-export u32 plain(void) {
+export u32 plain() {
     return 5;
 }
 ==> header-docs/src/geo/shape.smith <==
@@ -5711,11 +5711,11 @@ export u32 origin_count = 1; // how many origins there are
 }
 
 // A private function has no comment in the header.
-static u32 helper(void) {
+static u32 helper() {
     return 7;
 }
 
-export u32 seven(void); // declared here, defined in C
+export u32 seven(); // declared here, defined in C
 ==> header-in-memory/src/lib.smith <==
 module lib;
 
@@ -5739,7 +5739,7 @@ module main;
 import lib;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%u %u\n", lib::cost(3), lib::twice(3));
     return 0;
 }
@@ -5782,7 +5782,7 @@ module main;
 import inc::chain;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
@@ -5795,7 +5795,7 @@ constexpr i32 wide = 8;
 constexpr bool both = wide == 8 && target::float_radix == 2;
 
 // A chain: the branches not taken are never given to the parser, so they may be anything.
-export i32 arch_name(void) {
+export i32 arch_name() {
     if constexpr (target::arch == target::aarch64) {
         return 1;
     } else if constexpr (target::arch == target::x86_64) {
@@ -5861,7 +5861,7 @@ import <stdio.h>;
 
 constexpr bool fast = target::assertions == false;
 
-int main(void) {
+int main() {
     i32 answer = 0;
     // In a file with no module line the branches flow the same.
     if constexpr (target::os == target::macos) {
@@ -5886,7 +5886,7 @@ import <sys/wait.h>;
 import <stdio.h>;
 import "local.h";
 
-int main(void) {
+int main() {
     f32 root = c::sqrtf(81.0f);
     int status = 256 * 3;
     c::printf("%.1f %d %d eof=%d %d\n", (double)root, c::WIFEXITED(status), c::WEXITSTATUS(status), c::EOF,
@@ -5922,7 +5922,7 @@ import lib::text;
 import lib::util as u;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     text::Text t = text::make("hello");
     printf("%zu %d\n", text::length(t), u::twice(21));
     return 0;
@@ -5933,7 +5933,7 @@ import "d.h";
 #include <stdio.h>
 
 // With -fmodules a header is a module import, and the next import still starts a declaration.
-int main(void) {
+int main() {
     printf("%d\n", c::c_value() + c::d_value());
     return 0;
 }
@@ -5952,7 +5952,7 @@ import core;
 import rolls;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     core::Thing thing = core::make(40);
     c::printf("%d\n", rolls::total(&thing, 2));
     return 0;
@@ -5975,7 +5975,7 @@ export void hello(const char *name) {
 ==> include-keeps-c-names/src/main.smith <==
 import app::say;
 
-int main(void) {
+int main() {
     say::hello("there");
     return 0;
 }
@@ -5983,7 +5983,7 @@ int main(void) {
 import pick::inl;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     inl::show();
     c::printf("same in main: %d\n", inl::flavor());
     return 0;
@@ -5997,7 +5997,7 @@ import <stdio.h>;
 // An exported inline function with an `if constexpr` on the target: the header carries the preprocessor's own question
 // (the facts it needs defined once at the top, the branches between #if, #else and #endif), so a C includer's compiler
 // answers it, as the compiler of a .smith importer does.
-export inline i32 flavor(void) {
+export inline i32 flavor() {
     if constexpr (target::address_sanitizer) {
         return 1;
     } else if constexpr (target::assertions) {
@@ -6007,14 +6007,14 @@ export inline i32 flavor(void) {
     }
 }
 
-export void show(void) {
+export void show() {
     c::printf("flavor %d\n", flavor());
 }
 ==> inline-if-constexpr/src/main.smith <==
 import pick::inl;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     inl::show();
     c::printf("same in main: %d\n", inl::flavor());
     return 0;
@@ -6028,7 +6028,7 @@ import <stdio.h>;
 // An exported inline function with an `if constexpr` on the target: the header carries the preprocessor's own question
 // (the facts it needs defined once at the top, the branches between #if, #else and #endif), so a C includer's compiler
 // answers it, as the compiler of a .smith importer does.
-export inline i32 flavor(void) {
+export inline i32 flavor() {
     if constexpr (target::address_sanitizer) {
         return 1;
     } else if constexpr (target::assertions) {
@@ -6038,7 +6038,7 @@ export inline i32 flavor(void) {
     }
 }
 
-export void show(void) {
+export void show() {
     c::printf("flavor %d\n", flavor());
 }
 ==> keyword-names-fine/src/main.smith <==
@@ -6063,7 +6063,7 @@ i32 main() {
 import <stdio.h>;
 import smith::text;
 
-i32 main(void) {
+i32 main() {
     const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";
     const char line[:];
     const char word[:];
@@ -6143,7 +6143,7 @@ export u32 pair(u32 a, u32 b) {
     return PAIR(a, b);
 }
 
-export usize name_length(void) {
+export usize name_length() {
     return strlen(machine);
 }
 ==> main-io-module/src/main.smith <==
@@ -6249,7 +6249,7 @@ typedef struct {
     i32 vector_length;
 } Lens;
 
-int main(void) {
+int main() {
     Lens lens = {.vector_length = 3};
     Lens *p = &lens;
     // A member after `.` or `->` is a field, never a use of the macro of the same name.
@@ -6260,7 +6260,7 @@ int main(void) {
 import shapes::area as area;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     area::Rect r = {3.0, 4.0};
     struct area::Circle c = {2.0};
     printf("%.1f %.1f %.1f\n", area::rect(r), area::circle(c), area::triangle(r));
@@ -6306,7 +6306,7 @@ export f64 triangle(Rect shape) {
     return half(rect(shape));
 }
 
-export u32 private_count(void) {
+export u32 private_count() {
     return private_calls;
 }
 
@@ -6404,7 +6404,7 @@ static int increment(int value) {
     return value + 1;
 }
 
-int main(void) {
+int main() {
     k::Node last = {.next = nullptr, .value = 3, .mode = 2, .point = {.x = 1, .y = 2}};
     k::Node first = {.next = &last, .value = 4, .mode = 1};
     c::printf("%d %d\n", OPEN_SUM(&first), k::run(increment, 5));
@@ -6452,21 +6452,21 @@ module mix::use;
 import mix::modes;
 
 // From Smith the constants are the module's own names, whatever C calls them.
-export i32 both(void) {
+export i32 both() {
     return modes::score(modes::Fast, modes::Low) + modes::score(modes::Slow, modes::High);
 }
 ==> module-export-extern/src/cfg/limits.smith <==
 module cfg::limits;
 
 export extern u32 max_users;
-export u32 users_allowed(void) {
+export u32 users_allowed() {
     return max_users * 2;
 }
 ==> module-export-extern/src/main.smith <==
 import cfg::limits as limits;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%u %u\n", limits::max_users, limits::users_allowed());
     return 0;
 }
@@ -6474,18 +6474,18 @@ int main(void) {
 module cond::gate;
 
 #if 0
-export int never_there(void);
-export int also_never(void) { return -1; }
+export int never_there();
+export int also_never() { return -1; }
 #endif
 
-export int always_there(void) {
+export int always_there() {
     return 7;
 }
 ==> module-header-conditionals/src/main.smith <==
 import cond::gate;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d\n", gate::always_there());
     return 0;
 }
@@ -6493,7 +6493,7 @@ int main(void) {
 module main;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("main stays main\n");
     return 0;
 }
@@ -6501,7 +6501,7 @@ int main(void) {
 import names::fields as f;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     f::Stats s = f::make(2, 3);
     printf("%d %d\n", s.count, f::combine(&s));
     return 0;
@@ -6516,7 +6516,7 @@ export typedef struct {
 
 int count = 10;
 
-int total(void) {
+int total() {
     return 5;
 }
 
@@ -6532,7 +6532,7 @@ export Stats make(int count, int total) {
 ==> module-shadow-names/src/lib/gnu.smith <==
 module lib::gnu;
 
-export int answer(void) {
+export int answer() {
     return 42;
 }
 ==> module-shadow-names/src/lib/text.smith <==
@@ -6558,7 +6558,7 @@ import lib::text;
 import lib::gnu;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     text::Text text = text::make("shadow");
     int c = 2;
     [[gnu::unused]] int unused_one = gnu::answer();
@@ -6582,7 +6582,7 @@ export typedef struct Handle {
 } Handle;
 export enum Mode { Fast, Slow };
 
-u32 helper(void) {
+u32 helper() {
     return version + counter;
 }
 
@@ -6612,7 +6612,7 @@ export usize length(Text text) {
     return text.length;
 }
 
-usize unused_helper(void) {
+usize unused_helper() {
     return 0;
 }
 ==> module-three/src/main.smith <==
@@ -6621,7 +6621,7 @@ import lib::text;
 import <stdio.h>;
 import <math.h>;
 
-int main(void) {
+int main() {
     rp::Handle handle = {.fd = 5};
     rp::Replay replay = rp::open(&handle, "last.replay");
     f32 root = c::sqrtf(16.0f);
@@ -6704,7 +6704,7 @@ module main;
 import shape::box;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     box::Box b = {.width = 3, .height = 4};
     c::printf("%d %d %d %d %d %d\n", box::area(&b, 5), box::scaled(2, 3, 4), box::apply(box::width, &b),
               box::combined(10), box::height(&b), box::larger(i32, 3, 9));
@@ -6748,7 +6748,7 @@ export T larger(constexpr type T, T width, T height) {
 ==> plain-hello/src/main.smith <==
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("hello\n");
     return 0;
 }
@@ -6780,7 +6780,7 @@ struct Point {
 typedef int import;
 import global_value = 7;
 
-int main(void) {
+int main() {
     struct Point c = {1, 2};
     import value = c.x + c.y;
     int module = value;
@@ -6793,7 +6793,7 @@ int main(void) {
 
 typedef unsigned u32;
 
-int main(void) {
+int main() {
     u32 a = 3;
     int u8 = 4;
     int f32 = 5;
@@ -6823,7 +6823,7 @@ union Number {
 typedef Packet Alias;
 typedef struct Opaque Hidden;
 
-int main(void) {
+int main() {
     return 0;
 }
 ==> session-keyword-name/src/foo.smith <==
@@ -6873,12 +6873,12 @@ u32 twice(u8 byte) {
     return 2u * byte;
 }
 
-int main(void) {
+int main() {
     printf("%u\n", twice(21));
     return 0;
 }
 ==> sized-error-message/src/main.smith <==
-void f(void) {
+void f() {
     i32 x = "hello";
     (void)x;
 }
@@ -6900,7 +6900,7 @@ export u64 area(const Shape *shape) {
 ==> sized-own-typedef/src/main.smith <==
 // The file's own u32 is kept: the error names its type, not the built-in one.
 typedef unsigned char u32;
-void f(void) {
+void f() {
     u32 x = "hello";
     (void)x;
 }
@@ -6908,7 +6908,7 @@ void f(void) {
 #include <stddef.h>
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%zu %zu %zu %zu\n", sizeof(u8), sizeof(u16), sizeof(u32), sizeof(u64));
     printf("%zu %zu %zu %zu\n", sizeof(i8), sizeof(i16), sizeof(i32), sizeof(i64));
     printf("%zu %zu\n", sizeof(usize), sizeof(isize));
@@ -6986,7 +6986,7 @@ static typeof(f32[:][2]) lower(f32 rows[:][2]) {
     return rows[1:countof(rows)];
 }
 
-i32 main(void) {
+i32 main() {
     f32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
     f32 pairs[:][2] = raw;
     f32 grid[:][:] = raw;
@@ -7024,7 +7024,7 @@ module main;
 import r;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     i32 a[] = {4, 5, 6};
     i32 b[] = {10};
     c::printf("%d %d\n", r::first(a[0:3]), r::total(a[0:3], b[0:1]));
@@ -7079,7 +7079,7 @@ static usize total(struct Pair p) {
     return countof(p.key) * 10 + countof(p.value);
 }
 
-i32 main(void) {
+i32 main() {
     struct Pair a = {.key = "k", .value = "xyz"};
     struct Pair b = {"kk", "v"};
     char raw[3] = {'a', 'b', 'c'};
@@ -7152,7 +7152,7 @@ import key;
 
 // A fixed array passed to a slice parameter of an imported module's type, in a file that imports a C header: the
 // lowering's own spelling of the type is no C name of the user's (issue #203).
-i32 main(void) {
+i32 main() {
     key::Key ks[2] = {{1, 2}, {3, 4}};
     c::printf("%llu\n", (unsigned long long)key::total(ks));
     return 0;
@@ -7213,7 +7213,7 @@ static usize rows(const f32 (*m)[:][2]) {
     return countof(*m) * 10 + countof((*m)[0]);
 }
 
-i32 main(void) {
+i32 main() {
     const char s[:] = "a\nbc\nd";
     const char line[:];
     while (take_line(&s, &line)) {
@@ -7278,7 +7278,7 @@ export void copy(u8 dst[restrict :], u8 const src[const restrict :]) {
     }
 }
 
-export usize greet(void) {
+export usize greet() {
     const char word[:] = "abc";
     u8 bytes[3] = {1, 2, 3};
     u8 writable[const :] = bytes;
@@ -7329,7 +7329,7 @@ static f32 rows(f32 m[const :][2]) {
     return row[0] + m[0][1];
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[6] = {1, 2, 3, 4, 5, 6};
     u8 all[:] = raw;
     const u8 read[:] = all;      // u8[:] to const u8[:] is implicit
@@ -7387,19 +7387,19 @@ static typeof(i32[:]) inner(i32 xs[:]) {
     return xs[1:countof(xs) - 1];
 }
 
-static typeof(i32[:]) fixed(void) {
+static typeof(i32[:]) fixed() {
     static i32 data[3] = {7, 8, 9};
     return data;
 }
 
 static i32 once_calls = 0;
 
-static typeof(i32[:]) once(void) {
+static typeof(i32[:]) once() {
     once_calls += 1;
     return fixed();
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;
     i32 mid[:] = all[1:4];
@@ -7470,7 +7470,7 @@ module main;
 import hold;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     i32 x = 5;
     f64 y = 2.5;
     c::printf("%d %g %s\n", *hold::reset(i32, &x), *hold::reset(f64, &y), hold::note);
@@ -7483,7 +7483,7 @@ module main;
 import pool;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     c::printf("%g %s\n", pool::first(), pool::note);
     return 0;
 }
@@ -7508,7 +7508,7 @@ T *grab(constexpr type T, usize count, i32 flags) {
 
 export const char *note = "a string with zs[:] in it";
 
-export f64 first(void) {
+export f64 first() {
     Pair *p = grab(Pair, 1, 0);
     p->b = 2.5;
     usize *n = grab(usize, 2, 0);
@@ -7540,7 +7540,7 @@ static int measure(const char *str) {
     return n;
 }
 
-int main(void) {
+int main() {
     const char *str = "abcd";
     struct Holder holder = {.str = str};
     printf("%d %d\n", measure(str), measure(holder.str));
@@ -7576,7 +7576,7 @@ module main;
 import <stdio.h>;
 import words;
 
-i32 main(void) {
+i32 main() {
     str s = "hello world";
     str w = words::first_word(s);
     str *p = &s;
@@ -7641,7 +7641,7 @@ static void poke(char (*b)[:]) {
     (*b)[0] = 'Z';
 }
 
-i32 main(void) {
+i32 main() {
     str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
     str cut = s[0:2];
@@ -7703,7 +7703,7 @@ module main;
 import <stdio.h>;
 import text;
 
-i32 main(void) {
+i32 main() {
     text::str s = "hello world";
     text::str w = text::first_word(s);
     text::str *p = &s;
@@ -7780,7 +7780,7 @@ static void poke(bytes *b) {
     (*b)[0] = 'Z';
 }
 
-i32 main(void) {
+i32 main() {
     str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
     str cut = s[0:2];
@@ -7808,17 +7808,17 @@ import target;
 import <stdio.h>;
 
 // Each fact of the target, against the answer of C's own preprocessor in facts.c (`#if` and the predefined macros).
-extern i32 c_arch(void);
-extern i32 c_os(void);
-extern i32 c_address_sanitizer(void);
-extern i32 c_undefined_sanitizer(void);
-extern i32 c_thread_sanitizer(void);
-extern i32 c_assertions(void);
-extern i32 c_float_radix(void);
-extern i32 c_f32_mantissa_bits(void);
-extern i32 c_f64_mantissa_bits(void);
-extern i32 c_float_eval_method(void);
-extern i32 c_static_analyzer(void);
+extern i32 c_arch();
+extern i32 c_os();
+extern i32 c_address_sanitizer();
+extern i32 c_undefined_sanitizer();
+extern i32 c_thread_sanitizer();
+extern i32 c_assertions();
+extern i32 c_float_radix();
+extern i32 c_f32_mantissa_bits();
+extern i32 c_f64_mantissa_bits();
+extern i32 c_float_eval_method();
+extern i32 c_static_analyzer();
 
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
@@ -7840,7 +7840,7 @@ static i32 check(const char *name, i32 smith, i32 compiler) {
     return 0;
 }
 
-int main(void) {
+int main() {
     i32 bad = 0;
     bad += check("arch", target::arch, c_arch());
     bad += check("os", target::os, c_os());
@@ -7876,7 +7876,7 @@ Pair braces(i32 a, f32 b) {
     return {a, b};
 }
 
-Nested nest(void) {
+Nested nest() {
     return {1, {2.0f, 3.0f}};
 }
 
@@ -7889,7 +7889,7 @@ void by_pointer(Pair *p) {
     p->_1 = 0.5f;
 }
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } t = {1, 2.0f};
     t[1] = 2.5f;
     Pair p = make(3, 4.5f);
@@ -7946,7 +7946,7 @@ export struct { i32, f32 } make(i32 a, f32 b) {
 import geo::a;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     auto p = a::make(2, 3.0f);
     p[0] += 1;
     c::printf("%d %f %d\n", p[0], (double)p[1], (i32)countof(p));
@@ -7989,7 +7989,7 @@ export i32 twice(struct { i32, f32 } t) {
 }
 
 // `a::Meters` written here and `Meters` in geo::a are one spelling, so these are one type.
-export struct { a::Meters, f32 } mk(void) {
+export struct { a::Meters, f32 } mk() {
     return a::reach2(5.0);
 }
 
@@ -8003,7 +8003,7 @@ import geo::a;
 import geo::b;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     auto p = a::make(2, 3.0f);
     struct { i32, f32 } q = p;
     auto m = b::mk();
@@ -8025,7 +8025,7 @@ i32 take(struct { i32, f32 } t) {
     return t[0];
 }
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } a = {1, 2.0f};
     struct { c::int32_t, float } b = a;
     struct { int, float } c = b;
@@ -8047,7 +8047,7 @@ import marks;
 
 i32 marker = 3;
 
-int main(void) {
+int main() {
     f64 values[2] = {1.5, 2.5};
     i32 one = 7;
     c::printf("%g %d %d\n", marks::at(values), marks::at(one), marker);
@@ -8099,7 +8099,7 @@ typedef struct {
     f64 b;
 } Pair;
 
-int main(void) {
+int main() {
     Pair pair = {3, 2.5};
     Pair *pointer = &pair;
     i32 scalar = 7;
@@ -8116,7 +8116,7 @@ module main;
 import <stdio.h>;
 import shapes;
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %d %d\n", sizeof(shapes::keep(f64, 1.0)), sizeof(shapes::keep(u8, (u8)1)), shapes::width(f64),
               shapes::width(u8));
     return 0;
@@ -8150,7 +8150,7 @@ module main;
 import <stdio.h>;
 import sizes;
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %d\n", sizeof(sizes::convert(f64, 2.5)), sizeof(sizes::convert(u8, (u8)1)),
               (int)sizes::convert(f64, 2.5));
     return 0;
@@ -8176,7 +8176,7 @@ static type element(type t) {
     if (sizeof(t) > 4) return typeof(*p);
     return t;
 }
-int main(void) {
+int main() {
     constexpr type once = element(f64);
     constexpr type small = element(u8);
     once x = 1.5;
@@ -8207,7 +8207,7 @@ static int total(const Item *item, int n) {
     return sum;
 }
 
-int main(void) {
+int main() {
     Item item = {3, 4};
     wide big = 5; // the keyword again, once `type` is out of scope
     printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);
@@ -8227,13 +8227,13 @@ enum Color { Red, Green };
 
 typedef enum Color Paint;
 
-int main(void) {
+int main() {
     return 0;
 }
 ==> type-value-generic/src/main.smith <==
 import size;
 #include <stdio.h>
-int main(void) {
+int main() {
     printf("%d\n", size::run());
     return 0;
 }
@@ -8257,7 +8257,7 @@ i32 choose(constexpr type T) {
     }
 }
 
-export i32 run(void) {
+export i32 run() {
     return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
 }
 ==> type-value-import/src/main.smith <==
@@ -8288,7 +8288,7 @@ typedef struct {
     f64 a, b;
 } Pair;
 
-int main(void) {
+int main() {
     f32 vector[:];
     f32 grid[:][:];
     f32 rows[:][2];
@@ -8340,7 +8340,7 @@ export type slice_if_small(type t) {
 // A file whose only type values are in main is read in type-value mode (issue #174).
 typedef const char str[:];
 
-i32 main(void) {
+i32 main() {
     constexpr type t = str;
     static_assert(is_slice(t));
     t words = "abc";
@@ -8356,7 +8356,7 @@ constexpr type small = f32;
 
 big total = 7;
 
-i32 main(void) {
+i32 main() {
     big x = 1;
     static_assert(sizeof(big) == 4);
     small y = 2.5;
@@ -8400,7 +8400,7 @@ static_assert(slice(sliced) && !slice(kinds[5]));
 static_assert(integer(kinds[0]) == is_integer(kinds[0]) &&
               arithmetic(kinds[2]) == (is_integer(kinds[2]) || is_float(kinds[2])));
 
-int main(void) {
+int main() {
     printf("%d %d %d %d\n", (int)integer(kinds[0]), (int)arithmetic(kinds[2]), (int)unsigned_integer(kinds[2]),
            (int)signed_integer(kinds[2]));
     i32 a = 1;
@@ -8451,7 +8451,7 @@ static type twice(type T) {
     return T[:][:];
 }
 
-int main(void) {
+int main() {
     f32 xs[:];
     f32 rows[:][2];
     f32 grid[:][:];
@@ -8493,7 +8493,7 @@ typedef struct {
 } Column;
 constexpr Column column = {.of = u8, .count = 3};
 
-int main(void) {
+int main() {
     constexpr type t = i32;
     t a = 7;         // `t x;` declares a variable of the type t holds
     element b = 2.5; // a file-scope type value
@@ -8531,7 +8531,7 @@ static_assert(sizeof(wide) != 4, "sizeof of a type value is four bytes here");
 static_assert(alignof(wide) != 4, "alignof of a type value is four here");
 static_assert(sizeof(char *) == 8);
 
-export i32 eight(void) {
+export i32 eight() {
     return 8;
 }
 ==> type-value/src/main.smith <==
@@ -8582,7 +8582,7 @@ static_assert(wider(i32, f64) == double);
 static_assert(wider(u8, u16) == u16);
 static_assert(small(wider(i8, u16)) && !small(wider(i32, i64)));
 
-int main(void) {
+int main() {
     constexpr type local = wider(u8, i64);
     local big = 1;
     big <<= 40;
@@ -8612,17 +8612,17 @@ i32 total(constexpr type T) {
     return sum;
 }
 
-export i32 bytes(void) {
+export i32 bytes() {
     return total(u8);
 }
-export i32 words(void) {
+export i32 words() {
     return total(u64);
 }
 ==> value-query-for/src/main.smith <==
 import loop;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %d\n", loop::bytes(), loop::words());
     return 0;
 }
@@ -8630,7 +8630,7 @@ int main(void) {
 import size;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %d %d\n", size::small(), size::big(), size::all());
     return 0;
 }
@@ -8664,13 +8664,13 @@ i32 mixed(constexpr type T) {
     return 30;
 }
 
-export i32 small(void) {
+export i32 small() {
     return choose(u8);
 }
-export i32 big(void) {
+export i32 big() {
     return choose(Big);
 }
-export i32 all(void) {
+export i32 all() {
     return mixed(Big) * 10000 + mixed(u32) * 100 + mixed(u8);
 }
 ==> value-query-plain/src/main.smith <==
@@ -8682,7 +8682,7 @@ struct C {
     int count;
 };
 constexpr struct C cfg = {.count = 3};
-int main(void) {
+int main() {
     if constexpr (f(3) > 5) {
         puts("big");
     } else {
@@ -8696,7 +8696,7 @@ int main(void) {
 ==> value-query-windows/src/size.smith <==
 module size;
 
-static usize long_size(void) {
+static usize long_size() {
     return sizeof(long);
 }
 
@@ -8708,7 +8708,7 @@ i32 long_is_four(constexpr type T) {
     return 8;
 }
 
-export i32 use(void) {
+export i32 use() {
     return long_is_four(i32);
 }
 ==> value-query/src/main.smith <==
@@ -8732,7 +8732,7 @@ static i32 twice(i32 n) {
     return n * 2;
 }
 
-int main(void) {
+int main() {
     printf("%d\n", twice(21));
     return 0;
 }

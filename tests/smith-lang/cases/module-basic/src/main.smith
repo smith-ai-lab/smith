@@ -1,7 +1,7 @@
 import shapes::area as area;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     area::Rect r = {3.0, 4.0};
     struct area::Circle c = {2.0};
     printf("%.1f %.1f %.1f\n", area::rect(r), area::circle(c), area::triangle(r));

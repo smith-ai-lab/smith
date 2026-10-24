@@ -3,7 +3,7 @@ module main;
 import <stdio.h>;
 import sizes;
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %d\n", sizeof(sizes::convert(f64, 2.5)), sizeof(sizes::convert(u8, (u8)1)),
               (int)sizes::convert(f64, 2.5));
     return 0;

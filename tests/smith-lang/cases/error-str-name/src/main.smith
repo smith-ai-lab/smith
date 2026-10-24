@@ -10,7 +10,7 @@ static int measure(const char *str) {
     return str[0];
 }
 
-i32 main(void) {
+i32 main() {
     const char *str = "abcd";
     return measure(str);
 }

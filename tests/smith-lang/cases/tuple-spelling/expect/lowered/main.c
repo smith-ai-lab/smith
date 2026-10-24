@@ -5,7 +5,7 @@ typedef f64 Meters;
 __INT32_TYPE__ take(struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } t) {
 return t[0];
 }
-__INT32_TYPE__ main(void) {
+__INT32_TYPE__ main() {
 struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } a = {1, 2.0f};
 struct smith_tuple_i32__f32 { int32_t _0; float _1; } b = a;
 struct smith_tuple_i32__f32 { int _0; float _1; } c = b;

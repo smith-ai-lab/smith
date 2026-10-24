@@ -12,7 +12,7 @@ export kinds::slice_of(T, counts::dims(2, 3)) make(constexpr type T, usize rows,
     return result;
 }
 
-int main(void) {
+int main() {
     f32 grid[:][:];
     grid = make(f32, 4, 5);
     c::printf("%zu %zu\n", countof(grid), countof(grid[0]));

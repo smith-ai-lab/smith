@@ -3,7 +3,7 @@ module main;
 import pool;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     c::printf("%g %s\n", pool::first(), pool::note);
     return 0;
 }

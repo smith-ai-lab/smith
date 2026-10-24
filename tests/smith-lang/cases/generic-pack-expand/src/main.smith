@@ -3,7 +3,7 @@ module main;
 import expand;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d %d\n", expand::shifted(10, 1, 2, 3), expand::shifted(10));
     c::printf("%d %d %d\n", expand::around(), expand::around(2), expand::around((u8)3, 5));
     c::printf("%d %d\n", expand::rest_empty(), expand::rest_empty(2, 3));

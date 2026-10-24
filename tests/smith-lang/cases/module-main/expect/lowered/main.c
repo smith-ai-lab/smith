@@ -1,5 +1,5 @@
 #include <stdio.h>
-int main(void) {
+int main() {
 printf("main stays main\n");
 return 0;
 }

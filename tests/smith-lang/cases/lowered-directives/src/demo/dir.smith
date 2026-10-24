@@ -44,6 +44,6 @@ export u32 pair(u32 a, u32 b) {
     return PAIR(a, b);
 }
 
-export usize name_length(void) {
+export usize name_length() {
     return strlen(machine);
 }

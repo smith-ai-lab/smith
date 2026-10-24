@@ -11,6 +11,6 @@ i32 broken(constexpr type T) {
     return 0;
 }
 
-export i32 call(void) {
+export i32 call() {
     return broken(i32);
 }

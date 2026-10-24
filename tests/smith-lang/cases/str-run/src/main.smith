@@ -27,7 +27,7 @@ static void poke(char (*b)[:]) {
     (*b)[0] = 'Z';
 }
 
-i32 main(void) {
+i32 main() {
     str s = "abc";
     c::printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]));
     str cut = s[0:2];

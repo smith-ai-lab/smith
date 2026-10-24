@@ -2,7 +2,7 @@ import pick;
 
 constexpr i32 limit = 300;
 
-int main(void) {
+int main() {
     u8 small = 5;
     u32 big = 7;
     i32 neg = -1;

@@ -2,7 +2,7 @@
 #include "lib/gnu.h"
 #include <stdio.h>
 
-int main(void) {
+int main() {
 lib_text_Text text = lib_text_make("shadow");
 int c = 2;
 [[gnu::unused]] int unused_one = lib_gnu_answer();

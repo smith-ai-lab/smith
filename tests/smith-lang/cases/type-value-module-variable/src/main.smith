@@ -7,7 +7,7 @@ constexpr type small = f32;
 
 big total = 7;
 
-i32 main(void) {
+i32 main() {
     big x = 1;
     static_assert(sizeof(big) == 4);
     small y = 2.5;

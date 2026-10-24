@@ -18,7 +18,7 @@ typedef struct {
     i32 count;
 } Record;
 
-export void test_arena_pushes_are_zeroed(void) {
+export void test_arena_pushes_are_zeroed() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
@@ -32,7 +32,7 @@ export void test_arena_pushes_are_zeroed(void) {
         test::check_equal(again[i], 0); // a push after a reset is zeroed too
 }
 
-export void test_arena_pushes_are_aligned(void) {
+export void test_arena_pushes_are_aligned() {
     static Memory memory;
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
     for (usize align = 1; align <= arena::align_max; align *= 2) {
@@ -43,7 +43,7 @@ export void test_arena_pushes_are_aligned(void) {
     }
 }
 
-export void test_arena_typed_and_slice_pushes(void) {
+export void test_arena_typed_and_slice_pushes() {
     static Memory memory;
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
     Record *record = arena::push(&a, Record);
@@ -60,7 +60,7 @@ export void test_arena_typed_and_slice_pushes(void) {
     test::check_equal(countof(none), 0);
 }
 
-export void test_arena_typed_pushes_keep_every_alignment(void) {
+export void test_arena_typed_pushes_keep_every_alignment() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
@@ -81,7 +81,7 @@ export void test_arena_typed_pushes_keep_every_alignment(void) {
     test::check_equal(*wide, 0.0);
 }
 
-export void test_arena_fits_asks_without_pushing(void) {
+export void test_arena_fits_asks_without_pushing() {
     static Memory memory;
     arena::Arena a = arena::make(memory.bytes, 128);
     test::check_condition(arena::fits(&a, 128, 1));
@@ -99,7 +99,7 @@ export void test_arena_fits_asks_without_pushing(void) {
     test::check_condition(!arena::fits(&a, 1, 1));
 }
 
-export void test_arena_reset_and_scopes_give_memory_back(void) {
+export void test_arena_reset_and_scopes_give_memory_back() {
     static Memory memory;
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
     u8 *base = arena::push_raw(&a, 10, 1);
@@ -126,7 +126,7 @@ export void test_arena_reset_and_scopes_give_memory_back(void) {
 }
 
 // The same pushes lay out the same way in two arenas, whatever their addresses.
-export void test_arena_layout_is_deterministic(void) {
+export void test_arena_layout_is_deterministic() {
     static Memory first_memory;
     static Memory second_memory;
     arena::Arena first = arena::make(first_memory.bytes, sizeof first_memory.bytes);
@@ -142,7 +142,7 @@ export void test_arena_layout_is_deterministic(void) {
 }
 
 // Carved arenas are separate, aligned, laid out after what the parent used, and the parent goes on after them.
-export void test_arena_carve_makes_separate_arenas(void) {
+export void test_arena_carve_makes_separate_arenas() {
     static Memory memory;
     arena::Arena parent = arena::make(memory.bytes, sizeof memory.bytes);
     u8 *before = arena::push_raw(&parent, 10, 1);
@@ -172,7 +172,7 @@ export void test_arena_carve_makes_separate_arenas(void) {
     test::check_equal(again[0], 0); // zeroed again
 }
 
-export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena(void) {
+export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
@@ -199,7 +199,7 @@ export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena(void) {
     test::check_equal(a.used, before); // the slice's memory is given back with the scope
 }
 
-export void test_arena_push_slice_with_a_size_for_each_dimension(void) {
+export void test_arena_push_slice_with_a_size_for_each_dimension() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);

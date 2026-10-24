@@ -8,7 +8,7 @@ typedef struct {
     f64 b;
 } Pair;
 
-int main(void) {
+int main() {
     Pair pair = {3, 2.5};
     Pair *pointer = &pair;
     i32 scalar = 7;

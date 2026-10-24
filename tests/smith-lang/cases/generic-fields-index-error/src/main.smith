@@ -10,7 +10,7 @@ f32 one(constexpr type T, T *x) {
     return x->[f][1][0:1][0];
 }
 
-i32 main(void) {
+i32 main() {
     f32 r[3][2] = {};
     f32 rows[:][2] = r;
     Grid g = {.rows = rows};

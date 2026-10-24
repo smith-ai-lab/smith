@@ -2,7 +2,7 @@ import core;
 import rolls;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     core::Thing thing = core::make(40);
     c::printf("%d\n", rolls::total(&thing, 2));
     return 0;

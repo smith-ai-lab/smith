@@ -1,6 +1,6 @@
 module size;
 
-static usize long_size(void) {
+static usize long_size() {
     return sizeof(long);
 }
 
@@ -12,6 +12,6 @@ i32 long_is_four(constexpr type T) {
     return 8;
 }
 
-export i32 use(void) {
+export i32 use() {
     return long_is_four(i32);
 }

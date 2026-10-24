@@ -23,7 +23,7 @@ export void copy(u8 dst[restrict :], u8 const src[const restrict :]) {
     }
 }
 
-export usize greet(void) {
+export usize greet() {
     const char word[:] = "abc";
     u8 bytes[3] = {1, 2, 3};
     u8 writable[const :] = bytes;

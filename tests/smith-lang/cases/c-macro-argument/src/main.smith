@@ -7,7 +7,7 @@ import <stdio.h>;
 
 static_assert(sizeof(usize) == sizeof(u64));
 
-int main(void) {
+int main() {
     usize small = 3;
     c::assert(small < c::SIZE_MAX);
     c::assert(c::UINT64_MAX > 0 && small != c::SIZE_MAX);

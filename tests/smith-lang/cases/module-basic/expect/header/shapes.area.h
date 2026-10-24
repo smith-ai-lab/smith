@@ -29,7 +29,7 @@ double shapes_area_circle(struct shapes_area_Circle shape) __asm__("_shapes::are
 
 double shapes_area_triangle(shapes_area_Rect shape) __asm__("_shapes::area::triangle");
 
-uint32_t shapes_area_private_count(void) __asm__("_shapes::area::private_count");
+uint32_t shapes_area_private_count() __asm__("_shapes::area::private_count");
 
 enum shapes_area_Kind shapes_area_kind_of(uint32_t side_count) __asm__("_shapes::area::kind_of");
 #ifdef __cplusplus

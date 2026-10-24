@@ -1,6 +1,6 @@
 #include "twice.h"
 #include <stdio.h>
-int main(void) {
+int main() {
 __INT32_TYPE__ a = 3;
 __INT32_TYPE__ b = 2;
 if (a > b)

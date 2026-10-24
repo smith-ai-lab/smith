@@ -1,6 +1,6 @@
 import pick;
 
-int main(void) {
+int main() {
     u8 small = 5;
     i32 neg = -1;
     // The type of the first argument must be known.

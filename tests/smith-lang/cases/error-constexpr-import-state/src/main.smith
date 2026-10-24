@@ -6,6 +6,6 @@ import counter;
 static_assert(counter::plain(1) == 2);
 static_assert(counter::next() == 1);
 
-int main(void) {
+int main() {
     return 0;
 }

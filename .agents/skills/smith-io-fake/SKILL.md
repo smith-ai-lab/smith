@@ -11,7 +11,7 @@ A test that takes `io::Io *io` (`test_x(io::Io *io)`, smith-test) gets a real io
 import smith::arena;
 import smith::io;
 
-i32 main(void) {
+i32 main() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io io = io::make_test((io::Test){
         .memory = memory, .capacity = sizeof memory, .seed = 7, .input = "A3 B4\nC5 D6\n"});

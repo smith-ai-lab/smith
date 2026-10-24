@@ -28,7 +28,7 @@ struct smith_tuple_geo_a_Meters__f32 { geo_a_Meters _0; float _1; };
 #endif
 
 // `a::Meters` written here and `Meters` in geo::a are one spelling, so these are one type.
-struct smith_tuple_geo_a_Meters__f32 geo_b_mk(void) __asm__("_geo::b::mk");
+struct smith_tuple_geo_a_Meters__f32 geo_b_mk() __asm__("_geo::b::mk");
 
 geo_a_Reach geo_b_longer(geo_a_Reach r) __asm__("_geo::b::longer");
 #ifdef __cplusplus

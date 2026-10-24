@@ -6,12 +6,12 @@ struct Grid {
     u32 cells[6];
 };
 
-u32 plain(void) {
+u32 plain() {
     u32 xs[] = {1, 2, 3};
     return (u32)countof(xs);
 }
 
-u32 outer(void) {
+u32 outer() {
     f32 m[3][5] = {};
     return (u32)countof(m) * 10 + (u32)countof(m[0]);
 }
@@ -29,7 +29,7 @@ export u32 member(auto g) {
     return (u32)countof(g.cells);
 }
 
-i32 main(void) {
+i32 main() {
     u32 four[4] = {};
     struct Grid g = {};
     c::printf("%u %u %u %u %u\n", plain(), outer(), shaped(four), pack(1, 2), member(g));

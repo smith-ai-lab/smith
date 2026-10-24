@@ -1,6 +1,6 @@
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } t = {1, 2.0f};
     i32 i = 1;
     c::printf("%d\n", t[i]);

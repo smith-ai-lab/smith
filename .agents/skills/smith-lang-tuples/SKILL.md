@@ -16,7 +16,7 @@ export struct { i32, f32 } make(i32 a, f32 b) {    // returned, passed, stored i
     return {a, b};                                 // in a function that returns a tuple
 }
 
-export f32 demo(void) {
+export f32 demo() {
     struct { i32, struct { f32, f32 } } n = {1, {2.0f, 3.0f}};   // tuples nest
     Pair p = make(3, 4.5f);
     p[0] += n[0];                                  // p[0], p[1]: a constant index, written like a field

@@ -1,6 +1,6 @@
 #include <stdio.h>
 typedef unsigned u32;
-int main(void) {
+int main() {
 __UINT32_TYPE__ a = 3;
 int u8 = 4;
 int f32 = 5;

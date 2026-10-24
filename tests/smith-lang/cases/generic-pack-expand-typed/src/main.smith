@@ -3,7 +3,7 @@ module main;
 import <stdio.h>;
 import typed;
 
-int main(void) {
+int main() {
     i32 a[2] = {1, 2};
     c::printf("%d %d\n", typed::with_generic(a, 5, (u8)6), typed::with_generic(a));
     c::printf("%d %d\n", typed::with_function(a, 2, 3), typed::with_function(a));

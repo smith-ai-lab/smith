@@ -3,7 +3,7 @@ import lib::text;
 import <stdio.h>;
 import <math.h>;
 
-int main(void) {
+int main() {
     rp::Handle handle = {.fd = 5};
     rp::Replay replay = rp::open(&handle, "last.replay");
     f32 root = c::sqrtf(16.0f);

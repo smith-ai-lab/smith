@@ -8,7 +8,7 @@ static type twice(type t) {
     return t;
 }
 
-int main(void) {
+int main() {
     constexpr type once = twice(i32 *);
     constexpr type deep = twice(twice(i32 **));
     once x = 1;

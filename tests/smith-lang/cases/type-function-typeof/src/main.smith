@@ -6,7 +6,7 @@ static type element(type t) {
     if (sizeof(t) > 4) return typeof(*p);
     return t;
 }
-int main(void) {
+int main() {
     constexpr type once = element(f64);
     constexpr type small = element(u8);
     once x = 1.5;

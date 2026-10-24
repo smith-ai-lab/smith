@@ -2,7 +2,7 @@ module main;
 
 import number;
 
-int main(void) {
+int main() {
     usize runtime = 3;
     f64 real = 2.0;
     i32 a = number::scaled(runtime, 1);

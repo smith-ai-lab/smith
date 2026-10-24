@@ -67,7 +67,7 @@ static f32 twice(Shape s) {
     return area(s) * 2;
 }
 
-i32 main(void) {
+i32 main() {
     Shape a = {.circle = {.radius = 2}};
     Shape b = .empty;
     Shape c = make(true);

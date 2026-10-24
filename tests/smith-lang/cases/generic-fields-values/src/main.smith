@@ -2,7 +2,7 @@ module main;
 
 import walk;
 
-i32 main(void) {
+i32 main() {
     walk::run();
     return 0;
 }

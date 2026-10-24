@@ -4,7 +4,7 @@ export typedef struct { int count; int total; } Stats;
 
 int count = 10;
 
-int total(void) {
+int total() {
     return 5;
 }
 

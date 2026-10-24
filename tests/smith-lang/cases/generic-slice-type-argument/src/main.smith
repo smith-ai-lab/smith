@@ -3,7 +3,7 @@ module main;
 import probe;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     u8 plain[:] = raw;
     constexpr type plain_type = typeof(plain);

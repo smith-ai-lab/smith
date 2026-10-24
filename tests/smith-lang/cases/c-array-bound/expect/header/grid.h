@@ -14,9 +14,9 @@ extern "C" {
 #endif
 struct grid_Board { uint8_t cells[SIDE * SIDE]; uint32_t n; };
 
-size_t grid_board_size(void) __asm__("_grid::board_size");
+size_t grid_board_size() __asm__("_grid::board_size");
 
-size_t grid_other_sizes(void) __asm__("_grid::other_sizes");
+size_t grid_other_sizes() __asm__("_grid::other_sizes");
 #ifdef __cplusplus
 }
 #endif

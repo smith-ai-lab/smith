@@ -27,7 +27,7 @@ static usize total(struct Pair p) {
     return countof(p.key) * 10 + countof(p.value);
 }
 
-i32 main(void) {
+i32 main() {
     struct Pair a = {.key = "k", .value = "xyz"};
     struct Pair b = {"kk", "v"};
     char raw[3] = {'a', 'b', 'c'};

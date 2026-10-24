@@ -20,7 +20,7 @@ export i32 describe(auto value) {
     }
 }
 
-export i32 demo(void) {
+export i32 demo() {
     return describe(1.5f) + describe((i64)3);              // 1 + 6
 }
 ```

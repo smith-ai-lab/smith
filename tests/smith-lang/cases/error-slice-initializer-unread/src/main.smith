@@ -25,7 +25,7 @@ struct Holder {
     struct Anon inner;
 };
 
-i32 main(void) {
+i32 main() {
     struct Pair ps[2] = {{.key = "a"}, {.key = "b"}};
     struct Anon an = {.name = "x"};
     struct Holder h = {.inner = {.name = "y"}};

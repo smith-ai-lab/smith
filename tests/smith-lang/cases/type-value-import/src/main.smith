@@ -25,7 +25,7 @@ typedef struct {
     f64 a, b;
 } Pair;
 
-int main(void) {
+int main() {
     f32 vector[:];
     f32 grid[:][:];
     f32 rows[:][2];

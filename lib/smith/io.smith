@@ -508,7 +508,7 @@ bool mode_is(u32 mode, u32 kind) {
 }
 
 // errno, which is a macro for the system's function.
-i32 errno_now(void) {
+i32 errno_now() {
     return *c::__error();
 }
 
@@ -2764,7 +2764,7 @@ void io_link(Io *io, usize argc, const char *const *argv, const char *const *env
 }
 
 // $SMITH_SEED replays a run; otherwise the seed is 64 bits of the system's entropy.
-u64 seed_read(void) {
+u64 seed_read() {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     const char *text = c::getenv("SMITH_SEED");
     if (text != nullptr) {

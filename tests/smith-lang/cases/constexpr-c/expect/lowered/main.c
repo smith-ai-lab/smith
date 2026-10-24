@@ -8,7 +8,7 @@ for (int i = 1; i <= n; i++)
 s += i;
 return s;
 }
-static unsigned long width(void) {
+static unsigned long width() {
 return sizeof(long);
 }
 struct Table {
@@ -32,7 +32,7 @@ struct Bits {
 unsigned a : fib(5);
 };
 static int cached = fib(12);
-int main(void) {
+int main() {
 switch (x) {
 case fib(10):
 printf("%d %d %d %lu %d %d\n", x, table.v[5], table.n, w, Fib7, cached);

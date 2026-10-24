@@ -3,7 +3,7 @@ module main;
 import shape::box;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     box::Box b = {.width = 3, .height = 4};
     c::printf("%d %d %d %d %d %d\n", box::area(&b, 5), box::scaled(2, 3, 4), box::apply(box::width, &b),
               box::combined(10), box::height(&b), box::larger(i32, 3, 9));

@@ -12,7 +12,7 @@ static i32 clamp(i32 x, i32 low, i32 high) {
 constexpr i32 limit = clamp(300, 0, 255);
 static_assert(clamp(-5, 0, 9) == 0);
 
-i32 main(void) {
+i32 main() {
     c::printf("%d %d\n", limit, clamp(5, 0, 9));
     return 0;
 }

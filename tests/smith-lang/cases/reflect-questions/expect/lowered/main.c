@@ -14,6 +14,6 @@ float real;
 };
 typedef Packet Alias;
 typedef struct Opaque Hidden;
-int main(void) {
+int main() {
 return 0;
 }

@@ -11,11 +11,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int32_t size_small(void) __asm__("_size::small");
+int32_t size_small() __asm__("_size::small");
 
-int32_t size_big(void) __asm__("_size::big");
+int32_t size_big() __asm__("_size::big");
 
-int32_t size_all(void) __asm__("_size::all");
+int32_t size_all() __asm__("_size::all");
 #ifdef __cplusplus
 }
 #endif

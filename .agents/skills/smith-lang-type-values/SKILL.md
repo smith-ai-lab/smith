@@ -32,7 +32,7 @@ type wider(type a, type b) {
 
 constexpr bool fits = small(i32);                  // true: a call with a type name as its argument
 
-export usize demo(void) {
+export usize demo() {
     constexpr type local = wider(u8, i64);         // a function over types, at compile time
     constexpr type second = kinds[1];
     local big = 1;                                 // `t x;` declares a variable of the type t holds

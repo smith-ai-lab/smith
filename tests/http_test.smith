@@ -329,7 +329,7 @@ static void check_stall_after(Client *client, usize which, const char *answer, u
     test::check(io::clock_now(&client->io->clock) - before >= c::smith_http_idle_ns);
 }
 
-export void test_http_stalled_servers_time_out_on_the_io_clock(void) {
+export void test_http_stalled_servers_time_out_on_the_io_clock() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
@@ -349,7 +349,7 @@ export void test_http_stalled_servers_time_out_on_the_io_clock(void) {
 
 // ---------------------------------------------------------------- on the fake io
 
-export void test_http_fake_basics(void) {
+export void test_http_fake_basics() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
@@ -358,7 +358,7 @@ export void test_http_fake_basics(void) {
     check_bodies_without_a_length(&client);
 }
 
-export void test_http_fake_chunked(void) {
+export void test_http_fake_chunked() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
@@ -366,7 +366,7 @@ export void test_http_fake_chunked(void) {
     check_chunked(&client);
 }
 
-export void test_http_fake_redirects(void) {
+export void test_http_fake_redirects() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
@@ -376,7 +376,7 @@ export void test_http_fake_redirects(void) {
     check_redirect_loop(&client);
 }
 
-export void test_http_fake_failures(void) {
+export void test_http_fake_failures() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
@@ -386,7 +386,7 @@ export void test_http_fake_failures(void) {
     check_bad_responses(&client);
 }
 
-export void test_http_fake_urls_and_local_files(void) {
+export void test_http_fake_urls_and_local_files() {
     alignas(arena::align_max) static u8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};

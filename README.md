@@ -173,7 +173,7 @@ import target;
 constexpr usize count = 4; // `#define count 4` in a .smith file is a lint error
 constexpr usize lanes = target::arch == target::aarch64 ? 4 : 2;
 
-u32 lane_bytes(void) {
+u32 lane_bytes() {
     if constexpr (target::arch == target::aarch64) { // the branch not taken is dropped
         return 16;
     } else {
@@ -200,7 +200,7 @@ static_assert(t100 == 5050);
 struct Table {
     u32 v[8];
 };
-static struct Table squares(void) {
+static struct Table squares() {
     struct Table t = {};
     for (u32 i = 0; i < 8; i++)
         t.v[i] = i * i;

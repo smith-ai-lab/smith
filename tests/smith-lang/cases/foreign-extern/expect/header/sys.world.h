@@ -11,9 +11,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-uint32_t sys_world_env_count(void) __asm__("_sys::world::env_count");
+uint32_t sys_world_env_count() __asm__("_sys::world::env_count");
 
-uint32_t sys_world_counter_times_three(void) __asm__("_sys::world::counter_times_three");
+uint32_t sys_world_counter_times_three() __asm__("_sys::world::counter_times_three");
 
 // An exported extern is still the module's own symbol, defined in C by its C name.
 extern uint32_t sys_world_owned __asm__("_sys::world::owned");

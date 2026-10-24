@@ -14,8 +14,8 @@ return bits * 2;
 static uint64_t (*hook_table_chosen)(uint64_t bits) = hook_table_twice;
 extern uint64_t (*hook_table_hook)(uint64_t bits);
 uint64_t (*hook_table_hook)(uint64_t bits) = hook_table_twice;
-hook_table_Plain hook_table_plain(void) __asm__("_hook::table::plain");
-hook_table_Plain hook_table_plain(void) {
+hook_table_Plain hook_table_plain() __asm__("_hook::table::plain");
+hook_table_Plain hook_table_plain() {
 hook_table_Private private_twice = hook_table_twice;
 return private_twice;
 }

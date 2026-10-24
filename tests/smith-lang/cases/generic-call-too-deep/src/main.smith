@@ -1,6 +1,6 @@
 import num;
 
-int main(void) {
+int main() {
     int x = num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, num::id(i32, 1)))))))))))))))));
     return x;
 }

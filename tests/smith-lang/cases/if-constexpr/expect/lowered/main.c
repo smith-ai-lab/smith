@@ -27,7 +27,7 @@
 #include <stdio.h>
 
 constexpr bool fast = SMITH_TARGET_ASSERTIONS == false;
-int main(void) {
+int main() {
 __INT32_TYPE__ answer = 0;
 #if SMITH_TARGET_OS == 1
  {

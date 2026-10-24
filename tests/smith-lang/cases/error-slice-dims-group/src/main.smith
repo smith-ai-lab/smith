@@ -4,6 +4,6 @@ i32 take(f32 xs[:][2][n]) {
     return 0;
 }
 
-i32 main(void) {
+i32 main() {
     return 0;
 }

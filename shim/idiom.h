@@ -451,11 +451,20 @@ class C23Check final : public ClangTidyCheck {
         void scan(FileID file) {
             Lexed lexed = lex(sm, pp.getLangOpts(), file);
             const std::vector<Token> &tokens = lexed.tokens;
+            // `(void)` is a finding only in a module: a .c file, or a .smith file with no `module` line, is C as it is.
+            bool module = is_smith_file(sm, file) && !tokens.empty() && is_name(tokens[0], "module");
             for (size_t i = 0; i < tokens.size(); i++) {
                 if (!tokens[i].is(tok::raw_identifier)) continue;
                 llvm::StringRef name = tokens[i].getRawIdentifier();
                 bool member = i > 0 && (tokens[i - 1].is(tok::period) || tokens[i - 1].is(tok::arrow));
                 if (member) continue;
+                if (module && name == "void" && void_parameter_list(tokens, i)) {
+                    check.diag(tokens[i].getLocation(),
+                               "`(void)` is C's way to say no parameters: in C23 `()` means that, write `()`")
+                        << FixItHint::CreateRemoval(
+                               CharSourceRange::getCharRange(tokens[i].getLocation(), tokens[i].getEndLoc()));
+                    continue;
+                }
                 if (name == "NULL" && !conditional_directive(lexed, i)) {
                     check.diag(tokens[i].getLocation(), "`NULL` is a macro: write `nullptr`");
                 } else if (name == "_Bool") {
@@ -473,6 +482,27 @@ class C23Check final : public ClangTidyCheck {
                     attribute(tokens, i);
                 }
             }
+        }
+
+        // `void` at i is the whole parameter list `(void)` of a declaration, a definition or a function type, and not
+        // the cast `(void)x;` (an expression follows it) or the type of `sizeof(void)`.
+        static bool void_parameter_list(const std::vector<Token> &tokens, size_t i) {
+            if (i == 0 || i + 2 >= tokens.size() || !tokens[i - 1].is(tok::l_paren) || !tokens[i + 1].is(tok::r_paren))
+                return false;
+            if (i >= 2 && tokens[i - 2].is(tok::raw_identifier)) {
+                llvm::StringRef before = tokens[i - 2].getRawIdentifier();
+                if (before == "sizeof" || before == "alignof" || before == "_Alignof" || before == "typeof" ||
+                    before == "typeof_unqual" || before == "__typeof__" || before == "_Generic" || before == "return" ||
+                    before == "case" || before == "else") {
+                    return false;
+                }
+            }
+            const Token &next = tokens[i + 2];
+            if (next.is(tok::raw_identifier)) {
+                llvm::StringRef word = next.getRawIdentifier();
+                return word == "__attribute__" || word == "__asm__" || word == "asm";
+            }
+            return next.isOneOf(tok::semi, tok::l_brace, tok::r_paren, tok::comma, tok::l_square, tok::equal);
         }
 
         static bool conditional_directive(const Lexed &lexed, size_t i) {

@@ -20,7 +20,7 @@ bool usable(f32 value) {
     return math::is_finite(value) && math::abs(value) < 1000.0f;  // the type is the type of the argument
 }
 
-usize count_limit(void) {
+usize count_limit() {
     return math::max(usize);                         // SIZE_MAX
 }
 

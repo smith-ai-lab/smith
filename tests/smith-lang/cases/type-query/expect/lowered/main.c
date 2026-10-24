@@ -5,6 +5,6 @@ __UINT64_TYPE__ value;
 typedef Packet Alias;
 enum Color { Red, Green };
 typedef enum Color Paint;
-int main(void) {
+int main() {
 return 0;
 }

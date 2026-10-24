@@ -7,14 +7,14 @@ extern char **environ;
 extern u32 foreign_counter;
 extern u32 foreign_triple(u32 x);
 
-export u32 env_count(void) {
+export u32 env_count() {
     u32 count = 0;
     for (char **entry = environ; *entry != nullptr; entry++)
         count += 1;
     return count;
 }
 
-export u32 counter_times_three(void) {
+export u32 counter_times_three() {
     return foreign_triple(foreign_counter);
 }
 

@@ -3,7 +3,7 @@
 
 u32 twice(u8 byte) { return 2u * byte; }
 
-int main(void) {
+int main() {
     printf("%u\n", twice(21));
     return 0;
 }

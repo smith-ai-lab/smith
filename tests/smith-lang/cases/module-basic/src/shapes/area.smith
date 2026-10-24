@@ -30,7 +30,7 @@ export f64 triangle(Rect shape) {
     return half(rect(shape));
 }
 
-export u32 private_count(void) {
+export u32 private_count() {
     return private_calls;
 }
 

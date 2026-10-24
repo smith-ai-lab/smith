@@ -11,7 +11,7 @@ static type worse(type T) {
     return T[:3];
 }
 
-int main(void) {
+int main() {
     constexpr type q = bad(f32);
     constexpr type r = worse(f32);
     return 0;

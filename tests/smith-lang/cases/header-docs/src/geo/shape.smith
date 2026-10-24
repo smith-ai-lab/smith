@@ -28,8 +28,8 @@ export u32 origin_count = 1; // how many origins there are
 }
 
 // A private function has no comment in the header.
-static u32 helper(void) {
+static u32 helper() {
     return 7;
 }
 
-export u32 seven(void); // declared here, defined in C
+export u32 seven(); // declared here, defined in C

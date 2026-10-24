@@ -29,7 +29,7 @@ void show(constexpr type T, T *x) {
     }
 }
 
-i32 main(void) {
+i32 main() {
     char *words[2] = {"one", "two"};
     Table t = {.names = words[0:2], .n = 2};
     show(Table, &t);

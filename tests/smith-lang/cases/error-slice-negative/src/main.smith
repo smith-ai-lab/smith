@@ -1,6 +1,6 @@
 module main;
 
-i32 main(void) {
+i32 main() {
     i32 raw[3] = {1, 2, 3};
     i32 all[:] = raw;
     i32 last = all[-1];

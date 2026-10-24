@@ -3,5 +3,5 @@ module e::priv;
 typedef struct { int x; } Hidden;
 typedef Hidden Alias;
 
-export Hidden make(void);
+export Hidden make();
 export typedef struct { Alias inner; } Wrapper;

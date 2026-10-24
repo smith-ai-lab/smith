@@ -24,7 +24,7 @@ extern uint32_t demo_dir_counter __asm__("_demo::dir::counter");
 
 uint32_t demo_dir_pair(uint32_t a, uint32_t b) __asm__("_demo::dir::pair");
 
-size_t demo_dir_name_length(void) __asm__("_demo::dir::name_length");
+size_t demo_dir_name_length() __asm__("_demo::dir::name_length");
 #ifdef __cplusplus
 }
 #endif

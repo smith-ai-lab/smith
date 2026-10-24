@@ -5,7 +5,7 @@ import number;
 
 constexpr usize seven = 7;
 
-int main(void) {
+int main() {
     number::Triple t = {1, 2, 3};
     i32 x = 5;
     c::printf("%d %d %d\n", number::scaled(3, 1), number::scaled(seven, 1), number::scaled(2 + 3, x));

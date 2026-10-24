@@ -1,6 +1,6 @@
 #include "shapes/area.h"
 #include <stdio.h>
-int main(void) {
+int main() {
 shapes_area_Rect r = {3.0, 4.0};
 struct shapes_area_Circle c = {2.0};
 printf("%.1f %.1f %.1f\n", shapes_area_rect(r), shapes_area_circle(c), shapes_area_triangle(r));

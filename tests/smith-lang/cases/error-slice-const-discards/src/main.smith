@@ -10,7 +10,7 @@ static typeof(u8[:]) give(const u8 xs[:]) {
     return xs;
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     const u8 read[:] = raw;
     u8 same[:] = read;

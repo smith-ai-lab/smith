@@ -3,7 +3,7 @@ module main;
 import shape;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d %.1f %d\n", shape::framed(10), shape::framed(1.5), shape::plain(7));
     return 0;
 }

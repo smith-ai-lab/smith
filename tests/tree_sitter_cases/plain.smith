@@ -9,7 +9,7 @@ static int throw_it(int new, int class) {
     return u8 + 1;
 }
 
-int main(void) {
+int main() {
     struct S s = {.module = 1, .export = 2, .type = 3};
     import import_value = throw_it(s.module, s.export);
     printf("%d %d\n", import_value, s.type);

@@ -14,7 +14,7 @@ export typedef struct {
     const char name[:];
 } Replay;
 export constexpr u32 version = 3;
-u32 helper(void) { // private
+u32 helper() { // private
     return 1;
 }
 export Replay open(const char *path) {

@@ -2296,7 +2296,7 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     if (size == 0) return nullptr;
     *length = size;
     *kind = SmithTestKind_Plain;
-    if (strcmp(rest, "(void) {") == 0) return name;
+    if (strcmp(rest, "(void) {") == 0 || (module && strcmp(rest, "() {") == 0)) return name; // `()` is C23 in a module
     *kind = SmithTestKind_Property;
     if (strncmp(rest, "(SmithKey ", strlen("(SmithKey ")) == 0) {
         rest += strlen("(SmithKey ");

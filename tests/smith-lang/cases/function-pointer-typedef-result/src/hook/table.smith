@@ -22,7 +22,7 @@ static uint64_t twice(uint64_t bits) {
 uint64_t (*chosen)(uint64_t bits) = twice;
 [[smith::c_name("hook_table_hook")]] export uint64_t (*hook)(uint64_t bits) = twice;
 
-export Plain plain(void) {
+export Plain plain() {
     Private private_twice = twice;
     return private_twice;
 }

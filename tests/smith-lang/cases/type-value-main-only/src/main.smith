@@ -1,7 +1,7 @@
 // A file whose only type values are in main is read in type-value mode (issue #174).
 typedef const char str[:];
 
-i32 main(void) {
+i32 main() {
     constexpr type t = str;
     static_assert(is_slice(t));
     t words = "abc";

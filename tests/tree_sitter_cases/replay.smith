@@ -11,7 +11,7 @@ export typedef struct Handle { i32 fd; } Handle;
 export enum Mode { Fast, Slow };
 export union Word { u32 whole; u8 bytes[4]; };
 
-u32 helper(void) {
+u32 helper() {
     return version + counter;
 }
 
@@ -26,7 +26,7 @@ export Replay open(Handle *handle, const char *path) {
 export u64 checksum(const u8 *data, usize size);
 
 #if defined(__APPLE__)
-export int only_here(void);
+export int only_here();
 #endif
 
 export int say(const char *text) {

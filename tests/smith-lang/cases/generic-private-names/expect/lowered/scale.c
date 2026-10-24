@@ -24,7 +24,7 @@ return x + 1;
 static inline __INT32_TYPE__ scale_clamp_to_base(__INT32_TYPE__ x) {
 return x > scale_base ? scale_base : x;
 }
-__INT32_TYPE__ scale_calls(void) __asm__("_scale::calls");
-__INT32_TYPE__ scale_calls(void) {
+__INT32_TYPE__ scale_calls() __asm__("_scale::calls");
+__INT32_TYPE__ scale_calls() {
 return scale_counter.calls + scale_unused(0) - 1;
 } [ [ clang :: unavailable ( "scale::spread is a generic function: call it from a .smith module" ) ] ] void scale_spread ( void ) ;

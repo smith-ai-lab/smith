@@ -2,6 +2,6 @@ module main;
 
 import bad;
 
-int main(void) {
+int main() {
     return bad::no_pack(1) + bad::only_index(1) + bad::whole(1) + bad::nested(1, 2);
 }

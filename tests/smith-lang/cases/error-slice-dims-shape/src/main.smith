@@ -1,6 +1,6 @@
 module main;
 
-i32 main(void) {
+i32 main() {
     f32 three[4][3] = {};
     f32 one[4] = {};
     f32 rows[:][2] = three;
