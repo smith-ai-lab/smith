@@ -1,0 +1,37 @@
+module main;
+import <stdio.h>;
+
+// `countof` of a fixed array is C's own: the outer count, in a plain function and in a generic's instance (issue #167).
+struct Grid {
+    u32 cells[6];
+};
+
+u32 plain(void) {
+    u32 xs[] = {1, 2, 3};
+    return (u32)countof(xs);
+}
+
+u32 outer(void) {
+    f32 m[3][5] = {};
+    return (u32)countof(m) * 10 + (u32)countof(m[0]);
+}
+
+u32 shaped(u32 xs[4]) {
+    return (u32)countof(xs);
+}
+
+export u32 pack(auto... args) {
+    u32 xs[] = {(u32)args...};
+    return (u32)countof(xs);
+}
+
+export u32 member(auto g) {
+    return (u32)countof(g.cells);
+}
+
+i32 main(void) {
+    u32 four[4] = {};
+    struct Grid g = {};
+    c::printf("%u %u %u %u %u\n", plain(), outer(), shaped(four), pack(1, 2), member(g));
+    return 0;
+}

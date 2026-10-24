@@ -1712,6 +1712,17 @@ class SmithHook final : public TokenHook, public NameSource {
         return token.is(tok::identifier) && info != nullptr && !info->hasMacroDefinition();
     }
 
+    // The identifier `countof` of the lowering's output, as the keyword `_Countof`, unless it names a member
+    // (`x.countof`) or something the program declared.
+    void countofToKeyword(Token &made) {
+        const IdentifierInfo *info = made.getIdentifierInfo();
+        if (info->getName() != "countof" || info->getFETokenInfo() != nullptr) return;
+        if (!out.empty() && out.back().isOneOf(tok::period, tok::arrow)) return;
+        IdentifierInfo *keyword = PP.getIdentifierInfo("_Countof");
+        made.setIdentifierInfo(keyword);
+        made.setKind(keyword->getTokenID());
+    }
+
     static void emitToken(void *context, const SmithToken *token) {
         auto *self = static_cast<SmithHook *>(context);
         Token made;
@@ -1737,6 +1748,10 @@ class SmithHook final : public TokenHook, public NameSource {
                 }
             }
         }
+        // `countof` left in the output is C2y's, on a fixed array (`u32 xs[4]`, a local or a member): the lowering took
+        // every other meaning (a slice, a pack, fields, an array parameter, a tuple). A name of the program's own
+        // keeps its meaning (issue #167).
+        if (!token->expand && made.is(tok::identifier) && self->sema != nullptr) self->countofToKeyword(made);
         made.clearFlag(Token::StartOfLine);
         made.clearFlag(Token::LeadingSpace);
         made.clearFlag(Token::DisableExpand);

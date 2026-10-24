@@ -1,0 +1,2 @@
+src/main.smith:35:72: cannot tell the type of `1`, the argument of `pack`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:35:86: cannot tell the type of `g`, the argument of `member`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
