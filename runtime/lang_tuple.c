@@ -599,7 +599,11 @@ static void smith_lang_tuple_shown(const char *tag, char *out, size_t capacity) 
 // `[` after an expression of tuple type: `t[1]` is `t._1`; the index is a number or a constant. Returns true when the
 // subscript was written as the member.
 static bool smith_lang_tuple_subscript(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    if (host->previous == nullptr || host->expr_type == nullptr || lang->recording) return false;
+    // The `[` of `count[1]` in a slice's struct (the lowering's own token) is no subscript of a tuple. The question
+    // to the compiler below runs the parser's own type reader from inside its read of the token before, which left
+    // the end of the declaration before it wrong (a function's `}` ended at the slice parameter after it, and hover
+    // found nothing in that function).
+    if (token->synthetic || host->previous == nullptr || host->expr_type == nullptr || lang->recording) return false;
     const SmithToken *index = smith_lang_peek(lang, host, 0, false);
     if (index->foreign || lang->in_attribute || smith_lang_punct(index, "[")) return false;
     char base[512];

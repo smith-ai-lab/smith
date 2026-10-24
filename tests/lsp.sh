@@ -82,7 +82,11 @@ void build(SmithBuild *b) {
     smith_object(b, &box_object);
     smith_object(b, &util_object);
     smith_object(b, &pick_object);
-    SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, &pick_object, nullptr}};
+    SmithObject twice_object = {.compiler = "smith-cc", .source = "m.smith", .output = "build/m.o", .flags = flags};
+    SmithObject users_object = {.compiler = "smith-cc", .source = "users.smith", .output = "build/users.o", .flags = flags};
+    smith_object(b, &twice_object);
+    smith_object(b, &users_object);
+    SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, &pick_object, &twice_object, &users_object, nullptr}};
     smith_program(b, &program);
     smith_default(b, program.step.outputs);
     smith_compile_commands(b, "compile_commands.json");
@@ -269,13 +273,27 @@ int util_bad(void) {
 }
 EOF
 
+# Two functions with slice parameters in a module, and a module that calls the second (issue #133).
+cat >m.smith <<'EOF2'
+module m;
+export i32 a(f32 g[:]) { return (i32)countof(g); }
+export i32 b(i32 m[:]) { return (i32)countof(m); }
+EOF2
+cat >users.smith <<'EOF2'
+module users;
+import m;
+
+export i32 f(i32 xs[:]) {
+    return m::b(xs);
+}
+EOF2
 # The project builds with smith build, and runs.
 out=$(smith build 2>&1)
 status=$?
 expect "the project builds" 0 "$status"
 [ "$status" -eq 0 ] || printf '%s\n' "$out" | tail -n 20
 expect "the program runs" "area 6.000000" "$(build/demo 2>&1)"
-expect "compile_commands.json tells clangd the language of a .smith file" 3 \
+expect "compile_commands.json tells clangd the language of a .smith file" 5 \
     "$(grep -c '"-x"' compile_commands.json)"
 
 client() { "$work/lsp_client" "$(command -v smith)" "$root" "$@" 2>&1; }
@@ -341,6 +359,23 @@ expect_line "slice: the hover of a function shows its slice parameter as f32[:]"
     'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | f32 pick(f32[:] xs, usize i)'
 expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" \
     'hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs'
+
+# A function after one with a slice parameter (issue #133): the end of the first function's body (its `}` is read while
+# the lowering reads the second head) was the slice parameter's, so hover, references and highlights found nothing in
+# the second function. Hover, go-to-definition (from a module that calls it) and the outline work on both, on a parameter
+# named like the module too.
+log=$(client open m.smith users.smith -- hover m.smith 2 12 -- hover m.smith 3 12 -- hover m.smith 3 18 -- \
+    references m.smith 3 12 -- definition users.smith 5 15 m.smith:3:12 -- symbols m.smith)
+expect_line "after a slice: hover on the first function" "$log" \
+    'hover m.smith:2:12: function a |  | → i32 (aka int) |  | Parameters: |  | - f32[:] g |  | i32 a(f32[:] g)'
+expect_line "after a slice: hover on the second function" "$log" \
+    'hover m.smith:3:12: function b |  | → i32 (aka int) |  | Parameters: |  | - i32[:] m |  | i32 b(i32[:] m)'
+expect "after a slice: hover on its parameter" 1 "$(printf '%s\n' "$log" | grep -c '^hover m.smith:3:18: param m')"
+expect "after a slice: references of the second function find it" 1 "$(printf '%s\n' "$log" | grep -c '^reference m.smith:3:12')"
+expect_line "after a slice: go-to-definition of the second function, from a call" "$log" \
+    "definition users.smith:5:15 -> m.smith:3:12"
+expect "after a slice: the outline has both functions" "symbol m.smith: a symbol m.smith: b" \
+    "$(printf '%s\n' "$log" | grep '^symbol m.smith' | tr '\n' ' ' | sed 's/ $//')"
 
 # The many-dimensional forms and the qualifier tags are written as the language writes them (the tags of `restrict` and
 # `const` slices are declared by hand here: their lowering is the compiler's).
