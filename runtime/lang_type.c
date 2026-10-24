@@ -314,8 +314,9 @@ static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *o
     } else {
         smith_lang_ty_spell_add(out, capacity, standard != nullptr ? standard : at, strlen(standard ? standard : at));
     }
-    for (const char *rest = pointer != nullptr ? pointer + 4 : ""; *rest != 0;) { // `_ptr`, then its qualifiers
-        smith_lang_ty_spell_add(out, capacity, "*", 1);
+    if (pointer == nullptr) return true;
+    smith_lang_ty_spell_add(out, capacity, "*", 1);     // the first `_ptr`
+    for (const char *rest = pointer + 4; *rest != 0;) { // then qualifiers and more `_ptr`
         if (*rest == '_') rest += 1;
         for (bool again = true; again;) {
             again = false;
@@ -328,7 +329,8 @@ static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *o
             }
         }
         if (strncmp(rest, "ptr", 3) == 0) {
-            rest += 3 + (rest[3] == '_' ? 1 : 0);
+            smith_lang_ty_spell_add(out, capacity, "*", 1);
+            rest += 3;
         } else if (*rest != 0) {
             return false;
         }

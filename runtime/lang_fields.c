@@ -52,7 +52,8 @@ static bool smith_lang_fields_punct(uint32_t at, uint32_t limit, const char *tex
 }
 
 // How many tokens `fields ( T )` at `at` takes (T a type parameter of the generic), or `fields ( typeof ( x ) )` (x
-// a parameter of the generic whose type is a type of the instance: `auto x`, `T x`): 4, 7, or 0 when it is neither.
+// an expression of a struct's type: `x` (a parameter whose type is a type of the instance: `auto x`, `T x`), `*p`,
+// `p->f`): 4, the length of the whole call, or 0 when it is neither.
 static uint32_t smith_lang_fields_call_len(uint32_t at, uint32_t limit) {
     if (at + 3 >= limit) return 0;
     const SmithLangGenToken *name = smith_lang_cx_token(at);
@@ -65,12 +66,9 @@ static uint32_t smith_lang_fields_call_len(uint32_t at, uint32_t limit) {
         smith_lang_fields_punct(at + 3, limit, ")")) {
         return 4;
     }
-    const SmithLangGenToken *value = smith_lang_cx_token(at + 4);
-    return at + 6 < limit && smith_lang_cx_word(type, "typeof") && smith_lang_fields_punct(at + 3, limit, "(") &&
-                   value->kind == SmithTokenKind_Identifier && value->special == SmithLangGen_Plain &&
-                   smith_lang_fields_punct(at + 5, limit, ")") && smith_lang_fields_punct(at + 6, limit, ")")
-               ? 7
-               : 0;
+    if (!smith_lang_cx_word(type, "typeof") || !smith_lang_fields_punct(at + 3, limit, "(")) return 0;
+    uint32_t after = smith_lang_cx_skip_group(at + 3, limit); // `typeof ( E )`: E any expression of a struct's type
+    return after != UINT32_MAX && after > at + 5 && smith_lang_fields_punct(after, limit, ")") ? after + 1 - at : 0;
 }
 
 // Whether the tokens at `at` are `fields ( T ) [`: a field.
@@ -93,6 +91,45 @@ static bool smith_lang_fields_countof_at(uint32_t at, uint32_t limit) {
     return smith_lang_fields_countof_len(at, limit) != 0;
 }
 
+// Stages `typeof ( E )`, the tokens [first, last), with each parameter of the generic that E names as a value of its
+// type (`(*(T *)0)`: never evaluated), so the compiler can read what E is. False when the pool is full.
+static bool smith_lang_fields_stage_expression(uint32_t first, uint32_t last, const SmithLangInstance *instance,
+                                               uint32_t location, uint32_t *staged_first, uint32_t *staged_count) {
+    uint8_t flags[64];
+    uint8_t params[64];
+    uint32_t size = last + 1 - first < sizeof flags ? last + 1 - first : (uint32_t)sizeof flags;
+    const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];
+    for (uint32_t i = 0; i < size; i++) { // the names that stand for a value
+        SmithLangGenToken *token = smith_lang_cx_token(first + i);
+        flags[i] = token->flags;
+        params[i] = token->param;
+        bool member = i > 0 && (smith_lang_fields_punct(first + i - 1, last, ".") ||
+                                smith_lang_fields_punct(first + i - 1, last, "->"));
+        int own = member || token->kind != SmithTokenKind_Identifier
+                      ? -1
+                      : smith_lang_param_type_of(generic, instance, (SmithLangSpan){first + i, first + i + 1});
+        if (own >= 0) {
+            token->param = (uint8_t)(own + 1);
+            token->flags |= (uint8_t)smith_lang_gen_flag_value;
+        }
+    }
+    bool staged =
+        smith_lang_stage_type((SmithLangSpan){first, last + 1}, instance, location, staged_first, staged_count);
+    for (uint32_t i = 0; i < size; i++) { // put back
+        smith_lang_cx_token(first + i)->flags = flags[i];
+        smith_lang_cx_token(first + i)->param = params[i];
+    }
+    return staged;
+}
+
+// Whether the tokens [first, last) are `typeof ( E )` with E more than a name: an expression of the generic's
+// parameters (`*p`, `p->f`), whose type the compiler reads with each parameter as a value of its type.
+static bool smith_lang_fields_expression_type(uint32_t first, uint32_t last) {
+    const SmithLangGenToken *token = smith_lang_cx_token(first);
+    return last > first + 4 && (smith_lang_cx_word(token, "typeof") || smith_lang_cx_word(token, "__typeof__")) &&
+           smith_lang_fields_punct(first + 1, last, "(") && smith_lang_cx_skip_group(first + 1, last) == last;
+}
+
 // What the parser says of the type of `fields ( ... )` at `call_at`, as the instance has it: the `index`th field. False
 // with the message.
 static bool smith_lang_fields_load(const SmithHost *host, const SmithLangGeneric *generic,
@@ -109,13 +146,21 @@ static bool smith_lang_fields_load(const SmithHost *host, const SmithLangGeneric
     uint32_t mark[2] = {smith_lang_it.count, smith_lang_it.text_used};
     uint32_t first = 0;
     uint32_t count = 0;
-    int own = of_value ? smith_lang_param_type_of(generic, instance, (SmithLangSpan){type_at, type_at + 1}) : -1;
-    if (of_value && own < 0) {
+    bool lone = of_value && smith_lang_fields_call_len(call_at, UINT32_MAX) == 7; // `typeof(x)`
+    int own = lone ? smith_lang_param_type_of(generic, instance, (SmithLangSpan){type_at, type_at + 1}) : -1;
+    if (lone && own < 0) {
         snprintf(message, capacity, "`fields(typeof(%s))`: `%s` is not a parameter of this generic whose type is known",
                  smith_lang_gt_str(smith_lang_cx_token(type_at)), smith_lang_gt_str(smith_lang_cx_token(type_at)));
         return false;
     }
-    if (of_value) {
+    uint32_t value_end =
+        of_value ? call_at + smith_lang_fields_call_len(call_at, UINT32_MAX) - 2 : 0; // the `)` of typeof
+    if (of_value && own < 0 && value_end > type_at + 1) { // `typeof(*p)`, `typeof(p->f)`: the expression's type
+        if (!smith_lang_fields_stage_expression(call_at + 2, value_end, instance, location, &first, &count)) {
+            snprintf(message, capacity, "`fields(typeof(...))`: this expression is too long");
+            return false;
+        }
+    } else if (of_value) {
         first = instance->arg_first[own];
         count = instance->arg_count[own];
     } else if (!smith_lang_stage_type((SmithLangSpan){type_at, type_at + 1}, instance, location, &first, &count)) {

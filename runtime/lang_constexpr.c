@@ -306,6 +306,11 @@ static bool smith_lang_cx_query(SmithLangCx *cx, uint32_t first, uint32_t last, 
         staged_count = 0;
     } else if (smith_lang_cx_typeof_element_at(cx, first) && smith_lang_cx_skip_group(first + 1, last) == last) {
         if (!smith_lang_cx_element_type(cx, first, last, &staged_first, &staged_count)) return false;
+    } else if (smith_lang_fields_expression_type(first, last)) { // `typeof(*p)`, `typeof(p->f)`
+        if (!smith_lang_fields_stage_expression(first, last - 1, cx->instance, cx->location, &staged_first,
+                                                &staged_count)) {
+            return smith_lang_cx_fail(cx, "this type is too long");
+        }
     } else if (!smith_lang_stage_type(span, cx->instance, cx->location, &staged_first, &staged_count)) {
         return smith_lang_cx_fail(cx, "this type is too long");
     }

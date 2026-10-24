@@ -2692,6 +2692,83 @@ i32 main(void) {
     lib::show(Sample, &s);
     return 0;
 }
+==> generic-fields-pointee/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef struct {
+    i32 id;
+    f64 weight;
+} Inner;
+
+typedef struct {
+    Inner in;
+    Inner *link;
+    i32 count;
+} Outer;
+
+// `fields(typeof(*p))` and `fields(typeof(p->f))` read like `fields(T)`.
+void show_pointee(auto p) {
+    if constexpr (is_record(typeof(*p))) c::printf("record: ");
+    for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
+        c::printf("%s ", fields(typeof(*p))[i].name);
+    }
+    c::printf("\n");
+}
+
+void show_member(auto p) {
+    for constexpr (usize i = 0; i < countof(fields(typeof(p->in))); i++) {
+        c::printf("%s ", fields(typeof(p->in))[i].name);
+    }
+    c::printf("\n");
+}
+
+i32 main(void) {
+    Outer o = {};
+    show_pointee(&o);
+    show_member(&o);
+    show_pointee(o.link);
+    return 0;
+}
+==> generic-fields-star/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+
+typedef struct {
+    char *names[:];
+    i32 n;
+} Table;
+
+// What a failed check of an index calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+// A field `char *names[:]` is a slice of `char *`: the star is kept in `f.type` and in the element's type.
+void show(constexpr type T, T *x) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (is_slice(f.type)) {
+            if constexpr (is_pointer(typeof(x->[f][0])) && typeof(x->[f][0]) == char *) {
+                c::printf("%.*s: slice of char *\n", (i32)countof(f.name), f.name.data);
+            } else {
+                c::printf("%.*s: slice of something else\n", (i32)countof(f.name), f.name.data);
+            }
+        } else {
+            c::printf("%.*s: plain\n", (i32)countof(f.name), f.name.data);
+        }
+    }
+}
+
+i32 main(void) {
+    char *words[2] = {"one", "two"};
+    Table t = {.names = words[0:2], .n = 2};
+    show(Table, &t);
+    return 0;
+}
 ==> generic-fields-values/src/main.smith <==
 module main;
 

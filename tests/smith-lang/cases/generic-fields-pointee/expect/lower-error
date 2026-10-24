@@ -1,0 +1,3 @@
+src/main.smith:34:18: cannot tell the type of `&o`, the argument of `show_pointee`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:35:17: cannot tell the type of `&o`, the argument of `show_member`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:36:18: cannot tell the type of `o.link`, the argument of `show_pointee`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
