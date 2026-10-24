@@ -1,0 +1,11 @@
+module main;
+
+// `countof` of a pointer is an error, as in C: a pointer has no count (issue #167).
+u32 bad(u32 *p) {
+    return (u32)countof(p);
+}
+
+i32 main(void) {
+    u32 x = 0;
+    return (i32)bad(&x);
+}
