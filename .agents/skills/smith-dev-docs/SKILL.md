@@ -8,7 +8,7 @@ description: "Where a fact goes in smith's repository and how to change AGENTS.m
 The format is the plugin's [smith-docs](../smith-docs/SKILL.md); this is smith's own use of it.
 
 
-- Rules and decisions, one line each, with a link to the concept: `AGENTS.md`. What smith is: `knowledge/` (an OKF bundle, one concept per file, `index.md` listing each with its description word for word). How to do a task: `.agents/skills/<name>/SKILL.md`. Planned work: GitHub issues, nowhere in the repository. `.claude/skills` links to `.agents/skills`.
+- `AGENTS.md` is read by every agent every time, so every line must pay for itself: only a rule or decision everyone needs, one line each, with a link to the concept. Anything else (how a feature works, a mechanism, a limit) goes in its concept or skill. No agent adds an AGENTS.md line without the owner. What smith is: `knowledge/` (an OKF bundle, one concept per file, `index.md` listing each with its description word for word). How to do a task: `.agents/skills/<name>/SKILL.md`. Planned work: GitHub issues, nowhere in the repository. `.claude/skills` links to `.agents/skills`.
 - Each fact has one home. Skills link knowledge; knowledge never links skills.
 - Skills that teach using smith ship in the plugin straight from `.agents/skills`, are listed in `.claude-plugin/plugin.json`, and stay under about 60 lines; no project carries a copy, so change them here only.
 - Skills for changing smith are named `smith-dev` or `smith-dev-*`, are never listed in `plugin.json`, and are loaded by agents working in this repository only. `smith docs` fails when `plugin.json` lists a dev skill or leaves out a shipped one.
