@@ -93,6 +93,10 @@ export void test_format_strings_and_text(void) {
     test::check(is(out, "src/main.smith:x:hello:abc:(null)"));
     const char empty[:] = {};
     test::check_equal(format::to(out, sizeof out, empty).length, 0);
+    char letters[4] = "src";
+    char mutable_text[:] = letters[0:3];
+    (void)format::to(out, sizeof out, "[", mutable_text, "]");
+    test::check(is(out, "[src]")); // #168: a char[:] is its characters, never {data = ..., count = [3]}
 }
 
 // Every width, signed and unsigned, at its ends, against snprintf.
