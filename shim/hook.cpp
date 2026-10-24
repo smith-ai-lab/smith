@@ -2231,6 +2231,31 @@ class SmithHook final : public TokenHook, public NameSource {
 
     // The named fields of the struct a spelling names, and the `index`th of them (runtime/lang_fields.c). An unnamed
     // bit-field is padding, not a member; a member that is an anonymous struct or union has no name to reach it by.
+    // Whether a struct holds a run-time array (a `struct smith_array_...`) as a member, however deep: through arrays,
+    // other structs and anonymous members. A worklist of records, so there is no recursion.
+    static bool holdsSlice(const RecordDecl *first) {
+        const RecordDecl *work[64];
+        size_t count = 0;
+        work[count++] = first;
+        for (size_t at = 0; at < count; at++) {
+            for (const FieldDecl *field : work[at]->fields()) {
+                QualType member = field->getType().getCanonicalType();
+                while (const ArrayType *array = member->getAsArrayTypeUnsafe())
+                    member = array->getElementType().getCanonicalType();
+                const RecordDecl *inner = member->getAsRecordDecl();
+                if (inner == nullptr) continue;
+                if (inner->getName().starts_with("smith_array_")) return true;
+                if (inner->getDefinition() != nullptr && count < 64) {
+                    bool seen = false;
+                    for (size_t i = 0; i < count; i++)
+                        seen = seen || work[i] == inner->getDefinition();
+                    if (!seen) work[count++] = inner->getDefinition();
+                }
+            }
+        }
+        return false;
+    }
+
     static bool typeField(void *context, const char *spelling, uint32_t length, uint32_t index, SmithFieldInfo *out) {
         auto *self = static_cast<SmithHook *>(context);
         *out = SmithFieldInfo{};
@@ -2253,6 +2278,7 @@ class SmithHook final : public TokenHook, public NameSource {
             out->status = SmithFields_Incomplete;
             return true;
         }
+        out->has_slice = holdsSlice(record->getDefinition());
         for (const FieldDecl *field : record->getDefinition()->fields()) {
             if (field->isAnonymousStructOrUnion()) {
                 out->status = SmithFields_Anonymous;
