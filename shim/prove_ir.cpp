@@ -909,9 +909,10 @@ bool inline_helpers(Function &function, const std::set<const Function *> &recurs
             if (call == nullptr) continue;
             Function *callee = call->getCalledFunction();
             if (callee == nullptr || callee->isDeclaration() || callee == &function || is_modular(*callee) ||
-                recursive.count(callee) != 0 || callee->isVarArg() || contract_name(callee->getName()))
-                continue; // a variable argument list cannot be inlined into a function that has none; a contract is a
-                          // point
+                recursive.count(callee) != 0 || callee->isVarArg() || contract_name(callee->getName()) ||
+                is_assert_failure(call))
+                continue; // a variable argument list cannot be inlined into a function that has none; a contract and
+                          // the failure of a check (smith_failure, whose body a linked trace library has) are points
             target = call;
             break;
         }
@@ -1128,7 +1129,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
             if (call == nullptr) continue;
             const Function *callee = call->getCalledFunction();
             if (callee != nullptr && !callee->isDeclaration() && !contract_name(callee->getName()) &&
-                reached.insert(callee).second)
+                !is_assert_failure(call) && reached.insert(callee).second)
                 work.push_back(callee);
         }
     }
