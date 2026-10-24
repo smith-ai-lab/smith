@@ -1,0 +1,5 @@
+src/main.smith:10:13: read-only variable is not assignable
+src/main.smith:12:12: read-only variable is not assignable
+src/main.smith:15:11: cannot assign to variable 'fixed' with const-qualified type 'const struct smith_array_u8_n'
+src/main.smith:16:11: cannot assign to variable 'fixed' with const-qualified type 'const struct smith_array_u8_n'
+src/main.smith:9:13: read-only variable is not assignable

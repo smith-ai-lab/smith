@@ -1,0 +1,17 @@
+module main;
+
+// C's bracket qualifiers `static` and `volatile` mean nothing for a slice, and the rows of a slice of more dimensions
+// have no pointer of their own to qualify.
+
+static void sized(u8 xs[static :]) {
+}
+
+static void unstable(u8 xs[volatile :]) {
+}
+
+static void rows(f32 m[:][const :]) {
+}
+
+i32 main(void) {
+    return 0;
+}

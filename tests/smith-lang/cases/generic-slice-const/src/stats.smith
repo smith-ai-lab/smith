@@ -1,0 +1,34 @@
+module stats;
+
+import <stdio.h>;
+
+// The qualifiers of a slice reach a generic: an instance for `const u8[:]` is not the instance for `u8[:]`.
+
+export usize count(auto xs) {
+    return countof(xs);
+}
+
+export typeof(xs) tail(auto xs) {
+    return xs[1:];
+}
+
+export i64 total(auto xs) {
+    i64 sum = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        sum += xs[i];
+    }
+    return sum;
+}
+
+// A static of a generic is the instance's own: it counts the calls of one instance.
+export usize calls(auto xs) {
+    static usize n = 0;
+    n += 1;
+    return n + countof(xs) * 0;
+}
+
+export void names(auto v) {
+    for constexpr (usize i = 0; i < countof(fields(typeof(v))); i++) {
+        c::printf("%s ", fields(typeof(v))[i].name);
+    }
+}

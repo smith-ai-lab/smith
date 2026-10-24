@@ -172,7 +172,8 @@ typedef struct {
     size_t count;
     bool runtime[smith_lang_slice_dims_max];
     uint64_t fixed[smith_lang_slice_dims_max];
-    bool restrict_data; // `[restrict :]`: the data pointer is `restrict` (its own struct, `smith_array_restrict_...`)
+    bool restrict_data; // `[restrict :]`: the data pointer is `__restrict` (C and C++ headers both read it; its own
+                        // struct, `smith_array_restrict_...`)
 } SmithLangSliceDims;
 
 static SmithLangSliceDims smith_lang_slice_dims_one(void) {
@@ -321,7 +322,8 @@ static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag
         used += (size_t)snprintf(text + used, sizeof text - used, " %s", word);
         at += taken - 1;
     }
-    snprintf(text + used, sizeof text - used, " * %sdata; size_t count [ %zu ]; }", restrict_data ? "restrict " : "", sizes);
+    snprintf(text + used, sizeof text - used, " * %sdata; size_t count [ %zu ]; }", restrict_data ? "__restrict " : "",
+             sizes);
     return smith_lang_tuple_keep(text, strlen(text));
 }
 
@@ -337,7 +339,7 @@ static size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, Sm
         snprintf(pattern, sizeof pattern, "struct %s", tag);
     } else {
         snprintf(pattern, sizeof pattern, "struct %s { @0 * %sdata ; __SIZE_TYPE__ count [ %zu ] ; }", tag,
-                 dims->restrict_data ? "restrict " : "", sizes);
+                 dims->restrict_data ? "__restrict " : "", sizes);
     }
     SmithLangSliceSpan spans[1] = {{elem, count}};
     size_t first = used;
@@ -421,11 +423,12 @@ static size_t smith_lang_slice_bracket(SmithLang *lang, const SmithHost *host, c
             quals->is_restrict = true;
         } else if (quals->bad == nullptr) {
             quals->bad_where = word->location;
-            quals->bad = smith_lang_ident(word, "static")
-                             ? "`static` has no meaning for a slice: it has no size to promise (C's `int a[static 4]`); "
-                               "write `[const :]` or `[restrict :]`"
-                             : "`volatile` has no meaning in a slice's brackets: write it on the element, "
-                               "`volatile u8 xs[:]`; the brackets take `const` and `restrict`";
+            quals->bad =
+                smith_lang_ident(word, "static")
+                    ? "`static` has no meaning for a slice: it has no size to promise (C's `int a[static 4]`); "
+                      "write `[const :]` or `[restrict :]`"
+                    : "`volatile` has no meaning in a slice's brackets: write it on the element, "
+                      "`volatile u8 xs[:]`; the brackets take `const` and `restrict`";
         }
     }
     return words;
@@ -647,13 +650,13 @@ typedef enum {
 
 typedef struct {
     SmithLangSliceKind kind;
-    char tag[smith_lang_tuple_name_max];  // a slice: its struct
+    char tag[smith_lang_tuple_name_max];   // a slice: its struct
     char plain[smith_lang_tuple_name_max]; // a slice: its struct without `restrict` (what a cut or a row makes)
-    char stem[smith_lang_tuple_name_max]; // a slice: its tag without the dimensions
-    SmithLangSliceDims dims;              // a slice: its dimensions
-    char element[256];                    // a pointer or an array: the element as the parser writes it
-    uint64_t count;                       // an array: how many
-    uint32_t rank;                        // an array: its dimensions, `array_dims` their sizes
+    char stem[smith_lang_tuple_name_max];  // a slice: its tag without the dimensions
+    SmithLangSliceDims dims;               // a slice: its dimensions
+    char element[256];                     // a pointer or an array: the element as the parser writes it
+    uint64_t count;                        // an array: how many
+    uint32_t rank;                         // an array: its dimensions, `array_dims` their sizes
     uint64_t array_dims[smith_lang_slice_dims_max];
 } SmithLangSliceType;
 
@@ -1342,7 +1345,7 @@ static void smith_lang_slice_definition_text(const SmithLang *lang, const char *
     char element[256];
     if (stem <= prefix || !smith_lang_ty_stem_spelling(tag + prefix, stem - prefix, element, sizeof element)) return;
     snprintf(out, capacity, "struct %s { %s * %sdata ; __SIZE_TYPE__ count [ %zu ] ; } ;", tag, element,
-             dims.restrict_data ? "restrict " : "", smith_lang_slice_dims_runtime(&dims));
+             dims.restrict_data ? "__restrict " : "", smith_lang_slice_dims_runtime(&dims));
 }
 
 // `( struct tag ) { . data = ( expr ) , . count = { n } }`
@@ -1353,7 +1356,8 @@ static void smith_lang_slice_wrap(const SmithLang *lang, SmithLangSliceCur *cur,
     smith_lang_slice_definition_text(lang, tag, definition, sizeof definition);
     if (definition[0] != 0) {
         snprintf(pattern, sizeof pattern,
-                 "__extension__ ( { %s ( struct %s ) { . data = ( @0 ) , . count = { %llu } } ; } )", definition, tag, n);
+                 "__extension__ ( { %s ( struct %s ) { . data = ( @0 ) , . count = { %llu } } ; } )", definition, tag,
+                 n);
     } else {
         snprintf(pattern, sizeof pattern, "( struct %s ) { . data = ( @0 ) , . count = { %llu } }", tag, n);
     }
@@ -1400,8 +1404,9 @@ static void smith_lang_slice_convert_rows(SmithLang *lang, const SmithHost *host
     char pattern[smith_lang_tuple_name_max + 700];
     char definition[smith_lang_tuple_name_max + 200];
     smith_lang_slice_definition_text(lang, tag, definition, sizeof definition);
-    snprintf(pattern, sizeof pattern, "__extension__ ( { %s ( struct %s ) { . data = & ( @0 ) %s , . count = { %s } } ; } )",
-             definition, tag, zeros, counts);
+    snprintf(pattern, sizeof pattern,
+             "__extension__ ( { %s ( struct %s ) { . data = & ( @0 ) %s , . count = { %s } } ; } )", definition, tag,
+             zeros, counts);
     SmithLangSliceSpan spans[1] = {{expr, count}};
     cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, pattern, spans, expr);
     cur->changed = true;
@@ -1459,7 +1464,8 @@ static void smith_lang_slice_tag_words(const char *tag, char *out, size_t capaci
     if (strncmp(at, "restrict_", 9) == 0) at += 9;
     snprintf(out, capacity, "%s", at);
     size_t length = strlen(out);
-    while (length > 0 && (out[length - 1] == 'n' || out[length - 1] == '_' || (out[length - 1] >= '0' && out[length - 1] <= '9'))) {
+    while (length > 0 &&
+           (out[length - 1] == 'n' || out[length - 1] == '_' || (out[length - 1] >= '0' && out[length - 1] <= '9'))) {
         length -= 1;
         if (out[length] == '_') break;
     }
@@ -1479,9 +1485,9 @@ static void smith_lang_slice_requalify(SmithLang *lang, const SmithHost *host, c
         char to[96];
         smith_lang_slice_tag_words(type->tag, from, sizeof from);
         smith_lang_slice_tag_words(tag, to, sizeof to);
-        smith_lang_error(lang, host, expr[0].location,
-                         "converting a slice of `%s` to a slice of `%s` discards qualifiers: the elements are read-only",
-                         from, to);
+        smith_lang_error(
+            lang, host, expr[0].location,
+            "converting a slice of `%s` to a slice of `%s` discards qualifiers: the elements are read-only", from, to);
         char empty[smith_lang_tuple_name_max + 24];
         snprintf(empty, sizeof empty, "( struct %s ) { }", tag); // a value of the type, so that nothing else is said
         cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, empty, nullptr, expr);
@@ -1493,15 +1499,17 @@ static void smith_lang_slice_requalify(SmithLang *lang, const SmithHost *host, c
     if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) dims = smith_lang_slice_dims_one();
     char counts[160] = "";
     for (size_t at = 0; at < smith_lang_slice_dims_runtime(&dims); at++) { // the counts, as they are
-        snprintf(counts + strlen(counts), sizeof counts - strlen(counts), "%ssmith_s . count [ %zu ]", at > 0 ? " , " : "", at);
+        snprintf(counts + strlen(counts), sizeof counts - strlen(counts), "%ssmith_s . count [ %zu ]",
+                 at > 0 ? " , " : "", at);
     }
     char pattern[smith_lang_tuple_name_max + 600];
     char definition[smith_lang_tuple_name_max + 200];
     smith_lang_slice_definition_text(lang, tag, definition, sizeof definition);
-    snprintf(pattern, sizeof pattern,
-             "__extension__ ( { auto smith_s = ( @0 ) ; %s ( struct %s ) { . data = smith_s . data , . count = { %s } } "
-             "; } )",
-             definition, tag, counts);
+    snprintf(
+        pattern, sizeof pattern,
+        "__extension__ ( { auto smith_s = ( @0 ) ; %s ( struct %s ) { . data = smith_s . data , . count = { %s } } "
+        "; } )",
+        definition, tag, counts);
     SmithLangSliceSpan spans[1] = {{expr, count}};
     cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, pattern, spans, expr);
     cur->changed = true;
