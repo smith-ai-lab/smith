@@ -157,9 +157,9 @@ enum {
     SmithJsonState_ObjectValue, // a value, after a key
 };
 
-SmithJsonReader smith_json_reader_make(SmithText input, SmithJsonLimits limits) {
+SmithJsonReader smith_json_reader_make(struct smith_array_const_char_n input, SmithJsonLimits limits) {
     smith_requires(limits.depth <= smith_json_depth_max);
-    smith_requires(input.begin != nullptr || input.length == 0);
+    smith_requires(input.data != nullptr || input.count[0] == 0);
     SmithJsonReader reader = {.input = input, .limits = limits, .state = SmithJsonState_Top};
     reader.token = SmithJsonToken_Null; // nothing read yet; not Error and not End
     return reader;
@@ -182,7 +182,7 @@ static bool smith_json_is_space(char c) {
 }
 
 static void smith_json_skip_space(SmithJsonReader *reader) {
-    while (reader->position < reader->input.length && smith_json_is_space(reader->input.begin[reader->position])) {
+    while (reader->position < reader->input.count[0] && smith_json_is_space(reader->input.data[reader->position])) {
         reader->position += 1;
     }
 }
@@ -198,13 +198,14 @@ static void smith_json_after_value(SmithJsonReader *reader) {
 
 // One escape at input[at], which is the backslash. Returns the code point written to *code and the escape's length, or
 // 0 with *reason set.
-static size_t smith_json_escape(const SmithText input, size_t at, uint32_t *code, SmithJsonReason *reason) {
-    size_t available = input.length - at;
+static size_t smith_json_escape(const struct smith_array_const_char_n input, size_t at, uint32_t *code,
+                                SmithJsonReason *reason) {
+    size_t available = input.count[0] - at;
     if (available < 2) {
         *reason = SmithJsonReason_UnexpectedEnd;
         return 0;
     }
-    switch (input.begin[at + 1]) {
+    switch (input.data[at + 1]) {
     case '"':
         *code = '"';
         return 2;
@@ -235,7 +236,7 @@ static size_t smith_json_escape(const SmithText input, size_t at, uint32_t *code
         *reason = SmithJsonReason_BadEscape;
         return 0;
     }
-    int32_t first = smith_json_hex4(input.begin + at + 2, available - 2);
+    int32_t first = smith_json_hex4(input.data + at + 2, available - 2);
     if (first < 0) {
         *reason = SmithJsonReason_BadEscape;
         return 0;
@@ -248,11 +249,11 @@ static size_t smith_json_escape(const SmithText input, size_t at, uint32_t *code
         *code = (uint32_t)first;
         return 6;
     }
-    if (available < 12 || input.begin[at + 6] != '\\' || input.begin[at + 7] != 'u') {
+    if (available < 12 || input.data[at + 6] != '\\' || input.data[at + 7] != 'u') {
         *reason = SmithJsonReason_BadSurrogate;
         return 0;
     }
-    int32_t second = smith_json_hex4(input.begin + at + 8, available - 8);
+    int32_t second = smith_json_hex4(input.data + at + 8, available - 8);
     if (second < 0xdc00 || second > 0xdfff) {
         *reason = SmithJsonReason_BadSurrogate;
         return 0;
@@ -263,13 +264,13 @@ static size_t smith_json_escape(const SmithText input, size_t at, uint32_t *code
 
 // Reads the string whose opening quote is at the position; sets text, length and escaped. Returns false after failing.
 static bool smith_json_lex_string(SmithJsonReader *reader) {
-    SmithText input = reader->input;
+    struct smith_array_const_char_n input = reader->input;
     size_t at = reader->position + 1;
     size_t start = at;
     size_t length = 0;
     bool escaped = false;
-    while (at < input.length) {
-        unsigned char c = (unsigned char)input.begin[at];
+    while (at < input.count[0]) {
+        unsigned char c = (unsigned char)input.data[at];
         size_t step = 1;
         size_t decoded = 1;
         if (c == '"') break;
@@ -289,7 +290,7 @@ static bool smith_json_lex_string(SmithJsonReader *reader) {
             decoded = smith_json_encode(code, scratch);
             escaped = true;
         } else if (c >= 0x80) {
-            step = smith_json_utf8_length(input.begin + at, input.length - at);
+            step = smith_json_utf8_length(input.data + at, input.count[0] - at);
             if (step == 0) {
                 smith_json_fail(reader, at, SmithJsonReason_BadUtf8);
                 return false;
@@ -303,11 +304,11 @@ static bool smith_json_lex_string(SmithJsonReader *reader) {
         length += decoded;
         at += step;
     }
-    if (at >= input.length) {
+    if (at >= input.count[0]) {
         smith_json_fail(reader, at, SmithJsonReason_UnexpectedEnd);
         return false;
     }
-    reader->text = (SmithText){input.begin + start, at - start};
+    reader->text = (struct smith_array_const_char_n){.data = input.data + start, .count = {at - start}};
     reader->length = length;
     reader->escaped = escaped;
     reader->position = at + 1;
@@ -319,8 +320,8 @@ static bool smith_json_is_digit(char c) {
 }
 
 // Digits from at; returns where they end (at, if there are none).
-static size_t smith_json_digits(SmithText input, size_t at) {
-    while (at < input.length && smith_json_is_digit(input.begin[at])) {
+static size_t smith_json_digits(struct smith_array_const_char_n input, size_t at) {
+    while (at < input.count[0] && smith_json_is_digit(input.data[at])) {
         at += 1;
     }
     return at;
@@ -328,18 +329,18 @@ static size_t smith_json_digits(SmithText input, size_t at) {
 
 // -? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?
 static bool smith_json_lex_number(SmithJsonReader *reader) {
-    SmithText input = reader->input;
+    struct smith_array_const_char_n input = reader->input;
     size_t start = reader->position;
     size_t at = start;
-    if (input.begin[at] == '-') at += 1;
-    if (at >= input.length || !smith_json_is_digit(input.begin[at])) {
+    if (input.data[at] == '-') at += 1;
+    if (at >= input.count[0] || !smith_json_is_digit(input.data[at])) {
         smith_json_fail(reader, at, SmithJsonReason_BadNumber);
         return false;
     }
     size_t digits = at + 1; // a leading zero is the whole integer part: "01" is the number 0 and then a stray 1
-    if (input.begin[at] != '0') digits = smith_json_digits(input, at);
+    if (input.data[at] != '0') digits = smith_json_digits(input, at);
     at = digits;
-    if (at < input.length && input.begin[at] == '.') {
+    if (at < input.count[0] && input.data[at] == '.') {
         digits = smith_json_digits(input, at + 1);
         if (digits == at + 1) {
             smith_json_fail(reader, digits, SmithJsonReason_BadNumber);
@@ -347,9 +348,9 @@ static bool smith_json_lex_number(SmithJsonReader *reader) {
         }
         at = digits;
     }
-    if (at < input.length && (input.begin[at] == 'e' || input.begin[at] == 'E')) {
+    if (at < input.count[0] && (input.data[at] == 'e' || input.data[at] == 'E')) {
         size_t sign = at + 1;
-        if (sign < input.length && (input.begin[sign] == '+' || input.begin[sign] == '-')) sign += 1;
+        if (sign < input.count[0] && (input.data[sign] == '+' || input.data[sign] == '-')) sign += 1;
         digits = smith_json_digits(input, sign);
         if (digits == sign) {
             smith_json_fail(reader, digits, SmithJsonReason_BadNumber);
@@ -357,20 +358,20 @@ static bool smith_json_lex_number(SmithJsonReader *reader) {
         }
         at = digits;
     }
-    reader->text = (SmithText){input.begin + start, at - start};
+    reader->text = (struct smith_array_const_char_n){.data = input.data + start, .count = {at - start}};
     reader->position = at;
     return true;
 }
 
 static bool smith_json_literal(SmithJsonReader *reader, const char *word, size_t length) {
-    SmithText input = reader->input;
+    struct smith_array_const_char_n input = reader->input;
     for (size_t i = 0; i < length; i++) {
         size_t at = reader->position + i;
-        if (at >= input.length) {
+        if (at >= input.count[0]) {
             smith_json_fail(reader, at, SmithJsonReason_UnexpectedEnd);
             return false;
         }
-        if (input.begin[at] != word[i]) {
+        if (input.data[at] != word[i]) {
             smith_json_fail(reader, at, SmithJsonReason_UnexpectedCharacter);
             return false;
         }
@@ -434,9 +435,9 @@ static SmithJsonToken smith_json_read_key(SmithJsonReader *reader) {
     size_t offset = reader->position;
     if (!smith_json_lex_string(reader)) return SmithJsonToken_Error;
     smith_json_skip_space(reader);
-    if (reader->position >= reader->input.length)
+    if (reader->position >= reader->input.count[0])
         return smith_json_fail(reader, reader->position, SmithJsonReason_UnexpectedEnd);
-    if (reader->input.begin[reader->position] != ':')
+    if (reader->input.data[reader->position] != ':')
         return smith_json_fail(reader, reader->position, SmithJsonReason_UnexpectedCharacter);
     reader->position += 1;
     reader->state = SmithJsonState_ObjectValue;
@@ -448,9 +449,9 @@ static SmithJsonToken smith_json_read_after_comma(SmithJsonReader *reader, bool 
     reader->position += 1;
     reader->state = object ? SmithJsonState_ObjectKey : SmithJsonState_ArrayValue;
     smith_json_skip_space(reader);
-    if (reader->position >= reader->input.length)
+    if (reader->position >= reader->input.count[0])
         return smith_json_fail(reader, reader->position, SmithJsonReason_UnexpectedEnd);
-    char c = reader->input.begin[reader->position];
+    char c = reader->input.data[reader->position];
     if (!object) return smith_json_read_value(reader, c);
     if (c != '"') return smith_json_fail(reader, reader->position, SmithJsonReason_UnexpectedCharacter);
     return smith_json_read_key(reader);
@@ -459,12 +460,12 @@ static SmithJsonToken smith_json_read_after_comma(SmithJsonReader *reader, bool 
 SmithJsonToken smith_json_read(SmithJsonReader *reader) {
     if (reader->token == SmithJsonToken_Error || reader->token == SmithJsonToken_End) return reader->token;
     smith_json_skip_space(reader);
-    if (reader->position >= reader->input.length) {
+    if (reader->position >= reader->input.count[0]) {
         if (reader->state != SmithJsonState_Done)
             return smith_json_fail(reader, reader->position, SmithJsonReason_UnexpectedEnd);
         return smith_json_emit(reader, SmithJsonToken_End, reader->position);
     }
-    char c = reader->input.begin[reader->position];
+    char c = reader->input.data[reader->position];
     switch (reader->state) {
     case SmithJsonState_Done:
         return smith_json_fail(reader, reader->position, SmithJsonReason_TrailingContent);
@@ -497,7 +498,7 @@ bool smith_json_skip(SmithJsonReader *reader) {
     if (reader->token == SmithJsonToken_Error) return false;
     if (reader->token != SmithJsonToken_ObjectBegin && reader->token != SmithJsonToken_ArrayBegin) return true;
     size_t outside = reader->depth - 1;
-    for (size_t step = 0; step <= reader->input.length; step++) { // each token uses at least one byte
+    for (size_t step = 0; step <= reader->input.count[0]; step++) { // each token uses at least one byte
         SmithJsonToken token = smith_json_read(reader);
         if (token == SmithJsonToken_Error) return false;
         if (reader->depth == outside) return true;
@@ -510,9 +511,9 @@ bool smith_json_skip(SmithJsonReader *reader) {
 // Decoding strings
 
 // The next decoded character of raw, which is a validated string: writes its bytes to out and returns how many.
-static size_t smith_json_decode_step(SmithText raw, size_t *at, char *out) {
-    if (raw.begin[*at] != '\\') {
-        out[0] = raw.begin[*at];
+static size_t smith_json_decode_step(struct smith_array_const_char_n raw, size_t *at, char *out) {
+    if (raw.data[*at] != '\\') {
+        out[0] = raw.data[*at];
         *at += 1;
         return 1;
     }
@@ -524,18 +525,18 @@ static size_t smith_json_decode_step(SmithText raw, size_t *at, char *out) {
     return smith_json_encode(code, out);
 }
 
-static SmithText smith_json_decode_into(const SmithJsonReader *reader, char *destination) {
+static struct smith_array_const_char_n smith_json_decode_into(const SmithJsonReader *reader, char *destination) {
     size_t at = 0;
     size_t used = 0;
-    while (at < reader->text.length) {
+    while (at < reader->text.count[0]) {
         used += smith_json_decode_step(reader->text, &at, destination + used);
     }
     smith_json_check(used == reader->length);
     destination[used] = '\0';
-    return (SmithText){destination, used};
+    return (struct smith_array_const_char_n){.data = destination, .count = {used}};
 }
 
-SmithText smith_json_decode(const SmithJsonReader *reader, SmithArena *arena) {
+struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader, SmithArena *arena) {
     smith_trusted(); // its loops run over the input, which has no bound a proof can use
     smith_requires(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
     if (!reader->escaped) return reader->text;
@@ -548,7 +549,7 @@ bool smith_json_is(const SmithJsonReader *reader, const char *string) {
     smith_requires(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
     size_t at = 0;
     size_t matched = 0;
-    while (at < reader->text.length) {
+    while (at < reader->text.count[0]) {
         char bytes[4];
         size_t count = smith_json_decode_step(reader->text, &at, bytes);
         for (size_t i = 0; i < count; i++) {
@@ -568,10 +569,11 @@ typedef struct {
     size_t bytes;
 } SmithJsonSize;
 
-static bool smith_json_measure(SmithText input, SmithJsonLimits limits, SmithJsonSize *size, SmithJsonError *error) {
+static bool smith_json_measure(struct smith_array_const_char_n input, SmithJsonLimits limits, SmithJsonSize *size,
+                               SmithJsonError *error) {
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     size_t bytes = 0;
-    for (size_t reads = 0; reads <= input.length; reads++) { // every token but the last takes a byte of the input
+    for (size_t reads = 0; reads <= input.count[0]; reads++) { // every token but the last takes a byte of the input
         SmithJsonToken token = smith_json_read(&reader);
         if (token == SmithJsonToken_Error) {
             *error = reader.error;
@@ -595,12 +597,12 @@ typedef struct {
     size_t bytes_used;
     size_t open_node[smith_json_depth_max]; // the container at each depth, as an index in nodes
     size_t open_count[smith_json_depth_max];
-    SmithText key; // the key read for the next value
+    struct smith_array_const_char_n key; // the key read for the next value
 } SmithJsonBuild;
 
-static SmithText smith_json_build_text(SmithJsonBuild *build, const SmithJsonReader *reader) {
+static struct smith_array_const_char_n smith_json_build_text(SmithJsonBuild *build, const SmithJsonReader *reader) {
     if (!reader->escaped) return reader->text;
-    SmithText text = smith_json_decode_into(reader, build->bytes + build->bytes_used);
+    struct smith_array_const_char_n text = smith_json_decode_into(reader, build->bytes + build->bytes_used);
     build->bytes_used += reader->length + 1;
     return text;
 }
@@ -614,7 +616,7 @@ static SmithJsonValue *smith_json_build_node(SmithJsonBuild *build, const SmithJ
     node->offset = reader->offset;
     node->key = build->key;
     node->span = 1;
-    build->key = (SmithText){};
+    build->key = (struct smith_array_const_char_n){};
     if (depth > 0) build->open_count[depth - 1] += 1;
     return node;
 }
@@ -700,8 +702,8 @@ static bool smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, Smit
     return true;
 }
 
-bool smith_json_parse(SmithArena *arena, SmithText input, SmithJsonLimits limits, const SmithJsonValue **root,
-                      SmithJsonError *error) {
+bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
+                      const SmithJsonValue **root, SmithJsonError *error) {
     SmithJsonSize size = {};
     if (!smith_json_measure(input, limits, &size, error)) return false;
     SmithJsonBuild build = {};
@@ -849,10 +851,10 @@ void smith_json_write_array_end(SmithJsonWriter *writer) {
 }
 
 // Whether the text is well formed UTF-8 (the writer will not make invalid JSON out of anything else).
-static bool smith_json_valid_utf8(SmithText text) {
+static bool smith_json_valid_utf8(struct smith_array_const_char_n text) {
     size_t at = 0;
-    while (at < text.length) {
-        size_t step = smith_json_utf8_length(text.begin + at, text.length - at);
+    while (at < text.count[0]) {
+        size_t step = smith_json_utf8_length(text.data + at, text.count[0] - at);
         if (step == 0) return false;
         at += step;
     }
@@ -897,7 +899,7 @@ static void smith_json_put_escaped(SmithJsonWriter *writer, char c) {
 }
 
 // A quoted string. The text is written in runs that need no escape, each run in one copy.
-static void smith_json_put_string(SmithJsonWriter *writer, SmithText text) {
+static void smith_json_put_string(SmithJsonWriter *writer, struct smith_array_const_char_n text) {
     if (writer->error.reason != SmithJsonReason_None) return;
     if (!smith_json_valid_utf8(text)) {
         (void)smith_json_writer_fail(writer, SmithJsonReason_BadUtf8);
@@ -905,18 +907,18 @@ static void smith_json_put_string(SmithJsonWriter *writer, SmithText text) {
     }
     smith_json_put_char(writer, '"');
     size_t run = 0;
-    for (size_t at = 0; at < text.length; at++) {
-        char c = text.begin[at];
+    for (size_t at = 0; at < text.count[0]; at++) {
+        char c = text.data[at];
         if (c != '"' && c != '\\' && (unsigned char)c >= 0x20) continue;
-        (void)smith_json_put(writer, text.begin + run, at - run);
+        (void)smith_json_put(writer, text.data + run, at - run);
         smith_json_put_escaped(writer, c);
         run = at + 1;
     }
-    (void)smith_json_put(writer, text.begin + run, text.length - run);
+    (void)smith_json_put(writer, text.data + run, text.count[0] - run);
     smith_json_put_char(writer, '"');
 }
 
-void smith_json_write_key(SmithJsonWriter *writer, SmithText key) {
+void smith_json_write_key(SmithJsonWriter *writer, struct smith_array_const_char_n key) {
     if (writer->error.reason != SmithJsonReason_None) return;
     if (writer->depth == 0 || writer->state != SmithJsonWriterState_Key) {
         (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
@@ -929,7 +931,7 @@ void smith_json_write_key(SmithJsonWriter *writer, SmithText key) {
     writer->state = SmithJsonWriterState_Value;
 }
 
-void smith_json_write_string(SmithJsonWriter *writer, SmithText string) {
+void smith_json_write_string(SmithJsonWriter *writer, struct smith_array_const_char_n string) {
     if (!smith_json_begin_value(writer)) return;
     smith_json_put_string(writer, string);
     smith_json_end_value(writer);
@@ -991,7 +993,7 @@ static size_t smith_json_write_node(SmithJsonWriter *writer, const SmithJsonValu
         smith_json_write_bool(writer, current->kind == SmithJsonKind_True);
         return depth;
     case SmithJsonKind_Number:
-        smith_json_write_number(writer, current->text.begin, current->text.length);
+        smith_json_write_number(writer, current->text.data, current->text.count[0]);
         return depth;
     case SmithJsonKind_String:
         smith_json_write_string(writer, current->text);
@@ -1039,10 +1041,10 @@ void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value
     smith_json_check(false); // span does not count the tree
 }
 
-bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output) {
+bool smith_json_writer_finish(SmithJsonWriter *writer, struct smith_array_const_char_n *output) {
     if (writer->error.reason == SmithJsonReason_None && writer->state != SmithJsonWriterState_Done)
         (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
     if (writer->error.reason != SmithJsonReason_None) return false;
-    *output = (SmithText){writer->buffer, writer->length};
+    *output = (struct smith_array_const_char_n){.data = writer->buffer, .count = {writer->length}};
     return true;
 }

@@ -38,24 +38,24 @@ static void smith_mcp_text_add(SmithMcpText *text, const char *format, ...) {
     smith_mcp_text_bytes(text, piece, size);
 }
 
-static void smith_mcp_text_add_text(SmithMcpText *text, SmithText piece) {
-    smith_mcp_text_bytes(text, piece.begin, piece.length);
+static void smith_mcp_text_add_text(SmithMcpText *text, struct smith_array_const_char_n piece) {
+    smith_mcp_text_bytes(text, piece.data, piece.count[0]);
 }
 
 // A copy of the text with a terminator, for the functions that take a C string.
-static char *smith_mcp_cstring(SmithArena *arena, SmithText text) {
-    char *copy = smith_arena_push(arena, text.length + 1, 1);
+static char *smith_mcp_cstring(SmithArena *arena, struct smith_array_const_char_n text) {
+    char *copy = smith_arena_push(arena, text.count[0] + 1, 1);
     SMITH_ASSERT(copy != nullptr);
-    memcpy(copy, text.begin, text.length);
-    copy[text.length] = '\0';
+    memcpy(copy, text.data, text.count[0]);
+    copy[text.count[0]] = '\0';
     return copy;
 }
 
 // Copies the text into a fixed buffer, cut to fit.
-static void smith_mcp_copy(char *to, size_t capacity, SmithText from) {
+static void smith_mcp_copy(char *to, size_t capacity, struct smith_array_const_char_n from) {
     SMITH_ASSERT(capacity > 0);
-    size_t take = from.length < capacity - 1 ? from.length : capacity - 1;
-    memcpy(to, from.begin, take);
+    size_t take = from.count[0] < capacity - 1 ? from.count[0] : capacity - 1;
+    memcpy(to, from.data, take);
     to[take] = '\0';
 }
 

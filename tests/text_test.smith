@@ -21,7 +21,7 @@ constexpr f32 f32_min = 0x1p-126F;
 constexpr f64 f64_max = 0x1.fffffffffffffp+1023;
 constexpr f64 f64_min = 0x1p-1022;
 
-static text::Text test_text(const char *string) {
+static typeof(const char[:]) test_text(const char *string) {
     return text::make(string);
 }
 
@@ -50,15 +50,15 @@ static u64 test_text_bits_of(f64 value) {
 // Lines and words
 
 export void test_text_lines_and_words(void) {
-    text::Text input = test_text("first line\r\n\n  # only a comment\n\tmove  3\t-4   # go\nlast");
-    text::Text line = {};
-    text::Text word = {};
+    const char input[:] = test_text("first line\r\n\n  # only a comment\n\tmove  3\t-4   # go\nlast");
+    const char line[:] = {};
+    const char word[:] = {};
     test::check(text::take_line(&input, &line));
     test::check(text::is(line, "first line")); // the carriage return is gone
     test::check(text::take_line(&input, &line));
-    test::check_equal(line.length, 0);
+    test::check_equal(countof(line), 0);
     test::check(text::take_line(&input, &line));
-    test::check_equal(line.length, 0); // a comment and the spaces before it are gone
+    test::check_equal(countof(line), 0); // a comment and the spaces before it are gone
     test::check(text::take_line(&input, &line));
     test::check(text::take_word(&line, &word));
     test::check(text::is(word, "move"));
@@ -72,19 +72,19 @@ export void test_text_lines_and_words(void) {
     test::check(text::take_line(&input, &line)); // the last line has no newline
     test::check(text::is(line, "last"));
     test::check(!text::take_line(&input, &line));
-    test::check_equal(input.length, 0);
+    test::check_equal(countof(input), 0);
 }
 
 export void test_text_empty_and_unterminated(void) {
-    text::Text empty = test_text("");
-    text::Text line = {};
+    const char empty[:] = test_text("");
+    const char line[:] = {};
     test::check(!text::take_line(&empty, &line));
-    text::Text newline = test_text("\n");
+    const char newline[:] = test_text("\n");
     test::check(text::take_line(&newline, &line)); // one empty line
-    test::check_equal(line.length, 0);
+    test::check_equal(countof(line), 0);
     test::check(!text::take_line(&newline, &line));
-    text::Text blank = test_text(" \t ");
-    text::Text word = {};
+    const char blank[:] = test_text(" \t ");
+    const char word[:] = {};
     test::check(!text::take_word(&blank, &word));
 }
 
@@ -93,7 +93,8 @@ export void test_text_is_compares_whole_words(void) {
     test::check(!text::is(test_text("move"), "mov"));
     test::check(!text::is(test_text("mov"), "move"));
     test::check(!text::is(test_text("move"), "Move"));
-    test::check(text::is((text::Text){"moves", 4}, "move")); // a word is a pointer and a length
+    const char moves[:] = "moves";
+    test::check(text::is(moves[0:4], "move")); // a cut of a string is a word
     test::check(text::is(test_text(""), ""));
     test::check(!text::is(test_text(""), "x"));
 }
@@ -107,8 +108,8 @@ export void test_text_words_round_trip(random::Key key) {
         used += text::write_u64(buffer + used, test_text_draw_u64(random::key_derive(key, 100 + i)));
         buffer[used++] = i % 2 == 0 ? ' ' : '\t';
     }
-    text::Text line = {buffer, used};
-    text::Text word = {};
+    const char line[:] = buffer[0:used];
+    const char word[:] = {};
     usize seen = 0;
     while (text::take_word(&line, &word)) {
         u64 value = 0;
@@ -155,7 +156,7 @@ export void test_text_u64_round_trip(random::Key key) {
     usize count = text::write_u64(out, value);
     test::check_less_equal(count, text::number_capacity);
     u64 back = 0;
-    test::check(text::parse_u64((text::Text){out, count}, &back));
+    test::check(text::parse_u64(out[0:count], &back));
     test::check_equal(back, value);
     // Leading zeros change nothing, however many.
     char padded[test_text_capacity];
@@ -163,7 +164,7 @@ export void test_text_u64_round_trip(random::Key key) {
     __builtin_memset(padded, '0', zeros);
     __builtin_memcpy(padded + zeros, out, count);
     u64 again = 0;
-    test::check(text::parse_u64((text::Text){padded, zeros + count}, &again));
+    test::check(text::parse_u64(padded[0:zeros + count], &again));
     test::check_equal(again, value);
 }
 
@@ -175,7 +176,7 @@ export void test_text_i64_round_trip(random::Key key) {
     usize count = text::write_i64(out, value);
     test::check_less_equal(count, text::number_capacity);
     i64 back = 0;
-    test::check(text::parse_i64((text::Text){out, count}, &back));
+    test::check(text::parse_i64(out[0:count], &back));
     test::check_equal(back, value);
     char padded[test_text_capacity];
     usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
@@ -184,7 +185,7 @@ export void test_text_i64_round_trip(random::Key key) {
     __builtin_memset(padded + sign, '0', zeros);
     __builtin_memcpy(padded + sign + zeros, out + sign, count - sign);
     i64 again = 0;
-    test::check(text::parse_i64((text::Text){padded, zeros + count}, &again));
+    test::check(text::parse_i64(padded[0:zeros + count], &again));
     test::check_equal(again, value);
 }
 
@@ -193,7 +194,7 @@ export void test_text_hex_round_trip(random::Key key) {
     char out[16];
     test::check_equal(text::write_hex(out, value), 16);
     u64 back = 0;
-    test::check(text::parse_hex((text::Text){out, 16}, &back));
+    test::check(text::parse_hex(out[0:16], &back));
     test::check_equal(back, value);
     for (usize i = 0; i < 16; i++)
         test::check((out[i] >= '0' && out[i] <= '9') || (out[i] >= 'a' && out[i] <= 'f'));
@@ -202,7 +203,7 @@ export void test_text_hex_round_trip(random::Key key) {
     __builtin_memset(padded, '0', zeros);
     __builtin_memcpy(padded + zeros, out, 16);
     u64 again = 0;
-    test::check(text::parse_hex((text::Text){padded, zeros + 16}, &again));
+    test::check(text::parse_hex(padded[0:zeros + 16], &again));
     test::check_equal(again, value);
 }
 
@@ -287,7 +288,7 @@ export void test_text_overflow_fails(random::Key key) {
     usize count = text::write_u64(out, value);
     out[count++] = (char)('0' + test_text_uniform(random::key_derive(key, 3), 0, 9));
     u64 result = 0;
-    bool fits = text::parse_u64((text::Text){out, count}, &result);
+    bool fits = text::parse_u64(out[0:count], &result);
     // The text of value followed by a digit is value * 10 + digit, which fits exactly when it does not wrap.
     u64 digit = (u64)(out[count - 1] - '0');
     bool should_fit = value <= (math::max(u64) - digit) / 10;
@@ -917,7 +918,7 @@ export void test_text_f64_write_edges_round_trip(void) {
                 char out[text::f64_capacity];
                 usize length = text::write_f64(out, d);
                 f64 back = 0;
-                test::check(text::parse_f64((text::Text){out, length}, &back));
+                test::check(text::parse_f64(out[0:length], &back));
                 test::check_same_bits(back, d);
             }
         }

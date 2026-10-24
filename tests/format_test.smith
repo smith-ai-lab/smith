@@ -87,11 +87,11 @@ export void test_format_strings_and_text(void) {
     mutable_string[0] = 'x';
     mutable_string[1] = '\0';
     const char *nothing = nullptr;
-    text::Text word = text::make("hello world");
-    word.length = 5;
+    const char whole[:] = "hello world";
+    const char word[:] = whole[0:5];
     (void)format::to(out, 128, path, ":", mutable_string, ":", word, ":", format::bytes("abcdef", 3), ":", nothing);
     test::check(is(out, "src/main.smith:x:hello:abc:(null)"));
-    text::Text empty = text::make("");
+    const char empty[:] = "";
     test::check_equal(format::to(out, sizeof out, empty).length, 0);
 }
 
@@ -177,7 +177,7 @@ export void test_format_floats_read_back(random::Key key) {
     char out[capacity];
     format::Written written = format::to(out, sizeof out, value);
     f64 back = 0;
-    test::check(text::parse_f64((text::Text){out, written.length}, &back));
+    test::check(text::parse_f64(out[0:written.length], &back));
     test::check_same_bits(back, value);
 }
 
@@ -187,7 +187,7 @@ static void check_fixed(f64 value, u32 places) {
     (void)format::to(out, sizeof out, format::fixed(value, places));
     __builtin_snprintf(expected, sizeof expected, "%.*f", (i32)places, value);
     if (!is(out, expected)) {
-        test::check_equal(text::make(out).length, text::make(expected).length); // the failure shows both lengths
+        test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }
@@ -304,17 +304,17 @@ export void test_format_push_on_an_arena(void) {
         alignas(arena::align_max) u8 bytes[1024];
     } memory;
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
-    text::Text path = format::push(&a, "build/meshes/", "ship", ".mesh");
-    test::check_equal(path.length, 22);
-    test::check(is(path.begin, "build/meshes/ship.mesh")); // terminated after its length
+    char path[:] = format::push(&a, "build/meshes/", "ship", ".mesh");
+    test::check_equal(countof(path), 22);
+    test::check(is(path.data, "build/meshes/ship.mesh")); // terminated after its length
     usize used = a.used;
-    text::Text number = format::push(&a, (u64)42);
-    test::check_equal(number.length, 2);
-    test::check(is(number.begin, "42"));
+    char number[:] = format::push(&a, (u64)42);
+    test::check_equal(countof(number), 2);
+    test::check(is(number.data, "42"));
     test::check(a.used > used);
-    text::Text nothing = format::push(&a);
-    test::check_equal(nothing.length, 0);
-    test::check_equal(nothing.begin[0], '\0');
+    char nothing[:] = format::push(&a);
+    test::check_equal(countof(nothing), 0);
+    test::check_equal(nothing.data[0], '\0');
     arena::reset(&a);
     test::check_equal(a.used, 0);
 }
@@ -376,7 +376,7 @@ static void check_general(f64 value, u32 digits) {
     __builtin_snprintf(expected, sizeof expected, "%.*g", (i32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
     remove_trailing_zeros(expected);
     if (!is(out, expected)) {
-        test::check_equal(text::make(out).length, text::make(expected).length); // the failure shows both lengths
+        test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }
@@ -387,7 +387,7 @@ static void check_scientific(f64 value, u32 places) {
     (void)format::to(out, sizeof out, format::scientific(value, places));
     __builtin_snprintf(expected, sizeof expected, "%.*e", (i32)(places < 40 ? places : 40), value);
     if (!is(out, expected)) {
-        test::check_equal(text::make(out).length, text::make(expected).length);
+        test::check_equal(countof(text::make(out)), countof(text::make(expected)));
         test::check(is(out, expected));
     }
 }

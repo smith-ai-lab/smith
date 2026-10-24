@@ -74,11 +74,12 @@ constexpr unsigned smith_protocol_kind_any = (1U << 6) - 1;
 typedef const SmithJsonValue *SmithProtocolAny;
 
 // The types a schema starts from. "object" is any JSON object, kept as a tree; "any" is any JSON value.
-[[nodiscard]] bool smith_protocol_string_parse(SmithArena *arena, const SmithJsonValue *value, SmithText *out,
-                                               SmithProtocolError *error);
-void smith_protocol_string_write(SmithJsonWriter *writer, const SmithText *value);
-[[nodiscard]] bool smith_protocol_string_equal(const SmithText *a, const SmithText *b);
-void smith_protocol_string_random(SmithArena *arena, SmithKey key, SmithText *out);
+[[nodiscard]] bool smith_protocol_string_parse(SmithArena *arena, const SmithJsonValue *value,
+                                               struct smith_array_const_char_n *out, SmithProtocolError *error);
+void smith_protocol_string_write(SmithJsonWriter *writer, const struct smith_array_const_char_n *value);
+[[nodiscard]] bool smith_protocol_string_equal(const struct smith_array_const_char_n *a,
+                                               const struct smith_array_const_char_n *b);
+void smith_protocol_string_random(SmithArena *arena, SmithKey key, struct smith_array_const_char_n *out);
 
 [[nodiscard]] bool smith_protocol_integer_parse(SmithArena *arena, const SmithJsonValue *value, int64_t *out,
                                                 SmithProtocolError *error);
@@ -112,7 +113,7 @@ void smith_protocol_object_random(SmithArena *arena, SmithKey key, SmithProtocol
 
 // The members of an object that its schema does not list, for a schema that allows more ("additionalProperties").
 typedef struct {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithProtocolAny *values;
     size_t count;
 } SmithProtocolExtra;
@@ -130,7 +131,8 @@ void smith_protocol_extra_random(SmithArena *arena, SmithKey key, SmithProtocolE
                                               void **items, SmithProtocolError *error);
 // An object's members as a block of keys and one of items of size bytes.
 [[nodiscard]] bool smith_protocol_map_parse(SmithArena *arena, const SmithJsonValue *value, size_t size, size_t align,
-                                            SmithText **keys, void **items, SmithProtocolError *error);
+                                            struct smith_array_const_char_n **keys, void **items,
+                                            SmithProtocolError *error);
 [[nodiscard]] bool smith_protocol_const_text(const SmithJsonValue *value, const char *expected,
                                              SmithProtocolError *error);
 [[nodiscard]] bool smith_protocol_const_integer(const SmithJsonValue *value, int64_t expected,
@@ -138,12 +140,12 @@ void smith_protocol_extra_random(SmithArena *arena, SmithKey key, SmithProtocolE
 // The index of the string in names, else count; false if the value is not a string.
 [[nodiscard]] bool smith_protocol_enum_lookup(const SmithJsonValue *value, const char *const *names, size_t count,
                                               size_t *index, SmithProtocolError *error);
-[[nodiscard]] bool smith_protocol_text_is(SmithText text, const char *string);
+[[nodiscard]] bool smith_protocol_text_is(struct smith_array_const_char_n text, const char *string);
 
 // The writer's side.
 void smith_protocol_key(SmithJsonWriter *writer, const char *name);
 // The name "~k<i>" in the arena: the key of the i-th member of a random map.
-[[nodiscard]] SmithText smith_protocol_name(SmithArena *arena, size_t i);
+[[nodiscard]] struct smith_array_const_char_n smith_protocol_name(SmithArena *arena, size_t i);
 
 // The random makers' choices. All come from the key, so a key replays a value. word 0 of each is the simplest choice.
 [[nodiscard]] bool smith_protocol_coin(SmithKey key);                 // true half the time

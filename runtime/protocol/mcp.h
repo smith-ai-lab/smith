@@ -47,7 +47,7 @@ typedef struct SmithMcpAnnotations {
     bool has_audience;
     SmithMcpRoleList audience;
     bool has_lastModified;
-    SmithText lastModified;
+    struct smith_array_const_char_n lastModified;
     bool has_priority;
     double priority;
     SmithProtocolExtra additionalProperties;
@@ -58,25 +58,25 @@ typedef struct SmithMcpAudioContent {
     SmithProtocolAny _meta;
     bool has_annotations;
     SmithMcpAnnotations annotations;
-    SmithText data;
-    SmithText mimeType;
+    struct smith_array_const_char_n data;
+    struct smith_array_const_char_n mimeType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpAudioContent;
 
 typedef struct SmithMcpBaseMetadata {
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpBaseMetadata;
 
 typedef struct SmithMcpBlobResourceContents {
     bool has__meta;
     SmithProtocolAny _meta;
-    SmithText blob;
+    struct smith_array_const_char_n blob;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText uri;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpBlobResourceContents;
 
@@ -84,14 +84,14 @@ typedef struct SmithMcpBooleanSchema {
     bool has_default_;
     bool default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpBooleanSchema;
 
 typedef struct SmithMcpStringList {
-    const SmithText *items;
+    const struct smith_array_const_char_n *items;
     size_t count;
 } SmithMcpStringList;
 
@@ -102,10 +102,10 @@ typedef enum SmithMcpIconTheme {
 
 typedef struct SmithMcpIcon {
     bool has_mimeType;
-    SmithText mimeType;
+    struct smith_array_const_char_n mimeType;
     bool has_sizes;
     SmithMcpStringList sizes;
-    SmithText src;
+    struct smith_array_const_char_n src;
     bool has_theme;
     SmithMcpIconTheme theme;
     SmithProtocolExtra additionalProperties;
@@ -118,15 +118,15 @@ typedef struct SmithMcpIconList {
 
 typedef struct SmithMcpImplementation {
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_title;
-    SmithText title;
-    SmithText version;
+    struct smith_array_const_char_n title;
+    struct smith_array_const_char_n version;
     bool has_websiteUrl;
-    SmithText websiteUrl;
+    struct smith_array_const_char_n websiteUrl;
     SmithProtocolExtra additionalProperties;
 } SmithMcpImplementation;
 
@@ -145,7 +145,7 @@ typedef struct SmithMcpCacheableResult {
     bool has__meta;
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCacheableResult;
@@ -158,13 +158,13 @@ typedef enum SmithMcpRequestIdKind {
 typedef struct SmithMcpRequestId {
     SmithMcpRequestIdKind kind;
     union {
-        SmithText string;
+        struct smith_array_const_char_n string;
         int64_t integer;
     } as;
 } SmithMcpRequestId;
 
 typedef struct SmithMcpAnyMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithProtocolAny *values;
     size_t count;
 } SmithMcpAnyMap;
@@ -178,7 +178,7 @@ typedef struct SmithMcpClientCapabilitiesElicitation {
 } SmithMcpClientCapabilitiesElicitation;
 
 typedef struct SmithMcpAnyMapMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithMcpAnyMap *values;
     size_t count;
 } SmithMcpAnyMapMap;
@@ -228,7 +228,7 @@ typedef enum SmithMcpProgressTokenKind {
 typedef struct SmithMcpProgressToken {
     SmithMcpProgressTokenKind kind;
     union {
-        SmithText string;
+        struct smith_array_const_char_n string;
         int64_t integer;
     } as;
 } SmithMcpProgressToken;
@@ -239,7 +239,7 @@ typedef struct SmithMcpRequestMetaObject {
     SmithMcpImplementation io_modelcontextprotocol_clientInfo;
     bool has_io_modelcontextprotocol_logLevel;
     SmithMcpLoggingLevel io_modelcontextprotocol_logLevel;
-    SmithText io_modelcontextprotocol_protocolVersion;
+    struct smith_array_const_char_n io_modelcontextprotocol_protocolVersion;
     bool has_progressToken;
     SmithMcpProgressToken progressToken;
     SmithProtocolExtra additionalProperties;
@@ -250,7 +250,7 @@ typedef struct SmithMcpTextContent {
     SmithProtocolAny _meta;
     bool has_annotations;
     SmithMcpAnnotations annotations;
-    SmithText text;
+    struct smith_array_const_char_n text;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTextContent;
 
@@ -259,17 +259,17 @@ typedef struct SmithMcpImageContent {
     SmithProtocolAny _meta;
     bool has_annotations;
     SmithMcpAnnotations annotations;
-    SmithText data;
-    SmithText mimeType;
+    struct smith_array_const_char_n data;
+    struct smith_array_const_char_n mimeType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpImageContent;
 
 typedef struct SmithMcpToolUseContent {
     bool has__meta;
     SmithProtocolAny _meta;
-    SmithText id;
+    struct smith_array_const_char_n id;
     SmithProtocolAny input;
-    SmithText name;
+    struct smith_array_const_char_n name;
     SmithProtocolExtra additionalProperties;
 } SmithMcpToolUseContent;
 
@@ -279,17 +279,17 @@ typedef struct SmithMcpResourceLink {
     bool has_annotations;
     SmithMcpAnnotations annotations;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText name;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n name;
     bool has_size;
     int64_t size;
     bool has_title;
-    SmithText title;
-    SmithText uri;
+    struct smith_array_const_char_n title;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceLink;
 
@@ -297,9 +297,9 @@ typedef struct SmithMcpTextResourceContents {
     bool has__meta;
     SmithProtocolAny _meta;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText text;
-    SmithText uri;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n text;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTextResourceContents;
 
@@ -357,7 +357,7 @@ typedef struct SmithMcpToolResultContent {
     bool isError;
     bool has_structuredContent;
     SmithProtocolAny structuredContent;
-    SmithText toolUseId;
+    struct smith_array_const_char_n toolUseId;
     SmithProtocolExtra additionalProperties;
 } SmithMcpToolResultContent;
 
@@ -410,10 +410,10 @@ typedef struct SmithMcpCreateMessageResult {
     bool has__meta;
     SmithProtocolAny _meta;
     SmithMcpCreateMessageResultContent content;
-    SmithText model;
+    struct smith_array_const_char_n model;
     SmithMcpRole role;
     bool has_stopReason;
-    SmithText stopReason;
+    struct smith_array_const_char_n stopReason;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCreateMessageResult;
 
@@ -421,8 +421,8 @@ typedef struct SmithMcpRoot {
     bool has__meta;
     SmithProtocolAny _meta;
     bool has_name;
-    SmithText name;
-    SmithText uri;
+    struct smith_array_const_char_n name;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpRoot;
 
@@ -451,7 +451,7 @@ typedef enum SmithMcpElicitResultContentValue2Kind {
 typedef struct SmithMcpElicitResultContentValue2 {
     SmithMcpElicitResultContentValue2Kind kind;
     union {
-        SmithText string;
+        struct smith_array_const_char_n string;
         int64_t integer;
         bool boolean;
     } as;
@@ -471,7 +471,7 @@ typedef struct SmithMcpElicitResultContentValue {
 } SmithMcpElicitResultContentValue;
 
 typedef struct SmithMcpElicitResultContentValueMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithMcpElicitResultContentValue *values;
     size_t count;
 } SmithMcpElicitResultContentValueMap;
@@ -499,7 +499,7 @@ typedef struct SmithMcpInputResponse {
 } SmithMcpInputResponse;
 
 typedef struct SmithMcpInputResponseMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithMcpInputResponse *values;
     size_t count;
 } SmithMcpInputResponseMap;
@@ -510,9 +510,9 @@ typedef struct SmithMcpCallToolRequestParams {
     SmithProtocolAny arguments;
     bool has_inputResponses;
     SmithMcpInputResponseMap inputResponses;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_requestState;
-    SmithText requestState;
+    struct smith_array_const_char_n requestState;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCallToolRequestParams;
 
@@ -528,7 +528,7 @@ typedef struct SmithMcpCallToolResult {
     SmithMcpContentBlockList content;
     bool has_isError;
     bool isError;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     bool has_structuredContent;
     SmithProtocolAny structuredContent;
     SmithProtocolExtra additionalProperties;
@@ -576,7 +576,7 @@ typedef struct SmithMcpSamplingMessageList {
 
 typedef struct SmithMcpModelHint {
     bool has_name;
-    SmithText name;
+    struct smith_array_const_char_n name;
     SmithProtocolExtra additionalProperties;
 } SmithMcpModelHint;
 
@@ -619,19 +619,19 @@ typedef struct SmithMcpToolAnnotations {
     bool has_readOnlyHint;
     bool readOnlyHint;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpToolAnnotations;
 
 typedef struct SmithMcpToolInputSchema {
     bool has__schema;
-    SmithText _schema;
+    struct smith_array_const_char_n _schema;
     SmithProtocolExtra additionalProperties;
 } SmithMcpToolInputSchema;
 
 typedef struct SmithMcpToolOutputSchema {
     bool has__schema;
-    SmithText _schema;
+    struct smith_array_const_char_n _schema;
     SmithProtocolExtra additionalProperties;
 } SmithMcpToolOutputSchema;
 
@@ -641,15 +641,15 @@ typedef struct SmithMcpTool {
     bool has_annotations;
     SmithMcpToolAnnotations annotations;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
     SmithMcpToolInputSchema inputSchema;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_outputSchema;
     SmithMcpToolOutputSchema outputSchema;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTool;
 
@@ -670,7 +670,7 @@ typedef struct SmithMcpCreateMessageRequestParams {
     bool has_stopSequences;
     SmithMcpStringList stopSequences;
     bool has_systemPrompt;
-    SmithText systemPrompt;
+    struct smith_array_const_char_n systemPrompt;
     bool has_temperature;
     double temperature;
     bool has_toolChoice;
@@ -706,9 +706,9 @@ typedef enum SmithMcpStringSchemaFormat {
 
 typedef struct SmithMcpStringSchema {
     bool has_default_;
-    SmithText default_;
+    struct smith_array_const_char_n default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_format;
     SmithMcpStringSchemaFormat format;
     bool has_maxLength;
@@ -716,7 +716,7 @@ typedef struct SmithMcpStringSchema {
     bool has_minLength;
     int64_t minLength;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpStringSchema;
 
@@ -729,31 +729,31 @@ typedef struct SmithMcpNumberSchema {
     bool has_default_;
     double default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_maximum;
     double maximum;
     bool has_minimum;
     double minimum;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithMcpNumberSchemaType type;
     SmithProtocolExtra additionalProperties;
 } SmithMcpNumberSchema;
 
 typedef struct SmithMcpUntitledSingleSelectEnumSchema {
     bool has_default_;
-    SmithText default_;
+    struct smith_array_const_char_n default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpStringList enum_;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpUntitledSingleSelectEnumSchema;
 
 typedef struct SmithMcpTitledSingleSelectEnumSchemaOneOfItem {
-    SmithText const_;
-    SmithText title;
+    struct smith_array_const_char_n const_;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTitledSingleSelectEnumSchemaOneOfItem;
 
@@ -764,12 +764,12 @@ typedef struct SmithMcpTitledSingleSelectEnumSchemaOneOfItemList {
 
 typedef struct SmithMcpTitledSingleSelectEnumSchema {
     bool has_default_;
-    SmithText default_;
+    struct smith_array_const_char_n default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpTitledSingleSelectEnumSchemaOneOfItemList oneOf;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTitledSingleSelectEnumSchema;
 
@@ -782,20 +782,20 @@ typedef struct SmithMcpUntitledMultiSelectEnumSchema {
     bool has_default_;
     SmithMcpStringList default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpUntitledMultiSelectEnumSchemaItems items;
     bool has_maxItems;
     int64_t maxItems;
     bool has_minItems;
     int64_t minItems;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpUntitledMultiSelectEnumSchema;
 
 typedef struct SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem {
-    SmithText const_;
-    SmithText title;
+    struct smith_array_const_char_n const_;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem;
 
@@ -813,27 +813,27 @@ typedef struct SmithMcpTitledMultiSelectEnumSchema {
     bool has_default_;
     SmithMcpStringList default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpTitledMultiSelectEnumSchemaItems items;
     bool has_maxItems;
     int64_t maxItems;
     bool has_minItems;
     int64_t minItems;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpTitledMultiSelectEnumSchema;
 
 typedef struct SmithMcpLegacyTitledEnumSchema {
     bool has_default_;
-    SmithText default_;
+    struct smith_array_const_char_n default_;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpStringList enum_;
     bool has_enumNames;
     SmithMcpStringList enumNames;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpLegacyTitledEnumSchema;
 
@@ -863,14 +863,14 @@ typedef struct SmithMcpPrimitiveSchemaDefinition {
 } SmithMcpPrimitiveSchemaDefinition;
 
 typedef struct SmithMcpPrimitiveSchemaDefinitionMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithMcpPrimitiveSchemaDefinition *values;
     size_t count;
 } SmithMcpPrimitiveSchemaDefinitionMap;
 
 typedef struct SmithMcpElicitRequestFormParamsRequestedSchema {
     bool has__schema;
-    SmithText _schema;
+    struct smith_array_const_char_n _schema;
     SmithMcpPrimitiveSchemaDefinitionMap properties;
     bool has_required;
     SmithMcpStringList required;
@@ -878,14 +878,14 @@ typedef struct SmithMcpElicitRequestFormParamsRequestedSchema {
 } SmithMcpElicitRequestFormParamsRequestedSchema;
 
 typedef struct SmithMcpElicitRequestFormParams {
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithMcpElicitRequestFormParamsRequestedSchema requestedSchema;
     SmithProtocolExtra additionalProperties;
 } SmithMcpElicitRequestFormParams;
 
 typedef struct SmithMcpElicitRequestURLParams {
-    SmithText message;
-    SmithText url;
+    struct smith_array_const_char_n message;
+    struct smith_array_const_char_n url;
     SmithProtocolExtra additionalProperties;
 } SmithMcpElicitRequestURLParams;
 
@@ -923,7 +923,7 @@ typedef struct SmithMcpInputRequest {
 } SmithMcpInputRequest;
 
 typedef struct SmithMcpInputRequestMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithMcpInputRequest *values;
     size_t count;
 } SmithMcpInputRequestMap;
@@ -934,8 +934,8 @@ typedef struct SmithMcpInputRequiredResult {
     bool has_inputRequests;
     SmithMcpInputRequestMap inputRequests;
     bool has_requestState;
-    SmithText requestState;
-    SmithText resultType;
+    struct smith_array_const_char_n requestState;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpInputRequiredResult;
 
@@ -968,7 +968,7 @@ typedef struct SmithMcpCancelledNotificationParams {
     bool has__meta;
     SmithMcpNotificationMetaObject _meta;
     bool has_reason;
-    SmithText reason;
+    struct smith_array_const_char_n reason;
     SmithMcpRequestId requestId;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCancelledNotificationParams;
@@ -997,7 +997,7 @@ typedef struct SmithMcpDiscoverRequest {
 typedef struct SmithMcpPaginatedRequestParams {
     SmithMcpRequestMetaObject _meta;
     bool has_cursor;
-    SmithText cursor;
+    struct smith_array_const_char_n cursor;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPaginatedRequestParams;
 
@@ -1018,8 +1018,8 @@ typedef struct SmithMcpReadResourceRequestParams {
     bool has_inputResponses;
     SmithMcpInputResponseMap inputResponses;
     bool has_requestState;
-    SmithText requestState;
-    SmithText uri;
+    struct smith_array_const_char_n requestState;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpReadResourceRequestParams;
 
@@ -1060,8 +1060,8 @@ typedef struct SmithMcpListPromptsRequest {
 } SmithMcpListPromptsRequest;
 
 typedef struct SmithMcpStringMap {
-    const SmithText *keys;
-    const SmithText *values;
+    const struct smith_array_const_char_n *keys;
+    const struct smith_array_const_char_n *values;
     size_t count;
 } SmithMcpStringMap;
 
@@ -1071,9 +1071,9 @@ typedef struct SmithMcpGetPromptRequestParams {
     SmithMcpStringMap arguments;
     bool has_inputResponses;
     SmithMcpInputResponseMap inputResponses;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_requestState;
-    SmithText requestState;
+    struct smith_array_const_char_n requestState;
     SmithProtocolExtra additionalProperties;
 } SmithMcpGetPromptRequestParams;
 
@@ -1090,8 +1090,8 @@ typedef struct SmithMcpListToolsRequest {
 } SmithMcpListToolsRequest;
 
 typedef struct SmithMcpCompleteRequestParamsArgument {
-    SmithText name;
-    SmithText value;
+    struct smith_array_const_char_n name;
+    struct smith_array_const_char_n value;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCompleteRequestParamsArgument;
 
@@ -1102,14 +1102,14 @@ typedef struct SmithMcpCompleteRequestParamsContext {
 } SmithMcpCompleteRequestParamsContext;
 
 typedef struct SmithMcpPromptReference {
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPromptReference;
 
 typedef struct SmithMcpResourceTemplateReference {
-    SmithText uri;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceTemplateReference;
 
@@ -1173,7 +1173,7 @@ typedef struct SmithMcpClientRequest {
 typedef struct SmithMcpResult {
     bool has__meta;
     SmithMcpResultMetaObject _meta;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResult;
 
@@ -1190,7 +1190,7 @@ typedef struct SmithMcpCompleteResult {
     bool has__meta;
     SmithMcpResultMetaObject _meta;
     SmithMcpCompleteResultCompletion completion;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpCompleteResult;
 
@@ -1244,8 +1244,8 @@ typedef struct SmithMcpDiscoverResult {
     SmithMcpCacheableResultCacheScope cacheScope;
     SmithMcpServerCapabilities capabilities;
     bool has_instructions;
-    SmithText instructions;
-    SmithText resultType;
+    struct smith_array_const_char_n instructions;
+    struct smith_array_const_char_n resultType;
     SmithMcpStringList supportedVersions;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
@@ -1280,7 +1280,7 @@ typedef struct SmithMcpError {
     int64_t code;
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpError;
 
@@ -1299,9 +1299,9 @@ typedef struct SmithMcpGetPromptResult {
     bool has__meta;
     SmithMcpResultMetaObject _meta;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithMcpPromptMessageList messages;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpGetPromptResult;
 
@@ -1327,7 +1327,7 @@ typedef struct SmithMcpGetPromptResultResponse {
 typedef struct SmithMcpHeaderMismatchErrorError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpHeaderMismatchErrorError;
 
@@ -1349,28 +1349,28 @@ typedef struct SmithMcpInputResponseRequestParams {
     bool has_inputResponses;
     SmithMcpInputResponseMap inputResponses;
     bool has_requestState;
-    SmithText requestState;
+    struct smith_array_const_char_n requestState;
     SmithProtocolExtra additionalProperties;
 } SmithMcpInputResponseRequestParams;
 
 typedef struct SmithMcpInternalError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpInternalError;
 
 typedef struct SmithMcpInvalidParamsError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpInvalidParamsError;
 
 typedef struct SmithMcpInvalidRequestError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpInvalidRequestError;
 
@@ -1388,14 +1388,14 @@ typedef struct SmithMcpJSONRPCErrorResponse {
 
 typedef struct SmithMcpJSONRPCRequest {
     SmithMcpRequestId id;
-    SmithText method;
+    struct smith_array_const_char_n method;
     bool has_params;
     SmithProtocolAny params;
     SmithProtocolExtra additionalProperties;
 } SmithMcpJSONRPCRequest;
 
 typedef struct SmithMcpJSONRPCNotification {
-    SmithText method;
+    struct smith_array_const_char_n method;
     bool has_params;
     SmithProtocolAny params;
     SmithProtocolExtra additionalProperties;
@@ -1439,12 +1439,12 @@ typedef struct SmithMcpJSONRPCResponse {
 
 typedef struct SmithMcpPromptArgument {
     bool has_description;
-    SmithText description;
-    SmithText name;
+    struct smith_array_const_char_n description;
+    struct smith_array_const_char_n name;
     bool has_required;
     bool required;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPromptArgument;
 
@@ -1459,12 +1459,12 @@ typedef struct SmithMcpPrompt {
     bool has_arguments;
     SmithMcpPromptArgumentList arguments;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_title;
-    SmithText title;
+    struct smith_array_const_char_n title;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPrompt;
 
@@ -1478,9 +1478,9 @@ typedef struct SmithMcpListPromptsResult {
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
     bool has_nextCursor;
-    SmithText nextCursor;
+    struct smith_array_const_char_n nextCursor;
     SmithMcpPromptList prompts;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
 } SmithMcpListPromptsResult;
@@ -1497,15 +1497,15 @@ typedef struct SmithMcpResourceTemplate {
     bool has_annotations;
     SmithMcpAnnotations annotations;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText name;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n name;
     bool has_title;
-    SmithText title;
-    SmithText uriTemplate;
+    struct smith_array_const_char_n title;
+    struct smith_array_const_char_n uriTemplate;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceTemplate;
 
@@ -1519,9 +1519,9 @@ typedef struct SmithMcpListResourceTemplatesResult {
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
     bool has_nextCursor;
-    SmithText nextCursor;
+    struct smith_array_const_char_n nextCursor;
     SmithMcpResourceTemplateList resourceTemplates;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
 } SmithMcpListResourceTemplatesResult;
@@ -1538,17 +1538,17 @@ typedef struct SmithMcpResource {
     bool has_annotations;
     SmithMcpAnnotations annotations;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_icons;
     SmithMcpIconList icons;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText name;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n name;
     bool has_size;
     int64_t size;
     bool has_title;
-    SmithText title;
-    SmithText uri;
+    struct smith_array_const_char_n title;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResource;
 
@@ -1562,9 +1562,9 @@ typedef struct SmithMcpListResourcesResult {
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
     bool has_nextCursor;
-    SmithText nextCursor;
+    struct smith_array_const_char_n nextCursor;
     SmithMcpResourceList resources;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
 } SmithMcpListResourcesResult;
@@ -1580,8 +1580,8 @@ typedef struct SmithMcpListToolsResult {
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
     bool has_nextCursor;
-    SmithText nextCursor;
-    SmithText resultType;
+    struct smith_array_const_char_n nextCursor;
+    struct smith_array_const_char_n resultType;
     SmithMcpToolList tools;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
@@ -1599,7 +1599,7 @@ typedef struct SmithMcpLoggingMessageNotificationParams {
     SmithProtocolAny data;
     SmithMcpLoggingLevel level;
     bool has_logger;
-    SmithText logger;
+    struct smith_array_const_char_n logger;
     SmithProtocolExtra additionalProperties;
 } SmithMcpLoggingMessageNotificationParams;
 
@@ -1611,7 +1611,7 @@ typedef struct SmithMcpLoggingMessageNotification {
 typedef struct SmithMcpMethodNotFoundError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpMethodNotFoundError;
 
@@ -1622,7 +1622,7 @@ typedef struct SmithMcpMissingRequiredClientCapabilityErrorErrorData {
 
 typedef struct SmithMcpMissingRequiredClientCapabilityErrorError {
     SmithMcpMissingRequiredClientCapabilityErrorErrorData data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpMissingRequiredClientCapabilityErrorError;
 
@@ -1647,7 +1647,7 @@ typedef struct SmithMcpMultiSelectEnumSchema {
 } SmithMcpMultiSelectEnumSchema;
 
 typedef struct SmithMcpNotification {
-    SmithText method;
+    struct smith_array_const_char_n method;
     bool has_params;
     SmithProtocolAny params;
     SmithProtocolExtra additionalProperties;
@@ -1661,7 +1661,7 @@ typedef struct SmithMcpNotificationParams {
 
 typedef struct SmithMcpPaginatedRequest {
     SmithMcpRequestId id;
-    SmithText method;
+    struct smith_array_const_char_n method;
     SmithMcpPaginatedRequestParams params;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPaginatedRequest;
@@ -1670,15 +1670,15 @@ typedef struct SmithMcpPaginatedResult {
     bool has__meta;
     SmithMcpResultMetaObject _meta;
     bool has_nextCursor;
-    SmithText nextCursor;
-    SmithText resultType;
+    struct smith_array_const_char_n nextCursor;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpPaginatedResult;
 
 typedef struct SmithMcpParseError {
     bool has_data;
     SmithProtocolAny data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpParseError;
 
@@ -1686,7 +1686,7 @@ typedef struct SmithMcpProgressNotificationParams {
     bool has__meta;
     SmithMcpNotificationMetaObject _meta;
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     double progress;
     SmithMcpProgressToken progressToken;
     bool has_total;
@@ -1728,7 +1728,7 @@ typedef struct SmithMcpReadResourceResult {
     SmithMcpResultMetaObject _meta;
     SmithMcpCacheableResultCacheScope cacheScope;
     SmithMcpReadResourceResultContentsItemList contents;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     int64_t ttlMs;
     SmithProtocolExtra additionalProperties;
 } SmithMcpReadResourceResult;
@@ -1753,7 +1753,7 @@ typedef struct SmithMcpReadResourceResultResponse {
 } SmithMcpReadResourceResultResponse;
 
 typedef struct SmithMcpRequest {
-    SmithText method;
+    struct smith_array_const_char_n method;
     bool has_params;
     SmithProtocolAny params;
     SmithProtocolExtra additionalProperties;
@@ -1763,8 +1763,8 @@ typedef struct SmithMcpResourceContents {
     bool has__meta;
     SmithProtocolAny _meta;
     bool has_mimeType;
-    SmithText mimeType;
-    SmithText uri;
+    struct smith_array_const_char_n mimeType;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceContents;
 
@@ -1776,14 +1776,14 @@ typedef struct SmithMcpResourceListChangedNotification {
 
 typedef struct SmithMcpResourceRequestParams {
     SmithMcpRequestMetaObject _meta;
-    SmithText uri;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceRequestParams;
 
 typedef struct SmithMcpResourceUpdatedNotificationParams {
     bool has__meta;
     SmithMcpNotificationMetaObject _meta;
-    SmithText uri;
+    struct smith_array_const_char_n uri;
     SmithProtocolExtra additionalProperties;
 } SmithMcpResourceUpdatedNotificationParams;
 
@@ -1844,7 +1844,7 @@ typedef struct SmithMcpSubscriptionsListenResultMetaObject {
 
 typedef struct SmithMcpSubscriptionsListenResult {
     SmithMcpSubscriptionsListenResultMetaObject _meta;
-    SmithText resultType;
+    struct smith_array_const_char_n resultType;
     SmithProtocolExtra additionalProperties;
 } SmithMcpSubscriptionsListenResult;
 
@@ -1901,14 +1901,14 @@ typedef struct SmithMcpSubscriptionsListenResultResponse {
 } SmithMcpSubscriptionsListenResultResponse;
 
 typedef struct SmithMcpUnsupportedProtocolVersionErrorErrorData {
-    SmithText requested;
+    struct smith_array_const_char_n requested;
     SmithMcpStringList supported;
     SmithProtocolExtra additionalProperties;
 } SmithMcpUnsupportedProtocolVersionErrorErrorData;
 
 typedef struct SmithMcpUnsupportedProtocolVersionErrorError {
     SmithMcpUnsupportedProtocolVersionErrorErrorData data;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithMcpUnsupportedProtocolVersionErrorError;
 

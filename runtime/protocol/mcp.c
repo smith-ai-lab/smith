@@ -438,8 +438,8 @@ void smith_mcp_boolean_schema_random([[maybe_unused]] SmithArena *arena, [[maybe
 
 bool smith_mcp_string_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpStringList *out, SmithProtocolError *error) {
     void *block;
-    if (!smith_protocol_array_parse(arena, value, sizeof(SmithText), alignof(SmithText), &block, error)) return false;
-    SmithText *items = block;
+    if (!smith_protocol_array_parse(arena, value, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), &block, error)) return false;
+    struct smith_array_const_char_n *items = block;
     for (size_t i = 0; i < value->count; i++) { // bounded by the array
         if (!smith_protocol_string_parse(arena, value->items[i], &items[i], error)) return false;
     }
@@ -466,7 +466,7 @@ bool smith_mcp_string_list_equal([[maybe_unused]] const SmithMcpStringList *a, [
 
 void smith_mcp_string_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringList *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *items = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
     }
@@ -891,7 +891,7 @@ void smith_mcp_request_id_random([[maybe_unused]] SmithArena *arena, [[maybe_unu
 }
 
 bool smith_mcp_any_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpAnyMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), &keys, &block, error))
         return false;
@@ -925,7 +925,7 @@ bool smith_mcp_any_map_equal([[maybe_unused]] const SmithMcpAnyMap *a, [[maybe_u
 
 void smith_mcp_any_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnyMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithProtocolAny *items = smith_protocol_block(arena, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -994,7 +994,7 @@ void smith_mcp_client_capabilities_elicitation_random([[maybe_unused]] SmithAren
 }
 
 bool smith_mcp_any_map_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpAnyMapMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithMcpAnyMap), alignof(SmithMcpAnyMap), &keys, &block, error))
         return false;
@@ -1028,7 +1028,7 @@ bool smith_mcp_any_map_map_equal([[maybe_unused]] const SmithMcpAnyMapMap *a, [[
 
 void smith_mcp_any_map_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnyMapMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpAnyMap *items = smith_protocol_block(arena, sizeof(SmithMcpAnyMap), alignof(SmithMcpAnyMap), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -2730,7 +2730,7 @@ void smith_mcp_elicit_result_content_value_random([[maybe_unused]] SmithArena *a
 }
 
 bool smith_mcp_elicit_result_content_value_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpElicitResultContentValueMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithMcpElicitResultContentValue), alignof(SmithMcpElicitResultContentValue), &keys, &block, error))
         return false;
@@ -2764,7 +2764,7 @@ bool smith_mcp_elicit_result_content_value_map_equal([[maybe_unused]] const Smit
 
 void smith_mcp_elicit_result_content_value_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResultContentValueMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpElicitResultContentValue *items = smith_protocol_block(arena, sizeof(SmithMcpElicitResultContentValue), alignof(SmithMcpElicitResultContentValue), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -2886,7 +2886,7 @@ void smith_mcp_input_response_random([[maybe_unused]] SmithArena *arena, [[maybe
 }
 
 bool smith_mcp_input_response_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpInputResponseMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithMcpInputResponse), alignof(SmithMcpInputResponse), &keys, &block, error))
         return false;
@@ -2920,7 +2920,7 @@ bool smith_mcp_input_response_map_equal([[maybe_unused]] const SmithMcpInputResp
 
 void smith_mcp_input_response_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputResponseMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpInputResponse *items = smith_protocol_block(arena, sizeof(SmithMcpInputResponse), alignof(SmithMcpInputResponse), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -5370,7 +5370,7 @@ void smith_mcp_primitive_schema_definition_random([[maybe_unused]] SmithArena *a
 }
 
 bool smith_mcp_primitive_schema_definition_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpPrimitiveSchemaDefinitionMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithMcpPrimitiveSchemaDefinition), alignof(SmithMcpPrimitiveSchemaDefinition), &keys, &block, error))
         return false;
@@ -5404,7 +5404,7 @@ bool smith_mcp_primitive_schema_definition_map_equal([[maybe_unused]] const Smit
 
 void smith_mcp_primitive_schema_definition_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPrimitiveSchemaDefinitionMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpPrimitiveSchemaDefinition *items = smith_protocol_block(arena, sizeof(SmithMcpPrimitiveSchemaDefinition), alignof(SmithMcpPrimitiveSchemaDefinition), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -5739,7 +5739,7 @@ void smith_mcp_input_request_random([[maybe_unused]] SmithArena *arena, [[maybe_
 }
 
 bool smith_mcp_input_request_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpInputRequestMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithMcpInputRequest), alignof(SmithMcpInputRequest), &keys, &block, error))
         return false;
@@ -5773,7 +5773,7 @@ bool smith_mcp_input_request_map_equal([[maybe_unused]] const SmithMcpInputReque
 
 void smith_mcp_input_request_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputRequestMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpInputRequest *items = smith_protocol_block(arena, sizeof(SmithMcpInputRequest), alignof(SmithMcpInputRequest), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
@@ -6741,11 +6741,11 @@ void smith_mcp_list_prompts_request_random([[maybe_unused]] SmithArena *arena, [
 }
 
 bool smith_mcp_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpStringMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
-    if (!smith_protocol_map_parse(arena, value, sizeof(SmithText), alignof(SmithText), &keys, &block, error))
+    if (!smith_protocol_map_parse(arena, value, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), &keys, &block, error))
         return false;
-    SmithText *items = block;
+    struct smith_array_const_char_n *items = block;
     for (size_t i = 0; i < value->count; i++) { // bounded by the object
         if (!smith_protocol_string_parse(arena, value->items[i], &items[i], error)) return false;
     }
@@ -6775,8 +6775,8 @@ bool smith_mcp_string_map_equal([[maybe_unused]] const SmithMcpStringMap *a, [[m
 
 void smith_mcp_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
-    SmithText *items = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
+    struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
         smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);

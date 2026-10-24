@@ -137,20 +137,22 @@ static void smith_mcp_event_output(SmithMcpSession *session, SmithArena *arena, 
     SmithDapOutputEvent output;
     SmithProtocolError error;
     if (!smith_dap_output_event_parse(arena, tree, &output, &error)) return;
-    SmithText category = output.body.has_category ? output.body.category.text : smith_text_make("console");
+    struct smith_array_const_char_n category =
+        output.body.has_category ? output.body.category.text : smith_text_make("console");
     // The program's own output and the adapter's important messages; the debugger's console talk is noise here.
     if (!smith_text_is(category, "stdout") && !smith_text_is(category, "stderr") &&
         !smith_text_is(category, "important"))
         return;
     SmithMcpEvent event = {.kind = SmithMcpEvent_Output};
     smith_mcp_copy(event.category, sizeof event.category, category);
-    event.size = output.body.output.length < sizeof event.text - 1 ? output.body.output.length : sizeof event.text - 1;
-    memcpy(event.text, output.body.output.begin, event.size);
+    event.size =
+        output.body.output.count[0] < sizeof event.text - 1 ? output.body.output.count[0] : sizeof event.text - 1;
+    memcpy(event.text, output.body.output.data, event.size);
     event.text[event.size] = '\0';
     smith_mcp_event_push(session, &event);
 }
 
-static void smith_mcp_event_other(SmithMcpSession *session, SmithArena *arena, SmithText name,
+static void smith_mcp_event_other(SmithMcpSession *session, SmithArena *arena, struct smith_array_const_char_n name,
                                   const SmithJsonValue *tree) {
     SmithProtocolError error;
     SmithMcpEvent event = {};
@@ -206,7 +208,8 @@ static void smith_mcp_dap_ingest(SmithMcpServer *server, SmithMcpSession *sessio
     SmithJsonLimits limits = {.depth = 64, .string_length = smith_mcp_frame_max, .count = (size_t)1 << 20};
     SmithDapProtocolMessage message;
     SmithProtocolError error;
-    if (smith_json_parse(arena, (SmithText){copy, size}, limits, &tree, &json_error) &&
+    if (smith_json_parse(arena, (struct smith_array_const_char_n){.data = copy, .count = {size}}, limits, &tree,
+                         &json_error) &&
         smith_dap_protocol_message_parse(arena, tree, &message, &error)) {
         if (message.type.known == SmithDapProtocolMessageTypeKnown_Response) {
             SmithDapResponse response;
@@ -239,16 +242,19 @@ static size_t smith_mcp_header_length(const unsigned char *header, size_t size) 
     static const char name[] = "Content-Length:";
     for (size_t i = 0; i + sizeof name <= size; i++) { // bounded by the header
         if (memcmp(header + i, name, sizeof name - 1) != 0) continue;
-        SmithText digits = {(const char *)header + i + sizeof name - 1, size - i - (sizeof name - 1)};
-        while (digits.length > 0 && digits.begin[0] == ' ') {
-            digits.begin++;
-            digits.length--;
+        struct smith_array_const_char_n digits = {.data = (const char *)header + i + sizeof name - 1,
+                                                  .count = {size - i - (sizeof name - 1)}};
+        while (digits.count[0] > 0 && digits.data[0] == ' ') {
+            digits.data++;
+            digits.count[0]--;
         }
         size_t used = 0;
-        while (used < digits.length && digits.begin[used] >= '0' && digits.begin[used] <= '9')
+        while (used < digits.count[0] && digits.data[used] >= '0' && digits.data[used] <= '9')
             used++;
         uint64_t value = 0;
-        if (used == 0 || !smith_text_parse_u64((SmithText){digits.begin, used}, &value)) return SIZE_MAX;
+        if (used == 0 ||
+            !smith_text_parse_u64((struct smith_array_const_char_n){.data = digits.data, .count = {used}}, &value))
+            return SIZE_MAX;
         return value < SIZE_MAX ? (size_t)value : SIZE_MAX;
     }
     return SIZE_MAX;
@@ -339,15 +345,15 @@ static SmithJsonWriter smith_mcp_dap_writer(SmithMcpSession *session) {
 
 // Writes the message with its header and waits until the adapter has taken it (or is gone).
 static bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *session, SmithJsonWriter *writer) {
-    SmithText body;
+    struct smith_array_const_char_n body;
     if (!smith_json_writer_finish(writer, &body)) return false;
     char header[48];
-    int length = snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", body.length);
+    int length = snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", body.count[0]);
     SMITH_ASSERT(length > 0 && (size_t)length < sizeof header && (size_t)length <= 64);
     unsigned char *start = session->frame_out + 64 - (size_t)length;
     memcpy(start, header, (size_t)length);
     if (session->input_closed) return false;
-    smith_child_write_async(&session->child, &session->write, start, (size_t)length + body.length);
+    smith_child_write_async(&session->child, &session->write, start, (size_t)length + body.count[0]);
     session->write_pending = true;
     uint64_t deadline = smith_mcp_deadline(server, smith_mcp_request_timeout);
     for (size_t turn = 0; turn < smith_mcp_turns_max && session->write_pending; turn++) {
@@ -394,7 +400,7 @@ static SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession
     char *copy = smith_arena_push(&server->scratch, found->size + 1, 1);
     SMITH_ASSERT(copy != nullptr);
     memcpy(copy, found->frame, found->size);
-    SmithText text = {copy, found->size};
+    struct smith_array_const_char_n text = {.data = copy, .count = {found->size}};
     found->used = false;
     const SmithJsonValue *tree = nullptr;
     SmithJsonError json_error;

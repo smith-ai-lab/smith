@@ -20,7 +20,7 @@ static constexpr char smith_mcp_instructions[] =
     "with the next call.";
 
 // The version to answer an `initialize` that asked for `asked`: that one when it is ours, else the newest legacy one.
-static const char *smith_mcp_negotiate(SmithText asked) {
+static const char *smith_mcp_negotiate(struct smith_array_const_char_n asked) {
     for (size_t i = 0; i < sizeof smith_mcp_versions / sizeof smith_mcp_versions[0]; i++) { // bounded by the table
         if (smith_text_is(asked, smith_mcp_versions[i])) return smith_mcp_versions[i];
     }
@@ -40,15 +40,15 @@ static SmithJsonWriter smith_mcp_message_writer(SmithMcpServer *server) {
 // Sends the finished message and a newline. A message that did not fit or is not valid cannot be sent: it is reported
 // on stderr (stdout carries only protocol) and the client times out, which only a bug of ours can cause.
 static void smith_mcp_emit(SmithMcpServer *server, SmithJsonWriter *writer) {
-    SmithText text;
+    struct smith_array_const_char_n text;
     if (!smith_json_writer_finish(writer, &text)) {
         (void)smith_console_print_error(&server->io->console, "smith mcp: a message could not be written\n");
         return;
     }
-    char *end = (char *)text.begin + text.length;
+    char *end = (char *)text.data + text.count[0];
     end[0] = '\n';
     end[1] = '\0';
-    (void)smith_console_print(&server->io->console, text.begin);
+    (void)smith_console_print(&server->io->console, text.data);
 }
 
 static void smith_mcp_send_error(SmithMcpServer *server, const SmithMcpRequestId *id, int64_t code,
@@ -65,7 +65,7 @@ static void smith_mcp_send_error(SmithMcpServer *server, const SmithMcpRequestId
 
 // Writes a value of the generated code to a tree, to put as a member of a result that has no type for it.
 static const SmithJsonValue *smith_mcp_tree(SmithMcpServer *server, SmithJsonWriter *writer) {
-    SmithText text;
+    struct smith_array_const_char_n text;
     const SmithJsonValue *tree = nullptr;
     SmithJsonError error;
     SmithJsonLimits limits = {.depth = 32, .string_length = (size_t)1 << 16, .count = (size_t)1 << 16};
@@ -84,8 +84,8 @@ static void smith_mcp_send_initialize(SmithMcpServer *server, const SmithMcpRequ
                                    .version = smith_text_make(smith_mcp_version)};
     SmithJsonWriter info_writer = smith_mcp_message_writer(server);
     smith_mcp_implementation_write(&info_writer, &info);
-    SmithText keys[] = {smith_text_make("protocolVersion"), smith_text_make("capabilities"),
-                        smith_text_make("serverInfo"), smith_text_make("instructions")};
+    struct smith_array_const_char_n keys[] = {smith_text_make("protocolVersion"), smith_text_make("capabilities"),
+                                              smith_text_make("serverInfo"), smith_text_make("instructions")};
     SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(version)),
                                  smith_mcp_tree(server, &capabilities_writer), smith_mcp_tree(server, &info_writer),
                                  smith_mcp_json_string(&server->scratch, smith_text_make(smith_mcp_instructions))};
@@ -104,7 +104,7 @@ static void smith_mcp_send_ping(SmithMcpServer *server, const SmithMcpRequestId 
 }
 
 static void smith_mcp_send_discover(SmithMcpServer *server, const SmithMcpRequestId *id) {
-    SmithText versions[] = {smith_text_make("2026-07-28")};
+    struct smith_array_const_char_n versions[] = {smith_text_make("2026-07-28")};
     SmithMcpDiscoverResultResponse response = {
         .id = *id,
         .result = {.has__meta = true,
@@ -129,7 +129,9 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
     SmithJsonLimits limits = {.depth = 16, .string_length = (size_t)1 << 14, .count = (size_t)1 << 12};
     bool ok = smith_json_parse(&server->scratch, smith_text_make(entry->schema), limits, &schema, &error);
     SMITH_ASSERT(ok && schema->kind == SmithJsonKind_Object);
-    SmithText *keys = smith_arena_push_array(&server->scratch, sizeof(SmithText), schema->count, alignof(SmithText));
+    struct smith_array_const_char_n *keys =
+        smith_arena_push_array(&server->scratch, sizeof(struct smith_array_const_char_n), schema->count,
+                               alignof(struct smith_array_const_char_n));
     SmithProtocolAny *values = (SmithProtocolAny *)smith_arena_push_array(&server->scratch, sizeof(SmithProtocolAny),
                                                                           schema->count, alignof(SmithProtocolAny));
     SMITH_ASSERT(keys != nullptr && values != nullptr);
@@ -166,7 +168,7 @@ static void smith_mcp_send_tools(SmithMcpServer *server, const SmithMcpRequestId
 static void smith_mcp_send_tool_result(SmithMcpServer *server, const SmithMcpRequestId *id, const SmithMcpText *text,
                                        bool error) {
     SmithMcpContentBlock block = {.kind = SmithMcpContentBlockKind_TextContent,
-                                  .as = {.text_content = {.text = {text->data, text->size}}}};
+                                  .as = {.text_content = {.text = {.data = text->data, .count = {text->size}}}}};
     SmithMcpCallToolResultResponse response = {
         .id = *id,
         .result = {.kind = SmithMcpCallToolResultResponseResultKind_CallToolResult,
@@ -225,7 +227,7 @@ static void smith_mcp_handle_request(SmithMcpServer *server, const SmithMcpJSONR
 }
 
 // One line: a JSON-RPC message. Requests are answered; notifications and responses (to requests we never send) are not.
-static void smith_mcp_handle_line(SmithMcpServer *server, SmithText line) {
+static void smith_mcp_handle_line(SmithMcpServer *server, struct smith_array_const_char_n line) {
     SmithArenaScope scope = smith_arena_scope_begin(&server->scratch);
     const SmithJsonValue *tree = nullptr;
     SmithJsonError json_error;
@@ -243,7 +245,7 @@ static void smith_mcp_handle_line(SmithMcpServer *server, SmithText line) {
 }
 
 // Takes the next whole line off the buffered input into server->request. False if there is none yet.
-static bool smith_mcp_next_line(SmithMcpServer *server, SmithText *line) {
+static bool smith_mcp_next_line(SmithMcpServer *server, struct smith_array_const_char_n *line) {
     const char *newline = memchr(server->line, '\n', server->line_size);
     if (newline == nullptr) return false;
     size_t length = (size_t)(newline - server->line);
@@ -253,7 +255,7 @@ static bool smith_mcp_next_line(SmithMcpServer *server, SmithText *line) {
     server->request[kept] = '\0';
     memmove(server->line, server->line + length + 1, server->line_size - length - 1);
     server->line_size -= length + 1;
-    *line = (SmithText){server->request, kept};
+    *line = (struct smith_array_const_char_n){.data = server->request, .count = {kept}};
     return true;
 }
 
@@ -293,9 +295,9 @@ int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
     smith_mcp_folder(io, server.cwd, sizeof server.cwd);
     smith_mcp_input_submit(&server);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
-        SmithText line;
+        struct smith_array_const_char_n line;
         while (smith_mcp_next_line(&server, &line)) { // bounded by the buffered input
-            if (line.length > 0) smith_mcp_handle_line(&server, line);
+            if (line.count[0] > 0) smith_mcp_handle_line(&server, line);
         }
         if (server.overlong_seen) {
             server.overlong_seen = false;

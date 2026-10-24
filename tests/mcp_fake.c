@@ -232,7 +232,8 @@ static const char *test_reply(int id, bool *is_error) {
         const SmithJsonValue *tree = nullptr;
         SmithJsonError json_error;
         SmithJsonLimits limits = {.depth = 32, .string_length = (size_t)1 << 20, .count = (size_t)1 << 16};
-        bool parsed = smith_json_parse(&test_view, (SmithText){line, length}, limits, &tree, &json_error);
+        bool parsed = smith_json_parse(&test_view, (struct smith_array_const_char_n){.data = line, .count = {length}},
+                                       limits, &tree, &json_error);
         SMITH_ASSERT(parsed);
         int64_t found = -1;
         const SmithJsonValue *number = smith_json_member(tree, "id");
@@ -244,12 +245,12 @@ static const char *test_reply(int id, bool *is_error) {
                 int64_t code = 0;
                 (void)smith_text_parse_i64(smith_json_member(failure, "code")->text, &code);
                 snprintf(test_text, sizeof test_text, "error %lld: %.*s", (long long)code,
-                         (int)smith_json_member(failure, "message")->text.length,
-                         smith_json_member(failure, "message")->text.begin);
+                         (int)smith_json_member(failure, "message")->text.count[0],
+                         smith_json_member(failure, "message")->text.data);
             } else if (result != nullptr && smith_json_member(result, "content") != nullptr) {
                 const SmithJsonValue *block = smith_json_member(result, "content")->items[0];
                 const SmithJsonValue *text = smith_json_member(block, "text");
-                snprintf(test_text, sizeof test_text, "%.*s", (int)text->text.length, text->text.begin);
+                snprintf(test_text, sizeof test_text, "%.*s", (int)text->text.count[0], text->text.data);
                 if (is_error != nullptr) *is_error = smith_json_member(result, "isError")->kind == SmithJsonKind_True;
             } else if (result != nullptr) {
                 snprintf(test_text, sizeof test_text, "%.*s", (int)length, line);

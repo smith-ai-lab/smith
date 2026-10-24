@@ -40,7 +40,7 @@ void test_mcp_round_trip_role(SmithKey key) {
     smith_mcp_role_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_role_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRole back;
     SmithProtocolError error = {};
@@ -57,7 +57,7 @@ void test_mcp_round_trip_role_list(SmithKey key) {
     smith_mcp_role_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_role_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRoleList back;
     SmithProtocolError error = {};
@@ -74,7 +74,7 @@ void test_mcp_round_trip_annotations(SmithKey key) {
     smith_mcp_annotations_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_annotations_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpAnnotations back;
     SmithProtocolError error = {};
@@ -91,7 +91,7 @@ void test_mcp_round_trip_audio_content(SmithKey key) {
     smith_mcp_audio_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_audio_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpAudioContent back;
     SmithProtocolError error = {};
@@ -124,7 +124,7 @@ void test_mcp_round_trip_base_metadata(SmithKey key) {
     smith_mcp_base_metadata_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_base_metadata_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpBaseMetadata back;
     SmithProtocolError error = {};
@@ -157,7 +157,7 @@ void test_mcp_round_trip_blob_resource_contents(SmithKey key) {
     smith_mcp_blob_resource_contents_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_blob_resource_contents_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpBlobResourceContents back;
     SmithProtocolError error = {};
@@ -190,7 +190,7 @@ void test_mcp_round_trip_boolean_schema(SmithKey key) {
     smith_mcp_boolean_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_boolean_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpBooleanSchema back;
     SmithProtocolError error = {};
@@ -223,7 +223,7 @@ void test_mcp_round_trip_string_list(SmithKey key) {
     smith_mcp_string_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_string_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpStringList back;
     SmithProtocolError error = {};
@@ -240,7 +240,7 @@ void test_mcp_round_trip_icon_theme(SmithKey key) {
     smith_mcp_icon_theme_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_icon_theme_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpIconTheme back;
     SmithProtocolError error = {};
@@ -257,7 +257,7 @@ void test_mcp_round_trip_icon(SmithKey key) {
     smith_mcp_icon_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_icon_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpIcon back;
     SmithProtocolError error = {};
@@ -290,7 +290,7 @@ void test_mcp_round_trip_icon_list(SmithKey key) {
     smith_mcp_icon_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_icon_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpIconList back;
     SmithProtocolError error = {};
@@ -307,7 +307,7 @@ void test_mcp_round_trip_implementation(SmithKey key) {
     smith_mcp_implementation_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_implementation_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpImplementation back;
     SmithProtocolError error = {};
@@ -340,7 +340,7 @@ void test_mcp_round_trip_result_meta_object(SmithKey key) {
     smith_mcp_result_meta_object_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_result_meta_object_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResultMetaObject back;
     SmithProtocolError error = {};
@@ -357,7 +357,7 @@ void test_mcp_round_trip_cacheable_result_cache_scope(SmithKey key) {
     smith_mcp_cacheable_result_cache_scope_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_cacheable_result_cache_scope_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCacheableResultCacheScope back;
     SmithProtocolError error = {};
@@ -374,7 +374,7 @@ void test_mcp_round_trip_cacheable_result(SmithKey key) {
     smith_mcp_cacheable_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_cacheable_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCacheableResult back;
     SmithProtocolError error = {};
@@ -407,7 +407,7 @@ void test_mcp_round_trip_request_id(SmithKey key) {
     smith_mcp_request_id_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_request_id_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRequestId back;
     SmithProtocolError error = {};
@@ -424,7 +424,7 @@ void test_mcp_round_trip_any_map(SmithKey key) {
     smith_mcp_any_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_any_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpAnyMap back;
     SmithProtocolError error = {};
@@ -441,7 +441,7 @@ void test_mcp_round_trip_client_capabilities_elicitation(SmithKey key) {
     smith_mcp_client_capabilities_elicitation_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_capabilities_elicitation_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientCapabilitiesElicitation back;
     SmithProtocolError error = {};
@@ -458,7 +458,7 @@ void test_mcp_round_trip_any_map_map(SmithKey key) {
     smith_mcp_any_map_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_any_map_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpAnyMapMap back;
     SmithProtocolError error = {};
@@ -475,7 +475,7 @@ void test_mcp_round_trip_client_capabilities_roots(SmithKey key) {
     smith_mcp_client_capabilities_roots_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_capabilities_roots_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientCapabilitiesRoots back;
     SmithProtocolError error = {};
@@ -492,7 +492,7 @@ void test_mcp_round_trip_client_capabilities_sampling(SmithKey key) {
     smith_mcp_client_capabilities_sampling_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_capabilities_sampling_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientCapabilitiesSampling back;
     SmithProtocolError error = {};
@@ -509,7 +509,7 @@ void test_mcp_round_trip_client_capabilities(SmithKey key) {
     smith_mcp_client_capabilities_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_capabilities_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientCapabilities back;
     SmithProtocolError error = {};
@@ -526,7 +526,7 @@ void test_mcp_round_trip_logging_level(SmithKey key) {
     smith_mcp_logging_level_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_logging_level_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpLoggingLevel back;
     SmithProtocolError error = {};
@@ -543,7 +543,7 @@ void test_mcp_round_trip_progress_token(SmithKey key) {
     smith_mcp_progress_token_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_progress_token_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpProgressToken back;
     SmithProtocolError error = {};
@@ -560,7 +560,7 @@ void test_mcp_round_trip_request_meta_object(SmithKey key) {
     smith_mcp_request_meta_object_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_request_meta_object_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRequestMetaObject back;
     SmithProtocolError error = {};
@@ -593,7 +593,7 @@ void test_mcp_round_trip_text_content(SmithKey key) {
     smith_mcp_text_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_text_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTextContent back;
     SmithProtocolError error = {};
@@ -626,7 +626,7 @@ void test_mcp_round_trip_image_content(SmithKey key) {
     smith_mcp_image_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_image_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpImageContent back;
     SmithProtocolError error = {};
@@ -659,7 +659,7 @@ void test_mcp_round_trip_tool_use_content(SmithKey key) {
     smith_mcp_tool_use_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_use_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolUseContent back;
     SmithProtocolError error = {};
@@ -692,7 +692,7 @@ void test_mcp_round_trip_resource_link(SmithKey key) {
     smith_mcp_resource_link_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_link_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceLink back;
     SmithProtocolError error = {};
@@ -725,7 +725,7 @@ void test_mcp_round_trip_text_resource_contents(SmithKey key) {
     smith_mcp_text_resource_contents_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_text_resource_contents_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTextResourceContents back;
     SmithProtocolError error = {};
@@ -758,7 +758,7 @@ void test_mcp_round_trip_embedded_resource_resource(SmithKey key) {
     smith_mcp_embedded_resource_resource_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_embedded_resource_resource_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpEmbeddedResourceResource back;
     SmithProtocolError error = {};
@@ -775,7 +775,7 @@ void test_mcp_round_trip_embedded_resource(SmithKey key) {
     smith_mcp_embedded_resource_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_embedded_resource_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpEmbeddedResource back;
     SmithProtocolError error = {};
@@ -808,7 +808,7 @@ void test_mcp_round_trip_content_block(SmithKey key) {
     smith_mcp_content_block_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_content_block_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpContentBlock back;
     SmithProtocolError error = {};
@@ -825,7 +825,7 @@ void test_mcp_round_trip_content_block_list(SmithKey key) {
     smith_mcp_content_block_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_content_block_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpContentBlockList back;
     SmithProtocolError error = {};
@@ -842,7 +842,7 @@ void test_mcp_round_trip_tool_result_content(SmithKey key) {
     smith_mcp_tool_result_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_result_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolResultContent back;
     SmithProtocolError error = {};
@@ -875,7 +875,7 @@ void test_mcp_round_trip_sampling_message_content_block(SmithKey key) {
     smith_mcp_sampling_message_content_block_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_sampling_message_content_block_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSamplingMessageContentBlock back;
     SmithProtocolError error = {};
@@ -892,7 +892,7 @@ void test_mcp_round_trip_sampling_message_content_block_list(SmithKey key) {
     smith_mcp_sampling_message_content_block_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_sampling_message_content_block_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSamplingMessageContentBlockList back;
     SmithProtocolError error = {};
@@ -909,7 +909,7 @@ void test_mcp_round_trip_create_message_result_content(SmithKey key) {
     smith_mcp_create_message_result_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_create_message_result_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCreateMessageResultContent back;
     SmithProtocolError error = {};
@@ -934,7 +934,7 @@ void test_mcp_round_trip_create_message_result(SmithKey key) {
     smith_mcp_create_message_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_create_message_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCreateMessageResult back;
     SmithProtocolError error = {};
@@ -975,7 +975,7 @@ void test_mcp_round_trip_root(SmithKey key) {
     smith_mcp_root_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_root_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRoot back;
     SmithProtocolError error = {};
@@ -1008,7 +1008,7 @@ void test_mcp_round_trip_root_list(SmithKey key) {
     smith_mcp_root_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_root_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRootList back;
     SmithProtocolError error = {};
@@ -1025,7 +1025,7 @@ void test_mcp_round_trip_list_roots_result(SmithKey key) {
     smith_mcp_list_roots_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_roots_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListRootsResult back;
     SmithProtocolError error = {};
@@ -1058,7 +1058,7 @@ void test_mcp_round_trip_elicit_result_action(SmithKey key) {
     smith_mcp_elicit_result_action_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_result_action_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitResultAction back;
     SmithProtocolError error = {};
@@ -1075,7 +1075,7 @@ void test_mcp_round_trip_elicit_result_content_value2(SmithKey key) {
     smith_mcp_elicit_result_content_value2_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_result_content_value2_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitResultContentValue2 back;
     SmithProtocolError error = {};
@@ -1092,7 +1092,7 @@ void test_mcp_round_trip_elicit_result_content_value(SmithKey key) {
     smith_mcp_elicit_result_content_value_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_result_content_value_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitResultContentValue back;
     SmithProtocolError error = {};
@@ -1117,7 +1117,7 @@ void test_mcp_round_trip_elicit_result_content_value_map(SmithKey key) {
     smith_mcp_elicit_result_content_value_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_result_content_value_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitResultContentValueMap back;
     SmithProtocolError error = {};
@@ -1142,7 +1142,7 @@ void test_mcp_round_trip_elicit_result(SmithKey key) {
     smith_mcp_elicit_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitResult back;
     SmithProtocolError error = {};
@@ -1183,7 +1183,7 @@ void test_mcp_round_trip_input_response(SmithKey key) {
     smith_mcp_input_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputResponse back;
     SmithProtocolError error = {};
@@ -1208,7 +1208,7 @@ void test_mcp_round_trip_input_response_map(SmithKey key) {
     smith_mcp_input_response_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_response_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputResponseMap back;
     SmithProtocolError error = {};
@@ -1233,7 +1233,7 @@ void test_mcp_round_trip_call_tool_request_params(SmithKey key) {
     smith_mcp_call_tool_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_call_tool_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCallToolRequestParams back;
     SmithProtocolError error = {};
@@ -1274,7 +1274,7 @@ void test_mcp_round_trip_call_tool_request(SmithKey key) {
     smith_mcp_call_tool_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_call_tool_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCallToolRequest back;
     SmithProtocolError error = {};
@@ -1315,7 +1315,7 @@ void test_mcp_round_trip_call_tool_result(SmithKey key) {
     smith_mcp_call_tool_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_call_tool_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCallToolResult back;
     SmithProtocolError error = {};
@@ -1348,7 +1348,7 @@ void test_mcp_round_trip_create_message_request_params_include_context(SmithKey 
     smith_mcp_create_message_request_params_include_context_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_create_message_request_params_include_context_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCreateMessageRequestParamsIncludeContext back;
     SmithProtocolError error = {};
@@ -1365,7 +1365,7 @@ void test_mcp_round_trip_sampling_message_content(SmithKey key) {
     smith_mcp_sampling_message_content_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_sampling_message_content_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSamplingMessageContent back;
     SmithProtocolError error = {};
@@ -1390,7 +1390,7 @@ void test_mcp_round_trip_sampling_message(SmithKey key) {
     smith_mcp_sampling_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_sampling_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSamplingMessage back;
     SmithProtocolError error = {};
@@ -1431,7 +1431,7 @@ void test_mcp_round_trip_sampling_message_list(SmithKey key) {
     smith_mcp_sampling_message_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_sampling_message_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSamplingMessageList back;
     SmithProtocolError error = {};
@@ -1456,7 +1456,7 @@ void test_mcp_round_trip_model_hint(SmithKey key) {
     smith_mcp_model_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_model_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpModelHint back;
     SmithProtocolError error = {};
@@ -1473,7 +1473,7 @@ void test_mcp_round_trip_model_hint_list(SmithKey key) {
     smith_mcp_model_hint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_model_hint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpModelHintList back;
     SmithProtocolError error = {};
@@ -1490,7 +1490,7 @@ void test_mcp_round_trip_model_preferences(SmithKey key) {
     smith_mcp_model_preferences_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_model_preferences_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpModelPreferences back;
     SmithProtocolError error = {};
@@ -1507,7 +1507,7 @@ void test_mcp_round_trip_tool_choice_mode(SmithKey key) {
     smith_mcp_tool_choice_mode_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_choice_mode_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolChoiceMode back;
     SmithProtocolError error = {};
@@ -1524,7 +1524,7 @@ void test_mcp_round_trip_tool_choice(SmithKey key) {
     smith_mcp_tool_choice_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_choice_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolChoice back;
     SmithProtocolError error = {};
@@ -1541,7 +1541,7 @@ void test_mcp_round_trip_tool_annotations(SmithKey key) {
     smith_mcp_tool_annotations_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_annotations_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolAnnotations back;
     SmithProtocolError error = {};
@@ -1558,7 +1558,7 @@ void test_mcp_round_trip_tool_input_schema(SmithKey key) {
     smith_mcp_tool_input_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_input_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolInputSchema back;
     SmithProtocolError error = {};
@@ -1591,7 +1591,7 @@ void test_mcp_round_trip_tool_output_schema(SmithKey key) {
     smith_mcp_tool_output_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_output_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolOutputSchema back;
     SmithProtocolError error = {};
@@ -1608,7 +1608,7 @@ void test_mcp_round_trip_tool(SmithKey key) {
     smith_mcp_tool_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTool back;
     SmithProtocolError error = {};
@@ -1641,7 +1641,7 @@ void test_mcp_round_trip_tool_list(SmithKey key) {
     smith_mcp_tool_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolList back;
     SmithProtocolError error = {};
@@ -1658,7 +1658,7 @@ void test_mcp_round_trip_create_message_request_params(SmithKey key) {
     smith_mcp_create_message_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_create_message_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCreateMessageRequestParams back;
     SmithProtocolError error = {};
@@ -1699,7 +1699,7 @@ void test_mcp_round_trip_create_message_request(SmithKey key) {
     smith_mcp_create_message_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_create_message_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCreateMessageRequest back;
     SmithProtocolError error = {};
@@ -1740,7 +1740,7 @@ void test_mcp_round_trip_list_roots_request_params(SmithKey key) {
     smith_mcp_list_roots_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_roots_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListRootsRequestParams back;
     SmithProtocolError error = {};
@@ -1757,7 +1757,7 @@ void test_mcp_round_trip_list_roots_request(SmithKey key) {
     smith_mcp_list_roots_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_roots_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListRootsRequest back;
     SmithProtocolError error = {};
@@ -1790,7 +1790,7 @@ void test_mcp_round_trip_string_schema_format(SmithKey key) {
     smith_mcp_string_schema_format_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_string_schema_format_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpStringSchemaFormat back;
     SmithProtocolError error = {};
@@ -1807,7 +1807,7 @@ void test_mcp_round_trip_string_schema(SmithKey key) {
     smith_mcp_string_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_string_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpStringSchema back;
     SmithProtocolError error = {};
@@ -1840,7 +1840,7 @@ void test_mcp_round_trip_number_schema_type(SmithKey key) {
     smith_mcp_number_schema_type_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_number_schema_type_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpNumberSchemaType back;
     SmithProtocolError error = {};
@@ -1857,7 +1857,7 @@ void test_mcp_round_trip_number_schema(SmithKey key) {
     smith_mcp_number_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_number_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpNumberSchema back;
     SmithProtocolError error = {};
@@ -1890,7 +1890,7 @@ void test_mcp_round_trip_untitled_single_select_enum_schema(SmithKey key) {
     smith_mcp_untitled_single_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_untitled_single_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUntitledSingleSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -1923,7 +1923,7 @@ void test_mcp_round_trip_titled_single_select_enum_schema_one_of_item(SmithKey k
     smith_mcp_titled_single_select_enum_schema_one_of_item_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_single_select_enum_schema_one_of_item_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledSingleSelectEnumSchemaOneOfItem back;
     SmithProtocolError error = {};
@@ -1956,7 +1956,7 @@ void test_mcp_round_trip_titled_single_select_enum_schema_one_of_item_list(Smith
     smith_mcp_titled_single_select_enum_schema_one_of_item_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_single_select_enum_schema_one_of_item_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledSingleSelectEnumSchemaOneOfItemList back;
     SmithProtocolError error = {};
@@ -1973,7 +1973,7 @@ void test_mcp_round_trip_titled_single_select_enum_schema(SmithKey key) {
     smith_mcp_titled_single_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_single_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledSingleSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -2006,7 +2006,7 @@ void test_mcp_round_trip_untitled_multi_select_enum_schema_items(SmithKey key) {
     smith_mcp_untitled_multi_select_enum_schema_items_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_untitled_multi_select_enum_schema_items_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUntitledMultiSelectEnumSchemaItems back;
     SmithProtocolError error = {};
@@ -2039,7 +2039,7 @@ void test_mcp_round_trip_untitled_multi_select_enum_schema(SmithKey key) {
     smith_mcp_untitled_multi_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_untitled_multi_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUntitledMultiSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -2072,7 +2072,7 @@ void test_mcp_round_trip_titled_multi_select_enum_schema_items_any_of_item(Smith
     smith_mcp_titled_multi_select_enum_schema_items_any_of_item_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_multi_select_enum_schema_items_any_of_item_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem back;
     SmithProtocolError error = {};
@@ -2105,7 +2105,7 @@ void test_mcp_round_trip_titled_multi_select_enum_schema_items_any_of_item_list(
     smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItemList back;
     SmithProtocolError error = {};
@@ -2122,7 +2122,7 @@ void test_mcp_round_trip_titled_multi_select_enum_schema_items(SmithKey key) {
     smith_mcp_titled_multi_select_enum_schema_items_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_multi_select_enum_schema_items_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledMultiSelectEnumSchemaItems back;
     SmithProtocolError error = {};
@@ -2155,7 +2155,7 @@ void test_mcp_round_trip_titled_multi_select_enum_schema(SmithKey key) {
     smith_mcp_titled_multi_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_titled_multi_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpTitledMultiSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -2188,7 +2188,7 @@ void test_mcp_round_trip_legacy_titled_enum_schema(SmithKey key) {
     smith_mcp_legacy_titled_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_legacy_titled_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpLegacyTitledEnumSchema back;
     SmithProtocolError error = {};
@@ -2221,7 +2221,7 @@ void test_mcp_round_trip_primitive_schema_definition(SmithKey key) {
     smith_mcp_primitive_schema_definition_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_primitive_schema_definition_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPrimitiveSchemaDefinition back;
     SmithProtocolError error = {};
@@ -2246,7 +2246,7 @@ void test_mcp_round_trip_primitive_schema_definition_map(SmithKey key) {
     smith_mcp_primitive_schema_definition_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_primitive_schema_definition_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPrimitiveSchemaDefinitionMap back;
     SmithProtocolError error = {};
@@ -2271,7 +2271,7 @@ void test_mcp_round_trip_elicit_request_form_params_requested_schema(SmithKey ke
     smith_mcp_elicit_request_form_params_requested_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_request_form_params_requested_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitRequestFormParamsRequestedSchema back;
     SmithProtocolError error = {};
@@ -2312,7 +2312,7 @@ void test_mcp_round_trip_elicit_request_form_params(SmithKey key) {
     smith_mcp_elicit_request_form_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_request_form_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitRequestFormParams back;
     SmithProtocolError error = {};
@@ -2353,7 +2353,7 @@ void test_mcp_round_trip_elicit_request_url_params(SmithKey key) {
     smith_mcp_elicit_request_url_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_request_url_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitRequestURLParams back;
     SmithProtocolError error = {};
@@ -2386,7 +2386,7 @@ void test_mcp_round_trip_elicit_request_params(SmithKey key) {
     smith_mcp_elicit_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitRequestParams back;
     SmithProtocolError error = {};
@@ -2411,7 +2411,7 @@ void test_mcp_round_trip_elicit_request(SmithKey key) {
     smith_mcp_elicit_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_elicit_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpElicitRequest back;
     SmithProtocolError error = {};
@@ -2452,7 +2452,7 @@ void test_mcp_round_trip_input_request(SmithKey key) {
     smith_mcp_input_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputRequest back;
     SmithProtocolError error = {};
@@ -2477,7 +2477,7 @@ void test_mcp_round_trip_input_request_map(SmithKey key) {
     smith_mcp_input_request_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_request_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputRequestMap back;
     SmithProtocolError error = {};
@@ -2502,7 +2502,7 @@ void test_mcp_round_trip_input_required_result(SmithKey key) {
     smith_mcp_input_required_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_required_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputRequiredResult back;
     SmithProtocolError error = {};
@@ -2543,7 +2543,7 @@ void test_mcp_round_trip_call_tool_result_response_result(SmithKey key) {
     smith_mcp_call_tool_result_response_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_call_tool_result_response_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCallToolResultResponseResult back;
     SmithProtocolError error = {};
@@ -2568,7 +2568,7 @@ void test_mcp_round_trip_call_tool_result_response(SmithKey key) {
     smith_mcp_call_tool_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_call_tool_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCallToolResultResponse back;
     SmithProtocolError error = {};
@@ -2609,7 +2609,7 @@ void test_mcp_round_trip_notification_meta_object(SmithKey key) {
     smith_mcp_notification_meta_object_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_notification_meta_object_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpNotificationMetaObject back;
     SmithProtocolError error = {};
@@ -2626,7 +2626,7 @@ void test_mcp_round_trip_cancelled_notification_params(SmithKey key) {
     smith_mcp_cancelled_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_cancelled_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCancelledNotificationParams back;
     SmithProtocolError error = {};
@@ -2659,7 +2659,7 @@ void test_mcp_round_trip_cancelled_notification(SmithKey key) {
     smith_mcp_cancelled_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_cancelled_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCancelledNotification back;
     SmithProtocolError error = {};
@@ -2692,7 +2692,7 @@ void test_mcp_round_trip_client_notification(SmithKey key) {
     smith_mcp_client_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientNotification back;
     SmithProtocolError error = {};
@@ -2725,7 +2725,7 @@ void test_mcp_round_trip_request_params(SmithKey key) {
     smith_mcp_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRequestParams back;
     SmithProtocolError error = {};
@@ -2758,7 +2758,7 @@ void test_mcp_round_trip_discover_request(SmithKey key) {
     smith_mcp_discover_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_discover_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpDiscoverRequest back;
     SmithProtocolError error = {};
@@ -2791,7 +2791,7 @@ void test_mcp_round_trip_paginated_request_params(SmithKey key) {
     smith_mcp_paginated_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_paginated_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPaginatedRequestParams back;
     SmithProtocolError error = {};
@@ -2824,7 +2824,7 @@ void test_mcp_round_trip_list_resources_request(SmithKey key) {
     smith_mcp_list_resources_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resources_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourcesRequest back;
     SmithProtocolError error = {};
@@ -2857,7 +2857,7 @@ void test_mcp_round_trip_list_resource_templates_request(SmithKey key) {
     smith_mcp_list_resource_templates_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resource_templates_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourceTemplatesRequest back;
     SmithProtocolError error = {};
@@ -2890,7 +2890,7 @@ void test_mcp_round_trip_read_resource_request_params(SmithKey key) {
     smith_mcp_read_resource_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceRequestParams back;
     SmithProtocolError error = {};
@@ -2931,7 +2931,7 @@ void test_mcp_round_trip_read_resource_request(SmithKey key) {
     smith_mcp_read_resource_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceRequest back;
     SmithProtocolError error = {};
@@ -2972,7 +2972,7 @@ void test_mcp_round_trip_subscription_filter(SmithKey key) {
     smith_mcp_subscription_filter_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscription_filter_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionFilter back;
     SmithProtocolError error = {};
@@ -2989,7 +2989,7 @@ void test_mcp_round_trip_subscriptions_listen_request_params(SmithKey key) {
     smith_mcp_subscriptions_listen_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_listen_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsListenRequestParams back;
     SmithProtocolError error = {};
@@ -3022,7 +3022,7 @@ void test_mcp_round_trip_subscriptions_listen_request(SmithKey key) {
     smith_mcp_subscriptions_listen_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_listen_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsListenRequest back;
     SmithProtocolError error = {};
@@ -3055,7 +3055,7 @@ void test_mcp_round_trip_list_prompts_request(SmithKey key) {
     smith_mcp_list_prompts_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_prompts_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListPromptsRequest back;
     SmithProtocolError error = {};
@@ -3088,7 +3088,7 @@ void test_mcp_round_trip_string_map(SmithKey key) {
     smith_mcp_string_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_string_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpStringMap back;
     SmithProtocolError error = {};
@@ -3105,7 +3105,7 @@ void test_mcp_round_trip_get_prompt_request_params(SmithKey key) {
     smith_mcp_get_prompt_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_get_prompt_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpGetPromptRequestParams back;
     SmithProtocolError error = {};
@@ -3146,7 +3146,7 @@ void test_mcp_round_trip_get_prompt_request(SmithKey key) {
     smith_mcp_get_prompt_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_get_prompt_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpGetPromptRequest back;
     SmithProtocolError error = {};
@@ -3187,7 +3187,7 @@ void test_mcp_round_trip_list_tools_request(SmithKey key) {
     smith_mcp_list_tools_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_tools_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListToolsRequest back;
     SmithProtocolError error = {};
@@ -3220,7 +3220,7 @@ void test_mcp_round_trip_complete_request_params_argument(SmithKey key) {
     smith_mcp_complete_request_params_argument_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_request_params_argument_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteRequestParamsArgument back;
     SmithProtocolError error = {};
@@ -3253,7 +3253,7 @@ void test_mcp_round_trip_complete_request_params_context(SmithKey key) {
     smith_mcp_complete_request_params_context_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_request_params_context_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteRequestParamsContext back;
     SmithProtocolError error = {};
@@ -3270,7 +3270,7 @@ void test_mcp_round_trip_prompt_reference(SmithKey key) {
     smith_mcp_prompt_reference_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_reference_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptReference back;
     SmithProtocolError error = {};
@@ -3303,7 +3303,7 @@ void test_mcp_round_trip_resource_template_reference(SmithKey key) {
     smith_mcp_resource_template_reference_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_template_reference_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceTemplateReference back;
     SmithProtocolError error = {};
@@ -3336,7 +3336,7 @@ void test_mcp_round_trip_complete_request_params_ref(SmithKey key) {
     smith_mcp_complete_request_params_ref_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_request_params_ref_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteRequestParamsRef back;
     SmithProtocolError error = {};
@@ -3353,7 +3353,7 @@ void test_mcp_round_trip_complete_request_params(SmithKey key) {
     smith_mcp_complete_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteRequestParams back;
     SmithProtocolError error = {};
@@ -3386,7 +3386,7 @@ void test_mcp_round_trip_complete_request(SmithKey key) {
     smith_mcp_complete_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteRequest back;
     SmithProtocolError error = {};
@@ -3419,7 +3419,7 @@ void test_mcp_round_trip_client_request(SmithKey key) {
     smith_mcp_client_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_client_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpClientRequest back;
     SmithProtocolError error = {};
@@ -3444,7 +3444,7 @@ void test_mcp_round_trip_result(SmithKey key) {
     smith_mcp_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResult back;
     SmithProtocolError error = {};
@@ -3477,7 +3477,7 @@ void test_mcp_round_trip_complete_result_completion(SmithKey key) {
     smith_mcp_complete_result_completion_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_result_completion_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteResultCompletion back;
     SmithProtocolError error = {};
@@ -3510,7 +3510,7 @@ void test_mcp_round_trip_complete_result(SmithKey key) {
     smith_mcp_complete_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteResult back;
     SmithProtocolError error = {};
@@ -3543,7 +3543,7 @@ void test_mcp_round_trip_complete_result_response(SmithKey key) {
     smith_mcp_complete_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_complete_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpCompleteResultResponse back;
     SmithProtocolError error = {};
@@ -3576,7 +3576,7 @@ void test_mcp_round_trip_server_capabilities_prompts(SmithKey key) {
     smith_mcp_server_capabilities_prompts_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_capabilities_prompts_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerCapabilitiesPrompts back;
     SmithProtocolError error = {};
@@ -3593,7 +3593,7 @@ void test_mcp_round_trip_server_capabilities_resources(SmithKey key) {
     smith_mcp_server_capabilities_resources_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_capabilities_resources_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerCapabilitiesResources back;
     SmithProtocolError error = {};
@@ -3610,7 +3610,7 @@ void test_mcp_round_trip_server_capabilities_tools(SmithKey key) {
     smith_mcp_server_capabilities_tools_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_capabilities_tools_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerCapabilitiesTools back;
     SmithProtocolError error = {};
@@ -3627,7 +3627,7 @@ void test_mcp_round_trip_server_capabilities(SmithKey key) {
     smith_mcp_server_capabilities_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_capabilities_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerCapabilities back;
     SmithProtocolError error = {};
@@ -3644,7 +3644,7 @@ void test_mcp_round_trip_discover_result(SmithKey key) {
     smith_mcp_discover_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_discover_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpDiscoverResult back;
     SmithProtocolError error = {};
@@ -3677,7 +3677,7 @@ void test_mcp_round_trip_discover_result_response(SmithKey key) {
     smith_mcp_discover_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_discover_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpDiscoverResultResponse back;
     SmithProtocolError error = {};
@@ -3710,7 +3710,7 @@ void test_mcp_round_trip_enum_schema(SmithKey key) {
     smith_mcp_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpEnumSchema back;
     SmithProtocolError error = {};
@@ -3735,7 +3735,7 @@ void test_mcp_round_trip_error(SmithKey key) {
     smith_mcp_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpError back;
     SmithProtocolError error = {};
@@ -3768,7 +3768,7 @@ void test_mcp_round_trip_prompt_message(SmithKey key) {
     smith_mcp_prompt_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptMessage back;
     SmithProtocolError error = {};
@@ -3801,7 +3801,7 @@ void test_mcp_round_trip_prompt_message_list(SmithKey key) {
     smith_mcp_prompt_message_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_message_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptMessageList back;
     SmithProtocolError error = {};
@@ -3818,7 +3818,7 @@ void test_mcp_round_trip_get_prompt_result(SmithKey key) {
     smith_mcp_get_prompt_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_get_prompt_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpGetPromptResult back;
     SmithProtocolError error = {};
@@ -3851,7 +3851,7 @@ void test_mcp_round_trip_get_prompt_result_response_result(SmithKey key) {
     smith_mcp_get_prompt_result_response_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_get_prompt_result_response_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpGetPromptResultResponseResult back;
     SmithProtocolError error = {};
@@ -3876,7 +3876,7 @@ void test_mcp_round_trip_get_prompt_result_response(SmithKey key) {
     smith_mcp_get_prompt_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_get_prompt_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpGetPromptResultResponse back;
     SmithProtocolError error = {};
@@ -3917,7 +3917,7 @@ void test_mcp_round_trip_header_mismatch_error_error(SmithKey key) {
     smith_mcp_header_mismatch_error_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_header_mismatch_error_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpHeaderMismatchErrorError back;
     SmithProtocolError error = {};
@@ -3950,7 +3950,7 @@ void test_mcp_round_trip_header_mismatch_error(SmithKey key) {
     smith_mcp_header_mismatch_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_header_mismatch_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpHeaderMismatchError back;
     SmithProtocolError error = {};
@@ -3983,7 +3983,7 @@ void test_mcp_round_trip_icons(SmithKey key) {
     smith_mcp_icons_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_icons_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpIcons back;
     SmithProtocolError error = {};
@@ -4000,7 +4000,7 @@ void test_mcp_round_trip_input_response_request_params(SmithKey key) {
     smith_mcp_input_response_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_input_response_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInputResponseRequestParams back;
     SmithProtocolError error = {};
@@ -4041,7 +4041,7 @@ void test_mcp_round_trip_internal_error(SmithKey key) {
     smith_mcp_internal_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_internal_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInternalError back;
     SmithProtocolError error = {};
@@ -4074,7 +4074,7 @@ void test_mcp_round_trip_invalid_params_error(SmithKey key) {
     smith_mcp_invalid_params_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_invalid_params_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInvalidParamsError back;
     SmithProtocolError error = {};
@@ -4107,7 +4107,7 @@ void test_mcp_round_trip_invalid_request_error(SmithKey key) {
     smith_mcp_invalid_request_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_invalid_request_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpInvalidRequestError back;
     SmithProtocolError error = {};
@@ -4140,7 +4140,7 @@ void test_mcp_round_trip_any_list(SmithKey key) {
     smith_mcp_any_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_any_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpAnyList back;
     SmithProtocolError error = {};
@@ -4157,7 +4157,7 @@ void test_mcp_round_trip_jsonrpc_error_response(SmithKey key) {
     smith_mcp_jsonrpc_error_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_error_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCErrorResponse back;
     SmithProtocolError error = {};
@@ -4190,7 +4190,7 @@ void test_mcp_round_trip_jsonrpc_request(SmithKey key) {
     smith_mcp_jsonrpc_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCRequest back;
     SmithProtocolError error = {};
@@ -4223,7 +4223,7 @@ void test_mcp_round_trip_jsonrpc_notification(SmithKey key) {
     smith_mcp_jsonrpc_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCNotification back;
     SmithProtocolError error = {};
@@ -4256,7 +4256,7 @@ void test_mcp_round_trip_jsonrpc_result_response(SmithKey key) {
     smith_mcp_jsonrpc_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCResultResponse back;
     SmithProtocolError error = {};
@@ -4289,7 +4289,7 @@ void test_mcp_round_trip_jsonrpc_message(SmithKey key) {
     smith_mcp_jsonrpc_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCMessage back;
     SmithProtocolError error = {};
@@ -4306,7 +4306,7 @@ void test_mcp_round_trip_jsonrpc_response(SmithKey key) {
     smith_mcp_jsonrpc_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_jsonrpc_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpJSONRPCResponse back;
     SmithProtocolError error = {};
@@ -4323,7 +4323,7 @@ void test_mcp_round_trip_prompt_argument(SmithKey key) {
     smith_mcp_prompt_argument_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_argument_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptArgument back;
     SmithProtocolError error = {};
@@ -4356,7 +4356,7 @@ void test_mcp_round_trip_prompt_argument_list(SmithKey key) {
     smith_mcp_prompt_argument_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_argument_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptArgumentList back;
     SmithProtocolError error = {};
@@ -4373,7 +4373,7 @@ void test_mcp_round_trip_prompt(SmithKey key) {
     smith_mcp_prompt_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPrompt back;
     SmithProtocolError error = {};
@@ -4406,7 +4406,7 @@ void test_mcp_round_trip_prompt_list(SmithKey key) {
     smith_mcp_prompt_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptList back;
     SmithProtocolError error = {};
@@ -4423,7 +4423,7 @@ void test_mcp_round_trip_list_prompts_result(SmithKey key) {
     smith_mcp_list_prompts_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_prompts_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListPromptsResult back;
     SmithProtocolError error = {};
@@ -4456,7 +4456,7 @@ void test_mcp_round_trip_list_prompts_result_response(SmithKey key) {
     smith_mcp_list_prompts_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_prompts_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListPromptsResultResponse back;
     SmithProtocolError error = {};
@@ -4489,7 +4489,7 @@ void test_mcp_round_trip_resource_template(SmithKey key) {
     smith_mcp_resource_template_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_template_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceTemplate back;
     SmithProtocolError error = {};
@@ -4522,7 +4522,7 @@ void test_mcp_round_trip_resource_template_list(SmithKey key) {
     smith_mcp_resource_template_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_template_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceTemplateList back;
     SmithProtocolError error = {};
@@ -4539,7 +4539,7 @@ void test_mcp_round_trip_list_resource_templates_result(SmithKey key) {
     smith_mcp_list_resource_templates_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resource_templates_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourceTemplatesResult back;
     SmithProtocolError error = {};
@@ -4572,7 +4572,7 @@ void test_mcp_round_trip_list_resource_templates_result_response(SmithKey key) {
     smith_mcp_list_resource_templates_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resource_templates_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourceTemplatesResultResponse back;
     SmithProtocolError error = {};
@@ -4605,7 +4605,7 @@ void test_mcp_round_trip_resource(SmithKey key) {
     smith_mcp_resource_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResource back;
     SmithProtocolError error = {};
@@ -4638,7 +4638,7 @@ void test_mcp_round_trip_resource_list(SmithKey key) {
     smith_mcp_resource_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceList back;
     SmithProtocolError error = {};
@@ -4655,7 +4655,7 @@ void test_mcp_round_trip_list_resources_result(SmithKey key) {
     smith_mcp_list_resources_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resources_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourcesResult back;
     SmithProtocolError error = {};
@@ -4688,7 +4688,7 @@ void test_mcp_round_trip_list_resources_result_response(SmithKey key) {
     smith_mcp_list_resources_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_resources_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListResourcesResultResponse back;
     SmithProtocolError error = {};
@@ -4721,7 +4721,7 @@ void test_mcp_round_trip_list_tools_result(SmithKey key) {
     smith_mcp_list_tools_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_tools_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListToolsResult back;
     SmithProtocolError error = {};
@@ -4754,7 +4754,7 @@ void test_mcp_round_trip_list_tools_result_response(SmithKey key) {
     smith_mcp_list_tools_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_list_tools_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpListToolsResultResponse back;
     SmithProtocolError error = {};
@@ -4787,7 +4787,7 @@ void test_mcp_round_trip_logging_message_notification_params(SmithKey key) {
     smith_mcp_logging_message_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_logging_message_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpLoggingMessageNotificationParams back;
     SmithProtocolError error = {};
@@ -4820,7 +4820,7 @@ void test_mcp_round_trip_logging_message_notification(SmithKey key) {
     smith_mcp_logging_message_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_logging_message_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpLoggingMessageNotification back;
     SmithProtocolError error = {};
@@ -4853,7 +4853,7 @@ void test_mcp_round_trip_method_not_found_error(SmithKey key) {
     smith_mcp_method_not_found_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_method_not_found_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpMethodNotFoundError back;
     SmithProtocolError error = {};
@@ -4886,7 +4886,7 @@ void test_mcp_round_trip_missing_required_client_capability_error_error_data(Smi
     smith_mcp_missing_required_client_capability_error_error_data_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_missing_required_client_capability_error_error_data_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpMissingRequiredClientCapabilityErrorErrorData back;
     SmithProtocolError error = {};
@@ -4919,7 +4919,7 @@ void test_mcp_round_trip_missing_required_client_capability_error_error(SmithKey
     smith_mcp_missing_required_client_capability_error_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_missing_required_client_capability_error_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpMissingRequiredClientCapabilityErrorError back;
     SmithProtocolError error = {};
@@ -4952,7 +4952,7 @@ void test_mcp_round_trip_missing_required_client_capability_error(SmithKey key) 
     smith_mcp_missing_required_client_capability_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_missing_required_client_capability_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpMissingRequiredClientCapabilityError back;
     SmithProtocolError error = {};
@@ -4985,7 +4985,7 @@ void test_mcp_round_trip_multi_select_enum_schema(SmithKey key) {
     smith_mcp_multi_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_multi_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpMultiSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -5010,7 +5010,7 @@ void test_mcp_round_trip_notification(SmithKey key) {
     smith_mcp_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpNotification back;
     SmithProtocolError error = {};
@@ -5043,7 +5043,7 @@ void test_mcp_round_trip_notification_params(SmithKey key) {
     smith_mcp_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpNotificationParams back;
     SmithProtocolError error = {};
@@ -5060,7 +5060,7 @@ void test_mcp_round_trip_paginated_request(SmithKey key) {
     smith_mcp_paginated_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_paginated_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPaginatedRequest back;
     SmithProtocolError error = {};
@@ -5093,7 +5093,7 @@ void test_mcp_round_trip_paginated_result(SmithKey key) {
     smith_mcp_paginated_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_paginated_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPaginatedResult back;
     SmithProtocolError error = {};
@@ -5126,7 +5126,7 @@ void test_mcp_round_trip_parse_error(SmithKey key) {
     smith_mcp_parse_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_parse_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpParseError back;
     SmithProtocolError error = {};
@@ -5159,7 +5159,7 @@ void test_mcp_round_trip_progress_notification_params(SmithKey key) {
     smith_mcp_progress_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_progress_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpProgressNotificationParams back;
     SmithProtocolError error = {};
@@ -5192,7 +5192,7 @@ void test_mcp_round_trip_progress_notification(SmithKey key) {
     smith_mcp_progress_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_progress_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpProgressNotification back;
     SmithProtocolError error = {};
@@ -5225,7 +5225,7 @@ void test_mcp_round_trip_prompt_list_changed_notification(SmithKey key) {
     smith_mcp_prompt_list_changed_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_prompt_list_changed_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpPromptListChangedNotification back;
     SmithProtocolError error = {};
@@ -5258,7 +5258,7 @@ void test_mcp_round_trip_read_resource_result_contents_item(SmithKey key) {
     smith_mcp_read_resource_result_contents_item_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_result_contents_item_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceResultContentsItem back;
     SmithProtocolError error = {};
@@ -5275,7 +5275,7 @@ void test_mcp_round_trip_read_resource_result_contents_item_list(SmithKey key) {
     smith_mcp_read_resource_result_contents_item_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_result_contents_item_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceResultContentsItemList back;
     SmithProtocolError error = {};
@@ -5292,7 +5292,7 @@ void test_mcp_round_trip_read_resource_result(SmithKey key) {
     smith_mcp_read_resource_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceResult back;
     SmithProtocolError error = {};
@@ -5325,7 +5325,7 @@ void test_mcp_round_trip_read_resource_result_response_result(SmithKey key) {
     smith_mcp_read_resource_result_response_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_result_response_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceResultResponseResult back;
     SmithProtocolError error = {};
@@ -5350,7 +5350,7 @@ void test_mcp_round_trip_read_resource_result_response(SmithKey key) {
     smith_mcp_read_resource_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_read_resource_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpReadResourceResultResponse back;
     SmithProtocolError error = {};
@@ -5391,7 +5391,7 @@ void test_mcp_round_trip_request(SmithKey key) {
     smith_mcp_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpRequest back;
     SmithProtocolError error = {};
@@ -5424,7 +5424,7 @@ void test_mcp_round_trip_resource_contents(SmithKey key) {
     smith_mcp_resource_contents_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_contents_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceContents back;
     SmithProtocolError error = {};
@@ -5457,7 +5457,7 @@ void test_mcp_round_trip_resource_list_changed_notification(SmithKey key) {
     smith_mcp_resource_list_changed_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_list_changed_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceListChangedNotification back;
     SmithProtocolError error = {};
@@ -5490,7 +5490,7 @@ void test_mcp_round_trip_resource_request_params(SmithKey key) {
     smith_mcp_resource_request_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_request_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceRequestParams back;
     SmithProtocolError error = {};
@@ -5523,7 +5523,7 @@ void test_mcp_round_trip_resource_updated_notification_params(SmithKey key) {
     smith_mcp_resource_updated_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_updated_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceUpdatedNotificationParams back;
     SmithProtocolError error = {};
@@ -5556,7 +5556,7 @@ void test_mcp_round_trip_resource_updated_notification(SmithKey key) {
     smith_mcp_resource_updated_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_resource_updated_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpResourceUpdatedNotification back;
     SmithProtocolError error = {};
@@ -5589,7 +5589,7 @@ void test_mcp_round_trip_subscriptions_acknowledged_notification_params(SmithKey
     smith_mcp_subscriptions_acknowledged_notification_params_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_acknowledged_notification_params_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsAcknowledgedNotificationParams back;
     SmithProtocolError error = {};
@@ -5622,7 +5622,7 @@ void test_mcp_round_trip_subscriptions_acknowledged_notification(SmithKey key) {
     smith_mcp_subscriptions_acknowledged_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_acknowledged_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsAcknowledgedNotification back;
     SmithProtocolError error = {};
@@ -5655,7 +5655,7 @@ void test_mcp_round_trip_tool_list_changed_notification(SmithKey key) {
     smith_mcp_tool_list_changed_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_list_changed_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpToolListChangedNotification back;
     SmithProtocolError error = {};
@@ -5688,7 +5688,7 @@ void test_mcp_round_trip_server_notification(SmithKey key) {
     smith_mcp_server_notification_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_notification_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerNotification back;
     SmithProtocolError error = {};
@@ -5705,7 +5705,7 @@ void test_mcp_round_trip_subscriptions_listen_result_meta_object(SmithKey key) {
     smith_mcp_subscriptions_listen_result_meta_object_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_listen_result_meta_object_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsListenResultMetaObject back;
     SmithProtocolError error = {};
@@ -5738,7 +5738,7 @@ void test_mcp_round_trip_subscriptions_listen_result(SmithKey key) {
     smith_mcp_subscriptions_listen_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_listen_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsListenResult back;
     SmithProtocolError error = {};
@@ -5771,7 +5771,7 @@ void test_mcp_round_trip_server_result(SmithKey key) {
     smith_mcp_server_result_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_server_result_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpServerResult back;
     SmithProtocolError error = {};
@@ -5796,7 +5796,7 @@ void test_mcp_round_trip_single_select_enum_schema(SmithKey key) {
     smith_mcp_single_select_enum_schema_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_single_select_enum_schema_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSingleSelectEnumSchema back;
     SmithProtocolError error = {};
@@ -5813,7 +5813,7 @@ void test_mcp_round_trip_subscriptions_listen_result_response(SmithKey key) {
     smith_mcp_subscriptions_listen_result_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_subscriptions_listen_result_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpSubscriptionsListenResultResponse back;
     SmithProtocolError error = {};
@@ -5846,7 +5846,7 @@ void test_mcp_round_trip_unsupported_protocol_version_error_error_data(SmithKey 
     smith_mcp_unsupported_protocol_version_error_error_data_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_unsupported_protocol_version_error_error_data_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUnsupportedProtocolVersionErrorErrorData back;
     SmithProtocolError error = {};
@@ -5879,7 +5879,7 @@ void test_mcp_round_trip_unsupported_protocol_version_error_error(SmithKey key) 
     smith_mcp_unsupported_protocol_version_error_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_unsupported_protocol_version_error_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUnsupportedProtocolVersionErrorError back;
     SmithProtocolError error = {};
@@ -5912,7 +5912,7 @@ void test_mcp_round_trip_unsupported_protocol_version_error(SmithKey key) {
     smith_mcp_unsupported_protocol_version_error_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_unsupported_protocol_version_error_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithMcpUnsupportedProtocolVersionError back;
     SmithProtocolError error = {};
