@@ -55,6 +55,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Clang modules, smith_modules](clang-modules.md): Clang modules are implicit, one per header, opt-in, and cached once per machine.
 - [The executor](executor.md): The executor reads the subset of ninja's language that smith writes, schedules and decides rebuilds itself, and keeps its state in .smith.
 - [Failure reports are read from the call stack, and a test's signature says what it touches](failure-reports-and-tests.md): A failing check prints frame addresses that smith symbolize turns into the failing line, so checks and contracts are plain functions, and a test's parameters decide its io.
+- [CI runs the full check on the owner's Mac](ci.md): Every pull request runs smith check on a self-hosted runner under the machine's lock, and a green push to main installs smith.
 - [What loads a Mac that builds with smith, and what a test may not depend on](machine-load.md): Spotlight indexes only a non-hidden build/ folder, Gatekeeper assesses each new executable once, and a test's limits must count CPU time, never wall time.
 - [An import's functions run at compile time from the module's body file](body-files.md): A module's own compile writes its lowered functions to a .body file beside its header, and an importer that mentions one where C requires a constant defines it, with what it needs, before its first declaration.
 - [Known gaps](known-gaps.md): A response file is opaque to .metal routing and Apple's metal output is not reproducible.
