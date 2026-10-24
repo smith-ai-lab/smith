@@ -5,12 +5,12 @@ typedef struct {
 float w;
 float h;
 } shapes_Rect;
-typedef struct shapes_Shape {enum shapes_Shape_tag {shapes_Shape_tag_circle, shapes_Shape_tag_rect, shapes_Shape_tag_inline_one, shapes_Shape_tag_empty } tag; union {
+typedef struct smith_enum_shapes_Shape {enum shapes_Shape_tag {shapes_Shape_tag_circle, shapes_Shape_tag_rect, shapes_Shape_tag_inline_one, shapes_Shape_tag_empty } tag; union {
 shapes_Circle circle;
 shapes_Rect rect;
 struct { __INT32_TYPE__ a; } inline_one; };
 } __attribute__((annotate("smith::enum"))) shapes_Shape;
-typedef struct shapes_Mark {enum shapes_Mark_tag {shapes_Mark_tag_none, shapes_Mark_tag_some } tag;
+typedef struct smith_enum_shapes_Mark {enum shapes_Mark_tag {shapes_Mark_tag_none, shapes_Mark_tag_some } tag;
 } __attribute__((annotate("smith::enum"))) shapes_Mark;
 float shapes_area(shapes_Shape s) __asm__("_shapes::area");
 float shapes_area(shapes_Shape s) {

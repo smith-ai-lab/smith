@@ -79,6 +79,48 @@ expect_contains "dbg prints a field" "$out" "(int) 3"
 expect_contains "dbg prints a backtrace" "$out" "frame #0: "
 expect_contains "dbg's backtrace has the caller" "$out" "main at prog.c"
 
+# A payload enum (issue #198) shows its active variant and only that variant's payload, not every member of the union.
+mkdir enumdir
+cat >enumdir/main.smith <<'EOF2'
+module main;
+
+export typedef struct {
+    f64 r;
+} Circle;
+
+export typedef enum {
+    Circle circle;
+    f64 square;
+    empty;
+} Shape;
+
+i32 main() {
+    Shape a = {.circle = {2}};
+    Shape b = .empty;
+    Shape c = {.square = 3};
+    return (a == .empty ? 1 : 0) + (b == .empty ? 0 : 1) + (c == .empty ? 1 : 0);
+}
+EOF2
+if (cd enumdir && "$smith" cc -g -O0 main.smith -o ../enum_prog); then
+    out=$("$smith" dbg -b -o 'b main.smith:17' -o run -o 'frame variable a b c' enum_prog 2>&1)
+    expect_contains "dbg shows a payload enum's active variant and its payload" "$out" "a = circle {
+  circle = (r = 2)
+}"
+    expect_contains "... a variant with no payload by its name" "$out" "b = empty {}"
+    expect_contains "... and one with a number" "$out" "c = square {
+  square = 3
+}"
+    total=$((total + 1))
+    case $out in
+    *"tag = "*) failures=$((failures + 1)); echo "FAIL  ... the raw tag stays hidden: $out" ;;
+    *) echo "ok    ... the raw tag and the inactive members stay hidden" ;;
+    esac
+else
+    total=$((total + 1))
+    failures=$((failures + 1))
+    echo "FAIL  the payload enum program does not build"
+fi
+
 # smith dap: a client writes DAP messages, and the adapter's replies are read back.
 if ! "$smith" cc -std=gnu23 "$here/tests/dap_client.c" -o "$work/dap_client"; then
     echo "FAIL  tests/dap_client.c does not build"

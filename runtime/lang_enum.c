@@ -71,9 +71,11 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     size_t used = 0;
     bool payload = false;
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
-    made[used] = *name; // the source's own name token is the end of the declaration: this one stands for none
-    made[used].synthetic = true;
-    made[used++].space_before = true;
+    // The struct's tag is `smith_enum_<module>_<Name>`, which a debugger matches (`smith dbg` shows the active
+    // variant); the typedef name the program and C callers use stays `<module>_<Name>`.
+    const char *prefixed = smith_lang_prefixed(lang, name->text, name->length);
+    snprintf(text, sizeof text, "smith_enum_%s", prefixed);
+    made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, text, strlen(text), token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "enum", 4, token, false);
     snprintf(text, sizeof text, "%.*s_tag", (int)name->length, name->text);
@@ -160,7 +162,7 @@ typedef struct {
     char name[smith_lang_enum_name_max]; // main_Shape
 } SmithLangEnumType;
 
-// A canonical type that is a payload enum: a struct whose name has a tag enum `<name>_tag`.
+// A canonical type that is a payload enum: `struct smith_enum_<name>` with a tag enum `<name>_tag`.
 static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, SmithLangEnumType *out) {
     if (host->lookup == nullptr) return false;
     if (strncmp(canonical, "const ", 6) == 0) canonical += 6;
@@ -168,7 +170,9 @@ static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, S
         strchr(canonical + 7, '*') != nullptr || strlen(canonical + 7) + 8 > sizeof out->name) {
         return false;
     }
-    snprintf(out->name, sizeof out->name, "%s", canonical + 7);
+    const char *named = canonical + 7;
+    if (strncmp(named, "smith_enum_", 11) != 0) return false; // the tag the lowering gives a payload enum
+    snprintf(out->name, sizeof out->name, "%s", named + 11);
     snprintf(out->type, sizeof out->type, "%s", canonical);
     char tag[smith_lang_enum_name_max + 8];
     int length = snprintf(tag, sizeof tag, "%s_tag", out->name);
