@@ -33,12 +33,10 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | modules | `module a::b;`, `export` | `smith-lang-modules`, `smith-lang-exports` |
 | slices | `i32 xs[:]`, `xs[a:b]`, `countof(xs)` | `smith-lang-arrays` |
 | generics | `constexpr type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
-| argument lists | `auto... rest`, `for constexpr` | `smith-lang-rest` |
-| reflection | `fields(T)` | `smith-lang-reflection` |
+| argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
 | compile time | `constexpr i32 x = fib(10);`, `static_assert(f() == 3)` | `smith-lang-constexpr` |
 | type values | `constexpr type t = i32;` | `smith-lang-type-values` |
-| tuples | `struct { i32, f32 }`, `t[0]` | `smith-lang-tuples` |
-| used once | `[[smith::affine]]` | `smith-lang-affine` |
+| tuples, used once | `struct { i32, f32 }`, `[[smith::affine]]` | `smith-lang-tuples`, `smith-lang-affine` |
 | cleanup on every exit | `defer c::close(fd);` | `smith-lang-defer` |
 | the target | `import target;`, `target::arch`, no `#if` | `smith-lang-target` |
 | the io | `i32 main(io::Io *io)` | `smith-io` |
