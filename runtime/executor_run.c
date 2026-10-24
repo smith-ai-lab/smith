@@ -312,8 +312,8 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
     uint32_t count = 0;
     char first[smith_exec_name_max] = "";
     const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
-    if (file.error.code == 0 &&
-        smith_run_parse_depfile(exec, file.data, file.size, &deps, &count, first, sizeof first)) {
+    if (file.error.code == 0 && smith_run_parse_depfile(exec, (const char *)file.data.data, file.data.count[0], &deps,
+                                                        &count, first, sizeof first)) {
         char folded[smith_exec_name_max];
         snprintf(folded, sizeof folded, "%s", first);
         (void)smith_exec_canonical(folded, strlen(folded));

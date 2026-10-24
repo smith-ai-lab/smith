@@ -19,12 +19,12 @@ static void smith_mcp_input_submit(SmithMcpServer *server) {
 static void smith_mcp_input_take(SmithMcpServer *server) {
     server->input_pending = false;
     SmithOp *op = &server->input_op;
-    if (op->error.code != 0 || op->end || op->size == 0) {
+    if (op->error.code != 0 || op->end || op->data.count[0] == 0) {
         server->input_end = true;
         return;
     }
-    const char *data = op->data;
-    size_t size = op->size;
+    const char *data = (const char *)op->data.data;
+    size_t size = op->data.count[0];
     for (size_t turn = 0; turn < size + 1 && size > 0; turn++) { // each turn takes at least a byte
         if (server->overlong) {
             const char *newline = memchr(data, '\n', size);
@@ -310,12 +310,12 @@ static void smith_mcp_session_service(SmithMcpServer *server, SmithMcpSession *s
         session->read_pending = false;
         if (session->read.error.code != 0 || session->read.end) {
             session->output_ended = true;
-        } else if (session->input_size + session->read.size > sizeof session->input) {
+        } else if (session->input_size + session->read.data.count[0] > sizeof session->input) {
             session->input_size = 0; // cannot happen while whole messages are taken off at once; never grow past it
             smith_mcp_session_read_submit(session);
         } else {
-            memcpy(session->input + session->input_size, session->read.data, session->read.size);
-            session->input_size += session->read.size;
+            memcpy(session->input + session->input_size, session->read.data.data, session->read.data.count[0]);
+            session->input_size += session->read.data.count[0];
             smith_mcp_dap_frames(server, session);
             smith_mcp_session_read_submit(session);
         }

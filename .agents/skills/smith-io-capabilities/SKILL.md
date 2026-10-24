@@ -18,7 +18,7 @@ typedef struct {
 // One or two capabilities: those alone.
 Mesh mesh_load(io::Files *files, arena::Arena *a, const char *path) {
     io::Read text = io::files_read(files, a, path);
-    return (Mesh){.vertices = text.error.code == 0 ? text.size : 0};
+    return (Mesh){.vertices = text.error.code == 0 ? countof(text.data) : 0};
 }
 
 // Most of io: the whole of it.

@@ -178,7 +178,7 @@ static void smith_state_load_deps(SmithExec *exec, char *text, const char *end) 
 
 static bool smith_state_has_header(const SmithRead *file, const char *header) {
     size_t length = strlen(header);
-    return file->error.code == 0 && file->size >= length && memcmp(file->data, header, length) == 0;
+    return file->error.code == 0 && file->data.count[0] >= length && memcmp(file->data.data, header, length) == 0;
 }
 
 // Writes the log as it is in memory, with only live lines.
@@ -243,7 +243,7 @@ static void smith_state_open(SmithExec *exec) {
     state->deps = smith_exec_carve(exec, smith_state_entries_max * sizeof(SmithDepsEntry));
     SmithRead log = smith_files_read(&exec->io->files, exec->arena, log_path);
     if (smith_state_has_header(&log, "# smith log 1\n")) {
-        smith_state_load_log(exec, (char *)(uintptr_t)log.data, log.data + log.size);
+        smith_state_load_log(exec, (char *)(uintptr_t)log.data.data, (const char *)log.data.data + log.data.count[0]);
         if (smith_state_wasteful(state->log_lines, state->log_count) && !exec->options.dry_run)
             smith_state_compact_log(exec);
     } else if (log.error.code == 0 && !exec->options.dry_run) {
@@ -254,7 +254,8 @@ static void smith_state_open(SmithExec *exec) {
     }
     SmithRead deps = smith_files_read(&exec->io->files, exec->arena, deps_path);
     if (smith_state_has_header(&deps, "# smith deps 1\n")) {
-        smith_state_load_deps(exec, (char *)(uintptr_t)deps.data, deps.data + deps.size);
+        smith_state_load_deps(exec, (char *)(uintptr_t)deps.data.data,
+                              (const char *)deps.data.data + deps.data.count[0]);
         if (smith_state_wasteful(state->deps_records, state->deps_count) && !exec->options.dry_run)
             smith_state_compact_deps(exec);
     } else if (deps.error.code == 0 && !exec->options.dry_run) {

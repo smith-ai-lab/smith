@@ -60,7 +60,7 @@ static usize play(io::Console *console, arena::Arena *a, usize turn_max) {
             break;
         }
         test::check_equal(io::console_print(console, "move: ").code, 0);
-        test::check_equal(io::console_print(console, line.data).code, 0);
+        test::check_equal(io::console_print(console, (const char *)line.data.data).code, 0);
         test::check_equal(io::console_print(console, "\n").code, 0);
     }
     return turns;
@@ -84,7 +84,7 @@ export void test_io_fake_console_ends_at_the_end_of_the_input(void) {
     io::console_read_async(&fake.console, &op, &fake.arena, 8);
     test::check_equal(io::run(&fake, 0), 1);
     test::check(op.end);
-    test::check_equal(op.size, 0); // everything was consumed
+    test::check_equal(countof(op.data), 0); // everything was consumed
 }
 
 export void test_io_fake_clock_moves_only_when_told(void) {
@@ -190,21 +190,22 @@ export void test_io_fake_files_write_and_read_back(void) {
     test::check_equal(io::test_add_file(&fake, "same.txt", text).code, 0);
     io::Read read = io::files_read(&fake.files, &fake.arena, "same.txt");
     test::check_equal(read.error.code, 0);
-    test::check_equal(read.size, 17);
+    test::check_equal(countof(read.data), 17);
     io::Read absent = io::files_read(&fake.files, &fake.arena, "absent.txt");
     test::check_equal(absent.error.code, enoent);
     test::check_equal(io::test_add_file(&fake, "../up.txt", "up\n").code, 0); // a path outside the folder
     io::Read up = io::files_read(&fake.files, &fake.arena, "../up.txt");
     test::check_equal(up.error.code, 0);
-    test::check_equal(up.size, 3);
+    test::check_equal(countof(up.data), 3);
     test::check_equal(io::files_write(&fake.files, "new.txt", test_io_bytes("xyz", 3), io::Replace).code,
                       0); // writes land in memory
     io::Read back = io::files_read(&fake.files, &fake.arena, "new.txt");
-    test::check_equal(back.size, 3);
-    test::check(is(back.data, "xyz"));
+    test::check_equal(countof(back.data), 3);
+    test::check(is((const char *)back.data.data, "xyz"));
     test::check_equal(io::files_write(&fake.files, "new.txt", test_io_bytes("q", 1), io::Replace).code,
                       0); // and replace
-    test::check_equal(io::files_read(&fake.files, &fake.arena, "new.txt").size, 1);
+    io::Read one = io::files_read(&fake.files, &fake.arena, "new.txt");
+    test::check_equal(countof(one.data), 1);
 }
 
 // Everything a program does with a folder of files. It is given files and an arena only, so it cannot tell the disk
@@ -228,7 +229,7 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check(contains(taken.message, "one.txt"));
     io::Read kept = io::files_read(files, a, path);
     test::check_equal(kept.error.code, 0);
-    test::check(is(kept.data, "first")); // the second create changed nothing
+    test::check(is((const char *)kept.data.data, "first")); // the second create changed nothing
     io::FileInfo file = io::files_info(files, path);
     test::check_equal(file.error.code, 0);
     test::check(!file.folder);
@@ -241,8 +242,8 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check_equal(io::files_write(files, path, test_io_bytes("", 0), io::Append).code, 0);
     io::Read log = io::files_read(files, a, path);
     test::check_equal(log.error.code, 0);
-    test::check_equal(log.size, 8);
-    test::check(is(log.data, "one\ntwo\n"));
+    test::check_equal(countof(log.data), 8);
+    test::check(is((const char *)log.data.data, "one\ntwo\n"));
 
     io::FileList list = io::files_list(files, a, root); // sorted, files and folders
     test::check_equal(list.error.code, 0);
@@ -273,7 +274,7 @@ static void check_tree(io::Files *files, arena::Arena *a, const char *root) {
     test::check_equal(io::files_write(files, path, test_io_bytes("replaced!", 9), io::Atomic).code, 0);
     io::Read replaced = io::files_read(files, a, path);
     test::check_equal(replaced.error.code, 0);
-    test::check(is(replaced.data, "replaced!"));
+    test::check(is((const char *)replaced.data.data, "replaced!"));
     __builtin_snprintf(path, sizeof path, "%s/a/one.txt.tmp", root);
     test::check_equal(io::files_info(files, path).error.code, enoent); // the temporary file is gone
 }
@@ -289,7 +290,7 @@ static void check_map_and_remove(io::Files *files, arena::Arena *a, const char *
     test::check_equal((usize)mapped.data % 64, 0);
     __builtin_memcpy(mapped.data, "REPLACED?", 9); // private: the file keeps what it had
     io::Read unchanged = io::files_read(files, a, path);
-    test::check(is(unchanged.data, "replaced!"));
+    test::check(is((const char *)unchanged.data.data, "replaced!"));
     __builtin_snprintf(path, sizeof path, "%s/empty", root);
     test::check_equal(io::files_write(files, path, test_io_bytes("", 0), io::Replace).code, 0);
     test::check_equal(io::files_map(files, path).error.code, einval);
@@ -329,7 +330,7 @@ export void test_io_fake_append_many_times(void) {
                           0);
     io::Read log = io::files_read(&fake.files, &fake.arena, "log.txt");
     test::check_equal(log.error.code, 0);
-    test::check_equal(log.size, 22000);
+    test::check_equal(countof(log.data), 22000);
 }
 
 // ---------------------------------------------------------------- net
@@ -342,7 +343,7 @@ static isize read_all(io::Net *net, io::Connection *connection, char *buffer, us
         if (read.error.code != 0) {
             return -1;
         }
-        total += read.size;
+        total += countof(read.data);
         if (read.end) {
             break;
         }
@@ -374,14 +375,14 @@ static void check_scripted_net(io::Io *io) {
     char buffer[64];
     io::Read read = io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(read.error.code, 0);
-    test::check_equal(read.size, 4);
+    test::check_equal(countof(read.data), 4);
     test::check(!read.end);
     test::check_equal(__builtin_memcmp(buffer, "HELL", 4), 0); // a chunk at a time
     test::check_equal(read_all(&io->net, &connection, buffer, sizeof buffer), 7);
     test::check(is(buffer, "O WORLD"));
     read = io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer));
     test::check(read.end);
-    test::check_equal(read.size, 0); // the end is stable
+    test::check_equal(countof(read.data), 0); // the end is stable
     test::check_equal(io::net_close(&io->net, &connection).code, 0);
     test::check_equal(io::net_receive(&io->net, &connection, test_io_buffer(buffer, sizeof buffer)).error.code,
                       ecanceled);
@@ -480,7 +481,7 @@ static usize child_read(io::Io *io, io::Child *child, char *buffer, usize capaci
         if (read.end) {
             break;
         }
-        got += read.size;
+        got += countof(read.data);
     }
     return got;
 }
@@ -511,8 +512,8 @@ export void test_io_fake_child_output_input_and_exit(void) {
         test::check_equal(io::run(&fake, 0), 1);
         test::check(read.done);
         test::check_equal(read.error.code, 0);
-        test::check_equal(read.size, __builtin_strlen(pieces[i]));
-        test::check_equal(__builtin_memcmp(buffer, pieces[i], read.size), 0);
+        test::check_equal(countof(read.data), __builtin_strlen(pieces[i]));
+        test::check_equal(__builtin_memcmp(buffer, pieces[i], countof(read.data)), 0);
     }
     io::child_read_async(&first, &read, test_io_buffer(buffer, sizeof buffer));
     test::check_equal(io::run(&fake, 0), 0); // nothing more, and not over
@@ -522,7 +523,7 @@ export void test_io_fake_child_output_input_and_exit(void) {
     test::check_equal(io::run(&fake, 0), 1);
     test::check(write.done);
     test::check_equal(write.error.code, 0);
-    test::check_equal(write.size, 7);
+    test::check_equal(write.taken, 7);
     test::check(is(io::test_child_input(&fake, 0), "request"));
     io::Op wait = {};
     io::processes_wait_async(&fake.processes, &wait, first.process);
