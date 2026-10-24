@@ -86,6 +86,8 @@ void build(SmithBuild *b) {
     SmithObject users_object = {.compiler = "smith-cc", .source = "users.smith", .output = "build/users.o", .flags = flags};
     smith_object(b, &twice_object);
     smith_object(b, &users_object);
+    SmithObject same_object = {.compiler = "smith-cc", .source = "same.smith", .output = "build/same.o", .flags = flags};
+    smith_object(b, &same_object);
     SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, &pick_object, &twice_object, &users_object, nullptr}};
     smith_program(b, &program);
     smith_default(b, program.step.outputs);
@@ -287,13 +289,19 @@ export i32 f(i32 xs[:]) {
     return m::b(xs);
 }
 EOF2
+# A call of an exported function of the same module and a parameter inside countof(m) and m[i] (issue #154).
+cat >same.smith <<'EOF2'
+module same;
+export i32 f(i32 x) { return x; }
+export i32 g(i32 m[:]) { return f((i32)countof(m)) + m[0]; }
+EOF2
 # The project builds with smith build, and runs.
 out=$(smith build 2>&1)
 status=$?
 expect "the project builds" 0 "$status"
 [ "$status" -eq 0 ] || printf '%s\n' "$out" | tail -n 20
 expect "the program runs" "area 6.000000" "$(build/demo 2>&1)"
-expect "compile_commands.json tells clangd the language of a .smith file" 5 \
+expect "compile_commands.json tells clangd the language of a .smith file" 6 \
     "$(grep -c '"-x"' compile_commands.json)"
 
 client() { "$work/lsp_client" "$(command -v smith)" "$root" "$@" 2>&1; }
@@ -376,6 +384,14 @@ expect_line "after a slice: go-to-definition of the second function, from a call
     "definition users.smith:5:15 -> m.smith:3:12"
 expect "after a slice: the outline has both functions" "symbol m.smith: a symbol m.smith: b" \
     "$(printf '%s\n' "$log" | grep '^symbol m.smith' | tr '\n' ' ' | sed 's/ $//')"
+
+# Go-to-definition inside one module (issue #154): a call of an exported function, and a parameter used in countof(m)
+# and in m[i], go to the function's name and to the parameter.
+log=$(client open same.smith -- definition same.smith 3 33 same.smith:2:12 -- definition same.smith 3 48 same.smith:3:18 -- \
+    definition same.smith 3 54 same.smith:3:18)
+expect_line "same module: go-to-definition of a call of an exported function" "$log" "definition same.smith:3:33 -> same.smith:2:12"
+expect_line "same module: a parameter inside countof(m)" "$log" "definition same.smith:3:48 -> same.smith:3:18"
+expect_line "same module: a parameter in m[i]" "$log" "definition same.smith:3:54 -> same.smith:3:18"
 
 # The many-dimensional forms and the qualifier tags are written as the language writes them (the tags of `restrict` and
 # `const` slices are declared by hand here: their lowering is the compiler's).

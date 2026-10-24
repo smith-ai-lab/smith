@@ -1529,8 +1529,20 @@ class SmithHook final : public TokenHook, public NameSource {
             }
         }
         if (spots.empty()) return;
-        FileID id =
-            SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-copy>"), SrcMgr::C_User, 0, 0, first);
+        // The buffer is a file of the file manager's (a virtual one, with its text given): clangd places a declaration
+        // by its file entry, and the first declaration of an exported function is this copy, so a call of it found no
+        // place for it and go-to-definition said nothing (issue #154). The reply then names the definition's place.
+        static unsigned copies = 0;
+        std::string name = "<smith-copy-" + std::to_string(++copies) + ">";
+        FileID id;
+        if (OptionalFileEntryRef entry =
+                PP.getFileManager().getVirtualFileRef(name, static_cast<off_t>(text.size()), 0)) {
+            SM.overrideFileContents(*entry, llvm::MemoryBuffer::getMemBufferCopy(text, name));
+            id = SM.createFileID(*entry, first, SrcMgr::C_User);
+        } else {
+            id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(text, "<smith-copy>"), SrcMgr::C_User, 0, 0,
+                                 first);
+        }
         SourceLocation start = SM.getLocForStartOfFile(id);
         std::vector<std::pair<unsigned, SourceLocation>> &list = origins[id.getHashValue()];
         for (auto &[token, offset, origin] : spots) {
