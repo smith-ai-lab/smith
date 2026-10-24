@@ -3,7 +3,8 @@
 // Linked into smith and run on every compile, with no flag, by two entries of clang's static registries:
 //   - a ParsedAttrInfo makes `[[smith::affine]]` a known attribute (the compiler, clang-tidy and clangd all read the
 //     registry), kept in the AST as AnnotateAttr("smith::affine"), on a typedef or a tag;
-//   - a PluginASTAction of type AddAfterMainAction, which clang adds to every frontend action (the compiler's, clangd's)
+//   - a PluginASTAction of type AddAfterMainAction, which clang adds to every frontend action (the compiler's,
+//   clangd's)
 //     without a command-line flag, runs the analysis. clang-tidy cannot report a diagnostic it has no id for, so
 //     smith_affine_disable() (shim/tidy.cpp) turns it off there: every compile fails on a second use already.
 //
@@ -158,15 +159,18 @@ class Classifier {
             if (unary->isIncrementDecrementOp()) reset(unary, unary->getSubExpr());
         }
         if (const auto *call = dyn_cast<CallExpr>(stmt)) {
-            for (const Expr *argument : call->arguments()) wholeArray(argument);
+            for (const Expr *argument : call->arguments())
+                wholeArray(argument);
         }
         if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
             loops.push_back(loop);
-            for (const Stmt *child : stmt->children()) walk(child);
+            for (const Stmt *child : stmt->children())
+                walk(child);
             loops.pop_back();
             return;
         }
-        for (const Stmt *child : stmt->children()) walk(child);
+        for (const Stmt *child : stmt->children())
+            walk(child);
     }
 
   private:
@@ -238,8 +242,7 @@ class Classifier {
         }
         if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(expr)) {
             const auto *base = subscript->getBase()->IgnoreParenImpCasts();
-            if (!base->getType()->isArrayType() || !place(base, out))
-                return false;
+            if (!base->getType()->isArrayType() || !place(base, out)) return false;
             return index(subscript->getIdx(), out);
         }
         return slicePlace(expr, out);
@@ -301,16 +304,18 @@ class Classifier {
         if (counter->getInit() == nullptr || !counter->getInit()->EvaluateAsInt(zero, context) ||
             zero.Val.getInt().getExtValue() != 0)
             return false;
-        const auto *condition = dyn_cast_or_null<BinaryOperator>(loop->getCond() ? loop->getCond()->IgnoreParens() : nullptr);
+        const auto *condition =
+            dyn_cast_or_null<BinaryOperator>(loop->getCond() ? loop->getCond()->IgnoreParens() : nullptr);
         if (condition == nullptr || condition->getOpcode() != BO_LT || variableOf(condition->getLHS()) != counter)
             return false;
         Expr::EvalResult size;
         bool bound = mentions(condition->getRHS(), array);
         if (!bound && !condition->getRHS()->isValueDependent() && condition->getRHS()->EvaluateAsInt(size, context))
-            bound = array->getType()->isConstantArrayType() &&
-                    size.Val.getInt().getExtValue() ==
-                        static_cast<long long>(
-                            cast<ConstantArrayType>(array->getType()->getAsArrayTypeUnsafe())->getSize().getZExtValue());
+            bound =
+                array->getType()->isConstantArrayType() &&
+                size.Val.getInt().getExtValue() ==
+                    static_cast<long long>(
+                        cast<ConstantArrayType>(array->getType()->getAsArrayTypeUnsafe())->getSize().getZExtValue());
         if (!bound || !steps(loop->getInc(), counter)) return false;
         return !changes(loop->getBody(), counter);
     }
@@ -387,8 +392,10 @@ class Flow {
 
     static void erase(State &state, const VarDecl *root, const std::vector<Step> &prefix) {
         for (auto at = state.begin(); at != state.end();) {
-            if (at->first.first == root && isPrefix(prefix, at->first.second)) at = state.erase(at);
-            else ++at;
+            if (at->first.first == root && isPrefix(prefix, at->first.second))
+                at = state.erase(at);
+            else
+                ++at;
         }
     }
 
@@ -397,8 +404,10 @@ class Flow {
             bool indexed = false;
             for (const Step &step : at->first.second)
                 if (step.first == counter && step.second == counterIndex) indexed = true;
-            if (indexed || at->first.first == counter) at = state.erase(at);
-            else ++at;
+            if (indexed || at->first.first == counter)
+                at = state.erase(at);
+            else
+                ++at;
         }
     }
 
@@ -436,8 +445,10 @@ class Flow {
             break;
         case Action::AssignAll:
             for (auto at = state.begin(); at != state.end();)
-                if (at->first.first == site.key.first && !at->first.second.empty()) at = state.erase(at);
-                else ++at;
+                if (at->first.first == site.key.first && !at->first.second.empty())
+                    at = state.erase(at);
+                else
+                    ++at;
             break;
         case Action::Reset:
             forget(state, site.variable);
@@ -488,7 +499,8 @@ class Reporter {
     unsigned again, first, loop, index, advice;
 };
 
-// ---- Every function that has a body ----------------------------------------------------------------------------------
+// ---- Every function that has a body
+// ----------------------------------------------------------------------------------
 
 class Consumer : public ASTConsumer {
   public:
@@ -537,11 +549,13 @@ class Consumer : public ASTConsumer {
         if (!cfg) return;
         Flow flow(*cfg, classifier.sites);
         flow.run();
-        for (const Flow::Finding &finding : flow.findings) reporter.report(finding);
+        for (const Flow::Finding &finding : flow.findings)
+            reporter.report(finding);
     }
 };
 
-// ---- The registrations -----------------------------------------------------------------------------------------------
+// ---- The registrations
+// -----------------------------------------------------------------------------------------------
 
 struct AffineAttr final : ParsedAttrInfo {
     AffineAttr() {
@@ -567,8 +581,12 @@ struct AffinePlugin final : PluginASTAction {
         if (!pluginEnabled) return std::make_unique<ASTConsumer>(); // never null: the multiplexer calls it
         return std::make_unique<Consumer>(instance);
     }
-    bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override { return true; }
-    ActionType getActionType() override { return AddAfterMainAction; }
+    bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override {
+        return true;
+    }
+    ActionType getActionType() override {
+        return AddAfterMainAction;
+    }
 };
 
 const ParsedAttrInfoRegistry::Add<AffineAttr> attribute("smith-affine-attr", "[[smith::affine]]");

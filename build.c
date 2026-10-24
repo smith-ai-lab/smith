@@ -375,12 +375,12 @@ typedef struct {
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang", "lld", "format", "tidy",     "clangd",       "symbolize",
-                                   "hook",  "lsp", "lldb",   "lldb_dap", "lldb_explain", "lldb_slices", "affine"};
+    const char *const sources[] = {"clang", "lld",  "format",   "tidy",         "clangd",      "symbolize", "hook",
+                                   "lsp",   "lldb", "lldb_dap", "lldb_explain", "lldb_slices", "affine"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
-        bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
-                       strcmp(sources[i], "affine") == 0;
+        bool is_hook =
+            strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 || strcmp(sources[i], "affine") == 0;
         bool is_lldb = strncmp(sources[i], "lldb", 4) == 0;
         if ((is_hook && !config->hook) || (is_lldb && !config->lldb)) continue;
         build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
