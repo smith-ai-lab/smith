@@ -232,6 +232,42 @@ EOF
         failures=$((failures + 1))
         echo "FAIL  the .smith program does not build"
     fi
+    # A run-time array `T xs[:]` (issue #106) is shown as its elements with its count and the type as written, by dbg and
+    # by the variables request of dap, not as a pointer and a count array. The formatters are lldb's own C++ ones.
+    mkdir "$work/slice"
+    cat >"$work/slice/main.smith" <<'EOF'
+module main;
+int main(void) {
+  i32 raw[3] = {4, 5, 6};
+  i32 xs[:] = raw;
+  char name[:] = "abc";
+  return (int)countof(xs) - 3 + (int)countof(name) - 3;
+}
+EOF
+    if (cd "$work/slice" && "$smith" cc -g -O0 -c main.smith -o main.o && "$smith" cc -g main.o -o slice); then
+        out=$("$smith" dbg -b -o 'b main.smith:6' -o run -o 'frame variable xs name' -o 'frame variable xs[2]' \
+            "$work/slice/slice" 2>&1)
+        expect_contains "dbg shows a slice with its type as written and its count" "$out" "(i32[:]) xs = count=3 {"
+        expect_contains "dbg shows a slice's elements" "$out" "[2] = 6"
+        expect_contains "dbg shows a char slice as text" "$out" '(char[:]) name = "abc" count=3'
+        expect_contains "dbg indexes a slice" "$out" "(i32) xs[2] = 6"
+        "$work/dap_client" "$smith" "$work/slice/slice" "$work/slice/main.smith" 6 xs count=3 >"$work/dap-slice.log" 2>&1
+        status=$?
+        log=$(cat "$work/dap-slice.log")
+        total=$((total + 1))
+        if [ "$status" -eq 0 ]; then
+            echo "ok    dap: a slice session"
+        else
+            failures=$((failures + 1))
+            echo "FAIL  dap slice session (status $status)"
+            printf '%s\n' "$log" | cut -c1-300 | tail -n 30
+        fi
+        expect_contains "dap shows a slice's count as its value and its elements as indexed children" "$log" '"evaluateName":"xs","indexedVariables":3'
+    else
+        total=$((total + 1))
+        failures=$((failures + 1))
+        echo "FAIL  the slice program does not build"
+    fi
     cd "$work/src" || exit 1
 else
     echo "skipped: this smith has no token hook, so no .smith names"

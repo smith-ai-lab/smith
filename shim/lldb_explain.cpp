@@ -14,6 +14,8 @@ extern "C" {
 #include "lldb_explain.h"
 }
 
+extern "C" void smith_lldb_slice_formatters(void);
+
 namespace {
 
 lldb::SBDebugger debugger;
@@ -124,6 +126,7 @@ std::string format(lldb::SBValue value, int depth) {
 
 extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, size_t capacity) {
     smith_tool_start("__smith_lldb", self);
+    smith_lldb_slice_formatters();
     lldb::SBDebugger::Initialize();
     debugger = lldb::SBDebugger::Create(false);
     if (!debugger.IsValid()) {

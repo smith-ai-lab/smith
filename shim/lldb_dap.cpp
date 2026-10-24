@@ -3,10 +3,12 @@
 // every option and every message is lldb-dap's own. lldb's static initializers are deferred (tool.h).
 #include "tool.h"
 
+extern "C" void smith_lldb_slice_formatters(void);
 extern "C" int smith_lldb_dap_tool_main(int argc, char **argv);
 
 // Runs lldb-dap on argv[1 .. argc), as argv[0] (a path in smith's programs folder). Returns its exit status.
 extern "C" int smith_lldb_dap_main(int argc, char **argv) {
     smith_tool_start("__smith_lldb", argv[0]);
+    smith_lldb_slice_formatters();
     return smith_lldb_dap_tool_main(argc, argv);
 }

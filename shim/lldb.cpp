@@ -5,10 +5,12 @@
 // (smith.c sets LLDB_DEBUGSERVER_PATH when the caller has not). lldb's static initializers are deferred (tool.h).
 #include "tool.h"
 
+extern "C" void smith_lldb_slice_formatters(void);
 extern "C" int smith_lldb_driver_main(int argc, const char **argv);
 
 // Runs lldb on argv[1 .. argc), as argv[0] (a path in smith's programs folder). Returns its exit status.
 extern "C" int smith_lldb_main(int argc, char **argv) {
     smith_tool_start("__smith_lldb", argv[0]);
+    smith_lldb_slice_formatters();
     return smith_lldb_driver_main(argc, const_cast<const char **>(argv));
 }
