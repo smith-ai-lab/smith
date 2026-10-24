@@ -6580,6 +6580,29 @@ export i32 width(constexpr type T) {
     }
     return 1;
 }
+==> type-function-sized/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import sizes;
+
+int main(void) {
+    c::printf("%zu %zu %d\n", sizeof(sizes::convert(f64, 2.5)), sizeof(sizes::convert(u8, (u8)1)),
+              (int)sizes::convert(f64, 2.5));
+    return 0;
+}
+==> type-function-sized/src/sizes.smith <==
+module sizes;
+
+// A sized type written in a function over `type`: the importer's replay keeps the compiler's own name for it
+// (`__INT64_TYPE__`), and it is still a type value there (issue #143).
+export type small_of(type t) {
+    return sizeof(t) > 4 ? i64 : t;
+}
+
+export small_of(T) convert(constexpr type T, auto x) {
+    return x;
+}
 ==> type-plain-name/src/main.smith <==
 #include <stdio.h>
 
