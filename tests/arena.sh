@@ -4,7 +4,7 @@
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
-cc=${CC:-cc}
+cc="$smith cc"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
@@ -47,17 +47,17 @@ expect_contains() { # name, text, needle
 
 flags="-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I $here/include"
 
-# The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
+# The module is compiled by a smith whose clang has the token hook (every smith that builds smith has it).
 hook=yes
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/arena.smith"
 
 # 1. The programs of the modes below, plain and under AddressSanitizer (the checks of behavior are tests/arena_test.smith).
-$cc $flags "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/plain" || exit 1
-$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/asan" || exit 1
+$cc $flags "$here/tests/arena.c" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/plain" || exit 1
+$cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/asan" || exit 1
 
 # 2. The capacity stop is on in every build, NDEBUG included.
-$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/bootstrap/lib/smith/arena.c" "$here/bootstrap/lib/smith/contract.c" "$here/lib/trace.c" -o "$work/fast" || exit 1
+$cc $flags -w -DNDEBUG -O2 "$here/tests/arena.c" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/fast" || exit 1
 capture "$work/fast" stop
 expect "stop: the status is abort's" 134 "$rc"
 expect_contains "stop: the message names the request" "$err" "push of 100 bytes"

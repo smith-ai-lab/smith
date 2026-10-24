@@ -1064,26 +1064,6 @@ static constexpr unsigned char smith_embedded_http_header[] = {
 static constexpr unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
-// The runtime's package.c compiles in one translation unit with io, which needs the arena and the random library, and
-// the stage0 knows no .smith: it is built from the library's lowering (bootstrap/, knowledge/smith-language.md),
-// written to .smith/bootstrap/lib/smith/ so that the lowering's own relative include of the headers finds
-// .smith/include/smith.
-static constexpr unsigned char smith_embedded_contract_source[] = {
-#embed "bootstrap/lib/smith/contract.c"
-};
-static constexpr unsigned char smith_embedded_arena_source[] = {
-#embed "bootstrap/lib/smith/arena.c"
-};
-static constexpr unsigned char smith_embedded_random_source[] = {
-#embed "bootstrap/lib/smith/random.c"
-};
-static constexpr unsigned char smith_embedded_io_source[] = {
-#embed "bootstrap/lib/smith/io.c"
-};
-static constexpr unsigned char smith_embedded_inflate_source[] = {
-#embed "bootstrap/lib/smith/inflate.c"
-};
-
 static constexpr unsigned char smith_test_header[] = {
 #embed "include/smith/test.h"
 };
@@ -1320,50 +1300,65 @@ static SmithBuildFile smith_build_file(void) {
     smith_no_convention();
 }
 
+// The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
+// compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
+// through their headers. random declares -ffp-contract=off.
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
+
 // The manifest that compiles build.c into .smith/program with the clang `smith` would pick. When that is smith itself
 // (in_process) the program is `<smith> cc`, since smith's top level is verbs.
-static size_t smith_bootstrap_manifest(char *out, size_t capacity, const char *clang, bool in_process,
-                                       const char *build_source) {
+static size_t smith_build_program_manifest(char *out, size_t capacity, const char *self, const char *clang,
+                                           bool in_process, const char *build_source) {
     char word[PATH_MAX * 2];
     char quoted[PATH_MAX * 2 + 4];
+    char own_word[PATH_MAX * 2];
     smith_quote_word(word, sizeof word, clang);
+    smith_quote_word(own_word, sizeof own_word, self);
     int made = snprintf(quoted, sizeof quoted, "%s%s", word, in_process ? " cc" : "");
     SMITH_ASSERT(made > 0 && (size_t)made < sizeof quoted);
-    // A build.smith is smith's own language, so it compiles as C2y like any .smith (smith cc names no standard): a
-    // rule of its own, which only it uses
+    // A .smith file (a library, or a build.smith) is smith's own language, so it compiles as C2y (smith cc names no
+    // standard) by smith itself, never by an external clang.
     size_t source_length = strlen(build_source);
     bool is_smith = source_length > 6 && strcmp(build_source + source_length - 6, ".smith") == 0;
-    char smith_rule[PATH_MAX * 2 + 256] = "";
-    if (is_smith) {
-        int rule = snprintf(smith_rule, sizeof smith_rule,
-                            "rule cc_smith\n"
-                            "  command = %s -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
-                            "  depfile = $out.d\n"
-                            "  deps = gcc\n"
-                            "  description = smith: compile $in\n",
-                            quoted);
-        SMITH_ASSERT(rule > 0 && (size_t)rule < sizeof smith_rule);
-    }
-    int written =
-        snprintf(out, capacity,
-                 "# Written by smith build. It compiles the build file into .smith/program.\n"
-                 "ninja_required_version = 1.10\n"
-                 "builddir = .smith/bootstrap\n"
-                 "rule cc\n"
-                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
-                 "  depfile = $out.d\n"
-                 "  deps = gcc\n"
-                 "  description = smith: compile $in\n"
-                 "%s"
-                 "rule link\n"
-                 "  command = %s $in -o $out\n"
-                 "  description = smith: link $out\n"
-                 "build .smith/bootstrap/build.o: %s %s\n"
-                 "build .smith/bootstrap/runtime.o: cc .smith/runtime.c\n"
-                 "build .smith/program: link .smith/bootstrap/build.o .smith/bootstrap/runtime.o\n",
-                 quoted, smith_rule, quoted, is_smith ? "cc_smith" : "cc", build_source);
+    int written = snprintf(out, capacity,
+                           "# Written by smith build. It compiles the build file into .smith/program.\n"
+                           "ninja_required_version = 1.10\n"
+                           "builddir = .smith/build-program\n"
+                           "rule cc\n"
+                           "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
+                           "  depfile = $out.d\n"
+                           "  deps = gcc\n"
+                           "  description = smith: compile $in\n"
+                           "rule cc_smith\n"
+                           "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
+                           "  depfile = $out.d\n"
+                           "  deps = gcc\n"
+                           "  description = smith: compile $in\n"
+                           "rule link\n"
+                           "  command = %s $in -o $out\n"
+                           "  description = smith: link $out\n"
+                           "build .smith/build-program/build.o: %s %s\n"
+                           "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
+                           quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
-    return (size_t)written;
+    char objects[1024] = ".smith/build-program/build.o .smith/build-program/runtime.o";
+    size_t objects_length = strlen(objects);
+    for (size_t i = 0; i < sizeof smith_build_program_libraries / sizeof smith_build_program_libraries[0]; i++) {
+        const char *name = smith_build_program_libraries[i];
+        const char *flags = strcmp(name, "random") == 0 ? "-ffp-contract=off" : "";
+        int line = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/%s.o: cc_smith .smith/lib/smith/%s.smith\n  flags = %s\n", name,
+                            name, flags);
+        SMITH_ASSERT(line > 0 && (size_t)line < capacity - (size_t)written);
+        written += line;
+        int more = snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/%s.o",
+                            name);
+        SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
+        objects_length += (size_t)more;
+    }
+    int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
+    SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
+    return (size_t)written + (size_t)linked;
 }
 
 static void smith_build_find_ninja(const char *self, char *out) {
@@ -1597,18 +1592,16 @@ static void smith_build_write_libraries(void) {
     }
 }
 
-static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFile file) {
+static void smith_build_prepare(const char *self, const char *clang, bool in_process, SmithBuildFile file) {
     smith_make_folder(".smith");
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
     smith_make_folder(".smith/lib/smith");
     smith_make_folder(".smith/internal");
-    smith_make_folder(".smith/bootstrap");
-    smith_make_folder(".smith/bootstrap/lib");
-    smith_make_folder(".smith/bootstrap/lib/smith");
+    smith_make_folder(".smith/build-program");
     static char manifest[smith_build_manifest_max];
-    size_t length = smith_bootstrap_manifest(manifest, sizeof manifest, clang, in_process,
+    size_t length = smith_build_program_manifest(manifest, sizeof manifest, self, clang, in_process,
                                              file == SmithBuildFile_Conventions ? smith_conventions_path
                                              : file == SmithBuildFile_Smith     ? "build.smith"
                                                                                 : "build.c");
@@ -1619,16 +1612,6 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/include/smith/http.h", smith_embedded_http_header,
                            sizeof smith_embedded_http_header);
     smith_write_if_changed(".smith/internal/http.c", smith_embedded_http_source, sizeof smith_embedded_http_source);
-    smith_write_if_changed(".smith/bootstrap/lib/smith/contract.c", smith_embedded_contract_source,
-                           sizeof smith_embedded_contract_source);
-    smith_write_if_changed(".smith/bootstrap/lib/smith/arena.c", smith_embedded_arena_source,
-                           sizeof smith_embedded_arena_source);
-    smith_write_if_changed(".smith/bootstrap/lib/smith/random.c", smith_embedded_random_source,
-                           sizeof smith_embedded_random_source);
-    smith_write_if_changed(".smith/bootstrap/lib/smith/io.c", smith_embedded_io_source,
-                           sizeof smith_embedded_io_source);
-    smith_write_if_changed(".smith/bootstrap/lib/smith/inflate.c", smith_embedded_inflate_source,
-                           sizeof smith_embedded_inflate_source);
     if (file == SmithBuildFile_Conventions)
         smith_write_if_changed(smith_conventions_path, (const unsigned char *)smith_conventions_source,
                                sizeof smith_conventions_source - 1);
@@ -1637,7 +1620,7 @@ static void smith_build_prepare(const char *clang, bool in_process, SmithBuildFi
     smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
     smith_write_if_changed(".smith/xz.c", smith_build_xz, sizeof smith_build_xz);
     smith_write_if_changed(".smith/untar.c", smith_build_untar, sizeof smith_build_untar);
-    smith_write_if_changed(".smith/bootstrap/build.ninja", (const unsigned char *)manifest, length);
+    smith_write_if_changed(".smith/build-program/build.ninja", (const unsigned char *)manifest, length);
 }
 
 // What compiles and links build.c: an external clang, found as for any compile, or smith itself when clang is in it
@@ -1728,8 +1711,9 @@ static SmithExecOptions smith_build_options(int count, char **args) {
 
 // SMITH_NINJA=<ninja> runs the manifest with that ninja instead of the executor: the manifest is the same.
 static int smith_build_with_ninja(char *ninja, char **ninja_argv, char **program_argv) {
-    char *bootstrap_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/bootstrap/build.ninja", nullptr};
-    int status = smith_build_spawn(ninja, bootstrap_argv);
+    char *program_manifest_argv[] = {ninja, (char *)"--quiet", (char *)"-f", (char *)".smith/build-program/build.ninja",
+                                     nullptr};
+    int status = smith_build_spawn(ninja, program_manifest_argv);
     if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
     if (status != 0) return status;
     smith_run(ninja, ninja_argv);
@@ -1908,11 +1892,11 @@ static int smith_build_main(int count, char **args, const char *self, const char
 #ifdef __APPLE__
     smith_sdk_environment(self); // the compiles inherit it, as do the programs build.c runs
 #endif
-    smith_build_prepare(clang, in_process, file);
+    smith_build_prepare(self, clang, in_process, file);
     if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
     SmithIo io = smith_io_make(0, nullptr);
-    SmithExecOptions bootstrap = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
-    int status = smith_exec_run(&io, ".smith/bootstrap/build.ninja", &bootstrap);
+    SmithExecOptions program_options = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
+    int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
     if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
     if (status != 0) return status;
     return smith_exec_run(&io, ".smith/build.ninja", &options);
@@ -2927,8 +2911,8 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
-// text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked from its lowering in
-// bootstrap/), and on the io included above.
+// text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked as its own object),
+// and on the io module.
 #ifdef SMITH_MCP
 #include "lib/json.c"
 #include "runtime/mcp.c"

@@ -22,7 +22,7 @@ if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
 fi
 
 mkdir -p "$work/tree"
-for item in smith.c build.c bootstrap include lib runtime scripts templates tests shim; do
+for item in smith.c build.c include lib runtime scripts templates tests shim; do
     cp -R "$here/$item" "$work/tree/$item"
 done
 cd "$work/tree" || exit 1

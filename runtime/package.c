@@ -29,25 +29,19 @@
 #include <time.h>
 #include <unistd.h>
 
-#if __has_include("bootstrap/lib/smith/inflate.c")
-#include "bootstrap/lib/smith/inflate.c"
-#else
-#include "../bootstrap/lib/smith/inflate.c"
-#endif
+// The libraries are .smith modules, compiled by the smith that builds this file and linked beside it (smith.c's program,
+// the build program's manifest): only their headers are seen here.
+#include <smith/inflate.h>
 
 #ifdef __APPLE__
-#if __has_include("bootstrap/lib/smith/io.c")
-#include "bootstrap/lib/smith/arena.c"
-#include "bootstrap/lib/smith/contract.c"
-#include "bootstrap/lib/smith/io.c"
-#include "bootstrap/lib/smith/random.c"
+#include <smith/arena.h>
+#include <smith/contract.h>
+#include <smith/io.h>
+#include <smith/random.h>
+#if __has_include("internal/http.c")
 #include "internal/http.c"
 #include "lib/trace.c"
 #else
-#include "../bootstrap/lib/smith/arena.c"
-#include "../bootstrap/lib/smith/contract.c"
-#include "../bootstrap/lib/smith/io.c"
-#include "../bootstrap/lib/smith/random.c"
 #include "../lib/http.c"
 #include "../lib/trace.c"
 #endif

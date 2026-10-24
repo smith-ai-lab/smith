@@ -1,7 +1,7 @@
 // Tests of `smith mcp` on the fake io (issue #22): a scripted client on the console and a scripted `smith dap` child,
 // so that the whole server runs in one process, with no debugger, no clock and no network. The server is runtime/mcp.c
 // included here as smith.c includes it, with the libraries and the protocol code it stands on (the text module is
-// linked, as in smith: tests/mcp.sh compiles bootstrap/lib/smith/text.c with this file); tests/mcp.sh builds this
+// linked, as in smith: tests/mcp.sh compiles lib/smith/text.smith with this file, and the other libraries too); tests/mcp.sh builds this
 // file under the sanitizers and runs it. The real thing, a real adapter and a real program, is tests/mcp.sh's other
 // half.
 //
@@ -9,10 +9,10 @@
 // sends numbered from 1, so a frame answers the request of that number), and files. The server's output is one JSON
 // message a line; `reply` finds the one answering an id and gives the text of its result. In JSON written here an
 // apostrophe stands for a double quote.
-#include "../bootstrap/lib/smith/arena.c"
-#include "../bootstrap/lib/smith/contract.c"
-#include "../bootstrap/lib/smith/io.c"
-#include "../bootstrap/lib/smith/random.c"
+#include <smith/arena.h>
+#include <smith/contract.h>
+#include <smith/io.h>
+#include <smith/random.h>
 #include "../lib/json.c"
 #include "../lib/trace.c"
 #include "../runtime/protocol/dap.c"

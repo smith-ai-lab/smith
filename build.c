@@ -1,17 +1,14 @@
 // The build of smith, run with `smith build`. It replaces the Makefile and runs the commands the Makefile ran.
 //
-// Builds smith with any C23 compiler: smith.c is one file and needs nothing but libc. The standard is gnu23 (GNU mode
-// keeps realpath and readlink declared on Linux), so it needs a clang with constexpr, nullptr and [[noreturn]]; a
-// recent one has them.
-//
-// smith builds itself, so the installed smith must have `smith build`. A fresh clone, or an installed smith that is
-// broken, needs only a C23 compiler:
-//   mkdir -p build && cc -std=gnu23 smith.c -o build/stage0 && build/stage0 build install -DCC=cc
+// smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
+// modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith runs scripts/stage0.sh, which downloads the
+// newest release of an ancestor commit and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
 // prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
-// smith build: the default, text-exhaustive, headers, bootstrap, test-compare -DREAL=..., install (-DCC=...,
+// smith build: the default, text-exhaustive, headers, test-compare -DREAL=..., install (-DCC=...,
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
@@ -32,6 +29,7 @@ typedef struct {
     const char *cxx;     // compiles the shims
     bool lldb;           // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (scripts/prove-libs.sh), else ""
+    bool linkable;       // the install has what smith links (else the default target stops and says `smith build llvm`)
     bool hook;           // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
     const char
         *enzyme; // the folder with libEnzymeStatic-23.a (scripts/enzyme.sh): smith differentiates at link time, else ""
@@ -40,6 +38,12 @@ typedef struct {
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
 static const char *build_variable(SmithBuild *b, const char *name, const char *fallback, const char *description) {
     return smith_option_value(b, name, smith_env(b, name, fallback), description);
+}
+
+// The flags of a .smith source: the build's C flags, the include folder of the generated headers, and C2y (as `smith cc`
+// compiles a module, so `_Countof` works).
+static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *config) {
+    return smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-std=gnu2y", nullptr}, nullptr);
 }
 
 // The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
@@ -100,12 +104,12 @@ static int build_protocol_run(SmithRun *run) {
 }
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. text is the module smith::text, compiled from its lowering in bootstrap/.
+// scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
 static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {"scripts/protocol.c",
-                                   "bootstrap/lib/smith/arena.c",
-                                   "bootstrap/lib/smith/contract.c",
-                                   "bootstrap/lib/smith/text.c",
+                                   "lib/smith/arena.smith",
+                                   "lib/smith/contract.smith",
+                                   "lib/smith/text.smith",
                                    "lib/json.c",
                                    "lib/trace.c"};
     SmithObject objects[6] = {};
@@ -117,6 +121,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
             .output = smith_fmt(b, "%s/protocol-%zu.o", folder, i),
             .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", nullptr}, nullptr),
         };
+        if (strstr(sources[i], ".smith") != nullptr) objects[i].flags = build_smith_flags(b, config);
         smith_object(b, &objects[i]);
         linked[i] = &objects[i];
     }
@@ -175,51 +180,6 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
     check.test = true; // part of `smith test`, so of `smith check`
     smith_task(b, "headers", &rewrite);
     smith_task(b, "check-headers", &check);
-}
-
-// The .smith sources that smith's own build compiles (the protocol generator, and later smith itself): bootstrap/ holds
-// the lowering of each, as C, at the same path with `.c` for `.smith` (bootstrap/lib/smith/text.c). The build compiles
-// that C with whatever compiler builds smith (CC, a plain `cc` included), so neither the stage0 nor an older installed
-// smith needs to know the newest language, and a fresh clone builds with a C23 compiler alone. A source joins this list
-// when smith's build compiles it. `smith build bootstrap` rewrites the files with the smith just built;
-// `check-bootstrap` (a test, so part of `smith check`) lowers again and fails naming each file that is not what its
-// source lowers to now. scripts/bootstrap.sh writes a file: a first line saying where it is from, `// NOLINTBEGIN` (it
-// is generated, so `smith lint` leaves it alone, and it ends with `// NOLINTEND`), an include of the module's generated
-// header, then `smith cc --smith-lower` of the source less what the header says (its includes and type definitions).
-// It needs no compiler, so the stage0 writes the same bytes (knowledge/smith-bootstrap.md).
-static const char *const build_bootstrap_sources[] = {"lib/smith/arena.smith",
-                                                      "lib/smith/contract.smith",
-                                                      "lib/smith/inflate.smith",
-                                                      "lib/smith/io.smith",
-                                                      "lib/smith/random.smith",
-                                                      "lib/smith/text.smith",
-                                                      nullptr};
-
-// Lowers each source into a scratch folder and runs `action` (sh, with $src, $out and $dir/out.c) on it.
-static SmithStep build_bootstrap_step(SmithBuild *b, const BuildConfig *config, const char *action) {
-    const char *sources = smith_join(b, build_bootstrap_sources, " ");
-    return (SmithStep){
-        .command = smith_list(b, "sh", "-c",
-                              smith_fmt(b,
-                                        "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
-                                        "for src in %s; do out=bootstrap/${src%%.smith}.c; "
-                                        "sh scripts/bootstrap.sh \"$0\" \"$src\" \"$dir/out.c\" || exit 1; "
-                                        "%s; done; exit $status",
-                                        sources, action),
-                              config->binary, nullptr),
-        .inputs = smith_list(b, config->binary, "scripts/bootstrap.sh", nullptr),
-    };
-}
-
-static void build_bootstrap(SmithBuild *b, const BuildConfig *config) {
-    SmithStep rewrite =
-        build_bootstrap_step(b, config, "mkdir -p \"$(dirname \"$out\")\" && cp \"$dir/out.c\" \"$out\"");
-    SmithStep check = build_bootstrap_step(b, config,
-                                           "cmp -s \"$dir/out.c\" \"$out\" || { echo \"$out is not what $src lowers "
-                                           "to; run smith build bootstrap\"; status=1; }");
-    check.test = true;
-    smith_task(b, "bootstrap", &rewrite);
-    smith_task(b, "check-bootstrap", &check);
 }
 
 // The libraries of the LLVM install that the in-process clang and the tools link: libsmithtools.a first, in whole,
@@ -484,19 +444,14 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/arena.smith",
     "include/smith/autodiff.h",
     "lib/smith/autodiff.smith",
-    "bootstrap/lib/smith/arena.c",
     "include/smith/inflate.h",
     "lib/smith/inflate.smith",
-    "bootstrap/lib/smith/inflate.c",
     "include/smith/io.h",
     "lib/smith/io.smith",
-    "bootstrap/lib/smith/io.c",
     "include/smith/random.h",
     "lib/smith/random.smith",
-    "bootstrap/lib/smith/random.c",
     "include/smith/contract.h",
     "lib/smith/contract.smith",
-    "bootstrap/lib/smith/contract.c",
     "include/smith/format.h",
     "lib/smith/format.smith",
     "include/smith/math.h",
@@ -545,57 +500,70 @@ static const char *const build_smith_inputs[] = {
 // (the C++ inline functions and templates of LLVM, 57,000 of them) that the executable exports is bound by dyld at
 // every start against every image loaded, which cost 4 ms in the smith without lldb, and 9 ms more with the frameworks
 // lldb loads.
+// The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
+// only their headers); text is its own object beside them because smith mcp defines SmithText itself.
+static const char *const build_linked_libraries[] = {"arena", "contract", "inflate", "io", "random", "text"};
+
+// The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
+// Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
+static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *config) {
+    if (config->linkable) return smith_list(b, nullptr);
+    SmithStep stop = {
+        .command = (const char *[]){"sh", "-c",
+                                    "echo \"smith: the LLVM install $0 is missing or too old: run smith build llvm "
+                                    "(about 9 minutes once)\" >&2; exit 1",
+                                    config->llvm, nullptr},
+        .outputs = (const char *[]){"build/llvm-required", nullptr},
+    };
+    smith_step(b, &stop);
+    return stop.outputs;
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    bool in_process = config->llvm[0] != '\0';
-    const char *pack = in_process ? build_resource_pack(b, config, folder) : "";
+    const char *pack = build_resource_pack(b, config, folder);
     SmithObject object = {
         .compiler = config->cc,
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = smith_cat(
-            b, config->cflags, (const char *[]){"-DSMITH_COMMIT_LINKED", nullptr},
-            smith_when(b, in_process,
-                       (const char *[]){"-DSMITH_IN_PROCESS", smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id),
-                                        nullptr}),
-            smith_when(b, in_process && config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
-            smith_when(b, in_process && config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
-            smith_when(b, in_process && config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-            smith_when(b, in_process && config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
-            smith_when(b, in_process, (const char *[]){"-DSMITH_MCP", nullptr}), nullptr),
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, nullptr),
+            b, config->cflags, (const char *[]){"-I", "include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+            (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
+            smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
+            smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
+            smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
+        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs,
+                                     build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
-    // smith mcp stands on the text module, which is its lowering in bootstrap/ (it defines SmithText itself, so it is
-    // an object of its own beside smith.c, which sees only <smith/text.h>).
-    SmithObject text = {
-        .compiler = config->cc,
-        .source = "bootstrap/lib/smith/text.c",
-        .output = smith_fmt(b, "%s/text.o", folder),
-        .flags = config->cflags,
-    };
-    const SmithObject *objects[24] = {&object, &commit};
-    if (in_process) {
-        smith_object(b, &text);
-        objects[2] = &text;
-        build_shims(b, config, folder, pack, &shims, objects + 3);
+    SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
+    const SmithObject *objects[32] = {&object, &commit};
+    size_t count = 2;
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+        libraries[i] = (SmithObject){
+            .compiler = config->cc,
+            .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
+            .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
+            .flags = build_smith_flags(b, config),
+        };
+        smith_object(b, &libraries[i]);
+        objects[count++] = &libraries[i];
     }
+    build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags = smith_cat(
-            b, smith_when(b, in_process, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr}),
-            smith_when(b, in_process && config->enzyme[0] != '\0',
-                       (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
-            nullptr),
+        .flags = smith_cat(b, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+                           smith_when(b, config->enzyme[0] != '\0',
+                                      (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
+                           nullptr),
         .objects = objects,
-        .libraries =
-            in_process ? smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
-                                   build_enzyme_libraries(b, config), build_clang_libraries(b, config->llvm),
-                                   build_lldb_libraries(b, config),
-                                   (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr)
-                       : nullptr,
+        .libraries = smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
+                               build_enzyme_libraries(b, config), build_clang_libraries(b, config->llvm),
+                               build_lldb_libraries(b, config),
+                               (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));
@@ -647,7 +615,11 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
     // The units runner's files are built in the project of tests/units (by the smith under test); here they are objects
     // nobody asks for, so that their modules' headers are written (by the smith under test too) and lint reads them.
-    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr));
+    // (A fresh clone has no such smith yet: its first build leaves them out, since the libraries' compiles wait for every
+    // header and these headers would wait for the smith those compiles make.)
+    const char *const *tests =
+        access(smith_fmt(b, "%s/smith-cc", folder), X_OK) == 0 ? smith_glob(b, smith_list(b, "tests/*.smith", nullptr))
+                                                               : smith_list(b, nullptr);
     SmithObject units[64] = {};
     for (size_t i = 0; tests[i] != nullptr && i < _Countof(units); i++) {
         units[i] = (SmithObject){.compiler = smith_fmt(b, "%s/smith-cc", folder),
@@ -682,7 +654,6 @@ typedef struct {
 static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
     {"autodiff", "autodiff", nullptr, nullptr, 1},
-    {"bootstrap", "bootstrap", nullptr, nullptr, 0},
     {"build-0", "build", "0/4", nullptr, 1},
     {"build-1", "build", "1/4", nullptr, 1},
     {"build-2", "build", "2/4", nullptr, 1},
@@ -1093,24 +1064,24 @@ static bool build_has_command_hook(SmithBuild *b, const char *llvm) {
     return strcmp(smith_capture(b, (const char *[]){"sh", "-c", script, llvm, nullptr}), "yes") == 0;
 }
 
-// The LLVM install that `smith build llvm` makes, which smith links clang from; "" when there is none (and on other
-// systems than macOS, where it is not built), so that the plain smith, which runs an external clang, is built instead.
+// Whether the LLVM install has what smith links clang, lld and the tools from.
+static bool build_llvm_linkable(SmithBuild *b, const char *llvm) {
+    return build_has_command_hook(b, llvm) && access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
+           access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
+           access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
+           access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
+}
+
+// The LLVM install that `smith build llvm` makes, which smith links clang from (smith always compiles in its own
+// process). The folder is named even when nothing is built there yet: the default target says so, the others work.
 static const char *build_llvm_install(SmithBuild *b) {
-    const char *llvm =
-        build_variable(b, "LLVM", smith_fmt(b, "%s/install", build_llvm_folder(b)),
-                       "the LLVM install smith links clang from; empty: a smith that runs an external clang");
-    if (strcmp(b->os, "Darwin") != 0) return "";
-    bool linkable = build_has_command_hook(b, llvm) && access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
-                    access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
-                    access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
-                    access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
-    return linkable ? llvm : "";
+    return build_variable(b, "LLVM", smith_fmt(b, "%s/install", build_llvm_folder(b)),
+                          "the LLVM install smith links clang from");
 }
 
 // Z3 and Alive2 built beside the LLVM install (scripts/prove-libs.sh puts them in ../prove of the install); "" when
 // there are none, and the smith has no `smith prove`.
 static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
-    if (llvm[0] == '\0') return "";
     const char *folder = smith_fmt(b, "%s/../prove", llvm);
     bool linkable = access(smith_fmt(b, "%s/lib/libz3.a", folder), R_OK) == 0 &&
                     access(smith_fmt(b, "%s/lib/libbitwuzla.a", folder), R_OK) == 0 &&
@@ -1120,8 +1091,7 @@ static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
 
 // Enzyme's static library, built beside the LLVM install (scripts/enzyme.sh); "" when there is none, and the smith
 // cannot differentiate.
-static const char *build_enzyme_install(SmithBuild *b, const char *llvm) {
-    if (llvm[0] == '\0') return "";
+static const char *build_enzyme_install(SmithBuild *b) {
     const char *folder = build_enzyme_folder(b);
     return access(smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", folder), R_OK) == 0 ? folder : "";
 }
@@ -1131,27 +1101,23 @@ void build(SmithBuild *b) {
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
     const char *folder = build_variable(b, "BUILD", smith_fmt(b, "build/%s-%s", b->os, b->arch), "the build folder");
     BuildConfig config = {
-        .cc = build_variable(b, "CC", "cc", "the compiler that builds smith"),
+        .cc = build_variable(b, "CC", "smith-cc", "the smith that compiles smith: it compiles the .smith libraries"),
         .prefix = build_variable(b, "PREFIX", smith_fmt(b, "%s/.local", smith_env(b, "HOME", "")), "install here"),
         .werror = werror,
         .llvm = build_llvm_install(b),
     };
+    config.linkable = build_llvm_linkable(b, config.llvm);
     config.llvm_id =
-        config.llvm[0] != '\0'
-            ? smith_capture(b, (const char *[]){"cat", smith_fmt(b, "%s/lib/smith-clang.id", config.llvm), nullptr})
-            : "";
+        smith_capture_or(b, (const char *[]){"cat", smith_fmt(b, "%s/lib/smith-clang.id", config.llvm), nullptr}, "");
     // Not the environment's CXX, which may be smith-c++ itself: the shim wants LLVM's own headers and a clang.
-    // The compiler `compare` checks smith against: the clang of the LLVM smith links (it must match on every case),
-    // else Homebrew's, the one a smith without clang inside runs on macOS. Homebrew's differs from it in its version
-    // string.
-    const char *brew = strcmp(b->os, "Darwin") == 0 ? "/opt/homebrew/opt/llvm/bin/clang" : "";
-    config.real = build_variable(b, "REAL", config.llvm[0] != '\0' ? smith_fmt(b, "%s/bin/clang", config.llvm) : brew,
+    // The compiler `compare` checks smith against: the clang of the LLVM smith links (it must match on every case).
+    config.real = build_variable(b, "REAL", smith_fmt(b, "%s/bin/clang", config.llvm),
                                  "the compiler `compare` checks smith against");
     config.cxx = smith_option_value(b, "CXX", smith_fmt(b, "%s/bin/clang++", config.llvm), "compiles shim/clang.cpp");
     config.prove = build_prove_folder(b, config.llvm);
-    config.hook = config.llvm[0] != '\0' && build_has_hook(b, config.llvm);
-    config.enzyme = build_enzyme_install(b, config.llvm);
-    config.lldb = config.llvm[0] != '\0' && access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
+    config.hook = build_has_hook(b, config.llvm);
+    config.enzyme = build_enzyme_install(b);
+    config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
         smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
@@ -1162,7 +1128,6 @@ void build(SmithBuild *b) {
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
     build_headers(b, &config);
-    build_bootstrap(b, &config);
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_compare(b, &config, config.binary);
     build_install(b, &config, config.binary, tested);
