@@ -363,20 +363,6 @@ expect "test: a project with no tests says so" 0 "$rc"
 expect_contains "test: ... in smith test's words" "$err" "the build declares no tests"
 cd "$work" || exit 1
 
-# 5. The stage0 builds a C project by convention: it is plain C, so the build program needs nothing but a C compiler.
-cc -std=gnu23 "$here/smith.c" -o "$work/stage0" 2>"$work/stage0.err"
-expect "stage0: builds with one cc command" 0 "$?"
-mkdir -p "$work/zero/bin" && ln -s "$work/stage0" "$work/zero/bin/smith-cc" && ln -s "$work/stage0" "$work/zero/bin/smith-c++"
-if [ -z "${SMITH_CLANG:-}" ] && [ ! -x /opt/homebrew/opt/llvm/bin/clang ]; then SMITH_CLANG=/usr/bin/clang; export SMITH_CLANG; fi
-cp -R "$work/calc" "$work/zero/calc" && rm -rf "$work/zero/calc/.smith" "$work/zero/calc/build"
-cd "$work/zero/calc" || exit 1
-capture env PATH="$work/zero/bin:$PATH" "$work/stage0" build
-expect "stage0: builds the C project" 0 "$rc"
-expect "stage0: ... to the same program" "42" "$(build/debug/calc)"
-capture env PATH="$work/zero/bin:$PATH" "$work/stage0" run
-expect "stage0: smith run runs it" "42" "$(last "$out")"
-cd "$work" || exit 1
-
 # 6. Several programs, the defaults every program shares, folders' flags, includes found through -I, helpers in the tests.
 mkdir -p "$work/multi" && cd "$work/multi" || exit 1
 mkdir -p src/base tools tests

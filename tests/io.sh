@@ -3,7 +3,7 @@
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
-cc=${CC:-cc}
+cc="$smith cc"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
@@ -45,7 +45,7 @@ expect_contains() { # name, text, needle
 }
 
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/io.c $here/bootstrap/lib/smith/io.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/random.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
+sources="$here/tests/io.c $here/lib/smith/io.smith $here/lib/smith/arena.smith $here/lib/smith/random.smith $here/lib/smith/contract.smith $here/lib/trace.c"
 mkdir "$work/run" "$work/bin"
 cd "$work/run" || exit 1
 
@@ -66,7 +66,7 @@ expect "checks: ... and nothing was printed to stderr" "" "$err"
 hook=yes
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/io.smith"
-lowering="$here/bootstrap/lib/smith/io.c"
+lowering="$here/lib/smith/io.smith"
 game="-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 -Wmissing-variable-declarations -Wcomma -Wunreachable-code"
 for std in gnu23 gnu2y; do
     capture $cc -std=$std $warn -I "$here/include" -c "$lowering" -o "$work/io.o"

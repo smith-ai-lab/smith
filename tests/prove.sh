@@ -214,7 +214,7 @@ expect_contains "readonly: ... with its line" "$out" "readonly.c:54: smith_ensur
 # 7c2b. What a caller reads after a callee with UBSan checks and a contract is a value, not undefined behaviour (#62).
 prove --function=add_row "$cases/after_call.c"
 expect "after_call: add_row is proved" 0 "$rc"
-prove --function=replay_make --library="$here/bootstrap/lib/smith/arena.c" "$cases/arena_sret.c"
+prove --function=replay_make --library="$here/lib/smith/arena.smith" "$cases/arena_sret.c"
 expect "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)" 0 "$rc"
 
 # 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).
@@ -655,9 +655,9 @@ expect_contains "gate: ... and the module's size before and after" "$out" " inst
 expect_contains "gate: ... counting its functions" "$out" "phase gate: 2 functions with a contract of their own"
 expect_contains "gate: ... a failing assert is still refuted" "$out" "assertion.c:16: assert(x < 50) may fail"
 
-# 16c. The library that defines the contract functions (bootstrap/lib/smith/contract.c) in the program is no reason to
+# 16c. The library that defines the contract functions (lib/smith/contract.smith) in the program is no reason to
 # inline them: the contracts stay points, and the function is still a unit. Only what a unit reaches is flattened.
-prove "$cases/clamp.c" "$here/bootstrap/lib/smith/contract.c"
+prove "$cases/clamp.c" "$here/lib/smith/contract.smith"
 expect "contract.c in the program: the contracts are still proved" 0 "$rc"
 expect_contains "contract.c in the program: ... as before" "$out" "proved, 0 failed"
 

@@ -187,18 +187,6 @@ for verb in run test; do
 done
 cd "$work" || exit 1
 
-# 4. The stage0 has no hook, so it refuses a build.smith and says what is needed.
-cc -std=gnu23 "$here/smith.c" -o "$work/stage0" 2>"$work/stage0.err"
-expect "stage0: builds with one cc command" 0 "$?"
-mkdir "$work/zero" && cp "$work/shapes/build.smith" "$work/zero/build.smith" && cd "$work/zero" || exit 1
-capture "$work/stage0" build
-expect "stage0: refuses build.smith: status 2" 2 "$rc"
-expect_contains "stage0: ... says the full smith is needed" "$err" "build.smith needs the full smith"
-expect "stage0: ... and compiles nothing" no "$(exists .smith/program)"
-capture "$work/stage0" build --dump-config
-expect "stage0: --dump-config of a folder with a build file: status 0" 0 "$rc"
-cd "$work" || exit 1
-
 # 5. --dump-config of a .smith project: a build.smith that builds as the conventions do.
 sources "$work/dump"
 cd "$work/dump" || exit 1

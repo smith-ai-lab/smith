@@ -6,7 +6,7 @@
 //   pins     print the pinned values as C source, for updating them in tests/random_test.smith on purpose
 //   assert   a normal with a deviation of 0, which must abort
 //   stats    print the measured worst errors
-#include "../bootstrap/lib/smith/random.c"
+#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/random.sh
 
 #include <assert.h>
 #include <float.h>

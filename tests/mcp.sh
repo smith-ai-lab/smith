@@ -63,7 +63,7 @@ for mode in asan fast ndebug; do
     ndebug) flags="-O2 -DNDEBUG" ;;
     esac
     # shellcheck disable=SC2086
-    if ! $compile $flags "$here/tests/mcp_fake.c" "$here/bootstrap/lib/smith/text.c" -o "$work/mcp_fake_$mode" 2>"$work/build.log"; then
+    if ! $compile $flags -I "$here/include" "$here/tests/mcp_fake.c" "$here/lib/smith/text.smith" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/smith/io.smith" "$here/lib/smith/random.smith" -o "$work/mcp_fake_$mode" 2>"$work/build.log"; then
         total=$((total + 1))
         failures=$((failures + 1))
         echo "FAIL  fake io, $mode: tests/mcp_fake.c does not build"

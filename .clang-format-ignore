@@ -13,8 +13,6 @@ runtime/protocol/mcp.c
 runtime/protocol/mcp.h
 tests/protocol/test_protocol_dap.c
 tests/protocol/test_protocol_mcp.c
-# The lowering of lib/smith/text.smith (smith build bootstrap).
-bootstrap/**
 # The owner's scan reference, copied as it is (the hash of each file is in tests/autodiff/scan/COPIED.sha256).
 tests/autodiff/scan/**
 tests/build_fixtures/**

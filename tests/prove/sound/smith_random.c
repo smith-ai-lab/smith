@@ -1,8 +1,8 @@
 // proves: smith_uniform_int64_sample smith_random_around smith_bernoulli_sample
-// link: bootstrap/lib/smith/arena.c
+// link: lib/smith/arena.smith
 // smith's random draws: the proved functions, the ensures of the trusted draw_index (callers assume it), and what each
 // draw promises in its comment (a value inside its range).
-#include "../../../bootstrap/lib/smith/random.c"
+#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/prove_sound.sh
 #include "sound.h"
 
 static SmithKey key_random(void) {

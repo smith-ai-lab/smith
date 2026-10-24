@@ -3,7 +3,7 @@
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
-cc=${CC:-cc}
+cc="$smith cc"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 export XDG_CACHE_HOME=$work/xdg-cache # the module and package caches of the tests, never the real ones
@@ -47,11 +47,12 @@ expect_contains() { # name, text, needle
 # The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
 expected_digest=4a2e897669d609ac
 warn="-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes -Wstrict-prototypes -Wvla -Werror"
-sources="$here/tests/random.c $here/bootstrap/lib/smith/arena.c $here/bootstrap/lib/smith/contract.c $here/lib/trace.c"
+# tests/random.c reaches the module's static functions by including its raw lowering (what `smith cc --smith-lower` writes).
+mkdir "$work/lowered" || exit 1
+"$smith" cc --smith-lower "$here/lib/smith/random.smith" >"$work/lowered/random_lowered.c" || exit 1
+sources="-I $work/lowered $here/tests/random.c $here/lib/smith/arena.smith $here/lib/smith/contract.smith $here/lib/trace.c"
 
-# The module itself is compiled by a smith whose clang has the token hook; a stage0 skips the cases that need it.
 hook=yes
-printf 'int main(void) { return 0; }\n' >"$work/probe.smith"
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/random.smith"
 mflags="-I $here/include"
@@ -95,16 +96,11 @@ digest "-std=gnu2y" -std=gnu2y -O2
 digest "-ffp-contract=fast, which the pragma defeats" -std=gnu23 -O2 -ffp-contract=fast
 digest "-O3 -march=native -ffp-contract=fast" -std=gnu23 -O3 -march=native -ffp-contract=fast
 # 4. The refusals.
-capture $cc -std=gnu23 -I "$here/include" -ffast-math -c "$here/bootstrap/lib/smith/random.c" -o "$work/r.o"
-expect "refusal: -ffast-math fails to compile (the lowering)" yes "$([ "$rc" -ne 0 ] && echo yes)"
+capture $cc -std=gnu23 -I "$here/include" -ffast-math -c "$module" -o "$work/r.o"
+expect "refusal: -ffast-math fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
 expect_contains "refusal: ... with the reason" "$err" "-ffast-math changes floating-point results"
-capture $cc -std=gnu23 -I "$here/include" -Ofast -c "$here/bootstrap/lib/smith/random.c" -o "$work/r.o"
-expect "refusal: -Ofast fails to compile (the lowering)" yes "$([ "$rc" -ne 0 ] && echo yes)"
-if [ $hook = yes ]; then
-    capture "$smith" cc -std=gnu23 $mflags -ffast-math -c "$module" -o "$work/r.o"
-    expect "refusal: -ffast-math fails to compile (the module)" yes "$([ "$rc" -ne 0 ] && echo yes)"
-    expect_contains "refusal: ... with the reason" "$err" "-ffast-math changes floating-point results"
-fi
+capture $cc -std=gnu23 -I "$here/include" -Ofast -c "$module" -o "$work/r.o"
+expect "refusal: -Ofast fails to compile" yes "$([ "$rc" -ne 0 ] && echo yes)"
 capture "$work/fast" assert
 expect "refusal: a normal with deviation 0 aborts" 134 "$rc"
 expect_contains "refusal: ... a failed requires, as a contract fails" "$err" "smith-trace begin requires failed"

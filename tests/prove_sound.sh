@@ -36,8 +36,13 @@ check() { # name, status (0 is ok), details
     echo "skipped: this smith has no prover"
     exit 0
 }
-flags="-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all -ftrivial-auto-var-init=pattern -I $here/include -w"
-common="$here/lib/trace.c $here/bootstrap/lib/smith/contract.c"
+# Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`).
+mkdir "$work/lowered" || exit 1
+for module in arena random; do
+    "$smith" cc --smith-lower "$here/lib/smith/$module.smith" >"$work/lowered/${module}_lowered.c" || exit 1
+done
+flags="-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all -ftrivial-auto-var-init=pattern -I $here/include -I $work/lowered -w"
+common="$here/lib/trace.c $here/lib/smith/contract.smith"
 cd "$here" || exit 1
 
 # 1. The harnesses: one job each (prove, build, run), side by side.
@@ -49,7 +54,7 @@ harness() { # source file of the harness
     files=$(sed -n 's,^// prove-files: *,,p' "$1")
     link=$(sed -n 's,^// link: *,,p' "$1")
     [ -n "$files" ] || files=$1
-    out=$("$smith" prove -v $files -- -I "$here/include" 2>&1)
+    out=$("$smith" prove -v $files -- -I "$here/include" -I "$work/lowered" 2>&1)
     for fn in $proves; do
         case $out in
         *"ok    $fn  ("*) ;;

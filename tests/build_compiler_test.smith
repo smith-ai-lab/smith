@@ -8,15 +8,6 @@ import smith::io;
 import smith::test;
 import scratch;
 
-// 12. A smith built with one command.
-export void test_build_one_command_builds_a_smith(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built = scratch::sh(&p, "cc -std=gnu23 \"$SMITH_REPO/smith.c\" -o one-command-smith");
-    scratch::expect_status("one command: cc -std=gnu23 smith.c builds a smith", 0, &built);
-    scratch::Run version = scratch::sh(&p, "./one-command-smith version");
-    scratch::expect_contains("one command: the built smith runs", version.out, "smith 0.");
-}
-
 // 13. ninja sees the same command (`smith ...`) before and after, so the objects would look up to date. Each object and
 // program depends on a file in .smith/compiler/ that says which compiler it is.
 export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {

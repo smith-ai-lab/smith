@@ -1,6 +1,6 @@
 // proves: smith_protocol_pick smith_protocol_fail
-// prove-files: runtime/protocol/protocol.c bootstrap/lib/smith/random.c bootstrap/lib/smith/arena.c
-// link: lib/json.c bootstrap/lib/smith/random.c bootstrap/lib/smith/arena.c bootstrap/lib/smith/text.c
+// prove-files: runtime/protocol/protocol.c lib/smith/random.smith lib/smith/arena.smith
+// link: lib/json.c lib/smith/random.smith lib/smith/arena.smith lib/smith/text.smith
 #include "../../../runtime/protocol/protocol.c"
 #include "sound.h"
 
