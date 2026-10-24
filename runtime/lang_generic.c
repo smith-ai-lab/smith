@@ -238,10 +238,70 @@ static bool smith_lang_param_is_bare_type(const SmithLangParam *param) {
            first[1].kind == SmithTokenKind_Identifier;
 }
 
-// Whether the parameter is `auto x`: two tokens. Its type is the argument's, and `typeof(x)` names it.
+// The concepts, the questions of a type that can stand for a type (`arithmetic x`, issue #193): a name here is the
+// concept `auto` is, narrowed. The order is the one of smith_lang_concept_holds.
+static const char *const smith_lang_concepts[] = {"integer",    "floating", "signed_integer", "unsigned_integer",
+                                                  "arithmetic", "boolean",  "pointer",        "enumeration",
+                                                  "structure",  "array",    "slice"};
+
+// The concept a token names: 1 + its index, or 0.
+static unsigned smith_lang_concept_of(const SmithLangGenToken *token) {
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain) return 0;
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+        if (smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_concepts[i])) return (unsigned)i + 1;
+    }
+    return 0;
+}
+
+// Whether the token written in the source names a concept.
+static bool smith_lang_concept_word(const SmithToken *token) {
+    if (token->kind != SmithTokenKind_Identifier) return false;
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+        if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) return true;
+    }
+    return false;
+}
+
+// Whether the type, spelled as the compiler writes it, is of the concept (1 + its index in smith_lang_concepts).
+static bool smith_lang_concept_holds(const SmithHost *host, unsigned concept_id, const char *spelling) {
+    SmithTypeQuery query = {};
+    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) {
+        return true; // a host that cannot read the type judges nothing: the instance's own compile does
+    }
+    switch (concept_id - 1) {
+    case 0:
+        return query.is_integer;
+    case 1:
+        return query.is_float;
+    case 2:
+        return query.is_integer && query.is_signed;
+    case 3:
+        return query.is_integer && !query.is_signed;
+    case 4:
+        return query.is_integer || query.is_float;
+    case 5:
+        return query.is_bool;
+    case 6:
+        return query.is_pointer;
+    case 7:
+        return query.is_enum;
+    case 8:
+        return query.is_record;
+    case 9:
+        return query.is_array;
+    default: {
+        static const char tag[] = "struct smith_array_";
+        return strncmp(query.canonical, tag, sizeof tag - 1) == 0 && strpbrk(query.canonical + 7, "*[( ") == nullptr;
+    }
+    }
+}
+
+// Whether the parameter is `auto x`, or `arithmetic x` (a concept in place of `auto`): two tokens. Its type is the
+// argument's, and `typeof(x)` names it.
 static bool smith_lang_param_is_auto(const SmithLangParam *param) {
     const SmithLangGenToken *first = &smith_lang_gt.tokens[param->start];
-    return param->end - param->start == 2 && smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") &&
+    return param->end - param->start == 2 &&
+           (smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") || smith_lang_concept_of(first) != 0) &&
            first[1].kind == SmithTokenKind_Identifier && first[1].special == SmithLangGen_Plain;
 }
 
@@ -459,6 +519,12 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
         }
         bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
         bool after_constexpr = smith_lang_ident(before, "constexpr");
+        if (in_params && depth == 1 && starts_parameter && smith_lang_concept_word(token) &&
+            smith_lang_type_parameter_at(lang, host, index) &&
+            host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
+            host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
+            return true; // `arithmetic x`: a concept for `auto`
+        }
         if (in_params && depth == 1 && smith_lang_ident(token, "auto") && (starts_parameter || after_constexpr) &&
             (smith_lang_type_parameter_at(lang, host, index) ||
              (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) {
@@ -529,6 +595,7 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
     generic->param_count = (uint8_t)count;
     generic->type_count = 0;
     memset(generic->type_kind, 0, sizeof generic->type_kind);
+    memset(generic->type_concept, 0, sizeof generic->type_concept);
     for (size_t i = 0; i < count; i++) { // the compile-time parameters
         const SmithLangGenToken *first = &smith_lang_gt.tokens[params[i].start];
         if (smith_lang_param_is_bare_type(&params[i]) && !generic->plain)
@@ -540,6 +607,7 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
             generic->type_token[generic->type_count] = (uint8_t)(params[i].start - generic->first);
             generic->type_position[generic->type_count] = (uint8_t)i;
             generic->type_kind[generic->type_count] = SmithLangSlot_Auto;
+            generic->type_concept[generic->type_count] = (uint8_t)smith_lang_concept_of(first);
             generic->type_count += 1;
             continue;
         }
@@ -3224,6 +3292,28 @@ typedef struct {
     size_t entries;
 } SmithLangCallTypes;
 
+// An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
+// the argument, the call that asked.
+static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                     const SmithLangGeneric *generic, size_t slot, SmithLangSpan span,
+                                     uint32_t location, const uint32_t *first, const uint32_t *count) {
+    unsigned concept_id = generic->type_concept[slot];
+    if (concept_id == 0) return true;
+    char spelling[512];
+    smith_lang_it_spelling(*first, *count, spelling, sizeof spelling);
+    if (smith_lang_concept_holds(host, concept_id, spelling)) return true;
+    const SmithLangGenToken *parameter = &smith_lang_gt.tokens[generic->first + generic->type_token[slot] + 1];
+    char shown[256];
+    smith_lang_infer_written(span, shown, sizeof shown);
+    smith_lang_error(
+        lang, host, smith_lang_infer_place(host, replay, span, location),
+        "`%s` is not `%s`: `%s`, the argument of `%s`, has the type `%s`; the parameter `%.*s` is `%s %.*s`", spelling,
+        smith_lang_concepts[concept_id - 1], shown, smith_lang_str(generic->member), spelling, (int)parameter->length,
+        smith_lang_gt_str(parameter), smith_lang_concepts[concept_id - 1], (int)parameter->length,
+        smith_lang_gt_str(parameter));
+    return false;
+}
+
 // The types of a call: each slot's, then the arguments of `auto... rest`, staged in smith_lang_it, and the check that a
 // later argument converts to the type of an `auto` parameter. False after the error.
 static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3238,8 +3328,10 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
         uint8_t kind = smith_lang_entry_kind(generic, k);
         SmithLangSpan span = k < slots ? spans[generic->type_position[k]] : spans[fixed + (k - slots)];
         if (kind == SmithLangSlot_Auto) {
-            good =
-                smith_lang_infer_auto(lang, host, replay, generic, span, location, &types->first[k], &types->count[k]);
+            good = smith_lang_infer_auto(lang, host, replay, generic, span, location, &types->first[k],
+                                         &types->count[k]) &&
+                   smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
+                                            &types->count[k]);
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],
                                              &types->count[k]);

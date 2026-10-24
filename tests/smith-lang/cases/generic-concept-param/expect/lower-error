@@ -1,0 +1,8 @@
+src/main.smith:11:101: cannot tell the type of `c`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:45: cannot tell the type of `a`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:62: cannot tell the type of `b`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:80: cannot tell the type of `a`, the argument of `larger`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:40: cannot tell the type of `&b`, the argument of `width`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:60: cannot tell the type of `d`, the argument of `sign_of`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:44: cannot tell the type of `a`, the argument of `shifted`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:63: cannot tell the type of `b`, the argument of `shifted`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

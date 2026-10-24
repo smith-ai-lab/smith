@@ -864,6 +864,86 @@ static void smith_lang_dispatch(SmithLang *lang, const SmithHost *host, const Sm
     }
 }
 
+// `arithmetic x = 5;` (a concept where `auto` goes, issue #193): the declaration is `auto x = 5;` once the type of its
+// initializer is known to be of the concept, else the error is at the name. True when the token was replaced.
+static bool smith_lang_concept_local(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    bool judge = !lang->recording; // a generic's body is kept as it is written; its locals are judged by no one yet
+    if (!smith_lang_concept_word(token) || token->synthetic || (judge && host->expr_type == nullptr)) return false;
+    const SmithToken *name = smith_lang_peek(lang, host, 0, false);
+    if (name->kind != SmithTokenKind_Identifier || smith_lang_is_word(name) ||
+        !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "=")) {
+        return false;
+    }
+    SmithToken before;
+    if (!judge) { // the token before is the last one kept
+        const SmithLangGenToken *last = &smith_lang_gt.tokens[smith_lang_gt.count - 1];
+        if (!(smith_lang_gt_punct(last, ";") || smith_lang_gt_punct(last, "{") || smith_lang_gt_punct(last, "}"))) {
+            return false;
+        }
+    } else if (smith_lang_previous(lang, host, 1, &before) &&
+               !(smith_lang_punct(&before, ";") || smith_lang_punct(&before, "{") || smith_lang_punct(&before, "}"))) {
+        return false;
+    }
+    if (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind != SmithLookup_None ||
+        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind != SmithLookup_None) {
+        return false; // a name of the program's, which shadows the concept as it shadows any name
+    }
+    if (!judge) {
+        SmithToken automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, token, token->space_before);
+        automatic.line_start = token->line_start;
+        return smith_lang_tuple_replace(lang, 0, &automatic, 1);
+    }
+    static SmithToken init[64];
+    size_t count = 0;
+    int depth = 0;
+    for (size_t at = 2; at < 66; at++) { // the initializer, up to the `;`
+        const SmithToken *next = smith_lang_peek(lang, host, at, false);
+        if (next->kind == SmithTokenKind_Eof || (depth == 0 && smith_lang_punct(next, ";"))) break;
+        depth += smith_lang_punct(next, "(") || smith_lang_punct(next, "[") || smith_lang_punct(next, "{") ? 1 : 0;
+        depth -= smith_lang_punct(next, ")") || smith_lang_punct(next, "]") || smith_lang_punct(next, "}") ? 1 : 0;
+        init[count++] = *next;
+    }
+    char text[smith_lang_slice_text_max];
+    SmithExprType found = {};
+    if (count == 0 || count == 64 || !smith_lang_slice_text(lang, init, count, text, sizeof text) ||
+        !host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
+        return false; // not read here: the declaration stays, and the compiler says what it does not know
+    }
+    unsigned id = 0;
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+        if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) id = (unsigned)i + 1;
+    }
+    if (!smith_lang_concept_holds(host, id, found.canonical)) {
+        smith_lang_error(lang, host, token->location, "`%s` is not `%s`: the initializer of `%.*s` has that type",
+                         found.written, smith_lang_concepts[id - 1], (int)name->length, name->text);
+    } // and the declaration goes on as `auto`, so that nothing else is said about the name
+    SmithToken automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, token, token->space_before);
+    automatic.line_start = token->line_start;
+    return smith_lang_tuple_replace(lang, 0, &automatic, 1);
+}
+
+// A token of a file with slices (runtime/lang_slice.c): true when a slice's rewrite took it.
+static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, const SmithToken *token, bool capturing) {
+    if (smith_lang_punct(token, ";") && !token->synthetic) {
+        lang->slice.armed[0] = 0;
+        lang->slice.typeof_tag[0] = 0;
+    }
+    bool at_start = lang->slice.after_boundary;
+    lang->slice.after_boundary = smith_lang_slice_boundary(token);
+    if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return true;
+    if (smith_lang_slice_str(lang, host, token)) return true;
+    if (at_start && smith_lang_slice_begin(lang, host, token)) return true;
+    smith_lang_slice_equals(lang, host, token);
+    if (smith_lang_slice_init_compound(lang, host, token)) return true;
+    if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
+        smith_lang_slice_typeof(lang, host, token)) {
+        return true;
+    }
+    if (smith_lang_slice_chain(lang, host, token)) return true;
+    if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
+    return false;
+}
+
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
@@ -875,29 +955,15 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         smith_lang_ty_token(lang, host, token)) {
         return;
     }
+    if (!token->foreign && token->kind == SmithTokenKind_Identifier &&
+        (lang->recording || !smith_lang_capturing(lang)) && smith_lang_concept_local(lang, host, token)) {
+        return;
+    }
     if (!token->foreign && lang->recording && smith_lang_ident(token, "struct"))
         smith_lang_tuple_in_generic(lang, host, token);
     if (!token->foreign && !lang->recording) {
         bool capturing = smith_lang_capturing(lang); // the arguments of a call to a generic are kept, and typed later
-        if (smith_lang_slice_active(lang, host)) {
-            if (smith_lang_punct(token, ";") && !token->synthetic) {
-                lang->slice.armed[0] = 0;
-                lang->slice.typeof_tag[0] = 0;
-            }
-            bool at_start = lang->slice.after_boundary;
-            lang->slice.after_boundary = smith_lang_slice_boundary(token);
-            if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return;
-            if (smith_lang_slice_str(lang, host, token)) return;
-            if (at_start && smith_lang_slice_begin(lang, host, token)) return;
-            smith_lang_slice_equals(lang, host, token);
-            if (smith_lang_slice_init_compound(lang, host, token)) return;
-            if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&
-                smith_lang_slice_typeof(lang, host, token)) {
-                return;
-            }
-            if (smith_lang_slice_chain(lang, host, token)) return;
-            if (!capturing && smith_lang_ident(token, "return")) smith_lang_slice_return(lang, host, token);
-        }
+        if (smith_lang_slice_active(lang, host) && smith_lang_slice_process(lang, host, token, capturing)) return;
         if (token->kind == SmithTokenKind_Identifier) {
             if (smith_lang_ident(token, "enum") && !capturing && smith_lang_enum_begin(lang, host, token)) return;
             if (smith_lang_ident(token, "struct")) smith_lang_tuple_begin(lang, host, token);
