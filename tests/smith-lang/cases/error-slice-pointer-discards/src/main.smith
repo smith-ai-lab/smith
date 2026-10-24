@@ -1,0 +1,13 @@
+module main;
+
+// A pointer to `const char[:]` does not convert to a pointer to `char[:]`: it discards qualifiers, as in C.
+
+static void touch(char (*xs)[:]) {
+    (*xs)[0] = 'x';
+}
+
+i32 main(void) {
+    const char s[:] = "abc";
+    touch(&s);
+    return 0;
+}

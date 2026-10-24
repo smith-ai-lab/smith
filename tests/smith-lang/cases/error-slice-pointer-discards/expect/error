@@ -1,0 +1,1 @@
+src/main.smith:11:11: converting a pointer to a slice of `const char` to a pointer to a slice of `char` discards qualifiers: the elements are read-only

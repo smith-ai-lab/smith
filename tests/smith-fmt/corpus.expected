@@ -1285,6 +1285,20 @@ i32 main(void) {
     i32 rest[:] = p[1:];
     return rest[0];
 }
+==> error-slice-pointer-discards/src/main.smith <==
+module main;
+
+// A pointer to `const char[:]` does not convert to a pointer to `char[:]`: it discards qualifiers, as in C.
+
+static void touch(char (*xs)[:]) {
+    (*xs)[0] = 'x';
+}
+
+i32 main(void) {
+    const char s[:] = "abc";
+    touch(&s);
+    return 0;
+}
 ==> error-slice-qualifier-bracket/src/main.smith <==
 module main;
 
@@ -6036,6 +6050,101 @@ export typeof(char[:]) label(Layer *layer) {
 export Numbers first_two(Numbers all) {
     Numbers two = all[:2];
     return two;
+}
+==> slice-pointer-lowering/src/pointers.smith <==
+module pointers;
+
+// A pointer to a slice lowers to a pointer to the slice's struct (issue #148).
+
+export typedef typeof(const char[:]) Text;
+
+export bool take_line(const char (*text)[:], const char (*line)[:]) {
+    *line = (*text)[0:1];
+    *text = (*text)[1:];
+    return countof(*text) > 0;
+}
+
+export usize length(Text *text) {
+    return countof(*text);
+}
+
+export void grow(i32 (*const xs)[:][2]) {
+    (*xs)[0][1] = 1;
+}
+==> slice-pointer-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A pointer to a slice is C's pointer to an array (issue #148): `const char (*text)[:]` as `int (*p)[10]`. `*text` is
+// the slice; `&s` passes to it, and a pointer to `char[:]` converts to a pointer to `const char[:]`, not the reverse.
+
+typedef typeof(const char[:]) Text;
+
+static bool take_line(const char (*text)[:], const char (*line)[:]) {
+    if (countof(*text) == 0) return false;
+    usize n = 0;
+    while (n < countof(*text) && (*text)[n] != '\n')
+        n++;
+    *line = (*text)[0:n];
+    *text = (*text)[n < countof(*text) ? n + 1 : n:];
+    return true;
+}
+
+static usize length(Text *text) {
+    return countof(*text);
+}
+
+static void upper_first(char (*xs)[:]) {
+    (*xs)[0] = 'X';
+}
+
+static usize deep(const char (**pp)[:]) {
+    return countof(**pp);
+}
+
+static usize rows(const f32 (*m)[:][2]) {
+    return countof(*m) * 10 + countof((*m)[0]);
+}
+
+i32 main(void) {
+    const char s[:] = "a\nbc\nd";
+    const char line[:];
+    while (take_line(&s, &line)) {
+        c::printf("[%.*s]\n", (int)countof(line), line.data);
+    }
+
+    // The same through a typedef, as text and json write their API
+    Text t = "one\ntwo";
+    Text l;
+    usize n = 0;
+    while (take_line(&t, &l))
+        n += length(&l);
+    c::printf("%zu\n", n);
+
+    // A pointer to `char[:]` is a pointer to `const char[:]`
+    char buf[4] = {'a', 'b', 'c', 'd'};
+    char w[:] = buf;
+    char (*pw)[:] = &w;
+    upper_first(pw);
+    const char (*cw)[:] = pw;
+    c::printf("%zu %zu %c\n", length(&w), length(pw), (*cw)[0]);
+
+    f32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+    f32 g[:][2] = grid;
+    const char (*pcs)[:] = &s;
+    c::printf("%zu %zu\n", rows(&g), deep(&pcs));
+
+    // A typedef of a slice type is the slice everywhere
+    Text a = "abc";
+    typeof(const char[:]) b = "defg";
+    char raw[3] = {'x', 'y', 'z'};
+    Text r = raw;
+    a = "ab";
+    r = r[1:];
+    static Text fixed = "hello";
+    c::printf("%zu %zu %zu %zu\n", countof(a), countof(b), countof(r), countof(fixed));
+    return 0;
 }
 ==> slice-qualifiers-lowering/src/qualifiers.smith <==
 module qualifiers;

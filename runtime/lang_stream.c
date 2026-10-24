@@ -876,7 +876,10 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     if (!token->foreign && !lang->recording) {
         bool capturing = smith_lang_capturing(lang); // the arguments of a call to a generic are kept, and typed later
         if (smith_lang_slice_active(lang, host)) {
-            if (smith_lang_punct(token, ";") && !token->synthetic) lang->slice.armed[0] = 0;
+            if (smith_lang_punct(token, ";") && !token->synthetic) {
+                lang->slice.armed[0] = 0;
+                lang->slice.typeof_tag[0] = 0;
+            }
             bool at_start = lang->slice.after_boundary;
             lang->slice.after_boundary = smith_lang_slice_boundary(token);
             if (at_start && smith_lang_slice_begin(lang, host, token)) return;
