@@ -1,0 +1,71 @@
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to a pull request cancels its older run; runs on main never cancel each other.
+concurrency:
+  group: check-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          # the runner service reads no shell profile
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+          dir="$HOME/.cache/smith/llvm/$name"
+          if [ ! -d "$dir" ]; then
+            echo "::error::$dir is missing: the lead must run 'smith build llvm' on this Mac; CI never does."
+            exit 1
+          fi
+
+      - name: Build smith
+        run: smith build
+
+      - name: Full check
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ci"
+          rc=0
+          lockf /private/tmp/smith-full-check.lock build/Darwin-arm64/smith check >"$RUNNER_TEMP/ci/check.log" 2>&1 || rc=$?
+          {
+            echo '### smith check'
+            echo '```'
+            tail -n 40 "$RUNNER_TEMP/ci/check.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-log
+          path: ${{ runner.temp }}/ci/check.log
+          if-no-files-found: warn
+
+  install:
+    # after a green check on main only; replaces the lead's manual install
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          smith build
+          build/Darwin-arm64/smith build install
