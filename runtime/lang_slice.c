@@ -21,13 +21,48 @@ constexpr size_t smith_lang_slice_text_max = 4096;
 constexpr size_t smith_lang_slice_args_max = 16;
 constexpr char smith_lang_slice_prefix[] = "smith_array_";
 
-// Whether the text has a `[ ]` with a `:` that is neither `::` nor the `:` of a `? :` (the hook's hasSlice).
+// The end of the comment, string or character literal that begins at `at` (`at` itself when the text there is code): a
+// `[:]` in either is no slice (issue #121). A `'` after a letter or digit is a digit separator.
+static size_t smith_lang_text_skip(const char *text, size_t length, size_t at) {
+    char c = text[at];
+    if (c == '/' && at + 1 < length && text[at + 1] == '/') {
+        while (at < length && text[at] != '\n')
+            at += 1;
+        return at;
+    }
+    if (c == '/' && at + 1 < length && text[at + 1] == '*') {
+        at += 2;
+        while (at + 1 < length && !(text[at] == '*' && text[at + 1] == '/'))
+            at += 1;
+        return at + 2 < length ? at + 2 : length;
+    }
+    bool quote =
+        c == '"' || (c == '\'' && !(at > 0 && (isalnum((unsigned char)text[at - 1]) != 0 || text[at - 1] == '_')));
+    if (!quote) return at;
+    for (at += 1; at < length && text[at] != c && text[at] != '\n'; at++) {
+        if (text[at] == '\\') at += 1;
+    }
+    return at < length ? at + 1 : length;
+}
+
+// Whether the text has a `[ ]` with a `:` that is neither `::` nor the `:` of a `? :` (the hook's hasSlice), outside
+// comments and strings.
 static bool smith_lang_text_has_slice(const char *text, size_t length) {
-    for (size_t at = 0; at < length; at++) { // each `[`
+    for (size_t at = 0; at < length; at++) { // each `[` of the code
+        size_t after = smith_lang_text_skip(text, length, at);
+        if (after != at) {
+            at = after - 1;
+            continue;
+        }
         if (text[at] != '[') continue;
         int depth = 0;
         int conditions = 0;
         for (size_t scan = at; scan < length && text[scan] != ';'; scan++) { // to its `]`
+            size_t next = smith_lang_text_skip(text, length, scan);
+            if (next != scan) {
+                scan = next - 1;
+                continue;
+            }
             char c = text[scan];
             depth += c == '[' || c == '(' || c == '{';
             depth -= c == ']' || c == ')' || c == '}';

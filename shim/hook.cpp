@@ -2373,13 +2373,44 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // The end of the comment, string or character literal that begins at `at` (`at` itself when it is code): a `[:]` in
+    // either is no slice (runtime/lang_slice.c's smith_lang_text_skip).
+    static size_t skipLiteral(StringRef text, size_t at) {
+        char c = text[at];
+        if (c == '/' && at + 1 < text.size() && text[at + 1] == '/') {
+            size_t end = text.find('\n', at);
+            return end == StringRef::npos ? text.size() : end;
+        }
+        if (c == '/' && at + 1 < text.size() && text[at + 1] == '*') {
+            size_t end = text.find("*/", at + 2);
+            return end == StringRef::npos ? text.size() : end + 2;
+        }
+        bool separator = at > 0 && (isalnum(static_cast<unsigned char>(text[at - 1])) || text[at - 1] == '_');
+        if (c != '"' && !(c == '\'' && !separator)) return at;
+        for (at += 1; at < text.size() && text[at] != c && text[at] != '\n'; at++) {
+            if (text[at] == '\\') at += 1;
+        }
+        return at < text.size() ? at + 1 : text.size();
+    }
+
     // Whether a `[ ]` of the text holds a `:` that is neither `::` nor the `:` of a `? :`: `T xs[:]` or `xs[a:b]`, a
-    // run-time array (runtime/lang_slice.c). Comments and strings count.
+    // run-time array (runtime/lang_slice.c). Comments and strings do not count.
     static bool hasSlice(StringRef text) {
-        for (size_t at = text.find('['); at != StringRef::npos; at = text.find('[', at + 1)) {
+        for (size_t at = 0; at < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            if (text[at] != '[') continue;
             int depth = 0;
             int conditions = 0;
             for (size_t scan = at; scan < text.size(); scan++) {
+                size_t next = skipLiteral(text, scan);
+                if (next != scan) {
+                    scan = next - 1;
+                    continue;
+                }
                 char c = text[scan];
                 if (c == '[' || c == '(' || c == '{') depth += 1;
                 if (c == ']' || c == ')' || c == '}') depth -= 1;
