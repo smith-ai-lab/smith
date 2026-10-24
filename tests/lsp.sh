@@ -342,6 +342,39 @@ expect_line "slice: the hover of a function shows its slice parameter as f32[:]"
 expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" \
     'hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs'
 
+# The many-dimensional forms and the qualifier tags are written as the language writes them (the tags of `restrict` and
+# `const` slices are declared by hand here: their lowering is the compiler's).
+cat >geometry/dims.smith <<'EOF'
+module geometry::dims;
+
+struct smith_array_restrict_u8_n { unsigned char * __restrict data; unsigned long count[1]; };
+struct smith_array_const_char_n { const char *data; unsigned long count[1]; };
+
+export f32 rows(f32 m[:][2], usize i) {
+    return m[i][0];
+}
+
+export usize tags(const struct smith_array_restrict_u8_n a, struct smith_array_const_char_n b) {
+    return a.count[0] + b.count[0];
+}
+EOF
+cat >geometry/grid.smith <<'EOF'
+module geometry::grid;
+
+export f32 grid(f32 g[:][:], usize i) {
+    return g[i][0];
+}
+EOF
+log=$(client open geometry/dims.smith -- hover geometry/dims.smith 6 12 -- hover geometry/dims.smith 10 14 -- \
+    symbols geometry/dims.smith)
+expect_line "dims: the hover of a function shows an f32[:][2] parameter as written" "$log" \
+    'hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - f32[:][2] m | - usize i (aka unsigned long) |  | f32 rows(f32[:][2] m, usize i)'
+expect_line "dims: the hover shows the tags of qualified slices as written" "$log" \
+    'hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: |  | - u8[const restrict :] a | - const char[:] b |  | usize tags(u8[const restrict :] a, const char[:] b)'
+log=$(client open geometry/grid.smith -- hover geometry/grid.smith 3 12)
+expect_line "dims: the hover of a function shows an f32[:][:] parameter as written" "$log" \
+    'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | f32 grid(f32[:][:] g, usize i)'
+
 # A call to a generic: the compiler sees an instance there, so the layer answers for the lowering: the hover shows the
 # generic as its module wrote it and the instance asked for, and go-to-definition goes to the generic's name.
 log=$(client open genuse.smith pick.smith -- hover genuse.smith 7 26 -- definition genuse.smith 7 26 pick.smith:4:18 -- \

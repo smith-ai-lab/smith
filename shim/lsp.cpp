@@ -58,12 +58,61 @@ bool identifierBody(char c) {
     return identifierHead(c) || (c >= '0' && c <= '9');
 }
 
+// The dimensions at the end of a slice's tag, `_n_2` of `f32_n_2`, as written (`[:][2]`) and taken off `rest`; "" when
+// there is no run-time first one. A size left of the first `n` is the element's (`vec_2_n`).
+std::string writtenDimensions(StringRef &rest, const char *qualifiers) {
+    std::vector<std::string> groups; // last first
+    StringRef left = rest;
+    size_t first_n = 0;
+    while (groups.size() < 8) {
+        size_t cut = left.rfind('_');
+        if (cut == StringRef::npos) break;
+        StringRef group = left.substr(cut + 1);
+        unsigned long long size = 0;
+        bool runtime = group == "n";
+        if (!runtime && (group.empty() || group.getAsInteger(10, size))) break;
+        groups.push_back(runtime ? ":" : group.str());
+        if (runtime) first_n = groups.size();
+        left = left.substr(0, cut);
+    }
+    if (first_n == 0) return "";
+    size_t kept = 0; // the length of the groups left of the first `n`, which go back to the element
+    for (size_t at = first_n; at < groups.size(); at++)
+        kept += 1 + groups[at].size();
+    rest = StringRef(left.data(), left.size() + kept);
+    std::string text;
+    for (size_t at = first_n; at-- > 0;) {
+        text += "[";
+        if (at == first_n - 1 && *qualifiers != '\0') text += std::string(qualifiers) + " ";
+        text += groups[at] + "]";
+    }
+    return text;
+}
+
 // `f32[:]` for the lowering's `smith_array_f32_n`, the struct of a run-time array (runtime/lang_slice.c); "" when the
-// word is another.
-std::string writtenSlice(StringRef word, const smith::FileNames &names, Style style) {
-    if (!word.consume_front("smith_array_") || !word.consume_back("_n") || word.empty()) return "";
+// word is another. `smith_array_f32_n_2` is `f32[:][2]`, `smith_array_const_char_n` is `const char[:]`,
+// `smith_array_restrict_u8_n` is `u8[restrict :]`, and `const_slice` (a `const struct ...`) is `[const :]`.
+std::string writtenSlice(StringRef word, const smith::FileNames &names, Style style, bool const_slice = false) {
+    if (!word.consume_front("smith_array_")) return "";
+    bool restrict_data = word.consume_front("restrict_");
+    std::string qualifiers = std::string(const_slice ? "const" : "") + (const_slice && restrict_data ? " " : "") +
+                             (restrict_data ? "restrict" : "");
+    std::string dimensions = writtenDimensions(word, qualifiers.c_str());
+    if (dimensions.empty()) return "";
+    std::string element_qualifiers;
+    for (bool more = true; more;) {
+        more = false;
+        for (const char *keyword : {"const", "volatile"}) {
+            std::string prefix = std::string(keyword) + "_";
+            if (word.consume_front(prefix)) {
+                element_qualifiers += std::string(keyword) + " ";
+                more = true;
+            }
+        }
+    }
+    if (word.empty()) return "";
     const smith::WrittenName *element = word.contains('_') ? names.find(word) : nullptr;
-    return (element != nullptr ? shown(*element, style) : word.str()) + "[:]";
+    return element_qualifiers + (element != nullptr ? shown(*element, style) : word.str()) + dimensions;
 }
 
 // The text with the names of the table written in `style`. `moved` gets the old offset of each name changed and the new
@@ -81,10 +130,14 @@ std::string rewritten(StringRef text, const smith::FileNames &names, Style style
         while (end < text.size() && identifierBody(text[end]))
             end += 1;
         StringRef word = text.substr(at, end - at);
-        if (std::string slice = writtenSlice(word, names, style); !slice.empty()) {
-            const StringRef keyword = "struct ";
-            size_t before = out.size() >= keyword.size() && StringRef(out).ends_with(keyword) ? keyword.size() : 0;
-            out.resize(out.size() - before); // `struct smith_array_f32_n` is just `f32[:]`
+        const StringRef keyword = "struct ";
+        const StringRef constKeyword = "const struct ";
+        bool constSlice = StringRef(out).ends_with(constKeyword);
+        if (std::string slice = writtenSlice(word, names, style, constSlice); !slice.empty()) {
+            size_t before = constSlice                                                          ? constKeyword.size()
+                            : out.size() >= keyword.size() && StringRef(out).ends_with(keyword) ? keyword.size()
+                                                                                                : 0;
+            out.resize(out.size() - before); // `struct smith_array_f32_n` is just `f32[:]`, `const struct` `[const :]`
             if (moved != nullptr) moved->emplace_back(at, (long)slice.size() - (long)word.size() - (long)before);
             out += slice;
             at = end;

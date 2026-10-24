@@ -102,14 +102,18 @@ objects to read, as it does for C files (`dsymutil` is not run); compile each to
 
 `T xs[:]` is the struct `smith_array_<element>_n { T *data; usize count[1]; }` ([arrays](smith-language.md)); lldb would
 show a pointer and a one-element array. `shim/lldb_slices.cpp` registers, in lldb's default category, a synthetic
-children provider and a summary for the types matching `smith_array_.+_n`: the elements `[0]`..`[count-1]` (read from
-the data pointer, as lldb's own `std::span` provider does), the summary `count=3` (with the text first for a `char`
-slice) and the type name `i32[:]` taken from the struct's name. They are lldb's internal C++ classes (the installed
+children provider and a summary for the types matching `smith_array_.+_n(_[0-9n]+)*` (with or without `const`): the
+elements `[0]`..`[count-1]` (read from the data pointer, as lldb's own `std::span` provider does), the summary
+`count=3` (with the text first for a `char` slice) and the type name taken from the struct's name, as the language
+writes it. The name is read as `smith_array_[restrict_][const_]<element>_n[_<n or size>...]`: each `_n` or size after
+the first is a dimension (`smith_array_f32_n_2` is `f32[:][2]`, `_n_n` is `f32[:][:]`), `count[k]` holds the run-time
+ones in order, and the children of the first dimension are the elements, or rows: lldb's own arrays of the other
+dimensions (`float[2]`), so a row's elements are children of a child; the summary is `count=3x2`. The qualifier tags of
+#126 (`restrict_`, `const_` elements, a `const struct` for `[const :]`) show as `u8[restrict :]`, `const char[:]` and
+`u8[const :]`. They are lldb's internal C++ classes (the installed
 headers `lldb/DataFormatters/*`; `shim/lldb/FormatterBytecode.def`, which the install lacks, is a copy of LLVM's), so no
 Python and no LLVM change; `smith dbg`, `smith dap` and the failed-check reader call `smith_lldb_slice_formatters()`
-after the deferred initializers. `smith mcp` and the editors get them through `smith dap`. Only the one-dimension
-struct is read; the `[:][2]` and `[:][:]` forms of #105 (`count[k]`) need the provider to read `count[0..k)` and the
-fixed dimensions.
+after the deferred initializers. `smith mcp` and the editors get them through `smith dap`.
 
 ## Reading a failed check
 

@@ -4,9 +4,9 @@
 // is involved and nothing in LLVM changes: the editor's variables view, `frame variable` and `smith mcp` all use them.
 //   (i32[:]) xs = count=3 { [0] = 1 [1] = 2 [2] = 3 }
 //   (char[:]) name = "abc" count=3 { [0] = 'a' ... }
-// The type's name is the written one (`i32[:]`, `f32[:][2]`, `const char[:]`, `u8[restrict :]`), taken from the struct's
-// name; a row of a many-dimensional one is an array of the other dimensions. lldb's static initializers are deferred
-// (tool.h): this runs after they have.
+// The type's name is the written one (`i32[:]`, `f32[:][2]`, `const char[:]`, `u8[restrict :]`), taken from the
+// struct's name; a row of a many-dimensional one is an array of the other dimensions. lldb's static initializers are
+// deferred (tool.h): this runs after they have.
 #include "lldb/DataFormatters/DataVisualization.h"
 #include "lldb/DataFormatters/FormattersHelpers.h"
 #include "lldb/DataFormatters/TypeSummary.h"
@@ -79,9 +79,12 @@ Tag parse_tag(llvm::StringRef name, bool const_slice) {
     tag.restrict_data = name.consume_front("restrict_");
     std::string element;
     while (true) {
-        if (name.consume_front("const_")) element += "const ";
-        else if (name.consume_front("volatile_")) element += "volatile ";
-        else break;
+        if (name.consume_front("const_"))
+            element += "const ";
+        else if (name.consume_front("volatile_"))
+            element += "volatile ";
+        else
+            break;
     }
     if (name.empty()) return tag;
     tag.element = element + name.str();

@@ -25,3 +25,11 @@ export typeof(i32[:]) middle(i32 xs[:], i32 *p, usize n) {
     bool inside = n > 0 ? true : false;
     return inside ? head : view;
 }
+
+// Many dimensions and read-only elements (#106, #126): the same declarators, with a fixed size after the `:`.
+export f32 corner(f32 rows[:][2], f32 grid[:][:], const char label[:], char const tail[:]) {
+    f32 first[:][2] = rows[1:];
+    f32 cell = grid[0][0] + rows[0][1];
+    const char word[:] = "abc";
+    return cell + first[0][0] + (f32)countof(label) + (f32)countof(word) + (f32)countof(tail);
+}
