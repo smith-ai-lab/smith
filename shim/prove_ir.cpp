@@ -1672,7 +1672,7 @@ Instruction *havoc_ranges(UnitContext &context, CallBase &call, Instruction *las
         if (constant != nullptr) {
             Align align = range.first->getPointerAlignment(layout);
             source->setAlignment(align);
-            copy_object(anchor, call.getDebugLoc(), range.first, source, bytes, align);
+            copy_object(anchor, call.getDebugLoc(), range.first, source, bytes, align, true); // words, even when unaligned
         } else {
             source->setAlignment(Align(1));
             for (uint64_t offset = 0; offset < bytes; offset++) {
