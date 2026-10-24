@@ -765,7 +765,9 @@ static size_t smith_body_assemble(const SmithHost *host) {
     // The copies raise no warning of the importer's flags (they passed the module's own, and the importer's names may
     // shadow their locals): the compiler says nothing of text it was given.
     static const char head[] = "#pragma clang diagnostic push\n#pragma clang diagnostic ignored \"-Weverything\"\n";
-    static const char tail[] = "#pragma clang diagnostic pop\n";
+    // A C header of the module's may define `static_assert` as a macro, which a smith file does not have (the lowering
+    // does not see a macro as a token).
+    static const char tail[] = "#pragma clang diagnostic pop\n#undef static_assert\n";
     size_t used = sizeof head - 1;
     memcpy(smith_body_out, head, used);
     for (size_t m = smith_body_module_count; m > 0; m--) {

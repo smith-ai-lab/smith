@@ -2703,6 +2703,7 @@ class SmithHook final : public TokenHook, public NameSource {
         Token token;
         // A function's head is no place for a call at compile time (a head's words are its own names), and a function
         // body is one only where the statement says so.
+        bool afterColons = false;
         int groups = 0; // parenthesized groups at the top of the statement: a head with two has a computed result type
         int parens = 0;
         auto flushWords = [&](bool head) {
@@ -2718,10 +2719,12 @@ class SmithHook final : public TokenHook, public NameSource {
                 StringRef word = token.getRawIdentifier();
                 keyword = keyword || word == "static_assert" || word == "_Static_assert" || word == "constexpr" ||
                           word == "case" || word == "enum";
-                words.push_back(word.str());
+                if (afterColons) words.push_back(word.str()); // an import's function is written `module::name`
                 afterParen = false;
+                afterColons = false;
                 continue;
             }
+            afterColons = token.is(tok::coloncolon);
             equals = equals || token.is(tok::equal) || token.is(tok::l_square);
             parens += token.is(tok::l_paren) ? 1 : token.is(tok::r_paren) && parens > 0 ? -1 : 0;
             groups += token.is(tok::r_paren) && parens == 0 ? 1 : 0;
@@ -2751,7 +2754,8 @@ class SmithHook final : public TokenHook, public NameSource {
     static bool mentionsName(void *context, const char *name, uint32_t length) {
         auto *self = static_cast<SmithHook *>(context);
         if (!self->compileTimeScanned) self->scanCompileTime();
-        return self->compileTimeNames.count(std::string(name, length)) != 0;
+        bool hit = self->compileTimeNames.count(std::string(name, length)) != 0;
+        return hit;
     }
 
     static void includeText(void *context, const char *text, uint32_t length) {
