@@ -3,8 +3,9 @@
 // Enzyme differentiates LLVM IR: it finds a call to __enzyme_autodiff (reverse mode) or __enzyme_fwddiff (forward mode)
 // when smith links the program, writes the derivative of the function it is given, and replaces the call with it. So
 // no declaration of Enzyme's has a body, and none may: a marker that had a definition would be folded to its value
-// before Enzyme reads it. A program that imports this module (or includes the header) is an autodiff program, and smith builds it as
-// one (the smith-autodiff skill): full LTO, each file compiled with the profile's -O level and no optimization passes.
+// before Enzyme reads it. A program that imports this module (or includes the header) is an autodiff program, and smith
+// builds it as one (the smith-autodiff skill): full LTO, each file compiled with the profile's -O level and no
+// optimization passes.
 //
 // The names follow Enzyme's; a .smith file writes the module's (autodiff::reverse), C the names of the header.
 //
@@ -64,7 +65,8 @@ void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
                 } else if constexpr (is_slice(typeof(proto.[f]))) {
                     if (p->[f].count[0] > 0) { // an empty slice has no element to read
                         typeof(p->[f].data) old = p->[f].data;
-                        p->[f].data = (typeof(old))arena::push_array_raw(a, sizeof(*old), p->[f].count[0], alignof(typeof(*old)));
+                        p->[f].data =
+                            (typeof(old))arena::push_array_raw(a, sizeof(*old), p->[f].count[0], alignof(typeof(*old)));
                         __builtin_memcpy(p->[f].data, old, p->[f].count[0] * sizeof(*old));
                         shadow_walk(a, *p->[f].data, p->[f].data, p->[f].count[0]);
                     }
@@ -82,8 +84,9 @@ void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
 }
 
 // `autodiff::zeros(&arena, params)` is a copy of `params` in the shape of a gradient: every number zero, every `[:]`
-// field a new array of the same length from the arena. It is what an optimizer's state (momentum, Adam's moments) starts
-// as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]` holds).
+// field a new array of the same length from the arena. It is what an optimizer's state (momentum, Adam's moments)
+// starts as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]`
+// holds).
 export typeof(v) zeros(arena::Arena *a, auto v) {
     shadow_walk(a, v, &v, 1);
     return v;
@@ -109,8 +112,9 @@ export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... re
     return dx;
 }
 
-// The walkers of `map`, one for each number of inputs (a generic has four parameters at most, so the inputs are `typeof(out)`
-// parameters and not a list): `proto` is a copy of what `out` points to, for its type, and `n` how many are in a row.
+// The walkers of `map`, one for each number of inputs (a generic has four parameters at most, so the inputs are
+// `typeof(out)` parameters and not a list): `proto` is a copy of what `out` points to, for its type, and `n` how many
+// are in a row.
 void map_walk1(constexpr auto f, auto proto, usize n, auto out, typeof(out) a) {
     (void)n;
     (void)out;
@@ -122,7 +126,8 @@ void map_walk1(constexpr auto f, auto proto, usize n, auto out, typeof(out) a) {
                 constexpr Field fld = fields(typeof(proto))[i];
                 (void)fld;
                 if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk1(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0]);
+                    map_walk1(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
+                              &a->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
                     contract::assert(a->[fld].count[0] == out->[fld].count[0]);
                     if (out->[fld].count[0] > 0) { // an empty slice has no element to read
@@ -158,12 +163,14 @@ void map_walk2(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                 constexpr Field fld = fields(typeof(proto))[i];
                 (void)fld;
                 if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk2(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0], &b->[fld][0]);
+                    map_walk2(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
+                              &a->[fld][0], &b->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
                     contract::assert(a->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(b->[fld].count[0] == out->[fld].count[0]);
                     if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk2(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data, b->[fld].data);
+                        map_walk2(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                                  b->[fld].data);
                     }
                 } else {
                     map_walk2(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld]);
@@ -198,13 +205,15 @@ void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                 constexpr Field fld = fields(typeof(proto))[i];
                 (void)fld;
                 if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk3(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0], &b->[fld][0], &c->[fld][0]);
+                    map_walk3(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
+                              &a->[fld][0], &b->[fld][0], &c->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
                     contract::assert(a->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(b->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(c->[fld].count[0] == out->[fld].count[0]);
                     if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk3(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data, b->[fld].data, c->[fld].data);
+                        map_walk3(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                                  b->[fld].data, c->[fld].data);
                     }
                 } else {
                     map_walk3(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld]);
@@ -228,7 +237,8 @@ void map_walk3(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
     }
 }
 
-void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c, typeof(out) d) {
+void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, typeof(out) b, typeof(out) c,
+               typeof(out) d) {
     (void)n;
     (void)out;
     (void)a;
@@ -242,14 +252,16 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
                 constexpr Field fld = fields(typeof(proto))[i];
                 (void)fld;
                 if constexpr (is_array(typeof(proto.[fld]))) {
-                    map_walk4(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0], &a->[fld][0], &b->[fld][0], &c->[fld][0], &d->[fld][0]);
+                    map_walk4(f, out->[fld][0], sizeof(out->[fld]) / sizeof(out->[fld][0]), &out->[fld][0],
+                              &a->[fld][0], &b->[fld][0], &c->[fld][0], &d->[fld][0]);
                 } else if constexpr (is_slice(typeof(proto.[fld]))) {
                     contract::assert(a->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(b->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(c->[fld].count[0] == out->[fld].count[0]);
                     contract::assert(d->[fld].count[0] == out->[fld].count[0]);
                     if (out->[fld].count[0] > 0) { // an empty slice has no element to read
-                        map_walk4(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data, b->[fld].data, c->[fld].data, d->[fld].data);
+                        map_walk4(f, *out->[fld].data, out->[fld].count[0], out->[fld].data, a->[fld].data,
+                                  b->[fld].data, c->[fld].data, d->[fld].data);
                     }
                 } else {
                     map_walk4(f, out->[fld], 1, &out->[fld], &a->[fld], &b->[fld], &c->[fld], &d->[fld]);
@@ -275,13 +287,13 @@ void map_walk4(constexpr auto f, auto proto, usize n, auto out, typeof(out) a, t
     }
 }
 
-// `map` writes `*out` from `f` applied to each set of matching float leaves of the structs it is given: `autodiff::map(f,
-// &out, &a, &b)` is `out.leaf = f(a.leaf, b.leaf)` for every float leaf of the same type as `*out`, walking nested
-// structs, fixed arrays and `[:]` fields (each of `a` and `b` as long as `out`'s, checked), element by element; an
-// integer, bool or enum leaf is left as it is. One to four input structs; `out` may be one of them (`map(sgd, &params,
-// &params, &g)`). `f` is the name of an ordinary function of one float per input, so a step is `map` and one small
-// function (`f64 sgd(f64 p, f64 g)`); an `f32` leaf is converted to `f` parameters and the result back. A generic
-// function cannot be passed. The walkers are one function for each number of inputs.
+// `map` writes `*out` from `f` applied to each set of matching float leaves of the structs it is given:
+// `autodiff::map(f, &out, &a, &b)` is `out.leaf = f(a.leaf, b.leaf)` for every float leaf of the same type as `*out`,
+// walking nested structs, fixed arrays and `[:]` fields (each of `a` and `b` as long as `out`'s, checked), element by
+// element; an integer, bool or enum leaf is left as it is. One to four input structs; `out` may be one of them
+// (`map(sgd, &params, &params, &g)`). `f` is the name of an ordinary function of one float per input, so a step is
+// `map` and one small function (`f64 sgd(f64 p, f64 g)`); an `f32` leaf is converted to `f` parameters and the result
+// back. A generic function cannot be passed. The walkers are one function for each number of inputs.
 export void map(constexpr auto f, auto out, auto... rest) {
     static_assert(countof(rest) >= 1 && countof(rest) <= 4, "map takes one to four input structs after the output");
     if constexpr (countof(rest) == 1) {

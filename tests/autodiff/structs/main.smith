@@ -1,7 +1,8 @@
 // autodiff::gradient over structs and autodiff::map: a model of two f32 numbers (no allocation), a net with a `[:]` of
-// layers of `[:]` weights, a fixed array, an f32 and an integer leaf (against the analytic gradient), and an SGD step and
-// an Adam step written with map against a hand-written loop over the same numbers flattened. Prints a line for each
-// check and exits 1 when one is over its tolerance (1e-12 relative to the largest entry for f64 numbers, 1e-5 and 1e-6 for f32 ones).
+// layers of `[:]` weights, a fixed array, an f32 and an integer leaf (against the analytic gradient), and an SGD step
+// and an Adam step written with map against a hand-written loop over the same numbers flattened. Prints a line for each
+// check and exits 1 when one is over its tolerance (1e-12 relative to the largest entry for f64 numbers, 1e-5 and 1e-6
+// for f32 ones).
 module main;
 
 import <math.h>;
@@ -96,7 +97,8 @@ constexpr usize numbers = 3 + 2 + 1 + 4 + 1 + 1 + 2;
 
 // A net with layers of 3, 4 and 2 weights and given numbers; no value is special.
 Net make_net(arena::Arena *arena, f64 seed) {
-    Net p = {.layers = arena::push_slice(arena, Layer, 3), .scale = {1.5 + seed, -0.5 + seed}, .tag = 0.75f, .steps = 7};
+    Net p = {
+        .layers = arena::push_slice(arena, Layer, 3), .scale = {1.5 + seed, -0.5 + seed}, .tag = 0.75f, .steps = 7};
     usize sizes[3] = {3, 4, 2};
     for (usize j = 0; j < 3; j++) {
         p.layers[j].w = arena::push_slice(arena, f64, sizes[j]);
@@ -154,7 +156,8 @@ i32 main(i32 argc, char **argv) {
     f64 mwant[2] = {(f64)dm, (f64)db};
     report(console, "dm, db", mgot, mwant, 2, 1e-5);
 
-    // 2. A net: the gradient against the analytic one; the integer comes back zero, every array has the length of its own.
+    // 2. A net: the gradient against the analytic one; the integer comes back zero, every array has the length of its
+    // own.
     Net net = make_net(arena, 0.0);
     f64 data[2] = {1.25, -0.75};
     Batch batch = {};

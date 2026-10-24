@@ -29,7 +29,8 @@ typedef struct {
 // sum(y * dy) + sum(state_end * dse): the scalar whose gradient the backward computes.
 f64 scan_loss(Scan *scan, const Seeds *seeds) {
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
-    c::ReferenceScanInputs in = {scan->x.data, scan->dt.data, scan->a.data, scan->b.data, scan->c.data, scan->keep.data};
+    c::ReferenceScanInputs in = {scan->x.data, scan->dt.data, scan->a.data,
+                                 scan->b.data, scan->c.data,  scan->keep.data};
     f64 y[36] = {};
     f64 state_end[48] = {};
     c::reference_scan_forward(&shape, &in, scan->state0.data, y, state_end, nullptr);
