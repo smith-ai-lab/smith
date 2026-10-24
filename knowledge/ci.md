@@ -1,7 +1,7 @@
 ---
 type: design
 title: CI runs the full check on the owner's Mac
-description: Every pull request runs smith check on a self-hosted runner under the machine's lock, and a green push to main installs smith.
+description: Every pull request runs smith check on a self-hosted runner on a self-hosted runner (no lock, one clone per job), and a green push to main installs and releases smith.
 tags: [ci, process]
 ---
 # CI runs the full check on the owner's Mac
@@ -17,3 +17,5 @@ tags: [ci, process]
 **The process.** An implementer pushes its branch, opens a pull request with `gh pr create` linking the issue, and runs only the tests for what it changed. The lead merges (`gh pr merge --squash`, or `--rebase` to keep commits) only when CI is green on the head commit, so the commit that was checked is the commit that is merged.
 
 **Limits.** Each job has `timeout-minutes: 30`. The DAP test client fails with "the debugger is waiting for permission (Developer Tools)" when neither `smith dap` nor its children use CPU for 60 s (the service user lacks the permission), instead of waiting out the 600 s backstop.
+
+**Adding a runner.** CI can run on several runners on this machine (two today: `~/actions-runner` and `~/actions-runner2`), all as the owner's user. GitHub's `svc.sh install` writes the LaunchAgent with `SessionCreate = true`, which puts the runner in its own security session where debugserver refuses to attach ("non-interactive debug session"). After installing, set it false (`plutil -replace SessionCreate -bool false <plist>`) and restart the agent (`launchctl bootout`, wait, `bootstrap`); the user must also be in the `_developer` group (once per user). The "Debugger permission" step of the workflow fails in seconds when a runner cannot debug. Setting these up is the owner's job, not an agent's.
