@@ -1,0 +1,48 @@
+module main;
+
+import <stdio.h>;
+
+// A slice member takes a slice expression in an initializer list as it does in an assignment (issue #173): a string
+// literal, an array or another slice, by designator, by position, nested, as a typedef'd `str`, in a compound literal.
+
+typedef const char str[:];
+
+struct Pair {
+    const char key[:];
+    const char value[:];
+};
+
+struct Named {
+    str name;
+    i32 id;
+};
+
+struct Outer {
+    i32 first;
+    struct Pair pair;
+    str tag;
+};
+
+static usize total(struct Pair p) {
+    return countof(p.key) * 10 + countof(p.value);
+}
+
+i32 main(void) {
+    struct Pair a = {.key = "k", .value = "xyz"};
+    struct Pair b = {"kk", "v"};
+    char raw[3] = {'a', 'b', 'c'};
+    char word[:] = raw;
+    struct Pair c = {.value = word, .key = raw};
+    c::printf("%zu %zu %zu\n", total(a), total(b), total(c));
+
+    struct Named n = {.id = 7, .name = "five5"};
+    struct Outer o = {1, {.value = "ab", .key = "c"}, .tag = "tag"};
+    struct Outer o2 = {.pair = {"x", "yz"}};
+    c::printf("%zu %zu %zu %zu %zu\n", countof(n.name), countof(o.pair.value), countof(o.tag), countof(o2.pair.key),
+              countof(o2.pair.value));
+
+    c::printf("%zu %zu\n", total((struct Pair){.value = "x"}), total((struct Pair){"ab", "c"}));
+    struct Pair e = {};
+    c::printf("%zu %c\n", countof(e.key), a.value[2]);
+    return 0;
+}

@@ -1,0 +1,19 @@
+module main;
+
+// An initializer of a slice member that cannot become a slice is an error, never an empty slice (issue #173).
+
+struct Pair {
+    const char key[:];
+    const char value[:];
+};
+
+struct Wrap {
+    struct Pair pair;
+    const char note[:];
+};
+
+i32 main(void) {
+    struct Pair a = {.key = {"k"}};
+    struct Wrap w = {.pair.key = "k"};
+    return (i32)(countof(a.key) + countof(w.note));
+}
