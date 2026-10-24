@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests of `smith mcp` (issue #22, knowledge/mcp-server.md), in two halves. Usage: sh tests/mcp.sh path/to/smith
+# Tests of `smith mcp` (issue #22, knowledge/mcp-server.md), in two halves. Usage: sh tests/mcp.sh path/to/smith [fake|fake-asan|fake-fast|fake-ndebug|real]
 #
 # 1. The server on the fake io (tests/mcp_fake.c): a scripted client on the console and a scripted `smith dap` child, in
 #    one process, built in three ways (-O0 under AddressSanitizer and UBSan, -O2, and -O2 -DNDEBUG). This half needs only
@@ -52,8 +52,11 @@ finish() {
 
 # --- the server on the fake io -------------------------------------------------------------------------------------
 
+part=${2:-all} # fake (the first half, or one build of it: fake-asan, fake-fast, fake-ndebug), real (the second) or all: two tasks side by side (issue #116)
+if [ "$part" != real ]; then
 compile="$smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror"
 for mode in asan fast ndebug; do
+    case $part in all | fake | fake-$mode) ;; *) continue ;; esac
     case $mode in
     asan) flags="-O0 -fsanitize=address,undefined -fno-sanitize-recover=all" ;;
     fast) flags="-O2" ;;
@@ -80,6 +83,9 @@ for mode in asan fast ndebug; do
         ;;
     esac
 done
+
+fi
+case $part in fake*) finish ;; esac
 
 # --- the stage0 ------------------------------------------------------------------------------------------------------
 
