@@ -1261,7 +1261,7 @@ static void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, con
     written.synthetic = !real;
     written.instance = instance;
     // An instance's tokens begin the lines the generic's did: the compiler reads it (-Wmisleading-indentation).
-    // (Only a host with a parser: the raw lowering is text, and lines in it would change the bootstrap's bytes.)
+    // (Only a host with a parser: the raw lowering is text, and lines in it would change the lowering's bytes.)
     written.line_start =
         instance != 0 && host->type_query != nullptr && (token->flags & smith_lang_gen_flag_line_start) != 0;
     written.space_before = smith_lang_gen_space(lang, (SmithTokenKind)token->kind, written.text, written.length);
@@ -2813,8 +2813,8 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, SmithLan
     }
     SmithExprType type = {.explain = explain};
     if (host->expr_type == nullptr) {
-        *why = "the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a "
-               "function with `auto` parameters)";
+        *why = "the raw lowering has no compiler to type it (it cannot call a function with `auto` "
+               "parameters)";
         return false;
     }
     if (!host->expr_type(host->context, tokens, (uint32_t)strlen(tokens), &type)) {

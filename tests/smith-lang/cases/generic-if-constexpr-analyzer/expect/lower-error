@@ -1,2 +1,2 @@
-src/main.smith:5:30: in `if constexpr`: a fact of the target in a generic's condition needs the compiler to answer it: a raw lowering (a bootstrapped module, the stage0) cannot choose the branch
-src/main.smith:5:58: in `if constexpr`: a fact of the target in a generic's condition needs the compiler to answer it: a raw lowering (a bootstrapped module, the stage0) cannot choose the branch
+src/main.smith:5:30: in `if constexpr`: a fact of the target in a generic's condition needs the compiler to answer it: a raw lowering (`smith cc --smith-lower`) cannot choose the branch
+src/main.smith:5:58: in `if constexpr`: a fact of the target in a generic's condition needs the compiler to answer it: a raw lowering (`smith cc --smith-lower`) cannot choose the branch

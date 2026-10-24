@@ -1,11 +1,11 @@
-src/main.smith:22:14: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:22:14: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:23:14: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:23:14: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:24:39: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:24:65: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:24:93: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:25:111: cannot tell the type of `pair`, the argument of `first_name`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:25:55: cannot tell the type of `pair`, the argument of `field_count`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:25:83: cannot tell the type of `mixed`, the argument of `field_count`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:26:35: cannot tell the type of `mixed`, the argument of `first_name`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:22:14: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:22:14: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:23:14: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:23:14: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:24:39: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:24:65: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:24:93: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:25:111: cannot tell the type of `pair`, the argument of `first_name`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:25:55: cannot tell the type of `pair`, the argument of `field_count`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:25:83: cannot tell the type of `mixed`, the argument of `field_count`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:26:35: cannot tell the type of `mixed`, the argument of `first_name`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

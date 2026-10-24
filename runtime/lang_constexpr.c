@@ -566,7 +566,7 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (fact < 0) {
         return smith_lang_cx_fail(cx,
                                   "a fact of the target in a generic's condition needs the compiler to answer it: a "
-                                  "raw lowering (a bootstrapped module, the stage0) cannot choose the branch");
+                                  "raw lowering (`smith cc --smith-lower`) cannot choose the branch");
     }
     if (smith_lang_cx_is_builtin(token)) return smith_lang_cx_builtin(cx, at, last, value);
     if (smith_lang_cx_type_start(cx, *at)) {

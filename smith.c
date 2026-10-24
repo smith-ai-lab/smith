@@ -5,12 +5,11 @@
 // then run that compiler on the arguments, untouched:
 //   - a .metal input goes to Apple's Metal compiler: `xcrun -sdk macosx metal`, or $SMITH_METAL if set, which smith
 //     replaces itself with;
-//   - anything else goes to upstream LLVM's clang. A smith built with SMITH_IN_PROCESS has clang linked in
-//     (shim/clang.cpp) and runs clang's own main on the arguments, in its own process, unless $SMITH_CLANG names an
-//     external clang to run instead. The stage0, built by one `cc` command, has no clang in it: it replaces itself with
-//     an external one, $SMITH_CLANG if set, else Homebrew's llvm (/opt/homebrew/opt/llvm/bin/clang), else the first
-//     clang on PATH that is not smith itself. `smith c++`, and the link `smith-c++`, use clang++ ($SMITH_CLANGXX). On
-//     macOS it also picks the SDK through the environment, never a flag: see smith_sdk_environment.
+//   - anything else goes to upstream LLVM's clang. smith has clang linked in (shim/clang.cpp) and
+//     runs clang's own main on the arguments, in its own process, unless $SMITH_CLANG names an external clang to run
+//     instead (else the first clang on PATH that is not smith itself). `smith c++`, and the link `smith-c++`, use
+//     clang++ ($SMITH_CLANGXX). On macOS it also picks the SDK through the environment, never a flag: see
+//     smith_sdk_environment.
 // It adds no flags and reads no configuration, so replacing a compiler with smith cannot change a build. See AGENTS.md.
 //
 // `smith build` compiles the project's build.c with an embedded runtime, runs it to write a ninja manifest, and then
@@ -36,7 +35,6 @@
 
 extern char **environ;
 
-#ifdef SMITH_IN_PROCESS
 #include "scripts/pack.h"
 
 #include <compression.h>
@@ -76,7 +74,6 @@ int smith_lldb_main(int argc, char **argv);
 int smith_lldb_dap_main(int argc, char **argv);
 #else
 constexpr bool smith_has_lldb = false;
-#endif
 #endif
 
 #ifdef __APPLE__
@@ -378,7 +375,6 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
     return smith_exit_missing;
 }
 
-#ifdef SMITH_IN_PROCESS
 // What the driver looks up beside its program, carried inside smith.
 //
 // The driver finds its builtin headers (lib/clang/<major>/include), the compiler-rt libraries (lib/clang/<major>/lib),
@@ -823,7 +819,6 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("in-process", program, argv + first - 1);
     return smith_clang_main(program, argc - first + 1, argv + first - 1, !smith_has_linker_override(), resource);
 }
-#endif
 
 #include "runtime/lang.h"
 
@@ -910,11 +905,9 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, bool 
         argv = rewritten;
     }
     const char *tool = plus ? "clang++" : "clang";
-#ifdef SMITH_IN_PROCESS
     if (smith_runs_in_process(plus ? "SMITH_CLANGXX" : "SMITH_CLANG")) {
         return smith_route_in_process(argc, argv, first, which, plus, self);
     }
-#endif
     char program[PATH_MAX];
     smith_find_clang(tool, plus ? "SMITH_CLANGXX" : "SMITH_CLANG", self, program);
     if (which) {
@@ -929,10 +922,10 @@ static int smith_route_clang(int argc, char **argv, int first, bool which, bool 
     return smith_exit_missing;
 }
 
-// smith prove: the prover (Alive2, Bitwuzla and Z3) is linked into every full smith, which `smith build llvm` makes
-// possible (build.c); only the stage0 says it has none.
+// smith prove: the prover (Alive2, Bitwuzla and Z3) is linked into smith when the LLVM install it was built
+// against has it (build.c); a smith built without it says so.
 static int smith_prove(int argc, char **argv, const char *self) {
-#if defined(SMITH_PROVE) && defined(SMITH_IN_PROCESS)
+#ifdef SMITH_PROVE
     char folder[PATH_MAX];
     char programs[PATH_MAX];
     char program[PATH_MAX];
@@ -951,8 +944,7 @@ static int smith_prove(int argc, char **argv, const char *self) {
     (void)argc;
     (void)argv;
     (void)self;
-    smith_die(smith_exit_usage, "this smith is the stage0, which has no prover; the full smith has it",
-              "smith build llvm, then smith build");
+    smith_die(smith_exit_usage, "this smith was built without the prover", "smith build llvm, then smith build");
 #endif
 }
 
@@ -986,9 +978,9 @@ static constexpr unsigned char smith_build_untar[] = {
 // The registry. A library is its header, include/smith/<name>.h, and its source, which is C (lib/<name>.c, written to
 // .smith/lib/<name>.c) or a .smith module (lib/smith/<name>.smith, written to .smith/lib/smith/<name>.smith, where the
 // module smith::<name> lives at its path). C or .smith, the C API is the header: a .smith module's header is generated
-// (`smith cc --smith-header`) and committed, because the stage0 has no hook, embeds the header as bytes and only a
-// smith with the hook compiles the module; `check` fails when regenerating it gives other bytes. Porting a library is
-// one change in each of two places below: its source's #embed path, and the `false` of its row in smith_libraries.
+// (`smith cc --smith-header`) and committed, because smith.c embeds it as bytes; `check` fails when regenerating it
+// gives other bytes. Porting a library is one change in each of two places below: its source's #embed path, and the
+// `false` of its row in smith_libraries.
 static constexpr unsigned char smith_arena_header[] = {
 #embed "include/smith/arena.h"
 };
@@ -1288,10 +1280,11 @@ static SmithBuildFile smith_build_file(void) {
     if (has_c) return SmithBuildFile_C;
     if (has_smith) {
 #ifndef SMITH_HOOK
-        smith_die(smith_exit_usage,
-                  "build.smith needs the full smith (a smith whose clang has the token hook); this one is the stage0, "
-                  "which has no clang inside",
-                  nullptr);
+        smith_die(
+            smith_exit_usage,
+            "build.smith needs a smith whose clang has the token hook (patches/clang-token-hook.patch, applied by "
+            "`smith build llvm`); this one has none",
+            nullptr);
 #endif
         return SmithBuildFile_Smith;
     }
@@ -1628,13 +1621,11 @@ static void smith_build_prepare(const char *self, const char *clang, bool in_pro
 // What compiles and links build.c: an external clang, found as for any compile, or smith itself when clang is in it
 // (then true, and the commands are `smith cc ...`).
 static bool smith_build_compiler(const char *self, char *out) {
-#ifdef SMITH_IN_PROCESS
     if (smith_runs_in_process("SMITH_CLANG")) {
         int written = snprintf(out, PATH_MAX, "%s", self);
         SMITH_ASSERT(written > 0 && written < PATH_MAX); // self came from a PATH_MAX buffer
         return true;
     }
-#endif
     smith_find_clang("clang", "SMITH_CLANG", self, out);
     return false;
 }
@@ -1852,7 +1843,7 @@ static int smith_build_dump_config(void) {
 // Whether this smith can build a smith::autodiff program: Enzyme is linked into its linker (shim/lld.cpp), and the
 // compile and the link run in its own process (SMITH_CLANG and SMITH_LINKER run external ones, which have no Enzyme).
 static bool smith_can_differentiate(void) {
-#if defined(SMITH_ENZYME) && defined(SMITH_IN_PROCESS)
+#ifdef SMITH_ENZYME
     return smith_runs_in_process("SMITH_CLANG") && !smith_has_linker_override();
 #else
     return false;
@@ -2400,8 +2391,8 @@ static int smith_new_main(int count, char **args, const char *self) {
 // `smith fmt`, `smith lint`, `smith lsp`, `smith dbg` and `smith dap` are clang-format, clang-tidy, clangd, lldb and
 // lldb-dap, with the arguments unchanged, so a project's .clang-format and .clang-tidy apply as they do to the tools
 // alone. They are recognised only as the exact first argument. A smith with clang inside runs the tool's own main in
-// this process, from the same LLVM as the compiler; the stage0, and a caller who sets the tool's variable, run an
-// external tool instead.
+// this process, from the same LLVM as the compiler; a caller who sets the tool's variable runs an external
+// tool instead.
 typedef struct {
     const char *command;  // smith's name for it
     const char *tool;     // the LLVM program
@@ -2449,7 +2440,6 @@ static void smith_debugserver_environment(void) {
 }
 #endif
 
-#ifdef SMITH_IN_PROCESS
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
     char folder[PATH_MAX];
     char programs[PATH_MAX];
@@ -2475,7 +2465,6 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 #endif
     return smith_clangd_main(argc, argv);
 }
-#endif
 
 // ---- smith's defaults for a project with no config file (issue #43, part 1)
 //
@@ -2733,7 +2722,6 @@ static bool smith_lsp_commands_option(int argc, char **argv) {
     return false;
 }
 
-#ifdef SMITH_IN_PROCESS
 // `smith lsp`, in process: clangd formats with smith's style and runs its checks by smith's tidy config where the
 // project has no .clang-format or .clang-tidy, as `smith fmt` and `smith lint` do
 // (patches/smith-editor-defaults.patch). A project's file wins whole, and clangd's own --fallback-style wins over
@@ -2745,7 +2733,6 @@ static void smith_lsp_defaults(void) {
     smith_defaults_path(smith_defaults_clang_tidy, sizeof smith_defaults_clang_tidy, "clang-tidy", tidy);
     smith_clangd_defaults(style, tidy);
 }
-#endif
 
 // argv is main's, with argv[1] the command; the tool gets argv[1 ..] with the command replaced by its own path, so its
 // arguments are unchanged.
@@ -2755,14 +2742,12 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
     if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
 #endif
-#ifdef SMITH_IN_PROCESS
     const char *override = getenv(tool->override);
     bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
     if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb)) {
         if (strcmp(tool->command, "lsp") == 0) smith_lsp_defaults();
         return smith_tool_in_process(tool, argc - 1, argv + 1, self);
     }
-#endif
     char program[PATH_MAX];
     smith_find_clang(tool->tool, tool->override, self, program);
     argv[1] = program; // the full path, as for the compiler
@@ -2912,9 +2897,9 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 #include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
-// with clang inside), as the prover and the debugger are: the stage0 has the verb and says so. It stands on the JSON,
-// text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked as its own object),
-// and on the io module.
+// with clang inside), as the prover and the debugger are: a smith built without it has the verb and says so. It stands
+// on the JSON, text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked as its
+// own object), and on the io module.
 #ifdef SMITH_MCP
 #include "lib/json.c"
 #include "runtime/mcp.c"
@@ -3017,8 +3002,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
 #ifdef SMITH_MCP
         return smith_mcp_main(argc - 2, argv + 2, self);
 #else
-        fprintf(stderr,
-                "smith: mcp needs the full smith (clang inside); this one is the stage0 (knowledge/mcp-server.md)\n");
+        fprintf(stderr, "smith: mcp needs the full smith (clang inside); this one was built without it "
+                        "(knowledge/mcp-server.md)\n");
         return smith_exit_missing;
 #endif
     case SmithVerb_Docs:
@@ -3077,10 +3062,8 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     const char *name = smith_base_name(argv[0]);
-#ifdef SMITH_IN_PROCESS
     if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
     if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
-#endif
     // The links act as the verbs by their name, for what needs one program path: CC=smith-cc, CMake,
     // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs
     // again with -cc1.

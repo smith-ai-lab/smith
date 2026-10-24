@@ -432,7 +432,7 @@ static void smith_raw_emit(void *context, const SmithToken *token) {
 }
 
 // An import is an `#include` in the lowered text (`smith cc --smith-lower`): the module's bodies need what it imports,
-// and the header, which has only what the exports need, no longer has it for them (scripts/bootstrap.sh).
+// and the header, which has only what the exports need, no longer has it for them .
 static void smith_raw_include(void *context, const char *header, bool angled) {
     SmithLangRaw *raw = context;
     SmithLang *lang = raw->lang;

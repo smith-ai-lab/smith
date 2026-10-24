@@ -66,7 +66,7 @@ publish() {
         out=$(mktemp -d)
         package "$1" "$out"
         gh release create "$tag" "$out/$name" "$out/$name.sha256" --target "$head" --title "$tag" \
-            --notes "The smith of commit $head, for bootstrapping (knowledge/release.md)."
+            --notes "The smith of commit $head, for building the next commits (knowledge/release.md)."
         rm -rf "$out"
     fi
     # a failed prune leaves old releases, never a failed release

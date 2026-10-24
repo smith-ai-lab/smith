@@ -1,2 +1,2 @@
-src/main.smith:7:27: cannot tell the type of `0`, the argument of `spread`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:8:27: cannot tell the type of `0.5`, the argument of `spread`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:27: cannot tell the type of `0`, the argument of `spread`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:27: cannot tell the type of `0.5`, the argument of `spread`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

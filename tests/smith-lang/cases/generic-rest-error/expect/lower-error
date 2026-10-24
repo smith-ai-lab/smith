@@ -1,6 +1,6 @@
-src/main.smith:10:32: cannot tell the type of `1`, the argument of `runtime_index`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:10:32: cannot tell the type of `1`, the argument of `runtime_index`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
 src/main.smith:11:18: `for constexpr` ran 1024 turns without ending: is its condition ever false?
-src/main.smith:7:33: cannot tell the type of `3`, the argument of `run_time_bound`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:8:23: cannot tell the type of `1`, the argument of `bare`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
-src/main.smith:9:31: cannot tell the type of `1`, the argument of `out_of_range`: the raw lowering has no compiler to type it (a bootstrapped module and the stage0 cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:33: cannot tell the type of `3`, the argument of `run_time_bound`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:23: cannot tell the type of `1`, the argument of `bare`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:31: cannot tell the type of `1`, the argument of `out_of_range`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
 src/plain.smith:5:5: `for constexpr` is the loop of a generic function's body, run once for each instance; a plain function's loop is `for`
