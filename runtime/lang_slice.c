@@ -2028,6 +2028,10 @@ static size_t smith_lang_slice_init_slice(SmithLang *lang, const SmithHost *host
     return end;
 }
 
+static bool smith_lang_slice_init_holds(const SmithHost *host, const char *type, bool *anonymous);
+static void smith_lang_slice_init_unread(SmithLang *lang, const SmithHost *host, const SmithToken *open,
+                                         const char *why);
+
 // The value at `at` of the open struct, copied or converted, and the index after it.
 static size_t smith_lang_slice_init_value(SmithLang *lang, const SmithHost *host, SmithLangSliceInit *init, size_t at,
                                           SmithLangSliceCur *cur) {
@@ -2043,6 +2047,10 @@ static size_t smith_lang_slice_init_value(SmithLang *lang, const SmithHost *host
         SmithLangSliceInitFrame *inner = &init->frames[init->depth++];
         *inner = (SmithLangSliceInitFrame){};
         snprintf(inner->type, sizeof inner->type, "%s", member.record);
+        bool anonymous = false;
+        if (smith_lang_slice_init_holds(host, member.record, &anonymous) && anonymous) {
+            smith_lang_slice_init_unread(lang, host, &init->tokens[at], "in a struct with an anonymous member");
+        }
         smith_lang_slice_add(cur, init->tokens + at, 1);
         return at + 1;
     }
@@ -2132,13 +2140,42 @@ static bool smith_lang_slice_init_record(const SmithHost *host, const char *text
     return true;
 }
 
+// Whether the struct of this spelling holds a slice, however deep; `anonymous` says its members cannot be listed.
+static bool smith_lang_slice_init_holds(const SmithHost *host, const char *type, bool *anonymous) {
+    SmithFieldInfo info = {};
+    if (type[0] == 0 || host->type_field == nullptr ||
+        !host->type_field(host->context, type, (uint32_t)strlen(type), 0, &info)) {
+        return false;
+    }
+    *anonymous = info.status == SmithFields_Anonymous;
+    return info.has_slice;
+}
+
+// An initializer the walk cannot read, of a struct that holds a slice: an error, since the member would be empty.
+static void smith_lang_slice_init_unread(SmithLang *lang, const SmithHost *host, const SmithToken *open,
+                                         const char *why) {
+    smith_lang_error(lang, host, open->location,
+                     "a slice member %s is not read in an initializer list yet: assign the slice after the "
+                     "declaration (an unread value would leave it empty)",
+                     why);
+}
+
 // Reads the braces of an initializer (`open` is its `{`, in the queue at place 0 or the token being lowered), walks
 // them and, when a slice member's value changed, writes them again in place of the queue's.
 static bool smith_lang_slice_init_lower(SmithLang *lang, const SmithHost *host, const char *type,
                                         const SmithToken *open, bool queued) {
     static SmithToken tokens[smith_lang_slice_chain_max];
+    bool anonymous = false;
+    bool holds = smith_lang_slice_init_holds(host, type, &anonymous);
+    if (holds && anonymous) {
+        smith_lang_slice_init_unread(lang, host, open, "in a struct with an anonymous member");
+        return false;
+    }
     size_t count = smith_lang_slice_init_read(lang, host, open, queued ? 1 : 0, tokens, smith_lang_slice_chain_max);
-    if (count == 0) return false;
+    if (count == 0) {
+        if (holds) smith_lang_slice_init_unread(lang, host, open, "in an initializer of over 200 tokens");
+        return false;
+    }
     static SmithLangSliceCur converted;
     converted = (SmithLangSliceCur){};
     if (!smith_lang_slice_init_walk(lang, host, type, tokens, count, &converted)) return false;
@@ -2147,15 +2184,54 @@ static bool smith_lang_slice_init_lower(SmithLang *lang, const SmithHost *host, 
     return true;
 }
 
+// `T name[N] = { ... }`, an array of structs: a slice member in it is not read, which is an error.
+static void smith_lang_slice_init_array(SmithLang *lang, const SmithHost *host) {
+    SmithToken before = {};
+    if (!smith_lang_tuple_previous(lang, host, 1, &before) || !smith_lang_punct(&before, "]")) return;
+    unsigned back = 1;
+    for (unsigned guard = 0; guard < 6 && back < 8; guard++) { // the `[ ... ]` groups of the name
+        if (!smith_lang_tuple_previous(lang, host, back, &before)) return;
+        if (smith_lang_punct(&before, "]")) {
+            while (back < 8 && !smith_lang_punct(&before, "[")) // back to its `[`
+                if (!smith_lang_tuple_previous(lang, host, ++back, &before)) return;
+            back += 1;
+        } else {
+            break;
+        }
+    }
+    SmithToken name = {};
+    SmithToken tokens[9];
+    if (!smith_lang_tuple_previous(lang, host, back, &name) || name.kind != SmithTokenKind_Identifier) return;
+    size_t count = 0;
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &name, true);
+    size_t words = smith_lang_slice_type_before(lang, host, back + 1, tokens + count);
+    if (words == 0) return;
+    count += words;
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, &name, true);
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, &name, true);
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, &name, true);
+    char text[smith_lang_slice_text_max];
+    char type[256];
+    bool anonymous = false;
+    if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text) ||
+        !smith_lang_slice_init_record(host, text, type, sizeof type) ||
+        !smith_lang_slice_init_holds(host, type, &anonymous)) {
+        return;
+    }
+    const SmithToken *open = smith_lang_peek(lang, host, 0, false);
+    if (smith_lang_punct(open, "{")) smith_lang_slice_init_unread(lang, host, open, "in an array of structs");
+}
+
 // `T name = { ... }` where `T` is a struct: its slice members' values are slices (issue #173). True when written again.
 static bool smith_lang_slice_init_equals(SmithLang *lang, const SmithHost *host) {
     char text[smith_lang_slice_text_max];
     char type[256];
     bool pointer = false;
-    if (!smith_lang_slice_declared_text(lang, host, text, sizeof text, &pointer) || pointer ||
-        !smith_lang_slice_init_record(host, text, type, sizeof type)) {
+    if (!smith_lang_slice_declared_text(lang, host, text, sizeof text, &pointer)) {
+        smith_lang_slice_init_array(lang, host);
         return false;
     }
+    if (pointer || !smith_lang_slice_init_record(host, text, type, sizeof type)) return false;
     SmithToken brace = *smith_lang_peek(lang, host, 0, false);
     return smith_lang_punct(&brace, "{") && smith_lang_slice_init_lower(lang, host, type, &brace, true);
 }

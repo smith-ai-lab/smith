@@ -127,7 +127,8 @@ typedef struct {
     SmithFieldsStatus status;
     uint32_t count;
     bool bit_field;
-    bool tuple; // the struct is a tuple: its members are `_0`, `_1`, and `fields` names them "0", "1"
+    bool has_slice; // the struct holds a run-time array, however deep (anonymous members, arrays and structs inside)
+    bool tuple;     // the struct is a tuple: its members are `_0`, `_1`, and `fields` names them "0", "1"
     char name[128];
     char type[256];
 } SmithFieldInfo;
