@@ -38,9 +38,10 @@ import <smith/trace.h>;
 // contract::modifies(&x, ...)  the start of a function, after its requires: the function writes nothing but the objects
 //                         named (and its own locals), and a caller keeps everything else it knew across the call. Each
 //                         argument is a pointer to one object (`&moves->jumps`: the size is the pointee's). With no
-//                         argument the function writes nothing outside its locals. A function with no modifies may write
-//                         whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each range.
-//                         A range given as a slice (`xs`, `p[a:b]`) waits for generics that take slices (issue #119).
+//                         argument the function writes nothing outside its locals. A function with no modifies may
+//                         write whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each
+//                         range. A range given as a slice (`xs`, `p[a:b]`) waits for generics that take slices (issue
+//                         #119).
 //
 // A condition must be free of side effects: it is evaluated by the check, and not at all when assertions are off
 // (target::assertions, which NDEBUG turns off; the fast profile does).
@@ -161,7 +162,8 @@ export inline void modifies(auto... rest) {
         if constexpr (is_pointer(typeof(rest[i]))) {
             modifies_range(rest[i], sizeof(*rest[i]));
         } else {
-            static_assert(false, "contract::modifies takes &x, a pointer to one object (a slice is not supported yet, #119)");
+            static_assert(false,
+                          "contract::modifies takes &x, a pointer to one object (a slice is not supported yet, #119)");
         }
     }
 }
