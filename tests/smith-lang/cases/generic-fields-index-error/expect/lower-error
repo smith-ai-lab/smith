@@ -1,2 +1,2 @@
 src/main.smith:10:13: the field in `.[...]` is `fields(T)[i]` or a `Field`: a field kept in a variable needs smith's compiler to read it; the raw lowering has none
-src/main.smith:9:25: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
+src/main.smith:9:25: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it

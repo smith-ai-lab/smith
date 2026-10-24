@@ -160,7 +160,7 @@ The Zig 0.17.0 findings that shaped the design, from the cases:
   So a task is an edge with output `.smith/task/test` plus `build test: phony .smith/task/test`.
 - A value read with `smith_env` ends up in `build.ninja` and `.smith/.smith_log`. That matters if it is a secret.
 
-## Bootstrapping
+## Building smith from a fresh clone
 
 - (History: until issue #112 a fresh clone built a stage0 with one command, `cc -std=gnu23 smith.c -o smith`, and the
   libraries were compiled from a committed lowering; smith is now built by its previous release, see

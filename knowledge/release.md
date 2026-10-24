@@ -2,11 +2,11 @@
 type: design
 title: A stage0 release per merge to main
 description: Every green merge to main publishes the GitHub Release stage0-<commit> with smith's tarball and checksum, and old ones are pruned.
-tags: [ci, release, bootstrap]
+tags: [ci, release, build]
 ---
 # A stage0 release per merge to main
 
-`smith build release` packages the smith just built and publishes it, so the latest main binary is always one download away and a fresh clone can bootstrap from the release of its newest ancestor commit that has one. Nothing in the repository records which release to use, so a release needs no commit.
+`smith build release` packages the smith just built and publishes it, so the latest main binary is always one download away and a fresh clone can build from the release of its newest ancestor commit that has one. Nothing in the repository records which release to use, so a release needs no commit.
 
 **What is published.** A GitHub Release tagged `stage0-<full commit hash>` holding `smith-<os>-<arch>.tar.xz` (`bin/smith` and the links `smith-cc` and `smith-c++`, nothing else: the embedded files are inside the binary) and `smith-<os>-<arch>.tar.xz.sha256` (`shasum -a 256` format). The full smith is about 235 MB and the tarball about 67 MB (xz, 43 s CPU), far under the 300 MB limit set for this design.
 

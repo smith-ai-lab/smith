@@ -28,7 +28,7 @@ For simple code: `io::files_read(files, arena, path)`, `io::files_write(files, p
 
 `io::console_printf(console, format, ...)` and `io::console_eprintf` format into a 4 KiB buffer and print (`EMSGSIZE` past it). They are not `[[nodiscard]]`: a report of a hundred lines has nowhere to say that stdout closed.
 
-In `.smith` print typed pieces with no format string: `format::print(&io->console, "n = ", n, "\n")` and `format::print_error` (`import smith::format;`, skill smith-format) do the same through `io::console_print`; widths and `%g` are `format::pad`, `format::left`, `format::general`. The generic is in `format`, not `io`, because `io` is in the bootstrap lowering, which cannot write a generic.
+In `.smith` print typed pieces with no format string: `format::print(&io->console, "n = ", n, "\n")` and `format::print_error` (`import smith::format;`, skill smith-format) do the same through `io::console_print`; widths and `%g` are `format::pad`, `format::left`, `format::general`. The generic is in `format`, not `io`, because `io` is linked into smith, which its previous release builds, and a generic in it is the lag rule of smith-dev-build (a feature is usable there once it is on main).
 
 Reading lines to the end of input is a loop with a bound and an end check, which the fake console makes testable:
 

@@ -137,8 +137,8 @@ static bool smith_lang_fields_load(const SmithHost *host, const SmithLangGeneric
                                    SmithFieldInfo *info, char *message, size_t capacity) {
     if (host->type_field == nullptr || instance == nullptr) {
         snprintf(message, capacity,
-                 "`fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the "
-                 "stage0) cannot write it");
+                 "`fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot "
+                 "write it");
         return false;
     }
     bool of_value = smith_lang_cx_word(smith_lang_cx_token(call_at + 2), "typeof");

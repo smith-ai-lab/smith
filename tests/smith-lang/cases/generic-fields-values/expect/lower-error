@@ -1,7 +1,7 @@
-src/walk.smith:32:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:45:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:54:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:66:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:76:37: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:76:51: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/walk.smith:81:24: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
+src/walk.smith:32:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:45:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:54:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:66:5: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:76:37: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:76:51: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/walk.smith:81:24: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
