@@ -485,8 +485,8 @@ static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, 
                      "typedef (`typedef struct { i32, f32 } Pair;`)");
 }
 
-static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token, const char *tokens,
-                                     const SmithToken *span, size_t close);
+static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                     const char *tokens, const SmithToken *span, size_t close);
 
 // ---- An expression that is a tuple: `t[0]` and `countof(t)`
 
@@ -725,7 +725,8 @@ static void smith_lang_tuple_return(SmithLang *lang, const SmithHost *host, cons
         return;
     }
     char type[256];
-    if (!host->return_type(host->context, type, sizeof type) || (strncmp(type, "struct smith_tuple_", 19) != 0 && strncmp(type, "struct smith_array_", 19) != 0) ||
+    if (!host->return_type(host->context, type, sizeof type) ||
+        (strncmp(type, "struct smith_tuple_", 19) != 0 && strncmp(type, "struct smith_array_", 19) != 0) ||
         strchr(type, ' ') != type + 6 || strchr(type + 7, ' ') != nullptr) {
         return;
     }
@@ -861,8 +862,8 @@ static void smith_lang_tuple_hoist_kind(char *body, size_t *used, size_t capacit
         memcpy(suffix, body + found + 7 + strlen(tag_prefix), tag_length - strlen(tag_prefix));
         suffix[tag_length - strlen(tag_prefix)] = 0;
         char block[8192];
-        int written = snprintf(block, sizeof block, "\n\n#ifndef %s%s\n#define %s%s\n%.*s;\n#endif",
-                               guard, suffix, guard, suffix, (int)(end - found), body + found);
+        int written = snprintf(block, sizeof block, "\n\n#ifndef %s%s\n#define %s%s\n%.*s;\n#endif", guard, suffix,
+                               guard, suffix, (int)(end - found), body + found);
         if (written <= 0 || (size_t)written >= sizeof block) return;
         size_t start = smith_lang_tuple_decl_start(body, found);
         char define[smith_lang_tuple_name_max + 24];

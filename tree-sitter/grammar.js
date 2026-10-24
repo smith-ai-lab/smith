@@ -240,6 +240,23 @@ module.exports = grammar(C, {
       repeat(seq('*', repeat($.type_qualifier))),
     ),
 
+    // A run-time array (issue #82): `i32 xs[:]` declares a slice, `xs[a:b]`, `xs[:b]`, `xs[a:]` and `xs[:]` slice one
+    // (`xs[a:b:2]`, a step, is an error of the lowering and parses).
+    array_declarator: ($, original) => choice(original, prec(1, seq(
+      field('declarator', $._declarator), '[', field('size', ':'), ']'))),
+    array_field_declarator: ($, original) => choice(original, prec(1, seq(
+      field('declarator', $._field_declarator), '[', field('size', ':'), ']'))),
+    array_type_declarator: ($, original) => choice(original, prec(1, seq(
+      field('declarator', $._type_declarator), '[', field('size', ':'), ']'))),
+    abstract_array_declarator: ($, original) => choice(original, prec(1, seq(
+      field('declarator', optional($._abstract_declarator)), '[', field('size', ':'), ']'))),
+    subscript_expression: ($, original) => choice(original, prec(C.PREC.SUBSCRIPT, seq(
+      field('argument', $.expression), '[', field('index', $.slice_range), ']'))),
+    slice_range: $ => choice(
+      seq($.expression, ':', optional($.expression), optional(seq(':', $.expression))),
+      seq(':', optional($.expression)),
+    ),
+
     union_specifier: $ => prec.right(seq(
       'union',
       repeat($.attribute_declaration),

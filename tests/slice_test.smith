@@ -87,9 +87,8 @@ export void test_slice_results_fields_and_nested_chains(void) {
 
 export void test_slice_a_slice_passes_to_c_as_a_pointer(void) {
     char word[:] = "hello";
-    char copy[6] = {};
-    c::memcpy(copy, word, countof(word));
-    test::check_equal(copy[4], 'o');
+    test::check_equal(c::strncmp(word, "hello", countof(word)), 0);
+    test::check_equal(c::strncmp(word, "help!", countof(word)) > 0, false);
 }
 
 export void test_slice_an_index_past_the_end_stops(void) {

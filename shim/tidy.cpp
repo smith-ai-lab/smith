@@ -122,12 +122,12 @@ class SmithNaming final : public RenamerClangTidyCheck {
     }
 
     // A tuple `struct { i32, f32 }` is lowered to a struct named for its fields (`smith_tuple_i32__f32`) whose fields
-    // are
-    // `_0`, `_1`: names the lowering made and the program never wrote, so no rule of naming applies to them.
+    // are `_0`, `_1`, and a slice `T xs[:]` to `smith_array_i32_n` with `data` and `count`: names the lowering made and
+    // the program never wrote, so no rule of naming applies to them.
     static bool isTuplePart(const NamedDecl *Decl) {
-        constexpr StringRef prefix = "smith_tuple_";
-        if (const auto *record = dyn_cast<RecordDecl>(Decl)) return record->getName().starts_with(prefix);
-        if (const auto *field = dyn_cast<FieldDecl>(Decl)) return field->getParent()->getName().starts_with(prefix);
+        auto made = [](StringRef name) { return name.starts_with("smith_tuple_") || name.starts_with("smith_array_"); };
+        if (const auto *record = dyn_cast<RecordDecl>(Decl)) return made(record->getName());
+        if (const auto *field = dyn_cast<FieldDecl>(Decl)) return made(field->getParent()->getName());
         return false;
     }
 

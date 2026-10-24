@@ -376,6 +376,10 @@
             "named": false
           },
           {
+            "type": ":",
+            "named": false
+          },
+          {
             "type": "expression",
             "named": true
           }
@@ -570,6 +574,10 @@
         "types": [
           {
             "type": "*",
+            "named": false
+          },
+          {
+            "type": ":",
             "named": false
           },
           {
@@ -4033,6 +4041,21 @@
     }
   },
   {
+    "type": "slice_range",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "storage_class_specifier",
     "named": true,
     "fields": {}
@@ -4143,6 +4166,10 @@
         "types": [
           {
             "type": "expression",
+            "named": true
+          },
+          {
+            "type": "slice_range",
             "named": true
           }
         ]

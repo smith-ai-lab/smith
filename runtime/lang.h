@@ -273,7 +273,8 @@ typedef struct {
     // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
     // token, because a type value is found by the tokens around a type name.
     bool maybe_type_value;
-    bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook alone
+    bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook
+                      // alone
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
     void (*watch_imports)(void *context);
     // Whether the file being lowered has declared anything yet (an import must come first).
