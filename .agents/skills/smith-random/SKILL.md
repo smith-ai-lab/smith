@@ -27,7 +27,7 @@ f64 a = random::normal_double_sample(parts[0], n);
 f64 b = random::normal_double_sample(parts[0], n);   // error: smith-affine: 'parts[0]' is used again; it was already used at line N
 ```
 
-`random::split(key, keys)` uses `key` and fills an array or a slice with `countof(keys)` new keys (C: `smith_key_split_n(key, keys, count)`, also `random::split_n(key, keys, count)`, which a file that imports a C header needs for an array: `split` of an array fails there with "is a C name"); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.
+`random::split(key, keys)` uses `key` and fills an array or a slice with `countof(keys)` new keys (C: `smith_key_split_n(key, keys, count)`, also `random::split_n(key, keys, count)` for a pointer and a count); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.
 
 A loop that needs a key per turn without an array reassigns it:
 
