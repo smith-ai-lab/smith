@@ -37,7 +37,7 @@ void test_dap_round_trip_protocol_message_type(SmithKey key) {
     smith_dap_protocol_message_type_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_protocol_message_type_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProtocolMessageType back;
     SmithProtocolError error = {};
@@ -54,7 +54,7 @@ void test_dap_round_trip_protocol_message(SmithKey key) {
     smith_dap_protocol_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_protocol_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProtocolMessage back;
     SmithProtocolError error = {};
@@ -87,7 +87,7 @@ void test_dap_round_trip_request(SmithKey key) {
     smith_dap_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRequest back;
     SmithProtocolError error = {};
@@ -120,7 +120,7 @@ void test_dap_round_trip_event(SmithKey key) {
     smith_dap_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvent back;
     SmithProtocolError error = {};
@@ -153,7 +153,7 @@ void test_dap_round_trip_response_message(SmithKey key) {
     smith_dap_response_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_response_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapResponseMessage back;
     SmithProtocolError error = {};
@@ -170,7 +170,7 @@ void test_dap_round_trip_response(SmithKey key) {
     smith_dap_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapResponse back;
     SmithProtocolError error = {};
@@ -203,7 +203,7 @@ void test_dap_round_trip_string_map(SmithKey key) {
     smith_dap_string_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_string_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStringMap back;
     SmithProtocolError error = {};
@@ -220,7 +220,7 @@ void test_dap_round_trip_message(SmithKey key) {
     smith_dap_message_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_message_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapMessage back;
     SmithProtocolError error = {};
@@ -253,7 +253,7 @@ void test_dap_round_trip_error_response_body(SmithKey key) {
     smith_dap_error_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_error_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapErrorResponseBody back;
     SmithProtocolError error = {};
@@ -270,7 +270,7 @@ void test_dap_round_trip_error_response(SmithKey key) {
     smith_dap_error_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_error_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapErrorResponse back;
     SmithProtocolError error = {};
@@ -303,7 +303,7 @@ void test_dap_round_trip_cancel_arguments(SmithKey key) {
     smith_dap_cancel_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_cancel_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCancelArguments back;
     SmithProtocolError error = {};
@@ -320,7 +320,7 @@ void test_dap_round_trip_cancel_request(SmithKey key) {
     smith_dap_cancel_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_cancel_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCancelRequest back;
     SmithProtocolError error = {};
@@ -353,7 +353,7 @@ void test_dap_round_trip_cancel_response(SmithKey key) {
     smith_dap_cancel_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_cancel_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCancelResponse back;
     SmithProtocolError error = {};
@@ -386,7 +386,7 @@ void test_dap_round_trip_initialized_event(SmithKey key) {
     smith_dap_initialized_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_initialized_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInitializedEvent back;
     SmithProtocolError error = {};
@@ -419,7 +419,7 @@ void test_dap_round_trip_stopped_event_body_reason(SmithKey key) {
     smith_dap_stopped_event_body_reason_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stopped_event_body_reason_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStoppedEventBodyReason back;
     SmithProtocolError error = {};
@@ -436,7 +436,7 @@ void test_dap_round_trip_integer_list(SmithKey key) {
     smith_dap_integer_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_integer_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapIntegerList back;
     SmithProtocolError error = {};
@@ -453,7 +453,7 @@ void test_dap_round_trip_stopped_event_body(SmithKey key) {
     smith_dap_stopped_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stopped_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStoppedEventBody back;
     SmithProtocolError error = {};
@@ -486,7 +486,7 @@ void test_dap_round_trip_stopped_event(SmithKey key) {
     smith_dap_stopped_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stopped_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStoppedEvent back;
     SmithProtocolError error = {};
@@ -519,7 +519,7 @@ void test_dap_round_trip_continued_event_body(SmithKey key) {
     smith_dap_continued_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continued_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinuedEventBody back;
     SmithProtocolError error = {};
@@ -552,7 +552,7 @@ void test_dap_round_trip_continued_event(SmithKey key) {
     smith_dap_continued_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continued_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinuedEvent back;
     SmithProtocolError error = {};
@@ -585,7 +585,7 @@ void test_dap_round_trip_exited_event_body(SmithKey key) {
     smith_dap_exited_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exited_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExitedEventBody back;
     SmithProtocolError error = {};
@@ -618,7 +618,7 @@ void test_dap_round_trip_exited_event(SmithKey key) {
     smith_dap_exited_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exited_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExitedEvent back;
     SmithProtocolError error = {};
@@ -651,7 +651,7 @@ void test_dap_round_trip_terminated_event_body(SmithKey key) {
     smith_dap_terminated_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminated_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminatedEventBody back;
     SmithProtocolError error = {};
@@ -668,7 +668,7 @@ void test_dap_round_trip_terminated_event(SmithKey key) {
     smith_dap_terminated_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminated_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminatedEvent back;
     SmithProtocolError error = {};
@@ -701,7 +701,7 @@ void test_dap_round_trip_thread_event_body_reason(SmithKey key) {
     smith_dap_thread_event_body_reason_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_thread_event_body_reason_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadEventBodyReason back;
     SmithProtocolError error = {};
@@ -718,7 +718,7 @@ void test_dap_round_trip_thread_event_body(SmithKey key) {
     smith_dap_thread_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_thread_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadEventBody back;
     SmithProtocolError error = {};
@@ -751,7 +751,7 @@ void test_dap_round_trip_thread_event(SmithKey key) {
     smith_dap_thread_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_thread_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadEvent back;
     SmithProtocolError error = {};
@@ -784,7 +784,7 @@ void test_dap_round_trip_output_event_body_category(SmithKey key) {
     smith_dap_output_event_body_category_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_output_event_body_category_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapOutputEventBodyCategory back;
     SmithProtocolError error = {};
@@ -801,7 +801,7 @@ void test_dap_round_trip_output_event_body_group(SmithKey key) {
     smith_dap_output_event_body_group_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_output_event_body_group_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapOutputEventBodyGroup back;
     SmithProtocolError error = {};
@@ -818,7 +818,7 @@ void test_dap_round_trip_source_presentation_hint(SmithKey key) {
     smith_dap_source_presentation_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_presentation_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourcePresentationHint back;
     SmithProtocolError error = {};
@@ -835,7 +835,7 @@ void test_dap_round_trip_checksum_algorithm(SmithKey key) {
     smith_dap_checksum_algorithm_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_checksum_algorithm_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapChecksumAlgorithm back;
     SmithProtocolError error = {};
@@ -852,7 +852,7 @@ void test_dap_round_trip_checksum(SmithKey key) {
     smith_dap_checksum_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_checksum_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapChecksum back;
     SmithProtocolError error = {};
@@ -885,7 +885,7 @@ void test_dap_round_trip_checksum_list(SmithKey key) {
     smith_dap_checksum_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_checksum_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapChecksumList back;
     SmithProtocolError error = {};
@@ -902,7 +902,7 @@ void test_dap_round_trip_source(SmithKey key) {
     smith_dap_source_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSource back;
     SmithProtocolError error = {};
@@ -919,7 +919,7 @@ void test_dap_round_trip_output_event_body(SmithKey key) {
     smith_dap_output_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_output_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapOutputEventBody back;
     SmithProtocolError error = {};
@@ -952,7 +952,7 @@ void test_dap_round_trip_output_event(SmithKey key) {
     smith_dap_output_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_output_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapOutputEvent back;
     SmithProtocolError error = {};
@@ -985,7 +985,7 @@ void test_dap_round_trip_breakpoint_event_body_reason(SmithKey key) {
     smith_dap_breakpoint_event_body_reason_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_event_body_reason_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointEventBodyReason back;
     SmithProtocolError error = {};
@@ -1002,7 +1002,7 @@ void test_dap_round_trip_breakpoint_reason(SmithKey key) {
     smith_dap_breakpoint_reason_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_reason_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointReason back;
     SmithProtocolError error = {};
@@ -1019,7 +1019,7 @@ void test_dap_round_trip_breakpoint(SmithKey key) {
     smith_dap_breakpoint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpoint back;
     SmithProtocolError error = {};
@@ -1052,7 +1052,7 @@ void test_dap_round_trip_breakpoint_event_body(SmithKey key) {
     smith_dap_breakpoint_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointEventBody back;
     SmithProtocolError error = {};
@@ -1085,7 +1085,7 @@ void test_dap_round_trip_breakpoint_event(SmithKey key) {
     smith_dap_breakpoint_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointEvent back;
     SmithProtocolError error = {};
@@ -1118,7 +1118,7 @@ void test_dap_round_trip_module_event_body_reason(SmithKey key) {
     smith_dap_module_event_body_reason_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_event_body_reason_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModuleEventBodyReason back;
     SmithProtocolError error = {};
@@ -1135,7 +1135,7 @@ void test_dap_round_trip_module_id(SmithKey key) {
     smith_dap_module_id_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_id_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModuleId back;
     SmithProtocolError error = {};
@@ -1152,7 +1152,7 @@ void test_dap_round_trip_module(SmithKey key) {
     smith_dap_module_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModule back;
     SmithProtocolError error = {};
@@ -1185,7 +1185,7 @@ void test_dap_round_trip_module_event_body(SmithKey key) {
     smith_dap_module_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModuleEventBody back;
     SmithProtocolError error = {};
@@ -1218,7 +1218,7 @@ void test_dap_round_trip_module_event(SmithKey key) {
     smith_dap_module_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModuleEvent back;
     SmithProtocolError error = {};
@@ -1251,7 +1251,7 @@ void test_dap_round_trip_loaded_source_event_body(SmithKey key) {
     smith_dap_loaded_source_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_loaded_source_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLoadedSourceEventBody back;
     SmithProtocolError error = {};
@@ -1284,7 +1284,7 @@ void test_dap_round_trip_loaded_source_event(SmithKey key) {
     smith_dap_loaded_source_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_loaded_source_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLoadedSourceEvent back;
     SmithProtocolError error = {};
@@ -1317,7 +1317,7 @@ void test_dap_round_trip_process_event_body_start_method(SmithKey key) {
     smith_dap_process_event_body_start_method_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_process_event_body_start_method_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProcessEventBodyStartMethod back;
     SmithProtocolError error = {};
@@ -1334,7 +1334,7 @@ void test_dap_round_trip_process_event_body(SmithKey key) {
     smith_dap_process_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_process_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProcessEventBody back;
     SmithProtocolError error = {};
@@ -1367,7 +1367,7 @@ void test_dap_round_trip_process_event(SmithKey key) {
     smith_dap_process_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_process_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProcessEvent back;
     SmithProtocolError error = {};
@@ -1400,7 +1400,7 @@ void test_dap_round_trip_exception_breakpoints_filter(SmithKey key) {
     smith_dap_exception_breakpoints_filter_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_breakpoints_filter_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionBreakpointsFilter back;
     SmithProtocolError error = {};
@@ -1433,7 +1433,7 @@ void test_dap_round_trip_exception_breakpoints_filter_list(SmithKey key) {
     smith_dap_exception_breakpoints_filter_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_breakpoints_filter_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionBreakpointsFilterList back;
     SmithProtocolError error = {};
@@ -1450,7 +1450,7 @@ void test_dap_round_trip_string_list(SmithKey key) {
     smith_dap_string_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_string_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStringList back;
     SmithProtocolError error = {};
@@ -1467,7 +1467,7 @@ void test_dap_round_trip_column_descriptor_type(SmithKey key) {
     smith_dap_column_descriptor_type_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_column_descriptor_type_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapColumnDescriptorType back;
     SmithProtocolError error = {};
@@ -1484,7 +1484,7 @@ void test_dap_round_trip_column_descriptor(SmithKey key) {
     smith_dap_column_descriptor_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_column_descriptor_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapColumnDescriptor back;
     SmithProtocolError error = {};
@@ -1517,7 +1517,7 @@ void test_dap_round_trip_column_descriptor_list(SmithKey key) {
     smith_dap_column_descriptor_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_column_descriptor_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapColumnDescriptorList back;
     SmithProtocolError error = {};
@@ -1534,7 +1534,7 @@ void test_dap_round_trip_checksum_algorithm_list(SmithKey key) {
     smith_dap_checksum_algorithm_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_checksum_algorithm_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapChecksumAlgorithmList back;
     SmithProtocolError error = {};
@@ -1551,7 +1551,7 @@ void test_dap_round_trip_breakpoint_mode_applicability(SmithKey key) {
     smith_dap_breakpoint_mode_applicability_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_mode_applicability_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointModeApplicability back;
     SmithProtocolError error = {};
@@ -1568,7 +1568,7 @@ void test_dap_round_trip_breakpoint_mode_applicability_list(SmithKey key) {
     smith_dap_breakpoint_mode_applicability_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_mode_applicability_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointModeApplicabilityList back;
     SmithProtocolError error = {};
@@ -1585,7 +1585,7 @@ void test_dap_round_trip_breakpoint_mode(SmithKey key) {
     smith_dap_breakpoint_mode_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_mode_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointMode back;
     SmithProtocolError error = {};
@@ -1618,7 +1618,7 @@ void test_dap_round_trip_breakpoint_mode_list(SmithKey key) {
     smith_dap_breakpoint_mode_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_mode_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointModeList back;
     SmithProtocolError error = {};
@@ -1635,7 +1635,7 @@ void test_dap_round_trip_capabilities(SmithKey key) {
     smith_dap_capabilities_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_capabilities_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCapabilities back;
     SmithProtocolError error = {};
@@ -1652,7 +1652,7 @@ void test_dap_round_trip_capabilities_event_body(SmithKey key) {
     smith_dap_capabilities_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_capabilities_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCapabilitiesEventBody back;
     SmithProtocolError error = {};
@@ -1685,7 +1685,7 @@ void test_dap_round_trip_capabilities_event(SmithKey key) {
     smith_dap_capabilities_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_capabilities_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCapabilitiesEvent back;
     SmithProtocolError error = {};
@@ -1718,7 +1718,7 @@ void test_dap_round_trip_progress_start_event_body(SmithKey key) {
     smith_dap_progress_start_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_start_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressStartEventBody back;
     SmithProtocolError error = {};
@@ -1751,7 +1751,7 @@ void test_dap_round_trip_progress_start_event(SmithKey key) {
     smith_dap_progress_start_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_start_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressStartEvent back;
     SmithProtocolError error = {};
@@ -1784,7 +1784,7 @@ void test_dap_round_trip_progress_update_event_body(SmithKey key) {
     smith_dap_progress_update_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_update_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressUpdateEventBody back;
     SmithProtocolError error = {};
@@ -1817,7 +1817,7 @@ void test_dap_round_trip_progress_update_event(SmithKey key) {
     smith_dap_progress_update_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_update_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressUpdateEvent back;
     SmithProtocolError error = {};
@@ -1850,7 +1850,7 @@ void test_dap_round_trip_progress_end_event_body(SmithKey key) {
     smith_dap_progress_end_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_end_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressEndEventBody back;
     SmithProtocolError error = {};
@@ -1883,7 +1883,7 @@ void test_dap_round_trip_progress_end_event(SmithKey key) {
     smith_dap_progress_end_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_progress_end_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapProgressEndEvent back;
     SmithProtocolError error = {};
@@ -1916,7 +1916,7 @@ void test_dap_round_trip_invalidated_areas(SmithKey key) {
     smith_dap_invalidated_areas_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_invalidated_areas_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInvalidatedAreas back;
     SmithProtocolError error = {};
@@ -1933,7 +1933,7 @@ void test_dap_round_trip_invalidated_areas_list(SmithKey key) {
     smith_dap_invalidated_areas_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_invalidated_areas_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInvalidatedAreasList back;
     SmithProtocolError error = {};
@@ -1950,7 +1950,7 @@ void test_dap_round_trip_invalidated_event_body(SmithKey key) {
     smith_dap_invalidated_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_invalidated_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInvalidatedEventBody back;
     SmithProtocolError error = {};
@@ -1967,7 +1967,7 @@ void test_dap_round_trip_invalidated_event(SmithKey key) {
     smith_dap_invalidated_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_invalidated_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInvalidatedEvent back;
     SmithProtocolError error = {};
@@ -2000,7 +2000,7 @@ void test_dap_round_trip_memory_event_body(SmithKey key) {
     smith_dap_memory_event_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_memory_event_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapMemoryEventBody back;
     SmithProtocolError error = {};
@@ -2033,7 +2033,7 @@ void test_dap_round_trip_memory_event(SmithKey key) {
     smith_dap_memory_event_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_memory_event_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapMemoryEvent back;
     SmithProtocolError error = {};
@@ -2066,7 +2066,7 @@ void test_dap_round_trip_run_in_terminal_request_arguments_kind(SmithKey key) {
     smith_dap_run_in_terminal_request_arguments_kind_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_run_in_terminal_request_arguments_kind_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRunInTerminalRequestArgumentsKind back;
     SmithProtocolError error = {};
@@ -2083,7 +2083,7 @@ void test_dap_round_trip_nullable_string(SmithKey key) {
     smith_dap_nullable_string_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_nullable_string_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapNullableString back;
     SmithProtocolError error = {};
@@ -2100,7 +2100,7 @@ void test_dap_round_trip_nullable_string_map(SmithKey key) {
     smith_dap_nullable_string_map_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_nullable_string_map_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapNullableStringMap back;
     SmithProtocolError error = {};
@@ -2117,7 +2117,7 @@ void test_dap_round_trip_run_in_terminal_request_arguments(SmithKey key) {
     smith_dap_run_in_terminal_request_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_run_in_terminal_request_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRunInTerminalRequestArguments back;
     SmithProtocolError error = {};
@@ -2150,7 +2150,7 @@ void test_dap_round_trip_run_in_terminal_request(SmithKey key) {
     smith_dap_run_in_terminal_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_run_in_terminal_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRunInTerminalRequest back;
     SmithProtocolError error = {};
@@ -2183,7 +2183,7 @@ void test_dap_round_trip_run_in_terminal_response_body(SmithKey key) {
     smith_dap_run_in_terminal_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_run_in_terminal_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRunInTerminalResponseBody back;
     SmithProtocolError error = {};
@@ -2200,7 +2200,7 @@ void test_dap_round_trip_run_in_terminal_response(SmithKey key) {
     smith_dap_run_in_terminal_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_run_in_terminal_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRunInTerminalResponse back;
     SmithProtocolError error = {};
@@ -2233,7 +2233,7 @@ void test_dap_round_trip_start_debugging_request_arguments_output_presentation(S
     smith_dap_start_debugging_request_arguments_output_presentation_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_start_debugging_request_arguments_output_presentation_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStartDebuggingRequestArgumentsOutputPresentation back;
     SmithProtocolError error = {};
@@ -2250,7 +2250,7 @@ void test_dap_round_trip_start_debugging_request_arguments_request(SmithKey key)
     smith_dap_start_debugging_request_arguments_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_start_debugging_request_arguments_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStartDebuggingRequestArgumentsRequest back;
     SmithProtocolError error = {};
@@ -2267,7 +2267,7 @@ void test_dap_round_trip_start_debugging_request_arguments(SmithKey key) {
     smith_dap_start_debugging_request_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_start_debugging_request_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStartDebuggingRequestArguments back;
     SmithProtocolError error = {};
@@ -2300,7 +2300,7 @@ void test_dap_round_trip_start_debugging_request(SmithKey key) {
     smith_dap_start_debugging_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_start_debugging_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStartDebuggingRequest back;
     SmithProtocolError error = {};
@@ -2333,7 +2333,7 @@ void test_dap_round_trip_start_debugging_response(SmithKey key) {
     smith_dap_start_debugging_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_start_debugging_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStartDebuggingResponse back;
     SmithProtocolError error = {};
@@ -2366,7 +2366,7 @@ void test_dap_round_trip_initialize_request_arguments_path_format(SmithKey key) 
     smith_dap_initialize_request_arguments_path_format_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_initialize_request_arguments_path_format_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInitializeRequestArgumentsPathFormat back;
     SmithProtocolError error = {};
@@ -2383,7 +2383,7 @@ void test_dap_round_trip_initialize_request_arguments(SmithKey key) {
     smith_dap_initialize_request_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_initialize_request_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInitializeRequestArguments back;
     SmithProtocolError error = {};
@@ -2416,7 +2416,7 @@ void test_dap_round_trip_initialize_request(SmithKey key) {
     smith_dap_initialize_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_initialize_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInitializeRequest back;
     SmithProtocolError error = {};
@@ -2449,7 +2449,7 @@ void test_dap_round_trip_initialize_response(SmithKey key) {
     smith_dap_initialize_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_initialize_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInitializeResponse back;
     SmithProtocolError error = {};
@@ -2482,7 +2482,7 @@ void test_dap_round_trip_configuration_done_request(SmithKey key) {
     smith_dap_configuration_done_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_configuration_done_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapConfigurationDoneRequest back;
     SmithProtocolError error = {};
@@ -2515,7 +2515,7 @@ void test_dap_round_trip_configuration_done_response(SmithKey key) {
     smith_dap_configuration_done_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_configuration_done_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapConfigurationDoneResponse back;
     SmithProtocolError error = {};
@@ -2548,7 +2548,7 @@ void test_dap_round_trip_launch_request_arguments(SmithKey key) {
     smith_dap_launch_request_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_launch_request_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLaunchRequestArguments back;
     SmithProtocolError error = {};
@@ -2565,7 +2565,7 @@ void test_dap_round_trip_launch_request(SmithKey key) {
     smith_dap_launch_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_launch_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLaunchRequest back;
     SmithProtocolError error = {};
@@ -2598,7 +2598,7 @@ void test_dap_round_trip_launch_response(SmithKey key) {
     smith_dap_launch_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_launch_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLaunchResponse back;
     SmithProtocolError error = {};
@@ -2631,7 +2631,7 @@ void test_dap_round_trip_attach_request_arguments(SmithKey key) {
     smith_dap_attach_request_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_attach_request_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapAttachRequestArguments back;
     SmithProtocolError error = {};
@@ -2648,7 +2648,7 @@ void test_dap_round_trip_attach_request(SmithKey key) {
     smith_dap_attach_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_attach_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapAttachRequest back;
     SmithProtocolError error = {};
@@ -2681,7 +2681,7 @@ void test_dap_round_trip_attach_response(SmithKey key) {
     smith_dap_attach_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_attach_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapAttachResponse back;
     SmithProtocolError error = {};
@@ -2714,7 +2714,7 @@ void test_dap_round_trip_restart_arguments_arguments(SmithKey key) {
     smith_dap_restart_arguments_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_arguments_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartArgumentsArguments back;
     SmithProtocolError error = {};
@@ -2739,7 +2739,7 @@ void test_dap_round_trip_restart_arguments(SmithKey key) {
     smith_dap_restart_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartArguments back;
     SmithProtocolError error = {};
@@ -2764,7 +2764,7 @@ void test_dap_round_trip_restart_request(SmithKey key) {
     smith_dap_restart_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartRequest back;
     SmithProtocolError error = {};
@@ -2805,7 +2805,7 @@ void test_dap_round_trip_restart_response(SmithKey key) {
     smith_dap_restart_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartResponse back;
     SmithProtocolError error = {};
@@ -2838,7 +2838,7 @@ void test_dap_round_trip_disconnect_arguments(SmithKey key) {
     smith_dap_disconnect_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disconnect_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisconnectArguments back;
     SmithProtocolError error = {};
@@ -2855,7 +2855,7 @@ void test_dap_round_trip_disconnect_request(SmithKey key) {
     smith_dap_disconnect_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disconnect_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisconnectRequest back;
     SmithProtocolError error = {};
@@ -2888,7 +2888,7 @@ void test_dap_round_trip_disconnect_response(SmithKey key) {
     smith_dap_disconnect_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disconnect_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisconnectResponse back;
     SmithProtocolError error = {};
@@ -2921,7 +2921,7 @@ void test_dap_round_trip_terminate_arguments(SmithKey key) {
     smith_dap_terminate_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateArguments back;
     SmithProtocolError error = {};
@@ -2938,7 +2938,7 @@ void test_dap_round_trip_terminate_request(SmithKey key) {
     smith_dap_terminate_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateRequest back;
     SmithProtocolError error = {};
@@ -2971,7 +2971,7 @@ void test_dap_round_trip_terminate_response(SmithKey key) {
     smith_dap_terminate_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateResponse back;
     SmithProtocolError error = {};
@@ -3004,7 +3004,7 @@ void test_dap_round_trip_breakpoint_locations_arguments(SmithKey key) {
     smith_dap_breakpoint_locations_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_locations_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocationsArguments back;
     SmithProtocolError error = {};
@@ -3037,7 +3037,7 @@ void test_dap_round_trip_breakpoint_locations_request(SmithKey key) {
     smith_dap_breakpoint_locations_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_locations_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocationsRequest back;
     SmithProtocolError error = {};
@@ -3070,7 +3070,7 @@ void test_dap_round_trip_breakpoint_location(SmithKey key) {
     smith_dap_breakpoint_location_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_location_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocation back;
     SmithProtocolError error = {};
@@ -3103,7 +3103,7 @@ void test_dap_round_trip_breakpoint_location_list(SmithKey key) {
     smith_dap_breakpoint_location_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_location_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocationList back;
     SmithProtocolError error = {};
@@ -3120,7 +3120,7 @@ void test_dap_round_trip_breakpoint_locations_response_body(SmithKey key) {
     smith_dap_breakpoint_locations_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_locations_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocationsResponseBody back;
     SmithProtocolError error = {};
@@ -3153,7 +3153,7 @@ void test_dap_round_trip_breakpoint_locations_response(SmithKey key) {
     smith_dap_breakpoint_locations_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_locations_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointLocationsResponse back;
     SmithProtocolError error = {};
@@ -3186,7 +3186,7 @@ void test_dap_round_trip_source_breakpoint(SmithKey key) {
     smith_dap_source_breakpoint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_breakpoint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceBreakpoint back;
     SmithProtocolError error = {};
@@ -3219,7 +3219,7 @@ void test_dap_round_trip_source_breakpoint_list(SmithKey key) {
     smith_dap_source_breakpoint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_breakpoint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceBreakpointList back;
     SmithProtocolError error = {};
@@ -3236,7 +3236,7 @@ void test_dap_round_trip_set_breakpoints_arguments(SmithKey key) {
     smith_dap_set_breakpoints_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_breakpoints_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetBreakpointsArguments back;
     SmithProtocolError error = {};
@@ -3269,7 +3269,7 @@ void test_dap_round_trip_set_breakpoints_request(SmithKey key) {
     smith_dap_set_breakpoints_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_breakpoints_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetBreakpointsRequest back;
     SmithProtocolError error = {};
@@ -3302,7 +3302,7 @@ void test_dap_round_trip_breakpoint_list(SmithKey key) {
     smith_dap_breakpoint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_breakpoint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapBreakpointList back;
     SmithProtocolError error = {};
@@ -3319,7 +3319,7 @@ void test_dap_round_trip_set_breakpoints_response_body(SmithKey key) {
     smith_dap_set_breakpoints_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_breakpoints_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetBreakpointsResponseBody back;
     SmithProtocolError error = {};
@@ -3352,7 +3352,7 @@ void test_dap_round_trip_set_breakpoints_response(SmithKey key) {
     smith_dap_set_breakpoints_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_breakpoints_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetBreakpointsResponse back;
     SmithProtocolError error = {};
@@ -3385,7 +3385,7 @@ void test_dap_round_trip_function_breakpoint(SmithKey key) {
     smith_dap_function_breakpoint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_function_breakpoint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapFunctionBreakpoint back;
     SmithProtocolError error = {};
@@ -3418,7 +3418,7 @@ void test_dap_round_trip_function_breakpoint_list(SmithKey key) {
     smith_dap_function_breakpoint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_function_breakpoint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapFunctionBreakpointList back;
     SmithProtocolError error = {};
@@ -3435,7 +3435,7 @@ void test_dap_round_trip_set_function_breakpoints_arguments(SmithKey key) {
     smith_dap_set_function_breakpoints_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_function_breakpoints_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetFunctionBreakpointsArguments back;
     SmithProtocolError error = {};
@@ -3468,7 +3468,7 @@ void test_dap_round_trip_set_function_breakpoints_request(SmithKey key) {
     smith_dap_set_function_breakpoints_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_function_breakpoints_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetFunctionBreakpointsRequest back;
     SmithProtocolError error = {};
@@ -3501,7 +3501,7 @@ void test_dap_round_trip_set_function_breakpoints_response_body(SmithKey key) {
     smith_dap_set_function_breakpoints_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_function_breakpoints_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetFunctionBreakpointsResponseBody back;
     SmithProtocolError error = {};
@@ -3534,7 +3534,7 @@ void test_dap_round_trip_set_function_breakpoints_response(SmithKey key) {
     smith_dap_set_function_breakpoints_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_function_breakpoints_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetFunctionBreakpointsResponse back;
     SmithProtocolError error = {};
@@ -3567,7 +3567,7 @@ void test_dap_round_trip_exception_filter_options(SmithKey key) {
     smith_dap_exception_filter_options_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_filter_options_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionFilterOptions back;
     SmithProtocolError error = {};
@@ -3600,7 +3600,7 @@ void test_dap_round_trip_exception_filter_options_list(SmithKey key) {
     smith_dap_exception_filter_options_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_filter_options_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionFilterOptionsList back;
     SmithProtocolError error = {};
@@ -3617,7 +3617,7 @@ void test_dap_round_trip_exception_path_segment(SmithKey key) {
     smith_dap_exception_path_segment_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_path_segment_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionPathSegment back;
     SmithProtocolError error = {};
@@ -3650,7 +3650,7 @@ void test_dap_round_trip_exception_path_segment_list(SmithKey key) {
     smith_dap_exception_path_segment_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_path_segment_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionPathSegmentList back;
     SmithProtocolError error = {};
@@ -3667,7 +3667,7 @@ void test_dap_round_trip_exception_break_mode(SmithKey key) {
     smith_dap_exception_break_mode_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_break_mode_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionBreakMode back;
     SmithProtocolError error = {};
@@ -3684,7 +3684,7 @@ void test_dap_round_trip_exception_options(SmithKey key) {
     smith_dap_exception_options_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_options_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionOptions back;
     SmithProtocolError error = {};
@@ -3717,7 +3717,7 @@ void test_dap_round_trip_exception_options_list(SmithKey key) {
     smith_dap_exception_options_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_options_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionOptionsList back;
     SmithProtocolError error = {};
@@ -3734,7 +3734,7 @@ void test_dap_round_trip_set_exception_breakpoints_arguments(SmithKey key) {
     smith_dap_set_exception_breakpoints_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_exception_breakpoints_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExceptionBreakpointsArguments back;
     SmithProtocolError error = {};
@@ -3767,7 +3767,7 @@ void test_dap_round_trip_set_exception_breakpoints_request(SmithKey key) {
     smith_dap_set_exception_breakpoints_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_exception_breakpoints_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExceptionBreakpointsRequest back;
     SmithProtocolError error = {};
@@ -3800,7 +3800,7 @@ void test_dap_round_trip_set_exception_breakpoints_response_body(SmithKey key) {
     smith_dap_set_exception_breakpoints_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_exception_breakpoints_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExceptionBreakpointsResponseBody back;
     SmithProtocolError error = {};
@@ -3817,7 +3817,7 @@ void test_dap_round_trip_set_exception_breakpoints_response(SmithKey key) {
     smith_dap_set_exception_breakpoints_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_exception_breakpoints_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExceptionBreakpointsResponse back;
     SmithProtocolError error = {};
@@ -3850,7 +3850,7 @@ void test_dap_round_trip_data_breakpoint_info_arguments(SmithKey key) {
     smith_dap_data_breakpoint_info_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_info_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointInfoArguments back;
     SmithProtocolError error = {};
@@ -3883,7 +3883,7 @@ void test_dap_round_trip_data_breakpoint_info_request(SmithKey key) {
     smith_dap_data_breakpoint_info_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_info_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointInfoRequest back;
     SmithProtocolError error = {};
@@ -3916,7 +3916,7 @@ void test_dap_round_trip_data_breakpoint_access_type(SmithKey key) {
     smith_dap_data_breakpoint_access_type_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_access_type_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointAccessType back;
     SmithProtocolError error = {};
@@ -3933,7 +3933,7 @@ void test_dap_round_trip_data_breakpoint_access_type_list(SmithKey key) {
     smith_dap_data_breakpoint_access_type_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_access_type_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointAccessTypeList back;
     SmithProtocolError error = {};
@@ -3950,7 +3950,7 @@ void test_dap_round_trip_data_breakpoint_info_response_body(SmithKey key) {
     smith_dap_data_breakpoint_info_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_info_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointInfoResponseBody back;
     SmithProtocolError error = {};
@@ -3983,7 +3983,7 @@ void test_dap_round_trip_data_breakpoint_info_response(SmithKey key) {
     smith_dap_data_breakpoint_info_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_info_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointInfoResponse back;
     SmithProtocolError error = {};
@@ -4016,7 +4016,7 @@ void test_dap_round_trip_data_breakpoint(SmithKey key) {
     smith_dap_data_breakpoint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpoint back;
     SmithProtocolError error = {};
@@ -4049,7 +4049,7 @@ void test_dap_round_trip_data_breakpoint_list(SmithKey key) {
     smith_dap_data_breakpoint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_data_breakpoint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDataBreakpointList back;
     SmithProtocolError error = {};
@@ -4066,7 +4066,7 @@ void test_dap_round_trip_set_data_breakpoints_arguments(SmithKey key) {
     smith_dap_set_data_breakpoints_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_data_breakpoints_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetDataBreakpointsArguments back;
     SmithProtocolError error = {};
@@ -4099,7 +4099,7 @@ void test_dap_round_trip_set_data_breakpoints_request(SmithKey key) {
     smith_dap_set_data_breakpoints_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_data_breakpoints_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetDataBreakpointsRequest back;
     SmithProtocolError error = {};
@@ -4132,7 +4132,7 @@ void test_dap_round_trip_set_data_breakpoints_response_body(SmithKey key) {
     smith_dap_set_data_breakpoints_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_data_breakpoints_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetDataBreakpointsResponseBody back;
     SmithProtocolError error = {};
@@ -4165,7 +4165,7 @@ void test_dap_round_trip_set_data_breakpoints_response(SmithKey key) {
     smith_dap_set_data_breakpoints_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_data_breakpoints_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetDataBreakpointsResponse back;
     SmithProtocolError error = {};
@@ -4198,7 +4198,7 @@ void test_dap_round_trip_instruction_breakpoint(SmithKey key) {
     smith_dap_instruction_breakpoint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_instruction_breakpoint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInstructionBreakpoint back;
     SmithProtocolError error = {};
@@ -4231,7 +4231,7 @@ void test_dap_round_trip_instruction_breakpoint_list(SmithKey key) {
     smith_dap_instruction_breakpoint_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_instruction_breakpoint_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapInstructionBreakpointList back;
     SmithProtocolError error = {};
@@ -4248,7 +4248,7 @@ void test_dap_round_trip_set_instruction_breakpoints_arguments(SmithKey key) {
     smith_dap_set_instruction_breakpoints_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_instruction_breakpoints_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetInstructionBreakpointsArguments back;
     SmithProtocolError error = {};
@@ -4281,7 +4281,7 @@ void test_dap_round_trip_set_instruction_breakpoints_request(SmithKey key) {
     smith_dap_set_instruction_breakpoints_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_instruction_breakpoints_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetInstructionBreakpointsRequest back;
     SmithProtocolError error = {};
@@ -4314,7 +4314,7 @@ void test_dap_round_trip_set_instruction_breakpoints_response_body(SmithKey key)
     smith_dap_set_instruction_breakpoints_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_instruction_breakpoints_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetInstructionBreakpointsResponseBody back;
     SmithProtocolError error = {};
@@ -4347,7 +4347,7 @@ void test_dap_round_trip_set_instruction_breakpoints_response(SmithKey key) {
     smith_dap_set_instruction_breakpoints_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_instruction_breakpoints_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetInstructionBreakpointsResponse back;
     SmithProtocolError error = {};
@@ -4380,7 +4380,7 @@ void test_dap_round_trip_continue_arguments(SmithKey key) {
     smith_dap_continue_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continue_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinueArguments back;
     SmithProtocolError error = {};
@@ -4413,7 +4413,7 @@ void test_dap_round_trip_continue_request(SmithKey key) {
     smith_dap_continue_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continue_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinueRequest back;
     SmithProtocolError error = {};
@@ -4446,7 +4446,7 @@ void test_dap_round_trip_continue_response_body(SmithKey key) {
     smith_dap_continue_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continue_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinueResponseBody back;
     SmithProtocolError error = {};
@@ -4463,7 +4463,7 @@ void test_dap_round_trip_continue_response(SmithKey key) {
     smith_dap_continue_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_continue_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapContinueResponse back;
     SmithProtocolError error = {};
@@ -4496,7 +4496,7 @@ void test_dap_round_trip_stepping_granularity(SmithKey key) {
     smith_dap_stepping_granularity_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stepping_granularity_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSteppingGranularity back;
     SmithProtocolError error = {};
@@ -4513,7 +4513,7 @@ void test_dap_round_trip_next_arguments(SmithKey key) {
     smith_dap_next_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_next_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapNextArguments back;
     SmithProtocolError error = {};
@@ -4546,7 +4546,7 @@ void test_dap_round_trip_next_request(SmithKey key) {
     smith_dap_next_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_next_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapNextRequest back;
     SmithProtocolError error = {};
@@ -4579,7 +4579,7 @@ void test_dap_round_trip_next_response(SmithKey key) {
     smith_dap_next_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_next_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapNextResponse back;
     SmithProtocolError error = {};
@@ -4612,7 +4612,7 @@ void test_dap_round_trip_step_in_arguments(SmithKey key) {
     smith_dap_step_in_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInArguments back;
     SmithProtocolError error = {};
@@ -4645,7 +4645,7 @@ void test_dap_round_trip_step_in_request(SmithKey key) {
     smith_dap_step_in_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInRequest back;
     SmithProtocolError error = {};
@@ -4678,7 +4678,7 @@ void test_dap_round_trip_step_in_response(SmithKey key) {
     smith_dap_step_in_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInResponse back;
     SmithProtocolError error = {};
@@ -4711,7 +4711,7 @@ void test_dap_round_trip_step_out_arguments(SmithKey key) {
     smith_dap_step_out_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_out_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepOutArguments back;
     SmithProtocolError error = {};
@@ -4744,7 +4744,7 @@ void test_dap_round_trip_step_out_request(SmithKey key) {
     smith_dap_step_out_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_out_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepOutRequest back;
     SmithProtocolError error = {};
@@ -4777,7 +4777,7 @@ void test_dap_round_trip_step_out_response(SmithKey key) {
     smith_dap_step_out_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_out_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepOutResponse back;
     SmithProtocolError error = {};
@@ -4810,7 +4810,7 @@ void test_dap_round_trip_step_back_arguments(SmithKey key) {
     smith_dap_step_back_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_back_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepBackArguments back;
     SmithProtocolError error = {};
@@ -4843,7 +4843,7 @@ void test_dap_round_trip_step_back_request(SmithKey key) {
     smith_dap_step_back_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_back_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepBackRequest back;
     SmithProtocolError error = {};
@@ -4876,7 +4876,7 @@ void test_dap_round_trip_step_back_response(SmithKey key) {
     smith_dap_step_back_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_back_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepBackResponse back;
     SmithProtocolError error = {};
@@ -4909,7 +4909,7 @@ void test_dap_round_trip_reverse_continue_arguments(SmithKey key) {
     smith_dap_reverse_continue_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_reverse_continue_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReverseContinueArguments back;
     SmithProtocolError error = {};
@@ -4942,7 +4942,7 @@ void test_dap_round_trip_reverse_continue_request(SmithKey key) {
     smith_dap_reverse_continue_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_reverse_continue_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReverseContinueRequest back;
     SmithProtocolError error = {};
@@ -4975,7 +4975,7 @@ void test_dap_round_trip_reverse_continue_response(SmithKey key) {
     smith_dap_reverse_continue_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_reverse_continue_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReverseContinueResponse back;
     SmithProtocolError error = {};
@@ -5008,7 +5008,7 @@ void test_dap_round_trip_restart_frame_arguments(SmithKey key) {
     smith_dap_restart_frame_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_frame_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartFrameArguments back;
     SmithProtocolError error = {};
@@ -5041,7 +5041,7 @@ void test_dap_round_trip_restart_frame_request(SmithKey key) {
     smith_dap_restart_frame_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_frame_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartFrameRequest back;
     SmithProtocolError error = {};
@@ -5074,7 +5074,7 @@ void test_dap_round_trip_restart_frame_response(SmithKey key) {
     smith_dap_restart_frame_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_restart_frame_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapRestartFrameResponse back;
     SmithProtocolError error = {};
@@ -5107,7 +5107,7 @@ void test_dap_round_trip_goto_arguments(SmithKey key) {
     smith_dap_goto_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoArguments back;
     SmithProtocolError error = {};
@@ -5140,7 +5140,7 @@ void test_dap_round_trip_goto_request(SmithKey key) {
     smith_dap_goto_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoRequest back;
     SmithProtocolError error = {};
@@ -5173,7 +5173,7 @@ void test_dap_round_trip_goto_response(SmithKey key) {
     smith_dap_goto_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoResponse back;
     SmithProtocolError error = {};
@@ -5206,7 +5206,7 @@ void test_dap_round_trip_pause_arguments(SmithKey key) {
     smith_dap_pause_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_pause_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapPauseArguments back;
     SmithProtocolError error = {};
@@ -5239,7 +5239,7 @@ void test_dap_round_trip_pause_request(SmithKey key) {
     smith_dap_pause_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_pause_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapPauseRequest back;
     SmithProtocolError error = {};
@@ -5272,7 +5272,7 @@ void test_dap_round_trip_pause_response(SmithKey key) {
     smith_dap_pause_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_pause_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapPauseResponse back;
     SmithProtocolError error = {};
@@ -5305,7 +5305,7 @@ void test_dap_round_trip_stack_frame_format(SmithKey key) {
     smith_dap_stack_frame_format_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_frame_format_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackFrameFormat back;
     SmithProtocolError error = {};
@@ -5322,7 +5322,7 @@ void test_dap_round_trip_stack_trace_arguments(SmithKey key) {
     smith_dap_stack_trace_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_trace_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackTraceArguments back;
     SmithProtocolError error = {};
@@ -5355,7 +5355,7 @@ void test_dap_round_trip_stack_trace_request(SmithKey key) {
     smith_dap_stack_trace_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_trace_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackTraceRequest back;
     SmithProtocolError error = {};
@@ -5388,7 +5388,7 @@ void test_dap_round_trip_stack_frame_module_id(SmithKey key) {
     smith_dap_stack_frame_module_id_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_frame_module_id_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackFrameModuleId back;
     SmithProtocolError error = {};
@@ -5405,7 +5405,7 @@ void test_dap_round_trip_stack_frame_presentation_hint(SmithKey key) {
     smith_dap_stack_frame_presentation_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_frame_presentation_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackFramePresentationHint back;
     SmithProtocolError error = {};
@@ -5422,7 +5422,7 @@ void test_dap_round_trip_stack_frame(SmithKey key) {
     smith_dap_stack_frame_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_frame_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackFrame back;
     SmithProtocolError error = {};
@@ -5455,7 +5455,7 @@ void test_dap_round_trip_stack_frame_list(SmithKey key) {
     smith_dap_stack_frame_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_frame_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackFrameList back;
     SmithProtocolError error = {};
@@ -5472,7 +5472,7 @@ void test_dap_round_trip_stack_trace_response_body(SmithKey key) {
     smith_dap_stack_trace_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_trace_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackTraceResponseBody back;
     SmithProtocolError error = {};
@@ -5505,7 +5505,7 @@ void test_dap_round_trip_stack_trace_response(SmithKey key) {
     smith_dap_stack_trace_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stack_trace_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStackTraceResponse back;
     SmithProtocolError error = {};
@@ -5538,7 +5538,7 @@ void test_dap_round_trip_scopes_arguments(SmithKey key) {
     smith_dap_scopes_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scopes_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopesArguments back;
     SmithProtocolError error = {};
@@ -5571,7 +5571,7 @@ void test_dap_round_trip_scopes_request(SmithKey key) {
     smith_dap_scopes_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scopes_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopesRequest back;
     SmithProtocolError error = {};
@@ -5604,7 +5604,7 @@ void test_dap_round_trip_scope_presentation_hint(SmithKey key) {
     smith_dap_scope_presentation_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scope_presentation_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopePresentationHint back;
     SmithProtocolError error = {};
@@ -5621,7 +5621,7 @@ void test_dap_round_trip_scope(SmithKey key) {
     smith_dap_scope_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scope_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScope back;
     SmithProtocolError error = {};
@@ -5654,7 +5654,7 @@ void test_dap_round_trip_scope_list(SmithKey key) {
     smith_dap_scope_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scope_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopeList back;
     SmithProtocolError error = {};
@@ -5671,7 +5671,7 @@ void test_dap_round_trip_scopes_response_body(SmithKey key) {
     smith_dap_scopes_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scopes_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopesResponseBody back;
     SmithProtocolError error = {};
@@ -5704,7 +5704,7 @@ void test_dap_round_trip_scopes_response(SmithKey key) {
     smith_dap_scopes_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_scopes_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapScopesResponse back;
     SmithProtocolError error = {};
@@ -5737,7 +5737,7 @@ void test_dap_round_trip_variables_arguments_filter(SmithKey key) {
     smith_dap_variables_arguments_filter_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variables_arguments_filter_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablesArgumentsFilter back;
     SmithProtocolError error = {};
@@ -5754,7 +5754,7 @@ void test_dap_round_trip_value_format(SmithKey key) {
     smith_dap_value_format_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_value_format_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapValueFormat back;
     SmithProtocolError error = {};
@@ -5771,7 +5771,7 @@ void test_dap_round_trip_variables_arguments(SmithKey key) {
     smith_dap_variables_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variables_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablesArguments back;
     SmithProtocolError error = {};
@@ -5804,7 +5804,7 @@ void test_dap_round_trip_variables_request(SmithKey key) {
     smith_dap_variables_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variables_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablesRequest back;
     SmithProtocolError error = {};
@@ -5837,7 +5837,7 @@ void test_dap_round_trip_variable_presentation_hint_kind(SmithKey key) {
     smith_dap_variable_presentation_hint_kind_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_presentation_hint_kind_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablePresentationHintKind back;
     SmithProtocolError error = {};
@@ -5854,7 +5854,7 @@ void test_dap_round_trip_variable_presentation_hint_attributes_item(SmithKey key
     smith_dap_variable_presentation_hint_attributes_item_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_presentation_hint_attributes_item_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablePresentationHintAttributesItem back;
     SmithProtocolError error = {};
@@ -5871,7 +5871,7 @@ void test_dap_round_trip_variable_presentation_hint_attributes_item_list(SmithKe
     smith_dap_variable_presentation_hint_attributes_item_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_presentation_hint_attributes_item_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablePresentationHintAttributesItemList back;
     SmithProtocolError error = {};
@@ -5888,7 +5888,7 @@ void test_dap_round_trip_variable_presentation_hint_visibility(SmithKey key) {
     smith_dap_variable_presentation_hint_visibility_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_presentation_hint_visibility_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablePresentationHintVisibility back;
     SmithProtocolError error = {};
@@ -5905,7 +5905,7 @@ void test_dap_round_trip_variable_presentation_hint(SmithKey key) {
     smith_dap_variable_presentation_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_presentation_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablePresentationHint back;
     SmithProtocolError error = {};
@@ -5922,7 +5922,7 @@ void test_dap_round_trip_variable(SmithKey key) {
     smith_dap_variable_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariable back;
     SmithProtocolError error = {};
@@ -5955,7 +5955,7 @@ void test_dap_round_trip_variable_list(SmithKey key) {
     smith_dap_variable_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variable_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariableList back;
     SmithProtocolError error = {};
@@ -5972,7 +5972,7 @@ void test_dap_round_trip_variables_response_body(SmithKey key) {
     smith_dap_variables_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variables_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablesResponseBody back;
     SmithProtocolError error = {};
@@ -6005,7 +6005,7 @@ void test_dap_round_trip_variables_response(SmithKey key) {
     smith_dap_variables_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_variables_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapVariablesResponse back;
     SmithProtocolError error = {};
@@ -6038,7 +6038,7 @@ void test_dap_round_trip_set_variable_arguments(SmithKey key) {
     smith_dap_set_variable_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_variable_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetVariableArguments back;
     SmithProtocolError error = {};
@@ -6071,7 +6071,7 @@ void test_dap_round_trip_set_variable_request(SmithKey key) {
     smith_dap_set_variable_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_variable_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetVariableRequest back;
     SmithProtocolError error = {};
@@ -6104,7 +6104,7 @@ void test_dap_round_trip_set_variable_response_body(SmithKey key) {
     smith_dap_set_variable_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_variable_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetVariableResponseBody back;
     SmithProtocolError error = {};
@@ -6137,7 +6137,7 @@ void test_dap_round_trip_set_variable_response(SmithKey key) {
     smith_dap_set_variable_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_variable_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetVariableResponse back;
     SmithProtocolError error = {};
@@ -6170,7 +6170,7 @@ void test_dap_round_trip_source_arguments(SmithKey key) {
     smith_dap_source_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceArguments back;
     SmithProtocolError error = {};
@@ -6203,7 +6203,7 @@ void test_dap_round_trip_source_request(SmithKey key) {
     smith_dap_source_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceRequest back;
     SmithProtocolError error = {};
@@ -6236,7 +6236,7 @@ void test_dap_round_trip_source_response_body(SmithKey key) {
     smith_dap_source_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceResponseBody back;
     SmithProtocolError error = {};
@@ -6269,7 +6269,7 @@ void test_dap_round_trip_source_response(SmithKey key) {
     smith_dap_source_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceResponse back;
     SmithProtocolError error = {};
@@ -6302,7 +6302,7 @@ void test_dap_round_trip_threads_request(SmithKey key) {
     smith_dap_threads_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_threads_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadsRequest back;
     SmithProtocolError error = {};
@@ -6335,7 +6335,7 @@ void test_dap_round_trip_thread(SmithKey key) {
     smith_dap_thread_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_thread_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThread back;
     SmithProtocolError error = {};
@@ -6368,7 +6368,7 @@ void test_dap_round_trip_thread_list(SmithKey key) {
     smith_dap_thread_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_thread_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadList back;
     SmithProtocolError error = {};
@@ -6385,7 +6385,7 @@ void test_dap_round_trip_threads_response_body(SmithKey key) {
     smith_dap_threads_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_threads_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadsResponseBody back;
     SmithProtocolError error = {};
@@ -6418,7 +6418,7 @@ void test_dap_round_trip_threads_response(SmithKey key) {
     smith_dap_threads_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_threads_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapThreadsResponse back;
     SmithProtocolError error = {};
@@ -6451,7 +6451,7 @@ void test_dap_round_trip_terminate_threads_arguments(SmithKey key) {
     smith_dap_terminate_threads_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_threads_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateThreadsArguments back;
     SmithProtocolError error = {};
@@ -6468,7 +6468,7 @@ void test_dap_round_trip_terminate_threads_request(SmithKey key) {
     smith_dap_terminate_threads_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_threads_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateThreadsRequest back;
     SmithProtocolError error = {};
@@ -6501,7 +6501,7 @@ void test_dap_round_trip_terminate_threads_response(SmithKey key) {
     smith_dap_terminate_threads_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_terminate_threads_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapTerminateThreadsResponse back;
     SmithProtocolError error = {};
@@ -6534,7 +6534,7 @@ void test_dap_round_trip_modules_arguments(SmithKey key) {
     smith_dap_modules_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_modules_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModulesArguments back;
     SmithProtocolError error = {};
@@ -6551,7 +6551,7 @@ void test_dap_round_trip_modules_request(SmithKey key) {
     smith_dap_modules_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_modules_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModulesRequest back;
     SmithProtocolError error = {};
@@ -6584,7 +6584,7 @@ void test_dap_round_trip_module_list(SmithKey key) {
     smith_dap_module_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_module_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModuleList back;
     SmithProtocolError error = {};
@@ -6601,7 +6601,7 @@ void test_dap_round_trip_modules_response_body(SmithKey key) {
     smith_dap_modules_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_modules_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModulesResponseBody back;
     SmithProtocolError error = {};
@@ -6634,7 +6634,7 @@ void test_dap_round_trip_modules_response(SmithKey key) {
     smith_dap_modules_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_modules_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapModulesResponse back;
     SmithProtocolError error = {};
@@ -6667,7 +6667,7 @@ void test_dap_round_trip_loaded_sources_request(SmithKey key) {
     smith_dap_loaded_sources_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_loaded_sources_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLoadedSourcesRequest back;
     SmithProtocolError error = {};
@@ -6700,7 +6700,7 @@ void test_dap_round_trip_source_list(SmithKey key) {
     smith_dap_source_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_source_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSourceList back;
     SmithProtocolError error = {};
@@ -6717,7 +6717,7 @@ void test_dap_round_trip_loaded_sources_response_body(SmithKey key) {
     smith_dap_loaded_sources_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_loaded_sources_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLoadedSourcesResponseBody back;
     SmithProtocolError error = {};
@@ -6750,7 +6750,7 @@ void test_dap_round_trip_loaded_sources_response(SmithKey key) {
     smith_dap_loaded_sources_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_loaded_sources_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLoadedSourcesResponse back;
     SmithProtocolError error = {};
@@ -6783,7 +6783,7 @@ void test_dap_round_trip_evaluate_arguments_context(SmithKey key) {
     smith_dap_evaluate_arguments_context_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_evaluate_arguments_context_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvaluateArgumentsContext back;
     SmithProtocolError error = {};
@@ -6800,7 +6800,7 @@ void test_dap_round_trip_evaluate_arguments(SmithKey key) {
     smith_dap_evaluate_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_evaluate_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvaluateArguments back;
     SmithProtocolError error = {};
@@ -6833,7 +6833,7 @@ void test_dap_round_trip_evaluate_request(SmithKey key) {
     smith_dap_evaluate_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_evaluate_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvaluateRequest back;
     SmithProtocolError error = {};
@@ -6866,7 +6866,7 @@ void test_dap_round_trip_evaluate_response_body(SmithKey key) {
     smith_dap_evaluate_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_evaluate_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvaluateResponseBody back;
     SmithProtocolError error = {};
@@ -6899,7 +6899,7 @@ void test_dap_round_trip_evaluate_response(SmithKey key) {
     smith_dap_evaluate_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_evaluate_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapEvaluateResponse back;
     SmithProtocolError error = {};
@@ -6932,7 +6932,7 @@ void test_dap_round_trip_set_expression_arguments(SmithKey key) {
     smith_dap_set_expression_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_expression_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExpressionArguments back;
     SmithProtocolError error = {};
@@ -6965,7 +6965,7 @@ void test_dap_round_trip_set_expression_request(SmithKey key) {
     smith_dap_set_expression_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_expression_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExpressionRequest back;
     SmithProtocolError error = {};
@@ -6998,7 +6998,7 @@ void test_dap_round_trip_set_expression_response_body(SmithKey key) {
     smith_dap_set_expression_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_expression_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExpressionResponseBody back;
     SmithProtocolError error = {};
@@ -7031,7 +7031,7 @@ void test_dap_round_trip_set_expression_response(SmithKey key) {
     smith_dap_set_expression_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_set_expression_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapSetExpressionResponse back;
     SmithProtocolError error = {};
@@ -7064,7 +7064,7 @@ void test_dap_round_trip_step_in_targets_arguments(SmithKey key) {
     smith_dap_step_in_targets_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_targets_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTargetsArguments back;
     SmithProtocolError error = {};
@@ -7097,7 +7097,7 @@ void test_dap_round_trip_step_in_targets_request(SmithKey key) {
     smith_dap_step_in_targets_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_targets_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTargetsRequest back;
     SmithProtocolError error = {};
@@ -7130,7 +7130,7 @@ void test_dap_round_trip_step_in_target(SmithKey key) {
     smith_dap_step_in_target_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_target_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTarget back;
     SmithProtocolError error = {};
@@ -7163,7 +7163,7 @@ void test_dap_round_trip_step_in_target_list(SmithKey key) {
     smith_dap_step_in_target_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_target_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTargetList back;
     SmithProtocolError error = {};
@@ -7180,7 +7180,7 @@ void test_dap_round_trip_step_in_targets_response_body(SmithKey key) {
     smith_dap_step_in_targets_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_targets_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTargetsResponseBody back;
     SmithProtocolError error = {};
@@ -7213,7 +7213,7 @@ void test_dap_round_trip_step_in_targets_response(SmithKey key) {
     smith_dap_step_in_targets_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_step_in_targets_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapStepInTargetsResponse back;
     SmithProtocolError error = {};
@@ -7246,7 +7246,7 @@ void test_dap_round_trip_goto_targets_arguments(SmithKey key) {
     smith_dap_goto_targets_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_targets_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTargetsArguments back;
     SmithProtocolError error = {};
@@ -7279,7 +7279,7 @@ void test_dap_round_trip_goto_targets_request(SmithKey key) {
     smith_dap_goto_targets_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_targets_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTargetsRequest back;
     SmithProtocolError error = {};
@@ -7312,7 +7312,7 @@ void test_dap_round_trip_goto_target(SmithKey key) {
     smith_dap_goto_target_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_target_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTarget back;
     SmithProtocolError error = {};
@@ -7345,7 +7345,7 @@ void test_dap_round_trip_goto_target_list(SmithKey key) {
     smith_dap_goto_target_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_target_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTargetList back;
     SmithProtocolError error = {};
@@ -7362,7 +7362,7 @@ void test_dap_round_trip_goto_targets_response_body(SmithKey key) {
     smith_dap_goto_targets_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_targets_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTargetsResponseBody back;
     SmithProtocolError error = {};
@@ -7395,7 +7395,7 @@ void test_dap_round_trip_goto_targets_response(SmithKey key) {
     smith_dap_goto_targets_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_goto_targets_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapGotoTargetsResponse back;
     SmithProtocolError error = {};
@@ -7428,7 +7428,7 @@ void test_dap_round_trip_completions_arguments(SmithKey key) {
     smith_dap_completions_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completions_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionsArguments back;
     SmithProtocolError error = {};
@@ -7461,7 +7461,7 @@ void test_dap_round_trip_completions_request(SmithKey key) {
     smith_dap_completions_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completions_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionsRequest back;
     SmithProtocolError error = {};
@@ -7494,7 +7494,7 @@ void test_dap_round_trip_completion_item_type(SmithKey key) {
     smith_dap_completion_item_type_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completion_item_type_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionItemType back;
     SmithProtocolError error = {};
@@ -7511,7 +7511,7 @@ void test_dap_round_trip_completion_item(SmithKey key) {
     smith_dap_completion_item_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completion_item_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionItem back;
     SmithProtocolError error = {};
@@ -7544,7 +7544,7 @@ void test_dap_round_trip_completion_item_list(SmithKey key) {
     smith_dap_completion_item_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completion_item_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionItemList back;
     SmithProtocolError error = {};
@@ -7561,7 +7561,7 @@ void test_dap_round_trip_completions_response_body(SmithKey key) {
     smith_dap_completions_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completions_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionsResponseBody back;
     SmithProtocolError error = {};
@@ -7594,7 +7594,7 @@ void test_dap_round_trip_completions_response(SmithKey key) {
     smith_dap_completions_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_completions_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapCompletionsResponse back;
     SmithProtocolError error = {};
@@ -7627,7 +7627,7 @@ void test_dap_round_trip_exception_info_arguments(SmithKey key) {
     smith_dap_exception_info_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_info_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionInfoArguments back;
     SmithProtocolError error = {};
@@ -7660,7 +7660,7 @@ void test_dap_round_trip_exception_info_request(SmithKey key) {
     smith_dap_exception_info_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_info_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionInfoRequest back;
     SmithProtocolError error = {};
@@ -7693,7 +7693,7 @@ void test_dap_round_trip_exception_details(SmithKey key) {
     smith_dap_exception_details_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_details_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionDetails back;
     SmithProtocolError error = {};
@@ -7710,7 +7710,7 @@ void test_dap_round_trip_exception_info_response_body(SmithKey key) {
     smith_dap_exception_info_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_info_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionInfoResponseBody back;
     SmithProtocolError error = {};
@@ -7743,7 +7743,7 @@ void test_dap_round_trip_exception_info_response(SmithKey key) {
     smith_dap_exception_info_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_exception_info_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapExceptionInfoResponse back;
     SmithProtocolError error = {};
@@ -7776,7 +7776,7 @@ void test_dap_round_trip_read_memory_arguments(SmithKey key) {
     smith_dap_read_memory_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_read_memory_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReadMemoryArguments back;
     SmithProtocolError error = {};
@@ -7809,7 +7809,7 @@ void test_dap_round_trip_read_memory_request(SmithKey key) {
     smith_dap_read_memory_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_read_memory_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReadMemoryRequest back;
     SmithProtocolError error = {};
@@ -7842,7 +7842,7 @@ void test_dap_round_trip_read_memory_response_body(SmithKey key) {
     smith_dap_read_memory_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_read_memory_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReadMemoryResponseBody back;
     SmithProtocolError error = {};
@@ -7875,7 +7875,7 @@ void test_dap_round_trip_read_memory_response(SmithKey key) {
     smith_dap_read_memory_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_read_memory_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapReadMemoryResponse back;
     SmithProtocolError error = {};
@@ -7908,7 +7908,7 @@ void test_dap_round_trip_write_memory_arguments(SmithKey key) {
     smith_dap_write_memory_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_write_memory_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapWriteMemoryArguments back;
     SmithProtocolError error = {};
@@ -7941,7 +7941,7 @@ void test_dap_round_trip_write_memory_request(SmithKey key) {
     smith_dap_write_memory_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_write_memory_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapWriteMemoryRequest back;
     SmithProtocolError error = {};
@@ -7974,7 +7974,7 @@ void test_dap_round_trip_write_memory_response_body(SmithKey key) {
     smith_dap_write_memory_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_write_memory_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapWriteMemoryResponseBody back;
     SmithProtocolError error = {};
@@ -7991,7 +7991,7 @@ void test_dap_round_trip_write_memory_response(SmithKey key) {
     smith_dap_write_memory_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_write_memory_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapWriteMemoryResponse back;
     SmithProtocolError error = {};
@@ -8024,7 +8024,7 @@ void test_dap_round_trip_disassemble_arguments(SmithKey key) {
     smith_dap_disassemble_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassemble_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembleArguments back;
     SmithProtocolError error = {};
@@ -8057,7 +8057,7 @@ void test_dap_round_trip_disassemble_request(SmithKey key) {
     smith_dap_disassemble_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassemble_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembleRequest back;
     SmithProtocolError error = {};
@@ -8090,7 +8090,7 @@ void test_dap_round_trip_disassembled_instruction_presentation_hint(SmithKey key
     smith_dap_disassembled_instruction_presentation_hint_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassembled_instruction_presentation_hint_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembledInstructionPresentationHint back;
     SmithProtocolError error = {};
@@ -8107,7 +8107,7 @@ void test_dap_round_trip_disassembled_instruction(SmithKey key) {
     smith_dap_disassembled_instruction_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassembled_instruction_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembledInstruction back;
     SmithProtocolError error = {};
@@ -8140,7 +8140,7 @@ void test_dap_round_trip_disassembled_instruction_list(SmithKey key) {
     smith_dap_disassembled_instruction_list_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassembled_instruction_list_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembledInstructionList back;
     SmithProtocolError error = {};
@@ -8157,7 +8157,7 @@ void test_dap_round_trip_disassemble_response_body(SmithKey key) {
     smith_dap_disassemble_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassemble_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembleResponseBody back;
     SmithProtocolError error = {};
@@ -8190,7 +8190,7 @@ void test_dap_round_trip_disassemble_response(SmithKey key) {
     smith_dap_disassemble_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_disassemble_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapDisassembleResponse back;
     SmithProtocolError error = {};
@@ -8223,7 +8223,7 @@ void test_dap_round_trip_locations_arguments(SmithKey key) {
     smith_dap_locations_arguments_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_locations_arguments_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLocationsArguments back;
     SmithProtocolError error = {};
@@ -8256,7 +8256,7 @@ void test_dap_round_trip_locations_request(SmithKey key) {
     smith_dap_locations_request_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_locations_request_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLocationsRequest back;
     SmithProtocolError error = {};
@@ -8289,7 +8289,7 @@ void test_dap_round_trip_locations_response_body(SmithKey key) {
     smith_dap_locations_response_body_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_locations_response_body_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLocationsResponseBody back;
     SmithProtocolError error = {};
@@ -8322,7 +8322,7 @@ void test_dap_round_trip_locations_response(SmithKey key) {
     smith_dap_locations_response_random(&arena, key, &value);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_locations_response_write(&writer, &value);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     const SmithJsonValue *tree = protocol_test_parse(&arena, text);
     SmithDapLocationsResponse back;
     SmithProtocolError error = {};

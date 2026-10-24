@@ -11,8 +11,8 @@ SmithJsonWriter protocol_test_writer(SmithArena *arena) {
     return smith_json_writer_make(buffer, protocol_test_capacity, 0);
 }
 
-SmithText protocol_test_text(SmithJsonWriter *writer) {
-    SmithText text = {};
+struct smith_array_const_char_n protocol_test_text(SmithJsonWriter *writer) {
+    struct smith_array_const_char_n text = {};
     bool finished = smith_json_writer_finish(writer, &text);
     if (!finished) {
         smith_test_note("the writer failed at byte %zu: %s", writer->error.offset,
@@ -22,7 +22,7 @@ SmithText protocol_test_text(SmithJsonWriter *writer) {
     return text;
 }
 
-const SmithJsonValue *protocol_test_parse(SmithArena *arena, SmithText text) {
+const SmithJsonValue *protocol_test_parse(SmithArena *arena, struct smith_array_const_char_n text) {
     const SmithJsonValue *root = nullptr;
     SmithJsonError error = {};
     bool parsed = smith_json_parse(arena, text, protocol_test_limits, &root, &error);
@@ -42,14 +42,14 @@ void protocol_test_accepted(bool accepted, const SmithProtocolError *error) {
     smith_check(accepted);
 }
 
-void protocol_test_equal(bool equal, SmithText text) {
-    if (!equal) smith_test_note("written as %.*s", (int)(text.length < 3000 ? text.length : 3000), text.begin);
+void protocol_test_equal(bool equal, struct smith_array_const_char_n text) {
+    if (!equal) smith_test_note("written as %.*s", (int)(text.count[0] < 3000 ? text.count[0] : 3000), text.data);
     smith_check(equal);
 }
 
-void protocol_test_same_text(SmithText a, SmithText b) {
-    smith_check_equal_u64(a.length, b.length);
-    smith_check(memcmp(a.begin, b.begin, a.length) == 0);
+void protocol_test_same_text(struct smith_array_const_char_n a, struct smith_array_const_char_n b) {
+    smith_check_equal_u64(a.count[0], b.count[0]);
+    smith_check(memcmp(a.data, b.data, a.count[0]) == 0);
 }
 
 const SmithJsonValue *protocol_test_without(SmithArena *arena, const SmithJsonValue *tree, const char *name) {

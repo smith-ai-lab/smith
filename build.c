@@ -498,7 +498,7 @@ static const char *const build_smith_inputs[] = {
 // every start against every image loaded, which cost 4 ms in the smith without lldb, and 9 ms more with the frameworks
 // lldb loads.
 // The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
-// only their headers); text is its own object beside them because smith mcp defines SmithText itself.
+// only their headers); text is its own object beside them.
 static const char *const build_linked_libraries[] = {"arena", "contract", "inflate", "io", "random", "text"};
 
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.

@@ -69,7 +69,7 @@ bool smith_protocol_present(const SmithJsonValue *member) {
     return member != nullptr && member->kind != SmithJsonKind_Null;
 }
 
-bool smith_protocol_text_is(SmithText text, const char *string) {
+bool smith_protocol_text_is(struct smith_array_const_char_n text, const char *string) {
     return smith_text_is(text, string);
 }
 
@@ -97,19 +97,19 @@ void *smith_protocol_block(SmithArena *arena, size_t size, size_t align, size_t 
 // ---------------------------------------------------------------------------------------------------------------
 // Strings
 
-bool smith_protocol_string_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithText *out,
-                                 SmithProtocolError *error) {
+bool smith_protocol_string_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value,
+                                 struct smith_array_const_char_n *out, SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_String) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     *out = value->text;
     return true;
 }
 
-void smith_protocol_string_write(SmithJsonWriter *writer, const SmithText *value) {
+void smith_protocol_string_write(SmithJsonWriter *writer, const struct smith_array_const_char_n *value) {
     smith_json_write_string(writer, *value);
 }
 
-bool smith_protocol_string_equal(const SmithText *a, const SmithText *b) {
-    return a->length == b->length && (a->length == 0 || memcmp(a->begin, b->begin, a->length) == 0);
+bool smith_protocol_string_equal(const struct smith_array_const_char_n *a, const struct smith_array_const_char_n *b) {
+    return a->count[0] == b->count[0] && (a->count[0] == 0 || memcmp(a->data, b->data, a->count[0]) == 0);
 }
 
 // Pieces of UTF-8 a random string is made of: plain letters, the characters the writer escapes, and two, three and
@@ -119,7 +119,7 @@ static const char *const smith_protocol_pieces[] = {"a",  "Z",  "0", " ",       
 constexpr size_t smith_protocol_piece_count = sizeof smith_protocol_pieces / sizeof smith_protocol_pieces[0];
 constexpr size_t smith_protocol_string_pieces_max = 5;
 
-void smith_protocol_string_random(SmithArena *arena, SmithKey key, SmithText *out) {
+void smith_protocol_string_random(SmithArena *arena, SmithKey key, struct smith_array_const_char_n *out) {
     size_t pieces = smith_protocol_pick(smith_key_derive(key, 0), smith_protocol_string_pieces_max);
     char *bytes = smith_arena_push_array(arena, 1, pieces * 4 + 1, 1);
     size_t length = 0;
@@ -130,7 +130,7 @@ void smith_protocol_string_random(SmithArena *arena, SmithKey key, SmithText *ou
         memcpy(bytes + length, piece, piece_length);
         length += piece_length;
     }
-    *out = (SmithText){bytes, length};
+    *out = (struct smith_array_const_char_n){.data = bytes, .count = {length}};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -325,7 +325,7 @@ static void smith_protocol_random_item(SmithArena *arena, SmithJsonWriter *write
         break;
     }
     default: {
-        SmithText text;
+        struct smith_array_const_char_n text;
         smith_protocol_string_random(arena, rest, &text);
         smith_json_write_string(writer, text);
         break;
@@ -370,11 +370,11 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
             char name[16];
             size_t at = (size_t)(smith_text_write_u64(name + 1, step));
             name[0] = 'k';
-            smith_json_write_key(&writer, (SmithText){name, at + 1});
+            smith_json_write_key(&writer, (struct smith_array_const_char_n){.data = name, .count = {at + 1}});
         }
         due = true;
     }
-    SmithText text = {};
+    struct smith_array_const_char_n text = {};
     bool finished = smith_json_writer_finish(&writer, &text);
     if (!finished) __builtin_trap(); // the document fits its buffer
     const SmithJsonValue *root = nullptr;
@@ -405,7 +405,7 @@ bool smith_protocol_expect_object(const SmithJsonValue *value, SmithProtocolErro
     return true;
 }
 
-static bool smith_protocol_known(SmithText key, const char *const *known, size_t known_count) {
+static bool smith_protocol_known(struct smith_array_const_char_n key, const char *const *known, size_t known_count) {
     for (size_t i = 0; i < known_count; i++) { // bounded by the schema's list of members
         if (smith_text_is(key, known[i])) return true;
     }
@@ -420,7 +420,7 @@ bool smith_protocol_extra_parse(SmithArena *arena, const SmithJsonValue *object,
     }
     *out = (SmithProtocolExtra){};
     if (count == 0) return true;
-    SmithText *keys = nullptr;
+    struct smith_array_const_char_n *keys = nullptr;
     void *block = nullptr;
     if (!smith_protocol_map_parse(arena, object, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), &keys, &block,
                                   error))
@@ -461,7 +461,8 @@ void smith_protocol_extra_random(SmithArena *arena, SmithKey key, SmithProtocolE
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
     *out = (SmithProtocolExtra){};
     if (count == 0) return;
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n),
+                                                                 alignof(struct smith_array_const_char_n), count);
     SmithProtocolAny *values =
         (SmithProtocolAny *)smith_protocol_block(arena, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
@@ -492,16 +493,18 @@ bool smith_protocol_array_parse(SmithArena *arena, const SmithJsonValue *value, 
 }
 
 bool smith_protocol_map_parse(SmithArena *arena, const SmithJsonValue *value, size_t size, size_t align,
-                              SmithText **keys, void **items, SmithProtocolError *error) {
+                              struct smith_array_const_char_n **keys, void **items, SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_Object) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     *keys = nullptr;
     *items = nullptr;
     if (value->count == 0) return true;
     if (!smith_protocol_block_fits(arena, size, align, value->count) ||
-        !smith_protocol_block_fits(arena, sizeof(SmithText), alignof(SmithText), value->count))
+        !smith_protocol_block_fits(arena, sizeof(struct smith_array_const_char_n),
+                                   alignof(struct smith_array_const_char_n), value->count))
         return smith_protocol_fail(error, SmithProtocolReason_OutOfMemory, value);
     *items = smith_protocol_block(arena, size, align, value->count);
-    SmithText *names = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), value->count);
+    struct smith_array_const_char_n *names = smith_protocol_block(
+        arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), value->count);
     for (size_t i = 0; i < value->count; i++) { // bounded by the object's members
         names[i] = value->items[i]->key;
     }
@@ -540,10 +543,10 @@ void smith_protocol_key(SmithJsonWriter *writer, const char *name) {
     smith_json_write_key(writer, smith_text_make(name));
 }
 
-SmithText smith_protocol_name(SmithArena *arena, size_t i) {
+struct smith_array_const_char_n smith_protocol_name(SmithArena *arena, size_t i) {
     char *name = smith_arena_push_array(arena, 1, 24, 1);
     name[0] = '~';
     name[1] = 'k';
     size_t length = smith_text_write_u64(name + 2, i);
-    return (SmithText){name, length + 2};
+    return (struct smith_array_const_char_n){.data = name, .count = {length + 2}};
 }

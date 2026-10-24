@@ -338,11 +338,11 @@ void smith_dap_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unuse
 }
 
 bool smith_dap_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStringMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
-    if (!smith_protocol_map_parse(arena, value, sizeof(SmithText), alignof(SmithText), &keys, &block, error))
+    if (!smith_protocol_map_parse(arena, value, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), &keys, &block, error))
         return false;
-    SmithText *items = block;
+    struct smith_array_const_char_n *items = block;
     for (size_t i = 0; i < value->count; i++) { // bounded by the object
         if (!smith_protocol_string_parse(arena, value->items[i], &items[i], error)) return false;
     }
@@ -372,8 +372,8 @@ bool smith_dap_string_map_equal([[maybe_unused]] const SmithDapStringMap *a, [[m
 
 void smith_dap_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStringMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
-    SmithText *items = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
+    struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
         smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
@@ -3110,8 +3110,8 @@ void smith_dap_exception_breakpoints_filter_list_random([[maybe_unused]] SmithAr
 
 bool smith_dap_string_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStringList *out, SmithProtocolError *error) {
     void *block;
-    if (!smith_protocol_array_parse(arena, value, sizeof(SmithText), alignof(SmithText), &block, error)) return false;
-    SmithText *items = block;
+    if (!smith_protocol_array_parse(arena, value, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), &block, error)) return false;
+    struct smith_array_const_char_n *items = block;
     for (size_t i = 0; i < value->count; i++) { // bounded by the array
         if (!smith_protocol_string_parse(arena, value->items[i], &items[i], error)) return false;
     }
@@ -3138,7 +3138,7 @@ bool smith_dap_string_list_equal([[maybe_unused]] const SmithDapStringList *a, [
 
 void smith_dap_string_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStringList *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *items = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
     }
@@ -4944,7 +4944,7 @@ void smith_dap_nullable_string_random([[maybe_unused]] SmithArena *arena, [[mayb
 }
 
 bool smith_dap_nullable_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapNullableStringMap *out, SmithProtocolError *error) {
-    SmithText *keys;
+    struct smith_array_const_char_n *keys;
     void *block;
     if (!smith_protocol_map_parse(arena, value, sizeof(SmithDapNullableString), alignof(SmithDapNullableString), &keys, &block, error))
         return false;
@@ -4978,7 +4978,7 @@ bool smith_dap_nullable_string_map_equal([[maybe_unused]] const SmithDapNullable
 
 void smith_dap_nullable_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNullableStringMap *out) {
     size_t count = smith_protocol_count(smith_key_derive(key, 0));
-    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);
+    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithDapNullableString *items = smith_protocol_block(arena, sizeof(SmithDapNullableString), alignof(SmithDapNullableString), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);

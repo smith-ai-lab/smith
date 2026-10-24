@@ -142,8 +142,8 @@ static const char **gen_string_block(Generator *g, size_t count) {
     return (const char **)smith_arena_push_array(&g->arena, sizeof(const char *), count, alignof(const char *));
 }
 
-static const char *gen_text(Generator *g, SmithText text) {
-    return gen_copy(g, text.begin, text.length);
+static const char *gen_text(Generator *g, struct smith_array_const_char_n text) {
+    return gen_copy(g, text.data, text.count[0]);
 }
 
 [[gnu::format(printf, 2, 3)]] static const char *gen_format(Generator *g, const char *format, ...) {
@@ -312,10 +312,10 @@ static int gen_new_type(Generator *g, GenKind kind, const char *hint, const Smit
     return id;
 }
 
-static int gen_definition_index(const Generator *g, SmithText name) {
+static int gen_definition_index(const Generator *g, struct smith_array_const_char_n name) {
     for (size_t i = 0; i < g->definitions->count; i++) { // bounded by the definitions
-        const SmithText key = g->definitions->items[i]->key;
-        if (key.length == name.length && memcmp(key.begin, name.begin, name.length) == 0) return (int)i;
+        const struct smith_array_const_char_n key = g->definitions->items[i]->key;
+        if (key.count[0] == name.count[0] && memcmp(key.data, name.data, name.count[0]) == 0) return (int)i;
     }
     return -1;
 }
@@ -323,11 +323,11 @@ static int gen_definition_index(const Generator *g, SmithText name) {
 static int gen_reference(const Generator *g, const SmithJsonValue *node) {
     const SmithJsonValue *ref = gen_get(node, "$ref");
     if (ref->kind != SmithJsonKind_String) gen_die("a $ref at byte %zu is not a string", ref->offset);
-    SmithText name = ref->text;
-    size_t slash = name.length;
-    while (slash > 0 && name.begin[slash - 1] != '/')
+    struct smith_array_const_char_n name = ref->text;
+    size_t slash = name.count[0];
+    while (slash > 0 && name.data[slash - 1] != '/')
         slash--; // bounded by the reference
-    name = (SmithText){name.begin + slash, name.length - slash};
+    name = (struct smith_array_const_char_n){.data = name.data + slash, .count = {name.count[0] - slash}};
     int index = gen_definition_index(g, name);
     if (index < 0) gen_die("the reference at byte %zu names no definition", ref->offset);
     return g->definition_type[index];
@@ -506,7 +506,7 @@ typedef struct {
     bool extras;
 } GenCollect;
 
-static void gen_add_property(Generator *g, GenCollect *collect, const char *owner, SmithText name,
+static void gen_add_property(Generator *g, GenCollect *collect, const char *owner, struct smith_array_const_char_n name,
                              const SmithJsonValue *schema) {
     const char *json = gen_text(g, name);
     int type = gen_slot_for(g, schema, gen_hint(g, owner, json));
@@ -539,11 +539,12 @@ static void gen_add_own(Generator *g, GenCollect *collect, const char *owner, co
 // The definition a $ref names, as the node to read; a primitive is no base.
 static const SmithJsonValue *gen_reference_node(const Generator *g, const SmithJsonValue *node) {
     const SmithJsonValue *ref = gen_get(node, "$ref");
-    SmithText name = ref->text;
-    size_t slash = name.length;
-    while (slash > 0 && name.begin[slash - 1] != '/')
+    struct smith_array_const_char_n name = ref->text;
+    size_t slash = name.count[0];
+    while (slash > 0 && name.data[slash - 1] != '/')
         slash--; // bounded by the reference
-    int index = gen_definition_index(g, (SmithText){name.begin + slash, name.length - slash});
+    int index = gen_definition_index(
+        g, (struct smith_array_const_char_n){.data = name.data + slash, .count = {name.count[0] - slash}});
     if (index < 0) gen_die("the reference at byte %zu names no definition", ref->offset);
     return g->definitions->items[index];
 }
@@ -1052,8 +1053,8 @@ static void gen_literal(Sink *s, const char *text) {
 }
 
 static const char *gen_ctype(const Generator *g, int id) {
-    static const char *const primitive[] = {"bool",      "int64_t",          "double",
-                                            "SmithText", "SmithProtocolAny", "SmithProtocolAny"};
+    static const char *const primitive[] = {
+        "bool", "int64_t", "double", "struct smith_array_const_char_n", "SmithProtocolAny", "SmithProtocolAny"};
     return id < gen_primitives ? primitive[id] : g->types[id].name;
 }
 
@@ -1122,7 +1123,9 @@ static void gen_decl_enum(Generator *g, Sink *s, int id) {
     if (open) gen_emit(s, "    %s_Other, // a string the schema does not list: see text\n", enum_name);
     gen_emit(s, "} %s;\n\n", enum_name);
     if (open)
-        gen_emit(s, "typedef struct %s {\n    %s known;\n    SmithText text; // the string as it is written\n} %s;\n\n",
+        gen_emit(s,
+                 "typedef struct %s {\n    %s known;\n    struct smith_array_const_char_n text; // the string as it is "
+                 "written\n} %s;\n\n",
                  t->name, enum_name, t->name);
 }
 
@@ -1133,7 +1136,8 @@ static void gen_decl_wrapper(Generator *g, Sink *s, int id) {
         gen_emit(s, "typedef struct %s {\n    const %s *items;\n    size_t count;\n} %s;\n\n", t->name, e, t->name);
     else if (t->kind == GenKind_Map)
         gen_emit(s,
-                 "typedef struct %s {\n    const SmithText *keys;\n    const %s *values;\n    size_t count;\n} %s;\n\n",
+                 "typedef struct %s {\n    const struct smith_array_const_char_n *keys;\n    const %s *values;\n    "
+                 "size_t count;\n} %s;\n\n",
                  t->name, e, t->name);
     else
         gen_emit(s, "typedef struct %s {\n    bool is_null;\n    %s value; // when is_null is false\n} %s;\n\n",
@@ -1398,7 +1402,7 @@ static void gen_source_map(Generator *g, Sink *s, int id) {
     const GenType *t = &g->types[id];
     const char *e = gen_ctype(g, t->element);
     gen_head(g, s, id, "parse", true);
-    gen_emit(s, "    SmithText *keys;\n    void *block;\n");
+    gen_emit(s, "    struct smith_array_const_char_n *keys;\n    void *block;\n");
     gen_emit(s, "    if (!smith_protocol_map_parse(arena, value, sizeof(%s), alignof(%s), &keys, &block, error))\n", e,
              e);
     gen_emit(s, "        return false;\n    %s *items = block;\n", e);
@@ -1422,7 +1426,8 @@ static void gen_source_map(Generator *g, Sink *s, int id) {
              gen_fn(g, t->element, "equal"));
     gen_head(g, s, id, "random", true);
     gen_emit(s, "    size_t count = smith_protocol_count(smith_key_derive(key, 0));\n");
-    gen_emit(s, "    SmithText *keys = smith_protocol_block(arena, sizeof(SmithText), alignof(SmithText), count);\n");
+    gen_emit(s, "    struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct "
+                "smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);\n");
     gen_emit(s, "    %s *items = smith_protocol_block(arena, sizeof(%s), alignof(%s), count);\n", e, e, e);
     gen_emit(s, "    for (size_t i = 0; i < count; i++) { // bounded by the count\n");
     gen_emit(s, "        keys[i] = smith_protocol_name(arena, i);\n");
@@ -1563,7 +1568,7 @@ static void gen_test_prologue(Generator *g, Sink *s, int id, const char *what) {
 static void gen_test_round_trip(Generator *g, Sink *s, int id) {
     const GenType *t = &g->types[id];
     gen_test_prologue(g, s, id, "round_trip");
-    gen_emit(s, "    SmithText text = protocol_test_text(&writer);\n");
+    gen_emit(s, "    struct smith_array_const_char_n text = protocol_test_text(&writer);\n");
     gen_emit(s, "    const SmithJsonValue *tree = protocol_test_parse(&arena, text);\n");
     gen_emit(s, "    %s back;\n    SmithProtocolError error = {};\n", t->name);
     gen_emit(s, "    protocol_test_accepted(%s(&arena, tree, &back, &error), &error);\n", gen_fn(g, id, "parse"));
@@ -1654,15 +1659,15 @@ static Sink gen_sink_make(char *storage) {
     return (Sink){storage, 0};
 }
 
-static SmithText gen_read_file(const char *path, char *buffer, size_t capacity) {
+static struct smith_array_const_char_n gen_read_file(const char *path, char *buffer, size_t capacity) {
     FILE *file = fopen(path, "rb");
-    if (file == nullptr) return (SmithText){nullptr, 0};
+    if (file == nullptr) return (struct smith_array_const_char_n){.data = nullptr, .count = {0}};
     size_t length = fread(buffer, 1, capacity - 1, file);
     bool whole = feof(file) != 0;
     fclose(file);
     if (!whole) gen_die("%s is more than %zu bytes", path, capacity - 1);
     buffer[length] = '\0';
-    return (SmithText){buffer, length};
+    return (struct smith_array_const_char_n){.data = buffer, .count = {length}};
 }
 
 static char gen_existing[gen_sink_capacity];
@@ -1672,8 +1677,8 @@ static bool gen_output(const char *directory, const char *name, const Sink *sink
     char path[1024];
     int written = snprintf(path, sizeof path, "%s/%s", directory, name);
     GEN_ASSERT(written > 0 && (size_t)written < sizeof path);
-    SmithText old = gen_read_file(path, gen_existing, sizeof gen_existing);
-    if (old.begin != nullptr && old.length == sink->length && memcmp(old.begin, sink->begin, sink->length) == 0)
+    struct smith_array_const_char_n old = gen_read_file(path, gen_existing, sizeof gen_existing);
+    if (old.data != nullptr && old.count[0] == sink->length && memcmp(old.data, sink->begin, sink->length) == 0)
         return true;
     if (check) {
         fprintf(stderr, "protocol: %s is not what the generator writes now; run `smith build protocol`\n", path);
@@ -1692,7 +1697,7 @@ static char gen_test_storage[gen_sink_capacity];
 static char gen_license_storage[1 << 20];
 static char gen_schema_storage[gen_input_capacity];
 
-static void gen_prepare(Generator *g, const char *name, SmithText schema) {
+static void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n schema) {
     g->arena = smith_arena_make(gen_memory, sizeof gen_memory);
     g->schema = name;
     char upper[32];
@@ -1735,18 +1740,18 @@ int main(int argc, char **argv) {
     bool check = argc == 8 && strcmp(argv[7], "--check") == 0;
     if (argc != 7 && !check) gen_die("usage: protocol NAME SCHEMA LICENSE SOURCE OUT_DIR TEST_DIR [--check]");
     Generator *g = &generator;
-    SmithText schema = gen_read_file(argv[2], gen_schema_storage, sizeof gen_schema_storage);
-    if (schema.begin == nullptr) gen_die("cannot read %s", argv[2]);
-    SmithText license = gen_read_file(argv[3], gen_license_storage, sizeof gen_license_storage);
-    if (license.begin == nullptr) gen_die("cannot read %s", argv[3]);
+    struct smith_array_const_char_n schema = gen_read_file(argv[2], gen_schema_storage, sizeof gen_schema_storage);
+    if (schema.data == nullptr) gen_die("cannot read %s", argv[2]);
+    struct smith_array_const_char_n license = gen_read_file(argv[3], gen_license_storage, sizeof gen_license_storage);
+    if (license.data == nullptr) gen_die("cannot read %s", argv[3]);
     gen_prepare(g, argv[1], schema);
     Sink header = gen_sink_make(gen_header_storage);
     Sink source = gen_sink_make(gen_source_storage);
     Sink tests = gen_sink_make(gen_test_storage);
-    gen_header(g, &header, argv[4], license.begin);
-    gen_implementation(g, &source, argv[4], license.begin);
-    gen_tests(g, &tests, argv[4], license.begin);
-    Sink copy = {gen_license_storage, license.length};
+    gen_header(g, &header, argv[4], license.data);
+    gen_implementation(g, &source, argv[4], license.data);
+    gen_tests(g, &tests, argv[4], license.data);
+    Sink copy = {gen_license_storage, license.count[0]};
     bool same = gen_output(argv[5], gen_format(g, "%s.h", argv[1]), &header, check);
     same = gen_output(argv[5], gen_format(g, "%s.c", argv[1]), &source, check) && same;
     same = gen_output(argv[5], gen_format(g, "LICENSE-%s.txt", argv[1]), &copy, check) && same;

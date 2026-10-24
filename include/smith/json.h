@@ -1,7 +1,7 @@
 // <smith/json.h>: reading and writing JSON (RFC 8259) in memory, with every loop bounded and no malloc. Text is a
-// pointer and a length (SmithText), so a file read into memory is read where it lies. Numbers go through
-// <smith/text.h>, which calls no C library function, so a double written here reads back as the same bits on any
-// machine.
+// slice, `struct smith_array_const_char_n` (`.data`, `.count[0]`), so a file read into memory is read where it lies.
+// Numbers go through <smith/text.h>, which calls no C library function, so a double written here reads back as the same
+// bits on any machine.
 //
 // Reading has two layers. The reader is a pull parser that walks values without building anything:
 //
@@ -89,11 +89,12 @@ typedef enum {
 typedef struct {
     SmithJsonToken token; // the last one read
     size_t offset;        // its first byte in the input
-    SmithText text;       // Key and String: the text between the quotes, as written (escapes not decoded); Number: it
-    size_t length;        // Key and String: the bytes decoded, at most limits.string_length
-    bool escaped;         // Key and String: text holds escapes
+    struct smith_array_const_char_n
+        text;      // Key and String: the text between the quotes, as written (escapes not decoded); Number: it
+    size_t length; // Key and String: the bytes decoded, at most limits.string_length
+    bool escaped;  // Key and String: text holds escapes
     SmithJsonError error;
-    SmithText input;
+    struct smith_array_const_char_n input;
     SmithJsonLimits limits;
     size_t position;
     size_t depth;
@@ -103,7 +104,7 @@ typedef struct {
 } SmithJsonReader;
 
 // asserts limits.depth <= smith_json_depth_max.
-[[nodiscard]] SmithJsonReader smith_json_reader_make(SmithText input, SmithJsonLimits limits);
+[[nodiscard]] SmithJsonReader smith_json_reader_make(struct smith_array_const_char_n input, SmithJsonLimits limits);
 
 // The next token. After an Error it returns Error again; after End, End.
 SmithJsonToken smith_json_read(SmithJsonReader *reader);
@@ -114,7 +115,7 @@ SmithJsonToken smith_json_read(SmithJsonReader *reader);
 
 // The decoded text of the last Key or String. When it holds no escape it is the input itself; otherwise it is pushed
 // into the arena (length bytes, and a terminating zero that length does not count).
-[[nodiscard]] SmithText smith_json_decode(const SmithJsonReader *reader, SmithArena *arena);
+[[nodiscard]] struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader, SmithArena *arena);
 
 // Whether the last Key or String, decoded, is exactly the terminated string. Needs no arena.
 [[nodiscard]] bool smith_json_is(const SmithJsonReader *reader, const char *string);
@@ -135,18 +136,18 @@ typedef enum {
 typedef struct SmithJsonValue SmithJsonValue;
 struct SmithJsonValue {
     SmithJsonKind kind;
-    size_t offset;                      // where it began in the input
-    SmithText key;                      // an object member's name, decoded; empty elsewhere
-    SmithText text;                     // String: decoded. Number: as written. Else empty.
-    size_t count;                       // Array: elements. Object: members.
-    const SmithJsonValue *const *items; // the elements, or the members' values, in order
-    size_t span;                        // values in it, itself and everything inside included
+    size_t offset;                        // where it began in the input
+    struct smith_array_const_char_n key;  // an object member's name, decoded; empty elsewhere
+    struct smith_array_const_char_n text; // String: decoded. Number: as written. Else empty.
+    size_t count;                         // Array: elements. Object: members.
+    const SmithJsonValue *const *items;   // the elements, or the members' values, in order
+    size_t span;                          // values in it, itself and everything inside included
 };
 
 // Parses a whole document into the arena. The input must outlive the tree (strings without escapes and numbers point
 // into it); the tree lives as long as the arena. Returns false, and writes only *error, for a document that is invalid,
 // over a limit, or too big for the arena (the arena is then unchanged). Duplicate keys are kept.
-[[nodiscard]] bool smith_json_parse(SmithArena *arena, SmithText input, SmithJsonLimits limits,
+[[nodiscard]] bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
                                     const SmithJsonValue **root, SmithJsonError *error);
 
 // The value of the named member of an object (the last, if the key repeats), or nullptr.
@@ -177,8 +178,9 @@ void smith_json_write_object_begin(SmithJsonWriter *writer);
 void smith_json_write_object_end(SmithJsonWriter *writer);
 void smith_json_write_array_begin(SmithJsonWriter *writer);
 void smith_json_write_array_end(SmithJsonWriter *writer);
-void smith_json_write_key(SmithJsonWriter *writer, SmithText key);
-void smith_json_write_string(SmithJsonWriter *writer, SmithText string); // UTF-8, escaped as needed
+void smith_json_write_key(SmithJsonWriter *writer, struct smith_array_const_char_n key);
+void smith_json_write_string(SmithJsonWriter *writer,
+                             struct smith_array_const_char_n string); // UTF-8, escaped as needed
 void smith_json_write_u64(SmithJsonWriter *writer, uint64_t value);
 void smith_json_write_i64(SmithJsonWriter *writer, int64_t value);
 void smith_json_write_f64(SmithJsonWriter *writer, double value); // the fewest digits that read back as the same bits
@@ -193,4 +195,4 @@ void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value
 
 // The document written, once exactly one complete value has been. Returns false, with writer.error set, if a call
 // failed or the value is not finished. The text has no terminator.
-[[nodiscard]] bool smith_json_writer_finish(SmithJsonWriter *writer, SmithText *output);
+[[nodiscard]] bool smith_json_writer_finish(SmithJsonWriter *writer, struct smith_array_const_char_n *output);

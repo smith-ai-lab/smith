@@ -7,12 +7,13 @@ constexpr size_t smith_mcp_nodes_max = 2000;             // how many variables o
 constexpr size_t smith_mcp_source_max = (size_t)8 << 20; // a source file longer than this shows no line
 
 // A path as short as it can be told: relative to the session's folder when it is inside it.
-static void smith_mcp_path_add(SmithMcpText *out, const SmithMcpSession *session, SmithText path) {
+static void smith_mcp_path_add(SmithMcpText *out, const SmithMcpSession *session,
+                               struct smith_array_const_char_n path) {
     size_t folder = strlen(session->cwd);
-    if (folder > 0 && path.length > folder + 1 && memcmp(path.begin, session->cwd, folder) == 0 &&
-        path.begin[folder] == '/') {
-        path.begin += folder + 1;
-        path.length -= folder + 1;
+    if (folder > 0 && path.count[0] > folder + 1 && memcmp(path.data, session->cwd, folder) == 0 &&
+        path.data[folder] == '/') {
+        path.data += folder + 1;
+        path.count[0] -= folder + 1;
     }
     smith_mcp_text_add_text(out, path);
 }
@@ -57,7 +58,8 @@ static bool smith_mcp_stack_get(SmithMcpServer *server, SmithMcpSession *session
 }
 
 // The line of a source file, as `  > 12: text`; nothing if the file or the line is not there.
-static void smith_mcp_source_line(SmithMcpServer *server, SmithText path, int64_t line, SmithMcpText *out) {
+static void smith_mcp_source_line(SmithMcpServer *server, struct smith_array_const_char_n path, int64_t line,
+                                  SmithMcpText *out) {
     if (line < 1) return;
     SmithArenaScope scope = smith_arena_scope_begin(&server->scratch);
     const char *name = smith_mcp_cstring(&server->scratch, path);
@@ -147,17 +149,17 @@ static bool smith_mcp_variables_get(SmithMcpServer *server, SmithMcpSession *ses
 // `name = value (type)`, on one line: newlines in the value become spaces, and a long value is cut.
 static void smith_mcp_variable_add(SmithMcpText *out, size_t indent, const SmithDapVariable *variable) {
     char value[320];
-    size_t length = variable->value.length < sizeof value - 4 ? variable->value.length : sizeof value - 4;
+    size_t length = variable->value.count[0] < sizeof value - 4 ? variable->value.count[0] : sizeof value - 4;
     for (size_t i = 0; i < length; i++)
-        value[i] = variable->value.begin[i] == '\n' ? ' ' : variable->value.begin[i];
+        value[i] = variable->value.data[i] == '\n' ? ' ' : variable->value.data[i];
     value[length] = '\0';
     smith_mcp_text_add(out, "%*s", (int)(indent * 2), "");
     smith_mcp_text_add_text(out, variable->name);
     // An aggregate's value is its type's name; the type says it once.
-    bool same = variable->has_type && variable->type.length == variable->value.length &&
-                memcmp(variable->type.begin, variable->value.begin, variable->type.length) == 0;
-    if (!same) smith_mcp_text_add(out, " = %s%s", value, length < variable->value.length ? "..." : "");
-    if (variable->has_type && variable->type.length > 0) {
+    bool same = variable->has_type && variable->type.count[0] == variable->value.count[0] &&
+                memcmp(variable->type.data, variable->value.data, variable->type.count[0]) == 0;
+    if (!same) smith_mcp_text_add(out, " = %s%s", value, length < variable->value.count[0] ? "..." : "");
+    if (variable->has_type && variable->type.count[0] > 0) {
         smith_mcp_text_add(out, " (");
         smith_mcp_text_add_text(out, variable->type);
         smith_mcp_text_add(out, ")");

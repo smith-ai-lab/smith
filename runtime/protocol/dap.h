@@ -39,7 +39,7 @@ typedef enum SmithDapProtocolMessageTypeKnown {
 
 typedef struct SmithDapProtocolMessageType {
     SmithDapProtocolMessageTypeKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapProtocolMessageType;
 
 typedef struct SmithDapProtocolMessage {
@@ -50,7 +50,7 @@ typedef struct SmithDapProtocolMessage {
 
 typedef struct SmithDapRequest {
     int64_t seq;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_arguments;
     SmithProtocolAny arguments;
     SmithProtocolExtra additionalProperties;
@@ -58,7 +58,7 @@ typedef struct SmithDapRequest {
 
 typedef struct SmithDapEvent {
     int64_t seq;
-    SmithText event;
+    struct smith_array_const_char_n event;
     bool has_body;
     SmithProtocolAny body;
     SmithProtocolExtra additionalProperties;
@@ -72,14 +72,14 @@ typedef enum SmithDapResponseMessageKnown {
 
 typedef struct SmithDapResponseMessage {
     SmithDapResponseMessageKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapResponseMessage;
 
 typedef struct SmithDapResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -88,14 +88,14 @@ typedef struct SmithDapResponse {
 } SmithDapResponse;
 
 typedef struct SmithDapStringMap {
-    const SmithText *keys;
-    const SmithText *values;
+    const struct smith_array_const_char_n *keys;
+    const struct smith_array_const_char_n *values;
     size_t count;
 } SmithDapStringMap;
 
 typedef struct SmithDapMessage {
     int64_t id;
-    SmithText format;
+    struct smith_array_const_char_n format;
     bool has_variables;
     SmithDapStringMap variables;
     bool has_sendTelemetry;
@@ -103,9 +103,9 @@ typedef struct SmithDapMessage {
     bool has_showUser;
     bool showUser;
     bool has_url;
-    SmithText url;
+    struct smith_array_const_char_n url;
     bool has_urlLabel;
-    SmithText urlLabel;
+    struct smith_array_const_char_n urlLabel;
     SmithProtocolExtra additionalProperties;
 } SmithDapMessage;
 
@@ -119,7 +119,7 @@ typedef struct SmithDapErrorResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapErrorResponseBody body;
@@ -130,7 +130,7 @@ typedef struct SmithDapCancelArguments {
     bool has_requestId;
     int64_t requestId;
     bool has_progressId;
-    SmithText progressId;
+    struct smith_array_const_char_n progressId;
     SmithProtocolExtra additionalProperties;
 } SmithDapCancelArguments;
 
@@ -145,7 +145,7 @@ typedef struct SmithDapCancelResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -175,7 +175,7 @@ typedef enum SmithDapStoppedEventBodyReasonKnown {
 
 typedef struct SmithDapStoppedEventBodyReason {
     SmithDapStoppedEventBodyReasonKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapStoppedEventBodyReason;
 
 typedef struct SmithDapIntegerList {
@@ -186,13 +186,13 @@ typedef struct SmithDapIntegerList {
 typedef struct SmithDapStoppedEventBody {
     SmithDapStoppedEventBodyReason reason;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_threadId;
     int64_t threadId;
     bool has_preserveFocusHint;
     bool preserveFocusHint;
     bool has_text;
-    SmithText text;
+    struct smith_array_const_char_n text;
     bool has_allThreadsStopped;
     bool allThreadsStopped;
     bool has_hitBreakpointIds;
@@ -251,7 +251,7 @@ typedef enum SmithDapThreadEventBodyReasonKnown {
 
 typedef struct SmithDapThreadEventBodyReason {
     SmithDapThreadEventBodyReasonKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapThreadEventBodyReason;
 
 typedef struct SmithDapThreadEventBody {
@@ -277,7 +277,7 @@ typedef enum SmithDapOutputEventBodyCategoryKnown {
 
 typedef struct SmithDapOutputEventBodyCategory {
     SmithDapOutputEventBodyCategoryKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapOutputEventBodyCategory;
 
 typedef enum SmithDapOutputEventBodyGroup {
@@ -301,7 +301,7 @@ typedef enum SmithDapChecksumAlgorithm {
 
 typedef struct SmithDapChecksum {
     SmithDapChecksumAlgorithm algorithm;
-    SmithText checksum;
+    struct smith_array_const_char_n checksum;
     SmithProtocolExtra additionalProperties;
 } SmithDapChecksum;
 
@@ -312,15 +312,15 @@ typedef struct SmithDapChecksumList {
 
 typedef struct SmithDapSource {
     bool has_name;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_path;
-    SmithText path;
+    struct smith_array_const_char_n path;
     bool has_sourceReference;
     int64_t sourceReference;
     bool has_presentationHint;
     SmithDapSourcePresentationHint presentationHint;
     bool has_origin;
-    SmithText origin;
+    struct smith_array_const_char_n origin;
     bool has_sources;
     SmithProtocolAny sources;
     bool has_adapterData;
@@ -333,7 +333,7 @@ typedef struct SmithDapSource {
 typedef struct SmithDapOutputEventBody {
     bool has_category;
     SmithDapOutputEventBodyCategory category;
-    SmithText output;
+    struct smith_array_const_char_n output;
     bool has_group;
     SmithDapOutputEventBodyGroup group;
     bool has_variablesReference;
@@ -366,7 +366,7 @@ typedef enum SmithDapBreakpointEventBodyReasonKnown {
 
 typedef struct SmithDapBreakpointEventBodyReason {
     SmithDapBreakpointEventBodyReasonKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapBreakpointEventBodyReason;
 
 typedef enum SmithDapBreakpointReason {
@@ -379,7 +379,7 @@ typedef struct SmithDapBreakpoint {
     int64_t id;
     bool verified;
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     bool has_source;
     SmithDapSource source;
     bool has_line;
@@ -391,7 +391,7 @@ typedef struct SmithDapBreakpoint {
     bool has_endColumn;
     int64_t endColumn;
     bool has_instructionReference;
-    SmithText instructionReference;
+    struct smith_array_const_char_n instructionReference;
     bool has_offset;
     int64_t offset;
     bool has_reason;
@@ -426,29 +426,29 @@ typedef struct SmithDapModuleId {
     SmithDapModuleIdKind kind;
     union {
         int64_t integer;
-        SmithText string;
+        struct smith_array_const_char_n string;
     } as;
 } SmithDapModuleId;
 
 typedef struct SmithDapModule {
     SmithDapModuleId id;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_path;
-    SmithText path;
+    struct smith_array_const_char_n path;
     bool has_isOptimized;
     bool isOptimized;
     bool has_isUserCode;
     bool isUserCode;
     bool has_version;
-    SmithText version;
+    struct smith_array_const_char_n version;
     bool has_symbolStatus;
-    SmithText symbolStatus;
+    struct smith_array_const_char_n symbolStatus;
     bool has_symbolFilePath;
-    SmithText symbolFilePath;
+    struct smith_array_const_char_n symbolFilePath;
     bool has_dateTimeStamp;
-    SmithText dateTimeStamp;
+    struct smith_array_const_char_n dateTimeStamp;
     bool has_addressRange;
-    SmithText addressRange;
+    struct smith_array_const_char_n addressRange;
     SmithProtocolExtra additionalProperties;
 } SmithDapModule;
 
@@ -483,7 +483,7 @@ typedef enum SmithDapProcessEventBodyStartMethod {
 } SmithDapProcessEventBodyStartMethod;
 
 typedef struct SmithDapProcessEventBody {
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_systemProcessId;
     int64_t systemProcessId;
     bool has_isLocalProcess;
@@ -502,16 +502,16 @@ typedef struct SmithDapProcessEvent {
 } SmithDapProcessEvent;
 
 typedef struct SmithDapExceptionBreakpointsFilter {
-    SmithText filter;
-    SmithText label;
+    struct smith_array_const_char_n filter;
+    struct smith_array_const_char_n label;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_default_;
     bool default_;
     bool has_supportsCondition;
     bool supportsCondition;
     bool has_conditionDescription;
-    SmithText conditionDescription;
+    struct smith_array_const_char_n conditionDescription;
     SmithProtocolExtra additionalProperties;
 } SmithDapExceptionBreakpointsFilter;
 
@@ -521,7 +521,7 @@ typedef struct SmithDapExceptionBreakpointsFilterList {
 } SmithDapExceptionBreakpointsFilterList;
 
 typedef struct SmithDapStringList {
-    const SmithText *items;
+    const struct smith_array_const_char_n *items;
     size_t count;
 } SmithDapStringList;
 
@@ -533,10 +533,10 @@ typedef enum SmithDapColumnDescriptorType {
 } SmithDapColumnDescriptorType;
 
 typedef struct SmithDapColumnDescriptor {
-    SmithText attributeName;
-    SmithText label;
+    struct smith_array_const_char_n attributeName;
+    struct smith_array_const_char_n label;
     bool has_format;
-    SmithText format;
+    struct smith_array_const_char_n format;
     bool has_type;
     SmithDapColumnDescriptorType type;
     bool has_width;
@@ -564,7 +564,7 @@ typedef enum SmithDapBreakpointModeApplicabilityKnown {
 
 typedef struct SmithDapBreakpointModeApplicability {
     SmithDapBreakpointModeApplicabilityKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapBreakpointModeApplicability;
 
 typedef struct SmithDapBreakpointModeApplicabilityList {
@@ -573,10 +573,10 @@ typedef struct SmithDapBreakpointModeApplicabilityList {
 } SmithDapBreakpointModeApplicabilityList;
 
 typedef struct SmithDapBreakpointMode {
-    SmithText mode;
-    SmithText label;
+    struct smith_array_const_char_n mode;
+    struct smith_array_const_char_n label;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithDapBreakpointModeApplicabilityList appliesTo;
     SmithProtocolExtra additionalProperties;
 } SmithDapBreakpointMode;
@@ -686,14 +686,14 @@ typedef struct SmithDapCapabilitiesEvent {
 } SmithDapCapabilitiesEvent;
 
 typedef struct SmithDapProgressStartEventBody {
-    SmithText progressId;
-    SmithText title;
+    struct smith_array_const_char_n progressId;
+    struct smith_array_const_char_n title;
     bool has_requestId;
     int64_t requestId;
     bool has_cancellable;
     bool cancellable;
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     bool has_percentage;
     double percentage;
     SmithProtocolExtra additionalProperties;
@@ -706,9 +706,9 @@ typedef struct SmithDapProgressStartEvent {
 } SmithDapProgressStartEvent;
 
 typedef struct SmithDapProgressUpdateEventBody {
-    SmithText progressId;
+    struct smith_array_const_char_n progressId;
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     bool has_percentage;
     double percentage;
     SmithProtocolExtra additionalProperties;
@@ -721,9 +721,9 @@ typedef struct SmithDapProgressUpdateEvent {
 } SmithDapProgressUpdateEvent;
 
 typedef struct SmithDapProgressEndEventBody {
-    SmithText progressId;
+    struct smith_array_const_char_n progressId;
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     SmithProtocolExtra additionalProperties;
 } SmithDapProgressEndEventBody;
 
@@ -743,7 +743,7 @@ typedef enum SmithDapInvalidatedAreasKnown {
 
 typedef struct SmithDapInvalidatedAreas {
     SmithDapInvalidatedAreasKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapInvalidatedAreas;
 
 typedef struct SmithDapInvalidatedAreasList {
@@ -768,7 +768,7 @@ typedef struct SmithDapInvalidatedEvent {
 } SmithDapInvalidatedEvent;
 
 typedef struct SmithDapMemoryEventBody {
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     int64_t offset;
     int64_t count;
     SmithProtocolExtra additionalProperties;
@@ -787,11 +787,11 @@ typedef enum SmithDapRunInTerminalRequestArgumentsKind {
 
 typedef struct SmithDapNullableString {
     bool is_null;
-    SmithText value; // when is_null is false
+    struct smith_array_const_char_n value; // when is_null is false
 } SmithDapNullableString;
 
 typedef struct SmithDapNullableStringMap {
-    const SmithText *keys;
+    const struct smith_array_const_char_n *keys;
     const SmithDapNullableString *values;
     size_t count;
 } SmithDapNullableStringMap;
@@ -800,8 +800,8 @@ typedef struct SmithDapRunInTerminalRequestArguments {
     bool has_kind;
     SmithDapRunInTerminalRequestArgumentsKind kind;
     bool has_title;
-    SmithText title;
-    SmithText cwd;
+    struct smith_array_const_char_n title;
+    struct smith_array_const_char_n cwd;
     SmithDapStringList args;
     bool has_env;
     SmithDapNullableStringMap env;
@@ -828,7 +828,7 @@ typedef struct SmithDapRunInTerminalResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapRunInTerminalResponseBody body;
@@ -863,7 +863,7 @@ typedef struct SmithDapStartDebuggingResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -879,17 +879,17 @@ typedef enum SmithDapInitializeRequestArgumentsPathFormatKnown {
 
 typedef struct SmithDapInitializeRequestArgumentsPathFormat {
     SmithDapInitializeRequestArgumentsPathFormatKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapInitializeRequestArgumentsPathFormat;
 
 typedef struct SmithDapInitializeRequestArguments {
     bool has_clientID;
-    SmithText clientID;
+    struct smith_array_const_char_n clientID;
     bool has_clientName;
-    SmithText clientName;
-    SmithText adapterID;
+    struct smith_array_const_char_n clientName;
+    struct smith_array_const_char_n adapterID;
     bool has_locale;
-    SmithText locale;
+    struct smith_array_const_char_n locale;
     bool has_linesStartAt1;
     bool linesStartAt1;
     bool has_columnsStartAt1;
@@ -929,7 +929,7 @@ typedef struct SmithDapInitializeResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -948,7 +948,7 @@ typedef struct SmithDapConfigurationDoneResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -974,7 +974,7 @@ typedef struct SmithDapLaunchResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -998,7 +998,7 @@ typedef struct SmithDapAttachResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1036,7 +1036,7 @@ typedef struct SmithDapRestartResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1065,7 +1065,7 @@ typedef struct SmithDapDisconnectResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1090,7 +1090,7 @@ typedef struct SmithDapTerminateResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1142,7 +1142,7 @@ typedef struct SmithDapBreakpointLocationsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapBreakpointLocationsResponseBody body;
@@ -1154,13 +1154,13 @@ typedef struct SmithDapSourceBreakpoint {
     bool has_column;
     int64_t column;
     bool has_condition;
-    SmithText condition;
+    struct smith_array_const_char_n condition;
     bool has_hitCondition;
-    SmithText hitCondition;
+    struct smith_array_const_char_n hitCondition;
     bool has_logMessage;
-    SmithText logMessage;
+    struct smith_array_const_char_n logMessage;
     bool has_mode;
-    SmithText mode;
+    struct smith_array_const_char_n mode;
     SmithProtocolExtra additionalProperties;
 } SmithDapSourceBreakpoint;
 
@@ -1200,7 +1200,7 @@ typedef struct SmithDapSetBreakpointsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetBreakpointsResponseBody body;
@@ -1208,11 +1208,11 @@ typedef struct SmithDapSetBreakpointsResponse {
 } SmithDapSetBreakpointsResponse;
 
 typedef struct SmithDapFunctionBreakpoint {
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_condition;
-    SmithText condition;
+    struct smith_array_const_char_n condition;
     bool has_hitCondition;
-    SmithText hitCondition;
+    struct smith_array_const_char_n hitCondition;
     SmithProtocolExtra additionalProperties;
 } SmithDapFunctionBreakpoint;
 
@@ -1241,7 +1241,7 @@ typedef struct SmithDapSetFunctionBreakpointsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetFunctionBreakpointsResponseBody body;
@@ -1249,11 +1249,11 @@ typedef struct SmithDapSetFunctionBreakpointsResponse {
 } SmithDapSetFunctionBreakpointsResponse;
 
 typedef struct SmithDapExceptionFilterOptions {
-    SmithText filterId;
+    struct smith_array_const_char_n filterId;
     bool has_condition;
-    SmithText condition;
+    struct smith_array_const_char_n condition;
     bool has_mode;
-    SmithText mode;
+    struct smith_array_const_char_n mode;
     SmithProtocolExtra additionalProperties;
 } SmithDapExceptionFilterOptions;
 
@@ -1318,7 +1318,7 @@ typedef struct SmithDapSetExceptionBreakpointsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1329,7 +1329,7 @@ typedef struct SmithDapSetExceptionBreakpointsResponse {
 typedef struct SmithDapDataBreakpointInfoArguments {
     bool has_variablesReference;
     int64_t variablesReference;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_frameId;
     int64_t frameId;
     bool has_bytes;
@@ -1337,7 +1337,7 @@ typedef struct SmithDapDataBreakpointInfoArguments {
     bool has_asAddress;
     bool asAddress;
     bool has_mode;
-    SmithText mode;
+    struct smith_array_const_char_n mode;
     SmithProtocolExtra additionalProperties;
 } SmithDapDataBreakpointInfoArguments;
 
@@ -1360,7 +1360,7 @@ typedef struct SmithDapDataBreakpointAccessTypeList {
 
 typedef struct SmithDapDataBreakpointInfoResponseBody {
     SmithDapNullableString dataId;
-    SmithText description;
+    struct smith_array_const_char_n description;
     bool has_accessTypes;
     SmithDapDataBreakpointAccessTypeList accessTypes;
     bool has_canPersist;
@@ -1372,7 +1372,7 @@ typedef struct SmithDapDataBreakpointInfoResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapDataBreakpointInfoResponseBody body;
@@ -1380,13 +1380,13 @@ typedef struct SmithDapDataBreakpointInfoResponse {
 } SmithDapDataBreakpointInfoResponse;
 
 typedef struct SmithDapDataBreakpoint {
-    SmithText dataId;
+    struct smith_array_const_char_n dataId;
     bool has_accessType;
     SmithDapDataBreakpointAccessType accessType;
     bool has_condition;
-    SmithText condition;
+    struct smith_array_const_char_n condition;
     bool has_hitCondition;
-    SmithText hitCondition;
+    struct smith_array_const_char_n hitCondition;
     SmithProtocolExtra additionalProperties;
 } SmithDapDataBreakpoint;
 
@@ -1415,7 +1415,7 @@ typedef struct SmithDapSetDataBreakpointsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetDataBreakpointsResponseBody body;
@@ -1423,15 +1423,15 @@ typedef struct SmithDapSetDataBreakpointsResponse {
 } SmithDapSetDataBreakpointsResponse;
 
 typedef struct SmithDapInstructionBreakpoint {
-    SmithText instructionReference;
+    struct smith_array_const_char_n instructionReference;
     bool has_offset;
     int64_t offset;
     bool has_condition;
-    SmithText condition;
+    struct smith_array_const_char_n condition;
     bool has_hitCondition;
-    SmithText hitCondition;
+    struct smith_array_const_char_n hitCondition;
     bool has_mode;
-    SmithText mode;
+    struct smith_array_const_char_n mode;
     SmithProtocolExtra additionalProperties;
 } SmithDapInstructionBreakpoint;
 
@@ -1460,7 +1460,7 @@ typedef struct SmithDapSetInstructionBreakpointsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetInstructionBreakpointsResponseBody body;
@@ -1490,7 +1490,7 @@ typedef struct SmithDapContinueResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapContinueResponseBody body;
@@ -1522,7 +1522,7 @@ typedef struct SmithDapNextResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1551,7 +1551,7 @@ typedef struct SmithDapStepInResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1578,7 +1578,7 @@ typedef struct SmithDapStepOutResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1605,7 +1605,7 @@ typedef struct SmithDapStepBackResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1630,7 +1630,7 @@ typedef struct SmithDapReverseContinueResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1653,7 +1653,7 @@ typedef struct SmithDapRestartFrameResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1677,7 +1677,7 @@ typedef struct SmithDapGotoResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1700,7 +1700,7 @@ typedef struct SmithDapPauseResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -1754,7 +1754,7 @@ typedef struct SmithDapStackFrameModuleId {
     SmithDapStackFrameModuleIdKind kind;
     union {
         int64_t integer;
-        SmithText string;
+        struct smith_array_const_char_n string;
     } as;
 } SmithDapStackFrameModuleId;
 
@@ -1766,7 +1766,7 @@ typedef enum SmithDapStackFramePresentationHint {
 
 typedef struct SmithDapStackFrame {
     int64_t id;
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_source;
     SmithDapSource source;
     int64_t line;
@@ -1778,7 +1778,7 @@ typedef struct SmithDapStackFrame {
     bool has_canRestart;
     bool canRestart;
     bool has_instructionPointerReference;
-    SmithText instructionPointerReference;
+    struct smith_array_const_char_n instructionPointerReference;
     bool has_moduleId;
     SmithDapStackFrameModuleId moduleId;
     bool has_presentationHint;
@@ -1802,7 +1802,7 @@ typedef struct SmithDapStackTraceResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapStackTraceResponseBody body;
@@ -1830,11 +1830,11 @@ typedef enum SmithDapScopePresentationHintKnown {
 
 typedef struct SmithDapScopePresentationHint {
     SmithDapScopePresentationHintKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapScopePresentationHint;
 
 typedef struct SmithDapScope {
-    SmithText name;
+    struct smith_array_const_char_n name;
     bool has_presentationHint;
     SmithDapScopePresentationHint presentationHint;
     int64_t variablesReference;
@@ -1870,7 +1870,7 @@ typedef struct SmithDapScopesResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapScopesResponseBody body;
@@ -1924,7 +1924,7 @@ typedef enum SmithDapVariablePresentationHintKindKnown {
 
 typedef struct SmithDapVariablePresentationHintKind {
     SmithDapVariablePresentationHintKindKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapVariablePresentationHintKind;
 
 typedef enum SmithDapVariablePresentationHintAttributesItemKnown {
@@ -1941,7 +1941,7 @@ typedef enum SmithDapVariablePresentationHintAttributesItemKnown {
 
 typedef struct SmithDapVariablePresentationHintAttributesItem {
     SmithDapVariablePresentationHintAttributesItemKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapVariablePresentationHintAttributesItem;
 
 typedef struct SmithDapVariablePresentationHintAttributesItemList {
@@ -1960,7 +1960,7 @@ typedef enum SmithDapVariablePresentationHintVisibilityKnown {
 
 typedef struct SmithDapVariablePresentationHintVisibility {
     SmithDapVariablePresentationHintVisibilityKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapVariablePresentationHintVisibility;
 
 typedef struct SmithDapVariablePresentationHint {
@@ -1976,21 +1976,21 @@ typedef struct SmithDapVariablePresentationHint {
 } SmithDapVariablePresentationHint;
 
 typedef struct SmithDapVariable {
-    SmithText name;
-    SmithText value;
+    struct smith_array_const_char_n name;
+    struct smith_array_const_char_n value;
     bool has_type;
-    SmithText type;
+    struct smith_array_const_char_n type;
     bool has_presentationHint;
     SmithDapVariablePresentationHint presentationHint;
     bool has_evaluateName;
-    SmithText evaluateName;
+    struct smith_array_const_char_n evaluateName;
     int64_t variablesReference;
     bool has_namedVariables;
     int64_t namedVariables;
     bool has_indexedVariables;
     int64_t indexedVariables;
     bool has_memoryReference;
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_declarationLocationReference;
     int64_t declarationLocationReference;
     bool has_valueLocationReference;
@@ -2012,7 +2012,7 @@ typedef struct SmithDapVariablesResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapVariablesResponseBody body;
@@ -2021,8 +2021,8 @@ typedef struct SmithDapVariablesResponse {
 
 typedef struct SmithDapSetVariableArguments {
     int64_t variablesReference;
-    SmithText name;
-    SmithText value;
+    struct smith_array_const_char_n name;
+    struct smith_array_const_char_n value;
     bool has_format;
     SmithDapValueFormat format;
     SmithProtocolExtra additionalProperties;
@@ -2035,9 +2035,9 @@ typedef struct SmithDapSetVariableRequest {
 } SmithDapSetVariableRequest;
 
 typedef struct SmithDapSetVariableResponseBody {
-    SmithText value;
+    struct smith_array_const_char_n value;
     bool has_type;
-    SmithText type;
+    struct smith_array_const_char_n type;
     bool has_variablesReference;
     int64_t variablesReference;
     bool has_namedVariables;
@@ -2045,7 +2045,7 @@ typedef struct SmithDapSetVariableResponseBody {
     bool has_indexedVariables;
     int64_t indexedVariables;
     bool has_memoryReference;
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_valueLocationReference;
     int64_t valueLocationReference;
     SmithProtocolExtra additionalProperties;
@@ -2055,7 +2055,7 @@ typedef struct SmithDapSetVariableResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetVariableResponseBody body;
@@ -2076,9 +2076,9 @@ typedef struct SmithDapSourceRequest {
 } SmithDapSourceRequest;
 
 typedef struct SmithDapSourceResponseBody {
-    SmithText content;
+    struct smith_array_const_char_n content;
     bool has_mimeType;
-    SmithText mimeType;
+    struct smith_array_const_char_n mimeType;
     SmithProtocolExtra additionalProperties;
 } SmithDapSourceResponseBody;
 
@@ -2086,7 +2086,7 @@ typedef struct SmithDapSourceResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSourceResponseBody body;
@@ -2102,7 +2102,7 @@ typedef struct SmithDapThreadsRequest {
 
 typedef struct SmithDapThread {
     int64_t id;
-    SmithText name;
+    struct smith_array_const_char_n name;
     SmithProtocolExtra additionalProperties;
 } SmithDapThread;
 
@@ -2120,7 +2120,7 @@ typedef struct SmithDapThreadsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapThreadsResponseBody body;
@@ -2143,7 +2143,7 @@ typedef struct SmithDapTerminateThreadsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -2181,7 +2181,7 @@ typedef struct SmithDapModulesResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapModulesResponseBody body;
@@ -2209,7 +2209,7 @@ typedef struct SmithDapLoadedSourcesResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapLoadedSourcesResponseBody body;
@@ -2227,11 +2227,11 @@ typedef enum SmithDapEvaluateArgumentsContextKnown {
 
 typedef struct SmithDapEvaluateArgumentsContext {
     SmithDapEvaluateArgumentsContextKnown known;
-    SmithText text; // the string as it is written
+    struct smith_array_const_char_n text; // the string as it is written
 } SmithDapEvaluateArgumentsContext;
 
 typedef struct SmithDapEvaluateArguments {
-    SmithText expression;
+    struct smith_array_const_char_n expression;
     bool has_frameId;
     int64_t frameId;
     bool has_line;
@@ -2254,9 +2254,9 @@ typedef struct SmithDapEvaluateRequest {
 } SmithDapEvaluateRequest;
 
 typedef struct SmithDapEvaluateResponseBody {
-    SmithText result;
+    struct smith_array_const_char_n result;
     bool has_type;
-    SmithText type;
+    struct smith_array_const_char_n type;
     bool has_presentationHint;
     SmithDapVariablePresentationHint presentationHint;
     int64_t variablesReference;
@@ -2265,7 +2265,7 @@ typedef struct SmithDapEvaluateResponseBody {
     bool has_indexedVariables;
     int64_t indexedVariables;
     bool has_memoryReference;
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_valueLocationReference;
     int64_t valueLocationReference;
     SmithProtocolExtra additionalProperties;
@@ -2275,7 +2275,7 @@ typedef struct SmithDapEvaluateResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapEvaluateResponseBody body;
@@ -2283,8 +2283,8 @@ typedef struct SmithDapEvaluateResponse {
 } SmithDapEvaluateResponse;
 
 typedef struct SmithDapSetExpressionArguments {
-    SmithText expression;
-    SmithText value;
+    struct smith_array_const_char_n expression;
+    struct smith_array_const_char_n value;
     bool has_frameId;
     int64_t frameId;
     bool has_format;
@@ -2299,9 +2299,9 @@ typedef struct SmithDapSetExpressionRequest {
 } SmithDapSetExpressionRequest;
 
 typedef struct SmithDapSetExpressionResponseBody {
-    SmithText value;
+    struct smith_array_const_char_n value;
     bool has_type;
-    SmithText type;
+    struct smith_array_const_char_n type;
     bool has_presentationHint;
     SmithDapVariablePresentationHint presentationHint;
     bool has_variablesReference;
@@ -2311,7 +2311,7 @@ typedef struct SmithDapSetExpressionResponseBody {
     bool has_indexedVariables;
     int64_t indexedVariables;
     bool has_memoryReference;
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_valueLocationReference;
     int64_t valueLocationReference;
     SmithProtocolExtra additionalProperties;
@@ -2321,7 +2321,7 @@ typedef struct SmithDapSetExpressionResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapSetExpressionResponseBody body;
@@ -2341,7 +2341,7 @@ typedef struct SmithDapStepInTargetsRequest {
 
 typedef struct SmithDapStepInTarget {
     int64_t id;
-    SmithText label;
+    struct smith_array_const_char_n label;
     bool has_line;
     int64_t line;
     bool has_column;
@@ -2367,7 +2367,7 @@ typedef struct SmithDapStepInTargetsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapStepInTargetsResponseBody body;
@@ -2390,7 +2390,7 @@ typedef struct SmithDapGotoTargetsRequest {
 
 typedef struct SmithDapGotoTarget {
     int64_t id;
-    SmithText label;
+    struct smith_array_const_char_n label;
     int64_t line;
     bool has_column;
     int64_t column;
@@ -2399,7 +2399,7 @@ typedef struct SmithDapGotoTarget {
     bool has_endColumn;
     int64_t endColumn;
     bool has_instructionPointerReference;
-    SmithText instructionPointerReference;
+    struct smith_array_const_char_n instructionPointerReference;
     SmithProtocolExtra additionalProperties;
 } SmithDapGotoTarget;
 
@@ -2417,7 +2417,7 @@ typedef struct SmithDapGotoTargetsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapGotoTargetsResponseBody body;
@@ -2427,7 +2427,7 @@ typedef struct SmithDapGotoTargetsResponse {
 typedef struct SmithDapCompletionsArguments {
     bool has_frameId;
     int64_t frameId;
-    SmithText text;
+    struct smith_array_const_char_n text;
     int64_t column;
     bool has_line;
     int64_t line;
@@ -2463,13 +2463,13 @@ typedef enum SmithDapCompletionItemType {
 } SmithDapCompletionItemType;
 
 typedef struct SmithDapCompletionItem {
-    SmithText label;
+    struct smith_array_const_char_n label;
     bool has_text;
-    SmithText text;
+    struct smith_array_const_char_n text;
     bool has_sortText;
-    SmithText sortText;
+    struct smith_array_const_char_n sortText;
     bool has_detail;
-    SmithText detail;
+    struct smith_array_const_char_n detail;
     bool has_type;
     SmithDapCompletionItemType type;
     bool has_start;
@@ -2497,7 +2497,7 @@ typedef struct SmithDapCompletionsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapCompletionsResponseBody body;
@@ -2517,24 +2517,24 @@ typedef struct SmithDapExceptionInfoRequest {
 
 typedef struct SmithDapExceptionDetails {
     bool has_message;
-    SmithText message;
+    struct smith_array_const_char_n message;
     bool has_typeName;
-    SmithText typeName;
+    struct smith_array_const_char_n typeName;
     bool has_fullTypeName;
-    SmithText fullTypeName;
+    struct smith_array_const_char_n fullTypeName;
     bool has_evaluateName;
-    SmithText evaluateName;
+    struct smith_array_const_char_n evaluateName;
     bool has_stackTrace;
-    SmithText stackTrace;
+    struct smith_array_const_char_n stackTrace;
     bool has_innerException;
     SmithProtocolAny innerException;
     SmithProtocolExtra additionalProperties;
 } SmithDapExceptionDetails;
 
 typedef struct SmithDapExceptionInfoResponseBody {
-    SmithText exceptionId;
+    struct smith_array_const_char_n exceptionId;
     bool has_description;
-    SmithText description;
+    struct smith_array_const_char_n description;
     SmithDapExceptionBreakMode breakMode;
     bool has_details;
     SmithDapExceptionDetails details;
@@ -2545,7 +2545,7 @@ typedef struct SmithDapExceptionInfoResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     SmithDapExceptionInfoResponseBody body;
@@ -2553,7 +2553,7 @@ typedef struct SmithDapExceptionInfoResponse {
 } SmithDapExceptionInfoResponse;
 
 typedef struct SmithDapReadMemoryArguments {
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_offset;
     int64_t offset;
     int64_t count;
@@ -2567,11 +2567,11 @@ typedef struct SmithDapReadMemoryRequest {
 } SmithDapReadMemoryRequest;
 
 typedef struct SmithDapReadMemoryResponseBody {
-    SmithText address;
+    struct smith_array_const_char_n address;
     bool has_unreadableBytes;
     int64_t unreadableBytes;
     bool has_data;
-    SmithText data;
+    struct smith_array_const_char_n data;
     SmithProtocolExtra additionalProperties;
 } SmithDapReadMemoryResponseBody;
 
@@ -2579,7 +2579,7 @@ typedef struct SmithDapReadMemoryResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -2588,12 +2588,12 @@ typedef struct SmithDapReadMemoryResponse {
 } SmithDapReadMemoryResponse;
 
 typedef struct SmithDapWriteMemoryArguments {
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_offset;
     int64_t offset;
     bool has_allowPartial;
     bool allowPartial;
-    SmithText data;
+    struct smith_array_const_char_n data;
     SmithProtocolExtra additionalProperties;
 } SmithDapWriteMemoryArguments;
 
@@ -2615,7 +2615,7 @@ typedef struct SmithDapWriteMemoryResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -2624,7 +2624,7 @@ typedef struct SmithDapWriteMemoryResponse {
 } SmithDapWriteMemoryResponse;
 
 typedef struct SmithDapDisassembleArguments {
-    SmithText memoryReference;
+    struct smith_array_const_char_n memoryReference;
     bool has_offset;
     int64_t offset;
     bool has_instructionOffset;
@@ -2647,12 +2647,12 @@ typedef enum SmithDapDisassembledInstructionPresentationHint {
 } SmithDapDisassembledInstructionPresentationHint;
 
 typedef struct SmithDapDisassembledInstruction {
-    SmithText address;
+    struct smith_array_const_char_n address;
     bool has_instructionBytes;
-    SmithText instructionBytes;
-    SmithText instruction;
+    struct smith_array_const_char_n instructionBytes;
+    struct smith_array_const_char_n instruction;
     bool has_symbol;
-    SmithText symbol;
+    struct smith_array_const_char_n symbol;
     bool has_location;
     SmithDapSource location;
     bool has_line;
@@ -2682,7 +2682,7 @@ typedef struct SmithDapDisassembleResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;
@@ -2717,7 +2717,7 @@ typedef struct SmithDapLocationsResponse {
     int64_t seq;
     int64_t request_seq;
     bool success;
-    SmithText command;
+    struct smith_array_const_char_n command;
     bool has_message;
     SmithDapResponseMessage message;
     bool has_body;

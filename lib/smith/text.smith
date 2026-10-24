@@ -1,6 +1,6 @@
 // smith::text, <smith/text.h>: reading and writing small text formats by hand. Its C API is the generated header
 // include/smith/text.h (committed; `smith build headers` regenerates it). Every export has a short name here and a C
-// name (the attribute before it): `text::make` is `smith_text_make`, `text::Text` is `SmithText`. The comments above an
+// name (the attribute before it): `text::make` is `smith_text_make`. The comments above an
 // export are the header's doc comments, so they name the Smith names; the first one says how a C name follows from
 // them.
 module smith::text;
@@ -9,23 +9,24 @@ import smith::contract;
 
 // <smith/text.h>: reading and writing small text formats by hand, such as replays, scripts, configs and logs. It calls
 // no C library function and no locale, so a number written here reads back as the same value on any machine. Text is a
-// pointer and a length, never a terminated string, so a file read into memory is read where it lies, and every loop is
-// bounded by a length.
+// `char[:]`, a pointer and a count, never a terminated string, so a file read into memory is read where it lies, and
+// every loop is bounded by a length.
 //
 // Names. The module's names are short (text::make, text::take_line, text::parse_u64). In C a function is
-// smith_text_<name> (smith_text_make) and the type is SmithText; the capacities are smith_text_number_capacity and
-// smith_text_f64_capacity.
+// smith_text_<name> (smith_text_make) and text is the slice struct `struct smith_array_const_char_n` (`.data`,
+// `.count[0]`); the capacities are smith_text_number_capacity and smith_text_f64_capacity.
 //
-//   text::Text text = text::make("move 3 4\nturn -90 # left\n");
-//   text::Text line, word;
+//   const char text[:] = "move 3 4\nturn -90 # left\n";
+//   const char line[:];
+//   const char word[:];
 //   while (text::take_line(&text, &line)) {
 //       if (!text::take_word(&line, &word)) continue;      // a blank line
 //       if (text::is(word, "move")) { ... }
 //   }
 //
 // In C, the same:
-//   SmithText text = smith_text_make("move 3 4\nturn -90 # left\n");
-//   SmithText line, word;
+//   struct smith_array_const_char_n text = smith_text_make("move 3 4\nturn -90 # left\n");
+//   struct smith_array_const_char_n line, word;
 //   while (smith_text_take_line(&text, &line)) {
 //       if (!smith_text_take_word(&line, &word)) continue;      // a blank line
 //       if (smith_text_is(word, "move")) { ... }
@@ -34,12 +35,6 @@ import smith::contract;
 // A parse that fails returns false and writes nothing to its result. A write never fails: the caller gives room for
 // number_capacity characters.
 //
-// A run of characters: all of a file, one line of it, or one word of a line.
-[[smith::c_name("SmithText")]] export typedef struct {
-    const char *begin;
-    usize length;
-} Text;
-
 // Writes a number into out, which has room for number_capacity characters, and returns how many it wrote.
 // There is no terminator.
 export constexpr usize number_capacity = 20;
@@ -50,13 +45,13 @@ export constexpr usize f64_capacity = 32;
 // Room for write_f32.
 export constexpr usize f32_capacity = 24;
 
-// The text of a terminated string.
-[[smith::c_name("smith_text_make")]] export [[nodiscard]] Text make(const char *string) {
+// The text of a terminated string, without its terminator. It points into the string; nothing is copied.
+[[smith::c_name("smith_text_make")]] export [[nodiscard]] typeof(const char[:]) make(const char *string) {
     usize length = 0;
     while (string[length] != '\0') {
         length += 1;
     }
-    return (Text){string, length};
+    return string[0:length];
 }
 
 // A check that stays in every build and is no contract the prover reads: the bignum arithmetic and the float text of
@@ -75,50 +70,54 @@ bool is_space(char c) {
 
 // Takes the next line off text into line, without its newline, a trailing carriage return, or a # comment and the
 // spaces before it. Returns false once text is empty.
-[[smith::c_name("smith_text_take_line")]] export [[nodiscard]] bool take_line(Text *text, Text *line) {
-    if (text->length == 0) return false;
+[[smith::c_name("smith_text_take_line")]] export [[nodiscard]] bool take_line(typeof(const char[:]) *text,
+                                                                              typeof(const char[:]) *line) {
+    if (countof(*text) == 0) return false;
     usize length = 0;
-    while (length < text->length && text->begin[length] != '\n') {
+    while (length < countof(*text) && (*text)[length] != '\n') {
         length += 1;
     }
-    *line = (Text){text->begin, length};
-    usize consumed = length < text->length ? length + 1 : length; // the newline too
-    text->begin += consumed;
-    text->length -= consumed;
+    usize consumed = length < countof(*text) ? length + 1 : length; // the newline too
+    const char whole[:] = (*text)[0:length];
+    *text = (*text)[consumed:];
     usize comment = 0;
-    while (comment < line->length && line->begin[comment] != '#') {
+    while (comment < length && whole[comment] != '#') {
         comment += 1;
     }
-    line->length = comment;
-    while (line->length > 0 && (is_space(line->begin[line->length - 1]) || line->begin[line->length - 1] == '\r')) {
-        line->length -= 1;
+    length = comment;
+    while (length > 0 && (is_space(whole[length - 1]) || whole[length - 1] == '\r')) {
+        length -= 1;
     }
+    *line = whole[0:length];
     return true;
 }
 
 // Takes the next word off line, a run without spaces or tabs, into word. Returns false when only spaces are left.
-[[smith::c_name("smith_text_take_word")]] export [[nodiscard]] bool take_word(Text *line, Text *word) {
-    while (line->length > 0 && is_space(line->begin[0])) {
-        line->begin += 1;
-        line->length -= 1;
+[[smith::c_name("smith_text_take_word")]] export [[nodiscard]] bool take_word(typeof(const char[:]) *line,
+                                                                              typeof(const char[:]) *word) {
+    usize start = 0;
+    while (start < countof(*line) && is_space((*line)[start])) {
+        start += 1;
     }
-    if (line->length == 0) return false;
+    if (start == countof(*line)) {
+        *line = (*line)[start:];
+        return false;
+    }
     usize length = 0;
-    while (length < line->length && !is_space(line->begin[length])) {
+    while (start + length < countof(*line) && !is_space((*line)[start + length])) {
         length += 1;
     }
-    *word = (Text){line->begin, length};
-    line->begin += length;
-    line->length -= length;
+    *word = (*line)[start:start + length];
+    *line = (*line)[start + length:];
     return true;
 }
 
 // Whether word is exactly the terminated string.
-[[smith::c_name("smith_text_is")]] export [[nodiscard]] bool is(Text word, const char *string) {
-    for (usize i = 0; i < word.length; i++) {
-        if (string[i] != word.begin[i]) return false; // a shorter string ends in its terminator, which no word has
+[[smith::c_name("smith_text_is")]] export [[nodiscard]] bool is(const char word[:], const char *string) {
+    for (usize i = 0; i < countof(word); i++) {
+        if (string[i] != word[i]) return false; // a shorter string ends in its terminator, which no word has
     }
-    return string[word.length] == '\0';
+    return string[countof(word)] == '\0';
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -130,11 +129,11 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
 // Whole numbers: decimal digits, with an optional leading - for the signed one, or lowercase hexadecimal digits.
 // Leading zeros of any number are fine. Each returns false for an empty word, a stray character (a +, a space, a
 // capital hex digit) or a value that doesn't fit.
-[[smith::c_name("smith_text_parse_u64")]] export [[nodiscard]] bool parse_u64(Text word, u64 *value) {
-    if (word.length == 0) return false;
+[[smith::c_name("smith_text_parse_u64")]] export [[nodiscard]] bool parse_u64(const char word[:], u64 *value) {
+    if (countof(word) == 0) return false;
     u64 result = 0;
-    for (usize i = 0; i < word.length; i++) {
-        char c = word.begin[i];
+    for (usize i = 0; i < countof(word); i++) {
+        char c = word[i];
         if (c < '0' || c > '9') return false;
         u64 digit = (u64)(c - '0');
         if (result > (u64_max - digit) / 10) return false;
@@ -144,9 +143,9 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
     return true;
 }
 
-[[smith::c_name("smith_text_parse_i64")]] export [[nodiscard]] bool parse_i64(Text word, i64 *value) {
-    bool negative = word.length > 0 && word.begin[0] == '-';
-    Text digits = negative ? (Text){word.begin + 1, word.length - 1} : word;
+[[smith::c_name("smith_text_parse_i64")]] export [[nodiscard]] bool parse_i64(const char word[:], i64 *value) {
+    bool negative = countof(word) > 0 && word[0] == '-';
+    const char digits[:] = negative ? word[1:] : word;
     u64 magnitude = 0;
     if (!parse_u64(digits, &magnitude)) return false;
     u64 limit = negative ? (u64)i64_max + 1 : (u64)i64_max;
@@ -155,11 +154,11 @@ constexpr i64 i64_max = (i64)(u64_max >> 1);
     return true;
 }
 
-[[smith::c_name("smith_text_parse_hex")]] export [[nodiscard]] bool parse_hex(Text word, u64 *value) {
-    if (word.length == 0) return false;
+[[smith::c_name("smith_text_parse_hex")]] export [[nodiscard]] bool parse_hex(const char word[:], u64 *value) {
+    if (countof(word) == 0) return false;
     u64 result = 0;
-    for (usize i = 0; i < word.length; i++) {
-        char c = word.begin[i];
+    for (usize i = 0; i < countof(word); i++) {
+        char c = word[i];
         u64 digit = 0;
         if (c >= '0' && c <= '9')
             digit = (u64)(c - '0');
@@ -391,12 +390,12 @@ void decimal_add_digit(Decimal *decimal, u32 digit, bool in_fraction) {
 }
 
 // Reads digits with at most one point from word[*index], and returns whether there was a digit.
-bool decimal_scan_mantissa(Text word, usize *index, Decimal *decimal) {
+bool decimal_scan_mantissa(const char word[:], usize *index, Decimal *decimal) {
     bool in_fraction = false;
     bool any = false;
     usize i = *index;
-    for (; i < word.length; i++) {
-        char c = word.begin[i];
+    for (; i < countof(word); i++) {
+        char c = word[i];
         if (c == '.' && !in_fraction) {
             in_fraction = true;
         } else if (c >= '0' && c <= '9') {
@@ -411,16 +410,16 @@ bool decimal_scan_mantissa(Text word, usize *index, Decimal *decimal) {
 }
 
 // Reads an optional exponent at word[*index] into exp10, and returns false for an e with no digits.
-bool decimal_scan_exponent(Text word, usize *index, Decimal *decimal) {
+bool decimal_scan_exponent(const char word[:], usize *index, Decimal *decimal) {
     usize i = *index;
-    if (i == word.length || (word.begin[i] != 'e' && word.begin[i] != 'E')) return true;
+    if (i == countof(word) || (word[i] != 'e' && word[i] != 'E')) return true;
     i += 1;
-    bool negative = i < word.length && word.begin[i] == '-';
-    if (i < word.length && (word.begin[i] == '-' || word.begin[i] == '+')) i += 1;
+    bool negative = i < countof(word) && word[i] == '-';
+    if (i < countof(word) && (word[i] == '-' || word[i] == '+')) i += 1;
     i64 magnitude = 0;
     usize digits = 0;
-    for (; i < word.length && word.begin[i] >= '0' && word.begin[i] <= '9'; i++) {
-        if (magnitude < exponent_max) magnitude = magnitude * 10 + (word.begin[i] - '0');
+    for (; i < countof(word) && word[i] >= '0' && word[i] <= '9'; i++) {
+        if (magnitude < exponent_max) magnitude = magnitude * 10 + (word[i] - '0');
         digits += 1;
     }
     if (digits == 0) return false;
@@ -514,20 +513,20 @@ bool decimal_to_f64_bits(Decimal *decimal, u64 *bits) {
 }
 
 // Scans a whole word: a sign, digits and an exponent. Returns whether it is a number, and whether it is negative.
-bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
+bool decimal_scan(const char word[:], Decimal *decimal, bool *negative) {
     usize index = 0;
-    *negative = word.length > 0 && word.begin[0] == '-';
-    if (word.length > 0 && (word.begin[0] == '-' || word.begin[0] == '+')) index = 1;
+    *negative = countof(word) > 0 && word[0] == '-';
+    if (countof(word) > 0 && (word[0] == '-' || word[0] == '+')) index = 1;
     if (!decimal_scan_mantissa(word, &index, decimal)) return false;
     if (!decimal_scan_exponent(word, &index, decimal)) return false;
-    return index == word.length;
+    return index == countof(word);
 }
 
 // A decimal number: an optional sign, digits with an optional fraction (-90, 0.25, .5, 5.), and an optional exponent
 // (1e-5, 2.5E+3). The result is the f32 nearest to the number, ties to even, as strtof gives in the C locale, for
 // any number of digits; "-0" is negative zero. It returns false for no digits, a stray character, or a number too
 // large for an f32 (it would round to infinity). One too small rounds to zero or to a subnormal. No inf or nan.
-[[smith::c_name("smith_text_parse_f32")]] export [[nodiscard]] bool parse_f32(Text word, f32 *value) {
+[[smith::c_name("smith_text_parse_f32")]] export [[nodiscard]] bool parse_f32(const char word[:], f32 *value) {
     Decimal decimal;
     decimal_init(&decimal);
     bool negative = false;
@@ -541,7 +540,7 @@ bool decimal_scan(Text word, Decimal *decimal, bool *negative) {
 
 // The same for an f64: the f64 nearest the number, ties to even, as strtod gives in the C locale, for any number
 // of digits. It returns false for a number that would round to infinity (above about 1.7976931348623157e308).
-[[smith::c_name("smith_text_parse_f64")]] export [[nodiscard]] bool parse_f64(Text word, f64 *value) {
+[[smith::c_name("smith_text_parse_f64")]] export [[nodiscard]] bool parse_f64(const char word[:], f64 *value) {
     Decimal decimal;
     decimal_init(&decimal);
     bool negative = false;
@@ -676,7 +675,7 @@ bool f64_reads_back(u64 q, i64 s, u64 bits) {
     text[length++] = 'e';
     length += write_i64(text + length, s);
     f64 back = 0;
-    return parse_f64((Text){text, length}, &back) && __builtin_bit_cast(u64, back) == bits;
+    return parse_f64(text[0:length], &back) && __builtin_bit_cast(u64, back) == bits;
 }
 
 // Writes the digits q (p of them, the first one of exponent `first`) as positional or scientific text.
@@ -755,7 +754,7 @@ bool f32_reads_back(u64 q, i64 s, u32 bits) {
     text[length++] = 'e';
     length += write_i64(text + length, s);
     f32 back = 0;
-    return parse_f32((Text){text, length}, &back) && __builtin_bit_cast(u32, back) == bits;
+    return parse_f32(text[0:length], &back) && __builtin_bit_cast(u32, back) == bits;
 }
 
 // An f32 in the fewest digits, at most 9, that parse_f32 reads back as the same bits: 0.1f is "0.1", where its f64

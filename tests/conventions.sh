@@ -286,7 +286,7 @@ import smith::text;
 import <stdio.h>;
 
 int main(void) {
-    text::Text word = text::make("42");
+    const char word[:] = "42";
     u64 value = 0;
     if (!text::parse_u64(word, &value)) return 1;
     c::printf("%llu\n", (unsigned long long)value);

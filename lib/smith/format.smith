@@ -12,7 +12,7 @@ import smith::text;
 //
 //   format::Written written = format::to(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
 //   if (!written.fits) ...                                   // the text was cut; written.length is what it needed
-//   text::Text path = format::push(&arena, folder, "/", name, ".smith");       // path.begin is terminated too
+//   char path[:] = format::push(&arena, folder, "/", name, ".smith");       // path.data is terminated too
 //
 // What each type is written as, with no locale and no C library function:
 //   bool                      true or false
@@ -21,7 +21,7 @@ import smith::text;
 //   f32, f64                  text::write_f32's and write_f64's shortest digits that read back as the same value
 //                             (0.1f is 0.1, 1e22, 5e-324); inf, -inf and nan for what has no number
 //   char *, const char *      the terminated string; a null pointer is (null)
-//   text::Text                its length of characters, which need no terminator
+//   char[:], const char[:]    its count of characters, which need no terminator
 //   format::Hex               lowercase hexadecimal, zero-padded to a width: format::hex(value, 16), format::hex(x, 0)
 //   format::Fixed             a fixed number of places, rounded as printf's %.Nf does: format::fixed(value, 3)
 //   format::General           printf's %.Ng: format::general(value, 6), format::Scientific is %.Ne: scientific(value,
@@ -68,8 +68,9 @@ import smith::text;
 }
 
 // The text of length characters at begin, for what a printf wrote as %.*s.
-[[smith::c_name("smith_format_bytes")]] export [[nodiscard]] text::Text bytes(const char *begin, usize length) {
-    return (text::Text){begin, length};
+[[smith::c_name("smith_format_bytes")]] export [[nodiscard]] typeof(const char[:]) bytes(const char *begin,
+                                                                                         usize length) {
+    return begin[0:length];
 }
 
 [[smith::c_name("SmithFormatWriter")]] export typedef struct {
@@ -90,11 +91,16 @@ import smith::text;
     writer->length += 1;
 }
 
-// length characters at begin.
-[[smith::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char *begin, usize length) {
-    for (usize i = 0; i < length; i++) {
-        put_char(writer, begin[i]);
+// The characters of text.
+[[smith::c_name("smith_format_put_bytes")]] export void put_bytes(Writer *writer, const char text[:]) {
+    for (usize i = 0; i < countof(text); i++) {
+        put_char(writer, text[i]);
     }
+}
+
+// length characters at begin (a generic's body cannot cut a pointer, so it calls this).
+void put_chars(Writer *writer, const char *begin, usize characters) {
+    put_bytes(writer, begin[0:characters]);
 }
 
 // A terminated string; a null pointer is (null).
@@ -109,14 +115,14 @@ import smith::text;
 [[smith::c_name("smith_format_put_u64")]] export void put_u64(Writer *writer, u64 value) {
     char digits[text::number_capacity];
     usize length = text::write_u64(digits, value);
-    put_bytes(writer, digits, length);
+    put_bytes(writer, digits[0:length]);
 }
 
 // Decimal digits with a leading - for a negative number.
 [[smith::c_name("smith_format_put_i64")]] export void put_i64(Writer *writer, i64 value) {
     char digits[text::number_capacity + 1];
     usize length = text::write_i64(digits, value);
-    put_bytes(writer, digits, length);
+    put_bytes(writer, digits[0:length]);
 }
 
 bool is_finite(f64 value) {
@@ -143,7 +149,7 @@ void put_unfinite(Writer *writer, f64 value) {
     }
     char digits[text::f64_capacity];
     usize length = text::write_f64(digits, value);
-    put_bytes(writer, digits, length);
+    put_bytes(writer, digits[0:length]);
 }
 
 // As text::write_f32: the shortest digits that read back as the same f32, and inf, -inf or nan.
@@ -154,7 +160,7 @@ void put_unfinite(Writer *writer, f64 value) {
     }
     char digits[text::f32_capacity];
     usize length = text::write_f32(digits, value);
-    put_bytes(writer, digits, length);
+    put_bytes(writer, digits[0:length]);
 }
 
 // A Hex, as hex() made it.
@@ -254,7 +260,7 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
     if ((bits >> 63) != 0) put_char(writer, '-');
     put_u64(writer, whole);
     if (places > 0) put_char(writer, '.');
-    put_bytes(writer, digits, places);
+    put_bytes(writer, digits[0:places]);
 }
 
 // Ends the text: terminates the buffer where it ends and says how it went (see Written).
@@ -281,7 +287,7 @@ void fraction_digits(Split split, u32 places, char *digits, u64 *whole) {
     u32 places;
 } Scientific;
 
-// A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or Text is
+// A piece in a column of width characters, made by pad() or left(). The piece is already text: a string or a text is
 // referenced (it must outlive the call that writes it), any other piece is held in the 64 characters of the value.
 export constexpr usize padded_capacity = 64;
 [[smith::c_name("SmithFormatPadded")]] export typedef struct {
@@ -412,7 +418,7 @@ void put_scientific_digits(Writer *writer, const char *digits, u32 count, i32 ex
     put_char(writer, digits[0]);
     if (count > 1) {
         put_char(writer, '.');
-        put_bytes(writer, digits + 1, count - 1);
+        put_bytes(writer, digits[1:count]);
     }
     put_exponent(writer, exponent);
 }
@@ -462,14 +468,14 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
         }
         if (count > (u32)exponent + 1) {
             put_char(writer, '.');
-            put_bytes(writer, digits + exponent + 1, count - (u32)exponent - 1);
+            put_bytes(writer, digits[(u32)exponent + 1:count]);
         }
     } else {
         put_string(writer, "0.");
         for (i32 i = 1; i < -exponent; i++) {
             put_char(writer, '0');
         }
-        put_bytes(writer, digits, count);
+        put_bytes(writer, digits[0:count]);
     }
 }
 
@@ -482,7 +488,7 @@ bool prepare_digits(Writer *writer, f64 value, u32 want, char *digits, i32 *expo
             put_char(writer, ' ');
         }
     }
-    put_bytes(writer, characters, padded.length);
+    put_bytes(writer, characters[0:padded.length]);
     if (padded.left) {
         for (usize i = 0; i < spaces; i++) {
             put_char(writer, ' ');
@@ -514,10 +520,11 @@ void put(Writer *writer, auto piece, usize count) {
             usize length = 0;
             while (length < count && piece[length] != '\0')
                 length += 1;
-            put_bytes(writer, piece, length);
+            put_chars(writer, piece, length);
         }
-    } else if constexpr (typeof(piece) == text::Text) {
-        put_bytes(writer, piece.begin, piece.length);
+    } else if constexpr (typeof(piece) == struct smith_array_char_n ||
+                         typeof(piece) == struct smith_array_const_char_n) {
+        put_bytes(writer, piece);
     } else if constexpr (typeof(piece) == Hex) {
         put_hex(writer, piece);
     } else if constexpr (typeof(piece) == Fixed) {
@@ -572,9 +579,10 @@ Padded make_padded(auto piece, u32 width, bool left) {
     if constexpr (typeof(piece) == char * || typeof(piece) == const char *) {
         padded.begin = piece != nullptr ? piece : "(null)";
         padded.length = __builtin_strlen(padded.begin);
-    } else if constexpr (typeof(piece) == text::Text) {
-        padded.begin = piece.begin;
-        padded.length = piece.length;
+    } else if constexpr (typeof(piece) == struct smith_array_char_n ||
+                         typeof(piece) == struct smith_array_const_char_n) {
+        padded.begin = piece.data;
+        padded.length = countof(piece);
     } else {
         Writer writer = make(padded.characters, padded_capacity);
         if constexpr (is_pointer(typeof(piece)) && typeof(piece) != char *&&typeof(piece) != const char *) {
@@ -589,7 +597,7 @@ Padded make_padded(auto piece, u32 width, bool left) {
 
 // The piece in a column of width characters, spaces on its left: pad(n, 5) is printf's %5d, pad(name, 12) is %12s, and
 // pad(format::fixed(x, 1), 6) is %6.1f. A piece wider than the column is written whole. The piece is any of the types
-// `to` has a rule for except a Padded; a string or Text is read when the Padded is written, not when it is made.
+// `to` has a rule for except a Padded; a string or a text is read when the Padded is written, not when it is made.
 export [[nodiscard]] Padded pad(auto piece, u32 width) {
     return make_padded(piece, width, false);
 }
@@ -676,7 +684,8 @@ export Written to(char *buffer, usize capacity, auto... args) {
         if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
             put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char * ||
-                             typeof(args[i]) == text::Text) {
+                             typeof(args[i]) == struct smith_array_char_n ||
+                             typeof(args[i]) == struct smith_array_const_char_n) {
             put(&writer, args[i], 0);
         } else if constexpr (typeof(args[i]) == Hex || typeof(args[i]) == Fixed || typeof(args[i]) == General) {
             put(&writer, args[i], 0);
@@ -696,13 +705,23 @@ export usize length(auto... args) {
     return to(nullptr, 0, args...).length;
 }
 
-// The arguments as text pushed on the arena, with a terminator after it that Text's length does not count.
-export text::Text push(arena::Arena *arena, auto... args) {
+// What push returns: a `char[:]`. (The header pass cannot yet write a generic whose result is spelled
+// `typeof(char[:])`, so the type has a name.)
+export typedef typeof(char[:]) Chars;
+
+// length characters at memory (a generic's body cannot cut a pointer).
+Chars cut(char *memory, usize characters) {
+    Chars chars = memory[0:characters];
+    return chars;
+}
+
+// The arguments as text pushed on the arena, with a terminator after it that the slice's count does not count.
+export Chars push(arena::Arena *arena, auto... args) {
     usize characters = length(args...);
     char *memory =
         arena::push_array_raw(arena, sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
     Written written = to(memory, characters + 1, args...);
-    return (text::Text){memory, written.length};
+    return cut(memory, written.length);
 }
 
 constexpr i32 emsgsize = 40; // EMSGSIZE on macOS, which smith runs on

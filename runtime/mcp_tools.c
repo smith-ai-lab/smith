@@ -54,7 +54,7 @@ static const char *smith_mcp_absolute(SmithArena *arena, const char *folder, con
     return joined;
 }
 
-static const SmithJsonValue *smith_mcp_json_string(SmithArena *arena, SmithText text) {
+static const SmithJsonValue *smith_mcp_json_string(SmithArena *arena, struct smith_array_const_char_n text) {
     SmithJsonValue *value = smith_arena_push(arena, sizeof(SmithJsonValue), alignof(SmithJsonValue));
     SMITH_ASSERT(value != nullptr);
     *value = (SmithJsonValue){.kind = SmithJsonKind_String, .text = text, .span = 1};
@@ -219,8 +219,9 @@ static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char 
         const char *stop = newline != nullptr ? newline : end;
         if ((size_t)(stop - cursor) > sizeof "runner\t" - 1 && memcmp(cursor, "runner\t", sizeof "runner\t" - 1) == 0) {
             const char *path = smith_mcp_cstring(
-                &server->scratch, (SmithText){.begin = cursor + sizeof "runner\t" - 1,
-                                              .length = (size_t)(stop - cursor) - (sizeof "runner\t" - 1)});
+                &server->scratch,
+                (struct smith_array_const_char_n){.data = cursor + sizeof "runner\t" - 1,
+                                                  .count = {(size_t)(stop - cursor) - (sizeof "runner\t" - 1)}});
             const char *absolute = smith_mcp_absolute(&server->scratch, folder, path);
             SmithFileInfo info = smith_files_info(&server->io->files, absolute);
             if (info.error.code == 0 && !info.folder) return absolute;
@@ -321,8 +322,8 @@ static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession 
 static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *session, const char *program,
                                   const char *const *list, size_t count, bool stop_on_entry, int64_t *seq,
                                   SmithMcpText *out) {
-    SmithText keys[] = {smith_text_make("program"), smith_text_make("args"), smith_text_make("cwd"),
-                        smith_text_make("stopOnEntry")};
+    struct smith_array_const_char_n keys[] = {smith_text_make("program"), smith_text_make("args"),
+                                              smith_text_make("cwd"), smith_text_make("stopOnEntry")};
     SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(program)),
                                  smith_mcp_json_strings(&server->scratch, list, count),
                                  smith_mcp_json_string(&server->scratch, smith_text_make(session->cwd)),
@@ -570,7 +571,7 @@ static bool smith_mcp_scope(SmithMcpServer *server, SmithMcpSession *session, in
     }
     for (size_t i = 0; i < body.scopes.count; i++) { // bounded by the scopes
         const SmithDapScope *scope = &body.scopes.items[i];
-        if (scope->name.length == strlen(name) && strncasecmp(scope->name.begin, name, scope->name.length) == 0) {
+        if (scope->name.count[0] == strlen(name) && strncasecmp(scope->name.data, name, scope->name.count[0]) == 0) {
             *reference = scope->variablesReference;
             return true;
         }
@@ -689,7 +690,7 @@ static bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue
     }
     smith_mcp_text_add(out, "%s = ", expression);
     smith_mcp_text_add_text(out, body.result);
-    if (body.has_type && body.type.length > 0) {
+    if (body.has_type && body.type.count[0] > 0) {
         smith_mcp_text_add(out, " (");
         smith_mcp_text_add_text(out, body.type);
         smith_mcp_text_add(out, ")");

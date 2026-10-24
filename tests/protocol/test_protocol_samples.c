@@ -14,10 +14,10 @@ static const SmithJsonValue *test_samples_tree(SmithArena *arena, const char *js
     return protocol_test_parse(arena, smith_text_make(json));
 }
 
-static bool test_samples_has(SmithText text, const char *needle) {
+static bool test_samples_has(struct smith_array_const_char_n text, const char *needle) {
     size_t length = strlen(needle);
-    for (size_t at = 0; at + length <= text.length; at++) { // bounded by the text
-        if (memcmp(text.begin + at, needle, length) == 0) return true;
+    for (size_t at = 0; at + length <= text.count[0]; at++) { // bounded by the text
+        if (memcmp(text.data + at, needle, length) == 0) return true;
     }
     return false;
 }
@@ -50,7 +50,7 @@ void test_samples_dap_a_reason_the_schema_does_not_list_is_kept(void) {
     smith_check(smith_text_is(event.body.reason.text, "signal SIGSEGV"));
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stopped_event_write(&writer, &event);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     smith_check(test_samples_has(text, "\"reason\":\"signal SIGSEGV\""));
 }
 
@@ -66,7 +66,7 @@ void test_samples_dap_launch_arguments_keep_the_adapters_attributes(void) {
     smith_check_equal_u64(request.arguments.additionalProperties.count, 3);
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_launch_request_write(&writer, &request);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     smith_check(test_samples_has(text, "\"program\":\"/tmp/a.out\""));
     smith_check(test_samples_has(text, "\"args\":[\"x\",\"y\"]"));
     smith_check(test_samples_has(text, "\"command\":\"launch\""));
@@ -163,7 +163,7 @@ void test_samples_mcp_a_tool_keeps_its_own_input_schema(void) {
     smith_check_equal_u64(tool.inputSchema.additionalProperties.count, 2); // properties and required
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_write(&writer, &tool);
-    SmithText text = protocol_test_text(&writer);
+    struct smith_array_const_char_n text = protocol_test_text(&writer);
     smith_check(
         test_samples_has(text, "\"properties\":{\"file\":{\"type\":\"string\"},\"line\":{\"type\":\"integer\"}}"));
     smith_check(test_samples_has(text, "\"required\":[\"file\"]"));
