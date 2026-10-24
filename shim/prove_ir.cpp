@@ -208,6 +208,7 @@ bool has_own_contract(const Function &function, Contract kind) {
 // (smith_trusted() is not one). A function with only asserts is proved as a unit, and callers still inline it, since it
 // has no ensures.
 bool has_any_own_contract(const Function &function) {
+    if (function.hasFnAttribute(Attribute::AlwaysInline)) return false; // a generic instance such as contract::modifies
     for (const Instruction &instruction : instructions(function)) {
         Contract kind = contract_of(&instruction);
         bool is_contract = kind != Contract::None && kind != Contract::Trusted;
@@ -1591,23 +1592,14 @@ bool take_ranges(UnitContext &context, int call_site, std::vector<Range> &ranges
     return !found.empty();
 }
 
-// What a call may write of the object `argument` points to, the objects it was given and may change, saved before the call.
-struct Saved {
-    Value *argument;
-    AllocaInst *copy;
-    uint64_t bytes;
-    Align align;
-};
-
 bool may_write_pointee(const Function &callee, unsigned index) {
     return !callee.hasParamAttribute(index, Attribute::ReadOnly) &&
            !callee.hasParamAttribute(index, Attribute::ReadNone) && callee.getParamDereferenceableBytes(index) != 0;
 }
 
-// Alive2 lets a call change the whole object a pointer it was given points into (its memory model has blocks), so the
-// region that is saved is the pointer's object as far as its size is known: an object of the function, a global, or a
-// parameter with the bytes it is `dereferenceable` for. Otherwise the callee's own window at the pointer.
-bool object_region(UnitContext &context, Value *pointer, uint64_t window, Value *&base, uint64_t &bytes, Align &align) {
+// The object a pointer points into, as far as its size is known: an object of the function, a global, or a parameter
+// with the bytes it is `dereferenceable` for.
+bool object_region(UnitContext &context, Value *pointer, Value *&base, uint64_t &bytes, Align &align) {
     const DataLayout &layout = context.module.getDataLayout();
     Value *object = const_cast<Value *>(getUnderlyingObject(pointer));
     bytes = 0;
@@ -1624,102 +1616,79 @@ bool object_region(UnitContext &context, Value *pointer, uint64_t window, Value 
         bytes = argument->getDereferenceableBytes();
         align = argument->getParamAlign().valueOrOne();
     }
-    if (bytes != 0) {
-        base = object;
-        return true;
-    }
-    base = pointer;
-    bytes = window;
-    align = Align(1);
+    base = object;
     return bytes != 0;
 }
 
-void save_objects(UnitContext &context, CallBase &call, Function &callee, IRBuilder<> &entry,
-                  const SmallPtrSetImpl<const Value *> &readonly, std::vector<Saved> &saved) {
+// A callee that names its ranges writes nothing else (it was proved to, or is trusted to), so the call itself, which only
+// stands for the callee's effect, is given a scratch object in place of each pointer it may write through: Alive2 would
+// let it change the whole object the pointer points into. What the callee changed is then made arbitrary by hand, range
+// by range (havoc_ranges), and nothing else is touched.
+void redirect_arguments(UnitContext &context, CallBase &call, Function &callee, IRBuilder<> &entry,
+                        SmallPtrSetImpl<const Value *> &copies) {
     for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
         Value *pointer = call.getArgOperand(i);
-        if (!pointer->getType()->isPointerTy() || readonly.contains(pointer) || !may_write_pointee(callee, i)) continue;
-        Value *base = nullptr;
-        uint64_t bytes = 0;
-        Align align(1);
-        if (!object_region(context, pointer, callee.getParamDereferenceableBytes(i), base, bytes, align)) continue;
-        if (std::any_of(saved.begin(), saved.end(), [&](const Saved &other) { return other.argument == base; })) continue;
-        auto *copy = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(context.function.getContext()), bytes));
-        copy->setAlignment(align);
-        copy_object(&call, call.getDebugLoc(), copy, base, bytes, align);
-        saved.push_back({base, copy, bytes, align});
+        if (!pointer->getType()->isPointerTy() || copies.contains(pointer) || !may_write_pointee(callee, i)) continue;
+        uint64_t bytes = callee.getParamDereferenceableBytes(i);
+        auto *scratch = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(context.function.getContext()), bytes));
+        scratch->setAlignment(callee.getParamAlign(i).valueOrOne());
+        call.setArgOperand(i, scratch);
+        copies.insert(scratch);
     }
 }
 
-// After the call (and the havoc of its locals): what the callee did not say it writes is what it was. A byte inside a
-// range keeps what the call left; every other byte of an object the call was given is restored from the copy.
-Instruction *restore_objects(UnitContext &context, CallBase &call, Instruction *last, ArrayRef<Range> ranges,
-                             const std::vector<Saved> &saved) {
+void mark_frame_ok(Instruction *from, Instruction *to) { // [from, to) were written by the prover, not the function
+    for (Instruction *at = from; at != nullptr && at != to; at = at->getNextNode())
+        at->setMetadata("smith.frame_ok", MDNode::get(at->getContext(), {}));
+}
+
+// After the call: each range it may have written holds arbitrary bytes (the bytes of a global of its own that nothing
+// initializes, a different one at every call), and the callee's smith_ensures is assumed of them. Returns the last
+// instruction it inserted.
+Instruction *havoc_ranges(UnitContext &context, CallBase &call, Instruction *last, ArrayRef<Range> ranges) {
     const DataLayout &layout = context.module.getDataLayout();
     LLVMContext &llvm_context = context.module.getContext();
     Type *i64 = Type::getInt64Ty(llvm_context);
-    for (const Saved &object : saved) {
-        // a range at a constant place in the object, or not (then every byte asks)
-        std::vector<std::pair<int64_t, uint64_t>> constant;
-        bool fixed = true;
-        APInt base_offset(64, 0);
-        const Value *base = object.argument->stripAndAccumulateConstantOffsets(layout, base_offset, true);
-        for (const Range &range : ranges) {
-            APInt offset(64, 0);
-            const Value *where = range.first->stripAndAccumulateConstantOffsets(layout, offset, true);
-            auto *size = dyn_cast<ConstantInt>(range.second);
-            if (where != base || size == nullptr) {
-                fixed = false;
-                break;
-            }
-            constant.emplace_back((offset - base_offset).getSExtValue(), size->getZExtValue());
-        }
-        IRBuilder<> builder(last->getNextNode());
+    for (const Range &range : ranges) {
+        Instruction *anchor = last->getNextNode();
+        Instruction *before = anchor->getPrevNode();
+        IRBuilder<> builder(anchor);
         builder.SetCurrentDebugLocation(call.getDebugLoc());
-        auto mark = [&](Value *store) {
-            if (auto *instruction = dyn_cast<Instruction>(store))
-                instruction->setMetadata("smith.frame_ok", MDNode::get(llvm_context, {}));
-            if (auto *instruction = dyn_cast<Instruction>(store)) last = instruction;
-        };
-        if (fixed) {
-            std::vector<bool> inside(object.bytes, false);
-            for (auto [offset, size] : constant) {
-                for (uint64_t k = 0; k < size; k++) {
-                    int64_t at = offset + static_cast<int64_t>(k);
-                    if (at >= 0 && static_cast<uint64_t>(at) < object.bytes) inside[static_cast<size_t>(at)] = true;
-                }
-            }
-            for (uint64_t offset = 0; offset < object.bytes;) {
-                uint64_t width = std::min<uint64_t>(object.align.value(), 8);
-                while (width > 1 && (offset % width != 0 || offset + width > object.bytes ||
-                                     std::any_of(inside.begin() + static_cast<ptrdiff_t>(offset),
-                                                 inside.begin() + static_cast<ptrdiff_t>(offset + width),
-                                                 [&](bool value) { return value != inside[offset]; })))
-                    width /= 2;
-                if (!inside[offset]) {
-                    Type *type = builder.getIntNTy(static_cast<unsigned>(width * 8));
-                    Align here = commonAlignment(object.align, offset);
-                    Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.copy, offset);
-                    Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.argument, offset);
-                    mark(builder.CreateAlignedStore(builder.CreateAlignedLoad(type, from, here), to, here));
-                }
-                offset += width;
-            }
+        auto *constant = dyn_cast<ConstantInt>(range.second);
+        Value *base = nullptr;
+        uint64_t object_bytes = 0;
+        Align object_align(1);
+        bool known = object_region(context, range.first, base, object_bytes, object_align);
+        uint64_t bytes = constant != nullptr ? constant->getZExtValue() : object_bytes;
+        if (bytes == 0 || (constant == nullptr && !known)) {
+            context.fail(&call, "the size of a range the callee names is not known here",
+                         "name a range of a constant size, or of an object whose size the prover knows");
+            return last;
+        }
+        auto *type = ArrayType::get(Type::getInt8Ty(llvm_context), bytes);
+        auto *source =
+            new GlobalVariable(context.module, type, false, GlobalValue::InternalLinkage,
+                               ConstantAggregateZero::get(type), "smith.havoc." + std::to_string(context.havocs++));
+        if (constant != nullptr) {
+            Align align = range.first->getPointerAlignment(layout);
+            source->setAlignment(align);
+            copy_object(anchor, call.getDebugLoc(), range.first, source, bytes, align);
         } else {
-            for (uint64_t offset = 0; offset < object.bytes; offset++) {
-                Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.copy, offset);
-                Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.argument, offset);
-                Value *address = builder.CreatePtrToInt(to, i64);
-                Value *in = builder.getFalse();
-                for (const Range &range : ranges) {
-                    Value *distance = builder.CreateSub(address, builder.CreatePtrToInt(range.first, i64));
-                    in = builder.CreateOr(in, builder.CreateICmpULT(distance, range.second));
-                }
+            source->setAlignment(Align(1));
+            for (uint64_t offset = 0; offset < bytes; offset++) {
+                Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), base, offset);
+                Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), source, offset);
+                Value *distance = builder.CreateSub(builder.CreatePtrToInt(to, i64),
+                                                    builder.CreatePtrToInt(range.first, i64));
+                Value *in = builder.CreateICmpULT(distance, range.second);
                 Value *kept = builder.CreateAlignedLoad(builder.getInt8Ty(), to, Align(1));
-                Value *old = builder.CreateAlignedLoad(builder.getInt8Ty(), from, Align(1));
-                mark(builder.CreateAlignedStore(builder.CreateSelect(in, kept, old), to, Align(1)));
+                Value *arbitrary = builder.CreateAlignedLoad(builder.getInt8Ty(), from, Align(1));
+                builder.CreateAlignedStore(builder.CreateSelect(in, arbitrary, kept), to, Align(1));
             }
         }
+        context.function.setMemoryEffects(MemoryEffects::unknown()); // it now reads a global, whatever it inferred
+        mark_frame_ok(before->getNextNode(), anchor);
+        last = anchor->getPrevNode();
     }
     return last;
 }
@@ -1803,19 +1772,18 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     }
     std::vector<Range> ranges;
     bool names_ranges = take_ranges(context, call_site, ranges);
-    std::vector<Saved> saved;
-    if (names_ranges) save_objects(context, call, callee, entry, copies, saved);
     if (context.framed) note_call_writes(context, call, callee, names_ranges, ranges);
+    if (names_ranges) redirect_arguments(context, call, callee, entry, copies);
     if (slices.ensures_slice == nullptr && names_ranges) {
         Instruction *after = havoc_locals(context, call, callee, &call, copies);
-        restore_objects(context, call, after, ranges, saved);
+        havoc_ranges(context, call, after, ranges);
     }
     if (slices.ensures_slice != nullptr) {
         SmallVector<Value *, 8> with_result(arguments.begin(), arguments.end());
         if (slices.has_result) with_result.push_back(&call);
         with_result.append(olds.begin(), olds.end());
         Instruction *after = havoc_locals(context, call, callee, &call, copies);
-        if (names_ranges) after = restore_objects(context, call, after, ranges, saved);
+        if (names_ranges) after = havoc_ranges(context, call, after, ranges);
         auto *ensures_call =
             CallInst::Create(slices.ensures_slice, with_result, "", after->getNextNode()->getIterator());
         ensures_call->setDebugLoc(call.getDebugLoc());

@@ -12,3 +12,5 @@ parameters (tested on clang 22). An unknown attribute fails `-Werror` builds, so
 
 **Contracts do not depend on `-fbounds-safety`**, which only Apple's clang has. UBSan and the arenas' ASan poisoning
 check bounds at run time; contracts will prove them.
+
+**`contract::modifies` says what a function writes** (issue #54, agreed with the owner 2026-10-22): a call after the `requires`, `&x` for each object (C: `smith_modifies(p, size)`), the empty `modifies()` for writes-nothing. A function without it keeps the old rule (it may write whatever its pointer parameters reach). The prover proves the body inside the ranges and callers keep everything else. The slice form waits for #119. Skill: smith-contract.

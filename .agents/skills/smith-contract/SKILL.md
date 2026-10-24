@@ -39,10 +39,16 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass, and when the loop exits (see "A loop's invariant") |
 | `smith_assert(c)` | anywhere in a body | `c` is true here: the statement `assert` was, as a function. `smith prove` proves it, and a function with one is in the default set (`main` included); a program stops on it in the debug and release profiles; the fast profile compiles it away |
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
+| `smith_modifies(&x, size)` (`contract::modifies(&x, ...)`) | the start of a function, after its `smith_requires` | the function writes nothing but these objects and its own locals; a caller keeps all it knew of the rest (see "What a function writes") |
 
-- An old value is a `const` local saved at the top: `const u8 old = moves->len;`. The result is the variable about to be returned.
+- An old value is a `const` local saved at the top: `const u8 old = moves->len;` (for what a function leaves alone, `modifies` below). The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
 - **A condition must be free of side effects.** The call evaluates it, and when assertions are off (`target::assertions`, which `-DNDEBUG` turns off: the fast profile) nothing else happens: the body is empty.
+
+## What a function writes: `modifies`
+- `contract::modifies(&moves->jumps);` (C: `smith_modifies(&moves->jumps, sizeof moves->jumps)`, one call for each range; `contract::modifies(&a, &b)` names several): the function writes only these and its locals, so a caller keeps every other byte it passed, with no `old_*` saves. It does nothing at run time. With no argument (C: `smith_modifies(nullptr, 0)`) the function writes nothing outside its locals. A function with none may write what its pointer parameters reach.
+- **Only `&x` (a pointer to one object) is taken today**; anything else is `static assertion failed: contract::modifies takes &x`. A slice range (`xs`, `p[a:b]`) waits for #119, and an array-typed `&s->items` fails too: name the struct that holds it.
+- `smith prove` refutes a write of the body outside the ranges at its line, and at a call makes only the ranges arbitrary before `ensures`. Put it before the first write.
 
 ## A loop's invariant: unrolled, or proved by induction
 - **Unrolled** (up to 16 passes): its passes are copied and `c` is proved on each, so `c` need not be inductive.

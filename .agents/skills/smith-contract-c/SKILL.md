@@ -1,6 +1,6 @@
 ---
 name: smith-contract-c
-description: "Contracts from C (#include <smith/contract.h>: smith_requires, smith_ensures, smith_invariant, smith_assert, smith_trusted) and compiling the library in build.c. Load when C code includes <smith/contract.h> or a build.c calls smith_library(b, "contract")."
+description: "Contracts from C (#include <smith/contract.h>: smith_requires, smith_ensures, smith_invariant, smith_assert, smith_trusted, smith_modifies) and compiling the library in build.c. Load when C code includes <smith/contract.h> or a build.c calls smith_library(b, "contract")."
 ---
 
 # Contracts from C
@@ -20,6 +20,8 @@ for (uint8_t square = 0; square < squares; square++) {
     // ...
 }
 ```
+
+`smith_modifies(p, size)` says what a function writes (C has no slices and no generics): `smith_modifies(&moves->jumps, sizeof moves->jumps);` at the start, after the `smith_requires`, one call for each range. `smith_modifies(nullptr, 0)` alone means the function writes nothing outside its locals. A pointer and a count is `smith_modifies(xs, n * sizeof *xs)`; the extent of `xs` must be known to the prover (`int32_t xs[static 4]`, a field). `smith prove` refutes a write outside the ranges; callers keep the rest (smith-contract, "What a function writes").
 
 ## Get the library in build.c
 
