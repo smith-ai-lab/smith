@@ -49,7 +49,7 @@ tags: [lowering, internals]
     `TokenBuffer` (behind hover, references, highlights, the outline) learns the parser's tokens, so without this none
     of an exported declaration's head, its name included, was known to them and hover at a definition said nothing.
     The prototype that carries an exported function's symbol is a copy of the head: its tokens are placed in a buffer of
-    their own (`relocate`), so that the declaration it makes is not a second one at the definition's place, and a
+    their own (`relocate`: a virtual file, since clangd places a declaration by its file entry and an exported function's first declaration is this copy), so that the declaration it makes is not a second one at the definition's place, and a
     diagnostic there is left out (the definition has its own).
   - **Diagnostics as written** go through a consumer in front of clang's (`Presenter`, `shim/hook.cpp`, in `smith cc` and
     in clangd alike): every message, note and fix-it is rewritten by the lowering's table of names, and a note into a

@@ -2401,6 +2401,40 @@ static size_t smith_lang_slice_assign(SmithLang *lang, const SmithHost *host, co
     return count + 1;
 }
 
+// The tokens a rewrite made are located so that the nodes they make contain the source tokens inside them: the parser's
+// range of a made expression is from its first made token to its last, and a rewrite that put them all at its `[`
+// left `m` of `m[0]` outside every node that holds it, so the editor found nothing there (issue #154). A run of made
+// tokens goes to the character after the real token before it (a dropped `[` or `)`, where no name is), or, when
+// that is the next real token, or the run leads, to the character before the real token after it.
+static bool smith_lang_slice_real(const SmithToken *token) {
+    return !token->synthetic && !token->foreign && token->instance == 0;
+}
+
+static void smith_lang_slice_cover(SmithToken *tokens, size_t count) {
+    for (size_t at = 0; at < count; at++) {
+        if (smith_lang_slice_real(&tokens[at]) || tokens[at].copy || tokens[at].instance != 0) continue;
+        size_t end = at;
+        while (end < count && !smith_lang_slice_real(&tokens[end]))
+            end += 1;
+        const SmithToken *after = at > 0 ? &tokens[at - 1] : nullptr;
+        const SmithToken *next = end < count ? &tokens[end] : nullptr;
+        uint32_t place = 0;
+        if (after != nullptr && smith_lang_slice_real(after) &&
+            (next == nullptr || after->location + after->length < next->location)) {
+            place = after->location + after->length;
+        } else if (next != nullptr) {
+            place = next->location > 0 ? next->location - 1 : 0;
+        } else {
+            at = end;
+            continue;
+        }
+        for (size_t i = at; i < end; i++) {
+            if (!tokens[i].copy && tokens[i].instance == 0 && !tokens[i].foreign) tokens[i].location = place;
+        }
+        at = end;
+    }
+}
+
 // A chain with a subscript, a call or an assignment: written again, or left as it is (false).
 static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangSliceChain *chain = &smith_lang_slice_chain_state;
@@ -2432,6 +2466,7 @@ static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const
             break;
         }
     }
+    smith_lang_slice_cover(cur->tokens, cur->count);
     if (!smith_lang_tuple_replace(lang, chain->count - 1 + extra, cur->tokens, cur->count)) return false;
     smith_lang_slice_flag(lang);
     return true; // the token itself is dropped: its copy leads the queue
@@ -2494,6 +2529,7 @@ static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, con
         smith_lang_slice_pattern(cur.tokens, 0, smith_lang_slice_cur_max, "( ( @0 ) . count [ 0 ] )", spans, token);
     cur.tokens[0].space_before = token->space_before;
     cur.tokens[0].line_start = token->line_start;
+    smith_lang_slice_cover(cur.tokens, cur.count);
     return smith_lang_tuple_replace(lang, close + 1, cur.tokens, cur.count);
 }
 
