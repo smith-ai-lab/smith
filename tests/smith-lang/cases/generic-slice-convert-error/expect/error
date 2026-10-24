@@ -1,0 +1,3 @@
+src/conv.smith:10:24: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only
+src/conv.smith:10:24: variable has incomplete type 'struct smith_array_u8_n'
+src/conv.smith:14:12: converting a slice of `const u8` to a slice of `u8` discards qualifiers: the elements are read-only

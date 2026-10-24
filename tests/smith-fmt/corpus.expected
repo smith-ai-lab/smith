@@ -4218,6 +4218,103 @@ export void names(auto v) {
         c::printf("%s ", fields(typeof(v))[i].name);
     }
 }
+==> generic-slice-convert-error/src/conv.smith <==
+module conv;
+
+// Dropping `const` stays an error inside a generic's body, with the message an ordinary function gets.
+
+static usize plain_count(u8 xs[:]) {
+    return countof(xs);
+}
+
+export usize ordinary(const u8 xs[:]) {
+    return plain_count(xs);
+}
+
+export usize generic(auto xs) {
+    return plain_count(xs);
+}
+==> generic-slice-convert-error/src/main.smith <==
+module main;
+
+import conv;
+
+i32 main(void) {
+    u8 raw[2] = {1, 2};
+    const u8 read[:] = raw;
+    return (i32)(conv::ordinary(read) + conv::generic(read));
+}
+==> generic-slice-convert/src/conv.smith <==
+module conv;
+
+// A generic's body converts a slice parameter at a call as an ordinary function does (issue #135): `const` added,
+// `restrict` added or dropped. Dropping `const` is an error (generic-slice-convert-error).
+
+static usize plain_sum(u8 xs[:]) {
+    usize total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+static usize read_sum(const u8 xs[:]) {
+    usize total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+static usize fast_count(u8 xs[restrict:]) {
+    return countof(xs);
+}
+
+static usize both(u8 xs[:], const u8 ys[:], usize scale) {
+    return plain_sum(xs) * scale + read_sum(ys);
+}
+
+export usize call_plain(auto xs) {
+    return plain_sum(xs);
+}
+
+export usize call_read(auto xs) {
+    return read_sum(xs);
+}
+
+export usize call_fast(auto xs) {
+    return fast_count(xs);
+}
+
+// The arguments are converted one by one, and one that is no bare parameter is left as it is.
+export usize call_both(auto xs, auto ys) {
+    return both(xs, ys, countof(xs));
+}
+
+// A generic that calls a generic passes its parameter as it is; the callee's instance converts.
+export usize pass_on(auto xs) {
+    return call_plain(xs) + call_read(xs[1:]);
+}
+==> generic-slice-convert/src/main.smith <==
+module main;
+
+import conv;
+import <stdio.h>;
+
+static usize through_restrict(u8 xs[restrict:]) {
+    return conv::call_plain(xs) + conv::call_read(xs) + conv::call_fast(xs) + conv::pass_on(xs);
+}
+
+i32 main(void) {
+    u8 raw[4] = {1, 2, 3, 4};
+    u8 xs[:] = raw;
+    const u8 read[:] = xs;
+    c::printf("%zu %zu\n", conv::call_plain(xs), conv::call_read(xs));
+    c::printf("%zu %zu\n", conv::call_read(read), conv::call_fast(xs));
+    c::printf("%zu %zu\n", conv::call_both(xs, read), conv::pass_on(xs));
+    c::printf("%zu\n", through_restrict(xs));
+    return 0;
+}
 ==> generic-slice-type-argument/src/main.smith <==
 module main;
 
