@@ -99,5 +99,5 @@ the console and a scripted `smith dap` child (`smith_io_test_add_child`), whose 
 sends, numbered from 1. It covers the versions, the refusals, every tool, a whole session, a test launched by name, an
 adapter that exits at once or refuses, and timeouts on the fake clock. `tests/mcp.sh` also drives the real `smith mcp`,
 a real adapter and real programs, on a C program, a `.smith` module and a smith project's test, and checks that no
-program outlives the server. It is the task `test-mcp`; a smith without lldb or an account that may not debug skips the
+program outlives the server. It is the tasks `test-mcp-real` and `test-mcp-fake-*`; a smith without lldb or an account that may not debug skips the
 second half.
