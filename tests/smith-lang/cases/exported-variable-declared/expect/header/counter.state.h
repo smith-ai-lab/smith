@@ -3,6 +3,7 @@
 // smith-module: counter::state
 // smith-imports:
 // smith-names: total spare names chosen=counter_state_chosen limit sum
+// smith-bodies: sum
 // clang-format on
 #pragma once
 #include <stddef.h>

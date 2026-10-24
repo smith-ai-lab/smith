@@ -305,6 +305,111 @@ int main(void) {
     }
     return 0;
 }
+==> constexpr-import-header/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+import shapes;
+
+// The headers are on the include path here (the body file is written beside them); slices and tuples in a function's
+// body are what its own compile wrote: the importer runs them.
+static_assert(shapes::dot(1) == 1 + 4 + 9 + 16);
+static_assert(shapes::second(3) == 6);
+constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
+
+// What a failed check of an index calls (the library's, in a real program).
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+int main(void) {
+    c::printf("%d %d\n", chosen, shapes::dot(2));
+    return 0;
+}
+==> constexpr-import-header/src/shapes.smith <==
+module shapes;
+
+export i32 dot(i32 n) {
+    i32 buf[4] = {n, n + 1, n + 2, n + 3};
+    i32 xs[:] = buf;
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        total += xs[i] * xs[i];
+    return total;
+}
+
+export struct { i32, i32 } pair(i32 a) {
+    return {a, a * 2};
+}
+
+export i32 second(i32 a) {
+    struct { i32, i32 } p = pair(a);
+    return p[1];
+}
+==> constexpr-import/src/calc.smith <==
+module calc;
+
+// A function of another module runs at compile time: the importer defines it from this module's `.body` (issue #107).
+typedef struct {
+    i32 a;
+    i32 b;
+} Pair;
+
+static i32 twice(i32 n) {
+    return n * 2;
+}
+
+static i32 sum(Pair p) {
+    return twice(p.a) + p.b;
+}
+
+export i32 fib(i32 n) {
+    return n < 2 ? twice(n) / 2 : fib(n - 1) + fib(n - 2);
+}
+
+export i32 combine(i32 a, i32 b) {
+    Pair p = {a, b};
+    return sum(p);
+}
+
+export usize widen(usize n) {
+    return n + 1;
+}
+==> constexpr-import/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import mid;
+
+static_assert(mid::fib_plus(10) == 55 + 21);
+constexpr i32 table_size = mid::fib_plus(5);
+i32 table[table_size];
+
+enum { Wide = mid::fib_plus(4) };
+
+// A condition of a generic asks a function of an import.
+export i32 pick(constexpr type T) {
+    if constexpr (mid::fib_plus((i32)sizeof(T)) > 20) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+int main(void) {
+    c::printf("%d %zu %d %d %d\n", mid::fib_plus(6), sizeof table / sizeof table[0], Wide, pick(i64), pick(u8));
+    return 0;
+}
+==> constexpr-import/src/mid.smith <==
+module mid;
+
+import calc;
+
+// Another module's function calls one of calc: the importer of mid runs both.
+export i32 fib_plus(i32 n) {
+    return calc::fib(n) + calc::combine(n, 1);
+}
 ==> constexpr-modules/src/main.smith <==
 // The evaluator runs under -fmodules: a contract that holds is a no-op at compile time, and the program links the
 // library.
@@ -613,6 +718,31 @@ static Table make_table(i32 n) {
 
 constexpr Table good = make_table(3);
 constexpr Table bad = make_table(0);
+==> error-constexpr-import-state/src/counter.smith <==
+module counter;
+
+static i32 count = 0;
+
+export i32 next(void) {
+    count += 1;
+    return count;
+}
+
+export i32 plain(i32 n) {
+    return n + 1;
+}
+==> error-constexpr-import-state/src/main.smith <==
+module main;
+
+import counter;
+
+// A function that reads or writes the module's own state is not carried: a copy would be a second variable.
+static_assert(counter::plain(1) == 2);
+static_assert(counter::next() == 1);
+
+int main(void) {
+    return 0;
+}
 ==> error-constexpr-pointers/src/main.smith <==
 constexpr char hello[] = "hello";
 constexpr const char *word = "abc";

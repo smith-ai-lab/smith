@@ -5,6 +5,7 @@
 // smith-names: Layer Numbers total middle label first_two
 // smith-tuples
 // smith-slices
+// smith-bodies: total middle label first_two
 // clang-format on
 #pragma once
 #include <stddef.h>

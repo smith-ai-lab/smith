@@ -4,6 +4,7 @@
 // smith-imports: geo::a
 // smith-names: twice mk longer
 // smith-tuples
+// smith-bodies: twice mk longer
 // clang-format on
 #pragma once
 #include <stddef.h>

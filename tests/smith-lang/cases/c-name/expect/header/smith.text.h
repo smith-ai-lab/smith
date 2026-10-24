@@ -3,6 +3,7 @@
 // smith-module: smith::text
 // smith-imports: smith::arena
 // smith-names: fill
+// smith-bodies: fill
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -851,13 +851,45 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
     setenv("SMITH_LANG_INPUTS", inputs, 1);
 }
 
+// The flags of the command that decide where a module's imports are found and what they declare (-I, -isystem, -D,
+// -std,
+// ...), one to a line, for the compile that makes another module's body file (issue #107): it is given the same ones.
+static void smith_set_smith_flags(int argc, char **argv, int first) {
+    static char flags[smith_smith_args_max];
+    static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
+    static const char *const joined[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-std=", "-isysroot", "-F"};
+    size_t used = 0;
+    flags[0] = 0;
+    for (int i = first; i < argc; i++) { // bounded by argc
+        bool pair = false;
+        bool keep = false;
+        for (size_t k = 0; k < sizeof separate / sizeof separate[0]; k++)
+            pair = pair || strcmp(argv[i], separate[k]) == 0;
+        for (size_t k = 0; k < sizeof joined / sizeof joined[0]; k++)
+            keep = keep || strncmp(argv[i], joined[k], strlen(joined[k])) == 0;
+        size_t need = strlen(argv[i]) + 1 + (pair && i + 1 < argc ? strlen(argv[i + 1]) + 1 : 0);
+        if ((!pair && !keep) || used + need + 1 > sizeof flags) {
+            i += argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc ? 1 : 0;
+            continue;
+        }
+        used += (size_t)snprintf(flags + used, sizeof flags - used, "%s\n", argv[i]);
+        if (pair && i + 1 < argc) used += (size_t)snprintf(flags + used, sizeof flags - used, "%s\n", argv[++i]);
+    }
+    setenv("SMITH_LANG_FLAGS", flags, 1);
+    char self[PATH_MAX];
+    if (smith_self_path(self)) setenv("SMITH_LANG_SELF", self, 1);
+}
+
 // Rewrites the command for the .smith inputs it names (the rule is smith_lang_command, runtime/lang_command.c, which
 // `smith lsp` applies to every command clangd compiles with), and tells the hook the .smith files of the command.
 // Returns the new argument count, or 0 when the command stays as it is.
 static int smith_rewrite_smith_inputs(int argc, char **argv, int first, char **out) {
     int count = smith_lang_command(argc, argv, first, out, smith_smith_args_max);
     if (count < 0) smith_die(smith_exit_usage, "too many arguments with .smith inputs", nullptr);
-    if (count > 0) smith_set_smith_inputs(argc, argv, first);
+    if (count > 0) {
+        smith_set_smith_inputs(argc, argv, first);
+        smith_set_smith_flags(argc, argv, first);
+    }
     return count;
 }
 

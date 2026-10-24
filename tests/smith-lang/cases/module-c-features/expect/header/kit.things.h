@@ -3,6 +3,7 @@
 // smith-module: kit::things
 // smith-imports:
 // smith-names: Callback Word Node capacity names run sum make_word by_type pick say Local twice_local triple
+// smith-bodies: run sum make_word by_type pick say twice_local triple
 // clang-format on
 #pragma once
 #include <stddef.h>

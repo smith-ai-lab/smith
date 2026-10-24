@@ -1,0 +1,11 @@
+module main;
+
+import counter;
+
+// A function that reads or writes the module's own state is not carried: a copy would be a second variable.
+static_assert(counter::plain(1) == 2);
+static_assert(counter::next() == 1);
+
+int main(void) {
+    return 0;
+}

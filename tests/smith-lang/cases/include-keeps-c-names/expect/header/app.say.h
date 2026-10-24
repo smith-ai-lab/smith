@@ -3,6 +3,7 @@
 // smith-module: app::say
 // smith-imports:
 // smith-names: hello
+// smith-bodies: hello
 // clang-format on
 #pragma once
 #include <stddef.h>

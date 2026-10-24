@@ -492,7 +492,10 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
     lang->emit_synthetic = false;
 }
 
+static void smith_lang_body_note(SmithLang *lang); // runtime/lang_body.c
+
 static void smith_lang_end_declaration(SmithLang *lang) {
+    smith_lang_body_note(lang);
     if (lang->decl.c_name.length > 0 && !lang->decl.c_name_used) { // reported by the next token fed (it has the host)
         lang->unnamed_c_name = true;
         lang->unnamed_c_name_location = lang->decl.c_name_location;
@@ -530,11 +533,11 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
     if (host->previous != nullptr) {
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
-        lang->body_sparse = true;
-        host->watch_mode(host->context,
-                         host->maybe_if_constexpr || smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
-                             ? SmithWatch_All
-                             : SmithWatch_Braces);
+        lang->body_sparse = !lang->body_enabled; // the body file needs every token written
+        host->watch_mode(host->context, host->maybe_if_constexpr || lang->body_enabled ||
+                                                smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
+                                            ? SmithWatch_All
+                                            : SmithWatch_Braces);
     }
     smith_lang_push_brace(lang, host, SmithLangBrace_Function, location);
     lang->in_function = true;
@@ -731,6 +734,13 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         // With a body the head is written twice: the prototype that carries the symbol is a copy, and the definition
         // after it has the tokens of the source.
         lang->emit_synthetic = smith_lang_punct(terminator, "{");
+        if (lang->emit_synthetic && lang->decl.exported && !is_main &&
+            lang->body_names_count < smith_lang_body_names_max) {
+            const SmithLangHeld *held =
+                &lang->head[lang->decl.last_name]; // an importer may run it (runtime/lang_body.c)
+            lang->body_names[lang->body_names_count++] =
+                smith_lang_store(lang, smith_lang_scratch_str(held->original), held->original.length);
+        }
         smith_lang_emit_head(lang, host, true, false);
         if (!has_c_name) smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));

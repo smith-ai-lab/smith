@@ -3,6 +3,7 @@
 // smith-module: geo::shape
 // smith-imports:
 // smith-names: Point norm2 origin_count is_origin=geo_is_origin seven
+// smith-bodies: norm2 is_origin
 // clang-format on
 #pragma once
 #include <stddef.h>

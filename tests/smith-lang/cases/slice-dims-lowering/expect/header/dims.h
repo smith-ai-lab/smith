@@ -5,6 +5,7 @@
 // smith-names: Image at tail width first
 // smith-tuples
 // smith-slices
+// smith-bodies: at tail width first
 // clang-format on
 #pragma once
 #include <stddef.h>

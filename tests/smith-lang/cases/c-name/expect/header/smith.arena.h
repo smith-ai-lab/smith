@@ -3,6 +3,7 @@
 // smith-module: smith::arena
 // smith-imports:
 // smith-names: Arena=SmithArena make=smith_arena_create take limit=smith_arena_limit checksum=smith_arena_checksum
+// smith-bodies: make take
 // clang-format on
 #pragma once
 #include <stddef.h>

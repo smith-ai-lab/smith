@@ -3,6 +3,7 @@
 // smith-module: shape::box
 // smith-imports:
 // smith-names: Box width height area scaled apply combined larger
+// smith-bodies: height area scaled apply combined width
 // smith-generic: shape::box larger shape_box_larger src/shape/box.smith - 1 2 12 13 | iP1w@18:8=T iw@18:10=shape_box_larger p@18:16=( i@18:17=constexpr iw@18:27=type iP1w@18:32=T p@18:33=, iP1w@18:35=T iw@18:37=width p@18:42=, iP1w@18:44=T iw@18:46=height p@18:52=) pw@18:54={ iw@18:56=return iw@18:63=width pw@18:69=> iw@18:71=height pw@18:78=? iw@18:80=width pw@18:86=: iw@18:88=height p@18:94=; pw@18:96=}
 // clang-format on
 #pragma once

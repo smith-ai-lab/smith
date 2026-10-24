@@ -3,6 +3,7 @@
 // smith-module: mix::use
 // smith-imports: mix::modes
 // smith-names: both
+// smith-bodies: both
 // clang-format on
 #pragma once
 #include <stddef.h>

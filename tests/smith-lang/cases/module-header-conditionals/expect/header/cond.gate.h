@@ -3,6 +3,7 @@
 // smith-module: cond::gate
 // smith-imports:
 // smith-names: always_there
+// smith-bodies: always_there
 // clang-format on
 #pragma once
 #include <stddef.h>

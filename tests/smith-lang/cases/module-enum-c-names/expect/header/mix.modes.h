@@ -3,6 +3,7 @@
 // smith-module: mix::modes
 // smith-imports:
 // smith-names: Fast=MixMode_Fast Slow=MixMode_Slow Mode=MixMode Level Low=mix_modes_Level_Low High=mix_modes_Level_High score
+// smith-bodies: score
 // clang-format on
 #pragma once
 #include <stddef.h>

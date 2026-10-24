@@ -3,6 +3,7 @@
 // smith-module: math::small
 // smith-imports:
 // smith-names: twice clamp clamp_twice regular
+// smith-bodies: regular
 // clang-format on
 #pragma once
 #include <stddef.h>

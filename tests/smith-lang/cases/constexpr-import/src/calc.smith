@@ -1,0 +1,28 @@
+module calc;
+
+// A function of another module runs at compile time: the importer defines it from this module's `.body` (issue #107).
+typedef struct {
+    i32 a;
+    i32 b;
+} Pair;
+
+static i32 twice(i32 n) {
+    return n * 2;
+}
+
+static i32 sum(Pair p) {
+    return twice(p.a) + p.b;
+}
+
+export i32 fib(i32 n) {
+    return n < 2 ? twice(n) / 2 : fib(n - 1) + fib(n - 2);
+}
+
+export i32 combine(i32 a, i32 b) {
+    Pair p = {a, b};
+    return sum(p);
+}
+
+export usize widen(usize n) {
+    return n + 1;
+}

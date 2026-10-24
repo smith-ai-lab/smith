@@ -3,6 +3,7 @@
 // smith-module: box
 // smith-imports: pick
 // smith-names: bigger
+// smith-bodies: bigger
 // clang-format on
 #pragma once
 #include <stddef.h>

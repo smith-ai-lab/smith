@@ -3,6 +3,7 @@
 // smith-module: pick::inl
 // smith-imports:
 // smith-names: flavor show
+// smith-bodies: show
 // clang-format on
 #pragma once
 #include <stddef.h>

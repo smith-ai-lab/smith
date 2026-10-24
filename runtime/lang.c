@@ -73,6 +73,7 @@ constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and
 constexpr size_t smith_lang_gt_text_max = (size_t)1 << 21; // their text
 constexpr size_t smith_lang_it_max = (size_t)1 << 15;      // tokens of the types instances were asked for
 constexpr size_t smith_lang_it_text_max = (size_t)1 << 19; // their text
+constexpr size_t smith_lang_body_names_max = 512;          // exported functions with a body that one module lists
 constexpr size_t smith_lang_generics_max = 256;            // generics known: the module's own and the imports'
 constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
 constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameters of one generic
@@ -571,6 +572,13 @@ struct SmithLang {
     bool dump_enabled;
     size_t dump_used;
     bool dump_bol;
+    // The bodies of the module's functions, for importers that run them at compile time (runtime/lang_body.c).
+    bool body_enabled;                                   // SMITH_LANG_BODY: the compile keeps each declaration's text
+    bool body_closed;                                    // the instances are being written: no more sections
+    size_t body_mark;                                    // where in the dump the next section begins
+    size_t body_count;                                   // sections kept
+    SmithLangText body_names[smith_lang_body_names_max]; // the exported functions with a body (`// smith-bodies:`)
+    size_t body_names_count;
     uint32_t allowed[smith_lang_allowed_max];
     size_t allowed_count;
     size_t allowed_next;
@@ -842,3 +850,6 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // The private names an exported generic's body uses.
 #include "lang_private.c"
+
+// The bodies of a module's functions, for an importer that runs them at compile time.
+#include "lang_body.c"

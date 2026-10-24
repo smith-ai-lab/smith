@@ -3,6 +3,7 @@
 // smith-module: scale
 // smith-imports:
 // smith-names: calls spread
+// smith-bodies: calls
 // smith-generic: scale spread scale_spread src/scale.smith - 1 2 8 9 | iP1w@46:8=typeof(x) iw@46:18=scale_spread p@46:24=( iP1@46:25=auto iw@46:30=x p@46:31=, ixw@46:33=__INT32_TYPE__ iw@46:37=boosted p@46:44=) pw@46:46={ iw@47:5=scale_Range iw@47:11=r pw@47:13== iw@47:15=scale_widen p@47:20=( p@47:21=( i@47:22=scale_Range p@47:27=) p@47:28={ n@47:29=0 p@47:30=, nw@47:32=1 p@47:33=} p@47:34=, iw@47:36=nullptr p@47:43=) p@47:44=; iP1w@48:5=typeof(x) iw@48:15=result pw@48:22== pw@48:24=( iP1@48:25=typeof(x) p@48:34=) p@48:35=( p@48:36=( i@48:37=scale_Mode p@48:41=) i@48:42=boosted pw@48:50=== iw@48:53=scale_Boosted pw@48:61=? iw@48:63=r p@48:64=. i@48:65=high pw@48:70=: iw@48:72=r p@48:73=. i@48:74=low p@48:77=) p@48:78=; iw@49:5=return iw@49:12=result pw@49:19=+ pw@49:21=( iP1@49:22=typeof(x) p@49:31=) i@49:32=scale_table p@49:37=[ i@49:38=scale_slots pw@49:44=- nw@49:46=1 p@49:47=] pw@49:49=+ pw@49:51=( iP1@49:52=typeof(x) p@49:61=) i@49:62=scale_clamp_to_base p@49:75=( n@49:76=100 p@49:79=) p@49:80=; p@50:1=}
 // smith-linked: table widen clamp_to_base
 // smith-hidden: base slots Plain Boosted Mode Range table widen clamp_to_base

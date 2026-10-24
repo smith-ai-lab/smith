@@ -3,6 +3,7 @@
 // smith-module: arr
 // smith-imports:
 // smith-names: pick corner
+// smith-bodies: pick corner
 // clang-format on
 #pragma once
 #include <stddef.h>

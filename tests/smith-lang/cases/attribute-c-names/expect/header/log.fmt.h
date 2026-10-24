@@ -3,6 +3,7 @@
 // smith-module: log::fmt
 // smith-imports:
 // smith-names: say said
+// smith-bodies: say said
 // clang-format on
 #pragma once
 #include <stddef.h>

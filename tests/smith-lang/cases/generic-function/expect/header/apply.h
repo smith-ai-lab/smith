@@ -3,6 +3,7 @@
 // smith-module: apply
 // smith-imports:
 // smith-names: twice address_matches triple again call_with_pair
+// smith-bodies: triple
 // smith-generic: apply twice apply_twice src/apply.smith - 1 2 9 10 | iP2w@4:8=typeof(x) iw@4:18=apply_twice p@4:23=( i@4:24=constexpr iw@4:34=auto iP1w@4:39=f p@4:40=, iP2w@4:42=auto iw@4:47=x p@4:48=) pw@4:50={ iw@5:5=return iP1w@5:12=f p@5:13=( iP1@5:14=f p@5:15=( i@5:16=x p@5:17=) p@5:18=) p@5:19=; p@6:1=}
 // smith-generic: apply address_matches apply_address_matches src/apply.smith - 1 2 9 10 | ixw@9:8=__SIZE_TYPE__ iw@9:14=apply_address_matches p@9:29=( i@9:30=constexpr iw@9:40=auto iP1w@9:45=f p@9:46=, iP2w@9:48=auto iw@9:53=x p@9:54=) pw@9:56={ pw@10:5=( i@10:6=void p@10:10=) i@10:11=x p@10:12=; iw@11:5=return pw@11:12=( i@11:13=void pw@11:18=* p@11:19=) iP1@11:20=f pw@11:22=== pw@11:25=( i@11:26=void pw@11:31=* p@11:32=) p@11:33=& iP1@11:34=f pw@11:36=? nw@11:38=1 pw@11:40=: nw@11:42=0 p@11:43=; p@12:1=}
 // smith-generic: apply again apply_again src/apply.smith - 1 2 9 10 | iP2w@20:8=typeof(x) iw@20:18=apply_again p@20:23=( i@20:24=constexpr iw@20:34=auto iP1w@20:39=f p@20:40=, iP2w@20:42=auto iw@20:47=x p@20:48=) pw@20:50={ iw@21:5=return B@21:12=apply::twice p@21:17=( iP1@21:18=f p@21:19=, iw@21:21=x p@21:22=) E@21:12= p@21:23=; p@22:1=}

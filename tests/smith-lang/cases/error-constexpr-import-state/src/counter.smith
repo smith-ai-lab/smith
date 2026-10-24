@@ -1,0 +1,12 @@
+module counter;
+
+static i32 count = 0;
+
+export i32 next(void) {
+    count += 1;
+    return count;
+}
+
+export i32 plain(i32 n) {
+    return n + 1;
+}

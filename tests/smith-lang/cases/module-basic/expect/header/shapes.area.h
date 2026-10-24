@@ -3,6 +3,7 @@
 // smith-module: shapes::area
 // smith-imports:
 // smith-names: Rect Circle Kind Square=shapes_area_Kind_Square Round=shapes_area_Kind_Round Other=shapes_area_Kind_Other sides calls pi rect circle triangle private_count kind_of
+// smith-bodies: rect circle triangle private_count kind_of
 // clang-format on
 #pragma once
 #include <stddef.h>

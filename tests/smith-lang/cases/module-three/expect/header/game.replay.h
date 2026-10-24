@@ -3,6 +3,7 @@
 // smith-module: game::replay
 // smith-imports: lib::text
 // smith-names: Replay version counter Handle Mode Fast=game_replay_Mode_Fast Slow=game_replay_Mode_Slow open checksum
+// smith-bodies: open
 // clang-format on
 #pragma once
 #include <stddef.h>

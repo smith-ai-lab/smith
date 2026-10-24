@@ -1,0 +1,21 @@
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+import shapes;
+
+// The headers are on the include path here (the body file is written beside them); slices and tuples in a function's
+// body are what its own compile wrote: the importer runs them.
+static_assert(shapes::dot(1) == 1 + 4 + 9 + 16);
+static_assert(shapes::second(3) == 6);
+constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
+
+// What a failed check of an index calls (the library's, in a real program).
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+int main(void) {
+    c::printf("%d %d\n", chosen, shapes::dot(2));
+    return 0;
+}

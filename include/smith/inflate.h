@@ -3,6 +3,7 @@
 // smith-module: smith::inflate
 // smith-imports:
 // smith-names: Raw=SmithInflateFormat_Raw Zlib=SmithInflateFormat_Zlib Gzip=SmithInflateFormat_Gzip Format=SmithInflateFormat Ok=SmithInflateStatus_Ok Truncated=SmithInflateStatus_Truncated Corrupt=SmithInflateStatus_Corrupt Overflow=SmithInflateStatus_Overflow BadHeader=SmithInflateStatus_BadHeader BadChecksum=SmithInflateStatus_BadChecksum BadLength=SmithInflateStatus_BadLength Stopped=SmithInflateStatus_Stopped Status=SmithInflateStatus Sink=SmithInflateSink window=smith_inflate_window crc32=smith_inflate_crc32 adler32=smith_inflate_adler32 status_message=smith_inflate_status_message decode=smith_inflate_decode stream=smith_inflate_stream
+// smith-bodies: crc32 adler32 status_message decode stream
 // clang-format on
 #pragma once
 #include <stddef.h>

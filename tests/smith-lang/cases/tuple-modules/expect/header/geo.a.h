@@ -4,6 +4,7 @@
 // smith-imports:
 // smith-names: Meters Reach make sum reach reach2 scale
 // smith-tuples
+// smith-bodies: make sum reach reach2 scale
 // clang-format on
 #pragma once
 #include <stddef.h>

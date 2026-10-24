@@ -33,6 +33,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/VirtualFileSystem.h"
 
 extern "C" {
@@ -46,9 +47,14 @@ extern "C" {
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
+
+extern char **environ;
 
 using namespace clang;
 
@@ -80,6 +86,8 @@ struct Action {
     std::vector<std::string> text;  // per token of an instance: its spelling
     std::string header;
     std::string preface; // lines to include first (the headers an interface read in memory needs)
+    std::string body;    // the text of a file made in memory, entered as a system file (issue #107)
+    bool literal = false;
     SourceLocation at;
 };
 
@@ -633,6 +641,9 @@ class SmithHook final : public TokenHook, public NameSource {
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
         host.types_place = &SmithHook::typesPlace;
+        host.mentions = &SmithHook::mentionsName;
+        host.read_body = &SmithHook::readBody;
+        host.include_text = &SmithHook::includeText;
         host.field = &SmithHook::fieldOf;
         host.type_field = &SmithHook::typeField;
         host.read_header = &SmithHook::readHeader;
@@ -1644,6 +1655,14 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     void enterHeader(const Action &action) {
+        if (action
+                .literal) { // a system file: the copies of an import's functions raise no diagnostic of the file's own
+            auto buffer = llvm::MemoryBuffer::getMemBufferCopy(action.body, "<smith-bodies>");
+            FileID id = SM.createFileID(std::move(buffer), SrcMgr::C_System, 0, 0, action.at);
+            importFiles.insert(id.getHashValue());
+            PP.EnterSourceFile(id, nullptr, action.at);
+            return;
+        }
         // A module's header has a section for the instances of its exported generics (what they use of its private
         // code): only an importer that is a .smith file reads it.
         std::string text = action.preface + (action.angled ? "" : "#define SMITH_INSTANCES\n") +
@@ -2621,12 +2640,14 @@ class SmithHook final : public TokenHook, public NameSource {
     // A module's header on the include path (smith build writes it there), read through the file manager's file system,
     // so that a relative -I means what it means to the tool that set the working directory: clangd serves many
     // projects from one process.
+    std::string headerPath; // where headerOnPath found it
     bool headerOnPath(const std::string &relative) {
         for (DirectoryLookup &directory : PP.getHeaderSearchInfo().search_dir_range()) {
             if (!directory.isNormalDir()) continue;
             std::string path = directory.getName().str() + "/" + relative;
             auto buffer = PP.getFileManager().getVirtualFileSystem().getBufferForFile(path);
             if (!buffer) continue;
+            headerPath = path;
             headerFile = std::move(*buffer);
             return true;
         }
@@ -2659,6 +2680,190 @@ class SmithHook final : public TokenHook, public NameSource {
             self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
         }
         return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
+    }
+
+    // ---- The functions of the imports that the file runs at compile time (issue #107, runtime/lang_body.c)
+
+    std::set<std::string> compileTimeNames;
+    bool compileTimeScanned = false;
+
+    // The names the file writes where C requires a constant: in a statement that has `static_assert`, `constexpr`,
+    // `case`, `enum` or `static`, anywhere outside a function body (an initializer, a head), and in the condition of an
+    // `if constexpr`. A name is no more than that: whether it is a function of an import, the lowering asks.
+    void scanCompileTime() {
+        compileTimeScanned = true;
+        StringRef text = SM.getBufferData(MainFile);
+        Lexer lexer(SM.getLocForStartOfFile(MainFile), PP.getLangOpts(), text.begin(), text.begin(), text.end());
+        std::vector<std::string> words;
+        bool keyword = false;
+        int bodies = 0;
+        int open = 0;
+        bool afterParen = false;
+        Token token;
+        auto flushWords = [&] {
+            if (keyword || bodies == 0) compileTimeNames.insert(words.begin(), words.end());
+            words.clear();
+            keyword = false;
+        };
+        for (lexer.LexFromRawLexer(token); token.isNot(tok::eof); lexer.LexFromRawLexer(token)) {
+            if (token.is(tok::raw_identifier)) {
+                StringRef word = token.getRawIdentifier();
+                keyword = keyword || word == "static_assert" || word == "_Static_assert" || word == "constexpr" ||
+                          word == "case" || word == "enum" || word == "static";
+                words.push_back(word.str());
+                afterParen = false;
+                continue;
+            }
+            if (token.is(tok::l_brace)) {
+                flushWords();
+                bool body = bodies > 0 || (open == 0 && afterParen);
+                open += 1;
+                bodies += body ? 1 : 0;
+                bodyKinds.push_back(body);
+            } else if (token.is(tok::r_brace)) {
+                flushWords();
+                if (open > 0) {
+                    open -= 1;
+                    bodies -= bodyKinds.back() ? 1 : 0;
+                    bodyKinds.pop_back();
+                }
+            } else if (token.is(tok::semi)) {
+                flushWords();
+            }
+            afterParen = token.is(tok::r_paren);
+        }
+        flushWords();
+        bodyKinds.clear();
+    }
+    std::vector<bool> bodyKinds;
+
+    static bool mentionsName(void *context, const char *name, uint32_t length) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (!self->compileTimeScanned) self->scanCompileTime();
+        return self->compileTimeNames.count(std::string(name, length)) != 0;
+    }
+
+    static void includeText(void *context, const char *text, uint32_t length) {
+        auto *self = static_cast<SmithHook *>(context);
+        self->closeTokens();
+        Action action;
+        action.include = true;
+        action.literal = true;
+        action.body.assign(text, length);
+        action.at = self->pool.empty() ? SourceLocation() : self->pool.front().getLocation();
+        self->actions.push_back(std::move(action));
+    }
+
+    struct BodyFile {
+        bool ok = false;
+        std::string text;
+        std::string path; // the file to include by (empty: made in memory)
+    };
+    std::map<std::string, BodyFile> bodyFiles; // by header (a/b.h)
+
+    // The arguments of a compile of another module: the flags the driver passed, which decide where its imports are
+    // found and what it declares.
+    std::vector<std::string> bodyFlags() {
+        std::vector<std::string> flags;
+        const char *env = std::getenv("SMITH_LANG_FLAGS");
+        SmallVector<StringRef, 16> parts;
+        StringRef(env != nullptr ? env : "").split(parts, '\n', -1, false);
+        for (StringRef part : parts)
+            flags.push_back(part.str());
+        return flags;
+    }
+
+    // Runs `smith cc -fsyntax-only` on the module's source with SMITH_LANG_BODY set; the body file is written to
+    // `out` when it passes.
+    bool makeBody(const std::string &source, const std::string &out) {
+        // smith itself: the driver says where it is, since this process may be a clone of it that is called `clang`
+        const char *named = std::getenv("SMITH_LANG_SELF");
+        std::string self =
+            named != nullptr
+                ? named
+                : llvm::sys::fs::getMainExecutable("smith", reinterpret_cast<void *>(&SmithHook::readBody));
+        std::vector<std::string> keep = {self, "cc", "-fsyntax-only", "-w"};
+        for (std::string &flag : bodyFlags())
+            if (!flag.empty()) keep.push_back(flag);
+        keep.push_back(source);
+        std::vector<StringRef> args(keep.begin(), keep.end());
+        std::vector<std::string> environment;
+        for (char **entry = environ; entry != nullptr && *entry != nullptr; entry++)
+            if (StringRef(*entry).starts_with("SMITH_LANG_BODY=") == false) environment.push_back(*entry);
+        environment.push_back("SMITH_LANG_BODY=" + out);
+        std::vector<StringRef> env(environment.begin(), environment.end());
+        std::optional<StringRef> redirects[] = {std::nullopt, StringRef("/dev/null"), StringRef("/dev/null")};
+        int status = llvm::sys::ExecuteAndWait(self, args, env, redirects);
+
+        return status == 0 && llvm::sys::fs::exists(out);
+    }
+
+    static bool readBody(void *context, const char *header, const char **text, uint32_t *length, const char **path) {
+        auto *self = static_cast<SmithHook *>(context);
+        auto known = self->bodyFiles.find(header);
+        if (known == self->bodyFiles.end()) known = self->bodyFiles.emplace(header, self->findBody(header)).first;
+        if (!known->second.ok) return false;
+        *text = known->second.text.c_str();
+        *length = static_cast<uint32_t>(known->second.text.size());
+        *path = known->second.path.empty() ? nullptr : known->second.path.c_str();
+        return true;
+    }
+
+    // The source a header was generated from: the second line says (`// Generated by smith from <file>. Do not edit.`).
+    std::string sourceOfHeader(StringRef contents) {
+        StringRef line = contents.split('\n').second.split('\n').first;
+        if (!line.consume_front("// Generated by smith from ") || !line.consume_back(". Do not edit.")) return "";
+        std::string source = line.str();
+        if (llvm::sys::fs::exists(source)) return source;
+        std::string inside = ".smith/" + source; // a library: the build keeps its source there
+        return llvm::sys::fs::exists(inside) ? inside : "";
+    }
+
+    BodyFile findBody(const std::string &header) {
+        BodyFile found;
+        std::string module = header.substr(0, header.size() - 2); // a/b
+        std::string source;
+        std::string file;
+        bool onDisk = false;
+        if (headerOnPath(header)) {
+            file = headerPath.substr(0, headerPath.size() - 2) + ".body";
+            source = sourceOfHeader(headerFile->getBuffer());
+            onDisk = true;
+        } else if (Interface *entry = interfaceOf(module); entry != nullptr && entry->ok) {
+            source = entry->source;
+        } else {
+            return found;
+        }
+        llvm::sys::fs::file_status bodyStatus, sourceStatus;
+        bool have = onDisk && !llvm::sys::fs::status(file, bodyStatus);
+        bool stale = have && !source.empty() && !llvm::sys::fs::status(source, sourceStatus) &&
+                     bodyStatus.getLastModificationTime() < sourceStatus.getLastModificationTime();
+        if (!have || stale) {
+            if (source.empty()) return found;
+            std::string out = file + ".tmp" + std::to_string(::getpid());
+            if (!onDisk) {
+                llvm::SmallString<128> unique;
+                if (llvm::sys::fs::createTemporaryFile("smith-body", "body", unique)) return found;
+                out = unique.str().str();
+            }
+            bool made = makeBody(source, out);
+            auto buffer = made ? llvm::MemoryBuffer::getFile(out)
+                               : llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>(std::error_code());
+            bool kept =
+                made && onDisk && !llvm::sys::fs::rename(out, file); // a folder that cannot be written: in memory
+            if (!kept) llvm::sys::fs::remove(out);
+            if (!buffer) return found;
+            found.text = (*buffer)->getBuffer().str();
+            found.path = kept ? file : "";
+            found.ok = true;
+            return found;
+        }
+        auto buffer = llvm::MemoryBuffer::getFile(file);
+        if (!buffer) return found;
+        found.text = (*buffer)->getBuffer().str();
+        found.path = file;
+        found.ok = true;
+        return found;
     }
 
     static const char *readProblem(void *context) {

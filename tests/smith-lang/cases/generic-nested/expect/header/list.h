@@ -3,6 +3,7 @@
 // smith-module: list
 // smith-imports: arena
 // smith-names: make make_two bytes measure
+// smith-bodies: bytes
 // smith-generic: list make list_make src/list.smith - 2 3 11 12 | iP1w@6:8=T pw@6:10=* i@6:11=list_make p@6:15=( i@6:23=arena_Arena pw@6:29=* i@6:30=a p@6:31=, iw@6:33=constexpr iw@6:43=type iP1w@6:48=T p@6:49=) pw@6:51={ iw@7:5=return B@7:19=arena::push p@7:23=( i@7:24=a p@7:25=, iP1w@7:27=T p@7:28=) E@7:19= p@7:29=; p@8:1=}
 // smith-generic: list make_two list_make_two src/list.smith - 2 3 11 12 | iP1w@10:8=T pw@10:10=* i@10:11=list_make_two p@10:19=( i@10:27=arena_Arena pw@10:33=* i@10:34=a p@10:35=, iw@10:37=constexpr iw@10:47=type iP1w@10:52=T p@10:53=) pw@10:55={ B@11:5=list::make p@11:9=( i@11:10=a p@11:11=, iP1w@11:13=T p@11:14=) E@11:5= p@11:15=; iw@12:5=return B@12:12=list::make p@12:16=( i@12:17=a p@12:18=, iP1w@12:20=T p@12:21=) E@12:12= p@12:22=; p@13:1=}
 // smith-generic: list measure list_measure src/list.smith - 1 2 10 11 | ixw@20:8=__SIZE_TYPE__ iw@20:14=list_measure p@20:21=( i@20:29=arena_Arena pw@20:35=* i@20:36=a p@20:37=, iw@20:39=constexpr iw@20:49=type iP1w@20:54=T p@20:55=) pw@20:57={ iP1w@21:5=T pw@21:7=* i@21:8=value pw@21:14== B@21:16=list::make p@21:20=( i@21:21=a p@21:22=, iP1w@21:24=T p@21:25=) E@21:16= p@21:26=; pw@22:5=( i@22:6=void p@22:10=) i@22:11=value p@22:16=; iw@23:5=return iw@23:12=list_bytes p@23:17=( i@23:18=a p@23:19=) p@23:20=; p@24:1=}

@@ -3,6 +3,7 @@
 // smith-module: smith::text
 // smith-imports: smith::contract
 // smith-names: Text=SmithText number_capacity f64_capacity f32_capacity make=smith_text_make take_line=smith_text_take_line take_word=smith_text_take_word is=smith_text_is parse_u64=smith_text_parse_u64 parse_i64=smith_text_parse_i64 parse_hex=smith_text_parse_hex parse_f32=smith_text_parse_f32 parse_f64=smith_text_parse_f64 write_u64=smith_text_write_u64 write_i64=smith_text_write_i64 write_hex=smith_text_write_hex write_f64=smith_text_write_f64 write_f32=smith_text_write_f32
+// smith-bodies: make take_line take_word is parse_u64 parse_i64 parse_hex parse_f32 parse_f64 write_u64 write_i64 write_hex write_f64 write_f32
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -546,6 +546,7 @@ static SmithLangAct smith_lang_fast_stream(SmithLang *lang, const SmithHost *hos
 // What the host's fast path does with a token: Keep it, Rename it, make it a Sized type, Drop it (the second `static`),
 // or Slow: not decided here, send it to smith_lang_feed.
 SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->body_enabled) return smith_lang_act(SmithLangAct_Slow); // every token is written, for the body file
     if (lang->broken || token->kind == SmithTokenKind_Eof || token->foreign) return smith_lang_act(SmithLangAct_Slow);
     lang->recent_count = 0;
     if (smith_lang_type_on(lang, host) && !lang->recording) return smith_lang_act(SmithLangAct_Slow); // lang_type.c

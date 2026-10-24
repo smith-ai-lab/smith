@@ -3,6 +3,7 @@
 // smith-module: loop
 // smith-imports:
 // smith-names: bytes words
+// smith-bodies: bytes words
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -1,0 +1,24 @@
+module main;
+
+import <stdio.h>;
+import mid;
+
+static_assert(mid::fib_plus(10) == 55 + 21);
+constexpr i32 table_size = mid::fib_plus(5);
+i32 table[table_size];
+
+enum { Wide = mid::fib_plus(4) };
+
+// A condition of a generic asks a function of an import.
+export i32 pick(constexpr type T) {
+    if constexpr (mid::fib_plus((i32)sizeof(T)) > 20) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+int main(void) {
+    c::printf("%d %zu %d %d %d\n", mid::fib_plus(6), sizeof table / sizeof table[0], Wide, pick(i64), pick(u8));
+    return 0;
+}

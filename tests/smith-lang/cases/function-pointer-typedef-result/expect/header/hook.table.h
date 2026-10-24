@@ -3,6 +3,7 @@
 // smith-module: hook::table
 // smith-imports:
 // smith-names: Hook=HookFn Plain Sized Builtin Box Make hook=hook_table_hook plain call chosen_value
+// smith-bodies: plain call chosen_value
 // clang-format on
 #pragma once
 #include <stddef.h>

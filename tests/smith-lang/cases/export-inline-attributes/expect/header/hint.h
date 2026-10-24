@@ -3,6 +3,7 @@
 // smith-module: hint
 // smith-imports:
 // smith-names: first=hint_first second third used
+// smith-bodies: used
 // clang-format on
 #pragma once
 #include <stddef.h>

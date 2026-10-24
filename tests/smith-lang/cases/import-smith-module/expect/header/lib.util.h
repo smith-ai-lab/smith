@@ -3,6 +3,7 @@
 // smith-module: lib::util
 // smith-imports:
 // smith-names: twice
+// smith-bodies: twice
 // clang-format on
 #pragma once
 #include <stddef.h>

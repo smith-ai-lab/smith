@@ -3,6 +3,7 @@
 // smith-module: sys::world
 // smith-imports:
 // smith-names: env_count counter_times_three owned
+// smith-bodies: env_count counter_times_three
 // clang-format on
 #pragma once
 #include <stddef.h>

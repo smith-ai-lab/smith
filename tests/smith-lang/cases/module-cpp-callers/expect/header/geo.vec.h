@@ -3,6 +3,7 @@
 // smith-module: geo::vec
 // smith-imports:
 // smith-names: Vec dimensions length_squared dot counter
+// smith-bodies: length_squared
 // clang-format on
 #pragma once
 #include <stddef.h>

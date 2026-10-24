@@ -3,6 +3,7 @@
 // smith-module: smith::io
 // smith-imports:
 // smith-names: Io=SmithIo make=smith_io_make close=smith_io_close
+// smith-bodies: make close
 // clang-format on
 #pragma once
 #include <stddef.h>

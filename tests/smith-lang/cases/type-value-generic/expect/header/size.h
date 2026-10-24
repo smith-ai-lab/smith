@@ -3,6 +3,7 @@
 // smith-module: size
 // smith-imports:
 // smith-names: run
+// smith-bodies: run
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -3,6 +3,7 @@
 // smith-module: lib::text
 // smith-imports:
 // smith-names: Text make length
+// smith-bodies: make length
 // clang-format on
 #pragma once
 #include <stddef.h>

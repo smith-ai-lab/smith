@@ -3,6 +3,7 @@
 // smith-module: cfg::limits
 // smith-imports:
 // smith-names: max_users users_allowed
+// smith-bodies: users_allowed
 // clang-format on
 #pragma once
 #include <stddef.h>

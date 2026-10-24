@@ -3,6 +3,7 @@
 // smith-module: cfg::mode
 // smith-imports:
 // smith-names: Cell width always nested plain
+// smith-bodies: width width width always nested plain
 // clang-format on
 #pragma once
 #include <stddef.h>

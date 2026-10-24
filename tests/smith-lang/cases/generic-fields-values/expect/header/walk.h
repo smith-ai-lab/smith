@@ -4,6 +4,7 @@
 // smith-imports:
 // smith-names: run
 // smith-tuples
+// smith-bodies: run
 // clang-format on
 #pragma once
 #include <stddef.h>

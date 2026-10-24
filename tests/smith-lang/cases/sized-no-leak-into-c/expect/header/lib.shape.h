@@ -3,6 +3,7 @@
 // smith-module: lib::shape
 // smith-imports:
 // smith-names: Shape area
+// smith-bodies: area
 // clang-format on
 #pragma once
 #include <stddef.h>

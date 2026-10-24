@@ -3,6 +3,7 @@
 // smith-module: mix::sum
 // smith-imports:
 // smith-names: add total
+// smith-bodies: add
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -240,6 +240,16 @@ typedef struct {
     // written here when their own place in the module's source cannot be found: no check of the file's own code reads
     // them.
     uint32_t (*types_place)(void *context);
+    // The exported functions of the imports that the file runs at compile time (issue #107, runtime/lang_body.c). A
+    // host with a parser leaves all three null when it cannot offer them. `mentions`: whether the file's text names the
+    // function where C requires a constant (a `static_assert`, a `constexpr` initializer, an `if constexpr`, a
+    // file-scope initializer or head). `read_body`: the `<module>.body` of the module whose header is `header` (a/b.h),
+    // made if it is missing or older than the module's source; its text and the path to include it by (null: made in
+    // memory). `include_text`: puts text in front of the parser as an included file, defined once, before the file's
+    // first declaration.
+    bool (*mentions)(void *context, const char *name, uint32_t length);
+    bool (*read_body)(void *context, const char *header, const char **text, uint32_t *length, const char **path);
+    void (*include_text)(void *context, const char *text, uint32_t length);
     // The host location of a line and column (from 1) of a file, or UINT32_MAX when it cannot say.
     uint32_t (*locate)(void *context, const char *file, uint32_t line, uint32_t column);
     // The value of a fact of the target, from the compiler's preprocessor (`defined(__aarch64__)`,

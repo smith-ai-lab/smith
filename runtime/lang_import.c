@@ -285,6 +285,9 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
 // runtime/lang_type.c, which comes after this file: the import's functions over `type` are defined here (issue #107)
 static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location);
 
+// runtime/lang_body.c: the import's functions that this file runs at compile time are defined here (issue #107)
+static void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t location);
+
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
     if (!smith_lang_read_module_name(lang, host, &name)) {
@@ -420,6 +423,7 @@ static void smith_lang_import(SmithLang *lang, const SmithHost *host, const Smit
     // The last import line: the functions over `type` of the imports are defined after it (runtime/lang_type.c).
     if (lang->type_import && lang->imports_seen == host->import_lines)
         smith_lang_types_define(lang, host, keyword->location);
+    if (lang->imports_seen == host->import_lines) smith_lang_body_use(lang, host, keyword->location);
 }
 
 static bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {

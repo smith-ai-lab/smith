@@ -3,6 +3,7 @@
 // smith-module: demo::dir
 // smith-imports:
 // smith-names: width counter pair name_length
+// smith-bodies: width width pair name_length
 // clang-format on
 #pragma once
 #include <stddef.h>

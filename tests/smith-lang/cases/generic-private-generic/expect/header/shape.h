@@ -3,6 +3,7 @@
 // smith-module: shape
 // smith-imports:
 // smith-names: framed plain
+// smith-bodies: plain
 // smith-generic: shape padded shape_padded src/shape.smith p 1 2 5 6 | iP1@6:1=typeof(x) iw@6:11=shape_padded p@6:17=( iP1@6:18=auto iw@6:23=x p@6:24=) pw@6:26={ iw@7:5=return iw@7:12=x pw@7:14=+ pw@7:16=( iP1@7:17=typeof(x) p@7:26=) i@7:27=shape_margin p@7:33=; p@8:1=}
 // smith-generic: shape framed shape_framed src/shape.smith - 1 2 5 6 | iP1w@15:8=typeof(x) iw@15:18=shape_framed p@15:24=( iP1@15:25=auto iw@15:30=x p@15:31=) pw@15:33={ iw@16:5=return B@16:12=shape::padded p@16:18=( B@16:19=shape::padded p@16:25=( i@16:26=x p@16:27=) E@16:19= p@16:28=) E@16:12= p@16:29=; p@17:1=}
 // smith-hidden: margin

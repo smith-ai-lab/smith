@@ -4,6 +4,7 @@
 // smith-imports:
 // smith-names: Pair make sum swap
 // smith-tuples
+// smith-bodies: make sum swap
 // clang-format on
 #pragma once
 #include <stddef.h>

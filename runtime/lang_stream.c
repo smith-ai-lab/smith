@@ -559,6 +559,10 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
         used = smith_lang_append(out, capacity, used, "// smith-tuples\n"); // an importer indexes them
     if (lang->slices_seen) used = smith_lang_append(out, capacity, used, "// smith-slices\n");
     used = smith_lang_types_line(lang, out, capacity, used);
+    for (size_t i = 0; i < lang->body_names_count; i++) // the exported functions with a body: an importer may run them
+        used = smith_lang_append(out, capacity, used, i == 0 ? "// smith-bodies: %s" : " %s",
+                                 smith_lang_str(lang->body_names[i]));
+    if (lang->body_names_count > 0) used = smith_lang_append(out, capacity, used, "\n");
     used = smith_lang_generic_lines(lang, out, capacity, used);
     used = smith_lang_priv_linked_line(lang, out, capacity, used);
     return smith_lang_priv_hidden_line(lang, out, capacity, used);
@@ -619,10 +623,13 @@ static void smith_lang_write_file(const char *path, const char *bytes, size_t le
     fclose(file);
 }
 
+static void smith_lang_body_write(SmithLang *lang); // runtime/lang_body.c
+
 void smith_lang_finish(SmithLang *lang) {
     if (lang->finished) return;
     lang->finished = true;
     if (lang->is_module) smith_lang_assemble_header(lang, lang->main_file);
+    smith_lang_body_write(lang);
     const char *dump = getenv("SMITH_LANG_DUMP");
     if (lang->dump_enabled && dump != nullptr) {
         if (lang->dump_used < smith_lang_dump_max) smith_lang_dump[lang->dump_used++] = '\n';
@@ -809,6 +816,8 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
         smith_lang_emit_head(lang, host, true, false);
         smith_lang_end_declaration(lang);
     }
+    smith_lang_body_note(lang);
+    lang->body_closed = true; // what follows is the instances and the io main: not sections
     smith_lang_generic_instances(lang, host);
     smith_lang_finish_io_main(lang, host);
     smith_lang_ask(lang, host);
@@ -926,7 +935,8 @@ SmithLang *smith_lang_new(void) {
     lang->started = true;
     lang->slice.after_boundary = true;
     lang->pending = SIZE_MAX;
-    lang->dump_enabled = getenv("SMITH_LANG_DUMP") != nullptr;
+    lang->body_enabled = getenv("SMITH_LANG_BODY") != nullptr;
+    lang->dump_enabled = getenv("SMITH_LANG_DUMP") != nullptr || lang->body_enabled;
     lang->gen_dump_on = getenv("SMITH_LANG_GENERICS") != nullptr;
     smith_lang_generics_reset();
     return lang;

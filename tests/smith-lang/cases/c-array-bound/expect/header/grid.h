@@ -3,6 +3,7 @@
 // smith-module: grid
 // smith-imports:
 // smith-names: Board board_size other_sizes
+// smith-bodies: board_size other_sizes
 // clang-format on
 #pragma once
 #include <stddef.h>

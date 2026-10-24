@@ -3,6 +3,7 @@
 // smith-module: names::fields
 // smith-imports:
 // smith-names: Stats combine make
+// smith-bodies: combine make
 // clang-format on
 #pragma once
 #include <stddef.h>

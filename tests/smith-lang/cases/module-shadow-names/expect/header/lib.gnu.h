@@ -3,6 +3,7 @@
 // smith-module: lib::gnu
 // smith-imports:
 // smith-names: answer
+// smith-bodies: answer
 // clang-format on
 #pragma once
 #include <stddef.h>

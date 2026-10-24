@@ -3,6 +3,7 @@
 // smith-module: inc::chain
 // smith-imports:
 // smith-names: length root
+// smith-bodies: length root
 // clang-format on
 #pragma once
 #include <stddef.h>
