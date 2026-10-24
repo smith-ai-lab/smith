@@ -43,7 +43,7 @@ export usize demo(void) {
 - **Conversions follow C's pointer rules.** `u8[:]` to `const u8[:]` is implicit (a call, `=`, an initializer, a return); the reverse discards qualifiers. A cut `xs[a:b]` of a `const u8[:]` keeps the `const`. `restrict` goes either way. A write through a const element and `r = ...` of a `[const :]` slice are clang's own errors.
 - **Generics.** A `const u8[:]` argument passes as itself: `typeof(xs)`, `is_slice` and `fields(T)` keep the element's `const`, and `stats::count(const_slice)` is a different instance from `stats::count(plain_slice)`. The slice's own `const` and `restrict` are no part of the type a value holds (`typeof(dst)` of `u8 dst[restrict :]` is `u8[:]`). A call in a generic's body converts a slice parameter passed as a bare name as an ordinary call does; other conversions there (an initializer, an assignment, a return) are not done.
 - **Underneath:** `const T` makes `struct smith_array_const_u8_n` with a `const T *data`; `[const :]` makes the variable `const`; `[restrict :]` makes `data` `__restrict` in `struct smith_array_restrict_u8_n`, which a call converts to and from the plain one. A slice is two integers by value, so the IR has no `noalias`; `restrict` is in the debug info.
-- `smith fmt` writes `[const:]` and `[const restrict:]` today (no space before the colon) and keeps `char const xs[:]` or `const char xs[:]` as written.
+- `smith fmt` keeps the space of `[const :]` and `[const restrict :]`, and keeps `char const xs[:]` or `const char xs[:]` as written.
 
 ## Errors
 

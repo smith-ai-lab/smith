@@ -1,0 +1,20 @@
+--- a/clang/lib/Sema/SemaExpr.cpp
++++ b/clang/lib/Sema/SemaExpr.cpp
+@@ -18098,6 +18098,17 @@
+     return E;
+   }
+ 
++  // smith: in a .smith file a call of a C function that the evaluator ran
++  // (LangOptions::SmithConstexprC) is a constant expression where C requires
++  // one, and folding it is no GNU extension: no -Wgnu-folding-constant. Only an
++  // evaluation with no note at all counts (a real extension keeps its warning).
++  if (Folded && getLangOpts().SmithConstexprC && !getLangOpts().CPlusPlus &&
++      Notes.empty()) {
++    if (Result)
++      *Result = EvalResult.Val.getInt();
++    return E;
++  }
++
+   // If our only note is the usual "invalid subexpression" note, just point
+   // the caret at its location rather than producing an essentially
+   // redundant note.

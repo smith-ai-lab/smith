@@ -37,7 +37,7 @@ export i32 demo(void) {
 }
 ```
 
-The same holds for case labels, array bounds, enum values, bit-field widths and static initializers. In a `.c` file, `constexpr i32 x = fib(10);` is still an error. Under the conventions' `-Wpedantic -Werror` a call written directly in `static_assert(fib(10) == 55)`, an enum value or a case label is `-Wgnu-folding-constant`: give it a `constexpr` name first (issue #166).
+The same holds for case labels, array bounds, enum values, bit-field widths and static initializers. In a `.c` file, `constexpr i32 x = fib(10);` is still an error. A call written directly in `static_assert(fib(10) == 55)`, an enum value or a case label builds under the conventions' `-Wpedantic -Werror`.
 
 ## Rules
 
@@ -50,4 +50,4 @@ The same holds for case labels, array bounds, enum values, bit-field widths and 
 
 ``constexpr variable 'x' must be initialized by a constant expression``, then the reason and an `in call to 'f(1)'` chain. Reasons: the step budget (`-fconstexpr-steps`, 1048576 by default: a loop that does not end), the call depth (`-fconstexpr-depth`, 512), signed overflow, a read outside an array, a read of a variable that is not constant, a call to a function with no definition in the file (`printf`). Long computations are bounded by the step budget.
 
-Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Functions at compile time"); needs smith's LLVM `23.1.3-r6`.
+Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Functions at compile time"); needs smith's LLVM `23.1.3-r7`.

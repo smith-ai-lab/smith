@@ -118,7 +118,7 @@ diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator
        return TT_PointerOrReference;
      if (PrevToken->isPlacementOperator() && Tok.is(tok::ampamp))
        return TT_BinaryOperator;
-@@ -5203,6 +5245,14 @@
+@@ -5203,6 +5245,21 @@
    // clang-format-off section).
    if (Left.Finalized)
      return Right.hasWhitespaceBefore();
@@ -126,6 +126,13 @@ diff -ru a/clang/lib/Format/TokenAnnotator.cpp b/clang/lib/Format/TokenAnnotator
 +  // A .smith tuple type and slice (issues #96, #82).
 +  if (Left.isOneOf(TT_SmithTupleLBrace, TT_SmithSliceColon) ||
 +      Right.isOneOf(TT_SmithTupleRBrace, TT_SmithSliceColon)) {
++    // A qualifier inside the brackets keeps its space, as C's `a[const 10]`
++    // has it: `xs[const :]`, `xs[const restrict :]` (issue #130).
++    if (Right.is(TT_SmithSliceColon) &&
++        (Left.isOneOf(tok::kw_const, tok::kw_volatile, tok::kw__Atomic) ||
++         Left.TokenText == "restrict" || Left.TokenText == "__restrict")) {
++      return true;
++    }
 +    return Left.is(TT_SmithTupleLBrace) || Right.is(TT_SmithTupleRBrace);
 +  }
 +  if (Right.is(TT_SmithTupleLBrace) && Left.is(tok::kw_struct))
