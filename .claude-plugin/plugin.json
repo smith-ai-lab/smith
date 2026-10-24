@@ -74,6 +74,7 @@
     "./.agents/skills/smith-lang-c-interop/",
     "./.agents/skills/smith-lang-c-headers/",
     "./.agents/skills/smith-lang-defer/",
+    "./.agents/skills/smith-lang-enums/",
     "./.agents/skills/smith-lang-exports/",
     "./.agents/skills/smith-lang-constexpr/",
     "./.agents/skills/smith-lang-constexpr-modules/",
