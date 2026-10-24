@@ -874,13 +874,16 @@ static void build_compare(SmithBuild *b, const BuildConfig *config, const char *
 // smith++), where projects find it as CC. A link to the build folder would
 // hand every project each half-finished build. The copy goes to a temporary name and the rename replaces the binary in
 // one step, so a build running meanwhile never sees half a file.
+// -DNOTESTS (CI's install job: the check that came first already ran the suite on this tree) installs the binary
+// without running the tests; a local `smith build install` runs them.
 static void build_install(SmithBuild *b, const BuildConfig *config, const char *binary, const char *const *tested) {
+    bool skip_tests = smith_option(b, "NOTESTS", "install without running the tests first (CI's install job)");
     const char *script = "mkdir -p \"$0/bin\" && cp \"$1\" \"$0/bin/smith.tmp\" && "
                          "mv \"$0/bin/smith.tmp\" \"$0/bin/smith\" && ln -sf smith \"$0/bin/smith-cc\" && "
                          "ln -sf smith \"$0/bin/smith-c++\" && rm -f \"$0/bin/smith++\"";
     SmithStep install = {
         .command = (const char *[]){"sh", "-c", script, config->prefix, binary, nullptr},
-        .inputs = tested,
+        .inputs = skip_tests ? (const char *[]){binary, nullptr} : tested,
     };
     smith_task(b, "install", &install);
 }

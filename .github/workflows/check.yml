@@ -157,7 +157,8 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           smith build
-          build/Darwin-arm64/smith build install
+          # the check job already ran the suite on this tree: install without running it again
+          build/Darwin-arm64/smith build install -DNOTESTS
 
   release:
     # a job of its own after install, so a failure here cannot fail the check or the install; only it may write

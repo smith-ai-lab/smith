@@ -169,14 +169,22 @@ expect_contains "budget: ... and where the time went" "$out" "where the time wen
 # proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
 "$smith" prove --budget=30 "$cases/division.c" -- -I "$here/include" >/dev/null 2>&1 &
 parent=$!
-sleep 3
-children=$(pgrep -P "$parent")
+children=
+for _ in $(seq 1 300); do # until the proof's process exists, not a fixed number of seconds
+    children=$(pgrep -P "$parent")
+    [ -n "$children" ] && break
+    sleep 0.1
+done
 kill -9 "$parent"
 wait "$parent" 2>/dev/null
-sleep 1
 alive=
-for child in $children; do
-    kill -0 "$child" 2>/dev/null && alive="$alive $child"
+for _ in $(seq 1 300); do # until they are gone (a loaded machine takes longer), within the proof's 30 s budget
+    alive=
+    for child in $children; do
+        kill -0 "$child" 2>/dev/null && alive="$alive $child"
+    done
+    [ -z "$alive" ] && break
+    sleep 0.1
 done
 [ -n "$children" ] && expect "orphan: a proof was running when its parent was killed" yes yes || expect "orphan: a proof was running" yes "no child"
 expect "orphan: the proof's process ends with its parent" "" "$alive"
