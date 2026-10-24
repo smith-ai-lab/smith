@@ -618,9 +618,45 @@ EOF
     expect_contains "slices in a project: a guarded index is proved" "$out" "ok    stats::first  ("
     expect_contains "slices in a project: the unguarded index fails at its check" "$out" "assert(an index or a slice is in range) may fail"
     case $out in *"pthread_self"*|*"neither a body nor a contract"*) expect "slices in a project: the trace library's body is not read" "none" "$out" ;; *) expect "slices in a project: the trace library's body is not read" "none" "none" ;; esac
+    # 11e. The messages (issue #155): an instance is named as written in smith (clamp<i32>), and the note that a callee
+    # "may write memory it was not given" is only for a function that does, never a pure generic.
+    clampproj=$work/clampproj
+    mkdir -p "$clampproj"
+    cat >"$clampproj/main.smith" <<'EOF'
+import stats;
+import smith::contract;
+
+int main(void) {
+    contract::assert(stats::clamp(7, 5, 0) >= 0);
+    return 0;
+}
+EOF
+    cat >"$clampproj/stats.smith" <<'EOF'
+module stats;
+
+import smith::contract;
+
+export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
+    contract::requires(low <= high);
+    typeof(x) result = x < low ? low : (x > high ? high : x);
+    contract::ensures(result >= low && result <= high);
+    return result;
+}
+EOF
+    cd "$clampproj" && capture "$smith" prove -v; cd "$here"
+    expect "messages: a call that breaks a requires fails" 1 "$rc"
+    expect_contains "messages: the failure names the instance as written" "$out" "the call of stats::clamp<i32> may break smith_requires(low <= high)"
+    expect_contains "messages: -v names it the same way" "$out" "ok    stats::clamp<i32>  ("
+    case $out in *"<int>"*) expect "messages: no C type in an instance's name" "none" "$out" ;; *) expect "messages: no C type in an instance's name" "none" "none" ;; esac
+    case $out in *"may write memory"*) expect "messages: a pure generic is not said to write memory" "none" "$out" ;; *) expect "messages: a pure generic is not said to write memory" "none" "none" ;; esac
 else
     echo "skipped: this smith's clang has no token hook, so no .smith proofs"
 fi
+
+
+# 11f. The note about memory a callee may write (issue #155) names what LLVM found in the body.
+prove -v "$cases/global_writer.c"
+expect_contains "write note: a callee that stores to a global is said to write memory it was not given" "$out" "bump may write memory it was not given (LLVM found a store to the global counter at line 8 in the body)"
 
 
 # 12. Trusted boundaries (issue #42): a function marked smith_trusted() is assumed by its callers and not proved, and the
