@@ -1,0 +1,16 @@
+module main;
+
+import <stdio.h>;
+import number;
+
+constexpr usize seven = 7;
+
+int main(void) {
+    number::Triple t = {1, 2, 3};
+    i32 x = 5;
+    c::printf("%d %d %d\n", number::scaled(3, 1), number::scaled(seven, 1), number::scaled(2 + 3, x));
+    c::printf("%d %d\n", number::pick(0, 8, 9), number::pick(1, 8, 9));
+    c::printf("%d %d %d\n", number::field_of(&t, 0), number::field_of(&t, 2), number::sum_all(&t));
+    c::printf("%d\n", number::over_pack(&x, 1, 2, 3));
+    return 0;
+}
