@@ -6,6 +6,10 @@ tags: [test-beds, checkers]
 ---
 # The test beds and the bugs checkers found
 
+## Where agents run them
+
+Reading a test bed, or running the installed smith on it (to measure, or to reproduce a bug a user would see), is done in place. A smith under test (a branch's binary) runs only in a scratch copy: building, testing and proving write `.smith/` (objects, stamps, caches, `compile_commands.json`), and several lanes at once, each with a different smith, would overwrite each other's results and leave the owner's editor reading files made by a binary that never shipped. Edits that follow a smith change are made, committed and pushed on purpose, never left in the owner's working tree.
+
 ## checkers (`~/Documents/checkers`)
 
 A small checkers game, men only, kept small enough to reason about and to prove correct. Its tests found these bugs,
