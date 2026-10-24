@@ -1,0 +1,5 @@
+status 1
+affine_random_c.c:7:38: error: smith-affine: 'keys[0]' is used again; it was already used at line 6
+affine_random_c.c:6:38: note: 'keys[0]' was first used here
+affine_random_c.c:20:38: error: smith-affine: 'key' is used again; it was already used at line 19
+affine_random_c.c:19:38: note: 'key' was first used here

@@ -33,7 +33,7 @@ fi
 
 # What a compile of the file prints: the status, then the errors and notes.
 shown() {
-    (cd "$here/tests/affine" && smith cc -std=gnu2y -c "$1" -o /dev/null >"$work/out" 2>&1)
+    (cd "$here/tests/affine" && smith cc -std=gnu2y -I "$here/include" -c "$1" -o /dev/null >"$work/out" 2>&1)
     echo "status $?"
     grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|note|warning):' "$work/out"
 }
