@@ -6462,6 +6462,40 @@ i32 main(void) {
     c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
     return 0;
 }
+==> type-function-private/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import shapes;
+
+int main(void) {
+    c::printf("%zu %zu %d %d\n", sizeof(shapes::keep(f64, 1.0)), sizeof(shapes::keep(u8, (u8)1)), shapes::width(f64),
+              shapes::width(u8));
+    return 0;
+}
+==> type-function-private/src/shapes.smith <==
+module shapes;
+
+static bool wide(type t) {
+    return sizeof(t) > 4;
+}
+
+// A private function over `type`: the exported generics below call it, in a computed result type and in an
+// `if constexpr`, and an importing module's instance finds it (issue #143).
+static type same(type t) {
+    return wide(t) ? t : t;
+}
+
+export same(T) keep(constexpr type T, auto x) {
+    return x;
+}
+
+export i32 width(constexpr type T) {
+    if constexpr (wide(T)) {
+        return 2;
+    }
+    return 1;
+}
 ==> type-plain-name/src/main.smith <==
 #include <stdio.h>
 
