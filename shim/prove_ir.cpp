@@ -803,7 +803,8 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         }
     }
     for (Function &function : module) { // a contract reads its condition and nothing else
-        // The marker of a range has an empty body, which LLVM would find to return and touch nothing, and delete the calls.
+        // The marker of a range has an empty body, which LLVM would find to return and touch nothing, and delete the
+        // calls.
         if (function.getName() == "smith_contract_may_write" && !function.isDeclaration()) function.deleteBody();
         if (contract_name(function.getName())) {
             function.setMemoryEffects(MemoryEffects::none());
@@ -1569,7 +1570,6 @@ void assume_returned_pointer(CallBase &call, const Function &callee) {
                      MDNode::get(context, {})); // what it points to holds values, as a parameter's
 }
 
-
 // ---- smith_modifies (issue #54) ----
 
 using Range = std::pair<Value *, Value *>; // a pointer and a size in bytes (an i64)
@@ -1620,10 +1620,10 @@ bool object_region(UnitContext &context, Value *pointer, Value *&base, uint64_t 
     return bytes != 0;
 }
 
-// A callee that names its ranges writes nothing else (it was proved to, or is trusted to), so the call itself, which only
-// stands for the callee's effect, is given a scratch object in place of each pointer it may write through: Alive2 would
-// let it change the whole object the pointer points into. What the callee changed is then made arbitrary by hand, range
-// by range (havoc_ranges), and nothing else is touched.
+// A callee that names its ranges writes nothing else (it was proved to, or is trusted to), so the call itself, which
+// only stands for the callee's effect, is given a scratch object in place of each pointer it may write through: Alive2
+// would let it change the whole object the pointer points into. What the callee changed is then made arbitrary by hand,
+// range by range (havoc_ranges), and nothing else is touched.
 void redirect_arguments(UnitContext &context, CallBase &call, Function &callee, IRBuilder<> &entry,
                         SmallPtrSetImpl<const Value *> &copies) {
     for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
@@ -1672,14 +1672,15 @@ Instruction *havoc_ranges(UnitContext &context, CallBase &call, Instruction *las
         if (constant != nullptr) {
             Align align = range.first->getPointerAlignment(layout);
             source->setAlignment(align);
-            copy_object(anchor, call.getDebugLoc(), range.first, source, bytes, align, true); // words, even when unaligned
+            copy_object(anchor, call.getDebugLoc(), range.first, source, bytes, align,
+                        true); // words, even when unaligned
         } else {
             source->setAlignment(Align(1));
             for (uint64_t offset = 0; offset < bytes; offset++) {
                 Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), base, offset);
                 Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), source, offset);
-                Value *distance = builder.CreateSub(builder.CreatePtrToInt(to, i64),
-                                                    builder.CreatePtrToInt(range.first, i64));
+                Value *distance =
+                    builder.CreateSub(builder.CreatePtrToInt(to, i64), builder.CreatePtrToInt(range.first, i64));
                 Value *in = builder.CreateICmpULT(distance, range.second);
                 Value *kept = builder.CreateAlignedLoad(builder.getInt8Ty(), to, Align(1));
                 Value *arbitrary = builder.CreateAlignedLoad(builder.getInt8Ty(), from, Align(1));
@@ -1843,7 +1844,8 @@ void instrument_writes(UnitContext &context) {
                 ConstantInt::get(i64, layout.getTypeStoreSize(rmw->getValOperand()->getType()).getFixedValue()));
         } else if (auto *exchange = dyn_cast<AtomicCmpXchgInst>(&instruction)) {
             add(exchange->getPointerOperand(),
-                ConstantInt::get(i64, layout.getTypeStoreSize(exchange->getNewValOperand()->getType()).getFixedValue()));
+                ConstantInt::get(i64,
+                                 layout.getTypeStoreSize(exchange->getNewValOperand()->getType()).getFixedValue()));
         } else if (auto *call = dyn_cast<CallBase>(&instruction)) {
             Function *callee = direct_callee(call);
             if (callee == nullptr || callee->isIntrinsic() || contract_of(call) != Contract::None ||
@@ -1867,7 +1869,8 @@ void instrument_writes(UnitContext &context) {
         "smith.write_check", FunctionType::get(Type::getVoidTy(llvm_context), {Type::getInt1Ty(llvm_context)}, false));
     if (auto *declaration = dyn_cast<Function>(check.getCallee())) {
         declaration->setDoesNotAccessMemory();
-        declaration->setDoesNotThrow(); // not willreturn: the clean-up would delete a call that does nothing and returns
+        declaration
+            ->setDoesNotThrow(); // not willreturn: the clean-up would delete a call that does nothing and returns
     }
     for (UnitContext::Write &write : context.writes) {
         auto *at = dyn_cast_or_null<Instruction>(write.at);
@@ -1880,16 +1883,15 @@ void instrument_writes(UnitContext &context) {
             for (Value *value : {low, size}) {
                 auto *definition = dyn_cast<Instruction>(value);
                 if (definition != nullptr && !dominators.dominates(definition, at)) {
-                    context.fail(at,
-                                 "smith_modifies names a range after the function's first write",
+                    context.fail(at, "smith_modifies names a range after the function's first write",
                                  "put every smith_modifies at the start of the function, after its smith_requires");
                     return;
                 }
             }
-            Value *fits = builder.CreateAnd(
-                builder.CreateICmpUGE(size, write.size),
-                builder.CreateICmpULE(builder.CreateSub(address, builder.CreatePtrToInt(low, i64)),
-                                      builder.CreateSub(size, write.size)));
+            Value *fits =
+                builder.CreateAnd(builder.CreateICmpUGE(size, write.size),
+                                  builder.CreateICmpULE(builder.CreateSub(address, builder.CreatePtrToInt(low, i64)),
+                                                        builder.CreateSub(size, write.size)));
             inside = builder.CreateOr(inside, fits);
         }
         builder.CreateCall(check, {inside});
