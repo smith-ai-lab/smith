@@ -367,8 +367,9 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
         }
         top->remaining--;
         if (top->object) {
-            char name[16];
-            size_t at = (size_t)(smith_text_write_u64(name + 1, step));
+            char name[smith_text_number_capacity + 1];
+            size_t at = (size_t)(smith_text_write_u64(
+                (struct smith_array_char_n){.data = name + 1, .count = {smith_text_number_capacity}}, step));
             name[0] = 'k';
             smith_json_write_key(&writer, (struct smith_array_const_char_n){.data = name, .count = {at + 1}});
         }
@@ -547,6 +548,6 @@ struct smith_array_const_char_n smith_protocol_name(SmithArena *arena, size_t i)
     char *name = smith_arena_push_array(arena, 1, 24, 1);
     name[0] = '~';
     name[1] = 'k';
-    size_t length = smith_text_write_u64(name + 2, i);
+    size_t length = smith_text_write_u64((struct smith_array_char_n){.data = name + 2, .count = {22}}, i);
     return (struct smith_array_const_char_n){.data = name, .count = {length + 2}};
 }

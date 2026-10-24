@@ -19,6 +19,8 @@ A module's name is its C name without the prefix, and the C name is the one the 
 | the fake io: `io::Test`, `io::make_test`, `io::test_add_file`, `io::test_output`... | `SmithIoTest`, `smith_io_make_test`, `smith_io_test_add_file`, `smith_io_test_output`... |
 | an enum's constant: `io::Replace`, `io::Atomic`, `io::Never`, `io::InputClosed` | the type's C name and the constant: `SmithWrite_Replace`, `SmithChildExit_Never`... |
 
+**Bytes are slices.** `io::files_write`, `io::net_send` and `io::child_write_async` take a `const u8[:]` (C: `struct smith_array_const_u8_n`, `{.data = (const uint8_t *)p, .count = {n}}`), and the reads that fill a buffer (`io::net_receive`, `io::child_read_async`) a `u8[:]` (`struct smith_array_u8_n`); the count is the size or capacity.
+
 Nested modules do not exist, so a capability's functions are `io::<capability>_<name>` (`io::files_read`) where a future `io::files::read` might be; the capabilities and what they do would stay.
 
 ## From C

@@ -14,7 +14,7 @@ These block and run at once (they do not queue behind pending asynchronous file 
 | `io::files_info(files, path)` | `folder`, `writable`, `size`; `ENOENT` if nothing is there |
 | `io::files_list(files, arena, folder)` | entries (`name`, `folder`, `size`) sorted by name, without `.` and `..` |
 | `io::files_make_folder(files, path)` | like `mkdir -p`; a folder that is there is success |
-| `io::files_write(files, path, data, size, mode)` | writes the bytes as the mode says: `io::Replace` (create or replace), `io::Atomic` (write `<path>.tmp` and rename it over the path, so nobody sees half a file), `io::Append` (add to the end, creating the file) or `io::New` (create only if there is none: `EEXIST` otherwise, which is how a program makes a unique name) |
+| `io::files_write(files, path, data, mode)` (`data` is a `const u8[:]`; a caller with other data writes a byte view, `((const u8 *)xs)[0:n * sizeof(f32)]`) | writes the bytes as the mode says: `io::Replace` (create or replace), `io::Atomic` (write `<path>.tmp` and rename it over the path, so nobody sees half a file), `io::Append` (add to the end, creating the file) or `io::New` (create only if there is none: `EEXIST` otherwise, which is how a program makes a unique name) |
 | `io::files_remove(files, path)` | deletes a file (a folder is `EPERM`) |
 | `io::files_map(files, path)` | maps the file: nothing is read until the memory is touched, so a 150 MB asset costs only the pages used. Private and writable (writes never reach the file), for the life of the program; an empty file is `EINVAL`. The fake gives a copy |
 | `io::args_env(&io.args, "NAME")` | the variable's value, or `nullptr`; the real io asks the process each time |

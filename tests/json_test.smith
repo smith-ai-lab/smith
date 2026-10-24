@@ -17,6 +17,12 @@ import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
 
+// The bytes of a buffer, for the calls of io that take a slice.
+static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
+    const u8 *bytes = data;
+    return bytes[0:size];
+}
+
 // The C headers write these as macros (DBL_MAX, INT64_MIN), which a .smith file does not use.
 constexpr i64 i64_max = 9223372036854775807;
 constexpr i64 i64_min = -9223372036854775807 - 1;
@@ -516,7 +522,7 @@ export void test_json_a_large_array_keeps_its_order(void) {
     digits[used++] = '[';
     for (usize i = 0; i < 1000; i++) {
         if (i > 0) digits[used++] = ',';
-        used += text::write_u64(digits + used, i * i);
+        used += text::write_u64(digits[used:sizeof digits], i * i);
     }
     digits[used++] = ']';
     const c::SmithJsonValue *root = nullptr;
@@ -1386,7 +1392,8 @@ export void test_json_conformance_with_jsontestsuite(io::Io *io) {
                                " of ", totals.y_total, " accepted; n_: ", totals.n_refused, " of ", totals.n_total,
                                " refused; i_: ", totals.i_as_listed, " of ", totals.i_total, " as listed\n")
                         .length;
-        test::check_equal(io::files_write(&io->files, listing_path, report, reported, io::Replace).code, 0);
+        test::check_equal(io::files_write(&io->files, listing_path, test_io_bytes(report, reported), io::Replace).code,
+                          0);
     }
     test::note("y %zu/%zu accepted, n %zu/%zu refused, i %zu/%zu as listed", totals.y_accepted, totals.y_total,
                totals.n_refused, totals.n_total, totals.i_as_listed, totals.i_total);

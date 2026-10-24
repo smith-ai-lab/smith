@@ -105,7 +105,7 @@ export void test_text_words_round_trip(random::Key key) {
     usize used = 0;
     usize count = (usize)test_text_uniform(random::key_derive(key, 0), 0, 20);
     for (usize i = 0; i < count; i++) {
-        used += text::write_u64(buffer + used, test_text_draw_u64(random::key_derive(key, 100 + i)));
+        used += text::write_u64(buffer[used:test_text_capacity], test_text_draw_u64(random::key_derive(key, 100 + i)));
         buffer[used++] = i % 2 == 0 ? ' ' : '\t';
     }
     const char line[:] = buffer[0:used];

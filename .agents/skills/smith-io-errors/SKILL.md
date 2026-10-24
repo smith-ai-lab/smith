@@ -24,7 +24,7 @@ i32 main(i32 argc, char **argv) {
 
 ## Blocking calls
 
-For simple code: `io::files_read(files, arena, path)`, `io::files_write(files, path, data, size, io::Replace)`, `io::console_print(console, text)`, `io::console_print_error`, `io::console_read_line(console, arena)`, `io::clock_now(clock)` (monotonic ns), `io::clock_wall(clock)`, `io::clock_sleep(clock, ns)`, `io::processes_run(processes, arena, argv)` (stdout, stderr, exit status and signal in an `io::ProcessResult`; a missing program is `ENOENT`).
+For simple code: `io::files_read(files, arena, path)`, `io::files_write(files, path, data, io::Replace)`, `io::console_print(console, text)`, `io::console_print_error`, `io::console_read_line(console, arena)`, `io::clock_now(clock)` (monotonic ns), `io::clock_wall(clock)`, `io::clock_sleep(clock, ns)`, `io::processes_run(processes, arena, argv)` (stdout, stderr, exit status and signal in an `io::ProcessResult`; a missing program is `ENOENT`).
 
 `io::console_printf(console, format, ...)` and `io::console_eprintf` format into a 4 KiB buffer and print (`EMSGSIZE` past it). They are not `[[nodiscard]]`: a report of a hundred lines has nowhere to say that stdout closed.
 
