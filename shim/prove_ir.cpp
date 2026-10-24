@@ -2090,11 +2090,45 @@ bool only_read(const Function &callee, unsigned index) {
     return false;
 }
 
+// A slice parameter (`T xs[:]`): the size of T in bytes, 0 when the parameter is not one; `restricted` is whether its
+// data pointer is `restrict` (`T xs[restrict :]`, which the debug info keeps as DW_TAG_restrict_type on `data`).
+uint64_t slice_parameter(const Function &callee, unsigned index, bool &restricted) {
+    auto *pair = dyn_cast<ArrayType>(callee.getArg(index)->getType());
+    const DIType *type = parameter_type(callee, index);
+    if (pair == nullptr || pair->getNumElements() != 2 || !pair->getElementType()->isIntegerTy(64) || type == nullptr)
+        return 0;
+    uint64_t align = 1;
+    uint64_t bytes = slice_element_bytes(type, align);
+    restricted = false;
+    while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
+        unsigned tag = derived->getTag();
+        if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type)
+            break;
+        type = derived->getBaseType();
+    }
+    auto *composite = dyn_cast_or_null<DICompositeType>(type);
+    if (bytes == 0 || composite == nullptr) return 0;
+    for (const Metadata *member : composite->getElements()) {
+        auto *field = dyn_cast<DIDerivedType>(member);
+        if (field == nullptr || field->getName() != "data") continue;
+        for (const DIType *t = field->getBaseType(); auto *derived = dyn_cast_or_null<DIDerivedType>(t);
+             t = derived->getBaseType()) {
+            if (derived->getTag() == dwarf::DW_TAG_restrict_type) restricted = true;
+            if (derived->getTag() != dwarf::DW_TAG_typedef && derived->getTag() != dwarf::DW_TAG_const_type &&
+                derived->getTag() != dwarf::DW_TAG_volatile_type && derived->getTag() != dwarf::DW_TAG_restrict_type)
+                break;
+        }
+    }
+    return bytes;
+}
+
 // At a call of a function with a `restrict` parameter: the object it reaches through that argument is not the object of
 // any other pointer argument (unless both are only read), a point that names both and the line of the call. The size
 // of each object is what its type says; where the function uses a pointer as an array the range is not known, which is
-// an error at the function's declaration (a call of `smith.restrict_unknown`, which resolve_calls reports). A trusted
-// function's calls are not checked. Done before anything is inlined, which would lose the attribute.
+// an error at the function's declaration (a call of `smith.restrict_unknown`, which resolve_calls reports). A slice
+// (`u8 dst[restrict :]`) carries its count: its object is the range of its pointer and count at the call, so a slice is
+// never that error. A trusted function's calls are not checked. Done before anything is inlined, which would lose the
+// attribute.
 void check_restrict(Module &module, CallBase &call, Function &callee) {
     if (is_trusted(callee)) return;
     LLVMContext &llvm_context = module.getContext();
@@ -2116,21 +2150,32 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
         marker->setMetadata("smith.restrict_text", MDNode::get(llvm_context, {MDString::get(llvm_context, first),
                                                                               MDString::get(llvm_context, second)}));
     };
+    unsigned count = std::min<unsigned>(call.arg_size(), callee.arg_size());
+    std::vector<uint64_t> slice(count, 0); // the element size of a slice argument
+    std::vector<bool> restricted(count, false);
+    for (unsigned i = 0; i < count; i++) {
+        bool by_slice = false;
+        slice[i] = slice_parameter(callee, i, by_slice);
+        restricted[i] = slice[i] != 0 ? by_slice
+                                      : callee.hasParamAttribute(i, Attribute::NoAlias) &&
+                                            !callee.hasParamAttribute(i, Attribute::StructRet) &&
+                                            call.getArgOperand(i)->getType()->isPointerTy();
+        // the hidden result pointer of an sret is noalias in the IR, never a `restrict` of the source
+    }
+    auto reaches = [&](unsigned i) { return slice[i] != 0 || call.getArgOperand(i)->getType()->isPointerTy(); };
+    auto read_only = [&](unsigned i) {
+        return slice[i] != 0 ? slice_is_const(parameter_type(callee, i)) : only_read(callee, i);
+    };
     std::set<std::pair<unsigned, unsigned>> done;
-    for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
-        if (!callee.hasParamAttribute(i, Attribute::NoAlias) || callee.hasParamAttribute(i, Attribute::StructRet) ||
-            !call.getArgOperand(i)->getType()->isPointerTy())
-            continue; // the hidden result pointer of an sret is noalias in the IR, never a `restrict` of the source
-        for (unsigned j = 0; j < call.arg_size() && j < callee.arg_size(); j++) {
-            if (j == i || callee.hasParamAttribute(j, Attribute::StructRet) ||
-                !call.getArgOperand(j)->getType()->isPointerTy())
-                continue;
-            if ((only_read(callee, i) && only_read(callee, j)) || !done.insert({std::min(i, j), std::max(i, j)}).second)
-                continue;
+    for (unsigned i = 0; i < count; i++) {
+        if (!restricted[i]) continue;
+        for (unsigned j = 0; j < count; j++) {
+            if (j == i || callee.hasParamAttribute(j, Attribute::StructRet) || !reaches(j)) continue;
+            if ((read_only(i) && read_only(j)) || !done.insert({std::min(i, j), std::max(i, j)}).second) continue;
             std::string why;
             unsigned bad = i;
-            uint64_t size_i = accessed_bytes(callee, i, why);
-            uint64_t size_j = size_i != 0 ? (bad = j, accessed_bytes(callee, j, why)) : 0;
+            uint64_t size_i = slice[i] != 0 ? 1 : accessed_bytes(callee, i, why);
+            uint64_t size_j = size_i != 0 ? (bad = j, slice[j] != 0 ? 1 : accessed_bytes(callee, j, why)) : 0;
             IRBuilder<> builder(&call);
             builder.SetCurrentDebugLocation(call.getDebugLoc());
             if (size_i == 0 || size_j == 0) {
@@ -2140,7 +2185,8 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
                      "cannot check that the arguments of restrict `" + name + "` of " + source_name(callee) +
                          " do not overlap: " + why,
                      "state the range the function accesses: smith_modifies(" + name +
-                         ", size) or a smith_requires on its size; the call is never assumed fine");
+                         ", size) or a smith_requires on its size, or take a slice (`T xs[restrict :]`); the call is "
+                         "never assumed fine");
                 if (const DISubprogram *subprogram = callee.getSubprogram())
                     marker->setMetadata(
                         "smith.restrict_at",
@@ -2149,12 +2195,24 @@ void check_restrict(Module &module, CallBase &call, Function &callee) {
                                                        Type::getInt32Ty(llvm_context), subprogram->getLine()))}));
                 continue;
             }
-            auto *marker = builder.CreateCall(check, {call.getArgOperand(i), call.getArgOperand(j),
-                                                      builder.getInt64(size_i), builder.getInt64(size_j)});
+            // The pointer and the bytes of an argument: a slice is its data and count * the element size.
+            auto object = [&](unsigned k, uint64_t constant) -> std::pair<Value *, Value *> {
+                if (slice[k] == 0) return {call.getArgOperand(k), builder.getInt64(constant)};
+                Value *pair = call.getArgOperand(k);
+                Value *data = builder.CreateIntToPtr(builder.CreateExtractValue(pair, 0), builder.getPtrTy());
+                Value *bytes =
+                    builder.CreateMul(builder.CreateExtractValue(pair, 1), builder.getInt64(slice[k]), "", true);
+                return {data, bytes};
+            };
+            auto [first, first_bytes] = object(i, size_i);
+            auto [second, second_bytes] = object(j, size_j);
+            auto *marker = builder.CreateCall(check, {first, second, first_bytes, second_bytes});
             marker->setMetadata("smith.resolved", MDNode::get(llvm_context, {}));
             text(marker,
                  "the call of " + source_name(callee) + " passes `" + parameter_name(callee, i) + "` (restrict) and `" +
-                     parameter_name(callee, j) + "` objects that may be the same or overlap",
+                     parameter_name(callee, j) + "` " +
+                     (slice[i] != 0 || slice[j] != 0 ? "slices or ranges that may overlap"
+                                                     : "objects that may be the same or overlap"),
                  "");
         }
     }
@@ -2171,7 +2229,9 @@ void check_restrict_calls(Module &module) {
             if (callee == nullptr || callee->isDeclaration() || callee->isIntrinsic() || callee->arg_size() == 0)
                 continue;
             for (unsigned i = 0; i < callee->arg_size(); i++) {
-                if (callee->hasParamAttribute(i, Attribute::NoAlias)) {
+                bool restricted_slice = false;
+                if (callee->hasParamAttribute(i, Attribute::NoAlias) ||
+                    (slice_parameter(*callee, i, restricted_slice) != 0 && restricted_slice)) {
                     calls.push_back(call);
                     break;
                 }

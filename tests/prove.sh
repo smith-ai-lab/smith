@@ -320,6 +320,23 @@ prove --function=copies "$cases/restrict_call.c"
 expect "restrict call: a restrict array with no range is an error" 1 "$rc"
 expect_contains "restrict call: ... at the declaration, naming the parameter" "$out" "restrict_call.c:77: cannot be proved: cannot check that the arguments of restrict \`dst\` of copy"
 
+# 7c4b. A `restrict` slice carries its count, so the call proves the two ranges apart (#65): no new contract, and no
+# error at the declaration.
+slices=$cases/geometry/restrict_slices.smith
+for function in apart apart_arrays apart_slices reads pointer_apart; do
+    prove --function=geometry::restrict_slices::$function "$slices"
+    expect "restrict slice: $function is proved" 0 "$rc"
+done
+for pair in shifted:34:copy same:40:copy whole:45:copy unknown:50:copy pointer_inside:83:fill; do
+    function=${pair%%:*}
+    rest=${pair#*:}
+    line=${rest%%:*}
+    callee=${rest#*:}
+    prove --function=geometry::restrict_slices::$function "$slices"
+    expect "restrict slice: $function fails" 1 "$rc"
+    expect_contains "restrict slice: $function ... at the call, naming both" "$out" "restrict_slices.smith:$line: the call of geometry::restrict_slices::$callee passes \`"
+done
+
 # 7d. A struct passed by value holds values (issue #41); its bytes are free, never poison.
 for function in apply_move count_of bump_count is_step; do
     prove --function=$function "$cases/by_value.c"
