@@ -5,7 +5,8 @@ int a;
 } Pair;
 typedef enum { red, green } Color;
 typedef int Three[3];
-constexpr type kinds[10] = {__INT32_TYPE__, __UINT8_TYPE__, double, Pair, bool, char *, Color, Three, __INT32_TYPE__, __SIZE_TYPE__};
+typedef char *Text;
+constexpr type kinds[10] = {__INT32_TYPE__, __UINT8_TYPE__, double, Pair, bool, Text, Color, Three, __INT32_TYPE__, __SIZE_TYPE__};
 static type to_slice(type T) {
 return T[:];
 }
