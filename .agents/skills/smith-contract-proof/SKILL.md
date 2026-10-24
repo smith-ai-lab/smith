@@ -9,7 +9,7 @@ Part of [smith-contract](../smith-contract/SKILL.md), which has the calls.
 
 ## What a function writes: `modifies`
 - `contract::modifies(&moves->jumps);` (C: `smith_modifies(&moves->jumps, sizeof moves->jumps)`, one call for each range; `contract::modifies(&a, &b)` names several): the function writes only these and its locals, so a caller keeps every other byte it passed, with no `old_*` saves. It does nothing at run time. With no argument (C: `smith_modifies(nullptr, 0)`) the function writes nothing outside its locals. A function with none may write what its pointer parameters reach.
-- **Only `&x` (a pointer to one object) is taken today**; anything else is `static assertion failed: contract::modifies takes &x`. A slice range (`xs`, `p[a:b]`) waits for #119, and an array-typed `&s->items` fails too: name the struct that holds it.
+- **Each argument is `&x` (a pointer: one object, its size from the type) or a slice (a range: `xs`, or `p[a:b]` of a pointer or an array; its count times the element's size, none when empty)**; anything else is `static assertion failed: contract::modifies takes &x (a pointer to one object) or a slice xs, p[a:b] (a range)`. `contract::modifies(xs[0:2], &count)` names two. `p[a:b]` of a `T *p` (one object) needs the extent to be known, as a read does (smith-prove).
 - `smith prove` refutes a write of the body outside the ranges at its line, and at a call makes only the ranges arbitrary before `ensures`. Put it before the first write.
 
 ## A loop's invariant: unrolled, or proved by induction

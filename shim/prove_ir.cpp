@@ -467,6 +467,36 @@ uint64_t slice_element_bytes(const DIType *type, uint64_t &align) {
     return 0;
 }
 
+bool points_to_const(const DIType *type);
+
+// The data of a slice the function writes through, itself or by a callee that names it in a `modifies`: its object is
+// writable. Its size is the assumption the unit makes below; the one byte is what Alive2 needs to take the attribute.
+void mark_slice_writable(Argument *data) {
+    if (data->hasAttribute(Attribute::Writable)) return;
+    data->addAttr(Attribute::Writable);
+    data->addAttr(Attribute::NonNull);
+    if (data->getDereferenceableBytes() == 0)
+        data->addAttr(Attribute::getWithDereferenceableBytes(data->getContext(), 1));
+}
+
+// Whether `type` is a slice of const elements (`const T xs[:]`): its data pointer points at const.
+bool slice_is_const(const DIType *type) {
+    while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
+        unsigned tag = derived->getTag();
+        if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type)
+            break;
+        type = derived->getBaseType();
+    }
+    auto *composite = dyn_cast_or_null<DICompositeType>(type);
+    if (composite == nullptr) return false;
+    for (const Metadata *member : composite->getElements()) {
+        auto *field = dyn_cast<DIDerivedType>(member);
+        if (field == nullptr || field->getName() != "data") continue;
+        return points_to_const(field);
+    }
+    return false;
+}
+
 // The `inbounds` of the address arithmetic on a slice's pointer (the lowering's `data + a`) is dropped: the slice's own
 // checks, proved as points, say a <= b <= count, so the arithmetic stays inside the object, and what an element access
 // needs is checked at the access itself. Left on, each `inbounds` is a query about the sizes of two blocks, and
@@ -569,6 +599,13 @@ Function *split_slice_parameters(Function *function) {
         builder.CreateAssumption({OperandBundleDef("dereferenceable", sized), OperandBundleDef("align", aligned)});
     }
     relax_slice_arithmetic(slices);
+    for (unsigned i = 0, slice = 0; i < function->arg_size(); i++) {
+        if (elements[i] == 0) continue;
+        Value *data = slices[slice++];
+        if (slice_is_const(types[i + 1]) || !isModSet(unit->getMemoryEffects().getModRef(IRMemLocation::ArgMem)))
+            continue;
+        mark_slice_writable(cast<Argument>(data));
+    }
     return unit;
 }
 
@@ -1711,6 +1748,9 @@ Instruction *havoc_ranges(UnitContext &context, CallBase &call, Instruction *las
             }
         }
         context.function.setMemoryEffects(MemoryEffects::unknown()); // it now reads a global, whatever it inferred
+        if (auto *argument = dyn_cast<Argument>(getUnderlyingObject(range.first)); // a slice of the function's own
+            argument != nullptr && argument->getType()->isPointerTy() && argument->getName() == "xs.data")
+            mark_slice_writable(argument);
         mark_frame_ok(before->getNextNode(), anchor);
         last = anchor->getPrevNode();
     }
@@ -1762,14 +1802,6 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     }
     (void)subprogram;
     context.unit.call_sites.push_back(site);
-    MemoryEffects effects = callee.getMemoryEffects();
-    if (isModSet(effects.getModRef(IRMemLocation::Other))) {
-        context.unit.notes.push_back("note: " + site.file + ":" + std::to_string(site.line) + ": " +
-                                     source_name(callee) +
-                                     " may write memory it was not given (LLVM infers it from the body); what the "
-                                     "caller knows about that memory is "
-                                     "lost across the call");
-    }
     IRBuilder<> entry(&*function.getEntryBlock().getFirstInsertionPt());
     SmallPtrSet<const Value *, 2> copies; // what the call is given in place of the objects it may not write
     pass_copies_of_readonly(context, call, callee, entry, copies);
@@ -1797,7 +1829,21 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     std::vector<Range> ranges;
     bool names_ranges = take_ranges(context, call_site, ranges);
     if (context.framed) note_call_writes(context, call, callee, names_ranges, ranges);
-    if (names_ranges) redirect_arguments(context, call, callee, entry, copies);
+    if (names_ranges) {
+        redirect_arguments(context, call, callee, entry, copies);
+        // The call stands for the callee's effect, which is its ranges (made arbitrary by hand below): it writes
+        // nothing else. A slice goes in as two integers, so LLVM infers that the callee may write any memory.
+        if (call.getType()->isVoidTy() && isModSet(callee.getMemoryEffects().getModRef(IRMemLocation::Other)))
+            call.setMemoryEffects(MemoryEffects::none());
+    }
+    if (!(names_ranges && call.getType()->isVoidTy()) &&
+        isModSet(callee.getMemoryEffects().getModRef(IRMemLocation::Other))) {
+        context.unit.notes.push_back("note: " + site.file + ":" + std::to_string(site.line) + ": " +
+                                     source_name(callee) +
+                                     " may write memory it was not given (LLVM infers it from the body); what the "
+                                     "caller knows about that memory is "
+                                     "lost across the call");
+    }
     if (slices.ensures_slice == nullptr && names_ranges) {
         Instruction *after = havoc_locals(context, call, callee, &call, copies);
         havoc_ranges(context, call, after, ranges);

@@ -1,4 +1,4 @@
-// contract::modifies takes &x only: a value is an error that names the form.
+// contract::modifies takes &x or a slice: a value is an error that names the two forms.
 module errors::modifies;
 import smith::contract;
 

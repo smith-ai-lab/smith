@@ -35,13 +35,12 @@ import <smith/trace.h>;
 //                         no source): `smith prove` does not prove it. Its requires is proved at each call and its
 //                         ensures assumed, as for any function with a contract, but nothing in its body is read, and
 //                         the report lists it as trusted, never as proved. It checks nothing at run time.
-// contract::modifies(&x, ...)  the start of a function, after its requires: the function writes nothing but the objects
-//                         named (and its own locals), and a caller keeps everything else it knew across the call. Each
-//                         argument is a pointer to one object (`&moves->jumps`: the size is the pointee's). With no
-//                         argument the function writes nothing outside its locals. A function with no modifies may
-//                         write whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each
-//                         range. A range given as a slice (`xs`, `p[a:b]`) waits for generics that take slices (issue
-//                         #119).
+// contract::modifies(&x, xs, ...)  the start of a function, after its requires: the function writes nothing but the
+//                         objects named (and its own locals), and a caller keeps everything else it knew across the
+//                         call. Each argument is a pointer to one object (`&moves->jumps`: the size is the pointee's)
+//                         or a slice, a range (`xs`, `p[a:b]`: its count times the element's size). With no argument
+//                         the function writes nothing outside its locals. A function with no modifies may write
+//                         whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each range.
 //
 // A condition must be free of side effects: it is evaluated by the check, and not at all when assertions are off
 // (target::assertions, which NDEBUG turns off; the fast profile does).
@@ -156,14 +155,21 @@ modifies_range(const void *p, usize size) {
     }
 }
 
+// One slice of `modifies`: its range is the count times the element's size, none for an empty one.
+inline void modifies_slice(auto xs) {
+    modifies_range(countof(xs) ? &xs[0] : nullptr, countof(xs) * sizeof(xs[0]));
+}
+
 export inline void modifies(auto... rest) {
     modifies_range(nullptr, 0); // the marker `modifies()` is: a range of no bytes
     for constexpr (usize i = 0; i < countof(rest); i++) {
         if constexpr (is_pointer(typeof(rest[i]))) {
             modifies_range(rest[i], sizeof(*rest[i]));
+        } else if constexpr (is_slice(typeof(rest[i]))) {
+            modifies_slice(rest[i]);
         } else {
             static_assert(false,
-                          "contract::modifies takes &x, a pointer to one object (a slice is not supported yet, #119)");
+                          "contract::modifies takes &x (a pointer to one object) or a slice xs, p[a:b] (a range)");
         }
     }
 }

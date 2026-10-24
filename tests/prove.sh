@@ -720,7 +720,21 @@ expect "modifies (smith): contract::modifies() writes nothing" 0 "$rc"
 prove "$cases/geometry/pair.smith" --function=geometry::pair::bad
 expect "modifies (smith): a write outside &x is refuted" 1 "$rc"
 prove "$cases/errors/modifies.smith"
-expect_contains "modifies (smith): an argument that is not a pointer is an error naming &x" "$out" "contract::modifies takes &x"
+expect_contains "modifies (smith): an argument that is not a pointer or a slice is an error naming both forms" "$out" "contract::modifies takes &x (a pointer to one object) or a slice xs, p[a:b] (a range)"
+ranges=$cases/geometry/ranges.smith
+for good in set_two keeps_the_tail whole middle keeps_the_ends; do
+    prove "$ranges" --function=geometry::ranges::$good
+    expect "modifies (slice): $good proves" 0 "$rc"
+done
+prove "$ranges" --function=geometry::ranges::writes_past
+expect "modifies (slice): a write one element past the slice range is refuted" 1 "$rc"
+expect_contains "modifies (slice): ... at its line" "$out" "ranges.smith:34: the function writes here, outside the ranges its smith_modifies names"
+prove "$ranges" --function=geometry::ranges::other_slice
+expect "modifies (slice): a write to another slice is refuted" 1 "$rc"
+expect_contains "modifies (slice): ... at its line" "$out" "ranges.smith:49: the function writes here"
+prove "$ranges" --function=geometry::ranges::relies_on_the_head
+expect "modifies (slice): a caller relying on an element the range names is refuted" 1 "$rc"
+expect_contains "modifies (slice): ... at the assert" "$out" "ranges.smith:27: assert(xs[0] == first) may fail"
 
 # 18. Coverage (issue #51): how many of the project's functions have a contract of their own, in every form of the
 # output. Nothing fails on a low one.

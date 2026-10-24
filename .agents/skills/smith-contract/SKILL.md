@@ -39,7 +39,7 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 | `smith_invariant(c)` | the first statement of a loop body | `c` is true on every pass, and when the loop exits (smith-contract-proof) |
 | `smith_assert(c)` | anywhere in a body | `c` is true here: the statement `assert` was, as a function. `smith prove` proves it, and a function with one is in the default set (`main` included); a program stops on it in the debug and release profiles; the fast profile compiles it away |
 | `smith_trusted()` | the first statement of a function | `smith prove` does not prove this function: callers prove its `smith_requires` and assume its `smith_ensures`, and its body is not read (see "Trusted boundaries"); it checks nothing at run time |
-| `smith_modifies(&x, size)` (`contract::modifies(&x, ...)`) | the start of a function, after its `smith_requires` | the function writes nothing but these objects and its own locals; a caller keeps all it knew of the rest (smith-contract-proof) |
+| `smith_modifies(p, size)` (`contract::modifies(&x, xs, p[a:b])`) | the start of a function, after its `smith_requires` | the function writes nothing but these objects, ranges and its own locals; a caller keeps all it knew of the rest (smith-contract-proof) |
 
 - An old value is a `const` local saved at the top: `const u8 old = moves->len;` (for what a function leaves alone, `modifies`, smith-contract-proof). The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
