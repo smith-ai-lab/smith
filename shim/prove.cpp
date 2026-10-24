@@ -42,7 +42,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // Bump when a change to the prover can change what a function proves or how it fails.
-#define SMITH_PROVER_VERSION "5"
+#define SMITH_PROVER_VERSION "6"
 
 // The checks of UBSan that become explicit branches to a trap in the IR. null, alignment and object-size are left to
 // Alive2's memory model, which treats an invalid access as undefined behaviour itself; pointer-overflow, bool and enum

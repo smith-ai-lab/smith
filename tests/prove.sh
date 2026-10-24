@@ -397,6 +397,20 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
     prove --function=geometry::rows::unchecked "$rows"
     expect "smith module: an index that may be past the array is refused" 1 "$rc"
 
+    # 11a2. A `T xs[:]` parameter points at countof(xs) elements (#106): an index in range needs no contract, one that may
+    # be out of range fails at the index, a loop over it is bounded by a requires on countof, and a view of a pointer is
+    # held to what the pointer is known to point at.
+    slices=$cases/geometry/slices.smith
+    for good in at total last_of_tail first_of_one of_four; do
+        prove --function=geometry::slices::$good "$slices"
+        expect "smith slice: $good is proved" 0 "$rc"
+    done
+    prove --function=geometry::slices::unchecked "$slices"
+    expect "smith slice: an index that may be past the count is refused" 1 "$rc"
+    expect_contains "smith slice: ... as an index out of range, at its line" "$out" "slices.smith:14: assert(an index or a slice is in range) may fail"
+    prove --function=geometry::slices::second_of_one "$slices"
+    expect "smith slice: a view of two elements of a pointer to one is refused" 1 "$rc"
+
     # 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
     # a module and a trusted function written with c::smith_trusted().
     proj=$work/smithproj

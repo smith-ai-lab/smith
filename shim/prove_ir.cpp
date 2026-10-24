@@ -99,6 +99,8 @@ bool is_assert_failure(const Instruction *instruction) {
     auto *call = dyn_cast_or_null<CallBase>(instruction);
     if (call == nullptr || call->getCalledFunction() == nullptr) return false;
     StringRef name = call->getCalledFunction()->getName();
+    if (name == "smith_failure") // the check of an index or a slice; the contract functions of the library are its own
+        return !contract_name(call->getFunction()->getName());
     return name == "__assert_rtn" || name == "__assert_fail" || name == "__assert";
 }
 
@@ -429,6 +431,137 @@ uint64_t pointee_alignment(const DIType *type) {
         type = derived->getBaseType();
     }
     return 1;
+}
+
+// ---- slice parameters ----
+
+// `T xs[:]` is the struct smith_array_<T>_n { T *data; usize count[1]; }: the size of T in bytes when `type` is one (a
+// typedef of one too), else 0, and its alignment in `align`. Only the one-dimension form is read: it is 16 bytes, which
+// arm64 passes as one [2 x i64]; a bigger count array (more dimensions) is passed in memory.
+uint64_t slice_element_bytes(const DIType *type, uint64_t &align) {
+    while (auto *derived = dyn_cast_or_null<DIDerivedType>(type)) {
+        unsigned tag = derived->getTag();
+        if (tag != dwarf::DW_TAG_typedef && tag != dwarf::DW_TAG_const_type && tag != dwarf::DW_TAG_volatile_type)
+            break;
+        type = derived->getBaseType();
+    }
+    auto *composite = dyn_cast_or_null<DICompositeType>(type);
+    if (composite == nullptr || composite->getTag() != dwarf::DW_TAG_structure_type ||
+        !composite->getName().starts_with("smith_array_") || !composite->getName().ends_with("_n") ||
+        composite->getSizeInBits() != 128)
+        return 0;
+    for (const Metadata *member : composite->getElements()) {
+        auto *field = dyn_cast<DIDerivedType>(member);
+        if (field == nullptr || field->getName() != "data") continue;
+        align = pointee_alignment(field->getBaseType());
+        return pointee_bytes(field->getBaseType());
+    }
+    return 0;
+}
+
+// The `inbounds` of the address arithmetic on a slice's pointer (the lowering's `data + a`) is dropped: the slice's own
+// checks, proved as points, say a <= b <= count, so the arithmetic stays inside the object, and what an element access
+// needs is checked at the access itself. Left on, each `inbounds` is a query about the sizes of two blocks, and
+// `xs[skip:][n - 1]` takes 16 s instead of 2.
+void relax_slice_arithmetic(const std::vector<Value *> &roots) {
+    SmallVector<Value *, 8> work(roots.begin(), roots.end());
+    SmallPtrSet<Value *, 16> seen(roots.begin(), roots.end());
+    while (!work.empty()) {
+        Value *value = work.pop_back_val();
+        for (User *user : value->users()) {
+            if (!isa<GetElementPtrInst>(user) && !isa<PHINode>(user) && !isa<SelectInst>(user)) continue;
+            if (auto *gep = dyn_cast<GetElementPtrInst>(user)) gep->setNoWrapFlags(GEPNoWrapFlags::none());
+            if (seen.insert(user).second) work.push_back(user);
+        }
+    }
+}
+
+// The slice parameters of the function being proved point at `count` elements: its `data` is dereferenceable for
+// count * sizeof(T) bytes, which is what makes `xs[i]` with `i < countof(xs)` defined with no other contract. Only
+// the unit has it: a slice a callee receives is whatever its caller built, and the caller proves that.
+//
+// arm64 passes the struct as one [2 x i64], so the pointer is an integer that the body turns back with inttoptr, a
+// pointer with no object that Alive2 can check an index against. The unit gets a function of its own whose slice is
+// two parameters, (ptr data, i64 count); the body's `inttoptr(extract 0)` is `data`, and `extract 1` is `count`.
+Function *split_slice_parameters(Function *function) {
+    DISubprogram *subprogram = function->getSubprogram();
+    if (subprogram == nullptr || subprogram->getType() == nullptr) return function;
+    auto types = subprogram->getType()->getTypeArray();
+    if (types.size() != function->arg_size() + 1) return function; // a hidden sret result moves them; not read
+    LLVMContext &context = function->getContext();
+    std::vector<uint64_t> elements(function->arg_size(), 0), aligns(function->arg_size(), 1);
+    std::vector<Type *> parameters;
+    bool any = false;
+    for (unsigned i = 0; i < function->arg_size(); i++) {
+        Type *type = function->getArg(i)->getType();
+        auto *pair = dyn_cast<ArrayType>(type);
+        if (pair != nullptr && pair->getNumElements() == 2 && pair->getElementType()->isIntegerTy(64))
+            elements[i] = slice_element_bytes(types[i + 1], aligns[i]);
+        if (elements[i] == 0) {
+            parameters.push_back(type);
+            continue;
+        }
+        any = true;
+        parameters.push_back(PointerType::getUnqual(context));
+        parameters.push_back(Type::getInt64Ty(context));
+    }
+    if (!any) return function;
+    auto *type = FunctionType::get(function->getReturnType(), parameters, function->isVarArg());
+    Function *unit = Function::Create(type, function->getLinkage(), "", function->getParent());
+    unit->copyAttributesFrom(function);
+    SmallVector<AttributeSet, 8> attributes;
+    for (unsigned i = 0; i < function->arg_size(); i++) {
+        attributes.push_back(function->getAttributes().getParamAttrs(i));
+        if (elements[i] != 0) attributes.back() = AttributeSet(), attributes.push_back(AttributeSet());
+    }
+    unit->setAttributes(AttributeList::get(context, function->getAttributes().getFnAttrs(),
+                                           function->getAttributes().getRetAttrs(), attributes));
+    unit->copyMetadata(function, 0);
+    unit->setSubprogram(subprogram);
+    function->setSubprogram(nullptr);
+    std::string name = function->getName().str();
+    function->setName("smith.unsplit." + name);
+    unit->setName(name);
+    unit->splice(unit->end(), function);
+    BasicBlock &entry = unit->getEntryBlock();
+    IRBuilder<> builder(&*entry.getFirstInsertionPt());
+    unsigned next = 0;
+    std::vector<Value *> slices;
+    for (unsigned i = 0; i < function->arg_size(); i++, next++) {
+        Argument *old = function->getArg(i);
+        if (elements[i] == 0) {
+            old->replaceAllUsesWith(unit->getArg(next));
+            unit->getArg(next)->takeName(old);
+            continue;
+        }
+        Argument *data = unit->getArg(next), *count = unit->getArg(next + 1);
+        slices.push_back(data);
+        data->setName("xs.data");
+        count->setName("xs.count");
+        next++;
+        for (User *user : make_early_inc_range(old->users())) {
+            auto *extract = dyn_cast<ExtractValueInst>(user);
+            if (extract == nullptr || extract->getNumIndices() != 1) continue;
+            if (extract->getIndices()[0] == 1) {
+                extract->replaceAllUsesWith(count);
+                continue;
+            }
+            for (User *use : make_early_inc_range(extract->users())) {
+                if (isa<IntToPtrInst>(use)) use->replaceAllUsesWith(data);
+            }
+        }
+        Value *address = builder.CreatePtrToInt(data, Type::getInt64Ty(context));
+        Value *pair = builder.CreateInsertValue(PoisonValue::get(old->getType()), address, 0);
+        old->replaceAllUsesWith(builder.CreateInsertValue(pair, count, 1));
+        // no object is 2^40 bytes; the bound keeps the solver's sizes small
+        builder.CreateAssumption(builder.CreateICmpULE(count, ConstantInt::get(count->getType(), 1ull << 32)));
+        Value *bytes = builder.CreateMul(count, ConstantInt::get(count->getType(), elements[i]), "", true);
+        SmallVector<Value *, 2> sized = {data, bytes};
+        SmallVector<Value *, 2> aligned = {data, ConstantInt::get(count->getType(), aligns[i])};
+        builder.CreateAssumption({OperandBundleDef("dereferenceable", sized), OperandBundleDef("align", aligned)});
+    }
+    relax_slice_arithmetic(slices);
+    return unit;
 }
 
 // A pointer a function returns under an smith_ensures is a whole object of its type or null: proved at each return of
@@ -1661,6 +1794,10 @@ class Normalizer {
             if (MDNode *site = call->getMetadata("smith.callsite")) info.call_site = static_cast<int>(id_of(site));
         } else if (kind == Kind::Assert && condition != nullptr) {
             // smith_assert(condition) of <smith/contract.h>: the text is the line's, below
+        } else if (kind == Kind::Assert && base->getCalledFunction()->getName() == "smith_failure") {
+            // The check of an index or a slice of a `[:]` (and any other check of a library): reaching it is the
+            // failure.
+            info.text = "an index or a slice is in range";
         } else if (kind == Kind::Assert) {
             // __assert_rtn(function, file, line, expression) on macOS, __assert_fail(expression, file, line, function)
             bool apple = base->getCalledFunction()->getName() == "__assert_rtn";
@@ -2134,7 +2271,7 @@ void collect_costs(Function &function, Unit &unit) {
 Prepared program_prepare(Program &program, const std::string &name) {
     Prepared prepared;
     prepared.module = CloneModule(*program.module);
-    prepared.function = prepared.module->getFunction(name);
+    prepared.function = split_slice_parameters(prepared.module->getFunction(name));
     Function &function = *prepared.function;
     // A value a caller passes is a value. clang writes noundef on a scalar parameter, but not on the integers a struct
     // passed by value is split into (a 4-byte Move arrives as one i32), which Alive2 would then take as poison.
