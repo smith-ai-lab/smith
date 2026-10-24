@@ -76,7 +76,7 @@ constexpr size_t smith_lang_it_text_max = (size_t)1 << 19; // their text
 constexpr size_t smith_lang_body_names_max = 512;          // exported functions with a body that one module lists
 constexpr size_t smith_lang_generics_max = 256;            // generics known: the module's own and the imports'
 constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
-constexpr size_t smith_lang_type_params_max = 4;           // `type T` parameters of one generic
+constexpr size_t smith_lang_type_params_max = 32;          // `type T` parameters of one generic
 constexpr size_t smith_lang_call_params_max = 32;          // parameters of one generic
 constexpr size_t smith_lang_entries_max =
     smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
