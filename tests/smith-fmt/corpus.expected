@@ -747,6 +747,37 @@ export typeof(x) spread(auto x, i32 boosted) {
     typeof(x) result = (typeof(x))((Mode)boosted == Boosted ? r.high : r.low);
     return result + (typeof(x))table[slots - 1] + (typeof(x))clamp_to_base(100);
 }
+==> error-generic-return-type/src/main.smith <==
+module main;
+
+// A number is no type.
+static i32 three(type T) {
+    return 3;
+}
+
+// A division by zero is no constant.
+static type divided(type T, usize k) {
+    return k / (k - k) == 0 ? T : i64;
+}
+
+export three(T) not_a_type(constexpr type T, auto x) {
+    return x;
+}
+
+export divided(T, countof(rest)) not_computable(constexpr type T, auto... rest) {
+    return 0;
+}
+
+export missing(T) not_declared(constexpr type T) {
+    return 0;
+}
+
+int main(void) {
+    not_a_type(u8, (u8)1);
+    not_computable(u8, (u8)1);
+    not_declared(u8);
+    return 0;
+}
 ==> error-if-constexpr/src/main.smith <==
 import target;
 
@@ -3338,6 +3369,36 @@ int main(void) {
     i32 h = arguments::shapes();
     i32 k = arguments::mixed(1, (u16)2, 2.5);
     c::printf("%d %d %d | %d | %d %d | %d %d | %d\n", a, b, c, d, e, f, g, h, k);
+    return 0;
+}
+==> generic-return-type/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// Ordinary functions over types and numbers: they run in the compiler.
+static type by_count(type T, usize k) {
+    return k == 0 ? T : k == 1 ? i16 : f64;
+}
+
+static type wide_of(type T) {
+    return sizeof(T) <= 2 ? i64 : T;
+}
+
+// The result type is computed from `countof(rest)`: one body, the type settled for each instance.
+export by_count(T, countof(rest)) from_count(constexpr type T, auto... rest) {
+    return 7;
+}
+
+// ... or from a `constexpr type` parameter alone.
+export wide_of(T) widen(constexpr type T, auto x) {
+    return x;
+}
+
+int main(void) {
+    c::printf("%zu %zu %zu\n", sizeof(from_count(u8)), sizeof(from_count(u8, (u8)1)),
+              sizeof(from_count(u8, (u8)1, (u8)2)));
+    c::printf("%zu %zu\n", sizeof(widen(u8, (u8)3)), sizeof(widen(f32, 3.0f)));
     return 0;
 }
 ==> generic-sized-result-sizeof/src/main.smith <==

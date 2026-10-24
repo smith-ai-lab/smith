@@ -1,0 +1,30 @@
+module main;
+
+// A number is no type.
+static i32 three(type T) {
+    return 3;
+}
+
+// A division by zero is no constant.
+static type divided(type T, usize k) {
+    return k / (k - k) == 0 ? T : i64;
+}
+
+export three(T) not_a_type(constexpr type T, auto x) {
+    return x;
+}
+
+export divided(T, countof(rest)) not_computable(constexpr type T, auto... rest) {
+    return 0;
+}
+
+export missing(T) not_declared(constexpr type T) {
+    return 0;
+}
+
+int main(void) {
+    not_a_type(u8, (u8)1);
+    not_computable(u8, (u8)1);
+    not_declared(u8);
+    return 0;
+}
