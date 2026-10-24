@@ -946,6 +946,10 @@ class SmithHook final : public TokenHook, public NameSource {
     // it must (Slow).
     Fast tryFast(Token &tok) {
         if (host.maybe_slice || smith_lang_slices_on(lang)) return Fast::No; // the lowering reads every token
+        // A name of the module may hold a type (`constexpr type big = u32;`, then `big x = 1;`): the lowering reads its
+        // neighbours, so it is not renamed here (issue #165).
+        if (host.maybe_type_value && tok.is(tok::identifier) && renames.count(tok.getIdentifierInfo()) != 0)
+            return Fast::No;
         bool body = smith_lang_body_sparse(lang);
         if (body || !smith_lang_is_module(lang)) return tryFastSparse(tok, body);
         SmithToken view = lite(tok);

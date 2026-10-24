@@ -1,0 +1,16 @@
+module main;
+import <stdio.h>;
+
+// A file-scope `constexpr type` declares variables in a module's functions and at file scope (issue #165).
+constexpr type big = u32;
+constexpr type small = f32;
+
+big total = 7;
+
+i32 main(void) {
+    big x = 1;
+    static_assert(sizeof(big) == 4);
+    small y = 2.5;
+    c::printf("%u %u %.1f\n", (u32)x, (u32)total, (f64)y);
+    return 0;
+}
