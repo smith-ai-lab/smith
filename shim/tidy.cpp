@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <vector>
 
+extern "C" void smith_affine_disable();
 #ifdef SMITH_HOOK
 // shim/hook.cpp: makes every translation unit with a .smith main file, clang-tidy's included, offer its tokens to the
 // lowering and show its diagnostics (clang-tidy's own, fix-its included) with the names as written.
@@ -248,6 +249,7 @@ extern "C" void smith_tidy_names_register(bool) {}
 // its exit status.
 extern "C" int smith_tidy_main(int argc, char **argv) {
     smith_tool_start("__smith_tidy", argv[0]);
+    smith_affine_disable(); // SPIKE #189
     // clang-tidy builds each file's command through the tooling library, whose last arguments adjuster
     // (getStripPluginsAdjuster) asks the hook: a .smith file gets the command `smith cc` gives it, whatever the
     // compile database says.
