@@ -5284,6 +5284,44 @@ i32 main(void) {
     c::printf("%d\n", hold::say(1));
     return 0;
 }
+==> slice-text-in-library/src/main.smith <==
+module main;
+
+import pool;
+import <stdio.h>;
+
+i32 main(void) {
+    c::printf("%g %s\n", pool::first(), pool::note);
+    return 0;
+}
+==> slice-text-in-library/src/pool.smith <==
+module pool;
+
+// A library module whose comment says xs[:] and whose string says "ys[:]": neither is a slice, so the file is not in
+// slice mode, where the head `T *grab(` of a generic is not read (issue #121).
+
+typedef struct {
+    i32 a;
+    f64 b;
+} Pair;
+
+static char storage[256];
+
+T *grab(constexpr type T, usize count, i32 flags) {
+    (void)flags;
+    (void)count;
+    return (T *)storage;
+}
+
+export const char *note = "a string with zs[:] in it";
+
+export f64 first(void) {
+    Pair *p = grab(Pair, 1, 0);
+    p->b = 2.5;
+    usize *n = grab(usize, 2, 0);
+    n[0] = 3;
+    return p->b + (f64)n[0];
+}
 ==> std-default-c2y/src/main.smith <==
 #include <stdio.h>
 
