@@ -536,10 +536,12 @@ static void smith_prove_filter(char *flags) {
 }
 
 // Proves one group of sources that compile with the same flags: `smith prove <sources> -- <flags>`.
-static size_t smith_prove_groups_run; // the groups `smith prove` started, so that none can be said
+static size_t smith_prove_groups_run;     // the groups `smith prove` started, so that none can be said
+static size_t smith_prove_groups_without; // ... and those that had none of the --function names (exit status 4)
+static bool smith_prove_wants_function;   // some --function= is among the options
 
-// The prover's own options of the command line (-v, --budget=, --emit-ir=, --no-cache), which every group gets. The
-// groups write one file: the first empties it and the others add to it.
+// The prover's own options of the command line (-v, --budget=, --emit-ir=, --no-cache, --function=), which every group
+// gets. The groups write one file: the first empties it and the others add to it.
 static const SmithVerbArgs *smith_prove_options;
 
 static void smith_prove_pass_options(size_t *used) {
@@ -581,6 +583,7 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     size_t used = 0;
     smith_prove_argv[used++] = (char *)self;
     smith_prove_argv[used++] = (char *)"prove";
+    smith_prove_argv[used++] = (char *)"--in-project";
     smith_prove_pass_options(&used);
     for (size_t i = 0; i < member_count; i++)
         smith_prove_argv[used++] = (char *)info->compiles[members[i]];
@@ -636,6 +639,10 @@ static int smith_prove_unit(const char *self, const SmithInfo *info, char *sourc
             members[member_count++] = found[i];
         }
         int one = smith_prove_group(self, info, members, member_count, libraries);
+        if (one == 4) { // none of the --function names is defined in this group: another has it, or none does
+            smith_prove_groups_without++;
+            one = 0;
+        }
         if (one != 0) status = one;
     }
     return status;
@@ -666,11 +673,21 @@ static int smith_prove_project(int count, char **args, const char *self) {
             repeated[i] = repeated[i] || strcmp(info->units[i], info->units[j]) == 0;
     }
     status = 0;
+    for (size_t i = 0; i < split->own_count; i++)
+        smith_prove_wants_function = smith_prove_wants_function || strncmp(split->own[i], "--function=", 11) == 0;
     for (size_t i = 0; i < info->unit_count; i++) {
         if (repeated[i]) continue;
         int one =
             smith_prove_unit(self, info, (char *)info->units[i], i < info->library_count ? info->libraries[i] : "");
         if (one != 0) status = one;
+    }
+    if (status == 0 && smith_prove_wants_function && smith_prove_groups_without == smith_prove_groups_run &&
+        smith_prove_groups_run > 0) {
+        fprintf(stderr,
+                "smith prove: --function: no function by that name in any source the project proves; if the source "
+                "defines it, it is a static function that nothing calls, which clang does not emit (mark it "
+                "[[gnu::used]] to keep it)\n");
+        return 1;
     }
     if (status == 0 && smith_prove_groups_run == 0) {
         printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, smith_invariant or "

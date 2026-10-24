@@ -220,6 +220,9 @@ expect_contains "c: ... one of them" "$out$err" "1 passed, 0 failed"
 capture smith prove
 expect "c: smith prove runs on it" 0 "$rc"
 expect_contains "c: ... and says there is nothing to prove" "$out" "nothing to prove"
+capture smith prove --function=no_such_function
+expect "c: smith prove --function= naming nothing fails" 1 "$rc"
+expect_contains "c: ... and says no source defines it" "$err" "--function: no function by that name in any source"
 cp "$here/.clang-tidy" "$here/.clang-format" .
 capture smith lint
 expect "c: smith lint reads the build's compiles" 0 "$rc"

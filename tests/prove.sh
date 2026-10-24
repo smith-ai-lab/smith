@@ -651,7 +651,16 @@ expect_contains "induction: ... and -v says it was unrolled" "$out" "so it was p
 prove -v --induction-from=2 "$cases/induction.c" --function=countdown
 expect "induction: --induction-from only moves the threshold" 0 "$rc"
 
-# 16b. __memcpy_chk is memcpy (issue #94).
+# 16b. A smith_requires that bounded a loop's unrolling stays a premise of the rest of the function (issue #117), and
+# __memcpy_chk is memcpy (issue #94).
+prove "$cases/premise.c" --function=last_of
+expect "premise: a requires that bounded the unrolling still proves an index after the loop" 0 "$rc"
+prove "$cases/premise.c" --function=one_past
+expect "premise: the index one past the bound is refuted" 1 "$rc"
+prove "$cases/premise.c" --function=early
+expect "premise: ... also after a loop that leaves by a break" 0 "$rc"
+prove "$cases/premise.c" --function=early_past
+expect "premise: ... and the false variant after it is refuted" 1 "$rc"
 prove "$cases/memcpy_chk.c" --function=copied
 expect "memcpy_chk: it is memcpy, so the copied value is read back" 0 "$rc"
 prove "$cases/memcpy_chk.c" --function=too_long

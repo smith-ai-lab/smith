@@ -2782,11 +2782,11 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
     if (strcmp(verb, "prove") == 0) own = prove_options;
     for (int i = 0; i < count; i++) { // bounded by count
         if (strncmp(args[i], "-D", 2) == 0) continue;
-        // `smith prove --budget=20`, `--emit-ir=ir.ll` and `--induction-from=8` are the project's too: they name no
-        // file
+        // `smith prove --budget=20`, `--emit-ir=ir.ll`, `--induction-from=8` and `--function=name` are the project's
+        // too: they name no file
         if (strcmp(verb, "prove") == 0 &&
             (strncmp(args[i], "--budget=", 9) == 0 || strncmp(args[i], "--emit-ir=", 10) == 0 ||
-             strncmp(args[i], "--induction-from=", 17) == 0))
+             strncmp(args[i], "--induction-from=", 17) == 0 || strncmp(args[i], "--function=", 11) == 0))
             continue;
         bool known = false;
         for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)

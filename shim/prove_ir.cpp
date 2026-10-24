@@ -2109,8 +2109,9 @@ void describe_unbounded_loop(const Unit &unit, int index, Unprovable &failure) {
 // `smith_requires(count <= 5)` before `for (i = 0; i < count; i++)` bounds the loop at 5 passes. The unroller reads a
 // parameter's `range` attribute (SCEV reads an llvm.assume only for a value computed after it, never for a parameter),
 // so each premise of the form `parameter <op> constant`, alone or joined by `&&`, gives the parameter that range for
-// the unrolling. The attribute is removed before the proof, where the premises are assumed anyway, so what is proved
-// is the function as it was, unrolled.
+// the unrolling. The attribute is removed before the proof, and the optimizer has by then folded the premise itself to
+// true (a fact the proof needs later, such as an index in range, would be gone), so the range is put back as an
+// llvm.assume at the entry: what is proved is the function as it was, unrolled, with the premise kept (issue #117).
 void collect_ranges(Value *condition, std::map<Argument *, ConstantRange> &ranges) {
     if (auto *compare = dyn_cast<ICmpInst>(condition)) {
         auto *argument = dyn_cast<Argument>(compare->getOperand(0));
@@ -2148,9 +2149,18 @@ std::vector<Argument *> assume_requires(Function &function) {
     return bounded;
 }
 
-void remove_loop_ranges(const std::vector<Argument *> &bounded) {
-    for (Argument *argument : bounded)
+void remove_loop_ranges(Function &function, const std::vector<Argument *> &bounded) {
+    if (bounded.empty()) return;
+    IRBuilder<> builder(&*function.getEntryBlock().getFirstInsertionPt());
+    for (Argument *argument : bounded) {
+        ConstantRange range = argument->getAttribute(Attribute::Range).getValueAsConstantRange();
         argument->removeAttr(Attribute::Range);
+        // argument in [lower, upper), also when the set wraps: (argument - lower) < (upper - lower) as unsigned numbers
+        Type *type = argument->getType();
+        Value *offset = builder.CreateSub(argument, ConstantInt::get(type, range.getLower()));
+        Value *inside = builder.CreateICmpULT(offset, ConstantInt::get(type, range.getUpper() - range.getLower()));
+        builder.CreateAssumption(inside);
+    }
 }
 
 // A loop that is still there after unrolling: where it is (a source line, if there is one), and which of the unit's
@@ -2937,7 +2947,7 @@ Prepared program_prepare(Program &program, const std::string &name, const Option
         return finish();
     }
     remove_loop_marks(function);
-    remove_loop_ranges(bounded);
+    remove_loop_ranges(function, bounded);
     Normalizer(context).run();
     drop_unsupported_attributes(function);
     analyses.run_function(function, "dce", error);

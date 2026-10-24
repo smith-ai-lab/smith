@@ -61,19 +61,22 @@ struct Arguments {
 
 [[noreturn]] void usage(const char *message) {
     if (message != nullptr) std::fprintf(stderr, "smith: prove: %s\n", message);
-    std::fprintf(stderr,
-                 "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
-                 "  --function=NAME   prove only this function (repeatable)\n"
-                 "  --budget=SECONDS  the time one function may take (default 10)\n"
-                 "  --memory=GB       the memory one function may use (default 8)\n"
-                 "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
-                 "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
-                 "  --no-cache        prove again what a cached proof already proved\n"
-                 "  --induction       prove every loop that has a smith_invariant by induction (one pass)\n"
-                 "  --unroll          unroll every loop that has a bound, its invariant checked on each pass\n"
-                 "  --induction-from=N  by default a loop with an invariant is unrolled up to N passes (16)\n"
-                 "  -v                print the functions that are proved too, with their time, the slowest\n"
-                 "                    query of each and, when it took a second, what made it costly\n");
+    std::fprintf(
+        stderr,
+        "usage: smith prove [options] <file.c>... [-- <compile flags>]\n"
+        "  --function=NAME   prove only this function (repeatable)\n"
+        "  --in-project      this is one group of a project's sources: a --function defined in another group is\n"
+        "                    not an error (exit status 4 when none of them is defined here)\n"
+        "  --budget=SECONDS  the time one function may take (default 10)\n"
+        "  --memory=GB       the memory one function may use (default 8)\n"
+        "  --emit-ir=FILE    write the IR of each function as the prover checks it\n"
+        "  --library=FILE    a source of smith's own library: its contracts are used, it is not proved\n"
+        "  --no-cache        prove again what a cached proof already proved\n"
+        "  --induction       prove every loop that has a smith_invariant by induction (one pass)\n"
+        "  --unroll          unroll every loop that has a bound, its invariant checked on each pass\n"
+        "  --induction-from=N  by default a loop with an invariant is unrolled up to N passes (16)\n"
+        "  -v                print the functions that are proved too, with their time, the slowest\n"
+        "                    query of each and, when it took a second, what made it costly\n");
     std::exit(2);
 }
 
@@ -104,6 +107,8 @@ Arguments parse(int argc, char **argv) {
                 static_cast<unsigned>(std::strtoul(argument.c_str() + 17, nullptr, 10));
         } else if (argument == "--no-cache") {
             arguments.options.no_cache = true;
+        } else if (argument == "--in-project") {
+            arguments.options.in_project = true;
         } else if (argument.rfind("--function=", 0) == 0) {
             arguments.options.only.push_back(argument.substr(11));
         } else if (argument.rfind("--budget=", 0) == 0) {
@@ -584,10 +589,13 @@ void end_with_parent_or_budget(pid_t parent, const prove::Options &options) {
 // Every --function must name a function the prover read. One that names nothing is an error, never a skip: clang does
 // not emit a static function that nothing calls, so a harness written as one is silently absent from the IR and the run
 // would count as a success. One that is defined but is not a unit (no contract, not a caller of a contract) is an error
-// too. Returns false after printing each such name.
-bool check_wanted_functions(const prove::Program &loaded, const std::vector<std::string> &only) {
+// too. Returns false after printing each such name. In a project (one group of its sources among several) a name that
+// no function of this group defines is another group's: `absent` says that every name is, and nothing is printed.
+bool check_wanted_functions(const prove::Program &loaded, const std::vector<std::string> &only, bool in_project,
+                            bool &absent) {
     const std::vector<std::string> units = prove::program_units(loaded);
     bool ok = true;
+    size_t missing = 0;
     for (const std::string &name : only) {
         bool defined = false;
         bool unit = false;
@@ -608,6 +616,10 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
                 unit = unit || candidate == function_name;
         }
         if (unit) continue;
+        if (in_project && !defined) {
+            missing++;
+            continue;
+        }
         ok = false;
         if (trusted)
             continue;
@@ -625,6 +637,7 @@ bool check_wanted_functions(const prove::Program &loaded, const std::vector<std:
                          "(mark it [[gnu::used]] to keep it)\n",
                          name.c_str());
     }
+    absent = in_project && !only.empty() && missing == only.size();
     return ok;
 }
 
@@ -750,7 +763,9 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     rmdir(directory.data());
     if (result != 0) return result;
 
-    if (!check_wanted_functions(loaded, arguments.options.only)) return 1;
+    bool absent = false;
+    if (!check_wanted_functions(loaded, arguments.options.only, arguments.options.in_project, absent)) return 1;
+    if (absent) return 4; // the project's other groups have it (smith_prove_project says when none does)
     if (!arguments.options.emit_ir.empty() && !arguments.options.emit_ir_append) {
         std::ofstream(arguments.options.emit_ir, std::ios::trunc); // the children append their functions
     }

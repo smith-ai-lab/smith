@@ -125,10 +125,11 @@ struct Options {
     }
     bool verbose = false;
     std::vector<std::string> only; // function names; empty: every function with a contract
-    bool dump = false;             // print the IR each function is proved from
-    std::string emit_ir;           // a file that gets the IR of each function, as it is checked (--emit-ir)
-    bool emit_ir_append = false;   // the file is not emptied first (the project verb proves several groups)
-    bool no_cache = false;         // prove again what a cached proof has proved
+    bool in_project = false;     // one group of a project's sources (--in-project): a name defined in no other is fine
+    bool dump = false;           // print the IR each function is proved from
+    std::string emit_ir;         // a file that gets the IR of each function, as it is checked (--emit-ir)
+    bool emit_ir_append = false; // the file is not emptied first (the project verb proves several groups)
+    bool no_cache = false;       // prove again what a cached proof has proved
     // A loop with a smith_invariant that has a bound can be unrolled (the invariant is proved on each pass) or proved
     // by induction (once, for any pass). Auto: by induction when it has more than `induction_from_passes` passes or no
     // count. --induction and --unroll say it for every loop.
