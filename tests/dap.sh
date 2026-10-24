@@ -123,7 +123,7 @@ EOF
     cat >main.smith <<'EOF'
 module main;
 import geometry::box;
-int main(void) {
+int main() {
   box::Box b = {2, 3};
   f32 a = box::area(b);
   return (int)a - 6;
@@ -179,7 +179,7 @@ EOF
         cat >"$work/generic/gmain.smith" <<'EOF'
 module gmain;
 import pick;
-int main(void) {
+int main() {
     i32 a = 3;
     f64 d = 2.5;
     return pick::larger(a, 8) + (int)pick::larger(d, 1.5) - 10;
@@ -219,7 +219,7 @@ EOF
         cat >"$work/lists/lmain.smith" <<'EOF'
 module lmain;
 import gather;
-int main(void) {
+int main() {
     return gather::sum_with_marker(1, 2) - 103;
 }
 EOF
@@ -243,7 +243,7 @@ EOF
     mkdir "$work/slice"
     cat >"$work/slice/main.smith" <<'EOF'
 module main;
-int main(void) {
+int main() {
   i32 raw[3] = {4, 5, 6};
   i32 xs[:] = raw;
   char name[:] = "abc";
@@ -282,7 +282,7 @@ EOF
 module main;
 struct smith_array_restrict_u8_n { unsigned char * __restrict data; unsigned long count[1]; };
 struct smith_array_const_char_n { const char *data; unsigned long count[1]; };
-int main(void) {
+int main() {
   f32 raw[3][2] = {{1, 2}, {3, 4}, {5, 6}};
   f32 rows[:][2] = raw;
   f32 grid[:][:] = raw;

@@ -65,7 +65,7 @@ module main;
 import geometry::box;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i32 x = box::area(3, 4);
     c::printf("%d\n", x);
     return 0;
@@ -89,7 +89,7 @@ EOF
 cat >geometry/unused.smith <<'EOF'
 module geometry::unused;
 
-export i32 nothing(void) {
+export i32 nothing() {
     return 0 +; // would not compile: nothing imports this file, so nothing compiles it
 }
 EOF
@@ -148,7 +148,7 @@ module main;
 import geometry::volume;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%d\n", volume::of(2, 3, 4));
     return 0;
 }
@@ -506,7 +506,7 @@ cat >main.smith <<'EOF'
 module main;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("hi\n");
     return 0;
 }
@@ -525,7 +525,7 @@ static i32 helper(i32 x) {
     return x;
 }
 
-export void test_helper(void) {
+export void test_helper() {
     c::smith_check_equal_i32(helper(2), 2);
 }
 EOF

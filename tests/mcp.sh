@@ -267,7 +267,7 @@ EOF
     cat >main.smith <<'EOF'
 module main;
 import geometry::box;
-int main(void) {
+int main() {
   box::Box b = {2, 3};
   f32 a = box::area(b);
   return (int)a - 6;

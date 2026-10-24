@@ -2381,7 +2381,7 @@ module main;
 
 i32 first(i32 xs[:]) { return xs[0]; }
 
-i32 main(void) {
+i32 main() {
     i32 raw[2] = {7, 8};
     i32 all[:] = raw;
     return first(all) == 7 ? 0 : 1;

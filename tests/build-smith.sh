@@ -63,7 +63,7 @@ module main;
 import geometry::box;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     i32 x = box::area(3, 4);
     c::printf("%d\n", x);
     return 0;
@@ -82,7 +82,7 @@ module box_test;
 import smith::test;
 import geometry::box;
 
-export void test_area(void) {
+export void test_area() {
     test::check_equal(box::area(2, 3), 6);
 }
 EOF
