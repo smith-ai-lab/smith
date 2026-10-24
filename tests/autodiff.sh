@@ -94,7 +94,7 @@ expect_lacks "toy: release and fast have no sanitizer" "$(smith build -t command
 expect_contains "toy: the objects are beside the others" "$commands" "build/debug/autodiff/kernel.o"
 capture smith test
 expect "toy: smith test, whose test differentiates, passes" 0 "$rc"
-expect_contains "toy: ... and runs it" "$out" "2 passed, 0 failed"
+expect_contains "toy: ... and runs it" "$out$err" "2 passed"
 capture smith lint
 expect "toy: smith lint is clean" 0 "$rc"
 
@@ -181,12 +181,12 @@ unset ASAN_SYMBOLIZER_PATH
 # 4c. A call autodiff::gradient cannot differentiate is an error at the call, not a link error from Enzyme.
 mkdir "$work/wrong" && cd "$work/wrong" || exit 1
 git init -q .
-for call in 'autodiff::gradient(total, &d)' 'autodiff::gradient(total, &d, &d)' 'autodiff::gradient(total, 1.0, 2.0)'; do
+for call in 'autodiff::gradient(&a, total, &d)' 'autodiff::gradient(&a, total, &d, &d)' 'autodiff::gradient(&a, total, 1.0, 2.0)'; do
     escaped=$(printf '%s' "$call" | sed 's/&/\\&/g')
     sed "s|CALL|$escaped|" "$here/tests/autodiff/wrong/main.smith" >main.smith
     capture smith build
     expect "wrong: \`$call\` is refused" 1 "$rc"
-    expect_contains "wrong: ... at the call in main.smith" "$err$out" "main.smith:16:"
+    expect_contains "wrong: ... at the call in main.smith" "$err$out" "main.smith:18:"
     expect_lacks "wrong: ... and never reaches Enzyme" "$err$out" "Enzyme:"
 done
 

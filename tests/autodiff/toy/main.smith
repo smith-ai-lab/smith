@@ -1,16 +1,17 @@
 // Reverse and forward mode derivatives of toy::f and toy::loss, printed next to the analytic values.
 module main;
 
+import smith::arena;
 import smith::autodiff;
 import smith::io;
 import toy;
 import <math.h>;
 
 // autodiff::gradient against the analytic values and the raw call: the same Enzyme call, so equal to the bit.
-i32 gradients(io::Console *console) {
+i32 gradients(io::Console *console, arena::Arena *arena) {
     toy::Params p = {.w = {0.5, -1.5, 2.0}, .b = 0.3};
     toy::Batch batch = {.x = {1.0, 2.0, 3.0}, .scale = 1.5};
-    toy::Params g = autodiff::gradient(toy::model, &p, &batch);
+    toy::Params g = autodiff::gradient(arena, toy::model, &p, &batch);
     toy::Params raw = {};
     autodiff::reverse((void *)toy::model, autodiff::dup, &p, &raw, autodiff::constant, &batch);
     i32 status = 0;
@@ -25,13 +26,13 @@ i32 gradients(io::Console *console) {
     if (g.b != raw.b) {
         status = 1;
     }
-    toy::Params one = autodiff::gradient(toy::product, &p);
+    toy::Params one = autodiff::gradient(arena, toy::product, &p);
     (void)io::console_printf(console, "gradient product dw0 %.12f %.12f\n", one.w[0], p.w[1]);
     (void)io::console_printf(console, "gradient product dw1 %.12f %.12f\n", one.w[1], p.w[0]);
-    toy::Params readonly = autodiff::gradient(toy::first_square, &p);
+    toy::Params readonly = autodiff::gradient(arena, toy::first_square, &p);
     (void)io::console_printf(console, "gradient first_square dw0 %.12f %.12f\n", readonly.w[0], 2.0 * p.w[0]);
     f64 s = 1.7;
-    f64 cube = autodiff::gradient(toy::cube, &s);
+    f64 cube = autodiff::gradient(arena, toy::cube, &s);
     (void)io::console_printf(console, "gradient cube ds %.12f %.12f\n", cube, 3.0 * s * s);
     return status;
 }
@@ -54,7 +55,7 @@ i32 main(i32 argc, char **argv) {
     for (usize i = 0; i < 3; i++) {
         (void)io::console_printf(&io.console, "loss dp[%zu] %.12f %.12f\n", i, dp[i], 2.0 * (f64)(i + 1) * p[i]);
     }
-    i32 status = gradients(&io.console);
+    i32 status = gradients(&io.console, &io.arena);
     io::close(&io);
     return status;
 }

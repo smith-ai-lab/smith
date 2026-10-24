@@ -1,6 +1,7 @@
 // A test that differentiates too: the tests of an autodiff program are built the same way.
 module toy_test;
 
+import smith::arena;
 import smith::autodiff;
 import smith::test;
 import toy;
@@ -16,7 +17,9 @@ export void test_loss_gradient(void) {
 export void test_gradient(void) {
     toy::Params p = {.w = {1.0, 2.0, 3.0}, .b = 0.0};
     toy::Batch batch = {.x = {1.0, 1.0, 1.0}, .scale = 1.0};
-    toy::Params g = autodiff::gradient(toy::model, &p, &batch);
+    alignas(arena::align_max) u8 memory[256];
+    arena::Arena a = arena::make(memory, sizeof memory);
+    toy::Params g = autodiff::gradient(&a, toy::model, &p, &batch);
     test::check_near(g.w[0], 2.0, 1e-12);
     test::check_near(g.w[1], 4.0, 1e-12);
     test::check_near(g.w[2], 6.0, 1e-12);
