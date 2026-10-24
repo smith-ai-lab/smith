@@ -717,9 +717,12 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-fmt", "smith-fmt", nullptr, nullptr, 0},
     {"smith-lang", "smith-lang", nullptr, nullptr, 0},
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
-    {"test", "test", nullptr, nullptr, 1},
+    {"main", "test", "main", nullptr, 1},
+    {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
+    {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},
     {"isolate-main", "test", "isolate", "main", 1},
-    {"isolate-rest", "test", "isolate", "misc,workers,reports,flags,inprocess,explain,lang", 1},
+    {"isolate-reports", "test", "isolate", "misc,reports,lang", 1},
+    {"isolate-rest", "test", "isolate", "workers,flags,inprocess,explain", 1},
     {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
     {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
     {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
@@ -744,23 +747,36 @@ static bool build_list_has(SmithBuild *b, const char *list, char separator, cons
 
 // The parts of tests/test.sh and the shards of build_test_scripts must be the same set: a part in no `isolate` row
 // would never run under --isolate, and a name in a row that is no part would run nothing, silently.
+static const char *build_test_parts_of(const BuildTestScript *row) {
+    if (strcmp(row->script, "test") != 0) return nullptr;
+    return row->mode != nullptr && strcmp(row->mode, "isolate") == 0 ? row->shard : row->mode;
+}
+
+// Whether a row of tests/test.sh, plain (isolate false) or under --isolate, runs the part.
+static bool build_part_runs(SmithBuild *b, const char *part, bool isolate) {
+    for (size_t row = 0; row < build_test_script_count; row++) {
+        const BuildTestScript *script = &build_test_scripts[row];
+        const char *list = build_test_parts_of(script);
+        bool is_isolate = script->mode != nullptr && strcmp(script->mode, "isolate") == 0;
+        if (list != nullptr && is_isolate == isolate && build_list_has(b, list, ',', part)) return true;
+    }
+    return false;
+}
+
 static void build_check_test_parts(SmithBuild *b) {
     const char *parts = smith_capture(b, (const char *[]){"sh", "tests/test.sh", "--parts", nullptr});
     for (const char *name = parts; *name != '\0';) {
         size_t length = strcspn(name, "\n");
         const char *part = smith_fmt(b, "%.*s", (int)length, name);
-        bool run = false;
-        for (size_t row = 0; row < build_test_script_count; row++) {
-            const char *shard = build_test_scripts[row].shard;
-            run = run || (shard != nullptr && build_list_has(b, shard, ',', part));
-        }
-        if (!run)
+        if (!build_part_runs(b, part, true))
             build_stop(b, smith_fmt(b, "part '%s' of tests/test.sh is in no isolate row of build_test_scripts", part));
+        if (!build_part_runs(b, part, false))
+            build_stop(b, smith_fmt(b, "part '%s' of tests/test.sh is in no plain row of build_test_scripts", part));
         name += length + (name[length] == '\n' ? 1 : 0);
     }
     for (size_t row = 0; row < build_test_script_count; row++) {
         const BuildTestScript *script = &build_test_scripts[row];
-        for (const char *name = script->shard; name != nullptr && *name != '\0';) {
+        for (const char *name = build_test_parts_of(script); name != nullptr && *name != '\0';) {
             size_t length = strcspn(name, ",");
             const char *part = smith_fmt(b, "%.*s", (int)length, name);
             if (!build_list_has(b, parts, '\n', part))
