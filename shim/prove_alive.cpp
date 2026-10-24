@@ -118,9 +118,11 @@ double seconds_since(Clock::time_point start) {
 class SmithPoint final : public IR::Instr {
   public:
     SmithPoint(unsigned id, IR::Value *condition, IR::Value *first = nullptr, IR::Value *second = nullptr,
-               uint64_t first_bytes = 0, uint64_t second_bytes = 0)
+               uint64_t first_bytes = 0, uint64_t second_bytes = 0, IR::Value *first_size = nullptr,
+               IR::Value *second_size = nullptr)
         : Instr(IR::Type::voidTy, "#point" + std::to_string(id)), condition(condition), id(id), first(first),
-          second(second), first_bytes(first_bytes), second_bytes(second_bytes) {}
+          second(second), first_bytes(first_bytes), second_bytes(second_bytes), first_size(first_size),
+          second_size(second_size) {}
 
     IR::Value *condition;
     unsigned id;
@@ -128,13 +130,20 @@ class SmithPoint final : public IR::Instr {
     // blocks and offsets Alive2 holds, not about addresses, which are far dearer for the solver.
     IR::Value *first, *second;
     uint64_t first_bytes, second_bytes;
+    // The bytes of a slice's range are its count times its element size, known only at the call: a value, not a number.
+    IR::Value *first_size, *second_size;
     mutable IR::StateValue seen;
 
     bool is_restrict() const {
         return first != nullptr;
     }
     std::vector<IR::Value *> operands() const override {
-        if (is_restrict()) return {first, second};
+        if (is_restrict()) {
+            std::vector<IR::Value *> all{first, second};
+            if (first_size != nullptr) all.push_back(first_size);
+            if (second_size != nullptr) all.push_back(second_size);
+            return all;
+        }
         return condition != nullptr ? std::vector<IR::Value *>{condition} : std::vector<IR::Value *>{};
     }
     bool propagatesPoison() const override {
@@ -147,6 +156,8 @@ class SmithPoint final : public IR::Instr {
         if (condition == &what) condition = &with;
         if (first == &what) first = &with;
         if (second == &what) second = &with;
+        if (first_size == &what) first_size = &with;
+        if (second_size == &what) second_size = &with;
     }
     void print(std::ostream &os) const override {
         os << "point " << id;
@@ -158,11 +169,18 @@ class SmithPoint final : public IR::Instr {
             const IR::StateValue &b = state[*second];
             IR::Pointer pa(state.getMemory(), a.value);
             IR::Pointer pb(state.getMemory(), b.value);
+            // Offsets are signed and sizes unsigned: the sums are made one bit wider than both, so no range wraps.
             smt::expr offset_a = pa.getOffset(), offset_b = pb.getOffset();
-            unsigned bits = offset_a.bits();
-            smt::expr apart = pa.getBid() != pb.getBid() ||
-                              (offset_a + smt::expr::mkUInt(first_bytes, bits)).sle(offset_b) ||
-                              (offset_b + smt::expr::mkUInt(second_bytes, bits)).sle(offset_a);
+            unsigned bits = offset_a.bits() + 2;
+            auto size_of = [&](IR::Value *value, uint64_t constant) -> smt::expr {
+                if (value == nullptr) return smt::expr::mkUInt(constant, bits);
+                smt::expr size = state[*value].value;
+                return size.bits() >= bits ? size.trunc(bits) : size.zext(bits - size.bits());
+            };
+            smt::expr size_a = size_of(first_size, first_bytes), size_b = size_of(second_size, second_bytes);
+            smt::expr start_a = offset_a.sext(2), start_b = offset_b.sext(2);
+            smt::expr apart = pa.getBid() != pb.getBid() || size_a == 0 || size_b == 0 ||
+                              (start_a + size_a).sle(start_b) || (start_b + size_b).sle(start_a);
             seen = {smt::expr::mkIf(apart, smt::expr::mkUInt(1, 1), smt::expr::mkUInt(0, 1)),
                     a.non_poison && b.non_poison};
         }
@@ -172,7 +190,8 @@ class SmithPoint final : public IR::Instr {
         return true;
     }
     std::unique_ptr<IR::Instr> dup(IR::Function &, const std::string &) const override {
-        return std::make_unique<SmithPoint>(id, condition, first, second, first_bytes, second_bytes);
+        return std::make_unique<SmithPoint>(id, condition, first, second, first_bytes, second_bytes, first_size,
+                                            second_size);
     }
 };
 
@@ -418,12 +437,14 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
                 auto *call = dynamic_cast<IR::FnCall *>(&block->at(i));
                 if (call != nullptr && call->getFnName() == "@smith_restrict") {
                     auto id = IR::getInt(*call->getArgs()[0].first);
-                    auto first_bytes = IR::getInt(*call->getArgs()[3].first);
-                    auto second_bytes = IR::getInt(*call->getArgs()[4].first);
-                    if (!id || !first_bytes || !second_bytes) continue;
+                    IR::Value *first_size = call->getArgs()[3].first, *second_size = call->getArgs()[4].first;
+                    auto first_bytes = IR::getInt(*first_size);
+                    auto second_bytes = IR::getInt(*second_size);
+                    if (!id) continue;
                     auto *point = new SmithPoint(static_cast<unsigned>(*id), nullptr, call->getArgs()[1].first,
-                                                 call->getArgs()[2].first, static_cast<uint64_t>(*first_bytes),
-                                                 static_cast<uint64_t>(*second_bytes));
+                                                 call->getArgs()[2].first, first_bytes ? *first_bytes : 0,
+                                                 second_bytes ? *second_bytes : 0, first_bytes ? nullptr : first_size,
+                                                 second_bytes ? nullptr : second_size);
                     points.push_back(point);
                     block->getInstr(i) = std::unique_ptr<IR::Instr>(point);
                     continue;

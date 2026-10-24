@@ -1,0 +1,84 @@
+// `restrict` on a slice is checked at the call (#65): the two slices carry their counts, so the call proves their ranges
+// apart. A slice of one buffer overlapping the other is a failure at the call, naming both.
+module geometry::restrict_slices;
+import <smith/contract.h>;
+
+void copy(u8 dst[restrict :], const u8 src[restrict :]) {
+    c::smith_requires(countof(dst) <= countof(src));
+    c::smith_ensures(true);
+    for (usize i = 0; i < countof(dst) && i < 4; i++) dst[i] = src[i];
+}
+
+export void apart(void) {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    copy(b[0:4], b[4:8]);
+}
+
+export void apart_arrays(void) {
+    c::smith_ensures(true);
+    u8 a[4] = {0};
+    u8 b[4] = {0};
+    copy(a[0:4], b[0:4]);
+}
+
+export void apart_slices(u8 b[:]) {
+    c::smith_requires(countof(b) == 8);
+    c::smith_ensures(true);
+    copy(b[0:4], b[4:8]);
+}
+
+export void shifted(void) {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    copy(b[1:5], b[0:4]);
+}
+
+export void same(void) {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    copy(b[0:4], b[0:4]);
+}
+
+export void whole(u8 b[:]) {
+    c::smith_ensures(true);
+    copy(b, b);
+}
+
+export void unknown(u8 a[:], u8 b[:]) {
+    c::smith_ensures(true);
+    copy(a, b);
+}
+
+// Read only by both: allowed to be the same.
+u8 first_of(const u8 a[restrict :], const u8 b[restrict :]) {
+    c::smith_requires(countof(a) > 0 && countof(b) > 0);
+    c::smith_ensures(true);
+    return a[0] + b[0] < 255 ? a[0] : 0;
+}
+
+export void reads(const u8 b[:]) {
+    c::smith_requires(countof(b) > 0);
+    c::smith_ensures(true);
+    u8 x = first_of(b, b);
+    (void)x;
+}
+
+// A restrict slice and a pointer that points into it.
+void fill(u8 dst[restrict :], u8 *other) {
+    c::smith_requires(countof(dst) > 0);
+    c::smith_ensures(true);
+    dst[0] = *other;
+}
+
+export void pointer_apart(void) {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    fill(b[0:4], &b[5]);
+}
+
+export void pointer_inside(void) {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    fill(b[0:4], &b[2]);
+}
