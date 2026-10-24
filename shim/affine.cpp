@@ -507,9 +507,11 @@ const RecordDecl *tagOwner(const MemberExpr *member) {
     return field->getParent();
 }
 
-// The variant a constant names: `<struct>_tag_<variant>`.
+// The variant a constant names: `<name>_tag_<variant>`, for the struct `smith_enum_<name>`.
 std::string variantOf(const RecordDecl *record, const EnumConstantDecl *constant) {
-    std::string prefix = record->getName().str() + "_tag_";
+    llvm::StringRef tag = record->getName();
+    tag.consume_front("smith_enum_");
+    std::string prefix = tag.str() + "_tag_";
     std::string name = constant->getName().str();
     return name.rfind(prefix, 0) == 0 ? name.substr(prefix.size()) : name;
 }

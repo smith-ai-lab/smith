@@ -115,6 +115,18 @@ headers `lldb/DataFormatters/*`; `shim/lldb/FormatterBytecode.def`, which the in
 Python and no LLVM change; `smith dbg`, `smith dap` and the failed-check reader call `smith_lldb_slice_formatters()`
 after the deferred initializers. `smith mcp` and the editors get them through `smith dap`.
 
+## Payload enums
+
+A payload enum (`enum { Circle circle; empty; }`, [smith-language](smith-language.md), issue #198) lowers to a struct whose
+tag is `smith_enum_<module>_<Name>` (`typedef struct smith_enum_main_Shape {...} main_Shape;`: C callers keep the typedef
+name; the `tag` enum and its constants keep `<module>_<Name>_tag...`). The same `shim/lldb_slices.cpp` registers, for
+`^(const )?(struct )?smith_enum_.+$`, a summary that prints the active variant (the enumerator of `tag` after
+`<name>_tag_`) and a synthetic children provider whose only child is that variant's payload, so the other members of the
+union (garbage, and once a summary parse error) and the raw tag are hidden: `(main::Shape) a = circle { circle = (r = 2) }`,
+`b = empty {}`. The canonical type is matched (the typedef name says nothing), in C++ with no Python and no LLVM change. The
+affine plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
+(`variantOf`, shim/affine.cpp). Tests: `tests/dap.sh`.
+
 ## Reading a failed check
 
 `smith --smith-explain --pid <pid>` (`runtime/explain.c`, `shim/lldb_explain.cpp`) uses lldb's SB API in smith's process

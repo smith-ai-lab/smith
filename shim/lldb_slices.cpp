@@ -1,7 +1,10 @@
-// How the debugger shows a run-time array `T xs[:]` (the struct smith_array_<element>_n { T *data; usize count[1]; }):
-// as its elements, with its count, not as a pointer and a count array. The formatters are lldb's own C++ ones, the
-// kind it ships for std::span, registered in its default category when `smith dbg` or `smith dap` starts, so no Python
-// is involved and nothing in LLVM changes: the editor's variables view, `frame variable` and `smith mcp` all use them.
+// How the debugger shows a payload enum too (issue #198): the struct `smith_enum_<module>_<Name>` of an
+// `enum { Circle circle; empty; }` shows its active variant, and only that variant's payload, in the same way (see
+// enum_summary below). How the debugger shows a run-time array `T xs[:]` (the struct smith_array_<element>_n { T *data;
+// usize count[1]; }): as its elements, with its count, not as a pointer and a count array. The formatters are lldb's
+// own C++ ones, the kind it ships for std::span, registered in its default category when `smith dbg` or `smith dap`
+// starts, so no Python is involved and nothing in LLVM changes: the editor's variables view, `frame variable` and
+// `smith mcp` all use them.
 //   (i32[:]) xs = count=3 { [0] = 1 [1] = 2 [2] = 3 }
 //   (char[:]) name = "abc" count=3 { [0] = 'a' ... }
 // The type's name is the written one (`i32[:]`, `f32[:][2]`, `const char[:]`, `u8[restrict :]`), taken from the
@@ -251,6 +254,72 @@ bool summarize(ValueObject &shown, Stream &stream, const TypeSummaryOptions &) {
     return true;
 }
 
+// ---- Payload enums: `struct smith_enum_<name> { enum <name>_tag { <name>_tag_circle, ... } tag; union { ... }; }`
+
+// The variant the tag holds: the enumerator's name after `<name>_tag_`. Empty when it cannot be told.
+std::string active_variant(ValueObject &value) {
+    // A typedef'd name (`main_Shape`) is no help: the struct underneath carries the marker.
+    std::string canonical = value.GetCompilerType().GetCanonicalType().GetTypeName().GetString();
+    llvm::StringRef type = canonical;
+    type.consume_front("const ");
+    type.consume_front("struct ");
+    if (!type.consume_front("smith_enum_")) return "";
+    lldb::ValueObjectSP tag = value.GetChildMemberWithName("tag");
+    if (!tag) return "";
+    const char *written = tag->GetValueAsCString();
+    if (written == nullptr) return "";
+    std::string prefix = type.str() + "_tag_";
+    llvm::StringRef name(written);
+    return name.consume_front(prefix) ? name.str() : "";
+}
+
+class EnumFrontEnd : public SyntheticChildrenFrontEnd {
+  public:
+    explicit EnumFrontEnd(ValueObject &backend) : SyntheticChildrenFrontEnd(backend) {
+        Update();
+    }
+
+    // The active variant's payload only; a variant with no payload has no child.
+    llvm::Expected<uint32_t> CalculateNumChildren() override {
+        return payload ? 1 : 0;
+    }
+
+    lldb::ValueObjectSP GetChildAtIndex(uint32_t index) override {
+        return index == 0 ? payload : lldb::ValueObjectSP();
+    }
+
+    lldb::ChildCacheState Update() override {
+        std::string variant = active_variant(m_backend);
+        payload = variant.empty() ? nullptr : m_backend.GetChildMemberWithName(variant);
+        return lldb::ChildCacheState::eRefetch;
+    }
+
+    bool MightHaveChildren() override {
+        return true;
+    }
+
+    llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
+        if (payload && payload->GetName() == name) return 0;
+        return llvm::createStringErrorV("type has no child named '{0}'", name);
+    }
+
+  private:
+    lldb::ValueObjectSP payload;
+};
+
+SyntheticChildrenFrontEnd *make_enum_front_end(CXXSyntheticChildren *, lldb::ValueObjectSP backend) {
+    return backend ? new EnumFrontEnd(*backend) : nullptr;
+}
+
+// The variant's name: `circle`; its payload is the one child (`circle = {r = 2}`).
+bool enum_summary(ValueObject &shown, Stream &stream, const TypeSummaryOptions &) {
+    lldb::ValueObjectSP real = shown.GetNonSyntheticValue();
+    std::string variant = active_variant(real ? *real : shown);
+    if (variant.empty()) return false;
+    stream.PutCString(variant);
+    return true;
+}
+
 } // namespace
 
 // Registers the formatters of `T xs[:]`; once is enough, and calling it again changes nothing.
@@ -268,4 +337,8 @@ extern "C" void smith_lldb_slice_formatters(void) {
     summary.SetCascades(true).SetDontShowChildren(false).SetSkipPointers(false).SetSkipReferences(false);
     formatters::AddCXXSummary(category, summarize, "smith run-time array T xs[:]: its count",
                               "^(const )?(struct )?smith_array_.+_n(_[0-9n]+)*$", summary, true);
+    formatters::AddCXXSynthetic(category, make_enum_front_end, "smith payload enum: the active variant's payload",
+                                "^(const )?(struct )?smith_enum_.+$", synthetic, true);
+    formatters::AddCXXSummary(category, enum_summary, "smith payload enum: the active variant",
+                              "^(const )?(struct )?smith_enum_.+$", summary, true);
 }
