@@ -5,7 +5,32 @@ description: "What smith::contract's modifies and invariant mean to smith prove:
 
 # Contracts: modifies, invariants and compile time
 
-Part of [smith-contract](../smith-contract/SKILL.md), which has the calls.
+```smith
+module bag;
+
+import smith::contract;
+
+export typedef struct {
+    u32 len;
+    u32 jumps;
+} Moves;
+
+export void add_jump(Moves *moves) {
+    contract::requires(moves->jumps < 100);
+    contract::modifies(&moves->jumps);           // writes only this; a caller keeps `len` with no old_len saved
+    moves->jumps += 1;
+    contract::ensures(moves->jumps <= 100);
+}
+
+export u32 use_it(Moves *moves) {
+    contract::requires(moves->jumps < 100 && moves->len == 7);
+    add_jump(moves);
+    contract::assert(moves->len == 7);           // proved from `modifies`
+    return moves->len;
+}
+```
+
+Part of [smith-contract](../smith-contract/SKILL.md), which has the calls. Both functions prove in 0.1 s of CPU.
 
 ## What a function writes: `modifies`
 - `contract::modifies(&moves->jumps);` (C: `smith_modifies(&moves->jumps, sizeof moves->jumps)`, one call for each range; `contract::modifies(&a, &b)` names several): the function writes only these and its locals, so a caller keeps every other byte it passed, with no `old_*` saves. It does nothing at run time. With no argument (C: `smith_modifies(nullptr, 0)`) the function writes nothing outside its locals. A function with none may write what its pointer parameters reach.
