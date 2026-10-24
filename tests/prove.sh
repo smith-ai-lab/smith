@@ -732,8 +732,9 @@ expect_contains "coverage: ... at the line" "$out" "static_harness.c:19)"
 prove "$work/nothing.c"
 expect_contains "coverage: nothing to prove still counts the functions" "$out" "0 of 1 functions have contracts; smith prove -v lists the 1 without"
 expect "coverage: ... and succeeds" 0 "$rc"
-coverage=$work/coverage
+coverage=$work/coverage # a git repository, or smith fmt has no list of files
 mkdir "$coverage"
+git -C "$coverage" init -q
 cat >"$coverage/main.c" <<'SOURCE'
 #include <smith/contract.h>
 int f(int x);
@@ -746,16 +747,16 @@ int f(int x) {
 }
 int h(int x) { return g(x); }
 SOURCE
-cd "$coverage" && capture "$smith" prove; cd "$here"
+cd "$coverage" && capture env -u SMITH_OUTPUT "$smith" prove; cd "$here"
 expect_contains "coverage: smith prove says it on a second line" "$out" "1 of 4 functions have contracts; smith prove -v lists the 3 without"
 expect_contains "coverage: ... after the verdict" "$out" "smith prove: ok ("
 cd "$coverage" && capture "$smith" prove -v; cd "$here"
 expect_contains "coverage: smith prove -v lists them by file and line" "$out" "without  h  (main.c:10)"
 expect_contains "coverage: ... main too" "$out" "without  main  (main.c:4)"
-cd "$coverage" && capture "$smith" check; cd "$here"
+cd "$coverage" && capture env -u SMITH_OUTPUT "$smith" check; cd "$here"
 expect_contains "coverage: smith check carries it into its prove line" "$out" "smith check: prove ok (1 of 4 functions)"
 printf 'int main(void) { return 0; }\n' >"$coverage/main.c"
-cd "$coverage" && capture "$smith" check; cd "$here"
+cd "$coverage" && capture env -u SMITH_OUTPUT "$smith" check; cd "$here"
 expect_contains "coverage: nothing to prove is a success that says 0 of N" "$out" "smith check: prove ok (0 of 1 functions)"
 
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
