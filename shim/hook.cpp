@@ -2703,12 +2703,15 @@ class SmithHook final : public TokenHook, public NameSource {
         Token token;
         // A function's head is no place for a call at compile time (a head's words are its own names), and a function
         // body is one only where the statement says so.
+        int groups = 0;     // parenthesized groups at the top of the statement: a head with two has a computed result type
+        int parens = 0;
         auto flushWords = [&](bool head) {
-            if (keyword || (bodies == 0 && !head && (equals || open > 0)))
+            if (keyword || (bodies == 0 && (!head || groups >= 2) && (equals || open > 0 || groups >= 2)))
                 compileTimeNames.insert(words.begin(), words.end());
             words.clear();
             keyword = false;
             equals = false;
+            groups = 0;
         };
         for (lexer.LexFromRawLexer(token); token.isNot(tok::eof); lexer.LexFromRawLexer(token)) {
             if (token.is(tok::raw_identifier)) {
@@ -2720,6 +2723,8 @@ class SmithHook final : public TokenHook, public NameSource {
                 continue;
             }
             equals = equals || token.is(tok::equal) || token.is(tok::l_square);
+            parens += token.is(tok::l_paren) ? 1 : token.is(tok::r_paren) && parens > 0 ? -1 : 0;
+            groups += token.is(tok::r_paren) && parens == 0 ? 1 : 0;
             if (token.is(tok::l_brace)) {
                 bool body = bodies > 0 || (open == 0 && afterParen);
                 flushWords(open == 0 && afterParen);
