@@ -7588,6 +7588,16 @@ export type slice_of(type element, usize count) {
 export type slice_if_small(type t) {
     return small(t) ? slice_of(t, 1) : t;
 }
+==> type-value-main-only/src/main.smith <==
+// A file whose only type values are in main is read in type-value mode (issue #174).
+typedef const char str[:];
+
+i32 main(void) {
+    constexpr type t = str;
+    static_assert(is_slice(t));
+    t words = "abc";
+    return (i32)countof(words) - 3;
+}
 ==> type-value-slice/src/main.smith <==
 module main;
 
