@@ -1,0 +1,21 @@
+---
+type: architecture
+title: Affine types, a plugin linked into smith
+description: "[[smith::affine]] on a type makes each value used at most once, checked by one analysis in a clang plugin linked into smith that runs on every compile and in clangd with no flag."
+tags: [language, plugin, affine]
+---
+# Affine types, a plugin linked into smith
+
+**A type marked `[[smith::affine]]` has each of its values used at most once, and a second use is a compile error at the second use naming the first** (issue #189; `shim/affine.cpp`; skill smith-lang-affine). Valid C23, so a compiler that does not know it ignores it; checked for C and `.smith` alike.
+
+**One analysis, one host.** The analysis is a plugin in the clang that smith links, with no patch of clang, registered in clang's two static registries:
+- A `ParsedAttrInfo` makes `[[smith::affine]]` a known attribute everywhere (compile, clang-tidy, clangd), kept as `AnnotateAttr("smith::affine")` on a typedef or a tag (before the `typedef`, or after `struct`; after the body is clang's error).
+- A `PluginASTAction` of type `AddAfterMainAction` is added by clang to every frontend action with no `-add-plugin` flag, so `smith cc`, `smith build`, `smith run` and clangd run it and `smith lsp` shows the error as you type. There is no clang-tidy check: clang-tidy cannot report a diagnostic it has no id for (it crashes), so `smith_affine_disable()` (called by `smith_tidy_main`) leaves the plugin off in `smith lint`, where every compile fails anyway.
+
+**The analysis** is a forward dataflow over clang's CFG (`setAllAlwaysAdd`, so every expression is an element in evaluation order). A walk of each function body comes first, and a function with no variable of an affine type is never given a CFG. The state is the set of places used, each with its first use; a join is a union; an assignment or a declaration makes a place fresh; a whole array or slice passed to a call makes its elements fresh. A place is a variable, a member path and a constant index or the counter of a plain loop (`for (usize i = 0; i < countof(a); i++)`, found on the `ForStmt`, the counter changed nowhere in the body: a step of the counter makes `a[i]` another element). A use in a loop of a value from outside it finds itself through the back edge and says so. Any other index is an error.
+
+**Slices** (`Key keys[:]`) are lowered to `*__extension__({ auto smith_s = (keys); size_t smith_i = (index); check; &smith_s.data[smith_i]; })`; the plugin recognises that shape by its structure (a temporary named `smith_s…` copied from the slice, `data` indexed by a temporary), not by a marker from the lowering, so a lowering change that keeps the shape keeps the check. `.smith` locations are the source's (the hook keeps them), and the diagnostics go through the Presenter as any other.
+
+**Robust by construction, because a plugin crash is a compile crash.** It skips templates and their instances, dependent contexts, invalid declarations, functions with an expression that has an error (as clang's own warnings do), deleted functions and everything in a system header; it analyses the project's headers' inline functions too. `FunctionDecl::getName()` is never called on an operator or a constructor. smith's own C and C++ (shims included) and the three test beds compile with it on.
+
+Tests: `tests/affine.sh` (each rule and use case of the issue in C and `.smith`, and the editor).

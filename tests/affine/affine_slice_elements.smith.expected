@@ -1,3 +1,3 @@
 status 1
-affine_slice_elements.smith:14:22: error: smith-affine: 'keys[0]' is used again; it was already used at line 12
-affine_slice_elements.smith:12:22: note: 'keys[0]' was first used here
+affine_slice_elements.smith:29:22: error: smith-affine: 'keys[0]' is used again; it was already used at line 27
+affine_slice_elements.smith:27:22: note: 'keys[0]' was first used here

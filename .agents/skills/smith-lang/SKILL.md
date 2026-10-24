@@ -38,6 +38,7 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | compile time | `constexpr i32 x = fib(10);`, `static_assert(f() == 3)` | `smith-lang-constexpr` |
 | type values | `constexpr type t = i32;` | `smith-lang-type-values` |
 | tuples | `struct { i32, f32 }`, `t[0]` | `smith-lang-tuples` |
+| used once | `[[smith::affine]]` | `smith-lang-affine` |
 | the target | `import target;`, `target::arch`, no `#if` | `smith-lang-target` |
 | the io | `i32 main(io::Io *io)` | `smith-io` |
 
