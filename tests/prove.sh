@@ -651,6 +651,12 @@ expect_contains "induction: ... and -v says it was unrolled" "$out" "so it was p
 prove -v --induction-from=2 "$cases/induction.c" --function=countdown
 expect "induction: --induction-from only moves the threshold" 0 "$rc"
 
+# 16b. __memcpy_chk is memcpy (issue #94).
+prove "$cases/memcpy_chk.c" --function=copied
+expect "memcpy_chk: it is memcpy, so the copied value is read back" 0 "$rc"
+prove "$cases/memcpy_chk.c" --function=too_long
+expect "memcpy_chk: a length past the destination is refuted" 1 "$rc"
+
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
 # rebuild of smith with the same prover keeps the proofs.
 if grep -q '__DATE__\|__TIME__' "$here/shim/prove.cpp"; then

@@ -1627,9 +1627,29 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     return true;
 }
 
+// `__memcpy_chk(dst, src, len, dst_size)` is what Apple's headers make of memcpy when the destination's size is known
+// (it has no body here). It is memcpy: the check against dst_size only aborts where memcpy would be out of bounds,
+// which the proof of the memcpy reports as the undefined behaviour it is.
+void lower_memcpy_chk(Function &function) {
+    std::vector<CallBase *> calls;
+    for (Instruction &instruction : instructions(function)) {
+        auto *call = dyn_cast<CallInst>(&instruction);
+        Function *callee = call != nullptr ? direct_callee(call) : nullptr;
+        if (callee != nullptr && callee->getName() == "__memcpy_chk" && call->arg_size() == 4) calls.push_back(call);
+    }
+    for (CallBase *call : calls) {
+        IRBuilder<> builder(call);
+        Value *destination = call->getArgOperand(0);
+        builder.CreateMemCpy(destination, MaybeAlign(1), call->getArgOperand(1), MaybeAlign(1), call->getArgOperand(2));
+        call->replaceAllUsesWith(destination);
+        call->eraseFromParent();
+    }
+}
+
 // Every call in the function is inlined, replaced by its contract, or an Unprovable.
 bool resolve_calls(UnitContext &context) {
     Function &function = context.function;
+    lower_memcpy_chk(function);
     for (;;) {
         CallBase *target = nullptr;
         for (Instruction &instruction : instructions(function)) {

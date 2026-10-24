@@ -34,6 +34,7 @@
 #include <z3.h>
 
 #include <dirent.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -91,6 +92,22 @@ template <class Work> bool with_z3_cpu_limit(double seconds, Work work) {
     done = true;
     watcher.join();
     return interrupted;
+}
+
+// Alive2's handler of Z3's errors prints "Severe Z3 error: out of memory" from every solver thread that meets it and
+// exits. Z3 runs out of memory on a function whose queries are over the budget anyway (a sixteen-way concurrent set of
+// big queries), so that is not another failure: the process ends as the CPU budget ends it (SIGXCPU, which the parent
+// says as "over its budget"), and says nothing itself. Any other Z3 error is Alive2's own report.
+void z3_error(Z3_context context, Z3_error_code code) {
+    std::string_view message = Z3_get_error_msg(context, code);
+    if (message == "canceled") return; // the timeout, harmless
+    if (message == "out of memory") {
+        kill(getpid(), SIGXCPU);
+        for (;;) // the signal ends the process; this thread waits for it
+            usleep(1000);
+    }
+    util::config::dbg() << "Severe Z3 error: " << message << " [code=" << code << ']' << std::endl;
+    _Exit(-1);
 }
 
 double seconds_since(Clock::time_point start) {
@@ -401,6 +418,7 @@ Outcome alive_prove(Prepared &prepared, const Options &options) {
         // long as the parent's: on a busy machine a wall limit of the budget's size ends a proof the budget has not.
         smt::set_query_timeout(std::to_string(static_cast<long>((20 * options.budget_seconds + 30) * 1000)));
         solver_context.reset(); // takes the timeout
+        Z3_set_error_handler(smt::ctx(), z3_error);
         transform.preprocess();
         tools::TransformVerify verifier(transform, false);
         auto [state, target_state] = verifier.exec();

@@ -5,7 +5,7 @@ description: "smith_trusted(): the prover's boundary, what a trusted function as
 
 # Trusted boundaries
 
-The prover reads C. At the edge of a program the code is not C it can read: the io library, inline assembly (random's `register_*` helpers), a libc function (`printf`, `memcpy_chk`), another library with no source in the build. A proved function that reaches one fails: `a call of printf, which has neither a body nor a contract`, with the fix: *put `smith_trusted()` as the first statement of* the function that makes the call (the helper that wraps it, if there is one; the message names it).
+The prover reads C. At the edge of a program the code is not C it can read: the io library, inline assembly (random's `register_*` helpers), a libc function (`printf`; `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `abs` and `__memcpy_chk`, which is memcpy, are known to the prover), another library with no source in the build. A proved function that reaches one fails: `a call of printf, which has neither a body nor a contract`, with the fix: *put `smith_trusted()` as the first statement of* the function that makes the call (the helper that wraps it, if there is one; the message names it).
 
 ```c
 static void show(int32_t value) {
