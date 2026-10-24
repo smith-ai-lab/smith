@@ -3,6 +3,7 @@
 // so that the libraries it links and their headers come from that smith and not from the one that runs the repository's
 // build.c (an older smith would not know a library added since). `tests` there is a link to the repository's.
 #include <smith/build.h>
+#include <stdlib.h>
 
 void build(SmithBuild *b) {
     const char *const flags[] = {"-std=gnu2y",
@@ -19,7 +20,18 @@ void build(SmithBuild *b) {
                                  "-I",
                                  ".smith/include",
                                  nullptr};
+    // lib/http.c is C and not a registered smith library (its only user is smith), so tests/http_test.smith reaches it
+    // here, from the repository that build.c of the repository sets in SMITH_REPO.
+    const char *repo = getenv("SMITH_REPO");
+    SmithObject http = {
+        .compiler = "smith-cc",
+        .source = smith_fmt(b, "%s/lib/http.c", repo != nullptr ? repo : ".."),
+        .output = "build/tests_objects/http.o",
+        .flags = flags,
+    };
+    smith_object(b, &http);
     SmithTests tests = {
+        .objects = (const SmithObject *[]){&http, nullptr},
         .sources = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
