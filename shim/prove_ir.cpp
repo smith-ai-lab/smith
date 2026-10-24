@@ -16,6 +16,7 @@
 #include <tuple>
 #include "prove.hpp"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 
@@ -1002,6 +1003,7 @@ void mark_library(Module &module) {
 
 namespace {
 std::string source_name(const Function &function);
+std::string subprogram_name(const DISubprogram *subprogram);
 void hide_loop_tests(Function &function); // below, with the loops' own code
 void check_restrict_calls(Module &module);
 } // namespace
@@ -1089,6 +1091,12 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         // load of one after the call is undefined behaviour (issue #62).
         if (function.getIntrinsicID() == Intrinsic::ubsantrap || function.getIntrinsicID() == Intrinsic::trap)
             function.addFnAttr(Attribute::NoFree);
+    }
+    // A generic's instance is `weak`, which another definition may replace at link time, so LLVM infers nothing from
+    // its body (a pure function would be taken to write any memory). The linker has made it the one definition there
+    // is: it is an ordinary function now.
+    for (Function &function : module) {
+        if (function.hasWeakLinkage() && !function.isDeclaration()) function.setLinkage(GlobalValue::ExternalLinkage);
     }
     Analyses analyses;
     for (Function &function : module) {
@@ -1331,7 +1339,7 @@ std::string describe_instruction(const Instruction *instruction) {
     }
     std::string result = where + ": `" + text + "`";
     if (instruction->getDebugLoc() && instruction->getDebugLoc()->getInlinedAt() != nullptr)
-        result += " (in " + instruction->getDebugLoc()->getScope()->getSubprogram()->getName().str() + ")";
+        result += " (in " + subprogram_name(instruction->getDebugLoc()->getScope()->getSubprogram()) + ")";
     return result;
 }
 
@@ -1638,8 +1646,55 @@ bool known_library_function(StringRef name) {
     return false;
 }
 
+// The name of a function as the source writes it. A generic's instance is named by clang with C's types
+// (`clamp<int>`); in smith it is written with the sized types (`clamp<i32>`), so the arguments of the instance are.
+std::string as_written(const std::string &name) {
+    static const std::pair<const char *, const char *> types[] = {
+        {"unsigned long long", "u64"},
+        {"long long", "i64"},
+        {"unsigned long", "usize"},
+        {"unsigned short", "u16"},
+        {"unsigned char", "u8"},
+        {"unsigned int", "u32"},
+        {"signed char", "i8"},
+        {"unsigned", "u32"},
+        {"long", "isize"},
+        {"short", "i16"},
+        {"int", "i32"},
+        {"float", "f32"},
+        {"double", "f64"},
+        {"_Float16", "f16"},
+    };
+    size_t open = name.find('<');
+    if (open == std::string::npos) return name;
+    std::string result = name.substr(0, open);
+    for (size_t at = open; at < name.size();) { // bounded by the name
+        auto is_word = [&](size_t index) {
+            return index < name.size() && (isalnum(static_cast<unsigned char>(name[index])) != 0 || name[index] == '_');
+        };
+        bool replaced = false;
+        if (!is_word(at - 1)) {
+            for (const auto &[written, sized] : types) {
+                size_t length = strlen(written);
+                if (name.compare(at, length, written) == 0 && !is_word(at + length)) {
+                    result += sized;
+                    at += length;
+                    replaced = true;
+                    break;
+                }
+            }
+        }
+        if (!replaced) result += name[at++];
+    }
+    return result;
+}
+
+std::string subprogram_name(const DISubprogram *subprogram) {
+    return as_written(subprogram->getName().str());
+}
+
 std::string source_name(const Function &function) {
-    if (const DISubprogram *subprogram = function.getSubprogram()) return subprogram->getName().str();
+    if (const DISubprogram *subprogram = function.getSubprogram()) return subprogram_name(subprogram);
     return function.getName().str();
 }
 
@@ -1647,7 +1702,7 @@ std::string source_name(const Function &function) {
 std::string writer_of(const UnitContext &context, const Instruction *call) {
     if (call != nullptr && call->getDebugLoc()) {
         if (const DISubprogram *subprogram = call->getDebugLoc()->getScope()->getSubprogram())
-            return subprogram->getName().str();
+            return subprogram_name(subprogram);
     }
     return source_name(context.function);
 }
@@ -1988,6 +2043,33 @@ void note_call_writes(UnitContext &context, CallBase &call, Function &callee, bo
     }
 }
 
+// What LLVM found in a body that makes it write memory the function was not given: the first store or call that may
+// write something other than a local, as the source names it.
+std::string why_it_writes(const Function &callee) {
+    for (const Instruction &instruction : instructions(callee)) {
+        if (!instruction.mayWriteToMemory()) continue;
+        std::string what;
+        if (const auto *store = dyn_cast<StoreInst>(&instruction)) {
+            const Value *object = getUnderlyingObject(store->getPointerOperand());
+            if (isa<AllocaInst>(object)) continue;
+            what = isa<GlobalVariable>(object) ? "a store to the global " + object->getName().str()
+                                               : "a store through a pointer it was not given";
+        } else if (const auto *call = dyn_cast<CallBase>(&instruction)) {
+            if (call->doesNotAccessMemory() || call->onlyReadsMemory()) continue;
+            Function *called = call->getCalledFunction();
+            if (called != nullptr && called->isIntrinsic()) continue; // a trap writes nothing the caller can see
+            what = called == nullptr ? "a call through a function pointer" : "a call of " + source_name(*called);
+        } else {
+            what = "an instruction that writes memory";
+        }
+        std::string line;
+        if (instruction.getDebugLoc() && instruction.getDebugLoc().getLine() != 0)
+            line = " at line " + std::to_string(instruction.getDebugLoc().getLine());
+        return "LLVM found " + what + line + " in the body";
+    }
+    return "LLVM could not infer what the body writes, so it takes it as any memory";
+}
+
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
 bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     auto cached = context.slices.find(&callee);
@@ -2053,10 +2135,9 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     if (!(names_ranges && call.getType()->isVoidTy()) &&
         isModSet(callee.getMemoryEffects().getModRef(IRMemLocation::Other))) {
         context.unit.notes.push_back("note: " + site.file + ":" + std::to_string(site.line) + ": " +
-                                     source_name(callee) +
-                                     " may write memory it was not given (LLVM infers it from the body); what the "
-                                     "caller knows about that memory is "
-                                     "lost across the call");
+                                     source_name(callee) + " may write memory it was not given (" +
+                                     why_it_writes(callee) +
+                                     "); what the caller knows about that memory is lost across the call");
     }
     if (slices.ensures_slice == nullptr && names_ranges) {
         Instruction *after = havoc_locals(context, call, callee, &call, copies);
@@ -2731,7 +2812,7 @@ class Normalizer {
             if (info.line == 0) info.line = location->getLine();
             for (const DILocation *outer = location->getInlinedAt(); outer != nullptr; outer = outer->getInlinedAt()) {
                 if (outer->getScope()->getSubprogram() == context.function.getSubprogram()) continue; // this function
-                info.inlined.push_back(outer->getScope()->getSubprogram()->getName().str() + " at " +
+                info.inlined.push_back(subprogram_name(outer->getScope()->getSubprogram()) + " at " +
                                        outer->getFilename().str() + ":" + std::to_string(outer->getLine()));
             }
         }
