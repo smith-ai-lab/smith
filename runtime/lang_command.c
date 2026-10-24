@@ -2,6 +2,18 @@
 // (shim/clangd.cpp, which applies it to every command clangd compiles with), so that what the CLI accepts the editor
 // accepts, and they cannot drift. Included by smith.c, which has smith_ends_with and smith_takes_value.
 
+// Whether an input is C++ or Objective-C++, which have no `_Defer`.
+static bool smith_lang_has_other_input(int argc, char **argv, int first) {
+    static const char *const other[] = {".cpp", ".cc", ".cxx", ".C", ".mm", ".c++", ".cppm"};
+    for (int i = first; i < argc; i++) { // bounded by argc
+        if (argv[i][0] == '-') continue;
+        for (size_t k = 0; k < sizeof other / sizeof other[0]; k++) { // bounded by the table
+            if (smith_ends_with(argv[i], other[k])) return true;
+        }
+    }
+    return false;
+}
+
 // Whether the command names a C standard, or has an input that is not C (a C++ file refuses a C standard): `.smith`
 // is smith's own language and compiles as C2y, the standard `smith new` uses, unless the caller chose one.
 static bool smith_lang_standard_given(int argc, char **argv, int first) {
@@ -89,7 +101,7 @@ int smith_lang_command(int argc, char **argv, int first, char **out, size_t capa
     if (!smith_lang_standard_given(argc, argv, first)) out[used++] = (char *)"-std=gnu2y";
     // `defer` of a module is `_Defer`, which needs the defer TS on (issue #210); only a command with a .smith input
     // gets it, so a plain C file keeps C's keywords unless its own flags ask.
-    for (int i = first; i < argc; i++) { // bounded by argc
+    for (int i = first; i < argc && !scan.language && !smith_lang_has_other_input(argc, argv, first); i++) { // bounded
         if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
             out[used++] = (char *)"-fdefer-ts";
             break;
