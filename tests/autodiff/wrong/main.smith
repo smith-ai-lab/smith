@@ -8,13 +8,24 @@ typedef struct {
     f64 v[2];
 } Data;
 
+typedef struct {
+    f64 *v;
+} Pointers;
+
+f64 through(Pointers *p) {
+    return p->v[0];
+}
+
 f64 total(Data *d, f64 scale) {
     return d->v[0] * scale;
 }
 
 i32 main(void) {
     Data d = {};
+    Pointers ptr = {};
     arena::Arena a = {};
+    (void)d;
+    (void)ptr;
     CALL;
     return 0;
 }

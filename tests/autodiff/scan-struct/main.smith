@@ -1,0 +1,125 @@
+// learner's scan reference differentiated with autodiff::gradient over a struct of `f64[:]` fields (the gradient's
+// arrays come from the arena), against the hand-written backward. Exits 1 when they differ by
+// more than the tolerance relative to the largest gradient entry.
+module main;
+
+import smith::arena;
+import smith::autodiff;
+import smith::io;
+import <math.h>;
+import "base/reference_scan.h";
+
+constexpr f64 tolerance = 1e-12;
+
+typedef struct {
+    f64 x[:];
+    f64 dt[:];
+    f64 a[:];
+    f64 b[:];
+    f64 c[:];
+    f64 keep[:];
+    f64 state0[:];
+} Scan;
+
+typedef struct {
+    f64 dy[:];
+    f64 dse[:];
+} Seeds;
+
+// sum(y * dy) + sum(state_end * dse): the scalar whose gradient the backward computes.
+f64 scan_loss(Scan *scan, const Seeds *seeds) {
+    c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
+    c::ReferenceScanInputs in = {scan->x.data, scan->dt.data, scan->a.data, scan->b.data, scan->c.data, scan->keep.data};
+    f64 y[36] = {};
+    f64 state_end[48] = {};
+    c::reference_scan_forward(&shape, &in, scan->state0.data, y, state_end, nullptr);
+    f64 total = 0.0;
+    for (usize i = 0; i < 36; i++) {
+        total += y[i] * seeds->dy[i];
+    }
+    for (usize i = 0; i < 48; i++) {
+        total += state_end[i] * seeds->dse[i];
+    }
+    return total;
+}
+
+u64 rng = 88172645463325252ULL;
+
+f64 urand(f64 lo, f64 hi) {
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    return lo + (hi - lo) * ((f64)(rng >> 11) / 9007199254740992.0);
+}
+
+void fill(f64 *p, usize n, f64 lo, f64 hi) {
+    for (usize i = 0; i < n; i++) {
+        p[i] = urand(lo, hi);
+    }
+}
+
+f64 worst = 0.0;
+
+void compare(io::Console *console, const char *name, const f64 *got, const f64 *want, usize n) {
+    f64 scale = 0.0;
+    f64 difference = 0.0;
+    for (usize i = 0; i < n; i++) {
+        scale = c::fmax(scale, c::fabs(want[i]));
+        difference = c::fmax(difference, c::fabs(got[i] - want[i]));
+    }
+    f64 relative = scale > 0.0 ? difference / scale : difference;
+    (void)io::console_printf(console, "  %-8s n=%-4zu max|ref|=%.3e  maxrel=%.3e\n", name, n, scale, relative);
+    worst = c::fmax(worst, relative);
+}
+
+i32 main(i32 argc, char **argv) {
+    io::Io io = io::make(argc, argv);
+    arena::Arena *arena = &io.arena;
+    Scan scan = {.x = arena::push_slice(arena, f64, 36),
+                 .dt = arena::push_slice(arena, f64, 12),
+                 .a = arena::push_slice(arena, f64, 2),
+                 .b = arena::push_slice(arena, f64, 24),
+                 .c = arena::push_slice(arena, f64, 24),
+                 .keep = arena::push_slice(arena, f64, 6),
+                 .state0 = arena::push_slice(arena, f64, 48)};
+    Seeds seeds = {.dy = arena::push_slice(arena, f64, 36), .dse = arena::push_slice(arena, f64, 48)};
+    fill(scan.x.data, 36, -1.0, 1.0);
+    fill(scan.dt.data, 12, 0.01, 0.5);
+    fill(scan.a.data, 2, -2.0, -0.1);
+    fill(scan.b.data, 24, -1.0, 1.0);
+    fill(scan.c.data, 24, -1.0, 1.0);
+    for (usize i = 0; i < 6; i++) {
+        scan.keep[i] = urand(0.0, 1.0) < 0.1 ? 0.0 : 1.0;
+    }
+    fill(scan.state0.data, 48, -1.0, 1.0);
+    fill(seeds.dy.data, 36, -1.0, 1.0);
+    fill(seeds.dse.data, 48, -1.0, 1.0);
+
+    Scan g = autodiff::gradient(arena, scan_loss, &scan, &seeds);
+
+    c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
+    c::ReferenceScanInputs in = {scan.x.data, scan.dt.data, scan.a.data, scan.b.data, scan.c.data, scan.keep.data};
+    f64 states[144] = {};
+    f64 y[36] = {};
+    f64 state_end[48] = {};
+    c::reference_scan_forward(&shape, &in, scan.state0.data, y, state_end, states);
+    f64 hx[36] = {};
+    f64 hdt[12] = {};
+    f64 ha[2] = {};
+    f64 hb[24] = {};
+    f64 hc[24] = {};
+    f64 hstate0[48] = {};
+    c::ReferenceScanGradients hand = {hx, hdt, ha, hb, hc, hstate0, nullptr};
+    c::reference_scan_backward(&shape, &in, scan.state0.data, states, seeds.dy.data, seeds.dse.data, &hand);
+
+    (void)io::console_printf(&io.console, "gradient vs hand-written backward (a struct of slices):\n");
+    compare(&io.console, "dx", g.x.data, hx, 36);
+    compare(&io.console, "ddt", g.dt.data, hdt, 12);
+    compare(&io.console, "da", g.a.data, ha, 2);
+    compare(&io.console, "db", g.b.data, hb, 24);
+    compare(&io.console, "dc", g.c.data, hc, 24);
+    compare(&io.console, "dstate0", g.state0.data, hstate0, 48);
+    (void)io::console_printf(&io.console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
+    io::close(&io);
+    return worst <= tolerance ? 0 : 1;
+}

@@ -163,6 +163,35 @@ for profile in release debug; do
     expect_contains "scan gradient: $profile reports the difference" "$out" "worst relative difference"
 done
 
+# 3c. autodiff::gradient of the scan with its inputs as a struct of f64[:] fields: arrays from the arena, equal to the backward.
+mkdir "$work/scanstruct" && cd "$work/scanstruct" || exit 1
+cp -R "$here/tests/autodiff/scan/base" "$here/tests/autodiff/scan-struct/main.smith" .
+git init -q .
+capture smith build release
+expect "scan struct: release builds" 0 "$rc"
+capture smith build
+expect "scan struct: debug builds" 0 "$rc"
+for profile in release debug; do
+    capture "build/$profile/scanstruct"
+    expect "scan struct: $profile equals the hand-written backward to 1e-12" 0 "$rc"
+    expect_contains "scan struct: $profile reports the difference" "$out" "worst relative difference"
+done
+
+# 3d. gradient over structs (a model of two f32, a net of slices, fixed arrays and an integer) and map (SGD, Adam) against loops.
+mkdir "$work/structs" && cd "$work/structs" || exit 1
+cp "$here/tests/autodiff/structs/main.smith" .
+git init -q .
+capture smith build release
+expect "structs: release builds" 0 "$rc"
+capture smith build
+expect "structs: debug builds" 0 "$rc"
+for profile in release debug; do
+    capture "build/$profile/structs"
+    expect "structs: $profile gradients, SGD and Adam equal their references to 1e-12" 0 "$rc"
+    expect_contains "structs: $profile checks the net's gradient" "$out" "gradient vs analytic"
+    expect_contains "structs: $profile checks Adam" "$out" "map(adam) vs loop"
+done
+
 # 4b. AddressSanitizer through the generic instance of autodiff::gradient: the read's line, in the function as differentiated.
 mkdir "$work/oobgrad" && cd "$work/oobgrad" || exit 1
 cp "$here/tests/autodiff/oob-gradient/main.smith" .
@@ -181,14 +210,26 @@ unset ASAN_SYMBOLIZER_PATH
 # 4c. A call autodiff::gradient cannot differentiate is an error at the call, not a link error from Enzyme.
 mkdir "$work/wrong" && cd "$work/wrong" || exit 1
 git init -q .
-for call in 'autodiff::gradient(&a, total, &d)' 'autodiff::gradient(&a, total, &d, &d)' 'autodiff::gradient(&a, total, 1.0, 2.0)'; do
+line=$(grep -n '^    CALL' "$here/tests/autodiff/wrong/main.smith" | cut -d: -f1)
+for call in 'autodiff::gradient(&a, total, &d)' 'autodiff::gradient(&a, total, &d, &d)' 'autodiff::gradient(&a, total, 1.0, 2.0)' 'autodiff::gradient(total, &d, 1.0)' 'autodiff::gradient(&a, through, &ptr)'; do
     escaped=$(printf '%s' "$call" | sed 's/&/\\&/g')
     sed "s|CALL|$escaped|" "$here/tests/autodiff/wrong/main.smith" >main.smith
     capture smith build
     expect "wrong: \`$call\` is refused" 1 "$rc"
-    expect_contains "wrong: ... at the call in main.smith" "$err$out" "main.smith:18:"
+    expect_contains "wrong: ... at the call in main.smith" "$err$out" "main.smith:$line:"
     expect_lacks "wrong: ... and never reaches Enzyme" "$err$out" "Enzyme:"
 done
+expect_contains "wrong: a pointer field says to use a [:] slice" "$err$out" "a field is a pointer; use a [:] slice"
+
+# 4d. map: a field it cannot walk (a pointer), and a function that is not of a float, are errors at the call too.
+mkdir "$work/wrongmap" && cd "$work/wrongmap" || exit 1
+git init -q .
+cp "$here/tests/autodiff/wrong/map.smith" main.smith
+capture smith build
+expect "wrong map: a pointer field is refused" 1 "$rc"
+expect_contains "wrong map: ... at the call in main.smith" "$err$out" "main.smith:16:"
+expect_contains "wrong map: ... saying to use a [:] slice" "$err$out" "use a [:] slice"
+expect_lacks "wrong map: ... and never reaches Enzyme" "$err$out" "Enzyme:"
 
 # 5. A smith that runs an external clang has no Enzyme: the build refuses an autodiff program and says why.
 cd "$work/toy" || exit 1

@@ -81,8 +81,10 @@ void shadow_walk(arena::Arena *a, auto proto, auto p, usize n) {
     }
 }
 
-// A copy of *x in the shape of a gradient.
-typeof(v) shadow(arena::Arena *a, auto v) {
+// `autodiff::zeros(&arena, params)` is a copy of `params` in the shape of a gradient: every number zero, every `[:]`
+// field a new array of the same length from the arena. It is what an optimizer's state (momentum, Adam's moments) starts
+// as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]` holds).
+export typeof(v) zeros(arena::Arena *a, auto v) {
     shadow_walk(a, v, &v, 1);
     return v;
 }
@@ -98,7 +100,7 @@ typeof(v) shadow(arena::Arena *a, auto v) {
 // writes `__enzyme_autodiff` with `enzyme_interleave`).
 export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... rest) {
     (void)sizeof(f(x, rest...));
-    typeof_unqual(*x) dx = shadow(a, *x);
+    typeof_unqual(*x) dx = zeros(a, *x);
     if constexpr (countof(rest) == 0) {
         reverse((void *)f, dup, x, interleave, &dx);
     } else {

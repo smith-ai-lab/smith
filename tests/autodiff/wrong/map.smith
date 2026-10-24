@@ -1,0 +1,18 @@
+// map cannot walk a pointer field.
+module main;
+
+import smith::autodiff;
+
+typedef struct {
+    f64 *v;
+} Pointers;
+
+f64 twice(f64 x) {
+    return 2.0 * x;
+}
+
+i32 main(void) {
+    Pointers p = {};
+    autodiff::map(twice, &p, &p);
+    return 0;
+}
