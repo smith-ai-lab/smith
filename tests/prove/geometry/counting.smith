@@ -1,0 +1,35 @@
+// A loop that counts what a caller's memory holds, under a requires on its bound (#187): the unrolled copies' phi takes
+// values from loads of passes that did not run, and those are values too (C has no poison in the memory it is given).
+module geometry::counting;
+import smith::contract;
+
+export usize positives(i32 xs[8], usize count) {
+    contract::requires(count <= 8);
+    usize hits = 0;
+    for (usize i = 0; i < count; i++) {
+        if (xs[i] > 0) hits++;
+    }
+    contract::ensures(hits <= 8);
+    return hits;
+}
+
+export usize positives_of_slice(i32 xs[:]) {
+    contract::requires(countof(xs) <= 8);
+    usize hits = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] > 0) hits++;
+    }
+    contract::ensures(hits <= 8);
+    return hits;
+}
+
+// False: eight positives make eight.
+export usize positives_wrong(i32 xs[8], usize count) {
+    contract::requires(count <= 8);
+    usize hits = 0;
+    for (usize i = 0; i < count; i++) {
+        if (xs[i] > 0) hits++;
+    }
+    contract::ensures(hits <= 3);
+    return hits;
+}

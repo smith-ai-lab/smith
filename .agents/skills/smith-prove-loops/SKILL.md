@@ -22,6 +22,24 @@ export i32 squares_sum(usize count) {
 }
 ```
 
+A loop over what a caller's array holds proves the same way, whatever its body does with the elements:
+
+```smith
+module sums;
+
+import smith::contract;
+
+export usize positives(i32 xs[8], usize count) {
+    contract::requires(count <= 8);
+    usize hits = 0;
+    for (usize i = 0; i < count; i++) {
+        if (xs[i] > 0) hits++;
+    }
+    contract::ensures(hits <= 8);
+    return hits;
+}
+```
+
 The bound must be a parameter compared with a constant. Without the `requires`, the proof says where and why:
 
 ```text

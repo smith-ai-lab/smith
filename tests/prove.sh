@@ -485,6 +485,17 @@ if "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then
     prove --function=geometry::slices::second_of_one "$slices"
     expect "smith slice: a view of two elements of a pointer to one is refused" 1 "$rc"
 
+    # 11a3. A count of what a caller's memory holds, under a requires on its bound, is proved (#187), and a false bound
+    # still fails.
+    counting=$cases/geometry/counting.smith
+    for good in positives positives_of_slice; do
+        prove --function=geometry::counting::$good "$counting"
+        expect "smith counting: $good is proved" 0 "$rc"
+    done
+    prove --function=geometry::counting::positives_wrong "$counting"
+    expect "smith counting: a bound that is too small fails" 1 "$rc"
+    expect_contains "smith counting: ... at its line" "$out" "counting.smith:33: smith_ensures(hits <= 3) may be false"
+
     # 11b. The project verb proves .smith sources too (issue #42): a convention project, no build file, with a contract in
     # a module and a trusted function written with c::smith_trusted().
     proj=$work/smithproj
