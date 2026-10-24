@@ -1411,7 +1411,7 @@ void run_io(const Test *test, const Options *options, const Command *command) {
         random::Key root = random::key_make(seed_root);
         for (u64 i = 0; i < options->seed_count; i++) { // each case's key comes from the root, which moves on
             random::Key next[2];
-            random::split_n(root, next, 2);
+            random::split(root, next);
             root = next[0];
             run_key(test, options, random::key_bits(next[1]));
         }

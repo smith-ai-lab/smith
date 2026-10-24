@@ -583,7 +583,7 @@ export u64 pick(u64 index) {
     contract::requires(index < 10);
     random::Key key = random::key_make(7);
     random::Key parts[2];
-    random::split_n(key, parts, 2);
+    random::split(key, parts);
     contract::ensures(true);
     return parts[1].bits + index;
 }
