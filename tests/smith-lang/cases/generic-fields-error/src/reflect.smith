@@ -20,10 +20,6 @@ export i32 not_constant(constexpr type T, T *x, i32 n) {
     return x->[fields(T)[n]];
 }
 
-export void bare(constexpr type T) {
-    auto f = fields(T)[0];
-}
-
 export void odd_name(constexpr type T) {
     const char *name = fields(T)[0].label;
 }

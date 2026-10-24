@@ -4,4 +4,3 @@ src/main.smith:26:23: `fields(T)` needs the compiler to read the struct: a raw l
 src/main.smith:28:23: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
 src/main.smith:29:23: the index of `fields(T)[...]` is a compile-time number (a literal, the variable of a `for constexpr`, `countof(...)`, with `+` and `-`): the index here is a number, the variable of a `for constexpr` or `countof(rest)`, with `+` and `-`
 src/main.smith:30:14: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it
-src/main.smith:31:14: `fields(T)` needs the compiler to read the struct: a raw lowering (a bootstrapped module, the stage0) cannot write it

@@ -1,0 +1,17 @@
+module lib;
+
+import <stdio.h>;
+
+// A library generic that keeps a field in a variable and asks its type: no helper, so the file that calls it needs
+// nothing of its own.
+export void show(constexpr type T, T *x) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr auto f = fields(T)[i];
+        if constexpr (is_float(f.type)) {
+            c::printf("%s=%g ", fields(T)[i].name, (f64)x->[f]);
+        } else if constexpr (is_integer(f.type)) {
+            c::printf("%s=%lld ", fields(T)[i].name, (long long)x->[f]);
+        }
+    }
+    c::printf("\n");
+}

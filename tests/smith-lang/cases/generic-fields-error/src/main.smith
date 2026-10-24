@@ -27,7 +27,6 @@ i32 main(void) {
     One one = {1};
     total += reflect::out_of_range(One, &one);
     total += reflect::not_constant(One, &one, 0);
-    reflect::bare(One);
     reflect::odd_name(One);
     return total;
 }

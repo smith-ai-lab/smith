@@ -1,0 +1,94 @@
+module walk;
+
+import <stdio.h>;
+
+typedef struct {
+    i32 id;
+    f32 weight;
+    f64 scale;
+    u8 flag;
+} Sample;
+
+typedef struct {
+    i32,
+    f32
+} Pair;
+
+// `fields(T)` is an array of `Field`, a struct with a `name` (a `char[:]`) and a `type`. A field is an ordinary value:
+// it can be stored, passed to an ordinary function (which runs in the compiler), returned and compared.
+usize name_length(Field f) {
+    return countof(f.name);
+}
+
+bool is_floating(Field f) {
+    return is_float(f.type);
+}
+
+Field first_float(Field a, Field b) {
+    return is_floating(a) ? a : b;
+}
+
+void show(constexpr type T, T *x) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        c::printf("%.*s(%zu)", (i32)name_length(f), f.name.data, name_length(f));
+        if constexpr (is_floating(f)) {
+            c::printf("=%g", (f64)x->[f]);
+        }
+        c::printf(" ");
+    }
+    c::printf("\n");
+}
+
+usize total_length(constexpr type T) {
+    usize total = 0;
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr auto f = fields(T)[i];
+        total += name_length(f);
+    }
+    return total;
+}
+
+f64 sum_floats(constexpr type T, T *x) {
+    f64 total = 0;
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (is_float(f.type)) {
+            typeof(x->[f]) copy = x->[f];
+            total += (f64)copy;
+        }
+    }
+    return total;
+}
+
+usize count_integers(constexpr type T) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (is_integer(typeof(T.[f]))) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+const char *float_name(constexpr type T) {
+    constexpr Field f = first_float(fields(T)[0], fields(T)[1]);
+    return f.name.data;
+}
+
+usize second_length(constexpr type T) {
+    const Field *all = fields(T);
+    return all[1].name.count[0];
+}
+
+export void run(void) {
+    Sample s = {1, 2.5f, 3.0, 4};
+    Pair p = {7, 1.5f};
+    show(Sample, &s);
+    show(Pair, &p);
+    c::printf("%zu %zu\n", total_length(Sample), total_length(Pair));
+    c::printf("%g %g %zu %zu\n", sum_floats(Sample, &s), sum_floats(Pair, &p), count_integers(Sample),
+              count_integers(Pair));
+    c::printf("%s %s %zu\n", float_name(Sample), float_name(Pair), second_length(Sample));
+}

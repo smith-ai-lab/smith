@@ -1,0 +1,8 @@
+module main;
+
+import walk;
+
+i32 main(void) {
+    walk::run();
+    return 0;
+}
