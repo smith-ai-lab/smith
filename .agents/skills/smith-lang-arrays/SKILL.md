@@ -1,11 +1,37 @@
 ---
 name: smith-lang-arrays
-description: "Array parameters in a .smith module: `i32 xs[4]` keeps its size (checked indexes, shapes and uses, countof(xs)), `char **argv` for main, why `T xs[]` is an error. Load when a module has a parameter written as an array, on 'array parameter', 'an array parameter needs its size', 'is out of range for the array parameter' or 'pass an array of that shape'."
+description: "Arrays in a .smith module: run-time arrays `i32 xs[:]` (a slice: pointer and count; `countof(xs)`, `xs[i]`, `xs[a:b]`, `p[a:b]`, `char s[:] = \"abc\"`, `typeof(i32[:])`, checked in debug and release) and array parameters `i32 xs[4]` that keep their size (checked indexes, countof(xs)), `char **argv` for main, why `T xs[]` is an error. Load when a module has `[:]`, `xs[a:b]`, a parameter written as an array, `countof`, or on 'a slice has no step', 'an index is never negative', 'a pointer is no slice', 'cannot slice this expression', 'more than one dimension is not built yet', 'array parameter', 'an array parameter needs its size' or 'pass an array of that shape'."
 ---
 
-# Array parameters
+# Arrays
 
 This skill ships in the smith plugin, from `.agents/skills/smith-lang-arrays/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Overview: `smith-lang`.
+
+## Run-time arrays: `T xs[:]`
+
+A C pointer carries no length. `i32 xs[:]` is a pointer and the number of elements after it, in a parameter, a result (`typeof(i32[:]) f(...)`), a local, a global and a struct field. It is invalid C, so it works in any `.smith` file.
+
+```
+i32 sum(i32 xs[:]) {
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++) total += xs[i];    // countof(xs) is a usize
+    return total;
+}
+i32 raw[5] = {1, 2, 3, 4, 5};
+i32 all[:] = raw;               // a fixed array converts: count 5
+i32 mid[:] = all[1:4];          // a view that shares the elements: 2, 3, 4  (xs[:b], xs[a:] too)
+i32 *p = raw;
+i32 view[:] = p[2:5];           // a pointer becomes a slice by saying how many: the one unsafe spot, visible in the code
+char word[:] = "abc";           // count 3, no terminating zero; `char s[] = "abc"` is C's (a char[4], count 4 as a slice)
+c::strncmp(word, "abc", countof(word));   // a slice is a pointer only as an argument of a c:: function
+```
+
+- `xs[i]` and `xs[a:b]` are checked in debug and release builds, not fast: a failure is `contract::assert`'s report with the line and the stack. The program links the trace library (`smith_library(b, "trace")`; tests have it). A constant negative index, a step (`xs[a:b:2]`), slicing a pointer or an array with one bound, passing a pointer where a slice is wanted, and `[:][:]` (more dimensions are #105; rows of different lengths are a struct) are errors.
+- Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
+- Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, defined where used and in a generated header, so C writes `(struct smith_array_i32_n){.data = p, .count = {n}}` to call an export. The array expression of `xs[i]` is written twice at most as a name or member chain: do not index the result of a call with side effects.
+- Not yet: `arena::push(&a, T, n)` (use `push_array`), `fields`, `format` and `check_equal` over slices, `T xs[:][2]`, the prover and the debugger.
+
+## Array parameters: `i32 xs[4]`
 
 In C a parameter `i32 xs[2]` is a pointer: the `2` is dropped. In a file with a `module` line it is kept; a file with no `module` line means what it means in C (`xs[]`, `xs++`, `sizeof(xs)` and all). Only parameters change, and every change is an error, never a new meaning.
 

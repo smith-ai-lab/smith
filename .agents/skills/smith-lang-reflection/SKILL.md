@@ -11,7 +11,7 @@ Code that should work for any struct is written once, as regular C run at compil
 
 - **`fields(T)`** (T a `constexpr type T` parameter) or **`fields(typeof(x))`** (x an `auto x` or `T x` parameter) is the named fields of that struct, in order. **`countof(fields(T))`** is how many (a constant, so it bounds a `for constexpr` and a `static_assert`); **`fields(T)[i]`** is one, `i` a constant (a literal, the loop variable, `countof(...) - 1`).
 - **`fields(T)[i].name`** is the field's name as a string literal. **`x.[fields(T)[i]]`** and **`x->[fields(T)[i]]`** are the member (`x.m`, `x->m`), read or written. **`typeof(T.[fields(T)[i]])`** (or `typeof(x->[...])`) is the field's type, in an `if constexpr` condition too: `is_float(typeof(x->[fields(T)[i]]))`, `is_record`, `is_array` (new), `is_pointer`, `typeof(...) == char *`.
-- A field may be a nested struct (`fields` of its type visits it: write a generic that calls itself), a fixed array (`is_array`; it decays to a pointer when passed, so pass `sizeof(a.[f]) / sizeof(a.[f][0])` too) or a bit-field (read and written; its `typeof` is the integer type, and `&x.[f]` is C's own error). `[..]` fields are #82.
+- A field may be a nested struct (`fields` of its type visits it: write a generic that calls itself), a fixed array (`is_array`; it decays to a pointer when passed, so pass `sizeof(a.[f]) / sizeof(a.[f][0])` too) or a bit-field (read and written; its `typeof` is the integer type, and `&x.[f]` is C's own error). `[:]` fields are #82.
 - Errors, at the use, naming the type: a **union**, a struct with an **anonymous struct or union member**, a type that **is not a struct**, an index **out of range**, an index that is no constant. A raw lowering says it needs the compiler.
 
 ```smith fragment

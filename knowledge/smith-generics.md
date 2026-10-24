@@ -145,7 +145,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   generic that holds `fields` or an expression of an instance's parameter (`*p`, `a.m`) is typed like an argument that
   holds a call: the parameters are written as `(*(T *)0)` for the compiler to type (a local of the body, a runtime loop
   variable, cannot be named there). The grammar (`tree-sitter/grammar.js`) reads `x.[e]` and `x->[e]`; clang-format
-  needs nothing. `[..]` fields are #82's.
+  needs nothing. `[:]` fields are #82's.
 - **`for constexpr`** (issue #71, skill smith-lang-rest). Smith is C plus compile time. The lowering keeps, for the
   instance being written, the loop variables of the `for constexpr` it is inside, and writes plain C.
   - *Built lists are gone* (issue #101). `auto name = {a, b};` and `name = {name..., x};` made a list of variables
